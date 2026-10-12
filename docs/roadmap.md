@@ -6,6 +6,8 @@ Implementation started with [issue #1](https://github.com/Ten98-IO-Company/ten98
 
 [Issue #3](https://github.com/Ten98-IO-Company/ten98-monitor/issues/3) adds workspace/team screens, expiring invitation links, roles, UTC analytics and SPA/custom-event tracking, with transactional upgrades. These implement portions of P01/P02/P27/P28/P32/P33; each grouped parity requirement remains open until all of its sub-capabilities pass.
 
+[Issue #8](https://github.com/Ten98-IO-Company/ten98-monitor/issues/8) adds authored static reports, template briefs and revocable snapshots; [issue #9](https://github.com/Ten98-IO-Company/ten98-monitor/issues/9) adds domain roles and DNS ownership proofs; [issue #10](https://github.com/Ten98-IO-Company/ten98-monitor/issues/10) adds native consent/privacy, typed properties and measured visitor/visit overview. Alias collection, observed redirects, generated reports, advanced analytics and automatic retention remain separate unfinished capabilities. See the current evidence and limitations in the foundation runbook.
+
 ## Milestones and dependencies
 
 | Milestone | Work package | Prerequisites | Exit evidence |
@@ -47,7 +49,7 @@ Each row is ready to become an issue after M0; issue creation is not required fo
 
 ## Tracking, report imports and alias-domain backlog
 
-Scope and improved prompt: [tracking.md](tracking.md). Development now includes draft/preview/publish/rollback and browser loader adapters; their incomplete coverage is recorded in [foundation.md](foundation.md). Reporting imports and domain consolidation remain unimplemented. Each connector is its own bounded implementation task even when grouped below. API approvals and controlled test access are dependencies, not a reason to claim success from fixtures alone.
+Scope and improved prompt: [tracking.md](tracking.md). Development now includes draft/preview/publish/rollback, browser loader adapters, native consent settings and a domain ownership registry; their incomplete coverage is recorded in [foundation.md](foundation.md). Reporting imports and domain traffic consolidation remain unimplemented. Each connector is its own bounded implementation task even when grouped below. API approvals and controlled test access are dependencies, not a reason to claim success from fixtures alone.
 
 | ID / requirement | Owner | Deliverable and dependency | Acceptance |
 |---|---|---|---|

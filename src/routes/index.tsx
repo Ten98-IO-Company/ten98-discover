@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { AnalyticsPanel } from '../components/AnalyticsPanel'
+import { AnalyticsSettingsPanel } from '../components/AnalyticsSettingsPanel'
+import { DomainsPanel } from '../components/DomainsPanel'
 import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
 import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
@@ -65,7 +67,7 @@ function App() {
   const [jobError, setJobError] = useState('')
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
-  const [view, setView] = useState<'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity'>('project')
+  const [view, setView] = useState<'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains'>('project')
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState('')
   const oidcProof = useRef<string | undefined>(undefined)
@@ -343,7 +345,7 @@ function App() {
   const project = projects?.find((p) => p.id === projectId) ?? null
   const lastReceived = events !== null ? events.events[0]?.receivedAt ?? null : project?.lastEventAt ?? null
   const appUrl = (status?.appUrl ?? '').replace(/\/+$/, '')
-  const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}"></script>` : ''
+  const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
 
   return (
@@ -390,6 +392,16 @@ function App() {
         {authNotice && <div role='alert' className='alert'>{authNotice} <button className='btn ghost' onClick={() => setAuthNotice('')}>Dismiss</button></div>}
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError}</div>}
+        {project && workspace && ['project','destinations','collection','domains'].includes(view) && <header className='proj-head'>
+          <h1>{project.name}</h1>
+          <p className='dim mono'>{project.origin}</p>
+          <nav className='row' aria-label='Project sections' style={{marginTop: 12}}>
+            <button className={view === 'project' ? 'btn primary' : 'btn'} aria-current={view === 'project' ? 'page' : undefined} onClick={() => setView('project')}>Analytics</button>
+            <button className={view === 'collection' ? 'btn primary' : 'btn'} aria-current={view === 'collection' ? 'page' : undefined} onClick={() => setView('collection')}>Collection and privacy</button>
+            {['owner','admin'].includes(workspace.role) && <button className={view === 'destinations' ? 'btn primary' : 'btn'} aria-current={view === 'destinations' ? 'page' : undefined} onClick={() => setView('destinations')}>Destinations</button>}
+            {['owner','admin'].includes(workspace.role) && <button className={view === 'domains' ? 'btn primary' : 'btn'} aria-current={view === 'domains' ? 'page' : undefined} onClick={() => setView('domains')}>Domains</button>}
+          </nav>
+        </header>}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { await refreshMemberships(id); setView('project') }} onUnauthorized={resetSession} /></section>}
         {view === 'team' && workspace && me && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={resetSession} />}
         {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={resetSession} /><button className='btn' onClick={() => setView('identity')}>Manage identity sign-in and recovery</button></>}
@@ -399,8 +411,9 @@ function App() {
         </>}
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
+        {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
+        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
-          <div className='row between'><h1>{project.name} tracking</h1><button className='btn' onClick={() => setView('project')}>Back to analytics</button></div>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />
         </>}
         {view === 'project' && !workspace && <section className='card'><p>No workspace is linked to this account.</p><button className='btn primary' onClick={() => setView('workspace')}>Create workspace</button></section>}
@@ -418,11 +431,6 @@ function App() {
         )}
         {view === 'project' && workspace && project !== null && (
           <>
-            <header className='proj-head'>
-              <h1>{project.name}</h1>
-              <p className='dim mono'>{project.origin}</p>
-              {['owner','admin'].includes(workspace.role) && <button className='btn' onClick={() => setView('destinations')}>Configure destinations</button>}
-            </header>
             <AnalyticsPanel key={project.id} projectId={project.id} onUnauthorized={resetSession} />
             <section className='card' aria-labelledby='ev-h' aria-busy={eventsBusy}>
               <div className='row between'>
@@ -439,7 +447,7 @@ function App() {
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
                   <p><strong>No events recorded yet.</strong></p>
-                  <p>Install the snippet below on {project.origin}, open a page on that site, then choose Refresh events. Counts include only events the collector has persisted.</p>
+                  <p>Install the snippet below on {project.origin}, open that site and allow analytics in Tracking preferences, then choose Refresh events. Counts include only events the collector has persisted.</p>
                 </div>
               )}
               {events !== null && events.events.length > 0 && (
@@ -467,8 +475,8 @@ function App() {
                 {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
                 {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
               </div>
-              <p className='dim footnote'>Install the snippet on {project.origin}, visit a page, then refresh events to confirm delivery.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
-              <p className='dim footnote'>Page loads and SPA path changes are tracked automatically. After the script loads, call <code>window.ten98.track('signup')</code> for a custom event. Use fixed event names; never include personal details. Query strings, fragments and event properties are not collected.</p>
+              <p className='dim footnote'>Install the snippet on {project.origin}, choose analytics consent in Tracking preferences, then refresh events to confirm delivery. Earlier activity is discarded.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
+              <p className='dim footnote'>After consent, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Vendor tags have their own collection behavior.</p>
             </section>
             <section className='card' aria-labelledby='wc-h' aria-busy={checkBusy || jobsBusy}>
               <div className='row between'>

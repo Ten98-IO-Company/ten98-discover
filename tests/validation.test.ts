@@ -56,7 +56,7 @@ test('eventInput accepts a valid page_view; url may carry query/hash', () => {
 test('eventInput rejects bad name/uuid/url/unknown keys', () => {
   const base = { siteKey: ID1, eventId: ID2, name: 'page_view', url: 'https://a.com/' };
   assert.equal(eventInput.parse({ ...base, name: 'signup.complete' }).name, 'signup.complete');
-  for (const name of ['', 'with spaces', '1starts-with-number', 'x'.repeat(65), 'line\nbreak']) {
+  for (const name of ['', 'with spaces', '1starts-with-number', 'x'.repeat(65), 'line\nbreak', 'signup\n', 'signup\r', 'signup\u2028', 'signup\u2029']) {
     assert.throws(() => eventInput.parse({ ...base, name }), z.ZodError);
   }
   assert.throws(() => eventInput.parse({ ...base, siteKey: 'nope' }), z.ZodError);

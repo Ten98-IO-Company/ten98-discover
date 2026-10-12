@@ -6,7 +6,9 @@ import { getConfig } from './config.ts';
 import { assertSchema, getDatabase } from './db.ts';
 import { claimInstallation, FoundationError, getAuth } from './auth.ts';
 import { enqueueProbe, reconcileProbes } from './jobs.ts';
-import { eventInput, eventPath, InputError, projectInput, readJson } from './validation.ts';
+import { eventInput, InputError, projectInput, readJson } from './validation.ts';
+import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
+import { extractAnalyticsPeer } from './analytics-network.ts';
 import { projectAnalytics } from './analytics.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
@@ -14,6 +16,8 @@ import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseAp
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
 import { assertOidcCredentialsReadable, handleOidc } from './oidc.ts';
 import { isInstanceOperator } from './instance-operators.ts';
+import { handleReports } from './reports.ts';
+import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
 const id = '[0-9a-f-]{36}';
@@ -107,14 +111,13 @@ export async function handleApi(request: Request): Promise<Response> {
         await limit(`tracking-config:${input.siteKey}`, 600);
         return json(await getPublicDestinations(input.siteKey, input.environment, origin), 200, cors);
       }
-      const event = eventInput.parse(await readJson(request));
+      const event = eventInput.parse(await readJson(request, 16384));
       const { rows } = await getDatabase().pool.query('SELECT id,origin FROM project WHERE public_key=$1', [event.siteKey]);
       const project = rows[0];
       if (!project || project.origin !== origin || new URL(event.url).origin !== project.origin) throw new FoundationError(403, 'Event does not match the configured website.');
       await limit(`collector:${project.id}`, 3000);
-      // Public keys and Origin are not identity proof. Store observations, not unique visitors.
-      await getDatabase().pool.query('INSERT INTO event(id,project_id,event_name,path) VALUES($1,$2,$3,$4) ON CONFLICT(project_id,id) DO NOTHING', [event.eventId, project.id, event.name, eventPath(event.url)]);
-      return json({ accepted: true }, 202, cors);
+      // Origin and a site key are public routing values, never visitor identity proof.
+      return json(await collectNative(request, event.siteKey, event, extractAnalyticsPeer(request)), 202, cors);
     }
     if (!principal && request.method === 'POST' && request.headers.get('origin') !== config.appUrl) throw new FoundationError(403, 'This action must originate from the application.');
     const oidcResponse = await handleOidc(request);
@@ -167,6 +170,37 @@ export async function handleApi(request: Request): Promise<Response> {
       return json({ error: 'Authentication route unavailable.' }, 404);
     }
     const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
+    if (/^\/api\/projects\/[^/]+\/(reports|report-templates)(\/|$)/.test(path)) {
+      await limit(`reports:${user.id}:${request.method === 'GET' ? 'read' : 'write'}`, request.method === 'GET' ? 120 : 30);
+      const response = await handleReports(request, user.id);
+      if (response) return response;
+    }
+    const domainRoute = path.match(new RegExp(`^/api/projects/(${id})/domains(?:/(${id})/(update|challenge|verify|revoke|remove))?$`, 'i'));
+    if (domainRoute) {
+      if (url.search) throw new FoundationError(400, 'Domain settings do not accept query parameters.');
+      await limit(`domain-settings:${user.id}`, 60);
+      if (request.method === 'GET' && !domainRoute[2]) return json(await getDomains(domainRoute[1], user.id));
+      if (request.method === 'POST') {
+        const input = await readJson(request, 4096);
+        if (!domainRoute[2]) return json(await addDomain(domainRoute[1], user.id, input), 201);
+        const args = [domainRoute[1], user.id, domainRoute[2], input] as const;
+        if (domainRoute[3] === 'update') return json(await updateDomain(...args));
+        if (domainRoute[3] === 'challenge') return json(await issueDomainChallenge(...args));
+        if (domainRoute[3] === 'verify') {
+          await limit(`domain-dns:${user.id}`, 6);
+          return json(await verifyDomain(...args));
+        }
+        if (domainRoute[3] === 'revoke') return json(await revokeDomain(...args));
+        if (domainRoute[3] === 'remove') return json(await removeDomain(...args));
+      }
+      return json({ error: 'Method not allowed.' }, 405);
+    }
+    const analyticsSettingsRoute = path.match(new RegExp(`^/api/projects/(${id})/analytics-settings$`, 'i'));
+    if (analyticsSettingsRoute) {
+      await limit(`analytics-settings:${user.id}`, 60);
+      if (request.method === 'GET') return json(await analyticsSettings(analyticsSettingsRoute[1], user.id));
+      if (request.method === 'POST') return json(await saveAnalyticsSettings(analyticsSettingsRoute[1], user.id, await readJson(request, 65536)));
+    }
     const destinationRoute = path.match(new RegExp(`^/api/projects/(${id})/destinations(?:/(draft|preview|publish|rollback))?$`, 'i'));
     if (destinationRoute) {
       if ([...url.searchParams.keys()].some(key => key !== 'environment') || url.searchParams.getAll('environment').length > 1) throw new FoundationError(400, 'Choose one tracking environment.');
@@ -264,16 +298,16 @@ export async function handleApi(request: Request): Promise<Response> {
     if (match) {
       const target = await projectAccess(match[1], user.id, request.method !== 'GET');
       if (principal && request.method === 'POST' && match[2] === 'events') {
-        const input = eventInput.omit({ siteKey: true }).parse(await readJson(request));
+        const input = eventInput.omit({ siteKey: true, consent: true, context: true }).parse(await readJson(request, 16384));
         if (new URL(input.url).origin !== target.origin) throw new FoundationError(400, 'Event URL must use the project origin.');
         const client = await getDatabase().pool.connect();
         try {
           await client.query('BEGIN');
           await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [target.workspace_id]);
           await authorizeApiKey(apiToken!, target.workspace_id, 'events:write', client);
-          await client.query('INSERT INTO event(id,project_id,event_name,path) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [input.eventId, target.id, input.name, eventPath(input.url)]);
+          const result = await insertApiObservation(client, target.id, input);
           await client.query('COMMIT');
-          return json({ accepted: true }, 202);
+          return json(result, 202);
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
         finally { client.release(); }
       }
@@ -302,7 +336,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if (error instanceof z.ZodError) return json({ error: 'Check the submitted fields and try again.' }, 400, cors);
     const code = (error as { code?: string })?.code;
     if (code === '23505') return json({ error: 'This item already exists in the workspace.' }, 409, cors);
-    if (['SCHEMA_MISMATCH', '42P01', '42703', 'ECONNREFUSED', 'ENOTFOUND', 'ENOENT', 'EACCES'].includes(code ?? '')) return json({ error: 'The installation is not ready. Check database migrations and storage.' }, 503, cors);
+    if (['SCHEMA_MISMATCH', 'ANALYTICS_NETWORK_CONFIG', '42P01', '42703', 'ECONNREFUSED', 'ENOTFOUND', 'ENOENT', 'EACCES'].includes(code ?? '')) return json({ error: 'The installation is not ready. Check configuration, database migrations and storage.' }, 503, cors);
     console.error('Application request failed; inspect configuration and database availability.');
     return json({ error: 'The request could not be completed. Try again or contact your operator.' }, 500, cors);
   }

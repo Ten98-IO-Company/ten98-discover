@@ -5,6 +5,7 @@ import { getConfig } from '../src/server/config.ts';
 import { getDatabase } from '../src/server/db.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { createApiKey } from '../src/server/api-keys.ts';
+import { trackingConsentEpoch } from '../src/server/native-analytics.ts';
 import { getDestinations, getPublicDestinations, saveDestinationsDraft, previewDestinations,
   publishDestinations, rollbackDestinations } from '../src/server/destinations.ts';
 
@@ -48,9 +49,11 @@ export async function runDestinationChecks(options: Options): Promise<void> {
     assert.equal(first.draftVersion, 2);
     const active = await getPublicDestinations(siteKey, 'live', origin);
     assert.equal(active.revisionId, first.active.id);
-    assert.equal(active.consentEpoch, first.active.consentEpoch);
+    const nativeEpoch = (await pool.query('SELECT analytics_epoch FROM project WHERE id=$1', [projectId])).rows[0].analytics_epoch;
+    assert.equal(active.consentEpoch, trackingConsentEpoch(nativeEpoch, first.active.consentEpoch));
     assert.deepEqual(active.configuration, config);
-    assert.deepEqual(Object.keys(active).sort(), ['schemaVersion', 'siteKey', 'environment', 'origin', 'revisionId', 'consentEpoch', 'validUntil', 'configuration'].sort());
+    assert.deepEqual(Object.keys(active).sort(), ['schemaVersion', 'siteKey', 'environment', 'origin', 'revisionId', 'consentEpoch', 'validUntil', 'configuration', 'nativeTracking'].sort());
+    assert.equal(active.schemaVersion, 2);
     assert.ok(new Date(active.validUntil).getTime() > Date.now());
     assert.ok(new Date(active.validUntil).getTime() <= Date.now() + 65_000);
     assert.deepEqual((await getPublicDestinations(siteKey, 'test', origin)).configuration, { destinations: [] });

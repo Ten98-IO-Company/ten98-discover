@@ -32,10 +32,16 @@ export async function projectAnalytics(projectId: string, userId: string, params
   // ponytail: aggregate the selected range directly; add rollups after measured volume requires them.
   const { rows } = await getDatabase().pool.query(`
     WITH observations AS MATERIALIZED (
-      SELECT e.event_name,e.path,e.received_at
+      SELECT e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions
       FROM event e JOIN project p ON p.id=e.project_id
       JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
       WHERE e.project_id=$1 AND e.received_at >= $3::timestamptz AND e.received_at < $4::timestamptz
+    ), visits AS (
+      SELECT visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
+        count(*) FILTER (WHERE event_name<>'page_view') AS custom,
+        extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
+      FROM observations WHERE visit_id IS NOT NULL GROUP BY visitor_id,visit_id
+      HAVING count(*) FILTER (WHERE event_name='page_view')>0
     ), buckets AS (
       SELECT (received_at AT TIME ZONE 'UTC')::date AS day,
         count(*) FILTER (WHERE event_name='page_view') AS views,
@@ -53,6 +59,13 @@ export async function projectAnalytics(projectId: string, userId: string, params
     SELECT json_build_object(
       'totals',json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
         'customEvents',count(*) FILTER (WHERE event_name<>'page_view')),
+      'measurement',json_build_object('version','umami-3.4-hour-cache-v1',
+        'identifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NOT NULL),
+        'unidentifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NULL),
+        'visitors',(SELECT CASE WHEN count(*)>0 THEN count(DISTINCT visitor_id) END FROM visits),
+        'visits',(SELECT CASE WHEN count(*)>0 THEN count(*) END FROM visits),
+        'bounceRate',(SELECT 100.0*count(*) FILTER (WHERE pageviews=1 AND custom=0)/NULLIF(count(*),0) FROM visits),
+        'averageVisitSeconds',(SELECT avg(duration) FROM visits)),
       'daily',(SELECT json_agg(json_build_object('date',to_char(c.day,'YYYY-MM-DD'),
         'pageViews',COALESCE(b.views,0),'customEvents',COALESCE(b.custom,0)) ORDER BY c.day)
         FROM calendar c LEFT JOIN buckets b ON b.day=c.day),

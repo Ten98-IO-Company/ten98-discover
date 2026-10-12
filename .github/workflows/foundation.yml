@@ -38,6 +38,7 @@ jobs:
       HOST: 127.0.0.1
       PORT: '3000'
       TEN98_INTEGRATION_TEST: '1'
+      ANALYTICS_NETWORK_MODE: direct
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,7 +76,7 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm check:plan
-      - name: Verify original-install upgrade
+      - name: Verify original-install upgrade and domain isolation
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -85,19 +86,29 @@ jobs:
           try {
             await client.connect();
             await client.query('CREATE DATABASE ten98_upgrade');
+            await client.query('CREATE DATABASE ten98_domains');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
           } finally { await client.end(); }
           if (!process.exitCode) {
-            const database = new URL(process.env.DATABASE_URL);
-            database.pathname = '/ten98_upgrade';
-            const result = spawnSync(process.execPath, ['tests/migrations-integration.ts'], {
-              env: { ...process.env, DATABASE_URL: database.href }, stdio: 'inherit', timeout: 120_000,
-            });
-            if (result.status !== 0) {
-              console.error('Original-install upgrade checks did not complete successfully.');
-              process.exitCode = 1;
+            for (const [name, commands] of [
+              ['ten98_upgrade', [['tests/migrations-integration.ts']]],
+              ['ten98_domains', [['src/server/cli.ts', 'migrate'], ['tests/domains-integration.ts']]],
+            ]) {
+              const database = new URL(process.env.DATABASE_URL);
+              database.pathname = `/${name}`;
+              for (const args of commands) {
+                const result = spawnSync(process.execPath, args, {
+                  env: { ...process.env, DATABASE_URL: database.href }, stdio: 'inherit', timeout: 120_000,
+                });
+                if (result.status !== 0) {
+                  console.error('Isolated database checks did not complete successfully.');
+                  process.exitCode = 1;
+                  break;
+                }
+              }
+              if (process.exitCode) break;
             }
           }
           NODE

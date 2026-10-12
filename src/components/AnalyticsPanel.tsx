@@ -12,6 +12,11 @@ type Daily = { date: string; pageViews: number; customEvents: number };
 type Analytics = {
   range: { from: string; to: string; timeZone: 'UTC' };
   totals: { pageViews: number; customEvents: number };
+  measurement: {
+    identifiedPageViews: number; unidentifiedPageViews: number;
+    visitors: number | null; visits: number | null;
+    bounceRate: number | null; averageVisitSeconds: number | null;
+  };
   daily: Daily[];
   pages: { path: string; pageViews: number }[];
   events: { name: string; count: number }[];
@@ -279,6 +284,30 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
                 <p className="big-num">{fmtNum(data.totals.customEvents)}</p>
               </div>
             </div>
+            <div className="analytics-stats">
+              <div className="analytics-stat">
+                <span className="analytics-stat-label">Estimated visitors</span>
+                <p className={data.measurement.visitors === null ? 'analytics-unavailable' : 'big-num'}>{data.measurement.visitors === null ? 'Unavailable' : fmtNum(data.measurement.visitors)}</p>
+              </div>
+              <div className="analytics-stat">
+                <span className="analytics-stat-label">Visits</span>
+                <p className={data.measurement.visits === null ? 'analytics-unavailable' : 'big-num'}>{data.measurement.visits === null ? 'Unavailable' : fmtNum(data.measurement.visits)}</p>
+              </div>
+              <div className="analytics-stat">
+                <span className="analytics-stat-label">Bounce rate</span>
+                <p className={data.measurement.bounceRate === null ? 'analytics-unavailable' : 'big-num'}>{data.measurement.bounceRate === null ? 'Unavailable' : `${data.measurement.bounceRate.toFixed(1)}%`}</p>
+              </div>
+              <div className="analytics-stat">
+                <span className="analytics-stat-label">Average observed visit</span>
+                <p className={data.measurement.averageVisitSeconds === null ? 'analytics-unavailable' : 'big-num'}>{data.measurement.averageVisitSeconds === null ? 'Unavailable' : `${data.measurement.averageVisitSeconds.toFixed(1)} s`}</p>
+              </div>
+            </div>
+            <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} page views. Page views without a visitor estimate remain in traffic totals.</p>
+            <details className="analytics-details">
+              <summary>How these estimates work</summary>
+              <p>Visitors use a monthly, project-specific estimate. They are not a count of unique people. Network measurement must be configured by the installation operator; otherwise visitor and visit estimates are unavailable.</p>
+              <p>Visits use hourly keys, with an existing page context retained for up to 30 minutes. A bounce has one page view and no custom events within this date range. Duration runs from the first to the last page view; it does not measure active engagement or time after the last page view.</p>
+            </details>
             <p className="footnote dim">
               {data.lastReceivedAt
                 ? `Last event received ${fmtUtc(data.lastReceivedAt)}.`

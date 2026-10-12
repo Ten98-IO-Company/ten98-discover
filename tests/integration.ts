@@ -13,6 +13,8 @@ import { runApiKeyChecks } from './api-keys-integration.ts';
 import { runProviderChecks } from './providers-integration.ts';
 import { runOidcChecks } from './oidc-integration.ts';
 import { runDestinationChecks } from './destinations-integration.ts';
+import { runNativeAnalyticsChecks } from './native-analytics-integration.ts';
+import { runReportsChecks } from './reports-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -188,7 +190,8 @@ try {
 
   stage = 'public collector isolation, CORS and privacy';
   const eventId = randomUUID();
-  const event = { siteKey: projectA.publicKey, eventId, name: 'page_view', url: `${originA}/products?private-test-query=secret#private-test-fragment` };
+  const tracking = await expectStatus('/api/tracking-config', 200, { method: 'POST', origin: originA, body: { siteKey: projectA.publicKey, environment: 'live' } });
+  const event = { siteKey: projectA.publicKey, eventId, name: 'page_view', url: `${originA}/products?private-test-query=secret#private-test-fragment`, consent: { analytics: true, epoch: tracking.body.consentEpoch } };
   const preflight = await expectStatus('/api/collect', 204, { method: 'OPTIONS', origin: originA });
   assert.equal(preflight.response.headers.get('access-control-allow-origin'), originA);
   assert.equal(preflight.response.headers.get('access-control-allow-credentials'), null);
@@ -316,6 +319,10 @@ try {
   await runTeamsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'analytics aggregation and custom events';
   await runAnalyticsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, workspaceId: workspaceA, foreignProjectId: projectB.id });
+  stage = 'native analytics consent and measured visits';
+  await runNativeAnalyticsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  stage = 'reports and revocable snapshot shares';
+  await runReportsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'scoped API keys';
   await runApiKeyChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'account security lifecycle';

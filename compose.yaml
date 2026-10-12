@@ -27,6 +27,8 @@ x-app: &app
     BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:?Run pnpm run setup:local first}
     CREDENTIAL_KEYS: ${CREDENTIAL_KEYS:-}
     CREDENTIAL_ACTIVE_KEY: ${CREDENTIAL_ACTIVE_KEY:-}
+    ANALYTICS_NETWORK_MODE: ${ANALYTICS_NETWORK_MODE:-off}
+    ANALYTICS_TRUSTED_PROXIES: ${ANALYTICS_TRUSTED_PROXIES:-}
     # Compose injects its internal artifact path; .env ARTIFACT_DIR is host-only.
     ARTIFACT_DIR: /data/artifacts
   depends_on:

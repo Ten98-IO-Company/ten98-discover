@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
+import {publicAnalyticsSettings, trackingConsentEpoch} from './native-analytics.ts';
 
 export const PROVIDERS = ['meta', 'ga4', 'google_ads', 'cloudflare', 'tiktok', 'linkedin', 'microsoft_ads', 'pinterest', 'snapchat', 'x'] as const;
 export const CANONICAL_EVENTS = ['page_view', 'sign_up', 'generate_lead', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'refund'] as const;
@@ -321,7 +322,7 @@ async function withAuthorizedState<T>(
       `SELECT p.id, p.origin, m.role
        FROM project p
        LEFT JOIN membership m ON m.workspace_id = p.workspace_id AND m.user_id = $2
-       WHERE p.id = $1`,
+       WHERE p.id = $1 FOR UPDATE OF p`,
       [projectId, userId],
     );
     const row = authorized.rows[0];
@@ -514,7 +515,7 @@ export async function getPublicDestinations(siteKey: unknown, environment: unkno
   const env = parseOr400(environmentSchema, environment, 'Invalid environment');
   const requestedOrigin = parseOr400(z.string().min(1).max(2048), origin, 'Invalid origin');
   const result = await getDatabase().pool.query(
-    `SELECT p.origin, r.id AS revision_id, r.consent_epoch, r.configuration
+    `SELECT p.origin, p.analytics_settings, p.analytics_epoch, r.id AS revision_id, r.consent_epoch, r.configuration
      FROM project p
      LEFT JOIN tracking_state s ON s.project_id = p.id AND s.environment = $2
      LEFT JOIN tracking_revision r ON r.id = s.active_revision AND r.project_id = p.id AND r.environment = $2
@@ -525,12 +526,13 @@ export async function getPublicDestinations(siteKey: unknown, environment: unkno
   if (!row || row.origin !== requestedOrigin) throw new FoundationError(404, 'Not found');
   const hasActive = typeof row.revision_id === 'string';
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     siteKey: key,
     environment: env,
     origin: row.origin as string,
     revisionId: hasActive ? (row.revision_id as string) : null,
-    consentEpoch: hasActive ? (row.consent_epoch as string) : null,
+    consentEpoch: trackingConsentEpoch(row.analytics_epoch, hasActive ? row.consent_epoch : null),
+    nativeTracking: publicAnalyticsSettings(row.analytics_settings),
     validUntil: new Date(Date.now() + 60_000).toISOString(),
     configuration: hasActive ? parseDestinationConfiguration(row.configuration) : {destinations: []},
   };

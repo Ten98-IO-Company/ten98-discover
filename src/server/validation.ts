@@ -54,8 +54,12 @@ export const eventInput = z
   .object({
     siteKey: z.uuid(),
     eventId: z.uuid(),
-    name: z.string().regex(/^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/),
+    name: z.string().regex(/^[A-Za-z][A-Za-z0-9_.:-]{0,63}$(?![\s\S])/),
     url: z.string().max(2048).refine(isHttpUrl),
+    properties: z.unknown().optional(),
+    dimensions: z.unknown().optional(),
+    context: z.string().max(1024).optional(),
+    consent: z.object({ analytics: z.literal(true), epoch: z.uuid() }).strict().optional(),
   })
   .strict();
 

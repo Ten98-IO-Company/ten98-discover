@@ -50,7 +50,9 @@ export async function runAnalyticsChecks(options: { baseUrl: string; appUrl: str
   assert.equal((await request(`/api/projects/${project.id}/analytics?from=2026-02-29&to=2026-03-01`)).status, 400);
   assert.equal((await request(`/api/projects/${options.foreignProjectId}/analytics`)).status, 404);
 
-  const event = { siteKey: project.publicKey, eventId: randomUUID(), name: 'checkout.success', url: `${origin}/checkout?private=yes#secret` };
+  const tracking = await request('/api/tracking-config', 'POST', { siteKey: project.publicKey, environment: 'live' }, origin);
+  assert.equal(tracking.status, 200);
+  const event = { siteKey: project.publicKey, eventId: randomUUID(), name: 'checkout.success', url: `${origin}/checkout?private=yes#secret`, consent: { analytics: true, epoch: tracking.data.consentEpoch } };
   assert.equal((await request('/api/collect', 'POST', event, origin)).status, 202);
   assert.equal((await request('/api/collect', 'POST', event, origin)).status, 202);
   const custom = await pool.query('SELECT event_name,path FROM event WHERE project_id=$1 AND id=$2', [project.id, event.eventId]);

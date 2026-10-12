@@ -87,6 +87,7 @@
   }
   function eraseChoice(state) { try { localStorage.removeItem(state.storageKey); return localStorage.getItem(state.storageKey) === null; } catch (_) { return false; } }
   function stop(state, reason, persisted) {
+    if (typeof hub.nativeStop === 'function') hub.nativeStop(state);
     state.routes.forEach(function (route) {
       route.queue.length = 0;
       try { route.adapter?.stop(); } catch (_) {}
@@ -111,7 +112,7 @@
     if (!choice(value)) return {ok: false, reason: 'Provide all four consent choices as booleans.'};
     value = privacy() ? denied() : Object.assign({}, value);
     if (granted(value) && acknowledge !== true) return {ok: false, reason: 'Explain the page reload warning before requesting consent.'};
-    var changed = purposes.some(function (key) { return state.consent[key] !== value[key]; });
+    var changed = purposes.some(function (key) { return state.consent[key] !== value[key]; }), newlyAnalytics = !state.consent.analytics && value.analytics;
     var saved = saveChoice(state, value);
     if (!saved) {
       state.consent = denied();
@@ -121,8 +122,15 @@
     }
     state.consent = value;
     state.consentExpires = Date.now() + 180 * DAY;
+    if (!value.analytics && typeof hub.nativeStop === 'function') hub.nativeStop(state);
+    if (state.preferenceButton) state.preferenceButton.textContent = 'Tracking preferences';
     if (changed && state.loaded) stop(state, 'Consent changed. Reload required to stop already loaded vendor SDKs.', true);
     else state.routes.forEach(function (route) { route.state = permitted(state, route) ? 'ready' : 'consent_blocked'; route.reason = 'No event has been invoked by this loader.'; });
+    // Observe the page as it exists now. No pre-consent event, timestamp, property
+    // or vendor queue is replayed when analytics is newly granted.
+    if (newlyAnalytics && !state.reload && typeof hub.nativeEvent === 'function') {
+      try { hub.nativeEvent(state, {name: 'page_view', eventId: crypto.randomUUID(), url: location.origin + location.pathname}); } catch (_) {}
+    }
     return {ok: true, reloadRequired: state.reload};
   }
   function expire(state) {
@@ -152,6 +160,7 @@
   }
   function dispatch(state, input) {
     if ((privacy() || Date.now() >= state.consentExpires) && granted(state.consent)) applyChoice(state, denied(), false);
+    if (!state.reload && state.config && Date.now() < state.expires && Date.now() < state.consentExpires && !privacy() && state.consent.analytics && typeof hub.nativeEvent === 'function') hub.nativeEvent(state, input);
     var event = eventInput(input);
     if (!event) return;
     state.routes.forEach(function (route) {
@@ -184,12 +193,16 @@
     });
   }
   function validatePublic(value, state) {
-    if (!keys(value, ['schemaVersion', 'siteKey', 'environment', 'origin', 'revisionId', 'consentEpoch', 'validUntil', 'configuration']) ||
-      value.schemaVersion !== 1 || value.siteKey !== state.siteKey || value.environment !== state.environment || value.origin !== location.origin ||
+    if (!keys(value, ['schemaVersion', 'siteKey', 'environment', 'origin', 'revisionId', 'consentEpoch', 'validUntil', 'configuration', 'nativeTracking']) ||
+      value.schemaVersion !== 2 || value.siteKey !== state.siteKey || value.environment !== state.environment || value.origin !== location.origin ||
       typeof value.validUntil !== 'string' || !configuration(value.configuration)) return false;
+    var settings = value.nativeTracking;
+    if (!keys(settings, ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths']) ||
+      !['builtin', 'external'].includes(settings.consentMode) || ['enabled', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots'].some(function (key) { return typeof settings[key] !== 'boolean'; }) ||
+      !Array.isArray(settings.excludedPaths) || settings.excludedPaths.length > 50 || settings.excludedPaths.some(function (path) { return typeof path !== 'string' || path.length > 256 || !exact(/^\/[^?#\u0000-\u001f]*$/, path); })) return false;
     var expiry = Date.parse(value.validUntil);
     if (!Number.isFinite(expiry) || expiry <= Date.now() || expiry > Date.now() + 65000) return false;
-    return (value.revisionId === null && value.consentEpoch === null && value.configuration.destinations.length === 0) || (exact(uuidPattern, value.revisionId) && exact(uuidPattern, value.consentEpoch));
+    return exact(uuidPattern, value.consentEpoch) && ((value.revisionId === null && value.configuration.destinations.length === 0) || exact(uuidPattern, value.revisionId));
   }
   async function refresh(state) {
     if (state.fetching || state.reload) return;
@@ -203,10 +216,13 @@
       var value = JSON.parse(text); if (!validatePublic(value, state)) throw new Error('Invalid configuration.');
       var first = !state.config, changed = state.config && (state.config.revisionId !== value.revisionId || state.config.consentEpoch !== value.consentEpoch);
       if (changed) {
+        if (state.closeDialog) state.closeDialog();
         state.consent = denied(); var persisted = saveChoice(state, state.consent) || eraseChoice(state);
         stop(state, persisted ? 'Published revision changed; fresh consent and reload are required.' : 'Withdrawal not applied to loaded SDKs: close this page and clear site data.', persisted);
       }
       state.config = value; state.expires = Date.parse(value.validUntil);
+      if (value.nativeTracking.consentMode === 'builtin' && !state.preferenceButton) installPreferences(state);
+      else if (value.nativeTracking.consentMode !== 'builtin' && state.preferenceButton) { if (state.closeDialog) state.closeDialog(); state.preferenceButton.remove(); state.preferenceButton = null; }
       clearTimeout(state.expiryTimer); state.expiryTimer = setTimeout(function () { expire(state); }, Math.max(0, state.expires - Date.now()));
       if (first || changed) state.routes = value.configuration.destinations.map(function (d) { return {destination: d, queue: [], seen: new Set(), state: d.owner === 'external' || !d.enabled ? 'not_configured' : 'consent_blocked', reason: d.owner === 'external' ? 'External ownership; this loader never injects or invokes this SDK.' : 'Waiting for explicit consent.'}; });
       if (state.reload) { state.routes.forEach(function (r) { r.state = 'reload_required'; r.reason = 'Reload required after a configuration change.'; }); return; }
@@ -219,6 +235,7 @@
           typeof record.updatedAt === 'number' && record.updatedAt < started && typeof record.expiresAt === 'number' && record.expiresAt > Date.now() && record.expiresAt <= record.updatedAt + 180 * DAY && saveRecord(state, record)) {
           state.consent = record.choice;
           state.consentExpires = record.expiresAt;
+          if (state.preferenceButton) state.preferenceButton.textContent = 'Tracking preferences';
           if (granted(state.consent)) dispatch(state, {name: 'page_view', eventId: crypto.randomUUID(), url: location.origin + location.pathname});
         }
       }
@@ -232,7 +249,7 @@
       if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) return;
       if (sites.some(function (s) { return s.siteKey === site.siteKey && s.environment === environment && s.origin === endpoint.origin; }) || sites.length >= 20) return;
       var state = {siteKey: site.siteKey, environment: environment, origin: endpoint.origin, storageKey: 'ten98:consent:v1:' + endpoint.origin + ':' + site.siteKey + ':' + environment,
-        consent: denied(), consentExpires: 0, config: null, expires: 0, routes: [], loaded: false, reload: false, reloaded: false};
+        consent: denied(), consentExpires: 0, config: null, expires: 0, routes: [], loaded: false, reload: false, reloaded: false, nativeContext: null, nativeRequests: new Set()};
       sites.push(state); void refresh(state); setInterval(function () { void refresh(state); }, 30000);
     } catch (_) {}
   };
@@ -256,22 +273,47 @@
   });
   hub.api.consentPreferences = function (options) {
     var state = findSite(options); if (!state || !state.config || state.reload) return false;
-    var prior = document.activeElement, dialog = document.createElement('dialog');
+    if (state.dialog) { state.dialog.focus(); return true; }
+    var prior = document.activeElement, dialog = document.createElement('dialog'), openingEpoch = state.config.consentEpoch;
+    state.dialog = dialog;
     dialog.setAttribute('aria-label', 'Tracking preferences');
-    var title = document.createElement('h2'); title.textContent = 'Tracking preferences'; dialog.appendChild(title);
+    dialog.style.cssText = 'box-sizing:border-box;width:32rem;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#17243a;font:14px/1.5 system-ui,sans-serif;';
+    var title = document.createElement('h2'); title.textContent = 'Tracking preferences'; title.style.cssText = 'font:600 20px/1.3 system-ui,sans-serif;margin:0 0 12px;color:inherit;'; dialog.appendChild(title);
+    var nativeNotice = document.createElement('p'); nativeNotice.textContent = 'Analytics records page paths and events after you agree. Earlier activity is discarded. Optional referrer, campaign and screen details depend on this website\'s settings.'; dialog.appendChild(nativeNotice);
     var warning = document.createElement('p'); warning.textContent = 'Changing consent after a vendor tag loads reloads this page and may lose unsaved work. If consent storage fails, this page closes to stop loaded SDKs; clear site data before returning. Vendor SDKs may read the full URL, referrer and automatic events. Already shared or in-flight data cannot be withdrawn here.'; dialog.appendChild(warning);
-    var vendors = document.createElement('p'); vendors.textContent = 'Configured vendors: ' + state.routes.filter(function (r) { return r.destination.enabled; }).map(function (r) { return r.destination.provider; }).join(', '); dialog.appendChild(vendors);
+    var vendors = document.createElement('p'), vendorNames = state.routes.filter(function (r) { return r.destination.enabled; }).map(function (r) { return r.destination.provider; }); vendors.textContent = vendorNames.length ? 'Configured vendors: ' + vendorNames.join(', ') : 'No additional vendor tags are configured.'; dialog.appendChild(vendors);
     var controls = {}, feedback = document.createElement('p'); feedback.setAttribute('role', 'status');
-    purposes.forEach(function (purpose) { var label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.checked = privacy() ? false : state.consent[purpose]; input.disabled = privacy(); controls[purpose] = input; label.appendChild(input); label.appendChild(document.createTextNode(' ' + ({analytics: 'Analytics', advertising: 'Advertising', adUserData: 'Ad user data', adPersonalization: 'Ad personalization'})[purpose])); dialog.appendChild(label); dialog.appendChild(document.createElement('br')); });
+    purposes.forEach(function (purpose) { var label = document.createElement('label'), input = document.createElement('input'); label.style.cssText = 'display:flex;align-items:center;gap:8px;min-height:44px;margin:0;color:inherit;font:inherit;'; input.style.cssText = 'width:18px;height:18px;margin:0;flex:none;'; input.type = 'checkbox'; input.checked = privacy() ? false : state.consent[purpose]; input.disabled = privacy(); controls[purpose] = input; label.appendChild(input); label.appendChild(document.createTextNode(' ' + ({analytics: 'Analytics', advertising: 'Advertising', adUserData: 'Ad user data', adPersonalization: 'Ad personalization'})[purpose])); dialog.appendChild(label); });
     if (privacy()) { var veto = document.createElement('p'); veto.textContent = 'Your browser privacy signal requires denial.'; dialog.appendChild(veto); }
-    function close() { dialog.close(); dialog.remove(); prior?.focus(); }
-    function button(label, action) { var b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.addEventListener('click', action); dialog.appendChild(b); }
-    function submit(value) { var result = applyChoice(state, value, true); if (result.ok && !result.reloadRequired) close(); else feedback.textContent = result.reason || 'Reload required to apply this choice to loaded SDKs.'; }
+    function close() { dialog.close(); dialog.remove(); state.dialog = null; state.closeDialog = null; prior?.focus(); }
+    state.closeDialog = close;
+    function button(label, action) { var b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.style.cssText = 'min-height:44px;padding:8px 12px;margin:8px 6px 0 0;border:1px solid #64748b;border-radius:6px;background:#fff;color:#17243a;font:inherit;cursor:pointer;'; b.addEventListener('click', action); dialog.appendChild(b); }
+    function submit(value) {
+      if (state.dialog !== dialog || state.config.consentEpoch !== openingEpoch) return;
+      var result = applyChoice(state, value, true); if (result.ok && !result.reloadRequired) close(); else feedback.textContent = result.reason || 'Reload required to apply this choice to loaded SDKs.';
+    }
     button('Save choices', function () { var value = {}; purposes.forEach(function (p) { value[p] = controls[p].checked; }); submit(value); });
     button('Deny all', function () { submit(denied()); }); button('Cancel', close); dialog.appendChild(feedback);
     dialog.addEventListener('cancel', function (e) { e.preventDefault(); close(); });
-    document.body.appendChild(dialog); if (typeof dialog.showModal !== 'function') { dialog.remove(); return false; } dialog.showModal(); controls.analytics.focus(); return true;
+    document.body.appendChild(dialog); if (typeof dialog.showModal !== 'function') { dialog.remove(); state.dialog = null; state.closeDialog = null; return false; } dialog.showModal(); controls.analytics.focus(); return true;
   };
+  function installPreferences(state) {
+    function mount() {
+      if (!document.body || state.preferenceButton || state.config.nativeTracking.consentMode !== 'builtin') return;
+      var button = document.createElement('button'); button.type = 'button'; button.textContent = 'Choose tracking preferences';
+      button.setAttribute('aria-label', 'Tracking preferences for ' + state.origin);
+      // Native button/dialog semantics keep the embedded consent flow keyboard accessible.
+      button.style.cssText = 'padding:10px 14px;border:1px solid #374151;border-radius:6px;background:#fff;color:#111827;font:14px system-ui;max-width:100%';
+      button.addEventListener('click', function () { hub.api.consentPreferences({siteKey: state.siteKey, environment: state.environment, collectorOrigin: state.origin}); });
+      if (!hub.preferencesContainer) {
+        var container = document.createElement('aside'); container.setAttribute('aria-label', 'Website tracking preferences');
+        container.style.cssText = 'position:fixed;bottom:12px;left:12px;z-index:2147483646;display:flex;flex-direction:column;gap:6px;max-width:calc(100vw - 24px);max-height:50vh;overflow:auto';
+        hub.preferencesContainer = container; document.body.appendChild(container);
+      }
+      state.preferenceButton = button; hub.preferencesContainer.appendChild(button);
+    }
+    if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount, {once: true});
+  }
   // Original protocol adapters; vendor SDKs retain their own automatic observations.
   // An invoked SDK function is not a receipt, and stop() always requires coordinator reload.
   var vendorInstances = Object.create(null), googleSdk;

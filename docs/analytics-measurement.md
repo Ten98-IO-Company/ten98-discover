@@ -1,0 +1,59 @@
+# Native analytics measurement contract
+
+This is the measurement contract for native collection and its remaining analytics extensions, not evidence of full V1 completion. P28–P40 remain subject to the [parity acceptance gates](parity.md). The [foundation runbook](foundation.md#native-collection-and-measurement) identifies implemented behavior and checks. This contract keeps native observations, estimated visitor identity and imported provider measurements distinct.
+
+## Identity and visits
+
+An analytics visitor is a project-scoped pseudonymous estimate, never an application login or a unique person. The server derives its key from a trusted client IP, User-Agent, UTC calendar month and optional client distinct ID using a domain-separated keyed hash. Neither the IP, raw User-Agent nor raw distinct ID belongs in the event or visitor record. Hashing does not make these measurements anonymous.
+
+Changing project, network address, browser identifier, distinct ID, month or server signing secret changes the visitor key. Shared network/browser characteristics may combine visitors; changed characteristics may split one visitor. Distinct IDs are untrusted observations: they cannot authorize access or merge application accounts. A later explicit identification does not rewrite earlier anonymous events.
+
+The metric version `umami-3.4-hour-cache-v1` preserves the pinned reference's hourly-derived visit behavior:
+
+- Without a valid context, derive the visit from the visitor key and current UTC hour.
+- A signed browser context binds project, visitor, visit and its original issuance time. It can carry a visit across an hour for at most 30 minutes from issuance; accepted events do not slide that timer.
+- At exactly 30 minutes the context remains valid; after that it is replaced. Replacing it within the same hour can yield the same visit key.
+- Monthly visitor rotation overrides even a younger context. Future, malformed, tampered, foreign-project and mismatched-visitor contexts are ignored.
+- Missing trustworthy network identity or usable User-Agent yields no visitor/visit key. A previously valid context cannot bypass that requirement.
+
+For example, a visit beginning at 09:50 can continue at 10:15 with its original visit key. It expires after 10:20. A context beginning at 10:00 and replaced at 10:31 can retain the same hourly visit key. These are not conventional sliding inactivity sessions. Browser context stays scoped to one project/endpoint/environment; no alias or workspace grouping creates cross-site identity.
+
+The pinned source is [Umami 3.4.0 collection](https://github.com/umami-software/umami/blob/ec0ff50388c264ed8ce46f00967e92f7e71476ae/src/app/api/send/route.ts#L154). Ten98 uses explicit UTC periods and a separate native metric version rather than promising numerically identical reports across every upstream deployment configuration.
+
+## Network boundary
+
+`ANALYTICS_NETWORK_MODE` defaults to `off`. In `direct` mode, identity uses only the original Node transport's socket peer. In `proxy` mode, the socket peer must be in the explicitly configured `ANALYTICS_TRUSTED_PROXIES` IP/CIDR allowlist. The bounded `X-Forwarded-For` chain is examined from right to left, stopping at the first untrusted address. Missing, malformed or entirely trusted chains remain unknown.
+
+Only bare IP literals are accepted. Ports, quoted addresses, zone identifiers and hostnames are rejected. IPv4-mapped IPv6 forms normalize to the same IPv4 address. A plain or cloned Fetch `Request` may lack transport metadata; client headers must never substitute for it.
+
+Direct mode behind a shared gateway can collapse visitor estimates, so it must not be selected automatically. Proxy mode needs a verified deployment topology and an edge that overwrites/appends forwarding headers correctly. Development proxy behavior does not establish production Nitro, Docker or Caddy behavior. Those paths require real transport tests before documentation claims support.
+
+## Collection and privacy
+
+Native analytics has its own consent and exclusion gate, independent of which vendor destinations are enabled. Unknown or denied analytics consent produces no native event transmission; a later grant never replays earlier activity. Withdrawal clears pending collection and browser context. Previously accepted records remain subject to the documented retention/erasure policy; withdrawal alone does not erase stored history or guarantee a different future cookieless visitor key.
+
+The server checks the current combined native/destination consent epoch before accepting browser events. Policy publication and collection must share a project lock, with the effective destination revision read in a fresh statement after acquiring that lock. This prevents a waiting request from accepting an old policy snapshot after publication commits.
+
+Referrer, campaign and screen capture are separately configurable and default off. Referrer capture stores the hostname only. Query strings and fragments remain excluded from the native event path. Language is normalized. The explicit custom-property API must not scrape personal data from forms; it is not a guarantee that arbitrary caller-supplied properties contain no personal information.
+
+Property input is bounded, typed and validated before persistence. Missing, null, empty string, number and numeric-looking string remain distinguishable. Dotted and backslash-containing keys cannot collide with nested paths. Invalid date-looking strings remain strings. NUL and malformed Unicode are rejected because PostgreSQL JSONB cannot preserve them.
+
+API-key ingestion remains authorized per workspace and project and respects collection disablement/path exclusions. An API observation cannot claim browser consent or acquire a browser visitor merely by submitting a context or distinct ID. It is retained with its own source and identity coverage.
+
+## Reports and coverage
+
+All accepted events retain their server receipt time. Public client timestamps cannot move observations into another reporting period. Event IDs remain idempotent per project; a duplicate cannot rewrite data, advance visitor timestamps or mint a replacement context.
+
+Overview pageviews and custom-event counts remain available for legacy observations. Identity metrics describe only observations with valid visitor/visit keys; reports expose their coverage rather than inventing identity for historical rows. Unavailable measurements and rates with zero denominators are null, while a measured empty count is zero.
+
+Overview visitors count distinct visitor keys and visits count distinct visit keys among qualifying pageviews. A bounce has one pageview and no custom event in that visit within the selected window. Observed visit duration is the interval between first and last pageviews; one-page visits contribute zero. Average duration divides the summed observed duration by qualifying visits. It does not measure active engagement or time after the last pageview. Daily distinct visitors cannot be summed to obtain period visitors. [Pinned overview calculation](https://github.com/umami-software/umami/blob/ec0ff50388c264ed8ce46f00967e92f7e71476ae/src/queries/sql/getWebsiteStats.ts#L42)
+
+Cards, series, breakdowns and exports must use one explicit filter population. Event-property exploration must not silently present custom events as pageviews. Legacy page rankings retain the label pageviews; a distinct-visitor ranking must use a different explicit column label. Filtered bounce semantics require fixtures covering custom events outside a matching page filter.
+
+Store UTC instants and use a named IANA timezone for calendar date ranges. Ranges are half-open: the start local midnight is included and midnight after the final local date is excluded. Generate local calendar buckets; daylight-saving days are not necessarily 24 hours. Comparisons must state whether they compare calendar periods or elapsed durations.
+
+Future revenue and performance observations retain separate measurement rules. Revenue requires explicit currency and financial precision; generic numeric properties are not the authoritative revenue ledger. RUM samples do not become pageviews or custom-event bounce suppression. Each performance metric needs its own sample count and percentile calculation, with missing metrics remaining unavailable.
+
+## Remaining acceptance evidence
+
+Browser consent/withdrawal, encoded path exclusions, production Node transport, transactional policy-publication races, duplicate handling and tenant/API-key boundaries have local acceptance checks. The full release still requires actual proxy deployment tests, typed-property queries, DST boundaries, filtered metric reconciliation, identity links, advanced reports and the remaining parity rows. A conservative bot-name heuristic is not comprehensive bot detection. Imported provider visitors, reach and attributed conversions cannot be added to native distinct visitors as though they were one population.

@@ -17,7 +17,7 @@ export function getDatabase() {
 }
 export async function closeDatabase() { if (database) { await database.pool.end(); database = undefined; } }
 
-const migrationFiles = ['0001_foundation.sql', '0002_teams.sql', '0003_analytics.sql', '0004_account_security.sql', '0005_provider_core.sql', '0006_api_keys.sql', '0007_oidc.sql', '0008_destinations.sql', '0009_oidc_account_security.sql'] as const;
+const migrationFiles = ['0001_foundation.sql', '0002_teams.sql', '0003_analytics.sql', '0004_account_security.sql', '0005_provider_core.sql', '0006_api_keys.sql', '0007_oidc.sql', '0008_destinations.sql', '0009_oidc_account_security.sql', '0010_reports.sql', '0011_domains.sql', '0012_native_analytics.sql'] as const;
 type Migration = Readonly<{ version: string; filename: string; sql: string; checksum: string }>;
 type AppliedMigration = Readonly<{ version: string; checksum: string }>;
 let migrations: Promise<readonly Migration[]> | undefined;

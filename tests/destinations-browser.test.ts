@@ -21,21 +21,22 @@ function destination(provider: string, name = 'purchase') {
 const purchase = () => ({ name: 'purchase', eventId: randomUUID(), url: 'https://site.example/shop?private=hidden#secret',
   properties: { value: '49.95', currency: 'USD', transactionId: 'order-1', itemId: 'item-1' } });
 
-async function fixture(destinations: unknown[], settings: { saved?: boolean; privacy?: boolean; dnt?: string; failStorage?: boolean; pageAge?: number } = {}) {
+async function fixture(destinations: unknown[], settings: { saved?: boolean; privacy?: boolean; dnt?: string; failStorage?: boolean; pageAge?: number; consentMode?: 'builtin' | 'external' } = {}) {
   let now = Date.now(), nextTimer = 1, fetchFail = false, failStorage = !!settings.failStorage;
   const storage = new Map<string, string>(), actions: string[] = [], scripts: any[] = [], calls: any[][] = [], requests: any[] = [];
   const listeners: Record<string, Function> = {}, timers = new Map<number, { at: number; callback: Function; interval?: number }>();
-  let config: any = { schemaVersion: 1, siteKey, environment: 'live', origin: 'https://site.example', revisionId: revision,
-    consentEpoch: epoch, configuration: { destinations } };
+  let config: any = { schemaVersion: 2, siteKey, environment: 'live', origin: 'https://site.example', revisionId: revision,
+    consentEpoch: epoch, configuration: { destinations }, nativeTracking: { enabled: true, consentMode: settings.consentMode ?? 'external',
+      captureReferrer: false, captureCampaigns: false, captureScreen: false, excludeBots: true, excludedPaths: [] } };
   const storageKey = `ten98:consent:v1:https://monitor.example:${siteKey}:live`;
   if (settings.saved) storage.set(storageKey, JSON.stringify({ epoch, choice: full, updatedAt: now - 1000, expiresAt: now + 86400000 }));
   class Clock extends Date { static now() { return now; } }
   function timer(callback: Function, delay: number, interval?: number) { const id = nextTimer++; timers.set(id, { at: now + delay, callback, interval }); return id; }
   function element(tag: string): any {
-    return { tag, children: [], attributes: {}, textContent: '', checked: false, disabled: false,
+    return { tag, children: [], attributes: {}, style: {}, handlers: {}, removed: false, closed: false, textContent: '', checked: false, disabled: false,
       setAttribute(key: string, value: string) { this.attributes[key] = value; },
       appendChild(child: any) { this.children.push(child); return child; },
-      addEventListener() {}, remove() {}, focus() {}, showModal() {}, close() {} };
+      addEventListener(name: string, fn: Function) { this.handlers[name] = fn; }, remove() { this.removed = true; }, focus() {}, showModal() {}, close() { this.closed = true; } };
   }
   const document: any = { createElement: element, createTextNode: (text: string) => ({ textContent: text }),
     querySelectorAll: () => scripts, body: element('body'), activeElement: { focus() {} },
@@ -161,6 +162,26 @@ test('matching stored consent takes a fresh current-page observation and config 
 test('consent written after this navigation began is not restored during asynchronous loader startup', async () => {
   const f = await fixture([destination('meta', 'page_view')], { saved: true, pageAge: 2000 });
   assert.equal(f.scripts.length, 0); assert.deepEqual(f.status().consent, none);
+});
+
+test('an open built-in dialog cannot authorize a changed publication or an external consent interface', async () => {
+  for (const change of ['publication', 'external']) {
+    const f = await fixture([destination('meta')], { consentMode: 'builtin' });
+    assert.equal(f.context.ten98.consentPreferences(f.local(options)), true);
+    const dialog = f.context.document.body.children.find((node: any) => node.tag === 'dialog');
+    for (const label of dialog.children.filter((node: any) => node.tag === 'label')) label.children[0].checked = true;
+    const staleSave = dialog.children.find((node: any) => node.textContent === 'Save choices').handlers.click;
+    const next = { ...f.config() };
+    if (change === 'publication') {
+      next.revisionId = randomUUID(); next.consentEpoch = randomUUID();
+      next.configuration = { destinations: [{ ...destination('meta'), assetId: '456' }] };
+    } else next.nativeTracking = { ...next.nativeTracking, consentMode: 'external' };
+    f.changeConfig(next); await f.tick(30000);
+    assert.equal(dialog.closed, true); assert.equal(dialog.removed, true);
+    staleSave(); f.event(purchase()); await f.drain();
+    assert.deepEqual(f.status().consent, none, 'A callback from the old dialog must not grant the current configuration.');
+    assert.equal(f.scripts.length, 0);
+  }
 });
 
 test('GPC and DNT veto both new and restored grants before any SDK loads', async () => {
