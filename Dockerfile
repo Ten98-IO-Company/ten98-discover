@@ -22,6 +22,7 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/.output ./.output
 COPY --from=build --chown=node:node /app/src/server ./src/server
 COPY --from=build --chown=node:node /app/migrations ./migrations
+COPY --from=build --chown=node:node /app/scripts/docker-setup.mjs ./scripts/docker-setup.mjs
 RUN mkdir -p /data/artifacts && chown -R node:node /data
 USER node
 EXPOSE 3000

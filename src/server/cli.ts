@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { getConfig } from './config.ts';
 import { assertSchema, closeDatabase, getDatabase, migrationSources, pendingMigrations } from './db.ts';
 import { startWorker, stopJobs } from './jobs.ts';
+import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts';
+import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
+import { setInstanceOperator } from './instance-operators.ts';
 
 class CliError extends Error {}
 
@@ -16,6 +19,8 @@ async function setup() {
     `DATABASE_URL=postgres://ten98:${password}@postgres:5432/ten98`,
     `AUTH_SECRET=${randomBytes(32).toString('hex')}`,
     `BOOTSTRAP_TOKEN=${randomBytes(32).toString('hex')}`,
+    `CREDENTIAL_KEYS=${JSON.stringify({ v1: randomBytes(32).toString('base64') })}`,
+    'CREDENTIAL_ACTIVE_KEY=v1',
     'ARTIFACT_DIR=./data/artifacts', '',
   ].join('\n');
   try {
@@ -57,6 +62,8 @@ async function diagnose(checkWorker: boolean) {
   const checks: [string, () => Promise<unknown>][] = [
     ['Database connection', () => getDatabase().pool.query('SELECT 1')],
     ['Database schema', assertSchema],
+    ['Provider credential keyring', assertCredentialKeys],
+    ['Identity credential keyring', assertOidcCredentialsReadable],
     ['Artifact directory', async () => {
       await mkdir(config.artifactDir, { recursive: true, mode: 0o700 });
       const path = join(config.artifactDir, `.write-check-${randomUUID()}`);
@@ -84,6 +91,8 @@ async function diagnose(checkWorker: boolean) {
 
 async function worker() {
   await assertSchema();
+  await assertCredentialKeys();
+  await assertOidcCredentialsReadable();
   await startWorker();
   console.log('Foundation worker ready. No external providers are scheduled.');
   await new Promise<void>((resolve) => {
@@ -94,15 +103,24 @@ async function worker() {
 
 try {
   const [command, option, ...extra] = process.argv.slice(2);
-  if (extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
-    throw new CliError('Usage: cli.ts setup | migrate | worker | diagnose [worker]');
+  const usage = 'Usage: cli.ts setup | migrate | rekey | worker | diagnose [worker] | operator grant|revoke <existing-account-email>';
+  if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
+    throw new CliError(usage);
   }
   switch (command) {
     case 'setup': await setup(); break;
     case 'migrate': await migrate(); break;
+    case 'rekey': {
+      await assertSchema();
+      const providers = await rotateCredentialEncryption();
+      const identities = await rotateOidcCredentials();
+      console.log(`Re-encrypted ${providers} provider connections and ${identities} identity records with the active key. Keep old keys for backups.`);
+      break;
+    }
+    case 'operator': await assertSchema(); await setInstanceOperator(extra[0], option === 'grant'); console.log('Instance operator role updated and audited.'); break;
     case 'worker': await worker(); break;
     case 'diagnose': await diagnose(option === 'worker'); break;
-    default: throw new CliError('Usage: cli.ts setup | migrate | worker | diagnose [worker]');
+    default: throw new CliError(usage);
   }
 } catch (error) {
   console.error(error instanceof CliError ? error.message

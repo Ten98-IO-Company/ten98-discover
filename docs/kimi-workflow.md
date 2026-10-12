@@ -165,3 +165,25 @@ GPT validated each response against its exact two-file allowlist before applying
 - **Tracker:** suppress the HTTP `Referer` header as well as query/hash data in the payload; reject trailing whitespace in event names; contain failures from the host console; preserve initial/custom tracking when a history method is non-writable. Regression checks cover those failure paths alongside navigation, restoration, duplicate initialization and multiple sites.
 
 Kimi explicitly reported that it had not compiled or executed its drafts. GPT independently ran the TypeScript check and all **17 tracker VM tests**, which passed, and obtained a separate identity-flow review. Browser and Docker acceptance remain the supervising GPT's responsibility; draft completion does not establish a production release or full V1 parity. Raw prompts, outputs, credentials and session files are not included in this ledger.
+
+### Security, identity, destinations and setup swarm — 2026-10-13
+
+The following bounded tasks used native CLI **2.1.1**, fixed **`kimi-code/k3-256k`**, explicit thinking enabled and maximum effort requested through the same runner. K3 speed mode was unavailable; no older-model speed substitution was made. GPT retained account security, protocol/tenant/spending design, encryption, consent decisions, integration, and independent acceptance. Parallel work had separate output folders and file ownership. Only reviewed public source/contracts, synthetic cases and curated Markdown skills were supplied; credentials and private fixture files were not included. The application runtime does not depend on Kimi.
+
+| Task | Skills observed | Observed duration | Hard deadline | Result |
+|---|---|---:|---:|---|
+| API-key UI | Curated Skill-only profile | 114.7 s | 900 s | Draft accepted with GPT review corrections |
+| Provider/spending UI | Curated Skill-only profile | 380.7 s | 900 s | Draft accepted with GPT review corrections |
+| Account-security UI | Curated Skill-only profile | 440.0 s | 900 s | Draft accepted with GPT review corrections |
+| OIDC UI | Ponytail, UX copy refiner | 515.9 s | 900 s | Two-file draft accepted; GPT fixed stale callbacks, permission loss, account/proof changes and OIDC-only recovery integration |
+| Destination UI | Ponytail, UX copy refiner, frontend design | 383.8 s | 900 s | Draft applied after a bounded JSON-envelope repair and GPT review |
+| Destination domain code | Ponytail | 670.1 s | 900 s | Draft applied; GPT reviewed roles, locking, public config, mapping and concurrency |
+| Destination browser loader | Skill-only profile | 900.2 s | 900 s | Child terminated at deadline; no final code returned |
+| Narrowed browser adapter retry | No tool call before failure | 2.0 s | 300 s | Native CLI exited with `-1073740791`; no final code returned |
+| DKR-SETUP-01 | Ponytail | 277.6 s | 480 s | Helper/test draft accepted; GPT corrected a false-positive test catch and added failure-path checks |
+
+After the two browser-draft failures, the supervising GPT explicitly took over the security-sensitive consent coordinator and bounded native adapters. This was a checkpoint handoff, not an inferred quota failure or silent bulk-model substitution. No further Kimi retries were launched for that batch.
+
+GPT corrections included live role/account guards, one-time secret clearing, strict monetary and identifier parsing, safe session display on mobile, consent expiry measured from the affirmative choice, pre-navigation consent restoration only, and an explicit loaded-SDK withdrawal policy. Submitted secrets and enrollment values were kept out of screenshots and public logs. SDK invocation remains distinct from a provider receipt.
+
+Independent validation used unit checks, fresh PostgreSQL production-build integration, original-install upgrades, a signed local OIDC issuer, Edge browser flows with intercepted vendor scripts, and isolated Docker images. No real IdP or paid provider request was made by these checks. The implementation runbook records coverage and unresolved release gates. Resolved provider effort, account allowance, quota delta, per-task tokens, GPT review token usage and savings remain unknown; output duration is not provider latency or a savings measurement.

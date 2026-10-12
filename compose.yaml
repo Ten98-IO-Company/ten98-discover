@@ -2,7 +2,7 @@
 # - Plaintext env secrets are permitted for this initial dev recipe; Compose
 #   does NOT encrypt source env. The backend supports _FILE inputs; this
 #   development recipe uses generated .env values.
-# - No public HTTPS recipe exists yet; web binds to 127.0.0.1 only.
+# - Web binds to 127.0.0.1; compose.caddy.yaml optionally adds HTTPS.
 # - No container_name / external networks: run two instances with distinct
 #   project names (docker compose -p <name>) without collisions.
 #
@@ -13,7 +13,7 @@
 #   docker compose up -d web worker
 
 x-app: &app
-  image: ten98-monitor:foundation
+  image: ${TEN98_IMAGE:-ten98-monitor:foundation}
   build: .
   init: true # proper signal handling for graceful shutdown
   environment:
@@ -25,6 +25,8 @@ x-app: &app
     APP_URL: ${APP_URL:-http://localhost:3000}
     AUTH_SECRET: ${AUTH_SECRET:?Run pnpm run setup:local first}
     BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:?Run pnpm run setup:local first}
+    CREDENTIAL_KEYS: ${CREDENTIAL_KEYS:-}
+    CREDENTIAL_ACTIVE_KEY: ${CREDENTIAL_ACTIVE_KEY:-}
     # Compose injects its internal artifact path; .env ARTIFACT_DIR is host-only.
     ARTIFACT_DIR: /data/artifacts
   depends_on:

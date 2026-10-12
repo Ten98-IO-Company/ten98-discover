@@ -10,7 +10,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 
 type Payload = { name: string; eventId: string; siteKey: string; url: string };
 
-function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null } = {}) {
+function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; environment?: string } = {}) {
   const siteKey = 'siteKey' in opts ? opts.siteKey : 'site-a';
   const scriptSrc = 'scriptSrc' in opts ? opts.scriptSrc : SCRIPT_SRC;
 
@@ -19,6 +19,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null } = 
   const fetchCalls: Array<{ url: string; options: any }> = [];
   const payloads: Payload[] = [];
   const historyCalls: Array<{ method: string; thisArg: unknown; args: unknown[] }> = [];
+  const injectedScripts: any[] = [];
   const flags = {
     fetchOk: true,
     fetchReject: false,
@@ -64,6 +65,8 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null } = 
 
   const document: any = {
     currentScript: null,
+    createElement() { return {}; },
+    head: { appendChild(script: unknown) { injectedScripts.push(script); } },
     get cookie(): string {
       throw new Error('document.cookie must not be touched');
     },
@@ -100,7 +103,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null } = 
     document.currentScript =
       src === null
         ? null
-        : { src, getAttribute: (attr: string) => (attr === 'data-site-key' ? key : null) };
+        : { src, getAttribute: (attr: string) => (attr === 'data-site-key' ? key : attr === 'data-environment' ? opts.environment : null) };
   };
   setScript(siteKey ?? null, scriptSrc ?? null);
 
@@ -109,10 +112,40 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null } = 
     for (const fn of listeners.get(type) ?? []) fn(event);
   };
 
-  return { sandbox, windowObj, document, history, location, listeners, warnings, fetchCalls, payloads, historyCalls, flags, setScript, run, dispatch };
+  return { sandbox, windowObj, document, history, location, listeners, warnings, fetchCalls, payloads, historyCalls, injectedScripts, flags, setScript, run, dispatch };
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test('one header loads the destination manager once and forwards sanitized URLs without changing collector properties', () => {
+  const env = makeEnv(); env.run(); env.run();
+  assert.equal(env.injectedScripts.length, 1);
+  assert.equal(env.injectedScripts[0].src, 'https://analytics.example.com/destinations.js');
+  assert.equal(env.injectedScripts[0].referrerPolicy, 'no-referrer');
+  const forwarded: any[] = [];
+  env.windowObj.__ten98FoundationHub.destinationEvent = (site: unknown, event: unknown) => forwarded.push({site,event});
+  env.location.search = '?email=private'; env.location.hash = '#private';
+  const properties = {value:'19.95',currency:'USD',transactionId:'order-1'};
+  env.windowObj.ten98.track('purchase', properties);
+  assert.equal(forwarded.length, 1); assert.equal(forwarded[0].event.url, 'https://site.example/dashboard');
+  assert.equal(forwarded[0].event.eventId, env.payloads.at(-1)!.eventId);
+  assert.equal(forwarded[0].event.properties, properties);
+  assert.ok(!('properties' in env.payloads.at(-1)!));
+  env.flags.fetchThrows = true;
+  env.windowObj.ten98.track('sign_up');
+  assert.equal(forwarded.length, 2, 'Collector failure must not disable independently consent-gated destinations.');
+});
+
+test('test environment can exercise destination hooks without contaminating native analytics', () => {
+  const env = makeEnv({environment:'test'}); env.run();
+  assert.equal(env.fetchCalls.length, 0); assert.equal(env.injectedScripts.length, 1);
+  assert.equal(env.windowObj.__ten98FoundationHub.sites[0].environment, 'test');
+  let calls = 0; env.windowObj.__ten98FoundationHub.destinationEvent = () => calls++;
+  env.windowObj.ten98.track('sign_up');
+  assert.equal(calls, 1); assert.equal(env.fetchCalls.length, 0);
+  const invalid = makeEnv({environment:'invalid'}); invalid.run();
+  assert.equal(invalid.fetchCalls.length, 0); assert.equal(invalid.injectedScripts.length, 0);
+});
 
 test('initial page_view payload and fetch options', () => {
   const env = makeEnv();

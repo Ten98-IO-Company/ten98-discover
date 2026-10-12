@@ -50,7 +50,7 @@ async function schemaSnapshot() {
   return { columns: columns.rows, constraints: constraints.rows, indexes: indexes.rows };
 }
 
-const fixtureTables = ['installation', 'user', 'account', 'workspace', 'membership', 'project', 'event'] as const;
+const fixtureTables = ['installation', 'user', 'account', 'session', 'workspace', 'membership', 'project', 'event'] as const;
 async function records() {
   const snapshot: Record<string, Record<string, unknown>[]> = {};
   for (const table of fixtureTables) snapshot[table] = (await pool.query<{ data: Record<string, unknown> }>(`SELECT row_to_json(t) AS data FROM "${table}" t`)).rows.map((row) => row.data);
@@ -62,7 +62,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -75,6 +75,7 @@ try {
     const userId = randomUUID(), workspaceId = randomUUID(), projectId = randomUUID();
     await client.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [userId, 'Preserved owner', `${userId}@migration.test`]);
     await client.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)', [randomUUID(), userId, await hashPassword(randomBytes(24).toString('base64url'))]);
+    await client.query('INSERT INTO session(id,token,"userId","expiresAt","userAgent") VALUES($1,$2,$3,clock_timestamp()+interval \'1 day\',$4)', [randomUUID(), randomBytes(32).toString('base64url'), userId, 'Migration fixture']);
     await client.query('INSERT INTO workspace(id,name) VALUES($1,$2)', [workspaceId, 'Preserved workspace']);
     await client.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')", [workspaceId, userId]);
     await client.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [projectId, workspaceId, 'Preserved site', 'https://migration.test', randomUUID()]);
@@ -126,7 +127,7 @@ try {
   brokenCheckout = await mkdtemp(join(tmpdir(), 'ten98-migrations-'));
   await mkdir(join(brokenCheckout, 'migrations'));
   for (const migration of sources) {
-    await writeFile(join(brokenCheckout, 'migrations', migration.filename), migration.sql + (migration.version === '0003' ? '\nSELECT 1 / 0;\n' : ''));
+    await writeFile(join(brokenCheckout, 'migrations', migration.filename), migration.sql + (migration.version === sources.at(-1)!.version ? '\nSELECT 1 / 0;\n' : ''));
   }
   runMigrate(1, brokenCheckout);
   assert.deepEqual(await history(), originalHistory, 'A later failure must not commit an earlier pending migration.');
@@ -148,13 +149,18 @@ try {
       assert.deepEqual(actual, expected, `${table} original fields must survive upgrade.`);
     }
   }
+  for (const user of upgradedRecords.user) assert.equal(user.twoFactorEnabled, false, 'Existing accounts must not be enrolled in two-factor authentication automatically.');
+  for (const session of upgradedRecords.session) assert.equal(session.oidcProviderId, null, 'Existing sessions must remain local sessions after upgrade.');
+  for (const table of ['instance_operator', 'instance_operator_audit']) {
+    assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount, 0, 'Upgrade must not grant instance authority or record an implicit grant.');
+  }
   const upgradedSchema = await schemaSnapshot();
   runMigrate(0);
   assert.deepEqual(await history(), upgradedHistory);
   assert.deepEqual(await schemaSnapshot(), upgradedSchema);
   assert.deepEqual(await records(), upgradedRecords);
   await assertSchema();
-  console.log('PASS original owner, credentials, workspace, project and event preserved; repeat migration is idempotent');
+  console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {
   console.error(`Migration integration checks failed during: ${stage}.`);

@@ -2,7 +2,7 @@
 
 The first usable/public V1 release requires every [parity row](parity.md), all confirmed provider options, and the deployment/security checks. Internal milestones are development checkpoints, not a smaller public MVP.
 
-Implementation started with [issue #1](https://github.com/Ten98-IO-Company/ten98-monitor/issues/1): the [development foundation](foundation.md) provides local owner login, workspace authorization, persisted page views, a durable worker probe and tested local Docker startup. M1 remains incomplete: OIDC/2FA, credential encryption, budgets and the remaining setup flows are still required. No full parity row or release gate is marked complete by this foundation.
+Implementation started with [issue #1](https://github.com/Ten98-IO-Company/ten98-monitor/issues/1): the [development foundation](foundation.md) provides local owner login, workspace authorization, persisted page views, a durable worker probe and tested local Docker startup. The following security increment implements local/OIDC/2FA, encrypted credentials, scoped keys and spending controls; browser destinations implement part of M2T. Remaining setup, recovery and provider validation keep M1 and the release gates open. No grouped parity row is marked complete by these increments.
 
 [Issue #3](https://github.com/Ten98-IO-Company/ten98-monitor/issues/3) adds workspace/team screens, expiring invitation links, roles, UTC analytics and SPA/custom-event tracking, with transactional upgrades. These implement portions of P01/P02/P27/P28/P32/P33; each grouped parity requirement remains open until all of its sub-capabilities pass.
 
@@ -18,7 +18,7 @@ Implementation started with [issue #1](https://github.com/Ten98-IO-Company/ten98
 | M4 — complete SEO | Keywords/domain/backlinks/ranks, static/rendered audits and Lighthouse, GSC/GA4, local SEO, context | M1 | P47–P60 behavior mapping; both browser backends; OAuth refresh/revoke; known crawl graph results |
 | M4T — imported reports and domains | Platform reporting connections, source-aware consolidation, canonical/serving/redirect roles, redirect observations and alias SEO | M1 + M4 Google/report contracts + TRK-01 | P76–P77/P79–P80; every named reporting connector verified, alias/visit/backlink overlap fixtures |
 | M5 — unified workflows | Assistant, report templates/shares, complete REST/MCP coverage, branding/localization, free full-feature access, alerts/email, provider options | M2–M4 plus M2T/M4T contracts | P01–P10 and P61–P69 reconciled; every tool mapped; SMTP/CF, direct/gateway and role paths checked; no subscription/seat gates |
-| M6 — migration, operations and release | Importers, resource/soak tests, accessibility, isolated-browser security, backups/restore/upgrades, multiarch packaging and docs | M2–M5 | Independent GPT release review and reproducible evidence for all rows; no unresolved release blocker |
+| M6 — operations and release | Resource/soak tests, accessibility, isolated-browser security, backups/restore/upgrades, multiarch packaging and docs | M2–M5 | Independent GPT release review and reproducible evidence for all rows; no unresolved release blocker |
 
 M2/M3/M4 can progress in parallel after shared contracts stabilize, with separate file ownership and GPT integration review. Shared schema/auth/budget changes remain serialized. Fix shared root causes rather than adding different guards in each module.
 
@@ -43,11 +43,11 @@ Each row is ready to become an issue after M0; issue creation is not required fo
 | Google connectors | GPT OAuth design, Kimi routine flows | Property connection and report mapping | Refresh survives restart; revoke blocks future queries; foreign property denied |
 | Email/alerts | Kimi from approved outbox contract | SMTP and CF REST adapters, delivery history | Deduplication, partial recipients, unknown outcome, no silent transport fallback |
 | Assistant/MCP | GPT tool security, Kimi mechanical tool mapping | Shared authorized domain calls and evidence | Retrieved prompt injection cannot trigger tool writes/spend; token scope/revocation |
-| Import/restore | GPT designs/reviews, Kimi bounded transforms | Idempotent import and validated restore instructions | Counts/metrics reconcile and source data stays unchanged |
+| Provider import/restore | GPT designs/reviews, Kimi bounded transforms | Idempotent native provider report imports and validated ten98 restore instructions | Counts/metrics reconcile and source data stays unchanged; no legacy application history import |
 
 ## Tracking, report imports and alias-domain backlog
 
-Scope and improved prompt: [tracking.md](tracking.md). These packages extend the plan only; no application implementation is claimed. Each connector is its own bounded implementation task even when grouped below. API approvals and controlled test access are dependencies, not a reason to claim success from fixtures alone.
+Scope and improved prompt: [tracking.md](tracking.md). Development now includes draft/preview/publish/rollback and browser loader adapters; their incomplete coverage is recorded in [foundation.md](foundation.md). Reporting imports and domain consolidation remain unimplemented. Each connector is its own bounded implementation task even when grouped below. API approvals and controlled test access are dependencies, not a reason to claim success from fixtures alone.
 
 | ID / requirement | Owner | Deliverable and dependency | Acceptance |
 |---|---|---|---|
@@ -115,7 +115,7 @@ These are **acceptance targets for measurement**, not existing performance claim
 - Target collector p95 under 200 ms and normal dashboard p95 under 2 s in that stated local network workload; distinguish browser/render/provider latency from local app latency.
 - Replay test: 10 simultaneous sampled recordings with payload caps; assert no collector starvation, recover dropped chunks as designed, and measure bytes per recorded minute.
 - A 24-hour soak combines health probes, ingestion and bounded retries. Compare steady-state memory after warm-up; investigate a sustained increasing trend rather than accepting restart-as-memory-management.
-- Default proposed retention: raw analytics 90 days, replay 7 days, raw provider evidence 90 days, derived history 1 year; owner must confirm before data retention/deletion becomes active. Preview storage implications and allow changes.
+- Owner-approved retention defaults: raw analytics 90 days, replay 7 days, raw provider evidence 90 days and derived history 1 year. Allow workspace configuration and preview storage implications before changes take effect.
 - Proposed small-deployment recovery target: RPO 24 hours, RTO 4 hours. Demonstrate an off-host restore with keys/artifacts; operators can select stricter targets with a different backup schedule.
 
 ## Release checklist
@@ -126,7 +126,7 @@ These are **acceptance targets for measurement**, not existing performance claim
 4. No open critical/high auth, tenant, browser-escape, secret exposure or data-loss defect; documented limitations do not substitute for required features.
 5. Accessibility checks and representative operator/analyst walkthroughs pass with error/empty/loading states.
    Include the [onboarding study and acceptance cases](onboarding.md#implementation-acceptance-and-usability-study); operator registration and third-party approval waits are visible in completion evidence.
-6. Restore, migration, rollback and historical-data reconciliation pass; original deployments remain available until cutover accepted.
+6. ten98-monitor backup restoration, schema upgrades and rollback pass. Historical migration from the replaced Elmo, Umami and OpenSEO installations is excluded by the owner; native provider reporting imports still require source reconciliation.
 7. Multiarch images and actual Compose configurations verified; documentation starts from an empty host and records supported versions.
 8. GPT reviews final code and runs final checks independently. Owner accepts any unresolved business-function decisions before V1 release.
 

@@ -5,12 +5,19 @@ import { api, ApiError, errMsg } from '../lib/api'
 import { AnalyticsPanel } from '../components/AnalyticsPanel'
 import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
 import { InvitePanel } from '../components/InvitePanel'
+import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
+import { ApiKeysPanel } from '../components/ApiKeysPanel'
+import { ProviderPanel } from '../components/ProviderPanel'
+import { DestinationsPanel } from '../components/DestinationsPanel'
+import { OidcPanel } from '../components/OidcPanel'
+import { OidcSignIn } from '../components/OidcSignIn'
+import { OidcRecoveryPanel } from '../components/OidcRecoveryPanel'
 
 export const Route = createFileRoute('/')({ component: App })
 
 type Status = { configured: boolean; appUrl: string }
 type Workspace = { id: string; name: string; role: string }
-type Me = { user: { id: string; name: string; email: string }; workspaces: Workspace[] }
+type Me = { user: { id: string; name: string; email: string }; instanceOperator: boolean; workspaces: Workspace[] }
 type Project = { id: string; name: string; origin: string; publicKey: string; eventCount: number; lastEventAt: string | null }
 type EventsData = { events: { id: string; eventName: string; path: string; receivedAt: string }[]; total: number }
 type Job = { id: string; status: string; createdAt: string; completedAt: string | null; error: string | null }
@@ -40,7 +47,7 @@ function pillClass(status: string): string {
 }
 
 function App() {
-  const [phase, setPhase] = useState<'loading' | 'error' | 'setup' | 'signin' | 'app'>('loading')
+  const [phase, setPhase] = useState<'loading' | 'error' | 'setup' | 'signin' | 'factor' | 'app'>('loading')
   const [pageError, setPageError] = useState('')
   const [status, setStatus] = useState<Status | null>(null)
   const [me, setMe] = useState<Me | null>(null)
@@ -58,7 +65,11 @@ function App() {
   const [jobError, setJobError] = useState('')
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
-  const [view, setView] = useState<'project' | 'team' | 'workspace'>('project')
+  const [view, setView] = useState<'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity'>('project')
+  const [oidcProofId, setOidcProofId] = useState<string>()
+  const [authNotice, setAuthNotice] = useState('')
+  const oidcProof = useRef<string | undefined>(undefined)
+  const oidcFactor = useRef(false)
   const [inviteToken, setInviteToken] = useState('')
   const [inviteSigningIn, setInviteSigningIn] = useState(false)
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -69,7 +80,24 @@ function App() {
 
   useEffect(() => {
     function captureInvitation() {
-      const token = new URLSearchParams(window.location.hash.slice(1)).get('invite')
+      const params = new URLSearchParams(window.location.hash.slice(1))
+      if ([...params.keys()].some(key => key.startsWith('oidc-'))) {
+        oidcProof.current = undefined; setOidcProofId(undefined); oidcFactor.current = false
+        setInviteToken(''); setInviteSigningIn(false); setAuthNotice('')
+        const kinds = ['oidc-proof', 'oidc-factor', 'oidc-complete', 'oidc-error'].filter(key => params.has(key))
+        const kind = kinds.length === 1 && params.getAll(kinds[0]).length === 1 ? kinds[0] : null
+        const proof = kind === 'oidc-proof' ? params.get(kind) : null
+        if (proof && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(proof)) {
+          oidcProof.current = proof; setOidcProofId(proof); setView('identity')
+        } else if (kind === 'oidc-factor' && params.get(kind) === '1') {
+          oidcFactor.current = true
+        } else if (kind !== 'oidc-complete' || params.get(kind) !== '1') {
+          setAuthNotice('Identity sign-in could not be completed. Start again, or use local sign-in. For an invitation, reopen its original link.')
+        }
+        window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+        return
+      }
+      const token = params.get('invite')
       if (!token) return
       setInviteToken(token); setInviteSigningIn(false)
       // Invitation capabilities stay in memory, never query strings or browser storage.
@@ -93,7 +121,13 @@ function App() {
         if (!signal?.aborted) enterApp(m)
       } catch (e) {
         if (signal?.aborted) return
-        if (e instanceof ApiError && e.status === 401) setPhase('signin')
+        if (e instanceof ApiError && e.status === 401) {
+          if (oidcProof.current) {
+            oidcProof.current = undefined; setOidcProofId(undefined)
+            setAuthNotice('The account session for this identity verification ended. Sign in, then start the verification again.')
+          }
+          setPhase(oidcFactor.current ? 'factor' : 'signin')
+        }
         else throw e
       }
     } catch (e) {
@@ -104,12 +138,14 @@ function App() {
   }
 
   function enterApp(m: Me, preferredId?: string) {
+    oidcFactor.current = false
     setMe(m)
     const ws = m.workspaces.find((w) => w.id === preferredId) ?? m.workspaces[0]
     activeWorkspace.current = ws?.id ?? ''
     wsGen.current += 1
     setWorkspaceId(ws?.id ?? '')
     selectProject('')
+    if (oidcProof.current) setView('identity')
     setProjects(null)
     setProjectsError('')
     setPhase('app')
@@ -137,6 +173,7 @@ function App() {
   }
 
   function resetSession() {
+    oidcFactor.current = false; oidcProof.current = undefined; setOidcProofId(undefined)
     activeWorkspace.current = ''
     wsGen.current += 1
     selectProject('')
@@ -219,9 +256,19 @@ function App() {
   }
 
   async function handleSignIn(email: string, password: string) {
-    await api('/api/auth/sign-in/email', { method: 'POST', body: { email, password } })
-    enterApp(await api<Me>('/api/me'))
-    setInviteSigningIn(false)
+    setAuthNotice('')
+    const response = await api<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/email', { method: 'POST', body: { email, password } })
+    if (response.twoFactorRedirect) { setPhase('factor'); return }
+    setPhase('loading'); setInviteSigningIn(false)
+    await boot()
+  }
+
+  async function handleFactor(code: string, recovery: boolean) {
+    await api(`/api/auth/two-factor/${recovery ? 'verify-backup-code' : 'verify-totp'}`, { method: 'POST', body: { code } })
+    oidcFactor.current = false
+    // A completed factor is single-use. Retry loading the session, never the consumed code.
+    setPhase('loading'); setInviteSigningIn(false)
+    await boot()
   }
 
   async function refreshMemberships(preferredId = activeWorkspace.current) {
@@ -284,9 +331,11 @@ function App() {
   }
 
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
+  if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={() => { oidcFactor.current = false; setPhase('signin') }} />
   if (inviteToken && !inviteSigningIn) return <main className='center'><section className='card auth'><InvitePanel token={inviteToken} signedInEmail={me?.user.email ?? null}
-    onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={resetSession} /></section></main>
-  if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn}
+    onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={resetSession} />
+    {!me && <OidcSignIn key={inviteToken} invitationToken={inviteToken} />}</section></main>
+  if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
     onCancel={inviteToken ? () => setInviteSigningIn(false) : undefined} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
@@ -310,6 +359,10 @@ function App() {
         <nav aria-label='Workspace settings'>
           <button className={view === 'workspace' ? 'proj active' : 'proj'} onClick={() => setView('workspace')}>Create workspace</button>
           {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'team' ? 'proj active' : 'proj'} onClick={() => setView('team')}>Manage team</button>}
+          {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'keys' ? 'proj active' : 'proj'} onClick={() => setView('keys')}>API keys</button>}
+          {workspace?.role === 'owner' && <button className={view === 'providers' ? 'proj active' : 'proj'} onClick={() => setView('providers')}>Providers and spending</button>}
+          <button className={view === 'security' ? 'proj active' : 'proj'} onClick={() => setView('security')}>Account security</button>
+          <button className={view === 'identity' ? 'proj active' : 'proj'} onClick={() => setView('identity')}>Identity sign-in</button>
         </nav>
         <nav aria-label='Projects'>
           <p className='side-label'>Projects</p>
@@ -333,11 +386,23 @@ function App() {
         </div>
       </aside>
       <main className='main'>
-        <p className='banner' role='note'><strong>Development foundation.</strong> SEO, AI insights, data imports and OIDC sign-in are planned but not available yet. Everything shown here works against live data.</p>
+        <p className='banner' role='note'><strong>Development foundation.</strong> Analytics, team access, account security, OIDC and tracker configuration are available. SEO, AI insights and platform data imports are still being built.</p>
+        {authNotice && <div role='alert' className='alert'>{authNotice} <button className='btn ghost' onClick={() => setAuthNotice('')}>Dismiss</button></div>}
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError}</div>}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { await refreshMemberships(id); setView('project') }} onUnauthorized={resetSession} /></section>}
         {view === 'team' && workspace && me && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={resetSession} />}
+        {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={resetSession} /><button className='btn' onClick={() => setView('identity')}>Manage identity sign-in and recovery</button></>}
+        {view === 'identity' && me && <>
+          <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={resetSession} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
+          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={resetSession} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
+        </>}
+        {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
+        {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
+        {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
+          <div className='row between'><h1>{project.name} tracking</h1><button className='btn' onClick={() => setView('project')}>Back to analytics</button></div>
+          <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />
+        </>}
         {view === 'project' && !workspace && <section className='card'><p>No workspace is linked to this account.</p><button className='btn primary' onClick={() => setView('workspace')}>Create workspace</button></section>}
         {view === 'project' && workspace && project === null && canWrite && (
           <section className='card' aria-labelledby='create-h'>
@@ -345,10 +410,10 @@ function App() {
             <CreateProjectForm key={workspaceId} onCreate={createProject} />
           </section>
         )}
-        {view === 'project' && workspace && project === null && !canWrite && (
+        {view === 'project' && workspace && projects !== null && project === null && !canWrite && (
           <section className='card'>
-            <h1>No project to show</h1>
-            <p>Your role in this workspace is view-only. Ask a workspace admin to create a project or give you access to one.</p>
+            <h1>{projects.length ? 'Choose a project' : 'No project to show'}</h1>
+            <p>{projects.length ? 'Select a project from the sidebar to view its analytics.' : 'Your role in this workspace is view-only. Ask a workspace admin to create a project or give you access to one.'}</p>
           </section>
         )}
         {view === 'project' && workspace && project !== null && (
@@ -356,6 +421,7 @@ function App() {
             <header className='proj-head'>
               <h1>{project.name}</h1>
               <p className='dim mono'>{project.origin}</p>
+              {['owner','admin'].includes(workspace.role) && <button className='btn' onClick={() => setView('destinations')}>Configure destinations</button>}
             </header>
             <AnalyticsPanel key={project.id} projectId={project.id} onUnauthorized={resetSession} />
             <section className='card' aria-labelledby='ev-h' aria-busy={eventsBusy}>
@@ -482,7 +548,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   )
 }
 
-function SignInForm({ initialEmail, onSignIn, onCancel }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onCancel?: () => void }) {
+function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onCancel?: () => void; notice?: string }) {
   const [email, setEmail] = useState(initialEmail)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -502,6 +568,7 @@ function SignInForm({ initialEmail, onSignIn, onCancel }: { initialEmail: string
     <main className='center'>
       <form className='card auth' onSubmit={(e) => void submit(e)}>
         <h1>Sign in</h1>
+        {notice && <p className='alert' role='alert'>{notice}</p>}
         <div className='field'><label htmlFor='si-email'>Email</label>
           <input id='si-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         <div className='field'><label htmlFor='si-pw'>Password</label>
@@ -509,9 +576,35 @@ function SignInForm({ initialEmail, onSignIn, onCancel }: { initialEmail: string
         {error !== '' && <div role='alert' className='alert'>{error}</div>}
         <button className='btn primary' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
         {onCancel && <button type='button' className='btn' onClick={onCancel}>Back to invitation</button>}
+        <OidcSignIn />
       </form>
     </main>
   )
+}
+
+function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery: boolean) => Promise<void>; onCancel: () => void }) {
+  const [recovery, setRecovery] = useState(false)
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const locked = useRef(false)
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (locked.current) return
+    locked.current = true; setBusy(true); setError('')
+    try { await onSubmit(code.trim(), recovery); setCode('') }
+    catch (e) { setError(errMsg(e)) }
+    finally { locked.current = false; setBusy(false) }
+  }
+  return <main className='center'><form className='card auth' onSubmit={event => void submit(event)}>
+    <h1>Verify your sign-in</h1><p>{recovery ? 'Enter one unused recovery code. Each code can only be used once.' : 'Enter the six-digit code from your authenticator app.'}</p>
+    <div className='field'><label htmlFor='factor-code'>{recovery ? 'Recovery code' : 'Authenticator code'}</label>
+      <input id='factor-code' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} value={code} onChange={event => setCode(event.target.value)} maxLength={recovery ? 21 : 6} required disabled={busy} /></div>
+    {error && <div className='alert' role='alert'>{error}</div>}
+    <div className='row'><button className='btn primary' disabled={busy}>{busy ? 'Verifying…' : 'Verify'}</button>
+      <button type='button' className='btn' disabled={busy} onClick={() => { setRecovery(!recovery); setCode(''); setError('') }}>{recovery ? 'Use authenticator' : 'Use a recovery code'}</button>
+      <button type='button' className='btn ghost' disabled={busy} onClick={onCancel}>Back to sign in</button></div>
+  </form></main>
 }
 
 function CreateProjectForm({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {

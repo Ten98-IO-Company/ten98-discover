@@ -6,24 +6,18 @@ Related: [README](../README.md) · [Feature parity](parity.md) · [Kimi workflow
 
 ## Requirements
 
-- Node 24 only
-- pnpm 11.19.0 (via corepack)
-- Docker with Compose (recommended path)
+- Docker with Compose (recommended path; no host Node/pnpm required)
+- Native development only: Node 24 and pnpm 11.19.0 (via corepack)
 
 ## Quickstart (Docker)
 
 ```sh
-corepack enable
-corepack prepare pnpm@11.19.0 --activate
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm run setup:local        # NOT `pnpm setup` — that is a pnpm builtin
-docker compose build
-docker compose run --rm migrate
-docker compose up -d web worker
+sh scripts/deploy.sh local http://localhost:3000 3000 ten98-monitor
 # open http://localhost:3000
 ```
 
-- `setup:local` generates an exclusive `.env` with 3 random 32-byte hex secrets. It refuses to overwrite an existing `.env` and does not touch the database.
+- Follow the [Docker setup guide](docker-setup.md) for native Windows commands, existing/bundled HTTPS, safe reruns, backups and upgrades. This is a source-built development deployment, not a published release image.
+- Setup generates an exclusive private `.env` with independent 32-byte database/auth/bootstrap secrets and an encryption keyring. It refuses to overwrite saved configuration. Native development retains `pnpm run setup:local` (not the `pnpm setup` builtin).
 - Docker startup does **not** auto-migrate; the separate `migrate` run is required. `postgres` starts via the migrate service's healthy dependency.
 - Compose binds `127.0.0.1:3000` only; the database is never published.
 - Read `BOOTSTRAP_TOKEN` privately from `.env` to claim ownership. Never paste it into issues or logs. Choose a 12–128 character password.
@@ -119,7 +113,9 @@ docker compose exec worker node src/server/cli.ts diagnose worker
 
 ## What works today
 
-- Owner token atomic claim + local sign-in; create, rename and switch workspaces.
+- Owner token atomic claim + local sign-in; create, rename and switch workspaces. Account security supports password changes, session revocation, authenticator enrollment and one-use recovery codes.
+- Workspace owners/admins can create and revoke expiring, scoped API keys. Tokens appear once and only their hashes are stored. Current membership and scopes are enforced on every allowed API request.
+- Owners can save, rotate and revoke encrypted OpenRouter/DataForSEO credentials, run an explicit read-only account check, set workspace/connection budgets, and inspect the app's spending ledger. Paid execution adapters are still being built; saving credentials does not start work.
 - Team management for owners/admins, role changes and member removal. Owners can grant ownership; concurrent changes cannot remove the final owner. Admins manage editors/viewers only.
 - Revocable seven-day invitation links for new and existing local accounts. Only token hashes are stored; links are displayed once for manual sharing. Existing accounts must sign in with the invited email; accepting a link never resets their password or changes an existing membership's role. Removing/demoting an inviter invalidates grants they can no longer issue.
 - Project origin and public site key.
@@ -127,7 +123,7 @@ docker compose exec worker node src/server/cli.ts diagnose worker
 - Analytics for inclusive UTC date ranges up to 366 days: page views, custom-event counts, daily chart/table and the top 20 pages/event names. Counts are stored observations, not unique visitors or sessions.
 - CORS origin matching (public signals remain spoofable) and duplicate-event UUID dedup.
 - Jobs: internal free worker probe; durable Postgres queue with idempotency, transaction rollback, revoked-permission handling, failed-terminal reconcile.
-- Migrations: transaction + advisory lock + ordered, normalized checksums. Existing `0001` installations upgrade through `0002` and `0003`; unknown, altered or incomplete history is rejected.
+- Migrations: transaction + advisory lock + ordered, normalized checksums. Existing `0001` installations upgrade through the included ordered migrations; unknown, altered or incomplete history is rejected.
 
 ## Use the team and analytics flows
 
@@ -141,11 +137,11 @@ For an existing development install, back up its database and stop web/worker be
 ## Current limitations
 
 - Not a public V1/release. No published Docker image — build locally.
-- No production HTTPS installer. A host-local tracker snippet only works for another local origin; remote visitors cannot reach a localhost collector until a proper HTTPS deployment exists.
-- No provider imports, SEO, AI, OIDC, or pixel vendor loading yet — all remain full V1 scope.
+- The optional Caddy recipe has local proxy/configuration checks; public certificate issuance is not yet verified. A host-local tracker snippet only works for another local origin; remote visitors cannot reach a localhost collector until a proper HTTPS deployment exists.
+- No provider reporting imports, SEO or AI visibility yet. The browser loader implements ten tag adapters with synthetic checks; real vendor-account validation remains a release gate.
 - No unique-visitor claims, bot filtering, retention/data lifecycle, or advanced reports / full analytics parity yet.
-- No account recovery, 2FA, OIDC, automatic invitation email delivery or project/workspace deletion yet. Invitations currently support manually shared links.
-- SPA tracking observes pathname changes; hash-based routes, event properties, HTML event attributes, referrers and visitor/session identity are not implemented yet. The custom-event API does not buffer calls made before the script loads.
+- No email password recovery, workspace-wide identity/2FA enforcement, automatic invitation email delivery or project/workspace deletion yet. Local authenticator/recovery-code and generic OIDC flows are implemented; invitations currently support manually shared links.
+- SPA tracking observes pathname changes; hash-based routes, native event properties, HTML event attributes, referrers and visitor/session identity are not implemented yet. The tag loader accepts only its bounded canonical properties. The custom-event API does not buffer calls made before the script loads.
 - No SaaS billing.
 - Secrets in compose env are plaintext, not encrypted. The backend supports `_FILE` for `AUTH_SECRET` / `BOOTSTRAP_TOKEN` / `DATABASE_URL` (exclusive with direct values), but the current recipe uses `.env`. No production secrets manager is claimed.
 - Worker status refresh is manual; no global auto-poll.
@@ -158,3 +154,69 @@ For an existing development install, back up its database and stop web/worker be
 - Swarm uses independent file ownership: the first batch covered UI/packaging/validation, and the next covered team UI, analytics UI and tracker behavior. Review repairs are mandatory; actual durations and skills are recorded in the [Kimi ledger](kimi-workflow.md).
 - The existing native CLI uses individual OAuth and is not embedded in the app.
 - No quota/savings counts verified.
+
+## Account, API-key and provider controls
+
+Choose **Account security** to change your password, review sessions or enable an authenticator. Enrollment becomes active only after a valid six-digit code. Save recovery codes when shown: each works once, and generating replacements invalidates the previous set. Security changes revoke other sessions and pending challenges. A partially authenticated sign-in cannot access workspace data. Email recovery and workspace enforcement remain separate V1 work.
+
+Choose **API keys** as a workspace owner or administrator. Select only the required scopes and an expiry from 1–365 days (90 by default). Copy the token once. Supported bearer routes currently are:
+
+| Scope | Routes |
+|---|---|
+| `projects:read` | `GET /api/workspaces/:workspaceId/projects` |
+| `projects:write` | `POST /api/workspaces/:workspaceId/projects` |
+| `analytics:read` | `GET /api/projects/:projectId/analytics`, `GET /api/projects/:projectId/events` |
+| `events:write` | `POST /api/projects/:projectId/events` with `{eventId,name,url}` |
+| `team:read` | `GET /api/workspaces/:workspaceId/team` |
+
+Send exactly one `Authorization: Bearer <token>` header without cookies or alternate API-key headers. Tokens cannot manage authentication, credentials, budgets or other keys. Removing membership deletes its keys; rejoining does not revive them. OpenAPI, batch endpoints, compatibility access and complete MCP coverage remain outstanding.
+
+Choose **Providers and spending** as a workspace owner. A saved connection starts **untested**. **Run check** contacts only the provider's documented read-only account endpoint: [OpenRouter current key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key) or [DataForSEO user data](https://docs.dataforseo.com/v3/appendix-user-data/). Acceptance of credentials does not prove paid endpoint permissions or sufficient credit. Diagnostics never display the provider's response body or submitted credentials.
+
+Budgets start paused at zero. Amounts use integer USD micro-units (six decimal places), with independent workspace and connection caps. The ledger covers this app's requests, not spending elsewhere on the provider account. Concurrent reservations share a workspace lock; retries cannot enqueue or dispatch the same request twice. Outstanding work still consumes budget across a month boundary. Unknown charges pause spending and block new work even if someone unpauses the budget; reconcile the original request first. Owners can cancel undispatched reservations, including work whose initiating member has been removed.
+
+The internal settlement contract returns `reconciliationRequired` for unknown charges or reported amounts above the current $1M per-charge ledger limit. Such rows stay uncertain, preserve their provider reference and pause spending. Execution adapters must retain the exact reported amount/evidence with their job result and inspect this outcome before marking work complete. There is no automatic retry of a dispatched paid call.
+
+### Encryption keys and upgrades
+
+New installs generate `CREDENTIAL_KEYS` (JSON mapping version names to base64 32-byte keys) and `CREDENTIAL_ACTIVE_KEY`. Existing installations need an operator-generated keyring before saving credentials. The native process also accepts an exclusive `CREDENTIAL_KEYS_FILE` alternative; a Compose secret-file recipe must explicitly mount that file. The default Compose recipe passes the keyring from the private `.env`.
+
+Stored credentials bind encryption to the workspace, connection, provider and revision. Missing keys or invalid authenticated ciphertext fail readiness and worker startup; diagnostics make no provider calls. Protect and back up the keyring separately with access sufficient to restore the matching database. Environment variables are visible to host/container administrators; database encryption does not hide secrets from those administrators.
+
+To rotate encryption keys, stop all web and worker writers, add the new key while retaining old entries, choose it as active, and run `docker compose run --rm web node src/server/cli.ts rekey`. Recreate every web/worker process with the same updated configuration before accepting writes. Keep old keys for every retained backup that needs them. Provider connections and OIDC credentials rotate in separate transactions: a failure rolls back its own credential family, and rerunning safely resumes the other. Keep both keys until the whole command succeeds and readiness passes. An old process still using the old active key can otherwise write old-key ciphertext after rotation.
+
+The owner approved configurable retention defaults: raw analytics 90 days, replays 7 days, raw provider evidence 90 days and derived history 1 year. Retention execution is not active yet. No history migration from the three replaced apps is required; native provider report imports and this app's backup/export remain included. Shared reports will use revocable slugs under `APP_URL`, without separate per-client domain provisioning.
+
+## Identity provider setup and recovery
+
+Open **Identity sign-in**. Instance operators configure the provider's issuer, client ID, client authentication method and allowed endpoint origins. Register the callback URL displayed by the app with the identity provider. Save a draft, authenticate with that provider to test it, then enable the tested revision. A failed test leaves the previously enabled settings in service. Public PKCE clients use POST authentication with an empty secret; confidential clients use their configured secret.
+
+Workspace ownership does not grant instance administration. A newly claimed instance grants its first owner that separate role. On an upgraded installation, an operator with host access can grant it to an existing account:
+
+```sh
+docker compose run --rm web node src/server/cli.ts operator grant owner@example.com
+```
+
+Use `operator revoke` with the same email argument to remove it. These changes are audited. Endpoint requests are HTTPS, DNS pinned and restricted to the configured origins; private-address exceptions require explicit operator configuration. The local HTTP issuer used by tests is available only with the integration-test opt-in.
+
+Accounts link by the exact issuer and subject after explicit proof; matching email alone never merges accounts. An invitation can create an OIDC-only account without requiring a second password. Such an account can use fresh provider verification to add an optional local recovery password, enroll an authenticator or change recovery codes. Once enabled, app two-factor verification also applies to OIDC sign-in. Disabling a provider revokes its sessions and pending challenges; users with no other sign-in method lose access. Configure independent recovery before disabling the last method.
+
+Generic protocol, invitation, linking, revocation and fresh-verification flows are covered by signed local issuer fixtures. Real external IdPs and workspace-enforced policies/group mapping still require implementation or validation; fixture success is not vendor certification.
+
+## Browser destinations
+
+Select a project and **Configure destinations**. Choose **Live** or **Test**, add public asset IDs, choose supported event mappings and declare whether ten98 or an existing integration owns each tag. Save, run a dry preview, then publish. An ownership confirmation is required before managed tags can publish. Preview makes no vendor requests. Concurrent drafts reject stale versions; rollback creates a new immutable revision and consent epoch.
+
+The existing header snippet loads `/destinations.js` once. Published configuration contains public asset IDs and mappings only; report credentials remain separate. The loader supports Meta, GA4, Google Ads, Cloudflare Web Analytics, TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X. It shares Google's SDK, refuses detected foreign SDK ownership, limits readiness queues, discards events observed before consent, and reports SDK invocation rather than inventing a delivery receipt. Cloudflare owns its own page observations and has no custom-event mapping.
+
+Use `data-environment="test"` on the snippet to select the test configuration and suppress native analytics writes. Test assets can still send real traffic to vendors when consent is granted: this is separate configuration, not a vendor sandbox. Without that attribute, the snippet uses live configuration. This increment allows one asset per vendor and eight canonical event names; complete upstream event coverage and multi-asset ownership remain open.
+
+The browser API uses an explicit context, for example `{siteKey: 'PROJECT_PUBLIC_KEY', environment: 'live'}`. Check `window.ten98?.destinationStatus(context).ready` before opening `window.ten98.consentPreferences(context)` from a visitor action. The `ten98:destinations-ready` event signals validated configuration; the panel includes a working preferences-button example. A CMP can call `window.ten98.consent({analytics, advertising, adUserData, adPersonalization}, {...context, acknowledgeReload: true})` after displaying the reload/storage-failure warning. All four choices must be booleans. Unknown consent, GPC and DNT prevent vendor loading. No previous page event is replayed when a visitor first grants consent. Saved consent expires 180 days after the explicit choice; revisits do not extend it.
+
+Loaded vendor SDKs can perform their own observations. A saved withdrawal reloads the page because clearing this app's queue cannot stop arbitrary loaded code. If storage cannot save or erase consent, the loader instead navigates to a blank page to leave the running SDKs; clear site data before returning. If the browser blocks navigation, the visitor must close the page. The preference flow warns about unsaved work before granting consent. Configuration is valid for 60 seconds and refreshed every 30 seconds; expiry or a changed published revision stops routing and requires renewed consent/reload. Already transmitted data and requests in flight cannot be retracted. CSP, blockers, browser storage failures and provider settings require controlled acceptance checks before a V1 claim. The native foundation collector still runs independently; native collection privacy controls remain open work under P31.
+
+Security/tracking increment checked locally on 2026-10-13: production build, TypeScript, the full fresh PostgreSQL web/worker integration suite, and original-schema upgrades through `0009` passed. The integration suite covers OIDC signed claims and fresh verification, two-factor recovery, account log redaction, API-key live revocation, encrypted credential rotation, concurrent spending caps, and destination HTTP/CORS/role/revision isolation. Tests used synthetic data and no external IdP or paid provider traffic.
+
+Edge production-build checks passed OIDC-only invited signup, fresh provider verification, authenticator enrollment, replacement recovery codes, optional local password, local/recovery login and callback-error recovery. Destination checks passed save/preview/publish/rollback, actual tracker/loader/preferences integration, stored-consent restoration and withdrawal reload. Desktop 1360 px and mobile 360 px were checked without document overflow. Vendor scripts were intercepted with local stubs: no real vendor-account delivery claim.
+
+The integrated Linux amd64 Docker image built and its fresh `0001`–`0009` migrations, web/worker readiness, keyring diagnostics, owner claim, operator role, event collection, analytics and queued worker operation passed on an isolated local installation. Docker helper checks ran with networking disabled; the synthetic shell regression requires an executable container temporary mount. Packaging tests do not establish public HTTPS, ARM, performance or full V1 completion. Detailed setup/backup checks are in [docker-setup.md](docker-setup.md).

@@ -8,6 +8,11 @@ import { closeDatabase, getDatabase, migrationSource } from '../src/server/db.ts
 import { enqueueProbe, getBoss, reconcileProbes, stopJobs } from '../src/server/jobs.ts';
 import { runAnalyticsChecks } from './analytics-integration.ts';
 import { runTeamsChecks } from './teams-integration.ts';
+import { runAccountSecurityChecks } from './account-security-integration.ts';
+import { runApiKeyChecks } from './api-keys-integration.ts';
+import { runProviderChecks } from './providers-integration.ts';
+import { runOidcChecks } from './oidc-integration.ts';
+import { runDestinationChecks } from './destinations-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -311,6 +316,18 @@ try {
   await runTeamsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'analytics aggregation and custom events';
   await runAnalyticsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, workspaceId: workspaceA, foreignProjectId: projectB.id });
+  stage = 'scoped API keys';
+  await runApiKeyChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  stage = 'account security lifecycle';
+  await runAccountSecurityChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  console.log('PASS account security, password/session revocation, TOTP and one-use recovery codes');
+  stage = 'provider credentials and spending controls';
+  await runProviderChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  stage = 'OIDC identity lifecycle';
+  await runOidcChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  stage = 'browser destination revisions and isolation';
+  await runDestinationChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  console.log('PASS destination drafts, previews, immutable publishing, rollback and origin/tenant/environment isolation');
   stage = 'session revocation';
   await expectStatus('/api/auth/sign-out', 200, { method: 'POST', cookie: other.cookie, body: {} });
   await expectStatus('/api/me', 401, { cookie: other.cookie });

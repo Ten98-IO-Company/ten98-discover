@@ -1,0 +1,73 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createServer } from 'node:http';
+import { generateKeyPairSync, sign } from 'node:crypto';
+import { discoverOidc, exchangeOidcCode, permittedOidcAddress, requestOidcJson, validateOidcSettings, verifyOidcIdentity } from '../src/server/oidc.ts';
+
+test('OIDC pins approved endpoints and verifies signed issuer, audience, nonce and time claims', async () => {
+  const previous = process.env.TEN98_INTEGRATION_TEST;
+  process.env.TEN98_INTEGRATION_TEST = '1';
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'fixture', use: 'sig', alg: 'RS256' };
+  let origin = '', redirectTargetCalls = 0, tokenBody = '';
+  let tokenAuthorization: string | undefined;
+  const jwt = (claims: Record<string, unknown> = {}, key = privateKey) => {
+    const now = Math.floor(Date.now() / 1000);
+    const unsigned = [Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ iss: origin, aud: 'fixture-client', sub: 'fixture-subject', iat: now, exp: now + 300,
+        nonce: 'fixture-nonce', email: 'MEMBER@EXAMPLE.TEST', email_verified: true, name: 'Fixture member', ...claims })).toString('base64url')].join('.');
+    return `${unsigned}.${sign('RSA-SHA256', Buffer.from(unsigned), key).toString('base64url')}`;
+  };
+  const server = createServer(async (request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/.well-known/openid-configuration') response.end(JSON.stringify({ issuer: origin,
+      authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`, jwks_uri: `${origin}/keys`, id_token_signing_alg_values_supported: ['RS256'] }));
+    else if (request.url === '/keys') response.end(JSON.stringify({ keys: [jwk] }));
+    else if (request.url === '/token') {
+      tokenBody = ''; tokenAuthorization = request.headers.authorization;
+      for await (const chunk of request) tokenBody += chunk;
+      response.end(JSON.stringify({ id_token: jwt() }));
+    } else if (request.url === '/redirect') { response.writeHead(302, { location: `${origin}/target` }); response.end('{}'); }
+    else if (request.url === '/large') response.end(JSON.stringify({ payload: 'x'.repeat(1_048_576) }));
+    else { redirectTargetCalls++; response.end('{}'); }
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  origin = `http://127.0.0.1:${address.port}`;
+  try {
+    for (const address of ['127.0.0.1', '10.0.0.1', '169.254.169.254', '100.64.0.1', '::1', '::ffff:127.0.0.1', 'fd00::1', '2002:7f00:1::']) assert.equal(permittedOidcAddress(address, []), false);
+    assert.equal(permittedOidcAddress('1.1.1.1', []), true);
+    assert.equal(permittedOidcAddress('2606:4700:4700::1111', []), true);
+    assert.equal(permittedOidcAddress('127.0.0.1', ['127.0.0.1']), true);
+    const raw = { name: 'Local fixture', issuer: origin, clientId: 'fixture-client', allowedAddresses: ['127.0.0.1'] };
+    assert.throws(() => validateOidcSettings({ ...raw, allowedAddresses: [] }));
+    const settings = await discoverOidc(raw);
+    const claims = await verifyOidcIdentity(settings, jwt(), 'fixture-nonce');
+    assert.equal(claims.subject, 'fixture-subject'); assert.equal(claims.email, 'member@example.test'); assert.equal(claims.emailVerified, true);
+    for (const invalid of [{ iss: 'https://other.example.test' }, { aud: 'other-client' }, { nonce: 'other-nonce' },
+      { exp: 1 }, { iat: 1 }, { iat: Math.floor(Date.now() / 1000) + 600 }, { sub: '' }, { azp: 'other' }, { aud: ['fixture-client', 'other'], azp: 'other' }]) {
+      await assert.rejects(verifyOidcIdentity(settings, jwt(invalid), 'fixture-nonce'), 'Invalid identity claims must be rejected.');
+    }
+    await assert.rejects(verifyOidcIdentity(settings, jwt(), ''));
+    const other = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    await assert.rejects(verifyOidcIdentity(settings, jwt({}, other.privateKey), 'fixture-nonce'));
+    const identity = await exchangeOidcCode(settings, 'synthetic-secret', 'synthetic-code', 'synthetic-verifier', 'https://app.example.test/callback', 'fixture-nonce');
+    assert.equal(identity.subject, 'fixture-subject');
+    const submitted = new URLSearchParams(tokenBody);
+    assert.equal(submitted.get('code_verifier'), 'synthetic-verifier');
+    assert.equal(submitted.get('grant_type'), 'authorization_code');
+    await exchangeOidcCode({ ...settings, authentication: 'post' }, '', 'synthetic-code', 'synthetic-verifier', 'https://app.example.test/callback', 'fixture-nonce');
+    const publicClient = new URLSearchParams(tokenBody);
+    assert.equal(publicClient.get('client_id'), 'fixture-client'); assert.equal(publicClient.has('client_secret'), false);
+    assert.equal(tokenAuthorization, undefined, 'Public PKCE clients must not send empty Basic credentials.');
+    await assert.rejects(requestOidcJson(`${origin}/redirect`, settings));
+    assert.equal(redirectTargetCalls, 0, 'Redirect targets must never be followed.');
+    await assert.rejects(requestOidcJson(`${origin}/large`, settings));
+    await assert.rejects(requestOidcJson('https://not-approved.example.test/keys', settings));
+    delete process.env.TEN98_INTEGRATION_TEST;
+    assert.throws(() => validateOidcSettings(raw), 'HTTP must remain unavailable outside synthetic integration mode.');
+  } finally {
+    if (previous === undefined) delete process.env.TEN98_INTEGRATION_TEST; else process.env.TEN98_INTEGRATION_TEST = previous;
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

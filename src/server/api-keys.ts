@@ -1,0 +1,120 @@
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
+import { z } from 'zod';
+import { FoundationError } from './auth.ts';
+import { getDatabase } from './db.ts';
+
+export const apiKeyScopes = ['projects:read', 'projects:write', 'analytics:read', 'events:write', 'team:read'] as const;
+export type ApiKeyScope = typeof apiKeyScopes[number];
+type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+export type ApiKeyDto = {
+  id: string; workspaceId: string; issuerUserId: string; name: string; scopes: ApiKeyScope[];
+  createdAt: Date; expiresAt: Date; revokedAt: Date | null;
+};
+export type ApiKeyPrincipal = { id: string; userId: string; workspaceId: string; role: Role; scopes: ApiKeyScope[] };
+const idInput = z.uuid();
+const createInput = z.object({
+  name: z.string().trim().min(1).max(80),
+  scopes: z.array(z.enum(apiKeyScopes)).min(1).max(apiKeyScopes.length).refine((scopes) => new Set(scopes).size === scopes.length),
+  expiresInDays: z.number().int().min(1).max(365).default(90),
+}).strict();
+const fields = 'id,workspace_id AS "workspaceId",issuer_user_id AS "issuerUserId",name,scopes,created_at AS "createdAt",expires_at AS "expiresAt",revoked_at AS "revokedAt"';
+
+function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
+  const result = schema.safeParse(input);
+  if (!result.success) throw new FoundationError(400, 'Check the submitted API key fields and try again.');
+  return result.data;
+}
+
+function invalidKey(): never { throw new FoundationError(401, 'The API key is invalid, expired or unavailable.'); }
+function validToken(token: string): boolean {
+  if (!/^t98k_[A-Za-z0-9_-]{43}$/.test(token)) return false;
+  const bytes = Buffer.from(token.slice(5), 'base64url');
+  return bytes.length === 32 && bytes.toString('base64url') === token.slice(5);
+}
+function digest(token: string) { return createHash('sha256').update(token).digest('hex'); }
+
+export function parseApiKeyHeaders(headers: Headers): string | null {
+  const authorization = headers.get('authorization');
+  if (headers.has('x-api-key') || (authorization !== null && headers.has('cookie'))) {
+    throw new FoundationError(400, 'Use one Authorization Bearer header without cookies or additional API key headers.');
+  }
+  if (authorization === null) return null;
+  const match = /^Bearer (t98k_[A-Za-z0-9_-]{43})$/i.exec(authorization);
+  if (!match || !validToken(match[1])) invalidKey();
+  return match[1];
+}
+
+function allows(role: Role, scope: ApiKeyScope): boolean {
+  if (role === 'owner' || role === 'admin') return true;
+  if (scope === 'team:read') return false;
+  if (role === 'editor') return true;
+  return role === 'viewer' && (scope === 'projects:read' || scope === 'analytics:read');
+}
+
+async function managed<T>(workspaceId: string, userId: string, run: (client: PoolClient, role: 'owner' | 'admin') => Promise<T>): Promise<T> {
+  parse(idInput, workspaceId); parse(idInput, userId);
+  const client = await getDatabase().pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Team mutations and protected writes use this same lock before checking current authority.
+    await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [workspaceId]);
+    const member = await client.query<{ role: Role }>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, userId]);
+    const role = member.rows[0]?.role;
+    if (role !== 'owner' && role !== 'admin') throw new FoundationError(404, 'Workspace not found or unavailable.');
+    const result = await run(client, role);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally { client.release(); }
+}
+
+export async function createApiKey(workspaceId: string, userId: string, input: unknown): Promise<{ key: ApiKeyDto; token: string }> {
+  const details = parse(createInput, input);
+  return managed(workspaceId, userId, async (client, role) => {
+    if (details.scopes.some((scope) => !allows(role, scope))) throw new FoundationError(403, 'These scopes exceed your current workspace role.');
+    const token = `t98k_${randomBytes(32).toString('base64url')}`;
+    const result = await client.query<ApiKeyDto>(
+      `INSERT INTO api_key(id,workspace_id,issuer_user_id,name,token_hash,scopes,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+$7::integer*interval '1 day') RETURNING ${fields}`,
+      [randomUUID(), workspaceId, userId, details.name, digest(token), details.scopes, details.expiresInDays],
+    );
+    return { key: result.rows[0], token };
+  });
+}
+
+export async function listApiKeys(workspaceId: string, userId: string): Promise<{ keys: ApiKeyDto[] }> {
+  return managed(workspaceId, userId, async (client) => ({
+    keys: (await client.query<ApiKeyDto>(`SELECT ${fields} FROM api_key WHERE workspace_id=$1 ORDER BY created_at DESC,id`, [workspaceId])).rows,
+  }));
+}
+
+export async function revokeApiKey(workspaceId: string, userId: string, keyId: string): Promise<void> {
+  parse(idInput, keyId);
+  await managed(workspaceId, userId, async (client) => {
+    const result = await client.query('UPDATE api_key SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE workspace_id=$1 AND id=$2 RETURNING id', [workspaceId, keyId]);
+    if (!result.rowCount) throw new FoundationError(404, 'API key not found or unavailable.');
+  });
+}
+
+export async function authenticateApiKey(token: string, client?: Pick<PoolClient, 'query'>): Promise<ApiKeyPrincipal> {
+  if (typeof token !== 'string' || !validToken(token)) invalidKey();
+  const result = await (client ?? getDatabase().pool).query<ApiKeyPrincipal>(
+    `SELECT k.id,k.issuer_user_id AS "userId",k.workspace_id AS "workspaceId",m.role,k.scopes
+     FROM api_key k JOIN membership m ON m.workspace_id=k.workspace_id AND m.user_id=k.issuer_user_id
+     WHERE k.token_hash=$1 AND k.revoked_at IS NULL AND k.expires_at>clock_timestamp()`, [digest(token)],
+  );
+  const principal = result.rows[0];
+  if (!principal || !['owner', 'admin', 'editor', 'viewer'].includes(principal.role)) invalidKey();
+  return { ...principal, scopes: principal.scopes.filter((scope) => apiKeyScopes.includes(scope) && allows(principal.role, scope)) };
+}
+
+// For mutations, call after reading the request body, inside the transaction holding the workspace lock.
+export async function authorizeApiKey(token: string, workspaceId: string, scope: ApiKeyScope, client?: Pick<PoolClient, 'query'>): Promise<ApiKeyPrincipal> {
+  const principal = await authenticateApiKey(token, client);
+  if (principal.workspaceId !== workspaceId) throw new FoundationError(404, 'Workspace not found or unavailable.');
+  if (!principal.scopes.includes(scope)) throw new FoundationError(403, 'The API key does not permit this action.');
+  return principal;
+}

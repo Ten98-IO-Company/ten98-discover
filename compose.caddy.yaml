@@ -1,0 +1,30 @@
+# Optional overlay: docker compose -f compose.yaml -f compose.caddy.yaml ...
+# DNS and external TCP80/443 reachability are operator-managed prerequisites.
+services:
+  caddy:
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    environment:
+      APP_URL: ${APP_URL:?Set the public HTTPS origin in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy:/etc/caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      # Local config endpoint only; this does not prove public TLS issuance.
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  caddy_data:
+  caddy_config:

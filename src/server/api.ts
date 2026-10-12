@@ -9,6 +9,12 @@ import { enqueueProbe, reconcileProbes } from './jobs.ts';
 import { eventInput, eventPath, InputError, projectInput, readJson } from './validation.ts';
 import { projectAnalytics } from './analytics.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation } from './teams.ts';
+import { handleAccountSecurity } from './account-security.ts';
+import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey } from './api-keys.ts';
+import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
+import { assertOidcCredentialsReadable, handleOidc } from './oidc.ts';
+import { isInstanceOperator } from './instance-operators.ts';
+import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
@@ -63,7 +69,23 @@ export async function handleApi(request: Request): Promise<Response> {
     if (path === '/api/health/live' && request.method === 'GET') return json({ status: 'alive' });
     const config = getConfig();
     await assertSchema();
+    const apiToken = parseApiKeyHeaders(request.headers);
+    const principal = apiToken ? await authenticateApiKey(apiToken) : null;
+    if (principal) {
+      const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
+      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics)$`, 'i'));
+      if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
+        await authorizeApiKey(apiToken!, workspaceRoute[1], workspaceRoute[2] === 'team' ? 'team:read' : request.method === 'GET' ? 'projects:read' : 'projects:write');
+      } else if (projectRoute && (request.method === 'GET' || (request.method === 'POST' && projectRoute[2] === 'events'))) {
+        const target = await getDatabase().pool.query('SELECT workspace_id FROM project WHERE id=$1 AND workspace_id=$2', [projectRoute[1], principal.workspaceId]);
+        if (!target.rowCount) throw new FoundationError(404, 'Project not found or unavailable.');
+        await authorizeApiKey(apiToken!, target.rows[0].workspace_id, request.method === 'GET' ? 'analytics:read' : 'events:write');
+      } else throw new FoundationError(403, 'This route requires browser sign-in or is outside the API key scope.');
+      await limit(`api-key:${principal.id}`, 120);
+    }
     if (path === '/api/health/ready' && request.method === 'GET') {
+      await assertCredentialKeys();
+      await assertOidcCredentialsReadable();
       await access(config.artifactDir, constants.W_OK);
       return json({ status: 'ready' });
     }
@@ -71,7 +93,7 @@ export async function handleApi(request: Request): Promise<Response> {
       const { rows } = await getDatabase().pool.query("SELECT claimed FROM installation WHERE id='instance'");
       return json({ configured: rows[0]?.claimed === true, appUrl: config.appUrl });
     }
-    if (path === '/api/collect') {
+    if (path === '/api/collect' || path === '/api/tracking-config') {
       const origin = request.headers.get('origin');
       if (!origin) throw new FoundationError(403, 'A configured website origin is required.');
       await limit('collector:global', 6000);
@@ -80,6 +102,11 @@ export async function handleApi(request: Request): Promise<Response> {
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405, cors);
+      if (path === '/api/tracking-config') {
+        const input = z.object({ siteKey: z.uuid(), environment: z.enum(['live', 'test']) }).strict().parse(await readJson(request));
+        await limit(`tracking-config:${input.siteKey}`, 600);
+        return json(await getPublicDestinations(input.siteKey, input.environment, origin), 200, cors);
+      }
       const event = eventInput.parse(await readJson(request));
       const { rows } = await getDatabase().pool.query('SELECT id,origin FROM project WHERE public_key=$1', [event.siteKey]);
       const project = rows[0];
@@ -89,7 +116,11 @@ export async function handleApi(request: Request): Promise<Response> {
       await getDatabase().pool.query('INSERT INTO event(id,project_id,event_name,path) VALUES($1,$2,$3,$4) ON CONFLICT(project_id,id) DO NOTHING', [event.eventId, project.id, event.name, eventPath(event.url)]);
       return json({ accepted: true }, 202, cors);
     }
-    if (request.method === 'POST' && request.headers.get('origin') !== config.appUrl) throw new FoundationError(403, 'This action must originate from the application.');
+    if (!principal && request.method === 'POST' && request.headers.get('origin') !== config.appUrl) throw new FoundationError(403, 'This action must originate from the application.');
+    const oidcResponse = await handleOidc(request);
+    if (oidcResponse) return oidcResponse;
+    const accountResponse = await handleAccountSecurity(request);
+    if (accountResponse) return accountResponse;
     if (request.method === 'POST' && ['/api/invitations/inspect', '/api/invitations/accept'].includes(path)) {
       await limit('invitations:public', 60);
       const input = await readJson(request);
@@ -129,20 +160,54 @@ export async function handleApi(request: Request): Promise<Response> {
       return new Response(JSON.stringify({ ok: true }), { headers });
     }
     if (path.startsWith('/api/auth/')) {
-      if (request.method === 'GET' && path === '/api/auth/get-session') return getAuth().handler(authRequest(request));
-      if (request.method === 'POST' && ['/api/auth/sign-in/email', '/api/auth/sign-out'].includes(path)) {
-        const body = await readJson(request);
-        if (path.endsWith('/sign-in/email')) {
-          await limit('signin:global', 60);
-          const input = z.object({ email: z.string().trim().toLowerCase().email().max(254), password: z.string().min(1).max(128) }).strict().parse(body);
-          await limit(`signin:${createHash('sha256').update(input.email).digest('hex')}`, 5);
-          return getAuth().handler(authRequest(request, JSON.stringify(input)));
-        }
+      if (request.method === 'POST' && path === '/api/auth/sign-out') {
+        const body = z.object({}).strict().parse(await readJson(request));
         return getAuth().handler(authRequest(request, JSON.stringify(body)));
       }
       return json({ error: 'Authentication route unavailable.' }, 404);
     }
-    const user = await signedIn(request);
+    const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
+    const destinationRoute = path.match(new RegExp(`^/api/projects/(${id})/destinations(?:/(draft|preview|publish|rollback))?$`, 'i'));
+    if (destinationRoute) {
+      if ([...url.searchParams.keys()].some(key => key !== 'environment') || url.searchParams.getAll('environment').length > 1) throw new FoundationError(400, 'Choose one tracking environment.');
+      const environment = z.enum(['live', 'test']).parse(url.searchParams.get('environment') ?? 'live');
+      await limit(`tracking-settings:${user.id}`, 60);
+      if (request.method === 'GET' && !destinationRoute[2]) return json(await getDestinations(destinationRoute[1], user.id, environment));
+      if (request.method === 'POST') {
+        const input = await readJson(request, 16_384);
+        if (destinationRoute[2] === 'draft') return json(await saveDestinationsDraft(destinationRoute[1], user.id, environment, input));
+        if (destinationRoute[2] === 'preview') return json(await previewDestinations(destinationRoute[1], user.id, environment, input));
+        if (destinationRoute[2] === 'publish') return json(await publishDestinations(destinationRoute[1], user.id, environment, input));
+        if (destinationRoute[2] === 'rollback') return json(await rollbackDestinations(destinationRoute[1], user.id, environment, input));
+      }
+      return json({ error: 'Method not allowed.' }, 405);
+    }
+    let management = path.match(new RegExp(`^/api/workspaces/(${id})/(api-keys|providers|budget)$`, 'i'));
+    if (management) {
+      const workspaceId = management[1];
+      await limit(`settings:${user.id}`, 60);
+      if (request.method === 'GET' && management[2] === 'api-keys') return json(await listApiKeys(workspaceId, user.id));
+      if (request.method === 'GET' && management[2] === 'providers') return json(await listProviders(workspaceId, user.id));
+      if (request.method === 'POST') {
+        const input = await readJson(request);
+        if (management[2] === 'api-keys') return json(await createApiKey(workspaceId, user.id, input), 201);
+        if (management[2] === 'providers') return json(await saveProvider(workspaceId, user.id, input), 201);
+        if (management[2] === 'budget') { await saveBudget(workspaceId, user.id, input); return json({ ok: true }); }
+      }
+    }
+    management = path.match(new RegExp(`^/api/workspaces/(${id})/(api-keys|providers)/(${id})/(revoke|update|check)$`, 'i'));
+    if (management && request.method === 'POST') {
+      await limit(`settings:${user.id}`, 60);
+      const input = await readJson(request);
+      if (management[2] === 'providers' && management[4] === 'update') return json(await saveProvider(management[1], user.id, input, management[3]));
+      z.object({}).strict().parse(input);
+      if (management[2] === 'api-keys' && management[4] === 'revoke') { await revokeApiKey(management[1], user.id, management[3]); return json({ ok: true }); }
+      if (management[2] === 'providers' && management[4] === 'revoke') { await revokeProvider(management[1], user.id, management[3]); return json({ ok: true }); }
+      if (management[2] === 'providers' && management[4] === 'check') {
+        await limit(`provider-check:${management[3]}`, 3);
+        return json(await checkProvider(management[1], user.id, management[3]));
+      }
+    }
     if (path === '/api/workspaces' && request.method === 'POST') {
       await limit(`workspaces:${user.id}`, 10);
       const result = await createWorkspace(user.id, await readJson(request));
@@ -150,7 +215,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     if (path === '/api/me' && request.method === 'GET') {
       const { rows } = await getDatabase().pool.query('SELECT w.id,w.name,m.role FROM workspace w JOIN membership m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.created_at,w.id', [user.id]);
-      return json({ user: { id: user.id, name: user.name, email: user.email }, workspaces: rows });
+      return json({ user: { id: user.id, name: user.name, email: user.email }, instanceOperator: await isInstanceOperator(user.id), workspaces: rows });
     }
     let match = path.match(new RegExp(`^/api/workspaces/(${id})/(team|rename|invitations)$`, 'i'));
     if (match) {
@@ -185,6 +250,7 @@ export async function handleApi(request: Request): Promise<Response> {
         try {
           await client.query('BEGIN');
           await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [match[1]]);
+          if (apiToken) await authorizeApiKey(apiToken, match[1], 'projects:write', client);
           const access = await client.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [match[1], user.id]);
           if (!['owner', 'admin', 'editor'].includes(access.rows[0]?.role)) throw new FoundationError(404, 'Workspace not found or unavailable.');
           const { rows } = await client.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5) RETURNING id,name,origin,public_key AS "publicKey"', [randomUUID(), match[1], input.name, input.origin, randomUUID()]);
@@ -196,7 +262,21 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     match = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|jobs|check-worker)$`, 'i'));
     if (match) {
-      await projectAccess(match[1], user.id, request.method !== 'GET');
+      const target = await projectAccess(match[1], user.id, request.method !== 'GET');
+      if (principal && request.method === 'POST' && match[2] === 'events') {
+        const input = eventInput.omit({ siteKey: true }).parse(await readJson(request));
+        if (new URL(input.url).origin !== target.origin) throw new FoundationError(400, 'Event URL must use the project origin.');
+        const client = await getDatabase().pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [target.workspace_id]);
+          await authorizeApiKey(apiToken!, target.workspace_id, 'events:write', client);
+          await client.query('INSERT INTO event(id,project_id,event_name,path) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [input.eventId, target.id, input.name, eventPath(input.url)]);
+          await client.query('COMMIT');
+          return json({ accepted: true }, 202);
+        } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
+        finally { client.release(); }
+      }
       if (request.method === 'GET' && match[2] === 'analytics') return json(await projectAnalytics(match[1], user.id, url.searchParams));
       if (request.method === 'GET' && match[2] === 'events') {
         const [events, total] = await Promise.all([

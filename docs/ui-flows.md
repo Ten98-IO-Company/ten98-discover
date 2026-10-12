@@ -242,4 +242,4 @@ The initial three-product dashboard idea overemphasized headline numbers and con
 
 Risk: full navigation can overwhelm an analyst. Use module-local navigation and permissions to reduce visible choices without deleting capabilities. Risk: automatic cross-module recommendations imply causation. Show linked evidence and explicitly separate observed measures. Validate onboarding with a first-time operator and evidence investigation with an analyst before implementing all screens.
 
-Open: additional languages beyond the source baseline, user-tested density preferences, exact alert thresholds, custom-domain sharing and optional per-client branding depth. These are tracked decisions, not silent defaults. No subscription-sales UI is planned; the owner requires free full-feature access.
+Open: additional languages beyond the source baseline, user-tested density preferences, exact alert thresholds and optional per-client branding depth. Sharing uses revocable slugs under the installation's configured domain; no separate per-client domain setup is required. No subscription-sales UI is planned; the owner requires free full-feature access.

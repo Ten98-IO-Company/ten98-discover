@@ -10,6 +10,13 @@ test-results
 .kimi*
 sessions
 logs
+private
+secrets
+.research
+*.dump
+*.sqlite*
+*.pem
+*.key
 *.log
 docs
 # Kept on purpose: README*, LICENSE*, src, migrations, package.json,

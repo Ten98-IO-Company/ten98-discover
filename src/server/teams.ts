@@ -193,15 +193,11 @@ export async function inspectInvitation(input: unknown) {
   return { workspace: { id: invitation.workspaceId, name: invitation.workspaceName }, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt };
 }
 
-export async function acceptInvitation(input: unknown, signedInUser?: { id: string; email: string }) {
-  const details = parse(z.object({ token: tokenInput, name: z.string().trim().min(1).max(120).optional(), password: z.string().min(12).max(128).optional() }).strict(), input);
-  const signedIn = signedInUser === undefined ? undefined : parse(z.object({ id: idInput, email: emailInput }).strict(), signedInUser);
-  const digest = tokenDigest(details.token);
+async function lockInvitation(client: PoolClient, digest: string) {
   // Discover the workspace without taking an invitation lock, then consistently
   // lock workspace -> invitation -> email across all acceptance operations.
-  const found = await getDatabase().pool.query<{ workspace_id: string }>('SELECT workspace_id FROM workspace_invitation WHERE token_hash=$1', [digest]);
+  const found = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM workspace_invitation WHERE token_hash=$1', [digest]);
   if (!found.rows[0]) unavailable();
-  return transaction(async (client) => {
     const workspaceId = found.rows[0].workspace_id;
     try { await lockWorkspace(client, workspaceId); }
     catch (error) {
@@ -219,6 +215,21 @@ export async function acceptInvitation(input: unknown, signedInUser?: { id: stri
     // One normalized email can receive invitations to different workspaces.
     // Serialize its identity creation without locking another workspace.
     await client.query('SELECT pg_advisory_xact_lock($1,hashtext($2))', [109859, invitation.email]);
+    return { workspaceId, invitation };
+}
+
+async function consumeInvitation(client: PoolClient, invitation: Invitation, workspaceId: string, userId: string) {
+  // A link can add membership, never replace an existing member's privileges.
+  await client.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(workspace_id,user_id) DO NOTHING', [workspaceId, userId, invitation.role]);
+  const consumed = await client.query('DELETE FROM workspace_invitation WHERE id=$1 AND expires_at>clock_timestamp() RETURNING id', [invitation.id]);
+  if (!consumed.rowCount) unavailable();
+}
+
+export async function acceptInvitation(input: unknown, signedInUser?: { id: string; email: string }) {
+  const details = parse(z.object({ token: tokenInput, name: z.string().trim().min(1).max(120).optional(), password: z.string().min(12).max(128).optional() }).strict(), input);
+  const signedIn = signedInUser === undefined ? undefined : parse(z.object({ id: idInput, email: emailInput }).strict(), signedInUser);
+  return transaction(async (client) => {
+    const { workspaceId, invitation } = await lockInvitation(client, tokenDigest(details.token));
     const existing = await client.query<{ id: string; email: string }>('SELECT id,email FROM "user" WHERE lower(email)=$1', [invitation.email]);
     let userId = existing.rows[0]?.id;
     if (signedIn && (signedIn.id !== userId || signedIn.email !== invitation.email)) {
@@ -233,10 +244,21 @@ export async function acceptInvitation(input: unknown, signedInUser?: { id: stri
       await client.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [userId, details.name, invitation.email]);
       await client.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)', [randomUUID(), userId, password]);
     }
-    // A link can add membership, never replace an existing member's privileges.
-    await client.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(workspace_id,user_id) DO NOTHING', [workspaceId, userId, invitation.role]);
-    const consumed = await client.query('DELETE FROM workspace_invitation WHERE id=$1 AND expires_at>clock_timestamp() RETURNING id', [invitation.id]);
-    if (!consumed.rowCount) unavailable();
+    await consumeInvitation(client, invitation, workspaceId, userId);
     return { workspaceId, created, email: invitation.email };
   });
+}
+
+/** Server-only: caller must supply cryptographically verified, trusted OIDC email claims. */
+export async function acceptVerifiedOidcInvitation(client: PoolClient, token: unknown, identity: { email: string; name: string }, passwordHash?: string) {
+  const checked = parse(z.object({ email: emailInput, name: z.string().trim().min(1).max(120) }).strict(), identity);
+  const { workspaceId, invitation } = await lockInvitation(client, tokenDigest(parse(tokenInput, token)));
+  if (invitation.email !== checked.email) throw new FoundationError(403, 'The verified provider email does not match the invitation recipient.');
+  const existing = await client.query('SELECT id FROM "user" WHERE lower(email)=$1', [checked.email]);
+  if (existing.rowCount) throw new FoundationError(409, 'Sign in with the existing account before accepting this invitation. Link the provider explicitly in account settings.');
+  const userId = randomUUID();
+  await client.query('INSERT INTO "user"(id,name,email,"emailVerified") VALUES($1,$2,$3,true)', [userId, checked.name, checked.email]);
+  if (passwordHash) await client.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)', [randomUUID(), userId, passwordHash]);
+  await consumeInvitation(client, invitation, workspaceId, userId);
+  return { userId, workspaceId };
 }

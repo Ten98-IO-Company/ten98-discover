@@ -22,21 +22,24 @@
     return location.origin + location.pathname; // never query, hash, cookies, storage or referrer
   }
 
-  function send(site, name) {
+  function send(site, name, properties) {
     try {
-      fetch(site.endpoint, {
+      var event = { name: name, eventId: uuid(), url: currentUrl() };
+      try { if (site.environment !== 'test') fetch(site.endpoint, {
         method: 'POST',
         credentials: 'omit',
         referrerPolicy: 'no-referrer',
         mode: 'cors',
         keepalive: true,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name, eventId: uuid(), siteKey: site.siteKey, url: currentUrl() })
+        body: JSON.stringify({ name: name, eventId: event.eventId, siteKey: site.siteKey, url: event.url })
       }).then(function (response) {
         if (!response.ok) warn('ten98-monitor: event was not accepted. Check installation diagnostics.');
       }).catch(function () {
         warn('ten98-monitor: collector unavailable or blocked.');
-      });
+      }); } catch (ignore) {}
+      var h = hub();
+      if (h && typeof h.destinationEvent === 'function') h.destinationEvent(site, { name: name, eventId: event.eventId, url: event.url, properties: properties });
     } catch (ignore) {
       // Missing crypto/fetch or any other instrumentation failure stays invisible to the host.
     }
@@ -46,10 +49,10 @@
     try { console.warn(message); } catch (ignore) {}
   }
 
-  function fanout(name) {
+  function fanout(name, properties) {
     var h = hub();
     if (!h) return;
-    for (var i = 0; i < h.sites.length; i++) send(h.sites[i], name);
+    for (var i = 0; i < h.sites.length; i++) send(h.sites[i], name, properties);
   }
 
   // Sends a page_view only when origin+pathname actually changed (query/hash-only moves are ignored).
@@ -93,10 +96,10 @@
     } catch (ignore) {} // A frozen host method must not disable initial/custom events.
   }
 
-  function track(name) {
+  function track(name, properties) {
     try {
       if (typeof name !== 'string' || name === PAGE_VIEW || name !== name.trim() || !NAME_RE.test(name)) return;
-      fanout(name);
+      fanout(name, properties);
     } catch (ignore) {}
   }
 
@@ -112,11 +115,27 @@
     return h;
   }
 
+  function loadDestinations(h, site) {
+    try {
+      if (typeof h.destinationInit === 'function') { h.destinationInit(site); return; }
+      if (h.destinationLoaderRequested || window.ten98 !== h.api) return;
+      h.destinationLoaderRequested = true;
+      var loader = document.createElement('script');
+      loader.src = new URL('/destinations.js', site.endpoint).href;
+      loader.async = true;
+      loader.referrerPolicy = 'no-referrer';
+      loader.onerror = function () { warn('ten98-monitor: destination loader unavailable or blocked.'); };
+      (document.head || document.documentElement).appendChild(loader);
+    } catch (ignore) {} // Blocked optional tags never stop the host or native collection.
+  }
+
   try {
     var script = document.currentScript;
     if (!script) return;
     var siteKey = script.getAttribute('data-site-key');
     if (!siteKey) return;
+    var environment = script.getAttribute('data-environment') || 'live';
+    if (environment !== 'live' && environment !== 'test') return;
     var endpoint;
     try {
       endpoint = new URL('/api/collect', script.src).href;
@@ -124,12 +143,13 @@
       return; // invalid collector URL: skip this site quietly
     }
     var registry = window.__ten98FoundationSites || (window.__ten98FoundationSites = new Set());
-    var key = endpoint + ':' + siteKey;
+    var key = endpoint + ':' + siteKey + ':' + environment;
     if (registry.has(key)) return; // repeated init must not double send/patch/listen
     var h = hub() || install();
-    var site = { endpoint: endpoint, siteKey: siteKey };
+    var site = { endpoint: endpoint, siteKey: siteKey, environment: environment };
     h.sites.push(site);
     registry.add(key);
+    loadDestinations(h, site);
     send(site, PAGE_VIEW); // exactly one initial page_view per site registration
   } catch (ignore) {}
 })();

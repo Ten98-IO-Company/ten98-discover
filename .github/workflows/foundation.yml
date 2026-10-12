@@ -58,6 +58,9 @@ jobs:
             console.log(`::add-mask::${value}`);
             appendFileSync(process.env.GITHUB_ENV, `${key}=${value}\n`);
           }
+          const credentialKey = randomBytes(32).toString('base64');
+          console.log(`::add-mask::${credentialKey}`);
+          appendFileSync(process.env.GITHUB_ENV, `CREDENTIAL_KEYS=${JSON.stringify({v1: credentialKey})}\nCREDENTIAL_ACTIVE_KEY=v1\n`);
           const artifacts = join(process.env.RUNNER_TEMP, 'ten98-foundation-artifacts');
           mkdirSync(artifacts, { recursive: true, mode: 0o700 });
           appendFileSync(process.env.GITHUB_ENV, `ARTIFACT_DIR=${artifacts}\n`);

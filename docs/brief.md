@@ -59,9 +59,9 @@ These do not prevent a full plan. Ask before implementing the dependent feature.
 
 1. The pinned deployed versions also matched the latest upstream release tags when checked on 2026-10-12. Keep this explicit comparison baseline; newer upstream features require a baseline decision rather than silently following main.
 2. Subscription sales are explicitly excluded by the owner. Preserve full technical capabilities, branding and provider usage/budgets; do not reproduce upstream SaaS payment or entitlement restrictions.
-3. Choose expected event/replay volume, retention and deployment recovery targets. Preserve baseline language selection, locale formatting and RTL behavior; any reduced language set needs an explicit scope decision. Proposed test workload is in the roadmap, not a capacity guarantee.
-4. Choose default alert thresholds/recipients and whether client-facing custom domains are needed beyond revocable shared reports and branding.
-5. Choose which historical datasets must migrate. Existing applications remain available until reconciliation and rollback checks pass.
+3. Choose expected event/replay volume and deployment recovery targets. The owner approved configurable workspace retention defaults: raw analytics 90 days, replay 7 days, raw provider evidence 90 days and derived history 1 year. Preserve baseline language selection, locale formatting and RTL behavior; any reduced language set needs an explicit scope decision. Proposed test workload is in the roadmap, not a capacity guarantee.
+4. Choose default alert thresholds/recipients. Sharing uses slugs under the installation's configured domain, for example `/share/monthly-review`; branded, revocable reports remain included. The owner excluded a separate per-client custom-domain system.
+5. The owner excluded historical migration from Elmo, Umami and OpenSEO. This replacement starts fresh. Native reporting imports from connected analytics/ad platforms, and ten98-monitor's own export, backup and restore, remain required.
 
 ## Method and completion boundary
 

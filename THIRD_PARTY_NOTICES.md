@@ -20,6 +20,8 @@ Future imported-code ledger: add entries when code is actually adopted. An empty
 
 ## Foundation dependency inventory
 
+Optional deployment component: the official `caddy:2.11.7-alpine` image, pinned to manifest `sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f`, provides reverse proxy and automatic HTTPS. Caddy is Apache-2.0; its separate image includes its own dependencies and notices and is not relicensed MIT. No Caddy source is copied into the app. Verified on 2026-10-13 against the [official image inventory](https://github.com/docker-library/repo-info/blob/master/repos/caddy/remote/2.11.7-alpine.md) and [upstream license](https://github.com/caddyserver/caddy/blob/v2.11.7/LICENSE). The optional image is pulled directly from the official registry, not republished here.
+
 Audit date: 2026-10-12. Scope: `0.0.0-foundation`, `pnpm@11.19.0`, Node 24, lockfile SHA-256 `6c6777f9d139f3f592bd4a2e1430ebf406b7e9642bc14be8b8ff755f2777b30e`.
 
 The foundation is original application code using library dependencies and the documented architectural patterns above. It does not copy Elmo, Umami or OpenSEO application files, branding or datasets. The upstream application import ledger remains empty. Library dependencies below are separate from that ledger and retain their own licenses; MIT is the license of ten98-monitor's original code.
