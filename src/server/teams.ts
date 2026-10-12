@@ -1,0 +1,242 @@
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
+import { hashPassword } from 'better-auth/crypto';
+import { z } from 'zod';
+import { FoundationError } from './auth.ts';
+import { getDatabase } from './db.ts';
+
+type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+type Workspace = { id: string; name: string };
+type Invitation = { id: string; email: string; role: Exclude<Role, 'owner'>; expiresAt: Date };
+const idInput = z.uuid();
+const nameInput = z.object({ name: z.string().trim().min(1).max(120) }).strict();
+const emailInput = z.string().trim().toLowerCase().max(254).email();
+const tokenInput = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const roleInput = z.enum(['owner', 'admin', 'editor', 'viewer']);
+const invitationInput = z.object({ email: emailInput, role: roleInput.exclude(['owner']) }).strict();
+
+function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
+  const result = schema.safeParse(input);
+  if (!result.success) throw new FoundationError(400, 'Check the submitted fields and try again.');
+  return result.data;
+}
+
+function unavailable(): never {
+  throw new FoundationError(410, 'This invitation is unavailable or expired. Ask for a new invitation.');
+}
+
+function tokenDigest(token: string) { return createHash('sha256').update(token).digest('hex'); }
+
+async function transaction<T>(run: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await getDatabase().pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await run(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally { client.release(); }
+}
+
+async function lockWorkspace(client: PoolClient, workspaceId: string): Promise<Workspace> {
+  const result = await client.query<Workspace>('SELECT id,name FROM workspace WHERE id=$1 FOR UPDATE', [workspaceId]);
+  if (!result.rows[0]) throw new FoundationError(404, 'Workspace not found or unavailable.');
+  return result.rows[0];
+}
+
+async function managerRole(client: PoolClient, workspaceId: string, userId: string): Promise<'owner' | 'admin'> {
+  const result = await client.query<{ role: Role }>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, userId]);
+  const role = result.rows[0]?.role;
+  if (role !== 'owner' && role !== 'admin') throw new FoundationError(404, 'Workspace not found or unavailable.');
+  return role;
+}
+
+function mayGrant(actor: Role | undefined, role: Role): boolean {
+  return actor === 'owner' || (actor === 'admin' && (role === 'editor' || role === 'viewer'));
+}
+
+function requireGrant(actor: Role, role: Role) {
+  if (!mayGrant(actor, role)) throw new FoundationError(403, 'Only an owner can manage owners and administrators.');
+}
+
+async function preserveOwner(client: PoolClient, workspaceId: string, previous: Role, next?: Role) {
+  if (previous !== 'owner' || next === 'owner') return;
+  const result = await client.query<{ count: number }>("SELECT count(*)::int AS count FROM membership WHERE workspace_id=$1 AND role='owner'", [workspaceId]);
+  if (result.rows[0].count <= 1) throw new FoundationError(409, 'Assign another owner before removing or changing the last owner.');
+}
+
+export async function createWorkspace(userId: string, input: unknown) {
+  parse(idInput, userId);
+  const { name } = parse(nameInput, input);
+  return transaction(async (client) => {
+    const user = await client.query('SELECT id FROM "user" WHERE id=$1', [userId]);
+    if (!user.rowCount) throw new FoundationError(401, 'Sign in to continue.');
+    const workspace = { id: randomUUID(), name };
+    await client.query('INSERT INTO workspace(id,name) VALUES($1,$2)', [workspace.id, workspace.name]);
+    await client.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')", [workspace.id, userId]);
+    return { workspace, role: 'owner' as const };
+  });
+}
+
+export async function renameWorkspace(workspaceId: string, userId: string, input: unknown) {
+  parse(idInput, workspaceId); parse(idInput, userId);
+  const { name } = parse(nameInput, input);
+  return transaction(async (client) => {
+    await lockWorkspace(client, workspaceId);
+    const role = await managerRole(client, workspaceId, userId);
+    await client.query('UPDATE workspace SET name=$1 WHERE id=$2', [name, workspaceId]);
+    return { workspace: { id: workspaceId, name }, role };
+  });
+}
+
+export async function getTeam(workspaceId: string, userId: string) {
+  parse(idInput, workspaceId); parse(idInput, userId);
+  return transaction(async (client) => {
+    const workspace = await lockWorkspace(client, workspaceId);
+    const role = await managerRole(client, workspaceId, userId);
+    const members = await client.query<{ userId: string; name: string; email: string; role: Role }>(
+      `SELECT u.id AS "userId",u.name,u.email,m.role FROM membership m JOIN "user" u ON u.id=m.user_id
+       WHERE m.workspace_id=$1 ORDER BY u.name,u.id`, [workspaceId],
+    );
+    const invitations = await client.query<Invitation>(
+      `SELECT i.id,i.email,i.role,i.expires_at AS "expiresAt" FROM workspace_invitation i
+       JOIN membership m ON m.workspace_id=i.workspace_id AND m.user_id=i.inviter_id
+       WHERE i.workspace_id=$1 AND i.expires_at>clock_timestamp()
+       AND (m.role='owner' OR (m.role='admin' AND i.role IN ('editor','viewer')))
+       ORDER BY i.created_at,i.id`, [workspaceId],
+    );
+    return { workspace, role, members: members.rows, invitations: invitations.rows };
+  });
+}
+
+export async function inviteMember(workspaceId: string, userId: string, input: unknown) {
+  parse(idInput, workspaceId); parse(idInput, userId);
+  const details = parse(invitationInput, input);
+  return transaction(async (client) => {
+    await lockWorkspace(client, workspaceId);
+    const actor = await managerRole(client, workspaceId, userId);
+    requireGrant(actor, details.role);
+    const previous = await client.query<{ role: Role }>('SELECT role FROM workspace_invitation WHERE workspace_id=$1 AND email=$2', [workspaceId, details.email]);
+    if (previous.rows[0]) requireGrant(actor, previous.rows[0].role);
+    await client.query('DELETE FROM workspace_invitation WHERE workspace_id=$1 AND email=$2', [workspaceId, details.email]);
+    const token = randomBytes(32).toString('base64url');
+    const result = await client.query<Invitation>(
+      `INSERT INTO workspace_invitation(id,workspace_id,inviter_id,email,role,token_hash,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+interval '7 days')
+       RETURNING id,email,role,expires_at AS "expiresAt"`,
+      [randomUUID(), workspaceId, userId, details.email, details.role, tokenDigest(token)],
+    );
+    return { invitation: result.rows[0], token };
+  });
+}
+
+export async function revokeInvitation(workspaceId: string, userId: string, invitationId: string): Promise<void> {
+  parse(idInput, workspaceId); parse(idInput, userId); parse(idInput, invitationId);
+  await transaction(async (client) => {
+    await lockWorkspace(client, workspaceId);
+    const actor = await managerRole(client, workspaceId, userId);
+    const invitation = await client.query<{ role: Role }>('SELECT role FROM workspace_invitation WHERE workspace_id=$1 AND id=$2', [workspaceId, invitationId]);
+    if (!invitation.rows[0]) throw new FoundationError(404, 'Invitation not found or unavailable.');
+    requireGrant(actor, invitation.rows[0].role);
+    await client.query('DELETE FROM workspace_invitation WHERE workspace_id=$1 AND id=$2', [workspaceId, invitationId]);
+  });
+}
+
+export async function changeRole(workspaceId: string, userId: string, targetUserId: string, input: unknown): Promise<void> {
+  parse(idInput, workspaceId); parse(idInput, userId); parse(idInput, targetUserId);
+  const { role } = parse(z.object({ role: roleInput }).strict(), input);
+  await transaction(async (client) => {
+    await lockWorkspace(client, workspaceId);
+    const actor = await managerRole(client, workspaceId, userId);
+    const target = await client.query<{ role: Role }>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, targetUserId]);
+    if (!target.rows[0]) throw new FoundationError(404, 'Member not found or unavailable.');
+    requireGrant(actor, target.rows[0].role); requireGrant(actor, role);
+    await preserveOwner(client, workspaceId, target.rows[0].role, role);
+    await client.query('UPDATE membership SET role=$1 WHERE workspace_id=$2 AND user_id=$3', [role, workspaceId, targetUserId]);
+    await client.query(
+      `DELETE FROM workspace_invitation WHERE workspace_id=$1 AND inviter_id=$2
+       AND ($3::text NOT IN ('owner','admin') OR ($3='admin' AND role='admin'))`, [workspaceId, targetUserId, role],
+    );
+  });
+}
+
+export async function removeMember(workspaceId: string, userId: string, targetUserId: string): Promise<void> {
+  parse(idInput, workspaceId); parse(idInput, userId); parse(idInput, targetUserId);
+  await transaction(async (client) => {
+    await lockWorkspace(client, workspaceId);
+    const actor = await managerRole(client, workspaceId, userId);
+    const target = await client.query<{ role: Role }>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, targetUserId]);
+    if (!target.rows[0]) throw new FoundationError(404, 'Member not found or unavailable.');
+    requireGrant(actor, target.rows[0].role);
+    await preserveOwner(client, workspaceId, target.rows[0].role);
+    await client.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, targetUserId]);
+    await client.query(
+      `DELETE FROM workspace_invitation WHERE workspace_id=$1
+       AND (inviter_id=$2 OR email=(SELECT lower(email) FROM "user" WHERE id=$2))`, [workspaceId, targetUserId],
+    );
+  });
+}
+
+export async function inspectInvitation(input: unknown) {
+  const { token } = parse(z.object({ token: tokenInput }).strict(), input);
+  const result = await getDatabase().pool.query<{ workspaceId: string; workspaceName: string; email: string; role: Invitation['role']; expiresAt: Date }>(
+    `SELECT w.id AS "workspaceId",w.name AS "workspaceName",i.email,i.role,i.expires_at AS "expiresAt"
+     FROM workspace_invitation i JOIN workspace w ON w.id=i.workspace_id
+     JOIN membership m ON m.workspace_id=i.workspace_id AND m.user_id=i.inviter_id
+     WHERE i.token_hash=$1 AND i.expires_at>clock_timestamp()
+       AND (m.role='owner' OR (m.role='admin' AND i.role IN ('editor','viewer')))`, [tokenDigest(token)],
+  );
+  const invitation = result.rows[0];
+  if (!invitation) unavailable();
+  return { workspace: { id: invitation.workspaceId, name: invitation.workspaceName }, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt };
+}
+
+export async function acceptInvitation(input: unknown, signedInUser?: { id: string; email: string }) {
+  const details = parse(z.object({ token: tokenInput, name: z.string().trim().min(1).max(120).optional(), password: z.string().min(12).max(128).optional() }).strict(), input);
+  const signedIn = signedInUser === undefined ? undefined : parse(z.object({ id: idInput, email: emailInput }).strict(), signedInUser);
+  const digest = tokenDigest(details.token);
+  // Discover the workspace without taking an invitation lock, then consistently
+  // lock workspace -> invitation -> email across all acceptance operations.
+  const found = await getDatabase().pool.query<{ workspace_id: string }>('SELECT workspace_id FROM workspace_invitation WHERE token_hash=$1', [digest]);
+  if (!found.rows[0]) unavailable();
+  return transaction(async (client) => {
+    const workspaceId = found.rows[0].workspace_id;
+    try { await lockWorkspace(client, workspaceId); }
+    catch (error) {
+      if (error instanceof FoundationError && error.status === 404) unavailable();
+      throw error;
+    }
+    const result = await client.query<Invitation & { inviter_id: string }>(
+      `SELECT id,email,role,expires_at AS "expiresAt",inviter_id FROM workspace_invitation
+       WHERE token_hash=$1 AND workspace_id=$2 AND expires_at>clock_timestamp() FOR UPDATE`, [digest, workspaceId],
+    );
+    const invitation = result.rows[0];
+    if (!invitation) unavailable();
+    const inviter = await client.query<{ role: Role }>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, invitation.inviter_id]);
+    if (!mayGrant(inviter.rows[0]?.role, invitation.role)) unavailable();
+    // One normalized email can receive invitations to different workspaces.
+    // Serialize its identity creation without locking another workspace.
+    await client.query('SELECT pg_advisory_xact_lock($1,hashtext($2))', [109859, invitation.email]);
+    const existing = await client.query<{ id: string; email: string }>('SELECT id,email FROM "user" WHERE lower(email)=$1', [invitation.email]);
+    let userId = existing.rows[0]?.id;
+    if (signedIn && (signedIn.id !== userId || signedIn.email !== invitation.email)) {
+      throw new FoundationError(403, 'Sign in with the email this invitation was sent to.');
+    }
+    const created = !userId;
+    if (userId && !signedIn) throw new FoundationError(409, 'Sign in with the invited email to accept this invitation.');
+    if (!userId) {
+      if (!details.name || !details.password) throw new FoundationError(400, 'Enter your name and a password between 12 and 128 characters.');
+      const password = await hashPassword(details.password);
+      userId = randomUUID();
+      await client.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [userId, details.name, invitation.email]);
+      await client.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)', [randomUUID(), userId, password]);
+    }
+    // A link can add membership, never replace an existing member's privileges.
+    await client.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3) ON CONFLICT(workspace_id,user_id) DO NOTHING', [workspaceId, userId, invitation.role]);
+    const consumed = await client.query('DELETE FROM workspace_invitation WHERE id=$1 AND expires_at>clock_timestamp() RETURNING id', [invitation.id]);
+    if (!consumed.rowCount) unavailable();
+    return { workspaceId, created, email: invitation.email };
+  });
+}

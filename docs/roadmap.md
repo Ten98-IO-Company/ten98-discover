@@ -4,6 +4,8 @@ The first usable/public V1 release requires every [parity row](parity.md), all c
 
 Implementation started with [issue #1](https://github.com/Ten98-IO-Company/ten98-monitor/issues/1): the [development foundation](foundation.md) provides local owner login, workspace authorization, persisted page views, a durable worker probe and tested local Docker startup. M1 remains incomplete: OIDC/2FA, credential encryption, budgets and the remaining setup flows are still required. No full parity row or release gate is marked complete by this foundation.
 
+[Issue #3](https://github.com/Ten98-IO-Company/ten98-monitor/issues/3) adds workspace/team screens, expiring invitation links, roles, UTC analytics and SPA/custom-event tracking, with transactional upgrades. These implement portions of P01/P02/P27/P28/P32/P33; each grouped parity requirement remains open until all of its sub-capabilities pass.
+
 ## Milestones and dependencies
 
 | Milestone | Work package | Prerequisites | Exit evidence |

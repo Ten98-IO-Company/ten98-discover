@@ -2,10 +2,9 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getConfig } from './config.ts';
-import { assertSchema, closeDatabase, getDatabase, migrationSource } from './db.ts';
+import { assertSchema, closeDatabase, getDatabase, migrationSources, pendingMigrations } from './db.ts';
 import { startWorker, stopJobs } from './jobs.ts';
 
-const version = '0001';
 class CliError extends Error {}
 
 async function setup() {
@@ -29,21 +28,18 @@ async function setup() {
 }
 
 async function migrate() {
-  const { sql, checksum } = await migrationSource();
+  await migrationSources();
   const client = await getDatabase().pool.connect();
-  let applied = false;
+  const applied: string[] = [];
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1, $2)', [109857, 1]);
     await client.query('CREATE TABLE IF NOT EXISTS schema_version (version text PRIMARY KEY, checksum text NOT NULL)');
-    const current = await client.query<{ version: string; checksum: string }>('SELECT version, checksum FROM schema_version');
-    if (current.rows.some((row) => row.version !== version || row.checksum !== checksum)) {
-      throw new CliError('Migration stopped: unknown schema version or changed migration checksum. No changes were committed.');
-    }
-    if (current.rows.length === 0) {
-      await client.query(sql);
-      await client.query('INSERT INTO schema_version(version, checksum) VALUES ($1, $2)', [version, checksum]);
-      applied = true;
+    const current = await client.query<{ version: string; checksum: string }>('SELECT version, checksum FROM schema_version ORDER BY version');
+    for (const migration of await pendingMigrations(current.rows)) {
+      await client.query(migration.sql);
+      await client.query('INSERT INTO schema_version(version, checksum) VALUES ($1, $2)', [migration.version, migration.checksum]);
+      applied.push(migration.version);
     }
     await client.query('COMMIT');
   } catch (error) {
@@ -52,7 +48,7 @@ async function migrate() {
   } finally {
     client.release();
   }
-  console.log(applied ? 'Database migration 0001 applied.' : 'Database migration 0001 already applied; checksum verified.');
+  console.log(applied.length ? `Database migrations applied: ${applied.join(', ')}.` : 'Database migrations already applied; all checksums verified.');
 }
 
 async function diagnose(checkWorker: boolean) {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { PgBoss } from 'pg-boss';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
+import { FoundationError } from './auth.ts';
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
@@ -34,6 +35,9 @@ export async function enqueueProbe(projectId: string, userId: string, requestId:
   const client = await getDatabase().pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR UPDATE OF w', [projectId]);
+    const access = await client.query('SELECT m.role FROM membership m JOIN project p ON p.workspace_id=m.workspace_id WHERE p.id=$1 AND m.user_id=$2', [projectId, userId]);
+    if (!['owner', 'admin', 'editor'].includes(access.rows[0]?.role)) throw new FoundationError(404, 'Project not found or unavailable.');
     const inserted = await client.query<{ id: string; status: string }>(
       `INSERT INTO import_probe(id, project_id, user_id, request_id) VALUES ($1, $2, $3, $4)
        ON CONFLICT (project_id, request_id) DO NOTHING RETURNING id, status`,

@@ -1,6 +1,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import { api, ApiError, errMsg } from '../lib/api'
+import { AnalyticsPanel } from '../components/AnalyticsPanel'
+import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
+import { InvitePanel } from '../components/InvitePanel'
 
 export const Route = createFileRoute('/')({ component: App })
 
@@ -11,39 +15,6 @@ type Project = { id: string; name: string; origin: string; publicKey: string; ev
 type EventsData = { events: { id: string; eventName: string; path: string; receivedAt: string }[]; total: number }
 type Job = { id: string; status: string; createdAt: string; completedAt: string | null; error: string | null }
 type SetupValues = { token: string; name: string; email: string; password: string; workspaceName: string }
-
-class ApiError extends Error { status = 0 }
-
-async function api<T>(path: string, opts: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
-  let res: Response
-  try {
-    res = await fetch(path, {
-      method: opts.method ?? 'GET',
-      credentials: 'same-origin',
-      headers: opts.body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-      signal: opts.signal,
-    })
-  } catch (e) {
-    if (e instanceof Error && e.name === 'AbortError') throw e
-    throw new ApiError('Network error. Check your connection, then try again.')
-  }
-  const text = await res.text()
-  let data: unknown = null
-  if (text !== '') { try { data = JSON.parse(text) } catch { data = null } }
-  if (!res.ok) {
-    const d = data as { error?: unknown; message?: unknown } | null
-    const fromBody = d !== null ? (typeof d.error === 'string' ? d.error : typeof d.message === 'string' ? d.message : '') : ''
-    const err = new ApiError(fromBody !== '' ? fromBody : res.status === 401 ? 'Your session has expired. Sign in again.' : `Request failed with status ${res.status}.`)
-    err.status = res.status
-    throw err
-  }
-  return data as T
-}
-
-function errMsg(e: unknown): string {
-  return e instanceof Error && e.name !== 'AbortError' ? e.message : 'Something went wrong. Try again.'
-}
 
 function fmt(iso: string): string {
   const d = new Date(iso)
@@ -87,6 +58,9 @@ function App() {
   const [jobError, setJobError] = useState('')
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
+  const [view, setView] = useState<'project' | 'team' | 'workspace'>('project')
+  const [inviteToken, setInviteToken] = useState('')
+  const [inviteSigningIn, setInviteSigningIn] = useState(false)
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
   const activeWorkspace = useRef('')
   const activeProject = useRef('')
@@ -94,9 +68,18 @@ function App() {
   const projGen = useRef(0)
 
   useEffect(() => {
+    function captureInvitation() {
+      const token = new URLSearchParams(window.location.hash.slice(1)).get('invite')
+      if (!token) return
+      setInviteToken(token); setInviteSigningIn(false)
+      // Invitation capabilities stay in memory, never query strings or browser storage.
+      window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+    }
+    captureInvitation()
+    window.addEventListener('hashchange', captureInvitation)
     const ac = new AbortController()
     void boot(ac.signal)
-    return () => ac.abort()
+    return () => { ac.abort(); window.removeEventListener('hashchange', captureInvitation) }
   }, [])
 
   async function boot(signal?: AbortSignal) {
@@ -120,9 +103,9 @@ function App() {
     }
   }
 
-  function enterApp(m: Me) {
+  function enterApp(m: Me, preferredId?: string) {
     setMe(m)
-    const ws = m.workspaces[0]
+    const ws = m.workspaces.find((w) => w.id === preferredId) ?? m.workspaces[0]
     activeWorkspace.current = ws?.id ?? ''
     wsGen.current += 1
     setWorkspaceId(ws?.id ?? '')
@@ -134,6 +117,7 @@ function App() {
   }
 
   function selectProject(id: string) {
+    setView('project')
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
@@ -148,7 +132,8 @@ function App() {
     setWorkspaceId(id)
     setProjects(null); setProjectsError('')
     selectProject('')
-    void loadProjects(id)
+    if (id) void loadProjects(id)
+    else setProjects([])
   }
 
   function resetSession() {
@@ -236,6 +221,38 @@ function App() {
   async function handleSignIn(email: string, password: string) {
     await api('/api/auth/sign-in/email', { method: 'POST', body: { email, password } })
     enterApp(await api<Me>('/api/me'))
+    setInviteSigningIn(false)
+  }
+
+  async function refreshMemberships(preferredId = activeWorkspace.current) {
+    const generation = wsGen.current
+    try {
+      const m = await api<Me>('/api/me')
+      if (wsGen.current !== generation) return
+      setMe(m)
+      const selected = m.workspaces.find((w) => w.id === preferredId) ?? m.workspaces[0]
+      if ((selected?.id ?? '') !== activeWorkspace.current) changeWorkspace(selected?.id ?? '')
+      if (!selected || !['owner', 'admin'].includes(selected.role)) setView('project')
+    } catch (e) { if (wsGen.current === generation && !guardAuth(e)) throw e }
+  }
+
+  async function invitationAccepted(email: string, _created: boolean, workspace: string) {
+    setInviteToken(''); setInviteSigningIn(false)
+    try { enterApp(await api<Me>('/api/me'), workspace) }
+    catch (e) {
+      if (e instanceof ApiError && e.status === 401) { setSignInEmail(email); resetSession() }
+      else { setPageError(errMsg(e)); setPhase('error') }
+    }
+  }
+
+  async function invitationSignIn() {
+    try {
+      if (me) {
+        try { await api('/api/auth/sign-out', { method: 'POST', body: {} }) }
+        catch (e) { if (!(e instanceof ApiError && e.status === 401)) throw e }
+      }
+      resetSession(); setInviteSigningIn(true)
+    } catch (e) { setPageError(errMsg(e)); setPhase('error') }
   }
 
   async function signOut() {
@@ -267,7 +284,10 @@ function App() {
   }
 
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
-  if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} />
+  if (inviteToken && !inviteSigningIn) return <main className='center'><section className='card auth'><InvitePanel token={inviteToken} signedInEmail={me?.user.email ?? null}
+    onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={resetSession} /></section></main>
+  if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn}
+    onCancel={inviteToken ? () => setInviteSigningIn(false) : undefined} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
   const canWrite = workspace !== undefined && ['owner', 'admin', 'editor'].includes(workspace.role)
@@ -287,6 +307,10 @@ function App() {
             {(me?.workspaces ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         </div>
+        <nav aria-label='Workspace settings'>
+          <button className={view === 'workspace' ? 'proj active' : 'proj'} onClick={() => setView('workspace')}>Create workspace</button>
+          {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'team' ? 'proj active' : 'proj'} onClick={() => setView('team')}>Manage team</button>}
+        </nav>
         <nav aria-label='Projects'>
           <p className='side-label'>Projects</p>
           {projects === null && <p role='status' className='dim'>Loading…</p>}
@@ -312,30 +336,34 @@ function App() {
         <p className='banner' role='note'><strong>Development foundation.</strong> SEO, AI insights, data imports and OIDC sign-in are planned but not available yet. Everything shown here works against live data.</p>
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError}</div>}
-        {!workspace && <section className='card'><p>No workspace is linked to this account.</p></section>}
-        {workspace && project === null && canWrite && (
+        {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { await refreshMemberships(id); setView('project') }} onUnauthorized={resetSession} /></section>}
+        {view === 'team' && workspace && me && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={resetSession} />}
+        {view === 'project' && !workspace && <section className='card'><p>No workspace is linked to this account.</p><button className='btn primary' onClick={() => setView('workspace')}>Create workspace</button></section>}
+        {view === 'project' && workspace && project === null && canWrite && (
           <section className='card' aria-labelledby='create-h'>
             <h1 id='create-h'>{projects !== null && projects.length > 0 ? 'New project' : 'Create your first project'}</h1>
             <CreateProjectForm key={workspaceId} onCreate={createProject} />
           </section>
         )}
-        {workspace && project === null && !canWrite && (
+        {view === 'project' && workspace && project === null && !canWrite && (
           <section className='card'>
             <h1>No project to show</h1>
             <p>Your role in this workspace is view-only. Ask a workspace admin to create a project or give you access to one.</p>
           </section>
         )}
-        {workspace && project !== null && (
+        {view === 'project' && workspace && project !== null && (
           <>
             <header className='proj-head'>
               <h1>{project.name}</h1>
               <p className='dim mono'>{project.origin}</p>
             </header>
+            <AnalyticsPanel key={project.id} projectId={project.id} onUnauthorized={resetSession} />
             <section className='card' aria-labelledby='ev-h' aria-busy={eventsBusy}>
               <div className='row between'>
                 <div>
-                  <h2 id='ev-h'>Page views</h2>
+                  <h2 id='ev-h'>Recent events</h2>
                   <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
+                  <p className='dim'>All received events, across all dates</p>
                   <p className='dim'>{lastReceived !== null ? `Last received ${fmt(lastReceived)}` : 'Nothing received yet.'}</p>
                 </div>
                 <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
@@ -344,7 +372,7 @@ function App() {
               {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
-                  <p><strong>No page views recorded yet.</strong></p>
+                  <p><strong>No events recorded yet.</strong></p>
                   <p>Install the snippet below on {project.origin}, open a page on that site, then choose Refresh events. Counts include only events the collector has persisted.</p>
                 </div>
               )}
@@ -374,6 +402,7 @@ function App() {
                 {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
               </div>
               <p className='dim footnote'>Install the snippet on {project.origin}, visit a page, then refresh events to confirm delivery.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
+              <p className='dim footnote'>Page loads and SPA path changes are tracked automatically. After the script loads, call <code>window.ten98.track('signup')</code> for a custom event. Use fixed event names; never include personal details. Query strings, fragments and event properties are not collected.</p>
             </section>
             <section className='card' aria-labelledby='wc-h' aria-busy={checkBusy || jobsBusy}>
               <div className='row between'>
@@ -453,7 +482,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   )
 }
 
-function SignInForm({ initialEmail, onSignIn }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void> }) {
+function SignInForm({ initialEmail, onSignIn, onCancel }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onCancel?: () => void }) {
   const [email, setEmail] = useState(initialEmail)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -479,6 +508,7 @@ function SignInForm({ initialEmail, onSignIn }: { initialEmail: string; onSignIn
           <input id='si-pw' type='password' autoComplete='current-password' required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {error !== '' && <div role='alert' className='alert'>{error}</div>}
         <button className='btn primary' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        {onCancel && <button type='button' className='btn' onClick={onCancel}>Back to invitation</button>}
       </form>
     </main>
   )

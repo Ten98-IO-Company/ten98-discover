@@ -54,7 +54,7 @@ export const eventInput = z
   .object({
     siteKey: z.uuid(),
     eventId: z.uuid(),
-    name: z.literal('page_view'),
+    name: z.string().regex(/^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/),
     url: z.string().max(2048).refine(isHttpUrl),
   })
   .strict();

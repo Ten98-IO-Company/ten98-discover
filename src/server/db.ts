@@ -17,20 +17,36 @@ export function getDatabase() {
 }
 export async function closeDatabase() { if (database) { await database.pool.end(); database = undefined; } }
 
-let migration: Promise<{ sql: string; checksum: string }> | undefined;
-export function migrationSource() {
-  if (!migration) migration = (async () => {
+const migrationFiles = ['0001_foundation.sql', '0002_teams.sql', '0003_analytics.sql'] as const;
+type Migration = Readonly<{ version: string; filename: string; sql: string; checksum: string }>;
+type AppliedMigration = Readonly<{ version: string; checksum: string }>;
+let migrations: Promise<readonly Migration[]> | undefined;
+
+export function migrationSources(): Promise<readonly Migration[]> {
+  if (!migrations) migrations = Promise.all(migrationFiles.map(async (filename) => {
     // Git line-ending conversion must not change a migration's identity across host operating systems.
-    const sql = (await readFile(join(process.cwd(), 'migrations', '0001_foundation.sql'), 'utf8')).replace(/\r\n?/g, '\n');
-    return { sql, checksum: createHash('sha256').update(sql).digest('hex') };
-  })().catch((error) => { migration = undefined; throw error; });
-  return migration;
+    const sql = (await readFile(join(process.cwd(), 'migrations', filename), 'utf8')).replace(/\r\n?/g, '\n');
+    return Object.freeze({ version: filename.slice(0, 4), filename, sql, checksum: createHash('sha256').update(sql).digest('hex') });
+  })).then((sources) => Object.freeze(sources)).catch((error) => { migrations = undefined; throw error; });
+  return migrations;
+}
+
+// Preserve the original foundation checksum contract used by existing integration checks.
+export async function migrationSource() { return (await migrationSources())[0]; }
+
+function schemaMismatch() {
+  return Object.assign(new Error('Database schema is incompatible with this application. Use the matching image and migrations.'), { code: 'SCHEMA_MISMATCH' });
+}
+
+export async function pendingMigrations(applied: readonly AppliedMigration[]): Promise<readonly Migration[]> {
+  const sources = await migrationSources();
+  if (applied.length > sources.length || applied.some((row, index) => row.version !== sources[index].version || row.checksum !== sources[index].checksum)) {
+    throw schemaMismatch();
+  }
+  return sources.slice(applied.length);
 }
 
 export async function assertSchema() {
-  const { checksum } = await migrationSource();
-  const { rows } = await getDatabase().pool.query<{ version: string; checksum: string }>('SELECT version, checksum FROM schema_version');
-  if (rows.length !== 1 || rows[0].version !== '0001' || rows[0].checksum !== checksum) {
-    throw Object.assign(new Error('Database schema is incompatible with this application. Use the matching image and migrations.'), { code: 'SCHEMA_MISMATCH' });
-  }
+  const { rows } = await getDatabase().pool.query<AppliedMigration>('SELECT version, checksum FROM schema_version ORDER BY version');
+  if ((await pendingMigrations(rows)).length !== 0) throw schemaMismatch();
 }

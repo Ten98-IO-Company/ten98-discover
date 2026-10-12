@@ -1,6 +1,6 @@
 # Accepted brief and prompt critique
 
-Planning baseline: 2026-10-12. This repository contains a plan, not a working application.
+Planning baseline: 2026-10-12. The brief below records the original planning request. The owner subsequently authorized coding; the repository now contains a [working development build](foundation.md). Historical instructions limiting that planning task to documentation do not limit the current implementation work.
 
 ## Why the original prompt needed refinement
 

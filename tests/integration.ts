@@ -6,6 +6,8 @@ import type { Request as BossRequest, SendOptions } from 'pg-boss';
 import { getConfig } from '../src/server/config.ts';
 import { closeDatabase, getDatabase, migrationSource } from '../src/server/db.ts';
 import { enqueueProbe, getBoss, reconcileProbes, stopJobs } from '../src/server/jobs.ts';
+import { runAnalyticsChecks } from './analytics-integration.ts';
+import { runTeamsChecks } from './teams-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -169,7 +171,7 @@ try {
   await expectStatus(`/api/workspaces/${workspaceA}/projects`, 404, { method: 'POST', cookie: other.cookie, body: { name: 'Intrusion', origin: 'https://intrusion.integration.test' } });
   await expectStatus(`/api/workspaces/${workspaceA}/projects`, 200, { cookie: viewer.cookie });
   await expectStatus(`/api/workspaces/${workspaceA}/projects`, 404, { method: 'POST', cookie: viewer.cookie, body: { name: 'Viewer write', origin: 'https://viewer.integration.test' } });
-  for (const endpoint of ['events', 'jobs']) {
+  for (const endpoint of ['events', 'analytics', 'jobs']) {
     await expectStatus(`/api/projects/${projectA.id}/${endpoint}`, 404, { cookie: other.cookie });
     await expectStatus(`/api/projects/${projectB.id}/${endpoint}`, 404, { cookie: ownerCookie });
     await expectStatus(`/api/projects/${projectA.id}/${endpoint}`, 200, { cookie: viewer.cookie });
@@ -305,6 +307,10 @@ try {
   }
   console.log('PASS terminal/missing queue reconciliation preserves healthy and completed work');
 
+  stage = 'workspace and invitation lifecycle';
+  await runTeamsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  stage = 'analytics aggregation and custom events';
+  await runAnalyticsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, workspaceId: workspaceA, foreignProjectId: projectB.id });
   stage = 'session revocation';
   await expectStatus('/api/auth/sign-out', 200, { method: 'POST', cookie: other.cookie, body: {} });
   await expectStatus('/api/me', 401, { cookie: other.cookie });

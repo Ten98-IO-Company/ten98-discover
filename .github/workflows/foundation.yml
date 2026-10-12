@@ -72,6 +72,32 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm check:plan
+      - name: Verify original-install upgrade
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import pg from 'pg';
+          const client = new pg.Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 5000 });
+          try {
+            await client.connect();
+            await client.query('CREATE DATABASE ten98_upgrade');
+          } catch {
+            console.error('Could not prepare the isolated migration test database.');
+            process.exitCode = 1;
+          } finally { await client.end(); }
+          if (!process.exitCode) {
+            const database = new URL(process.env.DATABASE_URL);
+            database.pathname = '/ten98_upgrade';
+            const result = spawnSync(process.execPath, ['tests/migrations-integration.ts'], {
+              env: { ...process.env, DATABASE_URL: database.href }, stdio: 'inherit', timeout: 120_000,
+            });
+            if (result.status !== 0) {
+              console.error('Original-install upgrade checks did not complete successfully.');
+              process.exitCode = 1;
+            }
+          }
+          NODE
       - name: Verify real web and worker integration
         shell: bash
         env:
