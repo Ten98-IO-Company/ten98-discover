@@ -16,10 +16,12 @@ An MIT, Docker-first plan for one application combining web analytics, SEO resea
 8. [Milestones, acceptance gates and work packages](docs/roadmap.md)
 9. [Kimi/GPT development workflow and guardrails](docs/kimi-workflow.md)
 10. [One-snippet pixels, platform report imports and alias domains](docs/tracking.md)
+11. [Setup critique, deployment journey and native connection/OIDC flows](docs/onboarding.md)
 
 ## Product direction
 
 - One workspace/project model, local login, optional OIDC, team roles, and scoped API/MCP access.
+- Guided local/team deployment, resumable first-result setup, native provider app registration and account connection flows; no Zernio dependency.
 - Analytics through replays, heatmaps and advanced reports; search research, rankings, backlinks, audits, Google integrations and local SEO; AI prompt sampling, citations, comparisons and evidence-backed opportunities.
 - One header snippet centrally loads official Meta, Google, Cloudflare, TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X tags directly in the browser; separate read-only account connections import their reports.
 - Canonical, serving and redirect-alias domains share project context while redirect requests, visits and overlapping backlinks retain distinct measurement rules.

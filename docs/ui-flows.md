@@ -25,8 +25,9 @@ Workspace switcher / Project selector
   Reports     Library · Templates · Shares
   Assistant   Project conversations and approved actions
   Operations  Jobs · Alerts · Usage
+  Connections Native accounts · Selected assets · Import coverage · Reconnect
   Settings    Project · Team · Providers · Recording · API/MCP
-Instance settings: Identity · Storage · Email · Backups · Health (operators only)
+Instance settings: Identity · Integration apps · Storage · Email · Backups · Health (operators only)
 ```
 
 Keep the primary sidebar short; reveal module subnavigation on entry. Persist workspace/project/time selections in shareable URLs but never credentials. Mobile navigation is a drawer; dense tables scroll within their region, and key decisions stay readable at 360px.
@@ -45,50 +46,49 @@ Default light theme, dark/high-contrast variants after token validation within V
 
 ## Flow 1 — install to first trustworthy event
 
-User: operator/analyst with a domain. Success: an authenticated project shows one accepted test visit with diagnostic evidence. Paid provider setup is optional in this flow.
+User: operator/analyst with a domain. Success: an authenticated project shows one accepted test visit with diagnostic evidence, or a selected source report with coverage. The [setup critique and complete wireframes](onboarding.md) supersede the original separate claim/sign-in/workspace wizard. Paid provider setup, email and OIDC are optional in this first-result path; their V1 capabilities remain required.
 
 ```mermaid
 flowchart TD
-  B[Claim installation] --> L[Sign in]
-  L --> W[Create workspace]
-  W --> P[Create project]
-  P --> T[Install tracker]
-  T --> V{Event received?}
-  V -->|Yes| O[Project overview]
-  V -->|No| D[Tracker diagnostics]
-  D -->|Retest| T
-  P -->|Configure later| O
-  B -->|Invalid bootstrap token| B
-  L -->|OIDC unavailable| R[Local recovery]
+  A[Host-side deployment instructions] --> B[Secure installation]
+  B -->|Owner signed in and default workspace created| P[Add first project]
+  P --> T[Get first result]
+  T -->|Choose tracker or native import| V[Verify result]
+  V -->|Accepted event or report| O[Project overview]
+  V -->|Fix setup and retry| T
+  T -->|Configure later| O
+  B -->|Invalid setup token| B
+  A -->|Existing installation| L[Sign in]
+  L --> O
+  L -->|OIDC unavailable| R[Local operator recovery]
   R --> L
 ```
 
 | Screen | Intent | Primary action | Recovery |
 |---|---|---|---|
-| Claim installation | Establish owner safely | Create owner | Explain expired/invalid token; operator regenerates locally |
-| Sign in | Authenticate local/OIDC identity | Sign in | Recovery/2FA backup code; never bypass authorization |
-| Create workspace | Separate a client/team | Create workspace | Retry saved draft; duplicate names do not expose another workspace |
-| Create project | Record domain, name and timezone | Create project | URL validation; manual brand setup if research unavailable |
-| Install tracker | Add the snippet to the site | Verify installation | CSP, blocker, wrong website key and origin diagnostics |
-| Tracker diagnostics | Explain no event | Retest | Retry, edit site configuration or open integration instructions |
+| Secure installation | Establish owner and default workspace safely | Create owner | Expired token regenerated locally; existing state never reopens owner claim |
+| Sign in | Authenticate returning local/OIDC identity | Sign in | Recovery/2FA backup code; never bypass authorization |
+| Add first project | Record domain, name and timezone | Create project | Manual brand setup works without providers; workspace rename is optional |
+| Get first result | Choose visits, existing reports, search or audit | Continue | Configure later; provider prerequisites affect only selected outcome |
+| Verify result | Prove tracker acceptance or selected-source read/import | Verify setup | CSP/origin checks or authorization/account/worker diagnostics; retain draft |
 | Project overview | Read collected evidence | Inspect finding | Show “No visits yet” with install link, not synthetic data |
 
 ```text
-Claim installation                 Create project
+Secure installation                Add first project
 +--------------------------------+ +--------------------------------------+
 | Set up ten98-monitor            | | Add a project                        |
-| Bootstrap token [••••••••]      | | Name [Example Store]                 |
+| Setup token     [••••••••]      | | Name [Example Store]                 |
 | Owner email     [             ] | | Website [https://example.com]        |
 | Password       [             ] | | Timezone [Asia/Dubai]                |
 | [Create owner]                 | | [Create project]   Cancel            |
 +--------------------------------+ +--------------------------------------+
 
-Install tracker
+Get first result / Verify result
 +-----------------------------------------------------------------------+
-| Example Store / Install tracker                                      |
-| Add this script to the website. [Copy snippet]                        |
+| Example Store / Choose website visits or import existing reports      |
+| For website visits: add this script. [Copy snippet]                    |
 | Last event: none · Recording: off · Optional providers: not configured |
-| [Verify installation]    Configure later                             |
+| [Verify setup]    Configure later                                    |
 | Diagnostics: script fetched / request blocked / event accepted        |
 +-----------------------------------------------------------------------+
 ```
@@ -214,6 +214,12 @@ The [tracking flow and wireframes](tracking.md#ui-flow-and-wireframes) add: Trac
 The [domain flow](tracking.md#canonical-domains-serving-domains-and-redirect-aliases) adds canonical, serving and redirect roles, verification and redirect checks. Redirect aliases show server/edge observation setup instead of a misleading pixel-install instruction. Alias requests, landing visits and backlinks are distinct evidence.
 
 Both flows reuse the shared project scope, date filters, evidence drawer, accessible forms, drafts and loading/error states. No ad-management or DNS-editing controls are introduced.
+
+## Flow 6 — native connections and identity setup
+
+The [native connection journey](onboarding.md#flow-b-native-accounts-and-imports) is Choose connection → operator readiness if needed → Authorize account → Select assets → Review import → Import status → Source report. Integration app registration is instance-scoped; accounts/tokens/imports remain workspace-scoped. Connecting reports and publishing pixels are independent actions. Broad upstream grants such as Google Ads OAuth must not be mislabeled read-only; ten98 enforces reporting-only operations.
+
+The [OIDC journey](onboarding.md#flow-c-oidc-without-locking-out-the-operator) is Add identity provider → Register client → Test sign-in → Review access → Enable provider, with local operator recovery retained. Draft testing does not replace working configuration, link accounts or commit memberships. Explicit identity linking requires proof of both identities. Returning users resume saved setup rather than repeat owner/project creation.
 
 ## Screen states and accessibility contract
 

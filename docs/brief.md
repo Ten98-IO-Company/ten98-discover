@@ -49,6 +49,10 @@ Add canonical domains, additional serving domains and redirect aliases. The requ
 
 The [refined prompt and specification](tracking.md) define the complete addition. P70–P81 are new V1 requirements; no original parity requirement is removed. Advertising CAPI middleware, campaign editing, arbitrary custom tag execution and automatic DNS/redirect edits are outside this addition.
 
+## Accepted setup refinement
+
+The owner chose native platform integrations after evaluating Zernio and requested a critique and easier deployment, identity and account-connection flows. The [setup design](onboarding.md) separates host installation, instance OAuth app registration, workspace authorization and browser tag publication. It adds a resumable first-result journey, tested OIDC activation/recovery, operator handoffs and measurable usability gates. These refine existing requirements and preserve all 81 V1 rows. Optional business-outcome/social-reporting additions from the earlier discussion are not adopted by this decision. No installer or application is implemented in this planning task.
+
 ## Remaining function decisions
 
 These do not prevent a full plan. Ask before implementing the dependent feature.

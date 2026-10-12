@@ -4,6 +4,8 @@ Baseline: P01–P69 cover the pinned Elmo, Umami and OpenSEO revisions in [resea
 
 Source groups link to immutable path/line evidence and representative traces in the research document. `Local`, `MCP`, and `hosted flag` describe upstream exposure, not ten98-monitor exclusions. Hosted technical capabilities remain included. A missing third-party credential can produce a clear setup state; a provider-dependent feature still requires a successful configured-provider check to pass release acceptance.
 
+The [setup and native integration acceptance checks](onboarding.md#implementation-acceptance-and-usability-study) refine existing identity, onboarding, provider, deployment and tracking rows. They preserve the 81-row baseline and add no reduced release scope. Native connections are the owner-selected route; Zernio is excluded from the implementation plan.
+
 | ID | V1 capability | Upstream / exposure | Source trace group | Observable acceptance | Release | Status |
 |---|---|---|---|---|---|---|
 | P01 | Organizations, projects, brands, sites and multiple domains/aliases | Elmo + OpenSEO; local/hosted flags | [E1](research.md#e1-elmo-brands-prompts-and-providers), [O1](research.md#o1-openseo-research-ranks-and-backlinks) | Create two organizations with multiple sites/brands, switch context, update aliases, and prove cross-tenant IDs cannot read or mutate records. | V1 | planned |

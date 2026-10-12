@@ -21,6 +21,8 @@ Ponytail and UX Flow Wireframer turn the idea into observable outcomes; the Clou
 
 ## Product boundary and reuse
 
+Owner decision after provider evaluation: use **native integrations**, not Zernio. The [setup and connection specification](onboarding.md#flow-b-native-accounts-and-imports) adds operator app registration, permission-aware account/property discovery, import preview, resumable authorization and actionable provider-approval states. This refines P71/P76/P78/P81 without changing the platform list. A reporting-only connector can require a broad upstream OAuth scope; disclose that and enforce allowed operations server-side.
+
 The user outcome is: **install once, configure supported pixels centrally, and inspect your events alongside provider reports**. A site can use native analytics only, connect report imports only, or enable selected browser tags. Connecting a reporting account never activates a pixel. Adding a pixel never proves reporting access. There is no requirement to route third-party pixel requests through the ten98 server.
 
 Reuse P27–P31 ingestion, P39 revenue, P57–P58 Google connections/reports, P66 durable jobs, P68 retention, and shared auth/credentials. Extend the existing tracker rather than installing a second ten98 tracker. Preserve the existing Umami compatibility path with explicit migration mapping.

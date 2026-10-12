@@ -60,6 +60,22 @@ Scope and improved prompt: [tracking.md](tracking.md). These packages extend the
 
 Kimi receives only approved public contracts, synthetic fixtures and explicit file allowlists. GPT owns consent/security/metric decisions, provider-access interpretation, design and final checks. Real accounts/tokens/customer logs are never supplied to Kimi; initial docs work uses the tools-disabled profile.
 
+## Deployment and onboarding backlog
+
+Owner decision: use native integrations, without Zernio. The [setup critique and flows](onboarding.md) refine existing V1 requirements; they do not change the 81-row baseline or authorize a smaller release. Follow these flows during M1 and connector implementation, rather than treating setup as an M6 documentation task. Any effort estimate must include provider registration/review work and distinguish active work from external waiting time.
+
+| ID / existing requirements | Owner | Deliverable | Acceptance |
+|---|---|---|---|
+| ONB-01 / P63–P69/P81 | GPT design; Kimi bounded packaging | Versioned release bundle, local/public paths, same-image setup/diagnose and optional Caddy recipe | Tested published artifacts; idempotent secret init, explicit migration, loopback local mode, real HTTPS production event, no host socket or source build |
+| ONB-02 / P01–P04/P08/P10 | GPT design; Kimi approved forms | Atomic owner claim, automatic sign-in, default workspace and resumable first-result checklist | No provider/SMTP requirement; returning instance cannot be reclaimed; duplicate submission safe; empty overview usable |
+| ONB-03 / P10/P57–P58/P71/P76 | GPT auth; Kimi routine forms | Instance Integration apps and workspace Connections catalogue, native recipes, callback generation and operator handoff | Prerequisite ownership explicit; broad provider permissions disclosed; tenant/callback/asset attacks rejected; current Google Ads access recipe |
+| ONB-04 / P57–P58/P76–P78 | GPT contracts; Kimi one connector per task | Authorize/select/review/import/status/reconnect flows for every required source | Selected-account read, partial scopes, empty assets, access review, quota, restart/refresh; reconnection preserves history and never enables pixel |
+| ONB-05 / P02–P04 | GPT security; Kimi bounded UI copy/forms | OIDC discovery/draft/test/enable, identity-link/invite proof and recovery | Old policy survives failed test; exact issuer/subject binding; no email-only merge, unexpected admin mapping or SSRF; recovery/offboarding tested |
+| ONB-06 / P10/P63–P69/P81 | GPT recovery; Kimi diagnostics UI | Role-aware app/worker/source status, config source precedence, upgrade/restore checklist and redacted diagnostics | Missing key stops safely; no phantom progress; restore pauses outbound work; topology-specific instructions and no volume deletion |
+| ONB-07 / P07/P08/P10/P78 | GPT design and independent study; Kimi approved wording | Accessibility and first-time user walkthroughs covering all three setup journeys | All 12 onboarding checks; measured completion/help/time, explicit external waits, keyboard/screen reader/RTL/reflow; targets not advertised before validation |
+
+These packages reuse foundation/auth, native adapter and operations work above; do not implement a parallel setup framework. Core product parity, native provider integration and recovery tests still gate V1. Kimi receives only bounded public contracts/synthetic fixtures; GPT owns architecture, access decisions and final testing.
+
 ## Acceptance evidence format
 
 For each parity ID record: named sub-capability, baseline path/version, expected result, implementation path, runnable command, fixture or controlled integration setup, actual result/date/revision, coverage limitations and GPT reviewer. A grouped row passes only when every named sub-capability has evidence.
@@ -105,6 +121,7 @@ These are **acceptance targets for measurement**, not existing performance claim
 3. No transitive license or copied-asset blocker; notices/SBOM complete; dependency/runtime versions pinned and reviewed.
 4. No open critical/high auth, tenant, browser-escape, secret exposure or data-loss defect; documented limitations do not substitute for required features.
 5. Accessibility checks and representative operator/analyst walkthroughs pass with error/empty/loading states.
+   Include the [onboarding study and acceptance cases](onboarding.md#implementation-acceptance-and-usability-study); operator registration and third-party approval waits are visible in completion evidence.
 6. Restore, migration, rollback and historical-data reconciliation pass; original deployments remain available until cutover accepted.
 7. Multiarch images and actual Compose configurations verified; documentation starts from an empty host and records supported versions.
 8. GPT reviews final code and runs final checks independently. Owner accepts any unresolved business-function decisions before V1 release.

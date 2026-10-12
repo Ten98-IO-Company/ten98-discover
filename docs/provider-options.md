@@ -25,6 +25,8 @@ Do not build a generic plugin marketplace or arbitrary endpoint scripting system
 
 ## Credentials and connection UI
 
+The owner selected **native integrations**, with no Zernio adapter or required OAuth broker. The [native connection flow](onboarding.md#flow-b-native-accounts-and-imports) separates operator-owned app registration from workspace account authorization, explicit asset selection and verified report access. Identity uses its own [OIDC test-and-enable flow](onboarding.md#flow-c-oidc-without-locking-out-the-operator); signing in never grants advertising/report permissions. Provider review may require external work before Connect becomes available, while native analytics remains usable.
+
 All fields below are server-side configuration or encrypted connection records, never browser/tracker build variables.
 Secrets are write-only in the UI, redacted in logs/exports, and decryptable only by the relevant server job.
 Separate provider tokens by function and environment; allow a connection to be revoked without deleting historical results.

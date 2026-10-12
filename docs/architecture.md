@@ -35,7 +35,7 @@ The M1 integration spike must prove a tracker event, a queued provider stub, and
 | AI/SEO data | OpenRouter + DataForSEO primary, retain source adapter parity | Direct route or optional CF AI Gateway; adapter capabilities remain explicit |
 | Email | SMTP OR Cloudflare Email Sending REST | Shared delivery/outbox semantics; owner configures sender and recipients |
 | Validation tools | Existing Vitest and Playwright patterns; Docker integration checks | Reuse relevant upstream fixtures and license them correctly; no second framework |
-| Distribution | One application image with web/worker/migrate commands, separate optional browser image | Prebuilt native runtime; no cloud-emulator requirement or production source build |
+| Distribution | One application image with web/worker/migrate and bounded operator setup/diagnose commands, separate optional browser image | Prebuilt native runtime; no cloud-emulator requirement, production source build or Docker socket in the app |
 
 Versions are a proposal informed by the pinned sources, not an instruction to use mutable latest tags. Before importing, resolve one lockfile, check runtime compatibility, license inventory and advisories, and record the supported versions.
 
@@ -81,6 +81,8 @@ Gateway routing is selected before a provider request, not an extra second model
 | Operations | Jobs, provider requests, usage reservations/settlements, alerts/outbox, reports/templates/shares, audit log |
 
 Use explicit module folders inside one repository (`analytics`, `seo`, `visibility`, `identity`, `jobs`, `providers`, `reports`, `tracking`). These are code boundaries, not independently deployed services. Shared auth, spending and job services are justified by actual repeated consumers; do not create a generic plugin framework.
+
+Native integration app registrations are instance-owned encrypted configuration; OAuth connections, selected assets and report jobs remain workspace-scoped and independently authorized. Reuse the existing credential/job services and small server-side setup drafts rather than a workflow engine. The [setup design](onboarding.md) specifies one-time bootstrap, idempotent secret initialization, draft OIDC tests, configuration-source precedence and connection state transitions. No central OAuth broker or Zernio service is required. Browser tag configuration and report authorization remain separate contracts.
 
 All project-owned records carry workspace/project ownership. Cross-table foreign keys and uniqueness enforce valid ownership where possible. Request handlers, background jobs, MCP tools and exports call the same authorization/domain functions. Identifier obscurity is never access control. Paginate list/export APIs; validate limits and parameterize SQL.
 

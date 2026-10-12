@@ -8,9 +8,11 @@ bundled browser execution or Cloudflare Browser Rendering (now Browser Run), opt
 and email alerts through SMTP or Cloudflare Email Sending REST. These are release requirements, not deferred ideas.
 See [provider options](provider-options.md) for verified service constraints, setup, cost accounting, and test gates.
 
+The [setup critique and operator journey](onboarding.md#flow-a-deployment-to-a-first-result) define local evaluation versus public team deployment, a versioned release bundle, same-image setup/diagnosis commands, default-workspace creation, resumable setup and recovery. Those commands and an optional bundled Caddy recipe must be implemented and tested before publishing install instructions. Optional account configuration belongs in the authenticated UI; deployment-managed values are labeled read-only there. App, worker, public origin and connected-source readiness remain distinct.
+
 ## Smallest deployment that supports the product
 
-- One TypeScript repository and one production image, with explicit `web`, `worker`, and `migrate` commands.
+- One TypeScript repository and one production image, with explicit `web`, `worker`, and `migrate` commands plus bounded operator `setup`/`diagnose` commands; no Docker socket or web-controlled host updater.
 - Default Compose: one web container, one worker container, and one PostgreSQL container with a persistent volume.
 - Selecting bundled browser execution adds an isolated browser image built from the same repository; the Cloudflare option needs no local browser container.
 - The web process serves the UI, authenticated API/MCP, public tracker, and collection endpoints.
@@ -151,6 +153,7 @@ Retention must not delete objects needed by retained backups.
 The operator selects schedule, destination, retention, and recovery targets; installation docs include an off-host example.
 The restore drill provisions an empty instance, restores data and keys, verifies sample events/replays/reports and workspace permissions,
 then verifies encrypted provider/OAuth credentials can be read without automatically enabling paid jobs.
+Restore also pauses report imports, outgoing email and tag publication until the operator validates the new origin, credentials and configuration epoch; resuming one function does not implicitly enable the others.
 Report backup age and the last verified restore; do not equate a successful upload with a tested recovery.
 
 Upgrade procedure: review release/schema notes, take a recoverable backup, pause scheduled dispatch, run migration, start web/worker,
@@ -179,6 +182,7 @@ Deployment acceptance must exercise every required module, including the resourc
 - Domains: canonical/serving/redirect aliases, authenticated server/edge observations, safe redirect checks and non-overlapping SEO/property aggregation.
 - Both fresh bundled-DB install and external-DB install; local artifacts and the optional external store.
 - Local login and OIDC; revoked sessions/keys; tenant isolation; protected MCP; public collection independent of identity-provider availability.
+- Resumable local/public setup, tested OIDC draft activation/recovery, native integration app registration and all [onboarding acceptance checks](onboarding.md#implementation-acceptance-and-usability-study); no blanket one-click-provider claim.
 - Worker crash/retry, exhausted credit, missing optional credentials, duplicate enqueue, and deployment with scheduling disabled.
 - Migration contention, interrupted migration recovery, supported upgrade path, verified restore, and a cold host restart.
 - Vanilla Compose plus the documented deployment-importer target; two side-by-side installs without DNS or volume collision.
