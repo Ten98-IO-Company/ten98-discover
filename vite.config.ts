@@ -4,5 +4,5 @@ import react from '@vitejs/plugin-react';
 import { nitro } from 'nitro/vite';
 
 export default defineConfig({
-  plugins: [tanstackStart(), nitro({ preset: 'node-server' }), react()],
+  plugins: [tanstackStart(), nitro({ preset: 'node-server', plugins: ['./src/server/shutdown.ts'] }), react()],
 });

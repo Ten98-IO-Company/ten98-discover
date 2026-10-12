@@ -3,6 +3,7 @@ import { PgBoss } from 'pg-boss';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
+import { registerResourceCleanup } from './resource-cleanup.ts';
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
@@ -13,6 +14,7 @@ let workerStarted = false;
 
 export function getBoss(): Promise<PgBoss> {
   if (!bossPromise) {
+    registerResourceCleanup('jobs', stopJobs);
     const boss = new PgBoss({ connectionString: getConfig().databaseUrl, schedule: false, connectionTimeoutMillis: 5000 });
     boss.on('error', () => console.error('Job queue unavailable; check database availability.'));
     bossPromise = (async () => {

@@ -5,6 +5,7 @@ import pg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from './schema.ts';
 import { getConfig } from './config.ts';
+import { registerResourceCleanup } from './resource-cleanup.ts';
 
 let database: { pool: pg.Pool; db: ReturnType<typeof drizzle<typeof schema>> } | undefined;
 export function getDatabase() {
@@ -12,6 +13,7 @@ export function getDatabase() {
     const pool = new pg.Pool({ connectionString: getConfig().databaseUrl, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, statement_timeout: 10000 });
     pool.on('error', () => console.error('Database connection failed; check database availability.'));
     database = { pool, db: drizzle(pool, { schema }) };
+    registerResourceCleanup('database', closeDatabase);
   }
   return database;
 }
