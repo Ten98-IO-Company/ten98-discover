@@ -5,6 +5,7 @@ import { api, ApiError, errMsg } from '../lib/api'
 import { AnalyticsPanel } from '../components/AnalyticsPanel'
 import { AnalyticsSettingsPanel } from '../components/AnalyticsSettingsPanel'
 import { DomainsPanel } from '../components/DomainsPanel'
+import ReportsPanel from '../components/ReportsPanel'
 import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
 import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
@@ -67,7 +68,7 @@ function App() {
   const [jobError, setJobError] = useState('')
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
-  const [view, setView] = useState<'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains'>('project')
+  const [view, setView] = useState<'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports'>('project')
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState('')
   const oidcProof = useRef<string | undefined>(undefined)
@@ -392,11 +393,12 @@ function App() {
         {authNotice && <div role='alert' className='alert'>{authNotice} <button className='btn ghost' onClick={() => setAuthNotice('')}>Dismiss</button></div>}
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError}</div>}
-        {project && workspace && ['project','destinations','collection','domains'].includes(view) && <header className='proj-head'>
+        {project && workspace && ['project','destinations','collection','domains','reports'].includes(view) && <header className='proj-head'>
           <h1>{project.name}</h1>
           <p className='dim mono'>{project.origin}</p>
           <nav className='row' aria-label='Project sections' style={{marginTop: 12}}>
             <button className={view === 'project' ? 'btn primary' : 'btn'} aria-current={view === 'project' ? 'page' : undefined} onClick={() => setView('project')}>Analytics</button>
+            <button className={view === 'reports' ? 'btn primary' : 'btn'} aria-current={view === 'reports' ? 'page' : undefined} onClick={() => setView('reports')}>Reports</button>
             <button className={view === 'collection' ? 'btn primary' : 'btn'} aria-current={view === 'collection' ? 'page' : undefined} onClick={() => setView('collection')}>Collection and privacy</button>
             {['owner','admin'].includes(workspace.role) && <button className={view === 'destinations' ? 'btn primary' : 'btn'} aria-current={view === 'destinations' ? 'page' : undefined} onClick={() => setView('destinations')}>Destinations</button>}
             {['owner','admin'].includes(workspace.role) && <button className={view === 'domains' ? 'btn primary' : 'btn'} aria-current={view === 'domains' ? 'page' : undefined} onClick={() => setView('domains')}>Domains</button>}
@@ -412,6 +414,7 @@ function App() {
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
         {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
+        {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />

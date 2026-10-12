@@ -187,3 +187,18 @@ After the two browser-draft failures, the supervising GPT explicitly took over t
 GPT corrections included live role/account guards, one-time secret clearing, strict monetary and identifier parsing, safe session display on mobile, consent expiry measured from the affirmative choice, pre-navigation consent restoration only, and an explicit loaded-SDK withdrawal policy. Submitted secrets and enrollment values were kept out of screenshots and public logs. SDK invocation remains distinct from a provider receipt.
 
 Independent validation used unit checks, fresh PostgreSQL production-build integration, original-install upgrades, a signed local OIDC issuer, Edge browser flows with intercepted vendor scripts, and isolated Docker images. No real IdP or paid provider request was made by these checks. The implementation runbook records coverage and unresolved release gates. Resolved provider effort, account allowance, quota delta, per-task tokens, GPT review token usage and savings remain unknown; output duration is not provider latency or a savings measurement.
+
+### Native analytics, reports and domains swarm — 2026-10-13
+
+Routine drafts used CLI **2.1.1**, **`kimi-code/k3-256k`**, thinking enabled and maximum effort requested. Each task had a public contract, disjoint output, curated Skill-only access, eight-step ceiling, two internal attempts per failing step and a 900-second process-tree deadline. K3 speed mode was unavailable. Authentication stayed outside the repository; no private fixtures, secrets or customer data were provided. Separate CLI workers were supervised by GPT; native Kimi delegation remained disabled.
+
+| Task | Skills observed | Observed duration | Result |
+|---|---|---:|---|
+| Typed analytics normalizer | Ponytail | Approximately 6 minutes | Draft reviewed and corrected for strict dates, Unicode, hidden accessors and input boundaries |
+| Collection/privacy settings UI | Ponytail, UX copy refiner | Approximately 5 minutes | Draft reviewed and corrected for stale responses, conflicts and confirmation changes |
+| Domain registry UI | Ponytail, UX copy refiner | 616.2 seconds | Draft reviewed and corrected for lifecycle, permission and late clipboard results |
+| Report editor UI | Ponytail, UX copy refiner | 900-second timeout | No final code returned; child stopped at deadline |
+
+Quota-rejected attempts were stopped. After the owner indicated an imminent reset, GPT continued security/design/testing and resumed bounded Kimi work once available. A separate native CLI crash returned no code. The report deadline triggered an explicit GPT handoff for the access-sensitive editor and capability-sharing flow; no further report drafting retries were launched. GPT also retained database locking, identity/consent, report sanitization, DNS proof security and final acceptance.
+
+Independent checks found and corrected shared report read/write rate-limit accounting, preserved unsaved drafts on conflicts, and verified sensitive state clearing after role/project/session changes. The foundation runbook records actual unit, PostgreSQL and production-browser evidence. Account usage, per-task token counts, resolved provider effort and savings were not measured; approximate elapsed times are not usage estimates. Raw model output, local paths, credentials and private fixture evidence are excluded from this ledger.

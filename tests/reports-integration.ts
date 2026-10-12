@@ -118,6 +118,8 @@ export async function runReportsChecks(options:Options) {
   const read=await http(options.baseUrl,options.appUrl,endpoint,options.ownerCookie,200);
   assert.equal(read.headers.get('cache-control'),'no-store');
   assert.equal((await read.json()).reports.length,50);
+  // List/preview refreshes must not consume the separately bounded mutation allowance.
+  for(let index=0;index<31;index++) await http(options.baseUrl,options.appUrl,endpoint,options.ownerCookie,200);
   const savedResponse=await http(options.baseUrl,options.appUrl,endpoint,options.ownerCookie,200,{title:'HTTP saved',html:'<h1>HTTP report</h1><script>window.forbidden=1</script>'});
   const saved=(await savedResponse.json()).report;
   for(const title of ['private-sentinel\0','private-sentinel\ud800']) {
