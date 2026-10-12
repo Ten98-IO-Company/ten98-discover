@@ -1,0 +1,46 @@
+# ten98-monitor
+
+An MIT, Docker-first plan for one application combining web analytics, SEO research and audits, and AI visibility monitoring.
+
+**Status: planning repository. There is no application, Docker image or installable release yet.** The first usable release must reach the complete technical capability baseline of Elmo 0.4.4, Umami 3.4.0 and OpenSEO 0.1.12. These source tags match the documented deployment versions and latest release tags checked on 2026-10-12; live image-to-commit equivalence has not been verified. Internal milestones do not reduce that scope.
+
+## Start here
+
+1. [Accepted brief and prompt critique](docs/brief.md)
+2. [Source research and end-to-end traces](docs/research.md)
+3. [69-requirement V1 parity register](docs/parity.md)
+4. [UI, navigation, wireframes and user flows](docs/ui-flows.md)
+5. [Architecture, data model and reuse decisions](docs/architecture.md)
+6. [Provider and Cloudflare options](docs/provider-options.md)
+7. [Docker operations and deployment lessons](docs/deployment.md)
+8. [Milestones, acceptance gates and work packages](docs/roadmap.md)
+9. [Kimi/GPT development workflow and guardrails](docs/kimi-workflow.md)
+
+## Product direction
+
+- One workspace/project model, local login, optional OIDC, team roles, and scoped API/MCP access.
+- Analytics through replays, heatmaps and advanced reports; search research, rankings, backlinks, audits, Google integrations and local SEO; AI prompt sampling, citations, comparisons and evidence-backed opportunities.
+- OpenRouter and DataForSEO with operator-owned credentials, cost estimates and spending limits.
+- Bundled browser worker or Cloudflare Browser Run; optional Cloudflare AI Gateway; alerts over SMTP or Cloudflare Email Sending REST.
+- One portable application image for web/worker/migrations, PostgreSQL, and optional browser/proxy/object storage components.
+- GPT leads planning, design, complex work and independent final validation. Kimi K3 performs bounded routine development under [contributor rules](AGENTS.md).
+
+The application is free and fully featured for everyone: no SaaS subscription sales, seat limits or application feature paywalls. External data, model, browser and email providers may charge and impose their own terms. All technical capabilities remain in the release register, including source-visible hosted functions. Subscription commerce is explicitly excluded by the owner. Runtime questions are explicit in the brief and research.
+
+## Reuse and evidence
+
+This is a new combined project, with selective reuse planned from three MIT upstream repositories. It is not an official product of those projects. No upstream application source has been imported in this planning commit. See [third-party provenance](THIRD_PARTY_NOTICES.md) before importing code, assets or dependencies.
+
+Research is static source inspection at pinned commits plus sanitized deployment lessons. No runtime parity, provider integration, capacity, security certification or deployment success is claimed.
+
+## Check the plan
+
+With Node.js installed:
+
+```sh
+node scripts/check-plan.mjs
+```
+
+This checks the planning files, internal links, requirement IDs and planning status. It is not an application test. Application validation is specified in the roadmap and must be run independently by GPT during implementation.
+
+Licensed under [MIT](LICENSE). Planning baseline: 2026-10-12.
