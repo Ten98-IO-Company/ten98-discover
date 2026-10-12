@@ -76,9 +76,11 @@ Gateway routing is selected before a provider request, not an extra second model
 | SEO | Saved keywords/tags, domains, backlinks snapshots, rank trackers/checks, crawl runs/pages/issues/edges, GSC/GA4 property connections |
 | AI visibility | Prompts/tags/engine targets/schedules, runs/observations, model/surface/market, raw answer/citations/reported fan-out, mention-matcher version |
 | Evidence and context | Project research/context sections, assistant sessions, immutable result provenance, versioned derived metrics |
+| Tracking and domain groups | Browser destination configs/mappings/revisions; public pixel IDs separate from report credentials; canonical/serving/redirect domains, verification and source-labeled observations |
+| Imported marketing reports | Provider/account/dataset snapshots, permissions, cursor, source timezone/currency/attribution and coverage; reuse existing GA4/GSC connections |
 | Operations | Jobs, provider requests, usage reservations/settlements, alerts/outbox, reports/templates/shares, audit log |
 
-Use explicit module folders inside one repository (`analytics`, `seo`, `visibility`, `identity`, `jobs`, `providers`, `reports`). These are code boundaries, not independently deployed services. Shared auth, spending and job services are justified by actual repeated consumers; do not create a generic plugin framework.
+Use explicit module folders inside one repository (`analytics`, `seo`, `visibility`, `identity`, `jobs`, `providers`, `reports`, `tracking`). These are code boundaries, not independently deployed services. Shared auth, spending and job services are justified by actual repeated consumers; do not create a generic plugin framework.
 
 All project-owned records carry workspace/project ownership. Cross-table foreign keys and uniqueness enforce valid ownership where possible. Request handlers, background jobs, MCP tools and exports call the same authorization/domain functions. Identifier obscurity is never access control. Paginate list/export APIs; validate limits and parameterize SQL.
 
@@ -94,6 +96,14 @@ All project-owned records carry workspace/project ownership. Cross-table foreign
 | Reports/MCP/assistant | Same services as UI; report output untrusted; tool writes/costs require explicit intent and authorization; revoke shares independently |
 
 Keep compatible Umami ingestion as a deliberate migration endpoint or adapter; verify the tracker contract before changing it. Compatibility is not assumed for every upstream public API. Provide a published API/MCP surface with migration mapping and contract tests.
+
+## One-snippet tracking and domain aliases
+
+[Tracking & destinations](tracking.md) extends the existing tracker with a centrally configured loader for official vendor scripts. Collection flows browser-to-vendor; PostgreSQL/pg-boss are used for configuration and read-only report imports, not a new advertising conversion proxy. Native analytics ingestion remains independent. Shared consent and duplicate-ownership checks happen before SDK loading/invocation, and a vendor outage cannot block page navigation.
+
+Report credentials never enter the public loader configuration. Connect account/property permissions independently from pixel enablement. Native events, SDK diagnostics and imported aggregates stay distinct; imported snapshots must never become outgoing tracking events. Reuse the same Google connections/services for P58 and the new dashboard.
+
+Domains have canonical/serving/redirect roles. HTTP-only aliases use configured edge/server observations or P44 redirect instrumentation; landing-page JavaScript cannot reconstruct every redirect. Preserve original host and target, independently scoped GSC properties and backlink overlap. No alias grouping creates automatic cross-domain identity. See P70–P81 for acceptance gates.
 
 ## Money and execution correctness
 

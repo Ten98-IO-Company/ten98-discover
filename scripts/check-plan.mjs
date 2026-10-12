@@ -30,14 +30,15 @@ for (const file of files) {
 }
 const parity = readFileSync(resolve(root, 'docs/parity.md'), 'utf8');
 const rows = parity.split('\n').filter(line => /^\| P\d{2} \|/.test(line));
-assert.equal(rows.length, 69, 'Update the explicit parity baseline when adding/removing requirements');
+assert.equal(rows.length, 81, 'Update the explicit parity baseline when adding/removing requirements');
+assert.ok(parity.includes(rows.join('\n')), 'Requirement rows must remain in one continuous Markdown table');
 const ids = rows.map(row => row.split('|')[1].trim());
-assert.equal(new Set(ids).size, 69, 'Duplicate parity IDs');
-for (let i = 1; i <= 69; i++) assert.ok(ids.includes(`P${String(i).padStart(2, '0')}`), `Missing P${i}`);
+assert.equal(new Set(ids).size, 81, 'Duplicate parity IDs');
+for (let i = 1; i <= 81; i++) assert.ok(ids.includes(`P${String(i).padStart(2, '0')}`), `Missing P${i}`);
 for (const row of rows) assert.match(row, /\| V1 \| planned \|\s*$/, 'Planning baseline must not claim implementation');
 assert.match(readFileSync(resolve(root, 'README.md'), 'utf8'), /There is no application/);
 const profile = readFileSync(resolve(root, 'agents/kimi-text-only.md'), 'utf8');
 assert.match(profile, /^tools: \[\]$/m);
 assert.match(profile, /^subagents: \[\]$/m);
 assert.ok(existsSync(resolve(root, 'LICENSE')));
-console.log(`Plan checks passed: ${files.length} Markdown files, 69 V1 requirements, local files/heading links, code fences, no-tool Kimi profile.`);
+console.log(`Plan checks passed: ${files.length} Markdown files, 81 V1 requirements, local files/heading links, code fences, no-tool Kimi profile.`);

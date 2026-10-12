@@ -41,6 +41,14 @@ Use Kimi K3 through the user's individual subscription for routine implementatio
 - Commercial scope: free, fully featured for everyone; no SaaS subscription sales, seat limits, payment checkout or application feature paywalls. Provider spending and workspace budgets remain.
 - Development: authenticated individual Kimi subscription; entitlement and quota must be checked in the operator's account. Personal subscription details and quota history do not belong in the public repository.
 
+## Accepted tracking and domain extension
+
+The owner subsequently requested one centrally managed header snippet that injects providers' own browser tags, with browser-to-vendor traffic rather than mandatory server event middleware. They confirmed extending this plan/backlog only. V1 includes Meta/Facebook, GA4, Google Ads, Cloudflare Web Analytics, TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X, plus separate read-only report imports from their supported APIs.
+
+Add canonical domains, additional serving domains and redirect aliases. The requested example groups crystal-group.ae, crystalgroup.ae and cre.sh under crystal.re; actual ownership/redirect behavior remains unverified. Measure HTTP redirects through configured server/edge sources, not imaginary alias pixel execution, and preserve separate GSC/backlink scopes.
+
+The [refined prompt and specification](tracking.md) define the complete addition. P70–P81 are new V1 requirements; no original parity requirement is removed. Advertising CAPI middleware, campaign editing, arbitrary custom tag execution and automatic DNS/redirect edits are outside this addition.
+
 ## Remaining function decisions
 
 These do not prevent a full plan. Ask before implementing the dependent feature.

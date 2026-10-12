@@ -2,24 +2,27 @@
 
 An MIT, Docker-first plan for one application combining web analytics, SEO research and audits, and AI visibility monitoring.
 
-**Status: planning repository. There is no application, Docker image or installable release yet.** The first usable release must reach the complete technical capability baseline of Elmo 0.4.4, Umami 3.4.0 and OpenSEO 0.1.12. These source tags match the documented deployment versions and latest release tags checked on 2026-10-12; live image-to-commit equivalence has not been verified. Internal milestones do not reduce that scope.
+**Status: planning repository. There is no application, Docker image or installable release yet.** The first usable release must reach the complete technical capability baseline of Elmo 0.4.4, Umami 3.4.0 and OpenSEO 0.1.12. These source tags match the documented deployment versions and latest release tags checked on 2026-10-12; live image-to-commit equivalence has not been verified. Internal milestones do not reduce that scope. The register now also includes 12 owner-requested tracking, report-import and domain-alias requirements (P70–P81), in addition to the original 69.
 
 ## Start here
 
 1. [Accepted brief and prompt critique](docs/brief.md)
 2. [Source research and end-to-end traces](docs/research.md)
-3. [69-requirement V1 parity register](docs/parity.md)
+3. [81-requirement V1 release register](docs/parity.md)
 4. [UI, navigation, wireframes and user flows](docs/ui-flows.md)
 5. [Architecture, data model and reuse decisions](docs/architecture.md)
 6. [Provider and Cloudflare options](docs/provider-options.md)
 7. [Docker operations and deployment lessons](docs/deployment.md)
 8. [Milestones, acceptance gates and work packages](docs/roadmap.md)
 9. [Kimi/GPT development workflow and guardrails](docs/kimi-workflow.md)
+10. [One-snippet pixels, platform report imports and alias domains](docs/tracking.md)
 
 ## Product direction
 
 - One workspace/project model, local login, optional OIDC, team roles, and scoped API/MCP access.
 - Analytics through replays, heatmaps and advanced reports; search research, rankings, backlinks, audits, Google integrations and local SEO; AI prompt sampling, citations, comparisons and evidence-backed opportunities.
+- One header snippet centrally loads official Meta, Google, Cloudflare, TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X tags directly in the browser; separate read-only account connections import their reports.
+- Canonical, serving and redirect-alias domains share project context while redirect requests, visits and overlapping backlinks retain distinct measurement rules.
 - OpenRouter and DataForSEO with operator-owned credentials, cost estimates and spending limits.
 - Bundled browser worker or Cloudflare Browser Run; optional Cloudflare AI Gateway; alerts over SMTP or Cloudflare Email Sending REST.
 - One portable application image for web/worker/migrations, PostgreSQL, and optional browser/proxy/object storage components.

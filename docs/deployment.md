@@ -158,6 +158,14 @@ perform smoke checks, and explicitly resume schedules. Prefer backward-compatibl
 An image rollback is allowed only if the database schema remains compatible; otherwise restore the documented backup/checkpoint.
 Never remove data volumes in routine restart, update, uninstall examples, or troubleshooting steps without an explicit data-deletion action.
 
+## Tracking and import operations
+
+The [tracking plan](tracking.md) uses the existing web/worker/PostgreSQL topology. Host the versioned loader and bounded-cache public config over HTTPS; only approved pixel IDs/settings may be public. Document CSP/script/connection origins per enabled provider, current unversioned vendor-script limitations, and measured zero/one/all-connector browser overhead. One snippet does not imply one downloaded script.
+
+Report imports have independent concurrency/retention limits and can be paused without disabling pixels. Restore pauses imports and revalidates published configuration with a new epoch before fresh tag initialization. Kill switches and consent revocation must account for active pages and provider automatic listeners; test actual SDK disable/reload behavior.
+
+Redirect alias observation uses existing logs or a deliberately configured redirect handler, with bounded/authenticated imports and no automatic DNS changes. Preserve useful campaign parameters through configured redirects; never count requests as unique visitors or log sensitive query values by default.
+
 ## Release acceptance: complete capability target
 
 Incremental milestones may ship, but the release cannot claim combined full parity until the product capability matrix is satisfied.
@@ -167,6 +175,8 @@ Deployment acceptance must exercise every required module, including the resourc
 - SEO: keyword research, rank schedules/history, competitor/backlink reports, static and JavaScript audits, and Search Console refresh.
 - AEO: prompt schedules, repeated samples, configured engine adapters, citations/mentions, competitors, raw evidence, and opportunities.
 - Cross-product: multiple workspaces, teams/roles, unified permissions, spend controls, API/MCP, reports, and email alerts.
+- Tracking: one loader, vendor-direct network requests, consent lifecycle, CSP and duplicate-tag ownership; all configured report imports and source-aware totals.
+- Domains: canonical/serving/redirect aliases, authenticated server/edge observations, safe redirect checks and non-overlapping SEO/property aggregation.
 - Both fresh bundled-DB install and external-DB install; local artifacts and the optional external store.
 - Local login and OIDC; revoked sessions/keys; tenant isolation; protected MCP; public collection independent of identity-provider availability.
 - Worker crash/retry, exhausted credit, missing optional credentials, duplicate enqueue, and deployment with scheduling disabled.

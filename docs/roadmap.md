@@ -9,14 +9,16 @@ All implementation below is future work. The first usable/public V1 release requ
 | M0 — freeze comparison and licenses | Confirm pinned versions, enumerate every route/report/tool/adapter under each grouped parity row, classify hosted behavior, finish dependency/asset license inventory | Owner function decisions | Baseline manifest, unresolved list, accepted reuse ledger and license-compatible dependencies |
 | M1 — portable foundation | Import audited foundation; one schema/auth shell, workspace roles, local/OIDC/2FA, web/worker/migrate commands, pg-boss, credentials/budgets, artifact storage | M0 | Tracker event + stub queued job + shared screen; tenant attacks denied; clean DB install/restart/migration check |
 | M2 — complete analytics | Tracker and recorder, every analytics report/explorer, identities, links/pixels/boards, sharing/export/retention | M1 | P27–P46 fixture results, redacted replay and heatmap, upstream semantic comparison and workload measurements |
+| M2T — one-snippet tracking | Browser-direct tag loader, all ten connector entries, consent, mappings, configuration lifecycle and existing-tag migration | M1 + M2 collector contract + TRK-01 | P70–P75/P78 fixtures, real controlled vendor checks, no mandatory advertising event proxy |
 | M3 — complete AI visibility | All provider adapters/engines, prompt lifecycle, sampling, evidence, metrics, fan-out, citation research, opportunities and exports | M1 | P11–P26 fixtures and limited configured-provider checks; budgets and error denominators proven |
 | M4 — complete SEO | Keywords/domain/backlinks/ranks, static/rendered audits and Lighthouse, GSC/GA4, local SEO, context | M1 | P47–P60 behavior mapping; both browser backends; OAuth refresh/revoke; known crawl graph results |
-| M5 — unified workflows | Assistant, report templates/shares, complete REST/MCP coverage, branding/localization, free full-feature access, alerts/email, provider options | M2–M4 contracts | P01–P10 and P61–P69 reconciled; every tool mapped; SMTP/CF, direct/gateway and role paths checked; no subscription/seat gates |
+| M4T — imported reports and domains | Platform reporting connections, source-aware consolidation, canonical/serving/redirect roles, redirect observations and alias SEO | M1 + M4 Google/report contracts + TRK-01 | P76–P77/P79–P80; every named reporting connector verified, alias/visit/backlink overlap fixtures |
+| M5 — unified workflows | Assistant, report templates/shares, complete REST/MCP coverage, branding/localization, free full-feature access, alerts/email, provider options | M2–M4 plus M2T/M4T contracts | P01–P10 and P61–P69 reconciled; every tool mapped; SMTP/CF, direct/gateway and role paths checked; no subscription/seat gates |
 | M6 — migration, operations and release | Importers, resource/soak tests, accessibility, isolated-browser security, backups/restore/upgrades, multiarch packaging and docs | M2–M5 | Independent GPT release review and reproducible evidence for all rows; no unresolved release blocker |
 
 M2/M3/M4 can progress in parallel after shared contracts stabilize, with separate file ownership and GPT integration review. Shared schema/auth/budget changes remain serialized. Fix shared root causes rather than adding different guards in each module.
 
-Planning allowance: roughly **20–35 engineer-weeks**, with large uncertainty, for a complete reused-code integration and hardening effort; this is an estimate, not a commitment or a Kimi speedup claim. M0/M1 should replace it with measured import complexity and throughput. Calendar time depends on team size, integration access, provider budgets, migration volume and scope clarification.
+Original-scope planning allowance was roughly **20–35 engineer-weeks**, with large uncertainty. It does **not** include the new tracking/import/domain work and is not a current combined estimate or Kimi speedup claim. M0/M1 and TRK-01 must re-estimate using actual adapter complexity, approval lead times and integration throughput. The additional scope cannot be absorbed by silently reducing original V1 parity.
 
 ## First implementation backlog
 
@@ -39,6 +41,25 @@ Each row is ready to become an issue after M0; issue creation is not required fo
 | Assistant/MCP | GPT tool security, Kimi mechanical tool mapping | Shared authorized domain calls and evidence | Retrieved prompt injection cannot trigger tool writes/spend; token scope/revocation |
 | Import/restore | GPT designs/reviews, Kimi bounded transforms | Idempotent import and validated restore instructions | Counts/metrics reconcile and source data stays unchanged |
 
+## Tracking, report imports and alias-domain backlog
+
+Scope and improved prompt: [tracking.md](tracking.md). These packages extend the plan only; no application implementation is claimed. Each connector is its own bounded implementation task even when grouped below. API approvals and controlled test access are dependencies, not a reason to claim success from fixtures alone.
+
+| ID / requirement | Owner | Deliverable and dependency | Acceptance |
+|---|---|---|---|
+| TRK-01 / P70–P81 | GPT | Freeze current browser SDK/event/report capability matrix, API scopes/versions, legacy owners, approvals, source licenses and updated estimate | All ten connector entries have explicit supported/unsupported fields, test-account needs and evidence gaps; no obligatory CAPI middleware |
+| TRK-02 / P71–P72/P75 | GPT; Kimi routine schema/forms | Config, consent, event identity/trust and read-only endpoint contracts after TRK-01 | Tenant isolation, browser-first/backend-first order cases, public-secret separation and no campaign mutations |
+| TRK-03 / P70/P78 | Kimi from GPT contract; GPT lifecycle review | Extend existing tracker with one loader, page-lifetime SDK registry, bounded readiness queues, config preview/publish/rollback | Direct vendor requests, repeated initialization/SPA/revision change, blocked script, withdrawn consent and no fabricated receipts |
+| TRK-04 / P73 | Kimi, one connector per task | Meta, GA4, Google Ads and official Cloudflare beacon adapters after TRK-02/03 | Shared Google loader, explicit event maps, auto-injection ownership and controlled provider checks; Cloudflare custom events unavailable |
+| TRK-05 / P74 | Kimi, one connector per task | TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X browser adapters | Every named connector passes event/consent/diagnostic checks independently; no placeholders marked complete |
+| TRK-06 / P76 | GPT auth/access design; Kimi routine imports | Reuse GSC/GA4 connection patterns for every analytics/ad reporting connector; schedules/cursors/history | Report-only and tag-only setups, endpoint read allowlist, pagination, revoked access, quotas, partial response, restart and idempotency |
+| TRK-07 / P77 | GPT metric contract; Kimi tables/queries | Unified source-labeled reporting with explicit account/campaign mappings after TRK-06 | Overlapping accounts/conversions, currencies/timezones, late revisions and missing data reconcile without duplicate totals |
+| TRK-08 / P79/P80 | GPT domain/SSRF design; Kimi bounded UI/imports | Domain registry, expected redirects, verification, authenticated redirect observations and server-log/optional CF imports; reuse P44/P53 | Four-domain example, real rendering versus HTTP redirect, safe target checks, query handling, no DNS edits and no request-as-visitor counting |
+| TRK-09 / P80 | GPT scope rules; Kimi query adaptations | Alias GSC property and backlink grouping after TRK-08 and M4 | Distinct registered-domain properties, overlapping prefixes, indirect backlinks and summary-only coverage limitations |
+| TRK-10 / P78/P81 | GPT independent final validation; Kimi fixture mechanics | Migration walkthrough, accessibility, browser/network checks, privacy and Docker restore/load tests | All 12 tracking acceptance scenarios, zero/one/all-connector overhead, no silent script retry or live test, imports paused and config revalidated after restore |
+
+Kimi receives only approved public contracts, synthetic fixtures and explicit file allowlists. GPT owns consent/security/metric decisions, provider-access interpretation, design and final checks. Real accounts/tokens/customer logs are never supplied to Kimi; initial docs work uses the tools-disabled profile.
+
 ## Acceptance evidence format
 
 For each parity ID record: named sub-capability, baseline path/version, expected result, implementation path, runnable command, fixture or controlled integration setup, actual result/date/revision, coverage limitations and GPT reviewer. A grouped row passes only when every named sub-capability has evidence.
@@ -59,6 +80,8 @@ Retain synthetic provider fixtures in Git with licensing/provenance. Keep privat
 | AI/assistant | Consumer/API labels, actual-model mismatch, absent fan-out; malicious page text cannot change instructions or approve cost/write action |
 | Reporting | CSV formula escaping, safe HTML report isolation, accessible chart table, scoped share expiry/revocation |
 | Delivery | SMTP TLS, CF queued/bounced/suppressed outcomes, timeout ambiguity and restart; outbox claims never promise exactly-once delivery |
+| Browser tags/imports | One page-lifetime initialization, direct vendor traffic, consent before SDK load, external-tag ownership, tag-only/report-only setup, no import write endpoints, distinct SDK invocation and report attribution |
+| Alias domains | Safe redirect chain/query checks, exact host scopes, idempotent log records, no pixel on HTTP-only response, separate landing visits and overlapping backlink/GSC scope reconciliation |
 | Operations | Cold start, concurrent migration, schema mismatch, 2 installs/DNS isolation, external DB, each storage path, restore with keyring, image rollback boundary |
 
 Normal CI uses stubs and local fixtures, with no paid calls. Controlled external integration runs require configured provider credentials, a small explicit spend allowance and designated test recipients. Do not mark a provider verified from a stub alone. GPT owns the final independent execution and interpretation, even when Kimi wrote the tests.
@@ -77,7 +100,7 @@ These are **acceptance targets for measurement**, not existing performance claim
 
 ## Release checklist
 
-1. All 69 parity rows and every sub-capability mapped and independently verified; scope changes require explicit owner decisions.
+1. All 81 requirements (69 original plus P70–P81) and every sub-capability mapped and independently verified; scope changes require explicit owner decisions.
 2. All chosen operator paths work: bundled/external DB, local/object storage, local/OIDC, browser local/CF, models direct/gateway, SMTP/CF email.
 3. No transitive license or copied-asset blocker; notices/SBOM complete; dependency/runtime versions pinned and reviewed.
 4. No open critical/high auth, tenant, browser-escape, secret exposure or data-loss defect; documented limitations do not substitute for required features.

@@ -20,6 +20,8 @@ Workspace switcher / Project selector
               Search Console · Google Analytics · Local SEO
   AI visibility  Overview · Prompts · Responses · Citations · Share of voice
                  Query fan-out · Opportunities · Research
+  Tracking    Destinations · Event mappings · Preview · Tag diagnostics · Imported reports
+  Domains     Canonical · Serving domains · Redirect aliases · Verification
   Reports     Library · Templates · Shares
   Assistant   Project conversations and approved actions
   Operations  Jobs · Alerts · Usage
@@ -204,6 +206,14 @@ Report preview                           Assistant
 | Expiry [date]  No workspace access | | [Confirm action]   Cancel      |
 +--------------------------------------+ +--------------------------------+
 ```
+
+## Flow 5 — centrally managed pixels, imports and domains
+
+The [tracking flow and wireframes](tracking.md#ui-flow-and-wireframes) add: Tracking overview → Connect destination → Map events → Test delivery → Review and publish → Measurement dashboard. Browser tags send directly to vendors. Import permissions are a separate connection path; imported reports remain source-labeled.
+
+The [domain flow](tracking.md#canonical-domains-serving-domains-and-redirect-aliases) adds canonical, serving and redirect roles, verification and redirect checks. Redirect aliases show server/edge observation setup instead of a misleading pixel-install instruction. Alias requests, landing visits and backlinks are distinct evidence.
+
+Both flows reuse the shared project scope, date filters, evidence drawer, accessible forms, drafts and loading/error states. No ad-management or DNS-editing controls are introduced.
 
 ## Screen states and accessibility contract
 

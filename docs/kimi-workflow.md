@@ -99,6 +99,8 @@ and usage delta. No full transcript. GPT performs final independent validation.
 
 ## Budget, boundaries, and escalation
 
+Planning task ledger, 2026-10-12: TRK-COPY-01 used Kimi Code 2.1.1 with `kimi-code/k3-256k`, the tools/subagents-disabled text profile and an empty task skills directory for one bounded UI-state wording response. The initial local-storage permission failure happened before a response; one supervised retry completed. GPT revised the copy for the owner's later browser-direct/import/alias scope and performed independent review. Exact elapsed model time and quota/token delta were not measured; no savings claim. No provider calls, file tools, account changes or publication were delegated to Kimi.
+
 - Before each batch record task ID, CLI/model/effort, verified available allowance, start usage, and time. Set a numeric ceiling from verified figures when available; otherwise use an explicit task/time cap. No invented quota percentage allocation.
 - Afterward record usage delta, elapsed time, accepted/reworked result, and Astra review usage if available. Separate tokens from quota units. Mark missing measurements unknown; do not infer per-task tokens from account-wide percentages.
 - Compare accepted requirements per Kimi quota unit and Astra review consumption across milestones. Keep only a compact ledger in issue/PR notes; no telemetry service or budgeting script.

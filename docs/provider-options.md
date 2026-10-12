@@ -15,6 +15,8 @@ and grants workspaces access to them; membership never implies permission to rev
 | Optional LLM proxy | Direct OpenRouter OR Cloudflare AI Gateway | Same app behavior; no mandatory Cloudflare account |
 | JavaScript audits | Bundled browser worker OR Cloudflare Browser Run | Same audit output contract and visible capability differences |
 | Email alerts | Any compatible SMTP service OR Cloudflare Email Sending REST | Shared outbox, recipient preferences, delivery diagnostics |
+| Centrally managed pixels | Official browser tags for all ten connector entries in [tracking.md](tracking.md) | One installed loader; browser-to-vendor requests; no server event middleware required |
+| Marketing report imports | Read-only APIs for connected analytics/ad accounts | Separate authorization, source definitions, historical limits and sync health |
 | Core application | Docker with bundled/external PostgreSQL and local/optional object storage | No commercial vendor required for analytics, identity, stored reports, or bundled audits |
 
 Paid SEO/AEO feeds and model inference remain optional external data services. Shipping their adapters does not make that data free.
@@ -40,6 +42,14 @@ Separate provider tokens by function and environment; allow a connection to be r
 Do not accept arbitrary provider base URLs from ordinary workspace members. Use fixed adapter endpoints;
 administrator-only SMTP/OIDC endpoints may be private by intent, but require separate configuration and validation.
 Encryption keys belong in the operator's secret store and recovery inventory; changing a provider never changes the app key implicitly.
+
+## Browser tags and imported analytics
+
+The [tracking capability matrix](tracking.md#provider-capability-matrix) is the source of truth for Meta, GA4, Google Ads, Cloudflare, TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X. Public pixel/measurement identifiers intentionally reach the browser; OAuth secrets and report API tokens do not. The server-side credential table above remains private.
+
+Configure browser tags and report imports independently. API/app approval for reporting may be more restrictive than pixel installation. Report imports follow provider quotas, timezones, currencies, available history and attribution definitions. Lack of API approval is an explicit setup state and cannot be counted as a verified reporting adapter.
+
+Cloudflare Web Analytics requires its official beacon and does not support arbitrary custom events. Edge request datasets are a different measurement from beacon visits. Zaraz can coexist under explicit tag ownership but is not required for Docker deployment. Alias-domain observations can use Cloudflare or standard server logs; no Cloudflare account is required for the native domain registry.
 
 ## OpenRouter, BYOK, and optional AI Gateway
 
