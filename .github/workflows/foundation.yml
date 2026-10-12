@@ -1,0 +1,128 @@
+name: Foundation checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+        env:
+          POSTGRES_USER: ten98
+          POSTGRES_DB: ten98_test
+          # Only this fresh hosted-runner service uses trust, bound to loopback.
+          # This is not a deployment configuration or a production auth example.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ten98 -d ten98_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_URL: http://localhost:3000
+      BASE_URL: http://127.0.0.1:3000
+      DATABASE_URL: postgres://ten98@127.0.0.1:5432/ten98_test
+      HOST: 127.0.0.1
+      PORT: '3000'
+      TEN98_INTEGRATION_TEST: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Prepare isolated test configuration
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { randomBytes } from 'node:crypto';
+          import { appendFileSync, mkdirSync } from 'node:fs';
+          import { join } from 'node:path';
+          for (const key of ['AUTH_SECRET', 'BOOTSTRAP_TOKEN']) {
+            const value = randomBytes(32).toString('hex');
+            console.log(`::add-mask::${value}`);
+            appendFileSync(process.env.GITHUB_ENV, `${key}=${value}\n`);
+          }
+          const artifacts = join(process.env.RUNNER_TEMP, 'ten98-foundation-artifacts');
+          mkdirSync(artifacts, { recursive: true, mode: 0o700 });
+          appendFileSync(process.env.GITHUB_ENV, `ARTIFACT_DIR=${artifacts}\n`);
+          NODE
+          corepack enable
+          corepack prepare pnpm@11.19.0 --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build and check
+        shell: bash
+        run: |
+          pnpm build
+          pnpm typecheck
+          pnpm test
+          pnpm check:plan
+      - name: Verify real web and worker integration
+        shell: bash
+        env:
+          NODE_ENV: production
+        run: |
+          pnpm migrate
+          web_pid=''
+          worker_pid=''
+          cleanup() {
+            result=$?
+            trap - EXIT INT TERM
+            if [ -n "$web_pid" ]; then kill "$web_pid" 2>/dev/null || true; fi
+            if [ -n "$worker_pid" ]; then kill "$worker_pid" 2>/dev/null || true; fi
+            deadline=$((SECONDS + 35))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              running=false
+              for pid in "$web_pid" "$worker_pid"; do
+                if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then running=true; fi
+              done
+              if [ "$running" = false ]; then break; fi
+              sleep 1
+            done
+            for pid in "$web_pid" "$worker_pid"; do
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+            done
+            if [ -n "$web_pid" ]; then wait "$web_pid" 2>/dev/null || true; fi
+            if [ -n "$worker_pid" ]; then wait "$worker_pid" 2>/dev/null || true; fi
+            if [ "$result" -ne 0 ]; then
+              for log in "$RUNNER_TEMP/ten98-web.log" "$RUNNER_TEMP/ten98-worker.log"; do
+                if [ -f "$log" ]; then tail -n 80 "$log"; fi
+              done
+            fi
+            exit "$result"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          node .output/server/index.mjs >"$RUNNER_TEMP/ten98-web.log" 2>&1 &
+          web_pid=$!
+          node src/server/cli.ts worker >"$RUNNER_TEMP/ten98-worker.log" 2>&1 &
+          worker_pid=$!
+          export WEB_PID="$web_pid" WORKER_PID="$worker_pid"
+          if ! timeout 60s bash -c '
+            until curl --fail --silent --max-time 2 "$BASE_URL/api/health/ready" >/dev/null \
+              && timeout 5s node src/server/cli.ts diagnose worker >/dev/null 2>&1; do
+              kill -0 "$WEB_PID" "$WORKER_PID" 2>/dev/null || exit 1
+              sleep 1
+            done
+          '; then
+            echo "Web and worker did not become ready within 60 seconds."
+            exit 1
+          fi
+          node src/server/cli.ts diagnose worker
+          pnpm test:integration

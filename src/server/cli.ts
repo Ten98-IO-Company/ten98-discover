@@ -1,0 +1,119 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { getConfig } from './config.ts';
+import { assertSchema, closeDatabase, getDatabase, migrationSource } from './db.ts';
+import { startWorker, stopJobs } from './jobs.ts';
+
+const version = '0001';
+class CliError extends Error {}
+
+async function setup() {
+  const password = randomBytes(32).toString('hex');
+  const contents = [
+    '# Keep this file private. Never commit it or paste it into support requests.',
+    'APP_URL=http://localhost:3000', 'APP_PORT=3000',
+    `POSTGRES_PASSWORD=${password}`,
+    `DATABASE_URL=postgres://ten98:${password}@postgres:5432/ten98`,
+    `AUTH_SECRET=${randomBytes(32).toString('hex')}`,
+    `BOOTSTRAP_TOKEN=${randomBytes(32).toString('hex')}`,
+    'ARTIFACT_DIR=./data/artifacts', '',
+  ].join('\n');
+  try {
+    await writeFile(join(process.cwd(), '.env'), contents, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new CliError('Setup stopped: .env already exists and was not changed.');
+    throw new CliError('Setup could not create .env. Check directory permissions.');
+  }
+  console.log('Created .env with fresh credentials. Read it privately for the owner bootstrap token. No database was changed.');
+}
+
+async function migrate() {
+  const { sql, checksum } = await migrationSource();
+  const client = await getDatabase().pool.connect();
+  let applied = false;
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [109857, 1]);
+    await client.query('CREATE TABLE IF NOT EXISTS schema_version (version text PRIMARY KEY, checksum text NOT NULL)');
+    const current = await client.query<{ version: string; checksum: string }>('SELECT version, checksum FROM schema_version');
+    if (current.rows.some((row) => row.version !== version || row.checksum !== checksum)) {
+      throw new CliError('Migration stopped: unknown schema version or changed migration checksum. No changes were committed.');
+    }
+    if (current.rows.length === 0) {
+      await client.query(sql);
+      await client.query('INSERT INTO schema_version(version, checksum) VALUES ($1, $2)', [version, checksum]);
+      applied = true;
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  console.log(applied ? 'Database migration 0001 applied.' : 'Database migration 0001 already applied; checksum verified.');
+}
+
+async function diagnose(checkWorker: boolean) {
+  const config = getConfig();
+  console.log('Configuration: valid (credentials redacted).');
+  const checks: [string, () => Promise<unknown>][] = [
+    ['Database connection', () => getDatabase().pool.query('SELECT 1')],
+    ['Database schema', assertSchema],
+    ['Artifact directory', async () => {
+      await mkdir(config.artifactDir, { recursive: true, mode: 0o700 });
+      const path = join(config.artifactDir, `.write-check-${randomUUID()}`);
+      await writeFile(path, '', { flag: 'wx', mode: 0o600 });
+      await unlink(path);
+    }],
+  ];
+  if (checkWorker) checks.push(['Worker heartbeat', async () => {
+    const result = await getDatabase().pool.query(
+      `SELECT 1 FROM worker_heartbeat WHERE id = 'foundation-worker'
+       AND last_seen_at > now() - interval '30 seconds' AND last_seen_at <= now()`,
+    );
+    if (result.rows.length !== 1) throw new CliError('Worker has no recent heartbeat.');
+  }]);
+  for (const [label, check] of checks) {
+    try {
+      await check();
+      console.log(`${label}: ready.`);
+    } catch {
+      console.error(`${label}: unavailable. Check configuration, permissions and service health.`);
+      process.exitCode = 1;
+    }
+  }
+}
+
+async function worker() {
+  await assertSchema();
+  await startWorker();
+  console.log('Foundation worker ready. No external providers are scheduled.');
+  await new Promise<void>((resolve) => {
+    process.once('SIGTERM', resolve);
+    process.once('SIGINT', resolve);
+  });
+}
+
+try {
+  const [command, option, ...extra] = process.argv.slice(2);
+  if (extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
+    throw new CliError('Usage: cli.ts setup | migrate | worker | diagnose [worker]');
+  }
+  switch (command) {
+    case 'setup': await setup(); break;
+    case 'migrate': await migrate(); break;
+    case 'worker': await worker(); break;
+    case 'diagnose': await diagnose(option === 'worker'); break;
+    default: throw new CliError('Usage: cli.ts setup | migrate | worker | diagnose [worker]');
+  }
+} catch (error) {
+  console.error(error instanceof CliError ? error.message
+    : (error as { code?: string })?.code === 'SCHEMA_MISMATCH' ? 'Database schema is incompatible with this application. Use the matching image and migrations.'
+    : 'Command failed. Check configuration, database availability, schema and filesystem permissions; credentials have been redacted.');
+  process.exitCode = 1;
+} finally {
+  await stopJobs().catch(() => { console.error('Job shutdown failed.'); process.exitCode = 1; });
+  await closeDatabase().catch(() => { console.error('Database shutdown failed.'); process.exitCode = 1; });
+}

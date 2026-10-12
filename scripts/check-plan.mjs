@@ -36,7 +36,7 @@ const ids = rows.map(row => row.split('|')[1].trim());
 assert.equal(new Set(ids).size, 81, 'Duplicate parity IDs');
 for (let i = 1; i <= 81; i++) assert.ok(ids.includes(`P${String(i).padStart(2, '0')}`), `Missing P${i}`);
 for (const row of rows) assert.match(row, /\| V1 \| planned \|\s*$/, 'Planning baseline must not claim implementation');
-assert.match(readFileSync(resolve(root, 'README.md'), 'utf8'), /There is no application/);
+assert.match(readFileSync(resolve(root, 'README.md'), 'utf8'), /development foundation; not a V1 release/);
 const profile = readFileSync(resolve(root, 'agents/kimi-text-only.md'), 'utf8');
 assert.match(profile, /^tools: \[\]$/m);
 assert.match(profile, /^subagents: \[\]$/m);

@@ -1,0 +1,16 @@
+node_modules
+.git
+.env
+.env.*
+data
+.output
+dist
+coverage
+test-results
+.kimi*
+sessions
+logs
+*.log
+docs
+# Kept on purpose: README*, LICENSE*, src, migrations, package.json,
+# pnpm-lock.yaml (all needed for the build).

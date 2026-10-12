@@ -33,7 +33,7 @@ Inside the CLI, run `/login` and complete Kimi Code OAuth in the browser. Kimi P
 
 Use the verified alias **`kimi-code/k3-256k`**. On another installation inspect `/model` and `/status` first; CLI `-m` expects a configured alias.
 
-The official IDs are `k3-256k` and `k3`. K3 requires Plus/Moderato or above; 1M context requires Pro/Allegretto or above. The fixed 256K variant is the default for bounded tasks because 1M K3 consumes approximately twice its quota. Keep thinking enabled: disabling it routes K3 requests to K2.8 Preview. Keep effort stable within a session. Do not use HighSpeed for quota savings: its documented consumption is 3×. Entitlements and rates can change; recheck before changing the budget. [Official model configuration](https://www.kimi.com/code/docs/en/kimi-code/models)
+The official IDs are `k3-256k` and `k3`. K3 requires Plus/Moderato or above; 1M context requires Pro/Allegretto or above. The fixed 256K variant is the default for bounded tasks because 1M K3 consumes approximately twice its quota. Keep thinking enabled: disabling it routes K3 requests to K2.8 Preview. The owner requested **maximum effort**, so set the supported process override `KIMI_MODEL_THINKING_EFFORT=max`. Keep effort stable within a session. The currently documented HighSpeed model is **K2.7**, with approximately 6× speed and 3× quota use; it is not a K3 speed switch and was not substituted. Reverify capabilities and entitlements before changing models. [Official model configuration](https://www.kimi.com/code/docs/en/kimi-code/models), [environment overrides](https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/env-vars)
 
 Retain readiness evidence without credentials:
 
@@ -62,19 +62,32 @@ Retain readiness evidence without credentials:
 
 The default repository profile, [`agents/kimi-text-only.md`](../agents/kimi-text-only.md), declares `tools: []` and `subagents: []`. It can transform supplied public text only. Custom agent allowlists are enforced by the CLI; prompts alone are not a sandbox. More capable profiles require the isolated worker described below. No orchestration framework or default background automation is planned. [Agent documentation](https://moonshotai.github.io/kimi-code/en/customization/agents.html)
 
+For Windows skill-assisted drafting, use the [bounded runner](../scripts/kimi-draft.ps1) and [Skill-only profile](../agents/kimi-skill-drafter.md). First copy only reviewed Markdown skills into a separate public task directory, review the prompt, and choose a **new**, empty output path outside any checkout. Do not point it at your whole skills/home directory. The runner rejects project/global instructions, MCP/plugin configuration and hooks that need separate review; it requires explicit thinking enabled in the existing CLI configuration. It does not change global settings or apply drafts.
+
+```powershell
+pwsh -NoProfile -File .\scripts\kimi-draft.ps1 `
+  -PromptFile C:\public-task\prompt.md `
+  -SkillsDirectory C:\public-task\reviewed-skills `
+  -OutputDirectory C:\scratch\new-kimi-draft `
+  -TimeoutSeconds 600
+```
+
+Use actual absolute local paths whose parent directories already exist. The runner pins the reviewed native CLI and model, passes arguments without a shell, drains output privately, and kills only its own process tree at the deadline. Exit 2 means a prerequisite failed; 124 means timeout. Its runnable offline check uses a fake local child and spends no Kimi quota:
+
+```powershell
+. ./scripts/kimi-draft.ps1
+Test-KimiDraftProcess
+```
+
 ## Run one bounded task
 
 1. GPT defines the requirement, design, file allowlist, acceptance check, and budget.
-2. Supply only approved public text to the default profile; use an isolated worker for coding.
+2. Supply approved public text to a tool-free or curated Skill-only drafting profile; use an isolated worker before enabling filesystem or shell tools.
 3. Kimi produces the bounded patch; no new dependency without GPT review.
 4. Kimi may implement/run checks; GPT independently tests completed work and reviews the diff.
 5. GPT accepts or requests repair; after two failed repair attempts escalate instead of looping.
 
-Verified command pattern for the default text-only profile (prompt must contain the approved text):
-
-```powershell
-kimi --agent-file agents/kimi-text-only.md -m kimi-code/k3-256k -p "Edit only this supplied public text: [text]. Return a concise checklist."
-```
+The text-only profile was used for the earlier supervised planning tasks recorded below. New drafting tasks use the bounded runner above; launching the CLI directly bypasses its deadline, clean working directory, version check and maximum-effort preflight. Do not reintroduce a direct-launch shortcut when reusing the historical text-only profile.
 
 `-p` uses automatic permissions, regardless of the manual interactive default, and cannot combine with `--plan`, `--auto`, or `--yolo`. The empty tool/delegation allowlists are essential here. A prompt or `explore` profile does not isolate filesystem/network access sufficiently for untrusted code. `kimi doctor` checks configuration without editing it. [CLI reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-command.html)
 
@@ -98,6 +111,25 @@ and usage delta. No full transcript. GPT performs final independent validation.
 ```
 
 ## Budget, boundaries, and escalation
+
+### Foundation swarm ledger — 2026-10-12
+
+CLI 2.1.1; fixed `kimi-code/k3-256k`; `KIMI_MODEL_THINKING_EFFORT=max` requested in each child process. The installed CLI and official reference support that override; no provider wire trace was captured to independently prove the resolved effort. Account allowance, quota deltas and token savings remain unknown. These were parallel Kimi CLI workers coordinated by GPT, not unrestricted native Kimi delegation. UI, packaging and validation had disjoint file ownership; GPT owned the shared contract, auth, database transactions, review and acceptance tests.
+
+| Task | Curated skills observed in tool output | CLI wall time | Checkpoint | Disposition |
+|---|---|---:|---:|---|
+| M1-UI-01 | Ponytail, frontend design | 650.6 s | 15 min | Drafted UI/CSS; GPT review required repair |
+| M1-PACK-01 | Ponytail | 148.2 s | 12 min | Drafted Docker/Compose; GPT corrected commands/notices and pinned tested base images |
+| M1-VALIDATION-01 | Ponytail | 608.0 s | 10 min | Drafted validator and 13 tests; completed 8 seconds beyond the supervised checkpoint, before the next poll |
+| M1-UI-REPAIR-01 | Ponytail, UX copy refiner | 230.4 s | 10 min | Corrected role gates, stale responses, validation and copy; GPT applied final small fixes |
+| M1-DOC-01 | Ponytail | 77.8 s | 10 min | Drafted foundation runbook; GPT updated actual test evidence |
+| M1-RUNNER-SMOKE-01 | Ponytail | 21.4 s | 120 s hard deadline | Real CLI check of the hardened runner passed; no application edits |
+
+The draft profile exposed only `Skill`; tool-call logs confirmed the expected skills and no shell, file-edit, network or delegation tools. GPT supplied public task material, validated exact output paths, reviewed and applied JSON drafts, and ran checks independently. CLI credentials stayed outside the repository. Raw outputs and session files are not published.
+
+The supervised time-checkpoint overrun led to a hard-timeout runner for subsequent tasks. Manual launch directories also allowed automatic project discovery; a clean scratch working directory is required in the runner. A restricted tool profile alone must not be described as proof that all implicit CLI context is isolated. File-writing Kimi work remains blocked until the separate operating-system isolation below is verified.
+
+GPT independently ran the runner's offline checks for literal arguments, concurrent stdout/stderr draining, child-only environment overrides, exit propagation, thinking/hooks preflight and process-tree timeout. The subsequent real smoke task completed within its hard deadline and logged only the permitted Ponytail Skill call. This validates the draft runner, not an unrestricted coding sandbox.
 
 Planning task ledger, 2026-10-12: TRK-COPY-01 used Kimi Code 2.1.1 with `kimi-code/k3-256k`, the tools/subagents-disabled text profile and an empty task skills directory for one bounded UI-state wording response. The initial local-storage permission failure happened before a response; one supervised retry completed. GPT revised the copy for the owner's later browser-direct/import/alias scope and performed independent review. Exact elapsed model time and quota/token delta were not measured; no savings claim. No provider calls, file tools, account changes or publication were delegated to Kimi.
 

@@ -1,8 +1,10 @@
 # ten98-monitor
 
-An MIT, Docker-first plan for one application combining web analytics, SEO research and audits, and AI visibility monitoring.
+An MIT, Docker-first application in development, combining web analytics, SEO research and audits, and AI visibility monitoring.
 
-**Status: planning repository. There is no application, Docker image or installable release yet.** The first usable release must reach the complete technical capability baseline of Elmo 0.4.4, Umami 3.4.0 and OpenSEO 0.1.12. These source tags match the documented deployment versions and latest release tags checked on 2026-10-12; live image-to-commit equivalence has not been verified. Internal milestones do not reduce that scope. The register now also includes 12 owner-requested tracking, report-import and domain-alias requirements (P70–P81), in addition to the original 69.
+**Status: development foundation; not a V1 release.** Source now includes owner setup, local login, workspace authorization, projects, a page-view tracker and a durable worker check, with a local Docker recipe. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
+
+The first usable release must reach the complete technical capability baseline of Elmo 0.4.4, Umami 3.4.0 and OpenSEO 0.1.12. These source tags match the documented deployment versions and latest release tags checked on 2026-10-12; live image-to-commit equivalence has not been verified. Internal milestones do not reduce that scope. The register now also includes 12 owner-requested tracking, report-import and domain-alias requirements (P70–P81), in addition to the original 69.
 
 ## Start here
 
@@ -34,9 +36,9 @@ The application is free and fully featured for everyone: no SaaS subscription sa
 
 ## Reuse and evidence
 
-This is a new combined project, with selective reuse planned from three MIT upstream repositories. It is not an official product of those projects. No upstream application source has been imported in this planning commit. See [third-party provenance](THIRD_PARTY_NOTICES.md) before importing code, assets or dependencies.
+This is a new combined project, with selective reuse planned from three MIT upstream repositories. It is not an official product of those projects. No upstream application source has been copied into the current foundation. See [third-party provenance and dependency notices](THIRD_PARTY_NOTICES.md).
 
-Research is static source inspection at pinned commits plus sanitized deployment lessons. No runtime parity, provider integration, capacity, security certification or deployment success is claimed.
+Research is static source inspection at pinned commits plus sanitized deployment lessons. Foundation checks do not establish full runtime parity, provider integration, capacity or security certification.
 
 ## Check the plan
 
@@ -46,6 +48,6 @@ With Node.js installed:
 node scripts/check-plan.mjs
 ```
 
-This checks the planning files, internal links, requirement IDs and planning status. It is not an application test. Application validation is specified in the roadmap and must be run independently by GPT during implementation.
+This checks planning files, internal links and requirement IDs. Application checks and their scope are documented in the [foundation runbook](docs/foundation.md); GPT performs independent validation.
 
 Licensed under [MIT](LICENSE). Planning baseline: 2026-10-12.

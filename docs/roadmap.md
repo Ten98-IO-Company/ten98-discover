@@ -1,6 +1,8 @@
 # Delivery plan and release gates
 
-All implementation below is future work. The first usable/public V1 release requires every [parity row](parity.md), all confirmed provider options, and the deployment/security checks. Internal milestones are development checkpoints, not a smaller public MVP.
+The first usable/public V1 release requires every [parity row](parity.md), all confirmed provider options, and the deployment/security checks. Internal milestones are development checkpoints, not a smaller public MVP.
+
+Implementation started with [issue #1](https://github.com/Ten98-IO-Company/ten98-monitor/issues/1): the [development foundation](foundation.md) provides local owner login, workspace authorization, persisted page views, a durable worker probe and tested local Docker startup. M1 remains incomplete: OIDC/2FA, credential encryption, budgets and the remaining setup flows are still required. No full parity row or release gate is marked complete by this foundation.
 
 ## Milestones and dependencies
 
