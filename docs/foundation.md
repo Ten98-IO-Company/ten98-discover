@@ -4,6 +4,10 @@
 
 Related: [README](../README.md) · [Feature parity](parity.md) · [Kimi workflow](kimi-workflow.md)
 
+The [interface refresh](interface.md) groups measurement and connection pages under the selected project, with workspace tools in a separate menu. On narrow screens, choose **Menu** to navigate. **Install tracker** contains the snippet and collapsed worker diagnostics; **Recent events** contains received observations. The overview opens the first available project without overriding newer navigation or identity verification.
+
+The refreshed production UI passed independent Edge checks at desktop and360px widths: consent/privacy flows, known/unavailable metrics, report editing/sharing, stale responses, permissions, keyboard menu operation, focus transfer and delayed initial-project loading. No fake measurements were added. Existing database accounts and projects are preserved.
+
 ## Requirements
 
 - Docker with Compose (recommended path; no host Node/pnpm required)

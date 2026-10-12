@@ -14,7 +14,7 @@ assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(config.appUrl).host
 assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(config.databaseUrl).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Set PLAYWRIGHT_MODULE to the installed Playwright module URL.');
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
-let browser:any;
+let browser:any,releaseProjects:(()=>void)|undefined;
 try {
   await assertSchema();
   const {pool}=getDatabase();
@@ -38,9 +38,42 @@ try {
   const project=(await request(`/api/workspaces/${workspaceId}/projects`,{name:'UI report project',origin:'https://report-ui.integration.test'})).project;
   const otherProject=(await request(`/api/workspaces/${workspaceId}/projects`,{name:'Other report project',origin:'https://other-report-ui.integration.test'})).project;
   const page=await context.newPage();let pageErrors=0;page.on('pageerror',()=>{pageErrors++;});
-  await page.goto(config.appUrl,{waitUntil:'networkidle'});
-  await page.getByRole('button',{name:'UI report project',exact:true}).click();
-  await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name:'Reports',exact:true}).click();
+  async function navigation() {
+    const toggle=page.getByRole('button',{name:/^(Menu|Close menu)$/});
+    if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false') await toggle.click();
+  }
+  async function selectProject(name:string) {
+    await navigation();await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name,exact:true}).click();
+  }
+  async function section(name:string) {
+    await navigation();await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name,exact:true}).click();
+  }
+  // A late first-project response must not replace an explicitly chosen account view.
+  const projectPath=`**/api/workspaces/${workspaceId}/projects`;
+  const projectGate=new Promise<void>(resolve=>{releaseProjects=resolve;});
+  await page.route(projectPath,async(route:any)=>{const response=await route.fetch();await projectGate;await route.fulfill({response});});
+  await page.goto(config.appUrl,{waitUntil:'domcontentloaded'});
+  await page.getByRole('navigation',{name:'Workspace settings',exact:true}).getByRole('button',{name:'Account security',exact:true}).click();
+  await page.getByRole('heading',{name:'Two-factor authentication',exact:true}).waitFor();
+  releaseProjects?.();
+  await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name:'UI report project',exact:true}).waitFor();
+  assert.equal(await page.getByRole('heading',{name:'Two-factor authentication',exact:true}).isVisible(),true,'Late project loading must preserve newer explicit navigation.');
+  await page.unroute(projectPath);
+  // Exercise callback navigation without an IdP: this deliberately invalid proof
+  // must stay on its identity result view, never be mistaken for successful sign-in.
+  const identityPage=await context.newPage();let releaseIdentity!:()=>void;
+  const identityGate=new Promise<void>(resolve=>{releaseIdentity=resolve;});
+  try {
+    await identityPage.route(projectPath,async(route:any)=>{const response=await route.fetch();await identityGate;await route.fulfill({response});});
+    await identityPage.goto(`${config.appUrl}/#oidc-proof=${randomUUID()}`,{waitUntil:'domcontentloaded'});
+    await identityPage.getByRole('heading',{name:'Your sign-in methods',exact:true}).waitFor();
+    releaseIdentity();
+    await identityPage.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name:'UI report project',exact:true}).waitFor();
+    assert.equal(await identityPage.getByRole('heading',{name:'Your sign-in methods',exact:true}).isVisible(),true,'Project loading must preserve identity callback navigation.');
+    assert.equal(new URL(identityPage.url()).hash,'','Identity callback fragments must be cleared.');
+  } finally {releaseIdentity();await identityPage.close();}
+  await selectProject('UI report project');
+  await section('Reports');
   // Selectors below intentionally follow visible labels rather than internal component state.
   await page.getByRole('button',{name:'New report',exact:true}).click();
   await page.getByLabel('Report title',{exact:true}).fill('Quarterly review');
@@ -54,8 +87,8 @@ try {
   const saved=(await request(`/api/projects/${project.id}/reports`)).reports.find((row:any)=>row.title==='Quarterly review');
   assert.ok(saved);assert.equal((await request(`/api/projects/${project.id}/reports/${saved.id}`)).report.html,source);
   await page.reload({waitUntil:'networkidle'});
-  await page.getByRole('button',{name:'UI report project',exact:true}).click();
-  await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name:'Reports',exact:true}).click();
+  await selectProject('UI report project');
+  await section('Reports');
   await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
   assert.equal(await page.getByLabel('HTML source',{exact:true}).inputValue(),source);
   // A competing saved revision must never overwrite a typed draft silently.
@@ -138,19 +171,19 @@ try {
   await page.getByRole('checkbox',{name:/I have reviewed saved revision 3/}).check();
   await page.getByRole('button',{name:'Create public link',exact:true}).click();
   await Promise.race([intercepted,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Share response was not intercepted.')),10000))]);
-  await page.getByRole('button',{name:'Other report project',exact:true}).click();release();
-  await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name:'Reports',exact:true}).click();await page.getByText('No reports saved yet.',{exact:false}).waitFor();
+  await selectProject('Other report project');release();
+  await section('Reports');await page.getByText('No reports saved yet.',{exact:false}).waitFor();
   assert.equal(await oneTime.count(),0);assert.equal(await page.getByLabel('HTML source',{exact:true}).count(),0);
   await page.unroute(sharePath);
-  await page.getByRole('button',{name:'UI report project',exact:true}).click();await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name:'Reports',exact:true}).click();await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
+  await selectProject('UI report project');await section('Reports');await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
   assert.equal(await oneTime.count(),0,'Returning to a record must never recover a one-time URL.');
   await page.getByLabel('Link label',{exact:true}).fill('Clipboard race');await page.getByRole('checkbox',{name:/I have reviewed saved revision 3/}).check();
   await page.getByRole('button',{name:'Create public link',exact:true}).click();await oneTime.waitFor();
   await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:()=>new Promise<void>(resolve=>{(window as unknown as {finishFixtureCopy:()=>void}).finishFixtureCopy=resolve;})}}));
   await page.getByRole('button',{name:'Copy link',exact:true}).click();
-  await page.getByRole('button',{name:'Other report project',exact:true}).click();
+  await selectProject('Other report project');
   await page.evaluate(()=>(window as unknown as {finishFixtureCopy:()=>void}).finishFixtureCopy());
-  await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name:'Reports',exact:true}).click();await page.getByText('No reports saved yet.',{exact:false}).waitFor();
+  await section('Reports');await page.getByText('No reports saved yet.',{exact:false}).waitFor();
   assert.equal(await page.getByText('Copied.',{exact:true}).count(),0);assert.equal(await oneTime.count(),0);
   await page.getByRole('button',{name:'New report',exact:true}).click();await page.getByLabel('Report title',{exact:true}).fill('Temporary deletion check');await page.getByLabel('HTML source',{exact:true}).fill('<p>Delete this fixture</p>');
   await page.getByRole('button',{name:'Save report',exact:true}).click();await page.getByRole('checkbox',{name:/I have reviewed saved revision 1/}).check();
@@ -160,7 +193,7 @@ try {
   assert.equal((await context.request.get(deletedUrl)).status(),404);assert.equal((await request(`/api/projects/${otherProject.id}/reports`)).reports.length,0);
   console.log('PASS report UI: templates are reusable plain text; dirty navigation, deletion and late share/clipboard results cannot cross project boundaries');
 
-  await page.getByRole('button',{name:'UI report project',exact:true}).click();await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name:'Reports',exact:true}).click();
+  await selectProject('UI report project');await section('Reports');
   let failHistory=true;
   await page.route(sharePath,async(route:any)=>{
     if(route.request().method()==='GET'&&failHistory) {failHistory=false;await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Link history temporarily unavailable.'})});}
@@ -173,6 +206,28 @@ try {
   await mkdir('private/reports-screenshots',{recursive:true});
   for(const width of [1280,360]) {
     await page.setViewportSize({width,height:900});
+    if(width===360) {
+      const menu=page.getByRole('button',{name:'Menu',exact:true});
+      assert.equal(await menu.getAttribute('aria-expanded'),'false');assert.equal(await menu.getAttribute('aria-controls'),'app-navigation');
+      assert.equal(await page.getByRole('navigation',{name:'Project sections',exact:true}).isVisible(),false);
+      await menu.focus();await page.keyboard.press('Enter');
+      const close=page.getByRole('button',{name:'Close menu',exact:true});assert.equal(await close.getAttribute('aria-expanded'),'true');
+      const install=page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name:'Install tracker',exact:true});
+      await install.focus();await page.keyboard.press('Enter');
+      await page.getByRole('heading',{name:'Install the tracker',exact:true}).waitFor();
+      await page.waitForFunction(()=>document.activeElement===document.querySelector('main'));
+      assert.equal(await menu.getAttribute('aria-expanded'),'false');assert.equal(await page.getByRole('navigation',{name:'Project sections',exact:true}).isVisible(),false);
+      assert.match(await page.locator('pre.snippet').textContent()??'',/tracker\.js/);
+      await menu.focus();await page.keyboard.press('Space');
+      const recent=page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name:'Recent events',exact:true});
+      await recent.focus();await page.keyboard.press('Enter');
+      await page.getByRole('heading',{name:'Recent events',level:1,exact:true}).waitFor();
+      assert.equal(await page.locator('pre.snippet').count(),0,'Recent events must not expose the installation panel.');
+      await selectProject('Other report project');await page.getByRole('heading',{name:'Web analytics',level:1,exact:true}).waitFor();
+      await selectProject('UI report project');await section('Reports');await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
+      await page.getByRole('row').filter({hasText:'Client alpha'}).waitFor();
+      assert.equal(await menu.getAttribute('aria-expanded'),'false');
+    }
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`Report UI must fit viewport ${width}.`);
     assert.equal(await oneTime.count(),0,'Screenshots must not contain a one-time capability.');
     await page.screenshot({path:`private/reports-screenshots/reports-${width}.png`,fullPage:true});
@@ -196,6 +251,6 @@ try {
   assert.equal(await page.getByLabel('HTML source',{exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'Quarterly review',exact:true}).count(),0);
   await pool.query('DELETE FROM session WHERE "userId"=$1',[me.user.id]);await page.getByRole('button',{name:'Retry loading',exact:true}).click();
   await page.getByRole('button',{name:'Sign in',exact:true}).waitFor();assert.equal(await panel.count(),0);
-  console.log('PASS report UI: 1280/360px layouts, owner-to-editor sharing denial, viewer read-only state, removal purge and revoked session sign-in');
+  console.log('PASS report UI: late account/identity navigation, keyboard mobile menu and focus, separate install/events views, 1280/360px layouts, owner-to-editor sharing denial, viewer read-only state, removal purge and revoked session sign-in');
   assert.equal(pageErrors,0,'Report flows must not raise uncaught browser errors.');
-} finally {await browser?.close();await closeDatabase();}
+} finally {releaseProjects?.();await browser?.close();await closeDatabase();}

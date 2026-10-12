@@ -192,11 +192,10 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
 
   return (
     <div className="analytics" aria-busy={busy}>
-      <section className="card">
-        <h2>Analytics</h2>
+      <section className="card analytics-toolbar">
         <form onSubmit={applyDraft}>
           <fieldset className="analytics-fieldset" disabled={busy}>
-            <legend>Time range (UTC)</legend>
+            <legend className="sr-only">Time range (UTC)</legend>
             <div className="analytics-presets">
               {PRESETS.map((p) => {
                 const active = view.range.from === shiftDays(today, -(p.days - 1)) && view.range.to === today;
@@ -213,6 +212,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
                 );
               })}
             </div>
+            <details className="analytics-custom-range"><summary>Custom dates <span className="dim">· UTC</span></summary>
             <div className="analytics-dates">
               <div className="analytics-date">
                 <label htmlFor={`${uid}-from`}>From (UTC)</label>
@@ -238,13 +238,13 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
                 Apply
               </button>
             </div>
+            </details>
           </fieldset>
           {view.draftErr && (
             <p className="err-text analytics-draft-err" role="alert">
               {view.draftErr}
             </p>
           )}
-          <p className="hint">All dates and times are in UTC. The range includes both endpoints, up to 366 days.</p>
         </form>
       </section>
 
@@ -267,7 +267,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
 
       {data && (
         <>
-          <section className="card">
+          <section className="card analytics-overview">
             <div className="row between">
               <h2>Overview</h2>
               <span className="dim analytics-range-label">
@@ -283,8 +283,6 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
                 <span className="analytics-stat-label">Custom events</span>
                 <p className="big-num">{fmtNum(data.totals.customEvents)}</p>
               </div>
-            </div>
-            <div className="analytics-stats">
               <div className="analytics-stat">
                 <span className="analytics-stat-label">Estimated visitors</span>
                 <p className={data.measurement.visitors === null ? 'analytics-unavailable' : 'big-num'}>{data.measurement.visitors === null ? 'Unavailable' : fmtNum(data.measurement.visitors)}</p>
@@ -315,10 +313,10 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
             </p>
           </section>
 
-          <section className="card">
+          <section className="card analytics-activity">
             <h2>Daily activity (UTC)</h2>
             {!hasData ? (
-              <div className="empty">
+              <div className="empty analytics-empty-chart">
                 <p>
                   <strong>No events in this range.</strong>
                 </p>
@@ -358,7 +356,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
             )}
           </section>
 
-          <section className="card">
+          <section className="card analytics-breakdown">
             <h2>Top pages</h2>
             <p className="hint">Up to 20 paths in this date range.</p>
             {data.pages.length === 0 ? (
@@ -387,7 +385,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
             )}
           </section>
 
-          <section className="card">
+          <section className="card analytics-breakdown">
             <h2>Top custom events</h2>
             <p className="hint">Up to 20 event names in this date range.</p>
             {data.events.length === 0 ? (

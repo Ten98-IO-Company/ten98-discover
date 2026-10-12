@@ -135,8 +135,20 @@ try {
   await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [unmeasuredId, workspace.id, 'Unmeasured native sandbox', 'https://unmeasured.integration.test', randomUUID()]);
   await pool.query('INSERT INTO event(id,project_id,event_name,path) VALUES($1,$2,$3,$4)', [randomUUID(), unmeasuredId, 'page_view', '/legacy']);
   const dashboard = await context.newPage(); dashboard.setDefaultTimeout(15000);
+  async function navigation(target:any) {
+    const toggle=target.getByRole('button',{name:/^(Menu|Close menu)$/});
+    if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false') await toggle.click();
+  }
+  async function selectProject(target:any,name:string) {
+    await navigation(target);await target.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name,exact:true}).click();
+  }
+  async function section(target:any,name:string) {
+    await navigation(target);await target.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name,exact:true}).click();
+  }
   await dashboard.goto(config.appUrl, {waitUntil: 'networkidle'});
-  await dashboard.getByRole('button', {name: 'Native consent sandbox', exact: true}).click();
+  await dashboard.getByRole('heading',{name:'Web analytics',level:1,exact:true}).waitFor();
+  assert.equal(await dashboard.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name:'Unmeasured native sandbox',exact:true}).getAttribute('aria-current'),'true','Initial loading must open the first listed project when no newer navigation was requested.');
+  await selectProject(dashboard,'Native consent sandbox');
   const metric = (name: string) => dashboard.locator('.analytics-stat').filter({has: dashboard.getByText(name, {exact: true})}).locator('p');
   await metric('Estimated visitors').filter({hasText: /^1$/}).waitFor();
   assert.equal(await metric('Page views').textContent(), '2'); assert.equal(await metric('Visits').textContent(), '1');
@@ -148,13 +160,13 @@ try {
     if (process.env.BROWSER_ARTIFACT_DIR) await dashboard.screenshot({path: join(process.env.BROWSER_ARTIFACT_DIR, name), fullPage: true});
   }
   await capture('native-metrics-known-mobile.png');
-  await dashboard.getByRole('button', {name: 'Unmeasured native sandbox', exact: true}).click();
+  await selectProject(dashboard,'Unmeasured native sandbox');
   await metric('Estimated visitors').filter({hasText: /^Unavailable$/}).waitFor();
   for (const name of ['Visits', 'Bounce rate', 'Average observed visit']) assert.equal(await metric(name).textContent(), 'Unavailable');
   assert.equal(await metric('Page views').textContent(), '1');
   await capture('native-metrics-unavailable-mobile.png');
-  await dashboard.getByRole('button', {name: 'Native consent sandbox', exact: true}).click();
-  await dashboard.getByRole('button', {name: 'Collection and privacy', exact: true}).click();
+  await selectProject(dashboard,'Native consent sandbox');
+  await section(dashboard,'Collection and privacy');
   const settingsPanel = dashboard.locator('section.card').filter({has: dashboard.getByRole('heading', {name: 'Collection and privacy', exact: true})});
   const paths = settingsPanel.getByRole('textbox', {name: 'Excluded path prefixes'}), save = settingsPanel.getByRole('button', {name: 'Save changes', exact: true});
   await paths.waitFor(); assert.equal(await save.isDisabled(), true); assert.equal(await paths.inputValue(), '/private');
@@ -189,7 +201,7 @@ try {
   const viewerContext = await browser.newContext(); await viewerContext.route('**/*', blockExternal);
   assert.equal((await viewerContext.request.post(`${config.appUrl}/api/auth/sign-in/email`, {headers: {origin: config.appUrl}, data: {email: viewerEmail, password: viewerPassword}})).status(), 200);
   const viewer = await viewerContext.newPage(); await viewer.goto(config.appUrl, {waitUntil: 'networkidle'});
-  await viewer.getByRole('button', {name: 'Native consent sandbox', exact: true}).click(); await viewer.getByRole('button', {name: 'Collection and privacy', exact: true}).click();
+  await selectProject(viewer,'Native consent sandbox');await section(viewer,'Collection and privacy');
   await viewer.getByText('You can view these settings; only owners and admins can change them.', {exact: true}).waitFor();
   assert.equal(await viewer.getByRole('checkbox', {name: 'Enable native analytics', exact: true}).isDisabled(), true);
   assert.equal(await viewer.getByRole('button', {name: 'Save changes', exact: true}).isDisabled(), true);

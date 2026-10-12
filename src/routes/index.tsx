@@ -25,6 +25,7 @@ type Project = { id: string; name: string; origin: string; publicKey: string; ev
 type EventsData = { events: { id: string; eventName: string; path: string; receivedAt: string }[]; total: number }
 type Job = { id: string; status: string; createdAt: string; completedAt: string | null; error: string | null }
 type SetupValues = { token: string; name: string; email: string; password: string; workspaceName: string }
+type AppView = 'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports' | 'installation' | 'events'
 
 function fmt(iso: string): string {
   const d = new Date(iso)
@@ -68,7 +69,15 @@ function App() {
   const [jobError, setJobError] = useState('')
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
-  const [view, setView] = useState<'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports'>('project')
+  const [view, updateView] = useState<AppView>('project')
+  const viewRef = useRef<AppView>('project')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const mainRef = useRef<HTMLElement>(null)
+  function setView(next: AppView) {
+    viewRef.current = next
+    updateView(next)
+    if (menuOpen) { setMenuOpen(false); requestAnimationFrame(() => mainRef.current?.focus()) }
+  }
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState('')
   const oidcProof = useRef<string | undefined>(undefined)
@@ -155,8 +164,8 @@ function App() {
     if (ws) void loadProjects(ws.id)
   }
 
-  function selectProject(id: string) {
-    setView('project')
+  function selectProject(id: string, navigate = true) {
+    if (navigate) setView('project')
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
@@ -191,10 +200,17 @@ function App() {
 
   async function loadProjects(wsId: string) {
     const gen = wsGen.current
+    const selection = projGen.current
     setProjectsError('')
     try {
       const d = await api<{ projects: Project[] }>(`/api/workspaces/${wsId}/projects`)
-      if (activeWorkspace.current === wsId && wsGen.current === gen) setProjects(d.projects)
+      if (activeWorkspace.current === wsId && wsGen.current === gen) {
+        setProjects(d.projects)
+        if (!activeProject.current && d.projects[0] && projGen.current === selection && viewRef.current === 'project') {
+          selectProject(d.projects[0].id, false)
+          void loadEvents(d.projects[0].id); void loadJobs(d.projects[0].id)
+        }
+      }
     } catch (e) {
       if (activeWorkspace.current !== wsId || wsGen.current !== gen || guardAuth(e)) return
       setProjects([])
@@ -348,25 +364,23 @@ function App() {
   const appUrl = (status?.appUrl ?? '').replace(/\/+$/, '')
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
+  const projectView = ['project','destinations','collection','domains','reports','installation','events'].includes(view)
+  const pageTitles: Record<AppView, string> = {project: 'Web analytics', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending'}
+  const projectDescriptions: Partial<Record<AppView, string>> = {project: 'Understand how people find and use your website.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.'}
 
   return (
     <div className='shell'>
-      <aside className='side'>
-        <p className='brand'>ten98-monitor <span className='tag'>dev foundation</span></p>
+      <aside className='side' aria-label='Application navigation'>
+        <div className='brand-row'><p className='brand'><span className='brand-mark' aria-hidden='true'>98</span><span>ten98<span className='brand-product'>monitor</span></span></p>
+          <button type='button' className='btn mobile-nav-toggle' aria-expanded={menuOpen} aria-controls='app-navigation' onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? 'Close menu' : 'Menu'}</button>
+        </div>
+        <div id='app-navigation' className={`side-body${menuOpen ? ' is-open' : ''}`}>
         <div className='field'>
           <label htmlFor='ws'>Workspace</label>
           <select id='ws' value={workspaceId} onChange={(e) => changeWorkspace(e.target.value)}>
             {(me?.workspaces ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         </div>
-        <nav aria-label='Workspace settings'>
-          <button className={view === 'workspace' ? 'proj active' : 'proj'} onClick={() => setView('workspace')}>Create workspace</button>
-          {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'team' ? 'proj active' : 'proj'} onClick={() => setView('team')}>Manage team</button>}
-          {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'keys' ? 'proj active' : 'proj'} onClick={() => setView('keys')}>API keys</button>}
-          {workspace?.role === 'owner' && <button className={view === 'providers' ? 'proj active' : 'proj'} onClick={() => setView('providers')}>Providers and spending</button>}
-          <button className={view === 'security' ? 'proj active' : 'proj'} onClick={() => setView('security')}>Account security</button>
-          <button className={view === 'identity' ? 'proj active' : 'proj'} onClick={() => setView('identity')}>Identity sign-in</button>
-        </nav>
         <nav aria-label='Projects'>
           <p className='side-label'>Projects</p>
           {projects === null && <p role='status' className='dim'>Loading…</p>}
@@ -383,26 +397,44 @@ function App() {
           )}
           {canWrite && <button className='btn ghost' onClick={() => selectProject('')}>+ New project</button>}
         </nav>
+        {project && workspace && <nav aria-label='Project sections' className='section-nav'>
+          <p className='side-label'>Measure</p>
+          <button className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} onClick={() => setView('project')}>Analytics</button>
+          <button className={view === 'events' ? 'proj active' : 'proj'} aria-current={view === 'events' ? 'page' : undefined} onClick={() => setView('events')}>Recent events</button>
+          <button className={view === 'reports' ? 'proj active' : 'proj'} aria-current={view === 'reports' ? 'page' : undefined} onClick={() => setView('reports')}>Reports</button>
+          <p className='side-label section-label'>Connect</p>
+          <button className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} onClick={() => setView('installation')}>Install tracker</button>
+          {['owner','admin'].includes(workspace.role) && <button className={view === 'destinations' ? 'proj active' : 'proj'} aria-current={view === 'destinations' ? 'page' : undefined} onClick={() => setView('destinations')}>Destinations</button>}
+          <button className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} onClick={() => setView('collection')}>Collection and privacy</button>
+          {['owner','admin'].includes(workspace.role) && <button className={view === 'domains' ? 'proj active' : 'proj'} aria-current={view === 'domains' ? 'page' : undefined} onClick={() => setView('domains')}>Domains</button>}
+        </nav>}
+        <details className='workspace-tools' open={!projectView || !project}>
+          <summary>Workspace settings</summary>
+          <nav aria-label='Workspace settings'>
+            {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'team' ? 'proj active' : 'proj'} onClick={() => setView('team')}>Manage team</button>}
+            {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'keys' ? 'proj active' : 'proj'} onClick={() => setView('keys')}>API keys</button>}
+            {workspace?.role === 'owner' && <button className={view === 'providers' ? 'proj active' : 'proj'} onClick={() => setView('providers')}>Providers and spending</button>}
+            <button className={view === 'security' ? 'proj active' : 'proj'} onClick={() => setView('security')}>Account security</button>
+            <button className={view === 'identity' ? 'proj active' : 'proj'} onClick={() => setView('identity')}>Identity sign-in</button>
+            <button className={view === 'workspace' ? 'proj active' : 'proj'} onClick={() => setView('workspace')}>Create workspace</button>
+          </nav>
+        </details>
         <div className='side-foot'>
           <p className='dim'>{me?.user.email}</p>
           <button className='btn' disabled={signOutBusy} onClick={() => void signOut()}>{signOutBusy ? 'Signing out…' : 'Sign out'}</button>
         </div>
+        </div>
       </aside>
-      <main className='main'>
-        <p className='banner' role='note'><strong>Development foundation.</strong> Analytics, team access, account security, OIDC and tracker configuration are available. SEO, AI insights and platform data imports are still being built.</p>
+      <main className='main' ref={mainRef} tabIndex={-1}>
+        <header className='app-bar'><div className='breadcrumbs'><span>{workspace?.name ?? 'Your workspace'}</span>{project && <><span aria-hidden='true'>/</span><strong>{project.name}</strong></>}</div><span className='preview-badge'>Development preview</span></header>
+        <div className='page-content'>
         {authNotice && <div role='alert' className='alert'>{authNotice} <button className='btn ghost' onClick={() => setAuthNotice('')}>Dismiss</button></div>}
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError}</div>}
-        {project && workspace && ['project','destinations','collection','domains','reports'].includes(view) && <header className='proj-head'>
-          <h1>{project.name}</h1>
-          <p className='dim mono'>{project.origin}</p>
-          <nav className='row' aria-label='Project sections' style={{marginTop: 12}}>
-            <button className={view === 'project' ? 'btn primary' : 'btn'} aria-current={view === 'project' ? 'page' : undefined} onClick={() => setView('project')}>Analytics</button>
-            <button className={view === 'reports' ? 'btn primary' : 'btn'} aria-current={view === 'reports' ? 'page' : undefined} onClick={() => setView('reports')}>Reports</button>
-            <button className={view === 'collection' ? 'btn primary' : 'btn'} aria-current={view === 'collection' ? 'page' : undefined} onClick={() => setView('collection')}>Collection and privacy</button>
-            {['owner','admin'].includes(workspace.role) && <button className={view === 'destinations' ? 'btn primary' : 'btn'} aria-current={view === 'destinations' ? 'page' : undefined} onClick={() => setView('destinations')}>Destinations</button>}
-            {['owner','admin'].includes(workspace.role) && <button className={view === 'domains' ? 'btn primary' : 'btn'} aria-current={view === 'domains' ? 'page' : undefined} onClick={() => setView('domains')}>Domains</button>}
-          </nav>
+        {project && workspace && projectView && <header className='proj-head'>
+          <p className='project-origin'>{project.origin}</p>
+          <h1>{pageTitles[view]}</h1>
+          <p className='dim'>{projectDescriptions[view]}</p>
         </header>}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { await refreshMemberships(id); setView('project') }} onUnauthorized={resetSession} /></section>}
         {view === 'team' && workspace && me && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={resetSession} />}
@@ -421,8 +453,10 @@ function App() {
         </>}
         {view === 'project' && !workspace && <section className='card'><p>No workspace is linked to this account.</p><button className='btn primary' onClick={() => setView('workspace')}>Create workspace</button></section>}
         {view === 'project' && workspace && project === null && canWrite && (
-          <section className='card' aria-labelledby='create-h'>
-            <h1 id='create-h'>{projects !== null && projects.length > 0 ? 'New project' : 'Create your first project'}</h1>
+          <section className='card onboarding-card' aria-labelledby='create-h'>
+            <span className='eyebrow'>Website setup</span>
+            <h1 id='create-h'>{projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'}</h1>
+            <p className='dim'>Keep your website analytics, tracking tags and reports together. Start with a name and the website you want to measure.</p>
             <CreateProjectForm key={workspaceId} onCreate={createProject} />
           </section>
         )}
@@ -434,7 +468,11 @@ function App() {
         )}
         {view === 'project' && workspace && project !== null && (
           <>
+            {events?.total === 0 && <section className='connection-callout'><div><strong>Ready when your website is.</strong><p>Add the tracking snippet to start collecting consented visits.</p></div><button className='btn primary' onClick={() => setView('installation')}>Connect website</button></section>}
             <AnalyticsPanel key={project.id} projectId={project.id} onUnauthorized={resetSession} />
+          </>
+        )}
+        {view === 'events' && workspace && project !== null && (
             <section className='card' aria-labelledby='ev-h' aria-busy={eventsBusy}>
               <div className='row between'>
                 <div>
@@ -450,7 +488,7 @@ function App() {
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
                   <p><strong>No events recorded yet.</strong></p>
-                  <p>Install the snippet below on {project.origin}, open that site and allow analytics in Tracking preferences, then choose Refresh events. Counts include only events the collector has persisted.</p>
+                  <p>Install your tracker on {project.origin}, allow analytics in Tracking preferences, then refresh this list.</p><button className='btn' onClick={() => setView('installation')}>Install tracker</button>
                 </div>
               )}
               {events !== null && events.events.length > 0 && (
@@ -469,6 +507,9 @@ function App() {
                 </>
               )}
             </section>
+        )}
+        {view === 'installation' && workspace && project !== null && (
+          <>
             <section className='card' aria-labelledby='snip-h'>
               <h2 id='snip-h'>Install the tracker</h2>
               <p>Add this tag to the pages served from <strong>{project.origin}</strong>:</p>
@@ -481,7 +522,8 @@ function App() {
               <p className='dim footnote'>Install the snippet on {project.origin}, choose analytics consent in Tracking preferences, then refresh events to confirm delivery. Earlier activity is discarded.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
               <p className='dim footnote'>After consent, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Vendor tags have their own collection behavior.</p>
             </section>
-            <section className='card' aria-labelledby='wc-h' aria-busy={checkBusy || jobsBusy}>
+            <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>
+            <section aria-labelledby='wc-h'>
               <div className='row between'>
                 <h2 id='wc-h'>Worker check</h2>
                 <div className='row'>
@@ -505,8 +547,11 @@ function App() {
                 </ul>
               )}
             </section>
+            </details>
           </>
         )}
+        <footer className='app-footer'><span>ten98-monitor · Self-hosted and open source</span><span>SEO, AI insights and platform data imports are still being built.</span></footer>
+        </div>
       </main>
     </div>
   )
@@ -578,6 +623,7 @@ function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail
   return (
     <main className='center'>
       <form className='card auth' onSubmit={(e) => void submit(e)}>
+        <p className='auth-brand'>ten98 / monitor</p>
         <h1>Sign in</h1>
         {notice && <p className='alert' role='alert'>{notice}</p>}
         <div className='field'><label htmlFor='si-email'>Email</label>
