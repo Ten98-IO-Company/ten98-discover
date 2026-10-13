@@ -22,7 +22,7 @@ Queries may be used transiently to follow redirects. Stored evidence and fixed d
 
 ## Retention and upgrade
 
-Migration `0018` follows `0017` and preserves existing domain proofs; it does not start network checks. Observation payloads expire strictly before the workspace's **Raw provider evidence** cutoff (90 days by default), using completion time. Cleanup processes at most 100 payloads per shared retention transaction and retains receipt IDs, original outcome, configuration snapshot and idempotency. Queued/running checks are excluded. The UI labels an expired receipt as unavailable evidence, never a healthy or empty chain. Deleting a registry record does not turn its retained receipt into another domain's history; workspace/project deletion still cascades.
+Migration `0018` follows `0017` and preserves existing domain proofs; it does not start network checks. Observation payloads expire strictly before the workspace's **Raw provider evidence** cutoff (90 days by default), using completion time. Cleanup processes at most 100 payloads per shared retention transaction and retains receipt IDs, original check status, configuration snapshot and idempotency. Queued/running checks are excluded. The UI labels an expired receipt as unavailable evidence, never a healthy or empty chain. Deleting a registry record does not turn its retained receipt into another domain's history; workspace/project deletion still cascades.
 
 ## Local verification
 
@@ -33,3 +33,5 @@ With `TEN98_INTEGRATION_TEST=1` and a private local environment, run `node --env
 The optional `tests/domain-redirect-browser.ts` uses an installed Playwright module supplied through `PLAYWRIGHT_MODULE` and a production local server. It covers actual API/UI behavior, keyboard disclosure, dropped committed POST response retry, failed refresh, expired evidence, proof revocation, project isolation, permission loss and desktop/360px layout. All browser traffic outside the local app is blocked; worker DNS/HTTP answers are synthetic.
 
 On 2026-10-13, all seven database groups, the upgrade suite and six production Edge groups passed. TypeScript, production build, plan checks and 167 unit checks passed, with two pre-existing platform skips. No real-domain TLS/DNS, production capacity, public deployment or full P79/P80 parity is claimed.
+
+The combined branch independently repeated TypeScript, production build, plan checks,167 passing unit checks (two existing skips), migration preservation/rollback, all seven database groups and all six Edge browser groups. All observed network evidence in these checks is synthetic.
