@@ -1,6 +1,7 @@
 import {createHmac} from 'node:crypto';
 import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
+import {getProviderAccountIdentityKey} from './provider-account-identity.ts';
 import {keywordAccountEndpoint,keywordCatalogEndpoint,keywordEndpoints,keywordPayload,keywordReconcileEndpoint,matchesKeywordPayload,microUsd,providerMicros,validText,type KeywordMarket,type KeywordMode,type KeywordRequest,type KeywordResult,type KeywordRow} from './keyword-research-input.ts';
 
 type ObjectValue=Record<string,any>;
@@ -48,10 +49,10 @@ export function parseKeywordMarkets(response:{httpStatus:number;body:unknown}):K
   if(!markets.length||markets.length>5000)invalid();
   return markets.sort((a,b)=>a.locationName.localeCompare(b.locationName)||a.languageName.localeCompare(b.languageName));
 }
-export function parseKeywordAccount(response:{httpStatus:number;body:unknown},mode?:KeywordMode) {
+export function parseKeywordAccount(response:{httpStatus:number;body:unknown},mode?:KeywordMode,binding={key:getConfig().authSecret,version:1 as 1|2}) {
   const result=successfulFree(response);if(result.length!==1||!object(result[0])||!validText(result[0].login,254))invalid();
   const row=result[0];
-  const fingerprint=createHmac('sha256',getConfig().authSecret).update('ten98.dataforseo.account.v1:'+row.login.trim().toLowerCase()).digest('hex');
+  const fingerprint=createHmac('sha256',binding.key).update(`ten98.dataforseo.account.v${binding.version}:`+row.login.trim().toLowerCase()).digest('hex');
   if(!mode)return {fingerprint,perTask:0n,perItem:0n};
   const endpoint=mode==='overview'?'keyword_overview':'keyword_ideas';
   const prices=row.price?.dataforseo_labs?.[endpoint]?.live?.priority_normal;
@@ -62,7 +63,7 @@ export function parseKeywordAccount(response:{httpStatus:number;body:unknown},mo
   return {fingerprint,perTask:units.get('per_request')!,perItem:units.get('per_result')!};
 }
 export async function readKeywordMarkets(credentials:unknown,send:typeof fetch=fetch){try{return parseKeywordMarkets(await keywordProviderJson(keywordCatalogEndpoint,credentials,undefined,send));}catch{throw new FoundationError(502,'Could not load supported DataForSEO markets. Check the connection and try again.');}}
-export async function readKeywordAccount(credentials:unknown,mode?:KeywordMode,send:typeof fetch=fetch){try{return parseKeywordAccount(await keywordProviderJson(keywordAccountEndpoint,credentials,undefined,send),mode);}catch{throw new FoundationError(502,'Could not verify the DataForSEO account and supported prices. Check the connection and try again.');}}
+export async function readKeywordAccount(credentials:unknown,mode?:KeywordMode,send:typeof fetch=fetch,version:1|2=2){const key=await getProviderAccountIdentityKey(version);try{return parseKeywordAccount(await keywordProviderJson(keywordAccountEndpoint,credentials,undefined,send),mode,{key,version});}catch{throw new FoundationError(502,'Could not verify the DataForSEO account and supported prices. Check the connection and try again.');}}
 function metric(value:unknown,maximum=Number.MAX_SAFE_INTEGER,integer=false):number|null {if(value==null)return null;if(typeof value!=='number'||!Number.isFinite(value)||value<0||value>maximum||(integer&&!Number.isSafeInteger(value)))invalid();return value;}
 function timestamp(value:unknown):string|null {if(value==null)return null;if(typeof value!=='string'||value.length>40||!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,3})? ?(?:Z|\+00:00)$/.test(value))invalid();const date=new Date(value.replace(' ','T').replace(' +00:00','+00:00'));if(!Number.isFinite(date.getTime()))invalid();return date.toISOString();}
 function parseRow(raw:unknown):KeywordRow {

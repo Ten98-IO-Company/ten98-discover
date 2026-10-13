@@ -63,6 +63,7 @@ export async function runRetentionChecks({ ownerId }: { ownerId: string }): Prom
   assert.equal(preview.revision, initial.revision);
   assert.equal(new Date(preview.asOf).getTime() - new Date(preview.cutoff).getTime(), 30 * 86_400_000, 'The displayed cutoff must represent exactly the proposed retention days.');
   assert.deepEqual(preview.estimate, { status: 'available', rows: 0, atLeast: false, logicalBytes: 0 });
+  assert.deepEqual(preview.savedKeywordEstimate, { status: 'available', metrics: 0, atLeast: false });
   assert.deepEqual((await getRetention(settingsWorkspace, ownerId)).settings, defaults, 'Preview must not save the policy.');
   const foreignWorkspace = await workspace(memberId);
   await expectStatus(getRetention(foreignWorkspace, ownerId), 404, 'Foreign policy must remain unavailable.');

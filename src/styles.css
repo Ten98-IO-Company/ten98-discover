@@ -71,6 +71,32 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .site-audits table { min-width: 640px; }
 .site-audits .metric-grid { grid-template-columns: repeat(auto-fit,minmax(min(100%,120px),1fr)); }
 .keyword-research td:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
+.keyword-tabs { margin-bottom: 20px; }
+.keyword-workspace > [hidden] { display: none; }
+.saved-keywords { display: grid; gap: 16px; }
+.saved-keywords h2, .saved-keywords h3 { margin-bottom: 6px; }
+.saved-keywords .saved-keyword-fields, .saved-keywords fieldset.saved-keyword-filter-grid { border: 0; padding: 0; margin: 0; min-width: 0; }
+.saved-keywords .saved-keyword-fields { display: grid; gap: 12px; }
+.saved-keywords fieldset > legend { margin-bottom: 12px; font-weight: 600; }
+.saved-keywords .saved-keyword-fields > .btn { justify-self: start; }
+.saved-keyword-filter-grid, .saved-keywords fieldset.saved-keyword-filter-grid > .row, .saved-keywords fieldset.saved-keyword-filter-grid details > .row { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); gap: 12px; }
+.saved-keywords fieldset.saved-keyword-filter-grid { display: block; }
+.saved-keywords .field { margin: 0 0 12px; min-width: 0; }
+.saved-keywords table { min-width: 1000px; }
+.saved-keywords table td:nth-child(2) { min-width: 200px; max-width: 320px; }
+.saved-keywords table td:last-child { min-width: 210px; }
+.saved-keywords td { vertical-align: top; }
+.saved-keyword-tag { display: inline-block; margin: 2px 4px 2px 0; padding: 3px 7px; border-radius: 5px; color: #334155; background: #f1f5f9; font-size: 12px; }
+.saved-keyword-tag.tag-rose { color: #9f1239; background: #ffe4e6; }
+.saved-keyword-tag.tag-amber { color: #92400e; background: #fef3c7; }
+.saved-keyword-tag.tag-lime { color: #3f6212; background: #ecfccb; }
+.saved-keyword-tag.tag-emerald { color: #065f46; background: #d1fae5; }
+.saved-keyword-tag.tag-sky { color: #075985; background: #e0f2fe; }
+.saved-keyword-tag.tag-violet { color: #5b21b6; background: #ede9fe; }
+.saved-keyword-tag.tag-fuchsia { color: #86198f; background: #fae8ff; }
+.saved-keyword-refresh-child { border-top: 1px solid var(--line); padding-top: 14px; }
+.saved-keyword-refresh-list { list-style: none; padding: 0; }
+.saved-keyword-refresh-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .conversion-tabs { margin-bottom: 20px; }
 .conversion-fields, .conversions fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .conversion-step { min-width: 0; margin: 16px 0; padding: 18px; border: 1px solid var(--line); border-radius: 8px; }

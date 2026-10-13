@@ -73,6 +73,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     let auditEstimate: { status: 'available' | 'unavailable'; rawRuns: number | null; rawPages: number | null; rawEdges: number | null; derivedRuns: number | null; derivedPages: number | null; atLeast: boolean } =
       { status: 'unavailable', rawRuns: null, rawPages: null, rawEdges: null, derivedRuns: null, derivedPages: null, atLeast: false };
     let keywordEstimate: { status: 'available' | 'unavailable'; results: number | null; atLeast: boolean } = { status: 'unavailable', results: null, atLeast: false };
+    let savedKeywordEstimate: { status: 'available' | 'unavailable'; metrics: number | null; atLeast: boolean } = { status: 'unavailable', metrics: null, atLeast: false };
     let estimate: { status: 'available' | 'unavailable'; rows: number | null; atLeast: boolean; logicalBytes: number | null } = { status: 'unavailable', rows: null, atLeast: false, logicalBytes: null };
     await client.query('SAVEPOINT estimate');
     try {
@@ -88,6 +89,9 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       const keywords = await client.query(`SELECT id FROM keyword_research_run
         WHERE workspace_id=$1 AND result IS NOT NULL AND completed_at<$2 LIMIT 10001`, [workspaceId, derivedCutoff]);
       keywordEstimate = { status: 'available', results: Math.min(keywords.rows.length, 10000), atLeast: keywords.rows.length > 10000 };
+      const savedKeywords = await client.query(`SELECT k.id FROM saved_keyword k JOIN project p ON p.id=k.project_id
+        WHERE p.workspace_id=$1 AND k.metric_data IS NOT NULL AND k.metric_observed_at<$2 LIMIT 10001`, [workspaceId, derivedCutoff]);
+      savedKeywordEstimate = { status: 'available', metrics: Math.min(savedKeywords.rows.length, 10000), atLeast: savedKeywords.rows.length > 10000 };
       const prompts=await client.query('SELECT id FROM prompt_execution WHERE workspace_id=$1 AND result IS NOT NULL AND completed_at<$2 LIMIT 10001',[workspaceId,rawEvidenceCutoff]);
       const promptInputs=await client.query(`SELECT q.id FROM prompt_execution_quote q JOIN prompt_comparison c ON c.quote_id=q.id
        WHERE q.workspace_id=$1 AND q.input_purged_at IS NULL AND EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id)
@@ -102,7 +106,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, promptEstimate, redirectEstimate, auditEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, savedKeywordEstimate, promptEstimate, redirectEstimate, auditEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
@@ -186,7 +190,7 @@ export async function runRetentionBatch(projectId?: string) {
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
-    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
       expiredAuditRuns: audits.expiredAuditRuns, removedAuditPages: audits.removedAuditPages, removedAuditEdges: audits.removedAuditEdges,
       removedAuditIssues: audits.removedAuditIssues, clearedAuditEvidence: audits.clearedAuditEvidence, complete };
   } catch (error) {

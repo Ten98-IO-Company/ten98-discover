@@ -75,6 +75,7 @@ try {
   await raw().fill('0');assert.equal(await preview().isEnabled(),false);
   await raw().fill('30');await preview().click();await save().waitFor();
   await page.getByText('0 generated prompt answers and 0 copied execution inputs eligible under raw provider evidence retention.',{exact:true}).waitFor();
+  await page.getByText('0 saved keyword metric snapshots eligible. Authored keywords and tags remain.',{exact:true}).waitFor();
   await page.getByText('Raw provider evidence cutoff (UTC):',{exact:false}).waitFor();
   assert.equal((await pool.query('SELECT raw_analytics_days FROM workspace WHERE id=$1',[workspace.id])).rows[0].raw_analytics_days,90,'Preview must not save.');
   await raw().fill('45');assert.equal(await save().count(),0,'Editing invalidates an earlier confirmation.');

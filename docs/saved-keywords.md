@@ -1,0 +1,102 @@
+# Saved keywords
+
+Status: implemented development increment covering saved lists, tags, filters, exports and explicitly quoted metric refreshes. The source contract and acceptance evidence below describe this increment; they do not establish the complete 81-requirement V1 release or live-provider acceptance. GPT owns schema, authorization, provenance, spending, retention, product design and independent validation. Kimi drafted the bounded parser and controlled filter fields.
+
+## Source and existing seams
+
+Pinned OpenSEO: `89e5a00717cdf049b7c2b4e29646edb3a7d4995b`.
+
+- `src/db/pg/app.schema.ts:99`: saved identity is unique(project, keyword, location, language); authored saved rows are separate from metric cache. Tags and assignments are project-local.
+- `src/server/features/keywords/services/research/saved-keywords.ts:34`: normalize/deduplicate, optional observed metrics, append/replace tags; list/filter/export/tag/remove. An assigned tag cannot be deleted until detached.
+- `src/server/features/keywords/repositories/KeywordResearchRepository.ts:147`: case-insensitive literal search; all include terms, no exclude terms; inclusive volume/CPC/difficulty bounds; any selected tag; stable sort must be added in ten98.
+- `src/server/features/keywords/services/research/refresh-metrics.ts:15`: group refresh by exact location/language; omitted provider rows do not overwrite previous metrics.
+- `src/shared/saved-keyword-tags.ts` and `src/shared/tag-colors.ts`: display spelling is distinct from normalized tag identity; eight fixed color names.
+- `src/client/features/saved-keywords/useSavedKeywordsExport.ts`: selection and filtered CSV/Sheets export. Preserve CSV and a safe tabular clipboard/Sheets-compatible export in P48; native Google Sheets account integration is not implied.
+
+Reuse current `keyword-research-input.ts` types/normalization semantics, `KeywordRow`/`KeywordResult`, `dataforseo-keywords.ts`, explicit quote/start/cancel/reconcile flow, `reserveSpendInTransaction`, `dispatchSpend`, `settleSpend`, `withContentProject`, `contentReceipt`, cursor conventions, `csvCell`, and keyword retention transaction. No new provider, dependency, scheduler, client-side metric authority or duplicate queue framework.
+
+Important inspected boundary: paid `normalizeKeyword()` accepts 80 Unicode codepoints and 10 words. Trusted provider `KeywordRow.keyword` currently permits 500 UTF-16 units. Saving must not silently discard valid ideas rows merely because the current overview adapter cannot refresh them. Authored saved limit: input and normalized identity 1–500 UTF-16 units, well-formed Unicode, no C0/DEL; trim, collapse whitespace, lowercase. No percent/plus decoding. Preserve exact provider-reported spelling separately in metric evidence. Current refresh eligibility is evaluated with the existing paid normalizer and displayed as a reason when unsupported. This is an explicit reviewed distinction, not a change to paid request limits.
+
+## User flow
+
+Open **Keyword Research**, run or reopen research, select result rows, and choose **Save keywords**. The Saved tab opens the save form with server-backed row references and optional tags. Manual paste and explicit market selection also work without a provider connection. Saved is an authored project list, separate from research receipts. Switching between Research and Saved fetches current access again; an unfinished save must be saved or cancelled before switching away.
+
+Saved -> apply search/include/exclude/market/tag/metric filters -> select rows -> add/remove/replace/clear tags, export, remove or Refresh metrics. Manage tags supports rename, fixed color selection/reset, and deletion only when unassigned. Removal requires a visible count/confirmation; tag removal is distinct from deleting keywords. Selection never silently follows a changed filter or another project. Native labels and keyboard-focusable horizontal table region support 360px. All member roles can inspect; owner/admin/editor can mutate; viewer controls stay read-only.
+
+Refresh selected or all matching -> exact keyword/market/chunk preview -> quote with total and per-child maximum USD -> explicit Start -> durable child statuses, partial failure and per-keyword last-update state. No paid call from Save, list, export, page mount, refresh-status or browser retry. Ordinary Refresh means refresh metrics, not collection polling.
+
+## Authored storage and transaction boundaries
+
+Use three authoring tables: saved keyword, project tag, keyword/tag assignment, plus project-local authored and metric revisions. Add one bounded durable refresh-plan record linking existing child quote/run IDs and their captured target UUIDs; reuse existing child jobs and financial receipts rather than duplicate them. The plan is not an alternate ledger. No lifetime row count ceiling. Keyword/market identity is immutable; correcting it means remove and save a new row with a new UUID. Composite project-aware uniqueness/FKs prevent cross-project tag assignment.
+
+Saved row: UUID, project ID, normalized keyword, location code, language code, created/updated timestamps. Optional current observed metric snapshot has `sourceRunId`, source row index, provider spelling, source label, retrieved time, metric/intent update times and existing `KeywordRow` values. It is provider-derived data, not authored data. Include a server-controlled selection/version marker to prevent an older refresh completion replacing newer evidence. A new explicit save of older run evidence must not downgrade the current snapshot; report skipped older observations.
+
+Project tag: UUID, project ID, name, normalized name, nullable color; unique(project, normalized name). Assignment uses the same project in both parent references. Name normalization is trim/collapse whitespace and deterministic `toLowerCase`, not host-locale behavior. Preserve the first display spelling on append; rename is explicit. Supported colors: slate, rose, amber, lime, emerald, sky, violet, fuchsia.
+
+All authored mutations: workspace -> project gate, live write-role check, actor-bound idempotency receipt, expected authored revision, atomic validation of every selected row/tag, writes, revision increment, receipt. Foreign/missing IDs fail the whole operation; no best-effort cross-tenant partial writes. Concurrent revision winner is singular. Receipts store IDs/counts, not duplicate authored/provider payloads. Same key with changed actor/body conflicts; a late replay after deletion reports current absence and never recreates rows. Duplicate keyword saves merge by immutable identity and explicitly report existing versus inserted counts.
+
+## Save provenance
+
+Two strict request variants, with request ID, expected authored revision and optional tag operation:
+
+- manual: explicit normalized keyword strings and numeric location/language; new rows have no provider metrics.
+- run: project-owned run UUID and unique integer row indexes. Server reads the exact immutable stored run/request/result, verifies same project/workspace and current writer, terminal completed outcome with parsed metrics, result not expired, index bounds and exact market. No browser `metrics`, `source`, timestamps, account, cost or market override is accepted. Use row indexes, not a client-spelled keyword, to address the immutable source.
+
+Lock and recheck retention under the same workspace/project gates before copying observations. Two source rows that normalize to the same identity with conflicting metrics must fail for deliberate resolution, not select an arbitrary first value. Save-from-run after evidence expiry returns409 with a manual-save path; it must not resurrect expired metrics. Never URL-decode a literal `C++` or `%20` keyword to infer identity. Existing provider-normalizer matching helpers are not saved-keyword canonicalizers.
+
+## Tags, filters and results
+
+Save supports append (default) or nonempty replace. Bulk operations are explicit add, remove selected tags, nonempty replace, or clear; no omitted array means clear. Rename collisions return409 and never silently merge tags. In-use tag deletion returns409 with assignment count; detachment and deletion are separate deliberate operations.
+
+Default list50; explicit page sizes50/100/250 with stable cursor tie-breaker UUID and null ordering. Cursor binds project, normalized filters, sort/direction and relevant authored revision; metric sorting/filtering additionally binds a metric revision or returns409 when that ordering changes. Fresh requests are fresh snapshots; never advertise a frozen dataset across concurrent refreshes.
+
+Filters: search; include/exclude terms (AND includes, NONE excludes); exact optional location/language; any selected project tags; inclusive min/max volume, CPC USD and difficulty; optional metric state `all|available|unavailable|expired`. Literal case-insensitive matching, never regex or SQL wildcards. Numeric comparison excludes unknown/expired values; zero satisfies zero. No NULL-to-zero coercion. CPC is canonical decimal text converted to exact integer micros for comparison/sort; no binary floating conversion. Sort: createdAt, keyword, searchVolume, cpcUsd, competition, keywordDifficulty, fetchedAt; explicit asc/desc, NULLS LAST, UUID tie-breaker.
+
+Return role, authored revision, metric revision, filters, total count, rows, bounded tag options and next cursor. Row contains identity/market, tags, `metrics:{status:'available'|'unavailable'|'expired',...}` and `refresh:{eligible,reason,lastAttemptStatus,lastAttemptAt}`. A failed/missing refresh can coexist with older available metrics: show their actual observation time and the newer failure separately. Do not change old `fetchedAt` merely because refresh was attempted.
+
+## Export
+
+Selection and complete filtered scope use the same parser/query and current read authorization. CSV columns include keyword, market/language, numeric metrics with CPC currency, tags, source/observation time, metric update time and explicit data status. Reuse `csvCell` for every cell including tag names; pass an explicit empty string for unavailable numerical cells because that helper's general NULL default is the text `Unavailable`. Safe clipboard TSV/Sheets copy must separately neutralize formulas and embedded tabs/newlines. Do not label a bounded on-screen page as all filtered data.
+
+Use bounded pages while building one snapshot export; abort on disconnect/deadline and apply an explicit row/byte limit before publishing the download. Export operation ceiling:10,000 rows/16MiB; return413 asking to narrow filters rather than silently truncating. This is an export resource bound, not an authored-list ceiling; larger export support remains a recorded portability consideration. Unknown numeric values stay empty with separate status, never zero. Exact CPC decimal spelling remains lossless. No export invokes Google or another service.
+
+## Refresh, idempotency and retention
+
+Extend existing keyword jobs with saved-row target references; do not make browser callbacks the mechanism that updates saved metrics. Quote snapshots immutable target UUIDs/identities, actor, project, connection revision/account fingerprint and exact market; group sorted targets by location/language then chunk at100 using existing overview request shape (`mode:'overview', limit:100`). No fallback to another paid endpoint. Selection/all-matching resolution occurs server-side; added rows after quote are excluded. Unsupported saved keywords are listed with reasons before any quote/start; user explicitly excludes them before continuing.
+
+Bound one approval to at most2,000 targets and20 child requests; reject oversized plans without truncation. Multiple markets can reach the child bound before the target bound. These are transaction/queue work bounds, not lifetime saved limits. All-matching users see the actual scope count and can narrow it deliberately. No background continuation past the approved plan. The application's existing five-minute quote window still applies at each dispatch; queued expiry is honest cancellation, never silent requoting.
+
+Start binds parent quote and request key. Under the workspace gate recheck current role, project, all selected immutable row IDs, connection and all child quotes, then reserve every child and enqueue in ONE transaction using `reserveSpendInTransaction`. One budget/queue failure rolls the whole start back. Child request identities and parent mapping are stable, not regenerated on retry. A lost response retries the same parent key after quote expiry before any new-intent decision. New credentials or account cannot reconcile another account's charge.
+
+Immediately before paid dispatch recheck existing permission/budget/credential/quote guards and selected row existence. Deletion before dispatch cancels that affected child, not secretly removes keywords from its approved request. Deletion after dispatch does not erase the incurred charge: settle financial truth, but never upsert a missing/newly recreated saved row. Publish metrics only to exact captured UUIDs/identities with current role and monotone observation/version guard. Map returned metrics through the same saved-keyword normalization, without percent/plus decoding; an ambiguous conflicting normalized response cannot overwrite evidence. Record the actual charge even when publication is rejected. An older completion cannot overwrite a newer result. Missing/failed/uncertain results preserve previous metrics and record attempt status. Uncertain charges block further dispatch through existing ledger rules. Cancellation affects only undispatched children; reconciliation cannot fabricate a lost response body.
+
+Authored keyword/tag/assignment records survive raw/derived expiry until explicit deletion. Provider snapshots use `derivedHistoryDays`, anchored to the original trusted server run completion/observation time, never the later Save timestamp or provider's metric-update date. Save a recent copy only if still retained under current policy. Cleanup holds workspace -> project, rereads policy and publishes expired state before residual cleanup, in bounded batches. Preserve idempotency/financial receipts, target UUID/hash tombstones and original outcomes; do not add a forever-retained second copy of provider rows to plan/receipt JSON. Existing paid request text needed for charge reconciliation follows the existing financial-evidence rules rather than being mislabeled erased. Extension cannot resurrect deleted payloads. Receipt-only or never-observed values do not look like successful empty metrics.
+
+## Minimum implementation seams
+
+New pure input module, new saved-keyword server module, additive migration, small existing keyword worker/publication/retention seams, Saved tab/table and existing Research row-selection action. No separate job runner, provider adapter or design framework. API routes under `/api/projects/:projectId/saved-keywords`: list, save, bulk-tags, remove, tag update/delete, export; refresh quote/start/detail/cancel/reconcile can use one narrow parent wrapper over current keyword children. All carry fresh role and revision metadata. REST/MCP release mapping remains required in P05/P06/P63, not implicitly completed by cookie UI routes.
+
+## Acceptance and ownership
+
+GPT independent fixtures: same text across markets/projects; normalized duplicate saves; forged metrics/foreign run/expired source; tag name collision, in-use deletion and literal `%_` filters; exact CPC/null/zero; all export formats and formula injection; concurrent same-key/revision saves; all-child queue/budget rollback; mixed-market chunks100/101; dropped start response/retry after expiry; stale account/member revocation; deletion and delete-recreate before/after dispatch; out-of-order results; omitted rows; retention/save/refresh races; no provider calls from read/save/export. Browser: real selection, dirty state, held reads interrupted by writes, stale A->B->A completion, live demotion, explicit cost confirmation, keyboard and360px table/filters.
+
+Kimi drafted the pure strict input parser and, in a separate bounded task, the controlled filter fields after the [reviewed contract was published](https://github.com/Ten98-IO-Company/ten98-monitor/issues/39). GPT reviewed and corrected both drafts and implemented the shared application boundaries. The [Kimi ledger](kimi-workflow.md#saved-keyword-swarm--2026-10-13) records observed model, skills, duration and limitations. No paid/live acceptance is claimed from synthetic fixtures; designated-budget real provider acceptance remains a release gate.
+
+## Provider account identity and upgrades
+
+Migration `0021` adds authored lists, tags, revisions and refresh plans. Migration `0022` stabilizes DataForSEO account identity across login-secret rotation. Earlier migration files and fingerprints remain unchanged. During the upgrade transaction, the existing login secret is captured in an encrypted instance record for legacy version-1 fingerprints, alongside a random independent key for new version-2 fingerprints. Jobs and reconciliation select the version saved with their original quote. The account login itself is not stored in the fingerprint.
+
+Stop web and worker writers and back up the database, artifacts and matching configuration before migrating. An installation with existing keyword quotes must supply its matching credential encryption keyring and the `AUTH_SECRET` that generated those legacy quotes. A missing keyring aborts the upgrade atomically. If the old login secret was already lost or replaced before this migration, old fingerprints cannot be reconstructed: restore the matching original configuration and pre-upgrade backup before upgrading. Do not rewrite charges or accept another account as a recovery shortcut.
+
+Fresh installations without provider credentials can migrate without a vault keyring. They initialize the encrypted identity keys once, under a database row lock, when a correctly configured provider is first used. Missing identity state after quotes exist fails closed. Readiness, worker startup and `diagnose` check stored identity-key readability. `rekey` re-encrypts these same keys with the active vault key; it does not change account identity. Retain old encryption keys for backups that still need them.
+
+Runnable checks are `tests/saved-keywords.test.ts`, `tests/saved-keywords-integration.ts`, `tests/provider-account-identity-integration.ts` and the [production browser harness](../tests/saved-keywords-ui/README.md). Integration tests require their explicitly guarded synthetic local databases; the identity legacy/deferred cases each require a separate empty database. They do not call real providers.
+
+## Observed validation — 2026-10-13
+
+- Full unit suite: 278 passed, two existing platform skips, zero failures. TypeScript analysis and production build passed.
+- Saved-keyword PostgreSQL/API acceptance: 13 groups passed, including provenance, exact numeric filters, more than 250 tags, the 10,000-row export boundary, atomic multi-child queue failure, lost acknowledgements, deletion/recreation, out-of-order completion and retention races. Existing keyword worker and Google/keyword retention regressions also passed after `0022`.
+- Independent identity acceptance passed on separate fresh legacy/deferred databases: actual legacy capture and rollback, concurrent initialization, login-secret rotation, wrong-account rejection, uncertain-charge recovery, missing-key failures, encryption rekey and no-network failures before vault setup.
+- Upgrade acceptance preserved existing credentials, membership, analytics, provider charges, research, saved goals/funnels and authored keywords/tags. Repeat migration and rollback/history checks passed.
+- Six production Edge browser groups passed after `0022`, covering selection/save, tags, literal/metric filters, CSV/TSV, immutable retry and duplicate-click guards, stale responses, live role removal and tab reauthorization. Desktop and 360px screenshots were inspected. No browser errors or outbound provider requests occurred. A subsequent error-message-only change preserved the recovery-key 503 response and passed its targeted no-network regression and a fresh production build.
+- The local preview was backed up and upgraded through `0022`; all prior public-table counts, owner identity and projects were preserved. This is a local development preview, not a published release image.

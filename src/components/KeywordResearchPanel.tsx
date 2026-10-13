@@ -1,6 +1,8 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import {Link} from '@tanstack/react-router';
+import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
+import {isKeywordMetricRow} from '../lib/keyword-metrics';
 
 type Role='owner'|'admin'|'editor'|'viewer';
 type Mode='overview'|'ideas';
@@ -37,8 +39,7 @@ function validSummary(value:unknown):value is RunSummary{
 }
 function validResult(value:unknown):value is Result{
   const r=value as Result|null;
-  return !!r&&date(r.retrievedAt)&&r.source==='DataForSEO Labs / Google'&&strings(r.missingKeywords)&&metric(r.totalCount,Number.MAX_SAFE_INTEGER,true)&&typeof r.limited==='boolean'&&Array.isArray(r.rows)&&r.rows.length<=100&&r.rows.every(row=>
-    row&&typeof row.keyword==='string'&&metric(row.searchVolume,Number.MAX_SAFE_INTEGER,true)&&(row.cpcUsd===null||amount(row.cpcUsd))&&metric(row.competition,1)&&(row.competitionLevel===null||['LOW','MEDIUM','HIGH'].includes(row.competitionLevel))&&metric(row.keywordDifficulty,100)&&nullableString(row.intent)&&nullableDate(row.metricsUpdatedAt)&&nullableDate(row.intentUpdatedAt)&&Array.isArray(row.monthlySearches)&&row.monthlySearches.length<=120&&row.monthlySearches.every(m=>m&&Number.isInteger(m.year)&&m.year>=1970&&m.year<=9999&&Number.isInteger(m.month)&&m.month>=1&&m.month<=12&&metric(m.searchVolume,Number.MAX_SAFE_INTEGER,true)));
+  return !!r&&date(r.retrievedAt)&&r.source==='DataForSEO Labs / Google'&&strings(r.missingKeywords)&&metric(r.totalCount,Number.MAX_SAFE_INTEGER,true)&&typeof r.limited==='boolean'&&Array.isArray(r.rows)&&r.rows.length<=100&&r.rows.every(isKeywordMetricRow);
 }
 function sameRequest(a:Req,b:Req){return a.connectionId===b.connectionId&&a.mode===b.mode&&a.locationCode===b.locationCode&&a.languageCode===b.languageCode&&a.limit===b.limit&&a.keywords.length===b.keywords.length&&a.keywords.every((k,i)=>k===b.keywords[i]);}
 
@@ -81,10 +82,15 @@ function chargeNote(r:RunSummary):string{
 
 export function KeywordResearchPanel({workspaceId,projectId,userId,onUnauthorized}:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void}){
   // Keyed remount clears all drafts, quotes, pending request keys and results on scope change.
-  return <Panel key={userId+'|'+projectId} workspaceId={workspaceId} projectId={projectId} onUnauthorized={onUnauthorized}/>;
+  return <KeywordWorkspace key={userId+'|'+projectId} {...{workspaceId,projectId,userId,onUnauthorized}}/>;
 }
 
-function Panel({workspaceId,projectId,onUnauthorized}:{workspaceId:string;projectId:string;onUnauthorized:()=>void}){
+function KeywordWorkspace(props:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void}){
+  const [tab,setTab]=useState<'research'|'saved'>('research'),[researchLocked,setResearchLocked]=useState(false),[savedLocked,setSavedLocked]=useState(false),[seed,setSeed]=useState<ResearchSaveSeed|null>(null);
+  const locked=researchLocked||savedLocked;
+  return <div className="keyword-workspace"><div className="row keyword-tabs" aria-label="Keyword sections"><button className={'btn '+(tab==='research'?'primary':'ghost')} aria-pressed={tab==='research'} disabled={locked&&tab!=='research'} onClick={()=>{setSeed(null);setTab('research');}}>Research</button><button className={'btn '+(tab==='saved'?'primary':'ghost')} aria-pressed={tab==='saved'} disabled={locked&&tab!=='saved'} onClick={()=>setTab('saved')}>Saved keywords</button></div>{locked&&<p className="hint">Finish or cancel the current changes before switching keyword sections.</p>}{tab==='research'?<Panel {...props} active onLockChange={setResearchLocked} onSaveRows={(run,indexes)=>{setSeed({key:crypto.randomUUID(),runId:run.id,rowIndexes:indexes,keywords:indexes.map(i=>run.result!.rows[i].keyword),locationCode:run.locationCode,languageCode:run.languageCode});setTab('saved');}}/>:<SavedKeywordsPanel {...props} active seed={seed} onLockChange={setSavedLocked}/>}</div>;
+}
+function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveRows}:{workspaceId:string;projectId:string;onUnauthorized:()=>void;active:boolean;onLockChange:(locked:boolean)=>void;onSaveRows:(run:Run,indexes:number[])=>void}){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/keyword-research';
   const uid=useId();
   const [st,setSt]=useState<State|null>(null);
@@ -118,6 +124,7 @@ function Panel({workspaceId,projectId,onUnauthorized}:{workspaceId:string;projec
   const resultHeading=useRef<HTMLHeadingElement|null>(null),focusResult=useRef(false);
   const [clock,setClock]=useState(Date.now());
   unauthRef.current=onUnauthorized;
+  useEffect(()=>{onLockChange(writing||lostStart);},[writing,lostStart,onLockChange]);
 
   const current=(op:Operation)=>aliveRef.current&&activeRef.current===op&&genRef.current===op.generation;
   function begin(write=false,replaceRead=false):Operation|null{
@@ -203,7 +210,7 @@ function Panel({workspaceId,projectId,onUnauthorized}:{workspaceId:string;projec
     }finally{finish(op);}
   }
   useEffect(()=>{
-    if(!selected||pollDead||!['queued','running'].includes(selected.status))return;
+    if(!active||!selected||pollDead||!['queued','running'].includes(selected.status))return;
     const id=selected.id;let cancelled=false;let timer:ReturnType<typeof setTimeout>;
     const tick=async()=>{
       if(cancelled||selectionRef.current!==id||!aliveRef.current)return;
@@ -215,7 +222,7 @@ function Panel({workspaceId,projectId,onUnauthorized}:{workspaceId:string;projec
     };
     timer=setTimeout(tick,2000);
     return ()=>{cancelled=true;clearTimeout(timer);};
-  },[selected?.id,selected?.status,pollDead]);
+  },[active,selected?.id,selected?.status,pollDead]);
 
   const parsed=normKeywords(kwText);
   const markets=st?.catalog.markets??[];
@@ -435,7 +442,7 @@ function Panel({workspaceId,projectId,onUnauthorized}:{workspaceId:string;projec
         </div>
       </details>}
       {selected.result&&!selected.resultExpired?
-        <ResultView run={selected} result={selected.result} marketName={selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.request.locationCode+', language '+selected.request.languageCode}/>
+        <ResultView key={selected.id} run={selected} result={selected.result} canSave={canResearch&&selected.status==='completed'} disabled={writing||lostStart} onSave={indexes=>onSaveRows(selected,indexes)} marketName={selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.request.locationCode+', language '+selected.request.languageCode}/>
       :selected.resultExpired?
         <p className="hint">The saved result for this run was purged and is no longer available. The charge record above is unaffected.</p>
       :selected.status==='reconciled'?
@@ -471,14 +478,17 @@ function Panel({workspaceId,projectId,onUnauthorized}:{workspaceId:string;projec
   </section>;
 }
 
-function ResultView({run,result,marketName}:{run:Run;result:Result;marketName:string}){
+function ResultView({run,result,marketName,canSave,disabled,onSave}:{run:Run;result:Result;marketName:string;canSave:boolean;disabled:boolean;onSave:(indexes:number[])=>void}){
+  const [selected,setSelected]=useState<number[]>([]);
   return <div className="stack">
     {result.rows.length===0&&<p>No matching keyword data was returned. Unavailable data is not zero.</p>}
     <p className="hint">Source: {result.source} · retrieved {dt(result.retrievedAt)} · market {marketName}. Showing {result.rows.length}{result.totalCount!=null?' of '+result.totalCount:''} keywords{result.limited?' (bounded to the requested limit of '+run.request.limit+')':''}. Volumes may overlap between keywords and are not summed.</p>
+    {canSave&&result.rows.length>0&&<div className="row"><button className="btn ghost" disabled={disabled} onClick={()=>setSelected(result.rows.map((_,i)=>i))}>Select all results</button><button className="btn ghost" disabled={disabled||!selected.length} onClick={()=>setSelected([])}>Clear selection</button><button className="btn primary" disabled={disabled||!selected.length} onClick={()=>onSave(selected)}>Save {selected.length||''} selected keywords</button></div>}
     <div className="table-wrap" role="region" aria-label="Keyword data table" tabIndex={0}><table style={{minWidth:760}}>
-      <thead><tr><th>Keyword</th><th>Est. monthly volume</th><th>Historical CPC (USD)</th><th>Paid competition</th><th>Organic difficulty</th><th>Intent</th><th>Metrics updated</th></tr></thead>
+      <thead><tr>{canSave&&<th>Select</th>}<th>Keyword</th><th>Est. monthly volume</th><th>Historical CPC (USD)</th><th>Paid competition</th><th>Organic difficulty</th><th>Intent</th><th>Metrics updated</th></tr></thead>
       <tbody>
-        {result.rows.map(r=><tr key={r.keyword}>
+        {result.rows.map((r,index)=><tr key={index}>
+          {canSave&&<td><input type="checkbox" aria-label={'Select research keyword '+r.keyword} disabled={disabled} checked={selected.includes(index)} onChange={e=>setSelected(ids=>e.target.checked?[...ids,index]:ids.filter(i=>i!==index))}/></td>}
           <td style={{minWidth:200,overflowWrap:'anywhere'}}>{r.keyword}
             {(r.monthlySearches.length>0||r.intentUpdatedAt)&&<details>
               <summary>Monthly history</summary>

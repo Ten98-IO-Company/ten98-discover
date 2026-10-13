@@ -7,6 +7,9 @@ import { basename, join, resolve, sep } from 'node:path';
 import { hashPassword } from 'better-auth/crypto';
 import { getConfig } from '../src/server/config.ts';
 import { assertSchema, closeDatabase, getDatabase, migrationSource, migrationSources } from '../src/server/db.ts';
+import { saveAnalysis } from '../src/server/funnels.ts';
+import {saveSavedKeywords} from '../src/server/saved-keywords.ts';
+import {assertProviderAccountIdentityReadable} from '../src/server/provider-account-identity.ts';
 
 // This consumes a separate empty local database and retains its synthetic fixtures.
 // It never drops a schema/database or clears existing data.
@@ -62,7 +65,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -135,19 +138,25 @@ try {
   assert.deepEqual(await records(), originalRecords, 'Failed migration must preserve original records.');
   console.log('PASS multi-migration transaction rollback');
 
-  stage = 'preserve Google, financial, domain and audit records across the 0019-to-0020 upgrade';
+  stage = 'seed prior Google, financial, keyword, domain, audit and conversion records at 0021';
   const upgradeClient=await pool.connect();
   try {
     await upgradeClient.query('BEGIN');
     for(const migration of sources.slice(1,-1)) {await upgradeClient.query(migration.sql);await upgradeClient.query('INSERT INTO schema_version(version,checksum) VALUES($1,$2)',[migration.version,migration.checksum]);}
-    const owner=originalRecords.user[0].id,workspace=originalRecords.workspace[0].id,project=originalRecords.project[0].id,connection=randomUUID(),report=randomUUID(),provider=randomUUID();
+    const owner=originalRecords.user[0].id,workspace=originalRecords.workspace[0].id,project=originalRecords.project[0].id,connection=randomUUID(),report=randomUUID(),provider=randomUUID(),research=randomUUID(),quote=randomUUID();
     await upgradeClient.query("INSERT INTO google_connection(id,workspace_id,project_id,name,provider,revision,app_revision,status) VALUES($1,$2,$3,'Upgrade fixture','gsc',1,1,'disconnected')",[connection,workspace,project]);
     await upgradeClient.query(`INSERT INTO google_import(id,connection_id,project_id,user_id,request_id,connection_revision,app_revision,report,date_from,date_to,status,pages,row_count,source,quality,completed_at)
       VALUES($1,$2,$3,$4,$5,1,1,'gsc_daily','2026-01-01','2026-01-01','completed',1,1,'{"provider":"gsc"}','{"warnings":[],"metadata":{}}',clock_timestamp())`,[report,connection,project,owner,randomUUID()]);
     await upgradeClient.query(`INSERT INTO google_import_page(import_id,page,rows) VALUES($1,0,'[{"dimensions":["2026-01-01"],"metrics":{"clicks":1}}]')`,[report]);
     await upgradeClient.query("INSERT INTO provider_connection(id,workspace_id,provider,name) VALUES($1,$2,'dataforseo','Upgrade fixture')",[provider,workspace]);
     await upgradeClient.query(`INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,actual_micros,status,budget_month)
-      VALUES($1,$2,$3,1,$4,$5,'preserved.operation',$6,12120,12120,'settled','2026-01-01')`,[randomUUID(),workspace,provider,owner,randomUUID(),'a'.repeat(64)]);
+      VALUES($1,$2,$3,1,$4,$5,'keyword.overview',$6,12120,12120,'settled','2026-01-01')`,[research,workspace,provider,owner,randomUUID(),'a'.repeat(64)]);
+    await upgradeClient.query(`INSERT INTO keyword_quote(id,workspace_id,project_id,user_id,connection_id,connection_revision,request,account_fingerprint,per_task_micros,per_item_micros,estimate_micros,price_as_of,expires_at)
+      VALUES($1,$2,$3,$4,$5,1,$6,$7,12000,120,12120,clock_timestamp(),clock_timestamp()+interval '5 minutes')`,
+      [quote,workspace,project,owner,provider,JSON.stringify({connectionId:provider,mode:'overview',keywords:['preserved keyword'],locationCode:2840,languageCode:'en',limit:100}),'e'.repeat(64)]);
+    await upgradeClient.query(`INSERT INTO keyword_research_run(id,workspace_id,project_id,user_id,quote_id,status,result,reconciliation_evidence,completed_at)
+      VALUES($1,$2,$3,$4,$5,'completed',$6,'{"taskId":"preserved-task","reportedCost":0.01212}','2026-01-01T00:00:00.123456Z')`,
+      [research,workspace,project,owner,quote,JSON.stringify({source:'DataForSEO Labs',retrievedAt:'2026-01-01T00:00:00Z',rows:[{keyword:'preserved keyword',searchVolume:0,cpcUsd:'0.000001',competition:0,competitionLevel:null,keywordDifficulty:null,intent:null,monthlySearches:[],metricsUpdatedAt:null,intentUpdatedAt:null}],returnedCount:1,truncated:false,warnings:[]})]);
     const prompt=randomUUID(),version=randomUUID();
     await upgradeClient.query("INSERT INTO project_prompt(id,project_id,current_version_id,topic,enabled) VALUES($1,$2,$3,'Upgrade',false)",[prompt,project,version]);
     await upgradeClient.query("INSERT INTO prompt_text_version(id,project_id,prompt_id,number,text,lower_text,created_by) VALUES($1,$2,$3,1,'Preserved authored prompt','preserved authored prompt',$4)",[version,project,prompt,owner]);
@@ -170,19 +179,38 @@ try {
       VALUES($1,$2,$3,$4,'static-html-v1','missing-description','warning','{"fixture":"Preserved finding"}')`,[randomUUID(),audit,page,'d'.repeat(64)]);
     await upgradeClient.query('COMMIT');
   } catch(error) {await upgradeClient.query('ROLLBACK');throw error;} finally {upgradeClient.release();}
-  const preservedTables=['google_connection','google_import','google_import_page','provider_connection','provider_request','project_prompt','prompt_text_version','project_domain','domain_redirect_check','site_audit_run','site_audit_page','site_audit_edge','site_audit_issue'];
+  // Exercise actual authored-definition CRUD against the prior schema, retaining its receipts too.
+  for(const definition of [
+    {kind:'goal' as const,name:'Preserved purchase goal',description:'Authored before saved keywords',condition:{type:'event',match:'exact',value:'purchase'}},
+    {kind:'funnel' as const,name:'Preserved checkout funnel',description:'Authored before saved keywords',windowMinutes:60,steps:[{type:'path',match:'exact',value:'/cart'},{type:'event',match:'exact',value:'purchase'}]},
+  ]) await saveAnalysis(originalRecords.project[0].id,originalRecords.user[0].id,definition.kind,{requestId:randomUUID(),definition});
+  await saveSavedKeywords(originalRecords.project[0].id,originalRecords.user[0].id,{requestId:randomUUID(),revision:1,
+    source:{type:'manual',keywords:['preserved authored keyword'],locationCode:2840,languageCode:'en'},tags:['Preserved intent']});
+  const preservedTables=['google_connection','google_import','google_import_page','provider_connection','provider_request','keyword_research_run','project_prompt','prompt_text_version','project_content_request','analytics_definition','saved_keyword','saved_keyword_tag','saved_keyword_tag_assignment','project_domain','domain_redirect_check','site_audit_run','site_audit_page','site_audit_edge','site_audit_issue'];
   async function featureRecords() {const snapshot:Record<string,unknown>={};for(const table of preservedTables)snapshot[table]=(await pool.query(`SELECT row_to_json(t) AS data FROM ${table} t`)).rows;return snapshot;}
   const featureSnapshot=await featureRecords();
+  const quoteBefore=(await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data;
+  const policyBefore=(await pool.query('SELECT raw_analytics_days,replay_days,raw_provider_evidence_days,derived_history_days,retention_revision FROM workspace')).rows;
   const originalDomain=(await pool.query('SELECT row_to_json(d) AS data FROM project_domain d')).rows[0].data;
-  stage = 'upgrade original and feature data through 0020 and rerun idempotently';
+  stage = 'upgrade original and feature data through 0022 and rerun idempotently';
   runMigrate(0);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
   const upgradedDomain=(await pool.query('SELECT row_to_json(d) AS data FROM project_domain d')).rows[0].data;
-  assert.deepEqual(upgradedDomain,originalDomain,'Domain proof, alias settings and revision survive the conversion upgrade unchanged.');
+  assert.deepEqual(upgradedDomain,originalDomain,'Domain proof, alias settings and revision survive the saved-keyword upgrade unchanged.');
   assert.equal((await pool.query('SELECT id FROM domain_redirect_check')).rowCount,1,'Upgrade preserves the existing redirect receipt and schedules no extra check.');
   for(const table of ['site_audit_run','site_audit_page','site_audit_edge','site_audit_issue'])assert.equal((await pool.query(`SELECT id FROM ${table}`)).rowCount,1,'Upgrade must preserve existing audit evidence without starting another audit.');
-  assert.equal((await pool.query('SELECT id FROM analytics_definition')).rowCount,0,'Upgrade must not invent saved funnels or goals.');
+  assert.equal((await pool.query('SELECT id FROM analytics_definition')).rowCount,2,'Upgrade preserves both authored conversions and creates no extra definitions.');
+  const quoteAfter=(await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data;
+  assert.deepEqual(Object.fromEntries(Object.keys(quoteBefore).map(key=>[key,quoteAfter[key]])),quoteBefore,'Prior keyword quote evidence must remain unchanged.');
+  assert.equal(quoteAfter.saved_refresh_plan_id,null);assert.equal(quoteAfter.saved_target_ids,null,'Prior research must not become an approved saved refresh.');
+  assert.equal(quoteAfter.account_fingerprint_version,1,'Legacy fingerprints retain their explicit version and original hash.');
+  await assertProviderAccountIdentityReadable();
+  assert.ok((await pool.query("SELECT provider_account_identity IS NOT NULL AS captured FROM installation WHERE id='instance'")).rows[0].captured,'Upgrade captures recovery material before committing legacy history.');
+  assert.deepEqual((await pool.query('SELECT raw_analytics_days,replay_days,raw_provider_evidence_days,derived_history_days,retention_revision FROM workspace')).rows,policyBefore,'Upgrade must preserve retention policy and revision.');
+  assert.deepEqual((await pool.query('SELECT saved_keywords_revision,saved_keyword_metrics_revision::text FROM project')).rows,[{saved_keywords_revision:2,saved_keyword_metrics_revision:'1'}]);
+  for(const table of ['saved_keyword','saved_keyword_tag','saved_keyword_tag_assignment'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,1,'Upgrade must preserve the authored keyword and tag without inventing another.');
+  assert.equal((await pool.query('SELECT 1 FROM saved_keyword_refresh_plan')).rowCount,0,'Upgrade must not invent paid refresh work.');
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = await records();
@@ -206,7 +234,8 @@ try {
   assert.deepEqual(await records(), upgradedRecords);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
-  console.log('PASS Google snapshots, provider/financial/authored records, alias proof, redirect and audit evidence survive 0020 unchanged; no implicit audits or definitions');
+  assert.deepEqual((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data,quoteAfter);
+  console.log('PASS prior keyword evidence, charge ledger, authored keywords/tags, funnels/goals and receipts, Google snapshots, alias proof and audits survive 0022; no implicit paid refreshes');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {

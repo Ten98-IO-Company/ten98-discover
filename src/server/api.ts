@@ -25,7 +25,10 @@ import { isInstanceOperator } from './instance-operators.ts';
 import { handleReports } from './reports.ts';
 import { handleGoogle } from './google-api.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
+import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
 import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
+import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from './saved-keywords.ts';
+import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from './saved-keyword-refresh.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
 import { getDomainRedirectChecks, startDomainRedirectCheck } from './domain-redirects.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
@@ -105,6 +108,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await assertCredentialKeys();
       await assertOidcCredentialsReadable();
       await assertGoogleCredentialsReadable();
+      await assertProviderAccountIdentityReadable();
       await access(config.artifactDir, constants.W_OK);
       return json({ status: 'ready' });
     }
@@ -252,6 +256,44 @@ export async function handleApi(request: Request): Promise<Response> {
         if(action==='runs'&&runId&&runAction==='reconcile'){
           await limit(`execution-reconcile:${projectId}`,3);
           return json(await reconcilePromptExecution(projectId,user.id,runId,input));
+        }
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const savedKeywordRoute=path.match(new RegExp(`^/api/projects/(${id})/saved-keywords(?:/(list|bulk-tags|remove|export|refresh-quote|refreshes|tags)(?:/(list|${id})(?:/(update|delete|cancel|reconcile))?)?)?$`,'i'));
+    if(savedKeywordRoute){
+      if(url.search)throw new FoundationError(400,'Saved keyword requests do not accept query parameters.');
+      const [,projectId,action,targetId,operation]=savedKeywordRoute;
+      await limit(`saved-keyword:${user.id}`,120);
+      if(request.method==='GET'){
+        if(!action)return json(await listSavedKeywords(projectId,user.id,{}));
+        if(action==='refreshes'&&!operation)return json(targetId?await getSavedKeywordRefresh(projectId,user.id,targetId):await listSavedKeywordRefreshes(projectId,user.id));
+      }
+      if(request.method==='POST'){
+        const readOnly=action==='list'||action==='export'||action==='tags'&&targetId==='list';
+        await projectAccess(projectId,user.id,!readOnly);
+        await limit(`saved-keyword-${readOnly?'read':'write'}:${user.id}`,readOnly?60:30);
+        const input=await readJson(request,!action?1_048_576:131_072);
+        if(!targetId&&!operation){
+          if(!action)return json(await saveSavedKeywords(projectId,user.id,input));
+          if(action==='list')return json(await listSavedKeywords(projectId,user.id,input));
+          if(action==='bulk-tags')return json(await changeSavedKeywordTags(projectId,user.id,input));
+          if(action==='remove')return json(await removeSavedKeywords(projectId,user.id,input));
+          if(action==='refresh-quote'){await limit(`saved-keyword-quote:${user.id}`,10);return json(await quoteSavedKeywordRefresh(projectId,user.id,input));}
+          if(action==='refreshes')return json(await startSavedKeywordRefresh(projectId,user.id,input),202);
+          if(action==='export'){
+            const result=await exportSavedKeywords(projectId,user.id,input,request.signal);
+            return new Response(result.body,{headers:{'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount),'cache-control':'no-store','x-content-type-options':'nosniff'}});
+          }
+        }
+        if(action==='tags'&&targetId==='list'&&!operation)return json(await listSavedKeywordTags(projectId,user.id,input));
+        if(action==='tags'&&targetId&&targetId!=='list'){
+          if(operation==='update')return json(await updateSavedKeywordTag(projectId,user.id,targetId,input));
+          if(operation==='delete')return json(await deleteSavedKeywordTag(projectId,user.id,targetId,input));
+        }
+        if(action==='refreshes'&&targetId){
+          if(operation==='cancel')return json(await cancelSavedKeywordRefresh(projectId,user.id,targetId,input));
+          if(operation==='reconcile'){await limit(`saved-keyword-reconcile:${projectId}`,3);return json(await reconcileSavedKeywordRefresh(projectId,user.id,targetId,input));}
         }
       }
       return json({error:'Method not allowed.'},405);

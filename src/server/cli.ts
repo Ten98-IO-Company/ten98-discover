@@ -7,6 +7,7 @@ import { startWorker, stopJobs } from './jobs.ts';
 import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts';
 import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
+import {initializeProviderAccountIdentity,assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
 import { setInstanceOperator } from './instance-operators.ts';
 
 class CliError extends Error {}
@@ -44,6 +45,7 @@ async function migrate() {
     const current = await client.query<{ version: string; checksum: string }>('SELECT version, checksum FROM schema_version ORDER BY version');
     for (const migration of await pendingMigrations(current.rows)) {
       await client.query(migration.sql);
+      if(migration.version==='0022')await initializeProviderAccountIdentity(client,true);
       await client.query('INSERT INTO schema_version(version, checksum) VALUES ($1, $2)', [migration.version, migration.checksum]);
       applied.push(migration.version);
     }
@@ -66,6 +68,7 @@ async function diagnose(checkWorker: boolean) {
     ['Provider credential keyring', assertCredentialKeys],
     ['Identity credential keyring', assertOidcCredentialsReadable],
     ['Google reporting credential keyring', assertGoogleCredentialsReadable],
+    ['Provider account recovery keyring', assertProviderAccountIdentityReadable],
     ['Artifact directory', async () => {
       await mkdir(config.artifactDir, { recursive: true, mode: 0o700 });
       const path = join(config.artifactDir, `.write-check-${randomUUID()}`);
@@ -96,6 +99,7 @@ async function worker() {
   await assertCredentialKeys();
   await assertOidcCredentialsReadable();
   await assertGoogleCredentialsReadable();
+  await assertProviderAccountIdentityReadable();
   await startWorker();
   console.log('Foundation worker ready. Explicit Google imports are enabled; no provider scheduler is active.');
   await new Promise<void>((resolve) => {
@@ -118,8 +122,10 @@ try {
       const providers = await rotateCredentialEncryption();
       const identities = await rotateOidcCredentials();
       await rotateGoogleCredentials();
+      await rotateProviderAccountIdentityEncryption();
       console.log(`Re-encrypted ${providers} provider connections and ${identities} identity records with the active key. Keep old keys for backups.`);
       console.log('Google reporting credentials re-encrypted with the active key.');
+      console.log('Provider account recovery keys re-encrypted with the active key.');
       break;
     }
     case 'operator': await assertSchema(); await setInstanceOperator(extra[0], option === 'grant'); console.log('Instance operator role updated and audited.'); break;
