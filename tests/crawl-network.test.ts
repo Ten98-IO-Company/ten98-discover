@@ -85,12 +85,22 @@ test('redirects, Retry-After, bodyless/error/partial responses and unsupported M
 test('ambiguous/oversized headers and unsupported encodings fail closed without downloading',async()=>{
   for(const headers of [
     ['Content-Type','text/html','content-type','text/html'],['Content-Type','text/html','Content-Encoding','gzip','Content-Encoding','gzip'],
-    ['Location','/a','location','/b'],['Retry-After','1','retry-after','2'],['Link','a'.repeat(16384)],['Location','a'.repeat(2049)],
+    ['Location','/a','location','/b'],['Retry-After','1','retry-after','2'],['Cf-Mitigated','challenge','cf-mitigated','challenge'],['Link','a'.repeat(16384)],['Location','a'.repeat(2049)],
     ['Content-Type','text/html','Content-Length','1','Content-Length','1'],['Content-Type','text/html','Content-Length','1','Transfer-Encoding','chunked'],
     ['Content-Type','text/html','X-Ignore','bad\nvalue'],['Content-Type','text/html','Transfer-Encoding','chunked','Transfer-Encoding','chunked'],
   ])await fixture({headers},async state=>{invalid(await fetch(),'invalid_response');assert.equal(state.reads,0);});
   for(const transfer of ['gzip, chunked','deflate','identity'])await fixture({headers:['Content-Type','text/html','Transfer-Encoding',transfer]},async state=>{invalid(await fetch(),'unsupported_encoding');assert.equal(state.reads,0);});
   for(const encoding of ['br','deflate','gzip, gzip',''])await fixture({headers:['Content-Type','text/html','Content-Encoding',encoding]},async state=>{invalid(await fetch(),'unsupported_encoding');assert.equal(state.reads,0);});
+});
+
+test('challenge response header is an exact bounded observation, independent of HTTP status',async()=>{
+  for(const status of [200,403,429])for(const value of ['challenge',' challenge ','Challenge','other']){
+    await fixture({status,headers:['Content-Type','text/html','Cf-Mitigated',value],body:Buffer.from('<title>Page</title>')},async()=>{
+      const result=await fetch();assert.equal(result.status,status);assert.equal(result.headers.challenge,value.trim()==='challenge');
+      if(status!==200){assert.equal(result.complete,false);assert.equal(result.body,null);}
+      assert.ok(!JSON.stringify(result.headers).includes('Cf-Mitigated'));
+    });
+  }
 });
 
 test('wire and each expanded capacity use actual bytes and never expose a partial document',async()=>{

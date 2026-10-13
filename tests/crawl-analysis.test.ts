@@ -76,6 +76,31 @@ test('JS shell suppresses false content findings, including a script in head; JS
   assert.deepEqual(codes(noindex),['noindex-page','javascript-rendering-suspected']);
 });
 
+test('paired challenge document signals suppress SEO absence while ordinary bot scripts do not',()=>{
+  const title='<title>Just a moment...</title>';
+  const endpoint='/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1';
+  const external=`<script src="${endpoint}"></script>`;
+  const inline=`<script>window._cf_chl_opt={}; var source='${endpoint}';</script>`;
+  for(const script of [external,inline,`<script>(function(){window._cf_chl_opt={}; var source='${endpoint}';}());</script>`]){
+    const result=analyze(page(script,title));assert.equal(result.coverage,'unavailable');assert.deepEqual(result.reasons,['challenge_suspected']);
+    assert.equal(result.facts,null);assert.equal(result.evidence,null);assert.deepEqual(result.findings,[]);
+  }
+  for(const [head,body] of [
+    [title,'<h1>Ordinary content</h1>'],['<title>Application page</title>',external],
+    [title,'<script src="/cdn-cgi/challenge-platform/scripts/jsd/api.js"></script>'],
+    [title,'<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>'],
+    [title,`<script type="application/ld+json">window._cf_chl_opt={}; "${endpoint}"</script>`],
+    [title,`<template>${external}</template>`],[title,`<pre>${inline.replaceAll('<','&lt;')}</pre>`],
+    [title,`<script>const example="window._cf_chl_opt = {}; ${endpoint}";</script>`],
+    [title,`<script>/* window._cf_chl_opt = {}; ${endpoint} */</script>`],
+    [title,`<script>example._cf_chl_opt='${endpoint}';</script>`],
+    [title,inline.replace('<script>','<script src="">')],[title,external.replace(endpoint,endpoint.toUpperCase())],
+    [title,`<script src="https://elsewhere.example${endpoint}"></script>`],
+  ])assert.equal(analyze(page(body,head)).coverage,'analyzed');
+  assert.equal(analyze(page(external,title),{status:202}).coverage,'unavailable');
+  assert.equal(analyze(page('<h1>Processing</h1>'),{status:202}).coverage,'analyzed');
+});
+
 test('robots combine generic and Googlebot directives, scope each X-Robots value, and do not equate nofollow with noindex',()=>{
   for(const extra of ['<meta name="ROBOTS" content="index, noindex">','<meta name="googlebot" content="none">']){
     const result=analyze(page('<p>small</p>',extra));assert.ok(codes(result).includes('noindex-page'));assert.ok(!codes(result).includes('thin-content'));assert.ok(!codes(result).includes('no-outgoing-links'));

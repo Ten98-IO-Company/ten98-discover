@@ -13,6 +13,9 @@ const input:CrawlPageInput={url:'https://example.com/',status:200,fetchState:'ok
 
 test('real fixed child matches the pure analyzer and only returns complete output',async()=>{
   assert.deepEqual(await analyzeCrawlPageIsolated(input),{status:'ok',analysis:analyzeCrawlPage(input)});
+  const challenge={...input,html:'<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></script>'};
+  const result=await analyzeCrawlPageIsolated(challenge);assert.equal(result.status,'ok');
+  if(result.status==='ok'){assert.equal(result.analysis.coverage,'unavailable');assert.deepEqual(result.analysis.reasons,['challenge_suspected']);assert.equal(result.analysis.facts,null);}
 });
 
 test('validation rejects unsupported and oversized input before spawning or calling toJSON',async()=>{

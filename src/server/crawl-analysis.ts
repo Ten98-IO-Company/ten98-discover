@@ -157,6 +157,20 @@ export function analyzeCrawlPage(input:CrawlPageInput):CrawlAnalysis {
   if(base===null){out.coverage='partial';out.reasons.push('base_url_invalid');return out;}
   const effectiveBase=base??url;
   const title=text(headNodes.find(n=>n.tagName==='title')??{nodeName:'#text',value:'',parentNode:null});
+  // ponytail: narrow paired CF signature; other interstitials remain unknown until evidence-backed rules are added.
+  if(['just a moment...','just a moment…','attention required! | cloudflare'].includes(title.toLowerCase())&&nodes.some(n=>{
+    if(!executable(n)||excluded(n))return false;
+    const source=attr(n,'src');
+    if(source!==undefined){
+      if(!source)return false;
+      const target=resolvedUrl(source,effectiveBase);
+      return target!==null&&new URL(target).origin===new URL(url).origin&&/^\/cdn-cgi\/challenge-platform\/[a-z0-9/-]*\/orchestrate\/chl_page\//u.test(new URL(target).pathname);
+    }
+    const script=n.childNodes.map(child=>'value' in child?child.value:'').join('');
+    return /^\s*(?:\(\s*function\s*\(\s*\)\s*\{\s*)?window\._cf_chl_opt\s*=\s*\{/u.test(script)&&/\/cdn-cgi\/challenge-platform\/[a-z0-9/-]*\/orchestrate\/chl_page\//u.test(script);
+  })){
+    out.reasons.push('challenge_suspected');return out;
+  }
   const description=headNodes.find(n=>n.tagName==='meta'&&attr(n,'name')?.toLowerCase()==='description');
   const descriptionText=normalizeText(description?attr(description,'content')??'':'');
   const evidence:CrawlEvidence={title:clip(title),description:clip(descriptionText),htmlCanonicals:[],headerCanonicals:[],robotsMeta:[],xRobotsTags:robotHeaders.map(h=>clip(h)),headings:[],images:[],links:[],openGraph:{title:null,description:null,image:null},hreflang:[]};

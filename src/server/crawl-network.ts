@@ -10,7 +10,7 @@ import {addressKey,publicNetworkAddress} from './public-network.ts';
 
 export type CrawlDocumentKind='html'|'robots'|'sitemap';
 export type CrawlDownloadReason='blocked'|'dns_error'|'network_error'|'peer_mismatch'|'timeout'|'aborted'|'invalid_response'|'redirect'|'http_status'|'bodyless'|'partial_response'|'unsupported_mime'|'unsupported_encoding'|'wire_limit'|'expanded_limit'|'incomplete_body'|'invalid_compression';
-export type CrawlResponseHeaders={contentType:string|null;contentEncoding:string|null;location:string|null;retryAfter:string|null;link:string[];xRobotsTag:string[]};
+export type CrawlResponseHeaders={contentType:string|null;contentEncoding:string|null;location:string|null;retryAfter:string|null;challenge:boolean;link:string[];xRobotsTag:string[]};
 type Observation={status:number|null;headers:CrawlResponseHeaders;wireBytes:number;httpDecodedBytes:number;decodedBytes:number;dnsMs:number|null;headersMs:number|null;durationMs:number};
 export type CrawlDocumentObservation=Observation&({complete:true;body:Buffer;reason:null}|{complete:false;body:null;reason:CrawlDownloadReason});
 const capacities={html:1024*1024,robots:512*1024,sitemap:5*1024*1024};
@@ -30,10 +30,10 @@ function headersFrom(raw:string[]):{headers:CrawlResponseHeaders;length:bigint|n
     if(typeof name!=='string'||typeof value!=='string'||!name||/[^!#$%&'*+.^_`|~0-9A-Za-z-]/.test(name)||/[\u0000-\u0008\u000a-\u001f\u007f]/.test(value))throw failure('invalid_response');
     size+=Buffer.byteLength(name)+Buffer.byteLength(value)+4;if(size>HEADER_LIMIT)throw failure('invalid_response');
     const key=name.toLowerCase();
-    if(['content-type','content-encoding','location','retry-after','link','x-robots-tag','content-length','transfer-encoding'].includes(key))values.set(key,[...(values.get(key)??[]),value.trim()]);
+    if(['content-type','content-encoding','location','retry-after','cf-mitigated','link','x-robots-tag','content-length','transfer-encoding'].includes(key))values.set(key,[...(values.get(key)??[]),value.trim()]);
   }
   const single=(key:string)=>{const entries=values.get(key)??[];if(entries.length>1)throw failure('invalid_response');return entries[0]??null;};
-  const headers={contentType:single('content-type'),contentEncoding:single('content-encoding'),location:single('location'),retryAfter:single('retry-after'),link:values.get('link')??[],xRobotsTag:values.get('x-robots-tag')??[]};
+  const headers={contentType:single('content-type'),contentEncoding:single('content-encoding'),location:single('location'),retryAfter:single('retry-after'),challenge:single('cf-mitigated')==='challenge',link:values.get('link')??[],xRobotsTag:values.get('x-robots-tag')??[]};
   if(headers.location!==null&&Buffer.byteLength(headers.location)>URL_LIMIT)throw failure('invalid_response');
   const length=single('content-length'),transfer=single('transfer-encoding');
   if(length!==null&&(!/^[0-9]{1,20}$/.test(length)||values.has('transfer-encoding')))throw failure('invalid_response');
@@ -148,7 +148,7 @@ export async function fetchCrawlDocument(rawUrl:string,kind:CrawlDocumentKind,si
   const started=performance.now(),controller=new AbortController();let timedOut=false;
   const timer=setTimeout(()=>{timedOut=true;controller.abort();},TOTAL_MS);
   const cancel=()=>controller.abort();signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)cancel();
-  const observation:Observation={status:null,headers:{contentType:null,contentEncoding:null,location:null,retryAfter:null,link:[],xRobotsTag:[]},wireBytes:0,httpDecodedBytes:0,decodedBytes:0,dnsMs:null,headersMs:null,durationMs:0};
+  const observation:Observation={status:null,headers:{contentType:null,contentEncoding:null,location:null,retryAfter:null,challenge:false,link:[],xRobotsTag:[]},wireBytes:0,httpDecodedBytes:0,decodedBytes:0,dnsMs:null,headersMs:null,durationMs:0};
   try{
     controller.signal.throwIfAborted();
     if(typeof kind!=='string'||!Object.hasOwn(capacities,kind))throw failure('blocked');
