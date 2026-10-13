@@ -65,8 +65,8 @@ try {
       await page.getByLabel('Workspace', { exact: true }).selectOption(fixture.workspaceId);
       await page.getByRole('heading', { name: 'Web analytics', exact: true }).waitFor();
       async function navigation() { const toggle = page.getByRole('button', { name: /^(Menu|Close menu)$/ }); if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click(); }
-      async function section(name: string) { await navigation(); await page.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('button', { name, exact: true }).click(); }
-      await navigation(); await page.getByText('Workspace settings', { exact: true }).click(); await page.getByRole('button', { name: 'Google app setup', exact: true }).click();
+      async function section(name: string) { await navigation(); await page.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click(); }
+      await navigation(); await page.getByText('Workspace settings', { exact: true }).click(); await page.getByRole('link', { name: 'Google app setup', exact: true }).click();
       assert.equal(await page.getByLabel('Client secret', { exact: true }).inputValue(), '');
       assert.equal(await page.getByLabel(/Callback URI/).inputValue(), `${config.appUrl}/api/google/callback`);
       await section('Google reports');
@@ -80,7 +80,7 @@ try {
       assert.equal(await page.getByRole('alert').filter({ hasText: 'Google authorization returned.' }).count(), 0, 'A successful return must not be announced as an error.');
       assert.equal(new URL(page.url()).hash, '', 'OAuth state/code/target fragment must be cleared from browser history.');
       assert.equal(await page.getByLabel('Workspace', { exact: true }).inputValue(), fixture.workspaceId, 'Callback must select its authorized workspace, not the first membership.');
-      assert.equal(await page.getByRole('navigation', { name: 'Projects', exact: true }).getByRole('button', { name: 'Google imports fixture', exact: true }).getAttribute('aria-current'), 'true');
+      assert.equal(await page.getByRole('navigation', { name: 'Projects', exact: true }).getByRole('link', { name: 'Google imports fixture', exact: true }).getAttribute('aria-current'), 'page');
       const connection = page.locator('section').filter({ has: page.getByText('Browser Search Console', { exact: true }) }).last();
       await connection.getByRole('button', { name: 'Load available properties', exact: true }).click();
       await connection.getByRole('radio', { name: /sc-domain:example.test/ }).check();
@@ -122,9 +122,9 @@ try {
       await page.goto(`${config.appUrl}/#google=connected&google-project=${fixture.projectId}&google-workspace=${fixture.workspaceId}`);
       await Promise.race([started, delay(15000).then(() => { throw new Error('Callback project request did not start.'); })]);
       await navigation();
-      await page.getByRole('button', { name: 'Account security', exact: true }).click();
+      await page.getByRole('link', { name: 'Account security', exact: true }).click();
       releaseTarget?.();
-      await page.getByRole('heading', { name: 'Account security', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Account', exact: true }).waitFor();
       await context.unroute(targetPath, holdTarget);
       await delay(150);
       assert.equal(await page.getByRole('heading', { name: 'Google reports', exact: true }).count(), 0, 'Delayed callback project loading must not override newer account navigation.');

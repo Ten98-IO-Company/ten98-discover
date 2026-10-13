@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
@@ -21,8 +21,10 @@ import { OidcSignIn } from '../components/OidcSignIn'
 import { OidcRecoveryPanel } from '../components/OidcRecoveryPanel'
 import { GoogleReportsPanel } from '../components/GoogleReportsPanel'
 import { GoogleAppPanel } from '../components/GoogleAppPanel'
+import { allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
+import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
-export const Route = createFileRoute('/')({ component: App })
+export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: App })
 
 type Status = { configured: boolean; appUrl: string }
 type Workspace = { id: string; name: string; role: string }
@@ -31,7 +33,6 @@ type Project = { id: string; name: string; origin: string; publicKey: string; ev
 type EventsData = { events: { id: string; eventName: string; path: string; origin: string; receivedAt: string }[]; total: number; retainedFrom: string | null }
 type Job = { id: string; status: string; createdAt: string; completedAt: string | null; error: string | null }
 type SetupValues = { token: string; name: string; email: string; password: string; workspaceName: string }
-type AppView = 'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports' | 'installation' | 'events' | 'retention' | 'context' | 'prompts' | 'explore' | 'google' | 'google-app'
 
 function fmt(iso: string): string {
   const d = new Date(iso)
@@ -57,6 +58,17 @@ function pillClass(status: string): string {
 }
 
 function App() {
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
+  const router = useRouter()
+  const intent = useRef({ search, generation: 0 })
+  const sessionGeneration = useRef(0)
+  const bootGeneration = useRef(0)
+  const currentMe = useRef<Me | null>(null)
+  const loadedProjects = useRef<Project[] | null>(null)
+  const projectsRequest = useRef<{ workspace: string; controller: AbortController } | null>(null)
+  const callback = useRef<{ value: CallbackIntent; generation: number } | null>(null)
+  const [navigationPending, setNavigationPending] = useState(true)
   const [phase, setPhase] = useState<'loading' | 'error' | 'setup' | 'signin' | 'factor' | 'app'>('loading')
   const [pageError, setPageError] = useState('')
   const [status, setStatus] = useState<Status | null>(null)
@@ -76,19 +88,15 @@ function App() {
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
   const [view, updateView] = useState<AppView>('project')
-  const viewRef = useRef<AppView>('project')
   const [menuOpen, setMenuOpen] = useState(false)
   const mainRef = useRef<HTMLElement>(null)
-  function setView(next: AppView) {
-    viewRef.current = next
+  function showView(next: AppView) {
     updateView(next)
-    if (menuOpen) { setMenuOpen(false); requestAnimationFrame(() => mainRef.current?.focus()) }
   }
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
   const oidcProof = useRef<string | undefined>(undefined)
   const oidcFactor = useRef(false)
-  const googleTarget = useRef<{workspaceId:string;projectId:string} | null>(null)
   const [inviteToken, setInviteToken] = useState('')
   const [inviteSigningIn, setInviteSigningIn] = useState(false)
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -97,60 +105,85 @@ function App() {
   const wsGen = useRef(0)
   const projGen = useRef(0)
 
-  useEffect(() => {
-    function captureInvitation() {
-      const params = new URLSearchParams(window.location.hash.slice(1))
-      if (params.has('google')) {
-        const projectId = params.get('google-project') ?? '', workspaceId = params.get('google-workspace') ?? ''
-        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-        const connected = params.getAll('google').length === 1 && params.get('google') === 'connected'
-          && params.getAll('google-project').length === 1 && params.getAll('google-workspace').length === 1 && uuid.test(projectId) && uuid.test(workspaceId)
-        googleTarget.current = connected ? {projectId,workspaceId} : null
-        setAuthNotice(connected ? {kind: 'info', message: 'Google authorization returned. Review your connection and choose a property to import reports.'} : {kind: 'error', message: 'Google reporting could not be connected. Start the connection again and grant read access.'})
-        if (connected) setView('google')
-        window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
-        return
-      }
-      if ([...params.keys()].some(key => key.startsWith('oidc-'))) {
-        oidcProof.current = undefined; setOidcProofId(undefined); oidcFactor.current = false
-        setInviteToken(''); setInviteSigningIn(false); setAuthNotice(null)
-        const kinds = ['oidc-proof', 'oidc-factor', 'oidc-complete', 'oidc-error'].filter(key => params.has(key))
-        const kind = kinds.length === 1 && params.getAll(kinds[0]).length === 1 ? kinds[0] : null
-        const proof = kind === 'oidc-proof' ? params.get(kind) : null
-        if (proof && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(proof)) {
-          oidcProof.current = proof; setOidcProofId(proof); setView('identity')
-        } else if (kind === 'oidc-factor' && params.get(kind) === '1') {
-          oidcFactor.current = true
-        } else if (kind !== 'oidc-complete' || params.get(kind) !== '1') {
-          setAuthNotice({kind: 'error', message: 'Identity sign-in could not be completed. Start again, or use local sign-in. For an invitation, reopen its original link.'})
-        }
-        window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
-        return
-      }
-      const token = params.get('invite')
-      if (!token) return
-      setInviteToken(token); setInviteSigningIn(false)
-      // Invitation capabilities stay in memory, never query strings or browser storage.
-      window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+  function rememberIntent(next: NavigationSearch) {
+    if (navigationKey(next) !== navigationKey(intent.current.search)) intent.current = { search: next, generation: intent.current.generation + 1 }
+  }
+
+  function go(next: NavigationSearch, replace = false) {
+    if (!replace) setAppError('')
+    rememberIntent(next)
+    void navigate({ search: next, hash: '', replace })
+  }
+
+  function target(view: AppView, project = activeProject.current): NavigationSearch {
+    return { ...(activeWorkspace.current ? { workspace: activeWorkspace.current } : {}), ...(project && view !== 'new-project' ? { project } : {}), view }
+  }
+
+  function applyCallback(m: Me) {
+    const pending = callback.current
+    callback.current = null
+    if (!pending || pending.generation !== intent.current.generation) return
+    if (pending.value.kind === 'proof') go({ ...intent.current.search, view: 'identity' }, true)
+    if (pending.value.kind === 'google') {
+      const value = pending.value
+      if (m.workspaces.some(workspace => workspace.id === value.workspace)) go({ workspace: value.workspace, project: value.project, view: 'google' }, true)
+      else setAuthNotice({ kind: 'error', message: 'Google reporting returned, but that workspace is no longer available. Choose a current workspace.' })
     }
-    captureInvitation()
-    window.addEventListener('hashchange', captureInvitation)
+  }
+
+  useEffect(() => {
+    // Runs before router loading, including Back/Forward. A -> B -> A still
+    // invalidates old navigation completions even when the final URL matches.
+    const unsubscribe = router.subscribe('onBeforeNavigate', event => {
+      setMenuOpen(false)
+      requestAnimationFrame(() => mainRef.current?.focus({ preventScroll: true }))
+      const next = parseNavigation(event.toLocation.search)
+      if (navigationKey(next) !== navigationKey(intent.current.search)) setAppError('')
+      rememberIntent(next)
+    })
+    let alive = true
+    async function captureInvitation() {
+      const value = parseCallback(window.location.hash)
+      if (!value) return
+      const generation = intent.current.generation
+      callback.current = { value, generation }
+      oidcProof.current = undefined; setOidcProofId(undefined); oidcFactor.current = false
+      setInviteToken(''); setInviteSigningIn(false)
+      if (value.kind === 'proof') { oidcProof.current = value.proof; setOidcProofId(value.proof) }
+      else if (value.kind === 'factor') oidcFactor.current = true
+      else if (value.kind === 'invite') setInviteToken(value.token)
+      else if (value.kind === 'google') setAuthNotice({ kind: 'info', message: 'Google authorization returned. Review your connection and choose a property to import reports.' })
+      else if (value.kind === 'google-error') setAuthNotice({ kind: 'error', message: 'Google reporting could not be connected. Start the connection again and grant read access.' })
+      else if (value.kind === 'invalid' || value.kind === 'identity-error') setAuthNotice({ kind: 'error', message: 'The return link is invalid or ambiguous. Start the connection again, or reopen the original invitation.' })
+      // Capabilities live only in memory. Let the router own its history entry.
+      await navigate({ search: intent.current.search, hash: '', replace: true })
+      if (alive && currentMe.current) applyCallback(currentMe.current)
+    }
+    const capture = () => { void captureInvitation() }
+    window.addEventListener('hashchange', capture)
     const ac = new AbortController()
-    void boot(ac.signal)
-    return () => { ac.abort(); window.removeEventListener('hashchange', captureInvitation) }
+    void captureInvitation().then(() => { if (alive) void boot(ac.signal) })
+    return () => { alive = false; ac.abort(); projectsRequest.current?.controller.abort(); unsubscribe(); window.removeEventListener('hashchange', capture) }
   }, [])
 
+  useEffect(() => {
+    rememberIntent(search)
+    if (currentMe.current) applyNavigation(currentMe.current)
+  }, [navigationKey(search)])
+
   async function boot(signal?: AbortSignal) {
+    const session = sessionGeneration.current, generation = ++bootGeneration.current
+    const current = () => !signal?.aborted && sessionGeneration.current === session && bootGeneration.current === generation
     try {
       const s = await api<Status>('/api/status', { signal })
-      if (signal?.aborted) return
+      if (!current()) return
       setStatus(s)
       if (!s.configured) { setPhase('setup'); return }
       try {
         const m = await api<Me>('/api/me', { signal })
-        if (!signal?.aborted) enterApp(m)
+        if (current()) enterApp(m)
       } catch (e) {
-        if (signal?.aborted) return
+        if (!current()) return
         if (e instanceof ApiError && e.status === 401) {
           if (oidcProof.current) {
             oidcProof.current = undefined; setOidcProofId(undefined)
@@ -161,57 +194,75 @@ function App() {
         else throw e
       }
     } catch (e) {
-      if (signal?.aborted) return
+      if (!current()) return
       setPageError(errMsg(e))
       setPhase('error')
     }
   }
 
-  function enterApp(m: Me, preferredId?: string) {
+  function enterApp(m: Me) {
     oidcFactor.current = false
-    setMe(m)
-    const ws = m.workspaces.find((w) => w.id === (preferredId ?? googleTarget.current?.workspaceId)) ?? m.workspaces[0]
-    activeWorkspace.current = ws?.id ?? ''
-    wsGen.current += 1
-    setWorkspaceId(ws?.id ?? '')
-    selectProject('')
-    if (oidcProof.current) setView('identity')
-    else if (googleTarget.current && ws?.id === googleTarget.current.workspaceId) setView('google')
-    else googleTarget.current = null
-    setProjects(null)
-    setProjectsError('')
+    currentMe.current = m; setMe(m)
+    applyCallback(m)
     setPhase('app')
-    if (ws) void loadProjects(ws.id)
+    applyNavigation(m)
   }
 
-  function selectProject(id: string, navigate = true) {
-    if (navigate) setView('project')
+  function activateProject(id: string) {
+    if (activeProject.current === id) return
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
     setEvents(null); setEventsError(''); setEventsBusy(false)
     setJobs(null); setJobError(''); setJobsBusy(false); setCheckBusy(false)
     setCopied('idle')
+    if (id) { void loadEvents(id); void loadJobs(id) }
   }
 
   function changeWorkspace(id: string) {
-    googleTarget.current = null
-    activeWorkspace.current = id
-    wsGen.current += 1
-    setWorkspaceId(id)
-    setProjects(null); setProjectsError('')
-    selectProject('')
-    if (id) void loadProjects(id)
-    else setProjects([])
+    go({ ...(id ? { workspace: id } : {}), view: 'project' })
+  }
+
+  function applyNavigation(m: Me) {
+    const requested = intent.current.search
+    const workspace = m.workspaces.find(w => w.id === requested.workspace) ?? m.workspaces[0]
+    const workspaceId = workspace?.id ?? ''
+    const view = allowedView(requested.view, workspace?.role, m.instanceOperator) ? requested.view : 'project'
+    if (requested.workspace && requested.workspace !== workspaceId) setAppError('That workspace is no longer available. Showing an accessible workspace.')
+    else if (view !== requested.view) setAppError('That page is not available with your current access. Showing analytics instead.')
+    if (activeWorkspace.current !== workspaceId) {
+      projectsRequest.current?.controller.abort(); projectsRequest.current = null
+      activeWorkspace.current = workspaceId; wsGen.current += 1
+      setWorkspaceId(workspaceId); loadedProjects.current = null; setProjects(null); setProjectsError('')
+      activateProject('')
+    }
+    showView(view)
+    if (workspaceId && loadedProjects.current === null) {
+      setNavigationPending(isProjectView(view))
+      if (!projectsRequest.current) void loadProjects(workspaceId)
+      return
+    }
+    const available = loadedProjects.current ?? []
+    const sameWorkspace = !requested.workspace || requested.workspace === workspaceId
+    const requestedProject = sameWorkspace ? available.find(p => p.id === requested.project) : undefined
+    const project = view === 'new-project' ? undefined : requestedProject ?? (isProjectView(view) ? available[0] : undefined)
+    if (requested.project && sameWorkspace && !requestedProject && view !== 'new-project') setAppError('That project is no longer available in this workspace. Choose a current project.')
+    activateProject(project?.id ?? '')
+    setNavigationPending(false)
+    const resolved: NavigationSearch = { ...(workspaceId ? { workspace: workspaceId } : {}), ...(project ? { project: project.id } : {}), view }
+    if (navigationKey(resolved) !== navigationKey(requested) || !canonicalNavigation(window.location.search, resolved)) go(resolved, true)
   }
 
   function resetSession() {
-    googleTarget.current = null
+    sessionGeneration.current += 1; bootGeneration.current += 1
+    callback.current = null
     oidcFactor.current = false; oidcProof.current = undefined; setOidcProofId(undefined)
     activeWorkspace.current = ''
     wsGen.current += 1
-    selectProject('')
-    setMe(null); setProjects(null); setWorkspaceId('')
+    projectsRequest.current?.controller.abort(); projectsRequest.current = null
+    activateProject('')
+    currentMe.current = null; loadedProjects.current = null
+    setMe(null); setProjects(null); setWorkspaceId(''); setNavigationPending(true)
     setPhase('signin')
   }
 
@@ -222,30 +273,24 @@ function App() {
 
   async function loadProjects(wsId: string) {
     const gen = wsGen.current
-    const selection = projGen.current
+    const session = sessionGeneration.current
+    const controller = new AbortController()
+    projectsRequest.current?.controller.abort()
+    projectsRequest.current = { workspace: wsId, controller }
+    const current = () => !controller.signal.aborted && activeWorkspace.current === wsId && wsGen.current === gen && sessionGeneration.current === session
     setProjectsError('')
     try {
-      const d = await api<{ projects: Project[] }>(`/api/workspaces/${wsId}/projects`)
-      if (activeWorkspace.current === wsId && wsGen.current === gen) {
-        setProjects(d.projects)
-        const target = googleTarget.current
-        if (target?.workspaceId === wsId) {
-          googleTarget.current = null
-          if (!activeProject.current && d.projects.some(project => project.id === target.projectId) && projGen.current === selection && viewRef.current === 'google') {
-            selectProject(target.projectId, false)
-            void loadEvents(target.projectId); void loadJobs(target.projectId)
-          } else if (viewRef.current === 'google' && !activeProject.current) {
-            setView('project'); setAuthNotice({kind: 'error', message: 'Google reporting returned, but that project is no longer available. Choose a current project.'})
-          }
-        } else if (!activeProject.current && d.projects[0] && projGen.current === selection && viewRef.current === 'project') {
-          selectProject(d.projects[0].id, false)
-          void loadEvents(d.projects[0].id); void loadJobs(d.projects[0].id)
-        }
+      const d = await api<{ projects: Project[] }>(`/api/workspaces/${wsId}/projects`, { signal: controller.signal })
+      if (current()) {
+        loadedProjects.current = d.projects; setProjects(d.projects)
+        if (currentMe.current) applyNavigation(currentMe.current)
       }
     } catch (e) {
-      if (activeWorkspace.current !== wsId || wsGen.current !== gen || guardAuth(e)) return
-      setProjects([])
+      if (!current() || guardAuth(e)) return
       setProjectsError(errMsg(e))
+      setNavigationPending(false)
+    } finally {
+      if (projectsRequest.current?.controller === controller) projectsRequest.current = null
     }
   }
 
@@ -284,59 +329,68 @@ function App() {
 
   async function createProject(name: string, origin: string) {
     const wsId = workspaceId
-    const gen = wsGen.current
+    const gen = wsGen.current, session = sessionGeneration.current, navigation = intent.current.generation
+    const current = () => activeWorkspace.current === wsId && wsGen.current === gen && sessionGeneration.current === session
     try {
       const d = await api<{ project: Project }>(`/api/workspaces/${wsId}/projects`, { method: 'POST', body: { name, origin } })
-      if (activeWorkspace.current !== wsId || wsGen.current !== gen) return
+      if (!current()) return
       await loadProjects(wsId)
-      if (activeWorkspace.current !== wsId || wsGen.current !== gen) return
-      selectProject(d.project.id)
-      void loadEvents(d.project.id)
-      void loadJobs(d.project.id)
+      if (current() && intent.current.generation === navigation) go({ workspace: wsId, project: d.project.id, view: 'project' })
     } catch (e) {
-      if (guardAuth(e)) return
-      if (activeWorkspace.current !== wsId || wsGen.current !== gen) return
+      if (!current() || guardAuth(e) || intent.current.generation !== navigation) return
       throw e
     }
   }
 
   async function handleSetup(v: SetupValues) {
+    const session = ++sessionGeneration.current
     await api('/api/setup', { method: 'POST', body: v })
-    enterApp(await api<Me>('/api/me'))
+    if (sessionGeneration.current === session) await boot()
   }
 
   async function handleSignIn(email: string, password: string) {
+    const session = ++sessionGeneration.current
     setAuthNotice(null)
     const response = await api<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/email', { method: 'POST', body: { email, password } })
+    if (sessionGeneration.current !== session) return
     if (response.twoFactorRedirect) { setPhase('factor'); return }
     setPhase('loading'); setInviteSigningIn(false)
     await boot()
   }
 
   async function handleFactor(code: string, recovery: boolean) {
+    const session = sessionGeneration.current
     await api(`/api/auth/two-factor/${recovery ? 'verify-backup-code' : 'verify-totp'}`, { method: 'POST', body: { code } })
+    if (sessionGeneration.current !== session) return
     oidcFactor.current = false
     // A completed factor is single-use. Retry loading the session, never the consumed code.
     setPhase('loading'); setInviteSigningIn(false)
     await boot()
   }
 
-  async function refreshMemberships(preferredId = activeWorkspace.current) {
-    const generation = wsGen.current
+  async function refreshMemberships(preferredId?: string, navigation = intent.current.generation) {
+    const session = sessionGeneration.current, expectedUser = currentMe.current?.user.id
     try {
       const m = await api<Me>('/api/me')
-      if (wsGen.current !== generation) return
-      setMe(m)
-      const selected = m.workspaces.find((w) => w.id === preferredId) ?? m.workspaces[0]
-      if ((selected?.id ?? '') !== activeWorkspace.current) changeWorkspace(selected?.id ?? '')
-      if (!selected || !['owner', 'admin'].includes(selected.role)) setView('project')
-    } catch (e) { if (wsGen.current === generation && !guardAuth(e)) throw e }
+      if (sessionGeneration.current !== session) return
+      if (m.user.id !== expectedUser) { resetSession(); return }
+      currentMe.current = m; setMe(m)
+      if (preferredId && intent.current.generation === navigation && m.workspaces.some(w => w.id === preferredId)) go({ workspace: preferredId, view: 'project' })
+      applyNavigation(m)
+    } catch (e) { if (sessionGeneration.current === session && !guardAuth(e) && intent.current.generation === navigation) throw e }
   }
 
   async function invitationAccepted(email: string, _created: boolean, workspace: string) {
+    const session = sessionGeneration.current, navigation = intent.current.generation
     setInviteToken(''); setInviteSigningIn(false)
-    try { enterApp(await api<Me>('/api/me'), workspace) }
+    try {
+      const m = await api<Me>('/api/me')
+      if (sessionGeneration.current !== session) return
+      if (intent.current.generation === navigation && m.workspaces.some(w => w.id === workspace)) go({ workspace, view: 'project' }, true)
+      enterApp(m)
+    }
     catch (e) {
+      if (sessionGeneration.current !== session || intent.current.generation !== navigation) return
       if (e instanceof ApiError && e.status === 401) { setSignInEmail(email); resetSession() }
       else { setPageError(errMsg(e)); setPhase('error') }
     }
@@ -353,11 +407,14 @@ function App() {
   }
 
   async function signOut() {
+    const session = sessionGeneration.current
     setSignOutBusy(true); setAppError('')
     try {
       await api('/api/auth/sign-out', { method: 'POST', body: {} })
+      if (sessionGeneration.current !== session) return
       resetSession()
-    } catch (e) { if (!guardAuth(e)) setAppError(`Could not sign out: ${errMsg(e)}`) }
+      go({ view: 'project' }, true)
+    } catch (e) { if (sessionGeneration.current === session && !guardAuth(e)) setAppError(`Could not sign out: ${errMsg(e)}`) }
     finally { setSignOutBusy(false) }
   }
 
@@ -366,6 +423,9 @@ function App() {
     try { await navigator.clipboard.writeText(text); if (projGen.current === gen) setCopied('copied') }
     catch { if (projGen.current === gen) setCopied('failed') }
   }
+
+  const renderedSession = sessionGeneration.current, renderedIntent = intent.current.generation
+  const unauthorized = () => { if (sessionGeneration.current === renderedSession) resetSession() }
 
   if (phase === 'loading') return <main className='center'><p role='status' className='dim'>Loading…</p></main>
 
@@ -381,12 +441,12 @@ function App() {
   }
 
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
-  if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={() => { oidcFactor.current = false; setPhase('signin') }} />
+  if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={resetSession} />
   if (inviteToken && !inviteSigningIn) return <main className='center'><section className='card auth'><InvitePanel token={inviteToken} signedInEmail={me?.user.email ?? null}
-    onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={resetSession} />
+    onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={unauthorized} />
     {!me && <OidcSignIn key={inviteToken} invitationToken={inviteToken} />}</section></main>
   if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
-    onCancel={inviteToken ? () => setInviteSigningIn(false) : undefined} />
+    onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
   const canWrite = workspace !== undefined && ['owner', 'admin', 'editor'].includes(workspace.role)
@@ -395,8 +455,8 @@ function App() {
   const appUrl = (status?.appUrl ?? '').replace(/\/+$/, '')
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
-  const projectView = ['project','destinations','collection','domains','reports','installation','events','context','prompts','explore','google'].includes(view)
-  const pageTitles: Record<AppView, string> = {project: 'Web analytics', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup'}
+  const projectView = isProjectView(view)
+  const pageTitles: Record<AppView, string> = {project: 'Web analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup'}
   const projectDescriptions: Partial<Record<AppView, string>> = {project: 'Understand how people find and use your website.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize questions and preserve their history before tracking is configured.', google: 'Import Search Console and GA4 reports without changing browser tracking.', explore: 'Break down events by campaign, page or property in your time zone.'}
 
   return (
@@ -420,41 +480,40 @@ function App() {
             <ul className='proj-list'>
               {projects.map((p) => (
                 <li key={p.id}>
-                  <button className={p.id === projectId ? 'proj active' : 'proj'} aria-current={p.id === projectId ? 'true' : undefined}
-                    onClick={() => { selectProject(p.id); void loadEvents(p.id); void loadJobs(p.id) }}>{p.name}</button>
+                  <Link to='/' search={target('project', p.id)} className={p.id === projectId ? 'proj active' : 'proj'} aria-current={p.id === projectId ? 'page' : undefined}>{p.name}</Link>
                 </li>
               ))}
             </ul>
           )}
-          {canWrite && <button className='btn ghost' onClick={() => selectProject('')}>+ New project</button>}
+          {canWrite && <Link to='/' search={target('new-project')} className='btn ghost'>+ New project</Link>}
         </nav>
         {project && workspace && <nav aria-label='Project sections' className='section-nav'>
           <p className='side-label'>Measure</p>
-          <button className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} onClick={() => setView('project')}>Analytics</button>
-          <button className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} onClick={() => setView('explore')}>Explore</button>
-          <button className={view === 'events' ? 'proj active' : 'proj'} aria-current={view === 'events' ? 'page' : undefined} onClick={() => setView('events')}>Recent events</button>
-          <button className={view === 'reports' ? 'proj active' : 'proj'} aria-current={view === 'reports' ? 'page' : undefined} onClick={() => setView('reports')}>Reports</button>
-          <button className={view === 'google' ? 'proj active' : 'proj'} aria-current={view === 'google' ? 'page' : undefined} onClick={() => setView('google')}>Google reports</button>
+          <Link className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={target('project')}>Analytics</Link>
+          <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={target('explore')}>Explore</Link>
+          <Link className={view === 'events' ? 'proj active' : 'proj'} aria-current={view === 'events' ? 'page' : undefined} to='/' search={target('events')}>Recent events</Link>
+          <Link className={view === 'reports' ? 'proj active' : 'proj'} aria-current={view === 'reports' ? 'page' : undefined} to='/' search={target('reports')}>Reports</Link>
+          <Link className={view === 'google' ? 'proj active' : 'proj'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}>Google reports</Link>
           <p className='side-label section-label'>Research</p>
-          <button className={view === 'context' ? 'proj active' : 'proj'} aria-current={view === 'context' ? 'page' : undefined} onClick={() => setView('context')}>Context</button>
-          <button className={view === 'prompts' ? 'proj active' : 'proj'} aria-current={view === 'prompts' ? 'page' : undefined} onClick={() => setView('prompts')}>Prompts</button>
+          <Link className={view === 'context' ? 'proj active' : 'proj'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}>Context</Link>
+          <Link className={view === 'prompts' ? 'proj active' : 'proj'} aria-current={view === 'prompts' ? 'page' : undefined} to='/' search={target('prompts')}>Prompts</Link>
           <p className='side-label section-label'>Connect</p>
-          <button className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} onClick={() => setView('installation')}>Install tracker</button>
-          {['owner','admin'].includes(workspace.role) && <button className={view === 'destinations' ? 'proj active' : 'proj'} aria-current={view === 'destinations' ? 'page' : undefined} onClick={() => setView('destinations')}>Destinations</button>}
-          <button className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} onClick={() => setView('collection')}>Collection and privacy</button>
-          {['owner','admin'].includes(workspace.role) && <button className={view === 'domains' ? 'proj active' : 'proj'} aria-current={view === 'domains' ? 'page' : undefined} onClick={() => setView('domains')}>Domains</button>}
+          <Link className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}>Install tracker</Link>
+          {['owner','admin'].includes(workspace.role) && <Link className={view === 'destinations' ? 'proj active' : 'proj'} aria-current={view === 'destinations' ? 'page' : undefined} to='/' search={target('destinations')}>Destinations</Link>}
+          <Link className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}>Collection and privacy</Link>
+          {['owner','admin'].includes(workspace.role) && <Link className={view === 'domains' ? 'proj active' : 'proj'} aria-current={view === 'domains' ? 'page' : undefined} to='/' search={target('domains')}>Domains</Link>}
         </nav>}
         <details className='workspace-tools' open={!projectView || !project}>
           <summary>Workspace settings</summary>
           <nav aria-label='Workspace settings'>
-            {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'team' ? 'proj active' : 'proj'} onClick={() => setView('team')}>Manage team</button>}
-            {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'keys' ? 'proj active' : 'proj'} onClick={() => setView('keys')}>API keys</button>}
-            {workspace?.role === 'owner' && <button className={view === 'providers' ? 'proj active' : 'proj'} onClick={() => setView('providers')}>Providers and spending</button>}
-            {workspace && <button className={view === 'retention' ? 'proj active' : 'proj'} onClick={() => setView('retention')}>Data retention</button>}
-            <button className={view === 'security' ? 'proj active' : 'proj'} onClick={() => setView('security')}>Account security</button>
-            <button className={view === 'identity' ? 'proj active' : 'proj'} onClick={() => setView('identity')}>Identity sign-in</button>
-            {me?.instanceOperator && <button className={view === 'google-app' ? 'proj active' : 'proj'} onClick={() => setView('google-app')}>Google app setup</button>}
-            <button className={view === 'workspace' ? 'proj active' : 'proj'} onClick={() => setView('workspace')}>Create workspace</button>
+            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'team' ? 'proj active' : 'proj'} to='/' search={target('team')}>Manage team</Link>}
+            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'keys' ? 'proj active' : 'proj'} to='/' search={target('keys')}>API keys</Link>}
+            {workspace?.role === 'owner' && <Link className={view === 'providers' ? 'proj active' : 'proj'} to='/' search={target('providers')}>Providers and spending</Link>}
+            {workspace && <Link className={view === 'retention' ? 'proj active' : 'proj'} to='/' search={target('retention')}>Data retention</Link>}
+            <Link className={view === 'security' ? 'proj active' : 'proj'} to='/' search={target('security')}>Account security</Link>
+            <Link className={view === 'identity' ? 'proj active' : 'proj'} to='/' search={target('identity')}>Identity sign-in</Link>
+            {me?.instanceOperator && <Link className={view === 'google-app' ? 'proj active' : 'proj'} to='/' search={target('google-app')}>Google app setup</Link>}
+            <Link className={view === 'workspace' ? 'proj active' : 'proj'} to='/' search={target('workspace')}>Create workspace</Link>
           </nav>
         </details>
         <div className='side-foot'>
@@ -468,35 +527,36 @@ function App() {
         <div className='page-content'>
         {authNotice && <div role={authNotice.kind === 'error' ? 'alert' : 'status'} className={authNotice.kind === 'error' ? 'alert' : 'notice'}>{authNotice.message} <button className='btn ghost' onClick={() => setAuthNotice(null)}>Dismiss</button></div>}
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
-        {projectsError !== '' && <div role='alert' className='alert'>{projectsError}</div>}
+        {projectsError !== '' && <div role='alert' className='alert'>{projectsError} <button className='btn' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</button></div>}
+        {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
         {project && workspace && projectView && <header className='proj-head'>
           <p className='project-origin'>{project.origin}</p>
           <h1>{pageTitles[view]}</h1>
           <p className='dim'>{projectDescriptions[view]}</p>
         </header>}
-        {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { await refreshMemberships(id); setView('project') }} onUnauthorized={resetSession} /></section>}
-        {view === 'team' && workspace && me && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={resetSession} />}
-        {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={resetSession} /><button className='btn' onClick={() => setView('identity')}>Manage identity sign-in and recovery</button></>}
+        {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
+        {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
+        {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
         {view === 'identity' && me && <>
-          <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={resetSession} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
-          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={resetSession} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
+          <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
+          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
         </>}
-        {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
-        {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
-        {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={resetSession} />}
-        {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
-        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
-        {view === 'context' && project && me && <ContextPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
-        {view === 'prompts' && project && me && <PromptsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
-        {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
-        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
-        {view === 'google-app' && me && <GoogleAppPanel userId={me.user.id} onUnauthorized={resetSession} />}
-        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
+        {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
+        {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
+        {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'context' && project && me && <ContextPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'prompts' && project && me && <PromptsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
-          <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />
+          <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
         </>}
-        {view === 'project' && !workspace && <section className='card'><p>No workspace is linked to this account.</p><button className='btn primary' onClick={() => setView('workspace')}>Create workspace</button></section>}
-        {view === 'project' && workspace && project === null && canWrite && (
+        {view === 'project' && !workspace && <section className='card'><p>No workspace is linked to this account.</p><Link className='btn primary' to='/' search={target('workspace')}>Create workspace</Link></section>}
+        {(view === 'new-project' || (view === 'project' && projects !== null)) && workspace && project === null && canWrite && (
           <section className='card onboarding-card' aria-labelledby='create-h'>
             <span className='eyebrow'>Website setup</span>
             <h1 id='create-h'>{projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'}</h1>
@@ -512,8 +572,8 @@ function App() {
         )}
         {view === 'project' && workspace && project !== null && (
           <>
-            {events?.total === 0 && <section className='connection-callout'><div><strong>Ready when your website is.</strong><p>Add the tracking snippet to start collecting consented visits.</p></div><button className='btn primary' onClick={() => setView('installation')}>Connect website</button></section>}
-            <AnalyticsPanel key={project.id} projectId={project.id} onUnauthorized={resetSession} />
+            {events?.total === 0 && <section className='connection-callout'><div><strong>Ready when your website is.</strong><p>Add the tracking snippet to start collecting consented visits.</p></div><Link className='btn primary' to='/' search={target('installation')}>Connect website</Link></section>}
+            <AnalyticsPanel key={project.id} projectId={project.id} onUnauthorized={unauthorized} />
           </>
         )}
         {view === 'events' && workspace && project !== null && (
@@ -533,7 +593,7 @@ function App() {
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
                   <p><strong>No retained events available.</strong></p>
-                  <p>Install your tracker on {project.origin}, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><button className='btn' onClick={() => setView('installation')}>Install tracker</button>
+                  <p>Install your tracker on {project.origin}, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><Link className='btn' to='/' search={target('installation')}>Install tracker</Link>
                 </div>
               )}
               {events !== null && events.events.length > 0 && (
@@ -595,6 +655,7 @@ function App() {
             </details>
           </>
         )}
+        </>}
         <footer className='app-footer'><span>ten98-monitor · Self-hosted and open source</span><span>SEO, AI insights and platform data imports are still being built.</span></footer>
         </div>
       </main>

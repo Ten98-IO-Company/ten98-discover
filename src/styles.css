@@ -34,8 +34,10 @@ button { touch-action: manipulation; }
 .proj-list { display: flex; flex-direction: column; gap: 2px; margin: 0 0 4px; padding: 0; list-style: none; max-height: 150px; overflow-y: auto; }
 .proj { width: 100%; min-height: 40px; padding: 9px 11px; border: 0; border-radius: 7px; background: transparent; font: inherit; font-size: 13px; text-align: left; color: #515360; cursor: pointer; overflow-wrap: anywhere; }
 .proj:hover { background: #ececf2; color: var(--ink); }
+a.proj { display: block; text-decoration: none; }
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .proj.active { background: var(--blue-tint); color: var(--blue); font-weight: 650; }
-.proj[aria-current='true'] { background: white; color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
+.proj-list .proj[aria-current='page'] { background: white; color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
 .workspace-tools { padding-top: 18px; border-top: 1px solid var(--line); }
 .workspace-tools summary { padding: 8px 10px; cursor: pointer; font-weight: 550; font-size: 13px; color: var(--muted); }
 .workspace-tools nav { margin-top: 6px; }

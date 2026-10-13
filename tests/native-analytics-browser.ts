@@ -140,14 +140,14 @@ try {
     if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false') await toggle.click();
   }
   async function selectProject(target:any,name:string) {
-    await navigation(target);await target.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name,exact:true}).click();
+    await navigation(target);await target.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name,exact:true}).click();
   }
   async function section(target:any,name:string) {
-    await navigation(target);await target.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name,exact:true}).click();
+    await navigation(target);await target.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name,exact:true}).click();
   }
   await dashboard.goto(config.appUrl, {waitUntil: 'networkidle'});
   await dashboard.getByRole('heading',{name:'Web analytics',level:1,exact:true}).waitFor();
-  assert.equal(await dashboard.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name:'Unmeasured native sandbox',exact:true}).getAttribute('aria-current'),'true','Initial loading must open the first listed project when no newer navigation was requested.');
+  assert.equal(await dashboard.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:'Unmeasured native sandbox',exact:true}).getAttribute('aria-current'),'page','Initial loading must open the first listed project when no newer navigation was requested.');
   await selectProject(dashboard,'Native consent sandbox');
   const metric = (name: string) => dashboard.locator('.analytics-stat').filter({has: dashboard.getByText(name, {exact: true})}).locator('p');
   await metric('Estimated visitors').filter({hasText: /^1$/}).waitFor();

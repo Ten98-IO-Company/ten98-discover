@@ -23,8 +23,8 @@ await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VA
 await mkdir('private/evidence',{recursive:true});
 const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const c=await browser.newContext({viewport:{width:1365,height:950}}),page=await c.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());await c.route('**/*',r=>new URL(r.request().url()).origin===f.appUrl?r.continue():r.abort());
 
-async function go(view){const nav=page.getByRole('navigation',{name:'Project sections',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('button',{name:view,exact:true}).click();}
-async function chooseProject(name){const nav=page.getByRole('navigation',{name:'Projects',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('button',{name,exact:true}).click();}
+async function go(view){const nav=page.getByRole('navigation',{name:'Project sections',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('link',{name:view,exact:true}).click();}
+async function chooseProject(name){const nav=page.getByRole('navigation',{name:'Projects',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('link',{name,exact:true}).click();}
 const root=`/api/projects/${f.projectId}/context`;const get=async()=>{const r=await c.request.get(f.appUrl+root);assert.equal(r.status(),200);return r.json();};const post=async(updates)=>{const d=await get(),r=await c.request.post(f.appUrl+root+'/update',{headers:{origin:f.appUrl},data:{revision:d.revision,requestId:randomUUID(),updates}});assert.equal(r.status(),200);return r.json();};
 const saved=async()=>{await page.getByText('Changes saved. No provider work was started.',{exact:true}).waitFor();};
 try{
@@ -51,8 +51,8 @@ async function checkPrompts(){
 const context=await browser.newContext({viewport:{width:1365,height:900}});const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
 await context.route('**/*',r=>new URL(r.request().url()).origin===f.appUrl?r.continue():r.abort());
 
-async function go(view){const nav=page.getByRole('navigation',{name:'Project sections',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('button',{name:view,exact:true}).click();}
-async function chooseProject(name){const nav=page.getByRole('navigation',{name:'Projects',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('button',{name,exact:true}).click();}
+async function go(view){const nav=page.getByRole('navigation',{name:'Project sections',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('link',{name:view,exact:true}).click();}
+async function chooseProject(name){const nav=page.getByRole('navigation',{name:'Projects',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('link',{name,exact:true}).click();}
 const request=async(path,data)=>{const r=await context.request.post(f.appUrl+path,{data,headers:{Origin:f.appUrl}});assert.ok(r.ok(),`HTTP ${r.status()} for ${path}`);return r.json();};
 try {
  await request('/api/auth/sign-in/email',{email:f.email,password:f.password});

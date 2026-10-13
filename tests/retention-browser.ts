@@ -47,16 +47,16 @@ try {
     if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false')await toggle.click();
   }
   async function section(name:string) {
-    await navigation();await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('button',{name,exact:true}).click();
+    await navigation();await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name,exact:true}).click();
   }
   async function settings(name:string) {
     await navigation();
-    const target=page.getByRole('navigation',{name:'Workspace settings',exact:true}).getByRole('button',{name,exact:true});
+    const target=page.getByRole('navigation',{name:'Workspace settings',exact:true}).getByRole('link',{name,exact:true});
     if(!await target.isVisible())await page.getByText('Workspace settings',{exact:true}).click();
     await target.click();
   }
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
-  await navigation();await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('button',{name:'Retention browser project',exact:true}).click();
+  await navigation();await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:'Retention browser project',exact:true}).click();
   await page.getByText('This date range is partial after retention.',{exact:false}).waitFor();
   await page.getByText('Daily data table',{exact:true}).click();
   assert.ok(await page.getByText('Unavailable',{exact:true}).count()>0);

@@ -29,7 +29,7 @@ try{
   assert.equal((await ctx.request.post(`${config.appUrl}/api/auth/sign-in/email`,{headers:{origin:config.appUrl},data:{email,password}})).status(),200);
   const page=await ctx.newPage();page.setDefaultTimeout(15000);
   await page.goto(config.appUrl);
-  async function nav(label:string){const menu=page.getByRole('button',{name:'Menu',exact:true});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await page.getByRole('button',{name:label,exact:true}).click();}
+  async function nav(label:string){const menu=page.getByRole('button',{name:'Menu',exact:true});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await page.getByRole('link',{name:label,exact:true}).click();}
   await nav('Explorer sample');await nav('Explore');
   await page.getByRole('button',{name:'Download CSV'}).waitFor();
   await page.getByLabel('From',{exact:true}).fill('2026-03-08');await page.getByLabel('To',{exact:true}).fill('2026-03-08');

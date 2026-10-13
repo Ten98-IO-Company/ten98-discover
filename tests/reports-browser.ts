@@ -38,6 +38,7 @@ try {
   const cookies=await context.cookies(config.appUrl);assert.ok(cookies.some((cookie:any)=>cookie.name.includes('session_token')));
   const page=await context.newPage();
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
+  const parentUrl=page.url();
   const preview=`${config.appUrl}/api/projects/${projectId}/reports/${report.id}/preview?revision=1`;
   for(const source of [preview,share.url]) {
     await page.evaluate((src:string)=>{document.querySelector('#report-frame')?.remove();const frame=document.createElement('iframe');frame.id='report-frame';frame.title='Isolated report';frame.setAttribute('sandbox','');frame.src=src;document.body.append(frame);},source);
@@ -56,7 +57,7 @@ try {
     assert.deepEqual(isolation,{parentBlocked:true,cookieBlocked:true,storageBlocked:true,executed:false,color:'rgb(12, 34, 56)'});
     await frame.locator('#chart').evaluate((image:HTMLImageElement)=>image.decode());
     await frame.locator('#navigate').click();
-    assert.equal(page.url(),`${config.appUrl}/`,'Report links must not navigate the parent.');
+    assert.equal(page.url(),parentUrl,'Report links must not navigate the parent.');
   }
   const publicPage=await context.newPage();
   const response=await publicPage.goto(share.url,{waitUntil:'networkidle'});
