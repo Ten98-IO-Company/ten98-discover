@@ -182,7 +182,8 @@ export async function reconcilePromptExecution(projectId:string,userId:string,id
     const current=(await client.query(runSelect+' WHERE r.id=$1 AND r.project_id=$2',[id,projectId])).rows[0];
     if(current.charge_status!=='uncertain'||current.generation_id!==outcome.reference)throw new FoundationError(409,'The receipt changed. Reload this comparison.');
     const settled=await settleSpend(client,wid,id,outcome.cost,outcome.reference);
-    await client.query('UPDATE prompt_execution SET status=$2,evidence=$3,diagnostic=$4,completed_at=clock_timestamp() WHERE id=$1',[id,settled.reconciliationRequired?'uncertain':current.result?'completed':'reconciled',JSON.stringify(outcome.evidence),outcome.diagnostic??'The credit charge was recovered. The original answer is unavailable; a new answer requires a new paid quote.']);
+    // Charge recovery is not a new answer or a new raw-evidence retention period.
+    await client.query('UPDATE prompt_execution SET status=$2,evidence=$3,diagnostic=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',[id,settled.reconciliationRequired?'uncertain':current.result?'completed':'reconciled',JSON.stringify(outcome.evidence),outcome.diagnostic??'The credit charge was recovered. The original answer is unavailable; a new answer requires a new paid quote.']);
     await client.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[wid]);
     return {role,comparison:await comparisonDto(client,projectId,current.comparison_id,userId,role,true),reconciliation:{status:settled.reconciliationRequired?'inconclusive':'matched',message:'Spending remains paused until an owner reviews the charge.'}};
   });

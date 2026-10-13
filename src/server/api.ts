@@ -46,6 +46,7 @@ import { getDestinations, getPublicDestinations, previewDestinations, publishDes
 import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
 
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
+import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
@@ -250,6 +251,19 @@ export async function handleApi(request: Request): Promise<Response> {
           if(action==='cancel')return json(await cancelSiteAudit(projectId,user.id,runOrSetup,input));
           if(action==='delete')return json(await deleteSiteAudit(projectId,user.id,runOrSetup,input));
         }
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const insightRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-insights(?:/(export))?$`,'i'));
+    if(insightRoute){
+      const [,projectId,action]=insightRoute;await projectAccess(projectId,user.id,false);
+      await limit(`prompt-insights:${user.id}`,30);
+      if(request.method==='GET'&&!action)return json(await getPromptInsights(projectId,user.id,url.searchParams));
+      if(request.method==='POST'&&action==='export'){
+        if(url.search)throw new FoundationError(400,'Insight exports do not accept query parameters.');
+        await limit(`prompt-insights-export:${user.id}`,5);
+        const result=await exportPromptInsights(projectId,user.id,await readJson(request,4096),request.signal);
+        return new Response(result.body,{headers:{'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount),'cache-control':'no-store','x-content-type-options':'nosniff'}});
       }
       return json({error:'Method not allowed.'},405);
     }

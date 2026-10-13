@@ -89,6 +89,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_domains');
             await client.query('CREATE DATABASE ten98_context');
             await client.query('CREATE DATABASE ten98_paid');
+            await client.query('CREATE DATABASE ten98_prompt_insights_ci');
             await client.query('CREATE DATABASE ten98_site_api');
             await client.query('CREATE DATABASE ten98_site_retention');
             await client.query('CREATE DATABASE ten98_site_worker_ci');
@@ -127,6 +128,7 @@ jobs:
               ['ten98_domains', [['src/server/cli.ts', 'migrate'], ['tests/domains-integration.ts']]],
               ['ten98_context', [['src/server/cli.ts', 'migrate'], ['tests/project-context-integration.ts']]],
               ['ten98_paid', [['src/server/cli.ts', 'migrate'], ['tests/keyword-research-integration.ts'], ['tests/prompt-execution-integration.ts'], ['tests/google-retention-integration.ts']]],
+              ['ten98_prompt_insights_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-insights-integration.ts']], { TEN98_PROMPT_INSIGHTS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_site_api', [['src/server/cli.ts', 'migrate'], ['tests/site-audits-integration.ts']]],
               ['ten98_site_retention', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-retention-integration.ts']]],
               ['ten98_site_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-worker-integration.ts']]],

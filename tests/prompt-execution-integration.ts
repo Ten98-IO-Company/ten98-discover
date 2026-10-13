@@ -10,6 +10,7 @@ import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPrompt
 import {runRetentionBatch,previewRetention,getRetention} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
+import {getPromptInsights} from '../src/server/prompt-insights.ts';
 
 export async function runPromptExecutionChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
@@ -18,7 +19,7 @@ export async function runPromptExecutionChecks(){
  for(const user of [owner,editor,viewer,foreign])await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Prompt fixture\',$2)',[user,`${user}@execution.integration.test`]);
  await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),owner,await hashPassword(password)]);
  const mini='openai/gpt-4o-mini' as const,models=[mini,'openai/gpt-4o'] as const;
- let paid=0,free=0,mode:'ok'|'unknown'|'truncated'|'over'|'byok'|'invalid'|'empty'|'pending'='ok',priceChanged=false,receiptChange:Record<string,unknown>={};
+ let paid=0,free=0,mode:'ok'|'unknown'|'truncated'|'over'|'answer_unknown'|'byok'|'invalid'|'empty'|'pending'='ok',priceChanged=false,receiptChange:Record<string,unknown>={};
  const receipts=new Map<string,any>(),sent:string[]=[];
  const send:typeof fetch=async(url,init)=>{
   assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);const address=String(url);
@@ -27,7 +28,7 @@ export async function runPromptExecutionChecks(){
   if(address.startsWith('https://openrouter.ai/api/v1/generation?id=')){free++;return Response.json({data:{...receipts.get(new URL(address).searchParams.get('id')!),...receiptChange}});}
   assert.equal(address,'https://openrouter.ai/api/v1/chat/completions');assert.equal(init?.method,'POST');paid++;const input=JSON.parse(String(init?.body));sent.push(input.session_id);assert.deepEqual(input.provider.only,['openai']);assert.equal(input.provider.allow_fallbacks,false);
   if(mode==='unknown')throw new Error('Synthetic unavailable response, never live.');
-  const id='gen-'+randomUUID(),created=Math.floor(Date.now()/1000),cost=mode==='over'?0.04:0.000012345;
+  const id='gen-'+randomUUID(),created=Math.floor(Date.now()/1000),cost=mode==='over'?0.04:mode==='answer_unknown'?1000001:0.000012345;
   receipts.set(id,{id,model:input.model,provider_name:'OpenAI',session_id:input.session_id,external_user:input.user,created_at:new Date(created*1000).toISOString(),finish_reason:'stop',is_byok:mode==='byok',total_cost:cost,upstream_inference_cost:mode==='byok'?0.01:0});
   if(mode==='truncated')return new Response('{broken',{headers:{'x-generation-id':id}});
   return Response.json({id,model:input.model,provider:'OpenAI',created,choices:[{finish_reason:mode==='pending'?null:'stop',message:{content:mode==='invalid'?'bad\0':mode==='empty'?'':'Synthetic untrusted answer'}}],usage:{cost,is_byok:mode==='byok',prompt_tokens:12,completion_tokens:20}},{headers:{'x-generation-id':id}});
@@ -143,6 +144,30 @@ export async function runPromptExecutionChecks(){
   const storedActor=(await pool.query('SELECT q.request_actor FROM prompt_comparison c JOIN prompt_execution_quote q ON q.id=c.quote_id WHERE c.id=$1',[rotatedRun.id])).rows[0].request_actor;
   try{process.env.AUTH_SECRET=randomBytes(32).toString('hex');mode='truncated';await executePromptComparison(rotatedRun.id,send);const item=(await detail(rotated,rotatedRun.id)).runs[0];assert.equal(receipts.get(item.generationId).external_user,storedActor);assert.equal((await reconcilePromptExecution(rotated.project,owner,item.id,{},send)).reconciliation.status,'matched');}finally{process.env.AUTH_SECRET=authBefore;}
   console.log('PASS captured generation recovery after input expiry, exact owner/account/context evidence, no replay and no inferred missing charge');
+
+  // A validated answer can coexist with an unresolved charge. Settling that
+  // charge is not a new observation and cannot restart the raw evidence clock.
+  mode='ok';const retainedAnswer=await fixture(),retainedRun=await start(retainedAnswer);mode='answer_unknown';await executePromptComparison(retainedRun.id,send);
+  const retainedChild=(await detail(retainedAnswer,retainedRun.id)).runs[0];assert.equal(retainedChild.status,'uncertain');assert.equal(retainedChild.result.text,'Synthetic untrusted answer');
+  const agedAt=(await pool.query("SELECT (clock_timestamp()-interval '91 days')::text AS at")).rows[0].at as string,agedIso=new Date(agedAt).toISOString(),agedDay=agedIso.slice(0,10);
+  await pool.query(`UPDATE prompt_execution SET completed_at=$2,dispatched_at=CASE WHEN dispatched_at IS NOT NULL THEN $2::timestamptz END,
+    result=CASE WHEN result IS NOT NULL THEN jsonb_set(result,'{receivedAt}',to_jsonb($3::text)) END WHERE comparison_id=$1`,[retainedRun.id,agedAt,agedIso]);
+  await pool.query('UPDATE prompt_comparison SET created_at=$2 WHERE id=$1',[retainedRun.id,agedAt]);
+  await pool.query("UPDATE prompt_execution_quote SET created_at=$2,expires_at=$2::timestamptz+interval '5 minutes' WHERE id=$1",[retainedRun.quoteId,agedAt]);
+  receipts.get(retainedChild.generationId).created_at=agedIso;
+  const evidenceBeforeRecovery=(await pool.query('SELECT completed_at::text AS completed,result FROM prompt_execution WHERE id=$1',[retainedChild.id])).rows[0];
+  const insightParams=new URLSearchParams({from:agedDay,to:agedDay}),insightsBefore=await getPromptInsights(retainedAnswer.project,viewer,insightParams);
+  assert.equal(insightsBefore.coverage.expired,1);assert.equal(insightsBefore.coverage.eligible,0);
+  const retainedPolicy=await getRetention(retainedAnswer.workspace,owner),previewBeforeRecovery=await previewRetention(retainedAnswer.workspace,owner,{revision:retainedPolicy.revision,settings:retainedPolicy.settings});assert.equal(previewBeforeRecovery.promptEstimate.results,1);
+  const paidBeforeRecovery=paid;receiptChange={total_cost:0.000012345};const recoveredAnswer=await reconcilePromptExecution(retainedAnswer.project,owner,retainedChild.id,{},send);receiptChange={};
+  assert.equal(recoveredAnswer.reconciliation.status,'matched');assert.equal((await ledger(retainedChild.id)).status,'settled');assert.equal((await ledger(retainedChild.id)).actual_micros,'13');assert.equal(paid,paidBeforeRecovery);
+  assert.deepEqual((await pool.query('SELECT completed_at::text AS completed,result FROM prompt_execution WHERE id=$1',[retainedChild.id])).rows[0],evidenceBeforeRecovery,'Charge-only reconciliation must preserve the exact original completion timestamp and answer.');
+  const insightsAfter=await getPromptInsights(retainedAnswer.project,viewer,insightParams);assert.equal(insightsAfter.coverage.expired,1);assert.equal(insightsAfter.coverage.eligible,0);assert.equal(insightsAfter.metrics[0].eligibleAnswers,null);
+  assert.equal((await previewRetention(retainedAnswer.workspace,owner,{revision:retainedPolicy.revision,settings:retainedPolicy.settings})).promptEstimate.results,1);
+  const erasedAnswer=await runRetentionBatch(retainedAnswer.project);assert.equal(erasedAnswer?.expiredPromptResults,1);assert.equal(erasedAnswer?.expiredPromptInputs,1);
+  assert.equal((await detail(retainedAnswer,retainedRun.id)).runs[0].result,null);assert.equal((await detail(retainedAnswer,retainedRun.id)).runs[0].resultExpired,true);assert.equal((await getPromptExecutions(retainedAnswer.project,owner)).spendingPaused,true);
+  assert.equal((await getPromptInsights(retainedAnswer.project,viewer,insightParams)).coverage.expired,1);assert.equal(paid,paidBeforeRecovery);
+  console.log('PASS charge-only reconciliation preserves the original raw-retention clock, expired insight eligibility and cleanup while settling its exact ledger');
 
   mode='ok';const crashed=await fixture(),cr=await start(crashed);await pool.query("UPDATE provider_request SET status='dispatched' WHERE id=$1",[cr.runs[0].id]);await pool.query("UPDATE prompt_execution SET status='running',dispatched_at=clock_timestamp()-interval '2 minutes' WHERE id=$1",[cr.runs[0].id]);before=paid;await reconcilePromptExecutionJobs();const stopped=await detail(crashed,cr.id);assert.equal(stopped.runs[0].status,'uncertain');assert.equal(stopped.runs[1].status,'cancelled');assert.equal(paid,before);
   const evidence=(await pool.query('SELECT row_to_json(p) AS ledger,r.evidence FROM provider_request p JOIN prompt_execution r ON r.id=p.id WHERE p.id=$1',[done.runs[0].id])).rows[0];await pool.query("UPDATE prompt_execution SET completed_at=clock_timestamp()-interval '91 days' WHERE comparison_id=$1",[done.id]);const policy=await getRetention(f.workspace,owner);const preview=await previewRetention(f.workspace,owner,{revision:policy.revision,settings:policy.settings});assert.equal(preview.promptEstimate.results,2);

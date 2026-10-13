@@ -1,8 +1,9 @@
 # AI insights from retained answers
 
-Implementation contract reviewed2026-10-13; not implemented yet. This is the
-next local P15/P16/P17 increment, not completion of all AI visibility requirements.
-It reads existing evidence without requesting a provider, job or credit check.
+Read-only service and matcher implemented and tested locally2026-10-13; the
+interface is in progress. This P15/P16/P17 increment does not complete all AI
+visibility requirements. It reads existing evidence without requesting a
+provider, job or credit check.
 
 ## Evidence and measurement
 
@@ -69,10 +70,12 @@ applied scope, matcher and exact execution/result availability; changes reject
 with409, rather than mixing pages or reviving tombstones. CSV preserves provenance
 and counts, uses existing formula protection, and requires the displayed revision.
 
-Start with explicit31-day/1000-execution/10MiB retained-answer limits. Check count
+Use explicit31-day/1000-execution/10MiB retained-answer limits. Check count
 and byte bounds before loading payloads; reject with **Narrow the date range**,
-never silently sample or truncate. Measure matching work before setting the final
-report CPU cap. The pure matcher below has its own per-answer work bound.
+never silently sample or truncate. The conservative report CPU cap is100million
+text-unit/term operations; the actual matcher benchmark at that cap took97ms
+for Unicode and7ms for substring on the local acceptance host, not a deployment
+performance guarantee. The pure matcher has a20million per-answer work bound.
 Historical identity capture, remaining provider adapters, complete filter/export
 parity and historical comparison variants remain later required increments.
 
@@ -111,7 +114,7 @@ Validation and limits:
    and0–100 citation URL strings, and no sparse array entries. Text may contain
    line breaks. Every subject requires a unique nonempty id up to100 units, a
    nonempty name up to512 units, and arrays of at most20 aliases/20 domains.
-   Names/aliases/IDs are valid Unicode, have no ASCII controls, and have no leading
+   Each alias is at most512 units. Names/aliases/IDs are valid Unicode, have no ASCII controls, and have no leading
    or trailing whitespace. Aliases must be nonempty. Unknown object fields are
    ignored, never copied. Citation strings are valid Unicode, at most8192 units;
    empty or syntactically invalid URLs yield no citation hit.
@@ -119,7 +122,8 @@ Validation and limits:
    credentials, ports, paths (including backslashes), query/fragment, percent
    escapes, whitespace, IP addresses and empty
    labels. Parse using native URL with an https prefix for IDN normalization;
-   lowercase, strip one trailing dot and one leading `www.`. Require at least
+   lowercase, strip one trailing dot and one leading `www.`. The normalized ASCII
+   hostname must also be at most253 characters. Require at least
    two ASCII DNS labels, each1–63 characters, letters/digits/hyphens, no leading
    or trailing hyphen. Domain comparison uses the resulting ASCII hostname.
 3. Build each subject's terms in deterministic order: name, aliases, then
@@ -164,3 +168,18 @@ negative prose, aliases/repetition, URL-only/citation-only, hostile suffix/useri
 IDN/www, null denominators, changed context, actual drilldown reconciliation and
 zero unexpected provider traffic. This matcher is not accepted merely because
 Kimi generated a file.
+
+## Local acceptance and remaining work
+
+Eight independent pure matcher groups cover semantics, malformed inputs and a
+bounded250000-character failed-email regression. Seven PostgreSQL/API groups
+cover exact denominators and all eligibility categories, context/tag/payload
+revision changes, member isolation, retention/tombstones, pagination, timezone
+boundaries, capacity and CSV exports. All pass with zero outbound provider calls.
+Charge reconciliation preserves the original answer completion timestamp, so
+settling an old charge cannot restart its raw-evidence retention period; the
+nine-group execution suite verifies this regression and existing paid-work gates.
+
+Current-context insights still require interface and production browser
+acceptance. Historical identity capture/comparison methods, further provider
+adapters, generated reports and full filter/export parity remain outstanding.
