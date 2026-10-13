@@ -111,170 +111,72 @@ export function MetaAppView(props: MetaAppViewProps) {
 
   return (
     <section className="research-panel stack" style={layout} aria-labelledby={`${p}heading`}>
-      {heading}
-      <p>{INTRO}</p>
+      <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        {heading}
+        <div className="row">
+          <button type="button" className="btn" style={target} onClick={onBack} disabled={writeState === 'submitting' || unknown}>{backLabel}</button>
+          <button type="button" className="btn" style={target} onClick={onReload} disabled={busy}>Reload app setup</button>
+        </div>
+      </div>
+      <p className="hint" style={{ margin: 0 }}>{INTRO}</p>
       {error !== '' && <p className="alert" role="alert">{error}</p>}
       {unknown && <p className="alert" role="alert">{AMBIGUOUS_WRITE}</p>}
       {notice !== '' && <p role="status">{notice}</p>}
       {reading && <p role="status">Loading app setup…</p>}
       {readiness !== '' && <p className="hint">{readiness}</p>}
 
-      <div className="field" style={fill}>
-        <label id={`${p}registration-label`} htmlFor={`${p}registration`}>Registration</label>
-        <select
-          id={`${p}registration`}
-          aria-labelledby={`${p}registration-label`}
-          value={newRegistration || selected === null ? '' : selected.id}
-          disabled={busy || unknown}
-          style={fill}
-          onChange={(event) => {
-            const value = event.target.value;
-            if (value === '') onNew(); else onSelect(value);
-          }}
-        >
-          <option value="">New registration</option>
-          {offPage && <option value={selected.id}>{selected.appId}</option>}
-          {choices.map((choice) => (
-            <option key={choice.id} value={choice.id}>{choice.label}</option>
-          ))}
-        </select>
-        {choices.length === 0 && <span className="hint">No registrations on this page</span>}
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <div className="field" style={{ ...fill, flexGrow: 1 }}>
+          <label id={`${p}registration-label`} htmlFor={`${p}registration`}>Registration</label>
+          <select
+            id={`${p}registration`}
+            aria-labelledby={`${p}registration-label`}
+            value={newRegistration || selected === null ? '' : selected.id}
+            disabled={busy || unknown}
+            style={{ ...fill, minHeight: 44 }}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value === '') onNew(); else onSelect(value);
+            }}
+          >
+            <option value="">New registration</option>
+            {offPage && <option value={selected.id}>{selected.appId}</option>}
+            {choices.map((choice) => (
+              <option key={choice.id} value={choice.id}>{choice.label}</option>
+            ))}
+          </select>
+          {choices.length === 0 && <span className="hint">No registrations on this page</span>}
+        </div>
+        <button type="button" className="btn" style={target} onClick={onNew} disabled={busy || unknown}>New registration</button>
       </div>
 
       <div className="row">
-        <button type="button" className="btn" style={target} onClick={onNew} disabled={busy || unknown}>New registration</button>
         <button type="button" className="btn" style={target} onClick={onPrevious} disabled={busy || unknown || !canPrevious}>Previous registrations</button>
         <button type="button" className="btn" style={target} onClick={onNext} disabled={busy || unknown || !canNext}>Next registrations</button>
       </div>
 
       {!newRegistration && selected !== null && (
-        <div className="field" style={fill}>
+        <div className="card stack" style={{ gap: 'var(--space-3)', marginBottom: 0, minWidth: 0 }}>
           <p>App {selected.appId} · {selected.statusLabel}</p>
+          {confirmDisable ? (
+            <div className="field" style={fill}>
+              <p id={`${p}disable-impact`}>{DISABLE_CONSEQUENCE}</p>
+              <div className="row">
+                <button type="button" className="btn" style={target} onClick={onDisable} disabled={busy || unknown || !canDisable} aria-describedby={`${p}disable-impact`}>Disable registration</button>
+                <button type="button" className="btn" style={target} onClick={onKeepEnabled} disabled={busy || unknown}>Keep enabled</button>
+              </div>
+            </div>
+          ) : (
+            <div className="row">
+              <button type="button" className="btn" style={target} onClick={onReviewDisable} disabled={busy || unknown || !canDisable}>Disable registration</button>
+            </div>
+          )}
           <details>
             <summary>Registration details</summary>
             <p className="hint">{selected.revisionLabel}</p>
             <p className="hint">{selected.boundOrigin}</p>
           </details>
         </div>
-      )}
-
-      {hasRecord && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,240px),1fr))', gap: 14 }}>
-          <div className="field" style={fill}>
-            <label id={`${p}appid-label`} htmlFor={`${p}appid`}>App ID</label>
-            <input
-              id={`${p}appid`}
-              type="text"
-              inputMode="numeric"
-              maxLength={40}
-              value={appId}
-              readOnly={!newRegistration}
-              disabled={fieldLocked}
-              style={fill}
-              onChange={(event) => onAppId(event.target.value)}
-            />
-          </div>
-
-          <div className="field" style={fill}>
-            <label id={`${p}configid-label`} htmlFor={`${p}configid`}>Facebook Login configuration ID</label>
-            <input
-              id={`${p}configid`}
-              type="text"
-              inputMode="numeric"
-              maxLength={40}
-              value={configId}
-              disabled={fieldLocked}
-              style={fill}
-              onChange={(event) => onConfigId(event.target.value)}
-            />
-          </div>
-          </div>
-
-          <div className="field" style={fill}>
-            <label id={`${p}secret-label`} htmlFor={`${p}secret`}>App secret</label>
-            <input
-              id={`${p}secret`}
-              type="password"
-              autoComplete="new-password"
-              maxLength={512}
-              value={secret}
-              disabled={fieldLocked}
-              style={fill}
-              aria-describedby={`${p}secret-helper ${p}secret-handling`}
-              onChange={(event) => onSecret(event.target.value)}
-            />
-            <p className="hint" id={`${p}secret-helper`}>{SECRET_HELPER}</p>
-            <p className="hint" id={`${p}secret-handling`}>{SECRET_HANDLING}</p>
-          </div>
-
-          <div className="row">
-            <input
-              id={`${p}enabled`}
-              type="checkbox"
-              checked={enabled}
-              disabled={fieldLocked}
-              onChange={(event) => onEnabled(event.target.checked)}
-            />
-            <label id={`${p}enabled-label`} htmlFor={`${p}enabled`} style={{ minHeight: 44, display: 'flex', alignItems: 'center', margin: 0 }}>Enable this registration</label>
-          </div>
-
-          <div className="field" style={fill}>
-            <label id={`${p}mode-label`} htmlFor={`${p}mode`}>Operator-declared app mode</label>
-            <select
-              id={`${p}mode`}
-              value={declaredMode}
-              disabled={fieldLocked}
-              style={fill}
-              aria-describedby={`${p}mode-helper`}
-              onChange={(event) => onMode(event.target.value === 'live' ? 'live' : 'development')}
-            >
-              <option value="development">Development</option>
-              <option value="live">Live</option>
-            </select>
-            <span className="hint" id={`${p}mode-helper`}>{MODE_HELPER}</span>
-          </div>
-
-          {newRegistration || (selected !== null && !selected.active) ? (
-            <div className="field" style={fill}>
-              <div className="row">
-                <input
-                  id={`${p}activate`}
-                  type="checkbox"
-                  checked={activate}
-                  disabled={fieldLocked}
-                  aria-describedby={`${p}activate-helper`}
-                  onChange={(event) => onActivate(event.target.checked)}
-                />
-                <label id={`${p}activate-label`} htmlFor={`${p}activate`} style={{ minHeight: 44, display: 'flex', alignItems: 'center', margin: 0 }}>Use this registration for new connections</label>
-              </div>
-              <span className="hint" id={`${p}activate-helper`}>{ACTIVATE_HELPER}</span>
-            </div>
-          ) : selected !== null && selected.active ? (
-            <p className="hint">Active for new connections</p>
-          ) : null}
-
-          <p className="hint" id={`${p}save-impact`}>{REVISION_IMPACT}</p>
-          <div className="row">
-            <button type="button" className="btn primary" style={target} onClick={onSave} disabled={saveDisabled} aria-describedby={`${p}save-impact`}>Save app settings</button>
-          </div>
-        </>
-      )}
-
-      {!newRegistration && selected !== null && (
-        confirmDisable ? (
-          <div className="field" style={fill}>
-            <p id={`${p}disable-impact`}>{DISABLE_CONSEQUENCE}</p>
-            <div className="row">
-              <button type="button" className="btn" style={target} onClick={onDisable} disabled={busy || unknown || !canDisable} aria-describedby={`${p}disable-impact`}>Disable registration</button>
-              <button type="button" className="btn" style={target} onClick={onKeepEnabled} disabled={busy || unknown}>Keep enabled</button>
-            </div>
-          </div>
-        ) : (
-          <div className="row">
-            <button type="button" className="btn" style={target} onClick={onReviewDisable} disabled={busy || unknown || !canDisable}>Disable registration</button>
-          </div>
-        )
       )}
 
       {(callbacks.length > 0 || newRegistration) && (
@@ -288,7 +190,7 @@ export function MetaAppView(props: MetaAppViewProps) {
                 type="text"
                 readOnly
                 value={callback.url}
-                style={fill}
+                style={{ ...fill, minHeight: 44 }}
                 aria-describedby={`${p}callback-${callback.kind}-helper`}
               />
               <span className="hint" id={`${p}callback-${callback.kind}-helper`}>{callback.helper}</span>
@@ -322,10 +224,111 @@ export function MetaAppView(props: MetaAppViewProps) {
         </ul>
       </details>
 
-      <div className="row">
-        <button type="button" className="btn" style={target} onClick={onBack} disabled={writeState === 'submitting' || unknown}>{backLabel}</button>
-        <button type="button" className="btn" style={target} onClick={onReload} disabled={busy}>Reload app setup</button>
-      </div>
+      {hasRecord && (
+        <details open={newRegistration}>
+          <summary>App settings</summary>
+          <div className="stack">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,240px),1fr))', gap: 14 }}>
+              <div className="field" style={fill}>
+                <label id={`${p}appid-label`} htmlFor={`${p}appid`}>App ID</label>
+                <input
+                  id={`${p}appid`}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={40}
+                  value={appId}
+                  readOnly={!newRegistration}
+                  disabled={fieldLocked}
+                  style={{ ...fill, minHeight: 44 }}
+                  onChange={(event) => onAppId(event.target.value)}
+                />
+              </div>
+
+              <div className="field" style={fill}>
+                <label id={`${p}configid-label`} htmlFor={`${p}configid`}>Facebook Login configuration ID</label>
+                <input
+                  id={`${p}configid`}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={40}
+                  value={configId}
+                  disabled={fieldLocked}
+                  style={{ ...fill, minHeight: 44 }}
+                  onChange={(event) => onConfigId(event.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="field" style={fill}>
+              <label id={`${p}secret-label`} htmlFor={`${p}secret`}>App secret</label>
+              <input
+                id={`${p}secret`}
+                type="password"
+                autoComplete="new-password"
+                maxLength={512}
+                value={secret}
+                disabled={fieldLocked}
+                style={{ ...fill, minHeight: 44 }}
+                aria-describedby={`${p}secret-helper ${p}secret-handling`}
+                onChange={(event) => onSecret(event.target.value)}
+              />
+              <p className="hint" id={`${p}secret-helper`}>{SECRET_HELPER}</p>
+              <p className="hint" id={`${p}secret-handling`}>{SECRET_HANDLING}</p>
+            </div>
+
+            <div className="row">
+              <input
+                id={`${p}enabled`}
+                type="checkbox"
+                checked={enabled}
+                disabled={fieldLocked}
+                onChange={(event) => onEnabled(event.target.checked)}
+              />
+              <label id={`${p}enabled-label`} htmlFor={`${p}enabled`} style={{ minHeight: 44, display: 'flex', alignItems: 'center', margin: 0 }}>Enable this registration</label>
+            </div>
+
+            <div className="field" style={fill}>
+              <label id={`${p}mode-label`} htmlFor={`${p}mode`}>Operator-declared app mode</label>
+              <select
+                id={`${p}mode`}
+                value={declaredMode}
+                disabled={fieldLocked}
+                style={{ ...fill, minHeight: 44 }}
+                aria-describedby={`${p}mode-helper`}
+                onChange={(event) => onMode(event.target.value === 'live' ? 'live' : 'development')}
+              >
+                <option value="development">Development</option>
+                <option value="live">Live</option>
+              </select>
+              <span className="hint" id={`${p}mode-helper`}>{MODE_HELPER}</span>
+            </div>
+
+            {newRegistration || (selected !== null && !selected.active) ? (
+              <div className="field" style={fill}>
+                <div className="row">
+                  <input
+                    id={`${p}activate`}
+                    type="checkbox"
+                    checked={activate}
+                    disabled={fieldLocked}
+                    aria-describedby={`${p}activate-helper`}
+                    onChange={(event) => onActivate(event.target.checked)}
+                  />
+                  <label id={`${p}activate-label`} htmlFor={`${p}activate`} style={{ minHeight: 44, display: 'flex', alignItems: 'center', margin: 0 }}>Use this registration for new connections</label>
+                </div>
+                <span className="hint" id={`${p}activate-helper`}>{ACTIVATE_HELPER}</span>
+              </div>
+            ) : selected !== null && selected.active ? (
+              <p className="hint">Active for new connections</p>
+            ) : null}
+
+            <p className="hint" id={`${p}save-impact`}>{REVISION_IMPACT}</p>
+            <div className="row">
+              <button type="button" className="btn primary" style={target} onClick={onSave} disabled={saveDisabled} aria-describedby={`${p}save-impact`}>Save app settings</button>
+            </div>
+          </div>
+        </details>
+      )}
     </section>
   );
 }

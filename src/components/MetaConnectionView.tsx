@@ -161,10 +161,22 @@ export function MetaConnectionView(props: MetaConnectionViewProps) {
 
   return (
     <section className='research-panel stack' style={{ display: 'grid', gap: 14 }} aria-labelledby={id('heading')}>
-      <h2 id={id('heading')} tabIndex={-1}>
-        Meta ads
-      </h2>
-      <p>{INTRO}</p>
+      <div className='row' style={{ justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-3) var(--space-4)', minWidth: 0 }}>
+        <h2 id={id('heading')} tabIndex={-1} style={{ fontSize: 'var(--text-lg)', margin: 0, minWidth: 0 }}>
+          Meta ads
+        </h2>
+        {showConnections && (
+          <button className='btn' style={{ minHeight: 44, justifySelf: 'start' }} type='button' onClick={onReload} disabled={busy}>
+            Reload connections
+          </button>
+        )}
+        {mode === 'account' && isOwner && (
+          <button className="btn" style={{ minHeight: 44, justifySelf: 'start' }} type='button' onClick={onBack} disabled={writing}>
+            Back to connections
+          </button>
+        )}
+      </div>
+      <p className='hint' style={{ margin: 0 }}>{INTRO}</p>
 
       {error !== '' && <p role='alert'>{error}</p>}
       {notice !== '' && <p role='status'>{notice}</p>}
@@ -185,56 +197,24 @@ export function MetaConnectionView(props: MetaConnectionViewProps) {
 
       {showConnections && (
         <>
-          <div className='row'>
-            <button className='btn' style={{ minHeight: 44, justifySelf: 'start' }} type='button' onClick={onReload} disabled={busy}>
-              Reload connections
-            </button>
-          </div>
-          {isOwner && (
-            <details open={connections.length === 0}>
-              <summary>Add a connection</summary>
-              <p id={id('connect-helper')}>{ADD_HELPER}</p>
-              <div className='field'>
-                <label htmlFor={id('name')}>Connection name</label>
-                <input
-                  id={id('name')}
-                  value={name}
-                  maxLength={120}
-                  disabled={writing}
-                  onChange={(event) => onName(event.target.value)}
-                  aria-describedby={id('connect-helper')}
-                />
-              </div>
+          {isOwner && (setupMessage !== '' || canOpenAppSetup) && (
+            <div className='stack' style={{ gap: 'var(--space-3)' }}>
               {setupMessage !== '' && <p id={id('setup-message')}>{setupMessage}</p>}
-              <button className="btn primary" style={{ minHeight: 44, justifySelf: 'start' }}
-                type='button'
-                onClick={onConnect}
-                disabled={!canConnect || name.trim() === '' || busy}
-                aria-describedby={setupMessage !== '' ? id('setup-message') : undefined}
-              >
-                Connect Meta
-              </button>
               {canOpenAppSetup && (
                 <button className="btn" style={{ minHeight: 44, justifySelf: 'start' }} type='button' onClick={onOpenAppSetup} disabled={busy}>
                   Open app setup
                 </button>
               )}
-            </details>
+            </div>
           )}
 
           {connections.map((connection) => (
-            <article key={connection.id}>
-              <h3>{connection.name}</h3>
-              <p>{connection.statusLabel}</p>
-              <p>{connection.accountLabel}</p>
-              <details>
-                <summary>Connection details</summary>
-                <p>{connection.statusDetail}</p>
-                <p>{connection.currencyLabel}</p>
-                <p>{connection.timeZoneLabel}</p>
-                <p>{connection.tokenExpiryLabel}</p>
-                <p>{connection.dataExpiryLabel}</p>
-              </details>
+            <article key={connection.id} className='card stack' style={{ minWidth: 0, gap: 'var(--space-3)' }}>
+              <div className='row' style={{ justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-3)', minWidth: 0 }}>
+                <h3 style={{ margin: 0, minWidth: 0 }}>{connection.name}</h3>
+                <p style={{ margin: 0 }}>{connection.statusLabel}</p>
+              </div>
+              <p style={{ margin: 0 }}>{connection.accountLabel}</p>
               {isOwner && (
                 <div className='row'>
                   {connection.canChoose && (
@@ -258,16 +238,50 @@ export function MetaConnectionView(props: MetaConnectionViewProps) {
                   )}
                 </div>
               )}
+              <details>
+                <summary>Connection details</summary>
+                <p>{connection.statusDetail}</p>
+                <p>{connection.currencyLabel}</p>
+                <p>{connection.timeZoneLabel}</p>
+                <p>{connection.tokenExpiryLabel}</p>
+                <p>{connection.dataExpiryLabel}</p>
+              </details>
             </article>
           ))}
+
+          {isOwner && (
+            <details open={connections.length === 0}>
+              <summary>Add a connection</summary>
+              <p id={id('connect-helper')}>{ADD_HELPER}</p>
+              <div className='field'>
+                <label htmlFor={id('name')}>Connection name</label>
+                <input
+                  id={id('name')}
+                  value={name}
+                  maxLength={120}
+                  disabled={writing}
+                  onChange={(event) => onName(event.target.value)}
+                  aria-describedby={id('connect-helper')}
+                  style={{ minHeight: 44 }}
+                />
+              </div>
+              <button className="btn primary" style={{ minHeight: 44, justifySelf: 'start' }}
+                type='button'
+                onClick={onConnect}
+                disabled={!canConnect || name.trim() === '' || busy}
+                aria-describedby={setupMessage !== '' ? id('setup-message') : undefined}
+              >
+                Connect Meta
+              </button>
+            </details>
+          )}
         </>
       )}
 
       {mode === 'account' && isOwner && (
         <>
-          <button className="btn" style={{ minHeight: 44, justifySelf: 'start' }} type='button' onClick={onBack} disabled={writing}>
-            Back to connections
-          </button>
+          <h3>Choose an ad account</h3>
+          <p>Connection: {connectionName}</p>
 
           <p id={id('selection-helper')}>{SELECTION_HELPER}</p>
 
@@ -326,6 +340,18 @@ export function MetaConnectionView(props: MetaConnectionViewProps) {
             </p>
           )}
 
+          <p id={id('selection-note')}>{SELECTION_NOTE}</p>
+          <button className="btn primary" style={{ minHeight: 44, justifySelf: 'start' }}
+            type='button'
+            onClick={onConfirmAccount}
+            disabled={
+              !canConfirmAccount || selectedAccount === null || !selectedAccount.selectable || busy
+            }
+            aria-describedby={id('selection-note')}
+          >
+            Confirm account
+          </button>
+
           <details>
             <summary>Use an account ID</summary>
           <div className='field'>
@@ -338,6 +364,7 @@ export function MetaConnectionView(props: MetaConnectionViewProps) {
               disabled={writing}
               onChange={(event) => onAccountId(event.target.value)}
               aria-describedby={id('account-id-helper')}
+              style={{ minHeight: 44 }}
             />
             <p id={id('account-id-helper')}>
               Enter the account ID digits exactly as Meta shows them.
@@ -347,18 +374,6 @@ export function MetaConnectionView(props: MetaConnectionViewProps) {
             Check account
           </button>
           </details>
-
-          <p id={id('selection-note')}>{SELECTION_NOTE}</p>
-          <button className="btn primary" style={{ minHeight: 44, justifySelf: 'start' }}
-            type='button'
-            onClick={onConfirmAccount}
-            disabled={
-              !canConfirmAccount || selectedAccount === null || !selectedAccount.selectable || busy
-            }
-            aria-describedby={id('selection-note')}
-          >
-            Confirm account
-          </button>
         </>
       )}
 
