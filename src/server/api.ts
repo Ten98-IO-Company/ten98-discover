@@ -29,6 +29,8 @@ import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain
 import { getDomainRedirectChecks, startDomainRedirectCheck } from './domain-redirects.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
+import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
+
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
 
 const id = '[0-9a-f-]{36}';
@@ -187,6 +189,32 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`reports:${user.id}:${request.method === 'GET' ? 'read' : 'write'}`, request.method === 'GET' ? 120 : 30);
       const response = await handleReports(request, user.id);
       if (response) return response;
+    }
+    const auditRoute=path.match(new RegExp(`^/api/projects/(${id})/audits(?:/(setup|${id})(?:/(pages|issues|cancel|delete)(?:/(${id})(?:/(links))?)?)?)?$`,'i'));
+    if(auditRoute){
+      const [,projectId,runOrSetup,action,pageId,links]=auditRoute;
+      await limit(`audits:${user.id}:${request.method==='GET'?'read':'write'}`,request.method==='GET'?120:10);
+      if(request.method==='GET'){
+        if(!runOrSetup)return json(await listSiteAudits(projectId,user.id,url.searchParams));
+        if(runOrSetup==='setup'&&!action){if(url.search)throw new FoundationError(400,'Audit setup does not accept query parameters.');return json(await getSiteAuditSetup(projectId,user.id));}
+        if(runOrSetup!=='setup'){
+          if(!action){if(url.search)throw new FoundationError(400,'Audit details do not accept query parameters.');return json(await getSiteAudit(projectId,user.id,runOrSetup));}
+          if(action==='pages'&&!pageId)return json(await listSiteAuditPages(projectId,user.id,runOrSetup,url.searchParams));
+          if(action==='pages'&&pageId&&links)return json(await listSiteAuditLinks(projectId,user.id,runOrSetup,pageId,url.searchParams));
+          if(action==='pages'&&pageId&&!links){if(url.search)throw new FoundationError(400,'Page details do not accept query parameters.');return json(await getSiteAuditPage(projectId,user.id,runOrSetup,pageId));}
+          if(action==='issues'&&!pageId)return json(await listSiteAuditIssues(projectId,user.id,runOrSetup,url.searchParams));
+        }
+      }
+      if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'Audit actions do not accept query parameters.');
+        const input=await readJson(request,4096);
+        if(!runOrSetup){const result=await startSiteAudit(projectId,user.id,input);return json(result,result.created?202:200);}
+        if(runOrSetup!=='setup'&&!pageId){
+          if(action==='cancel')return json(await cancelSiteAudit(projectId,user.id,runOrSetup,input));
+          if(action==='delete')return json(await deleteSiteAudit(projectId,user.id,runOrSetup,input));
+        }
+      }
+      return json({error:'Method not allowed.'},405);
     }
     const executionRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-executions(?:/(quote|comparisons|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
     if(executionRoute){
