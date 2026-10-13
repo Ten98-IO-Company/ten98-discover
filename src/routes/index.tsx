@@ -472,6 +472,7 @@ function App() {
 
   return (
     <div className='shell'>
+      <a className='skip-link' href='#main-content' onClick={(event) => { event.preventDefault(); mainRef.current?.focus() }}>Skip to main content</a>
       <aside className='side' aria-label='Application navigation'>
         <div className='brand-row'><p className='brand'><span className='brand-mark' aria-hidden='true'>98</span><span>ten98<span className='brand-product'>monitor</span></span></p>
           <button type='button' className='btn mobile-nav-toggle' aria-expanded={menuOpen} aria-controls='app-navigation' onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? 'Close menu' : 'Menu'}</button>
@@ -565,7 +566,7 @@ function App() {
         </div>
         </div>
       </aside>
-      <main className='main' ref={mainRef} tabIndex={-1}>
+      <main className='main' id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
         <header className='app-bar'><div className='breadcrumbs'><span>{workspace?.name ?? 'Your workspace'}</span>{project && <><span aria-hidden='true'>/</span><strong>{project.name}</strong></>}</div><span className='preview-badge'>Development preview</span></header>
         <div className='page-content'>
         {authNotice && <div role={authNotice.kind === 'error' ? 'alert' : 'status'} className={authNotice.kind === 'error' ? 'alert' : 'notice'}>{authNotice.message} <button className='btn ghost' onClick={() => setAuthNotice(null)}>Dismiss</button></div>}
@@ -573,9 +574,9 @@ function App() {
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError} <button className='btn' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</button></div>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
         {project && workspace && projectView && <header className='proj-head'>
-          <p className='project-origin'>{project.origin}</p>
           <h1>{pageTitles[view]}</h1>
-          <p className='dim'>{projectDescriptions[view]}</p>
+          <p className='project-origin'>{project.origin}</p>
+          {projectDescriptions[view] && view !== 'events' && view !== 'installation' && <p className='dim'>{projectDescriptions[view]}</p>}
         </header>}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
@@ -628,29 +629,28 @@ function App() {
           </>
         )}
         {view === 'events' && workspace && project !== null && (
-            <section className='card' aria-labelledby='ev-h' aria-busy={eventsBusy}>
-              <div className='row between'>
+            <section className='card events-panel' aria-labelledby='ev-h' aria-busy={eventsBusy}>
+              <div className='row between events-toolbar'>
                 <div>
-                  <h2 id='ev-h'>Recent events</h2>
+                  <h2 id='ev-h'>Retained events</h2>
                   <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
-                  <p className='dim'>Events currently retained</p>
-                  {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint'>History before {fmt((events?.retainedFrom ?? project.retainedFrom)!)} is unavailable after retention. This is not a lifetime total.</p>}
-                  <p className='dim'>{lastReceived !== null ? `Last retained event received ${fmt(lastReceived)}` : 'No retained events available.'}</p>
                 </div>
                 <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
               </div>
+              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint'>History before {fmt((events?.retainedFrom ?? project.retainedFrom)!)} is unavailable after retention. This is not a lifetime total.</p>}
+              {lastReceived !== null && <p className='dim'>Last retained event received {fmt(lastReceived)}</p>}
               {eventsError !== '' && <div role='alert' className='alert'>{eventsError}</div>}
               {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
                   <p><strong>No retained events available.</strong></p>
-                  <p>Install your tracker on {project.origin}, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><Link className='btn' to='/' search={target('installation')}>Install tracker</Link>
+                  <p>Install your tracker, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><Link className='btn' to='/' search={target('installation')}>Install tracker</Link>
                 </div>
               )}
               {events !== null && events.events.length > 0 && (
                 <>
-                  <div className='table-wrap'>
-                    <table>
+                  <div className='table-wrap' role='region' aria-label='Retained event rows' tabIndex={0}>
+                    <table aria-labelledby='ev-h'>
                       <thead><tr><th scope='col'>Event</th><th scope='col'>Origin</th><th scope='col'>Path</th><th scope='col'>Received</th></tr></thead>
                       <tbody>
                         {events.events.map((ev) => (
@@ -666,17 +666,21 @@ function App() {
         )}
         {view === 'installation' && workspace && project !== null && (
           <>
-            <section className='card' aria-labelledby='snip-h'>
-              <h2 id='snip-h'>Install the tracker</h2>
-              <p>Add this tag to the pages served from <strong>{project.origin}</strong> or a verified HTTPS serving domain configured under Domains:</p>
-              <pre className='snippet'><code>{snippet}</code></pre>
-              <div className='row'>
-                <button className='btn' onClick={() => void copySnippet(snippet)}>Copy snippet</button>
-                {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
-                {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
+            <section className='card installation-panel' aria-labelledby='snip-h'>
+              <div className='row between installation-toolbar'>
+                <h2 id='snip-h'>Tracking snippet</h2>
+                <button className='btn primary' onClick={() => void copySnippet(snippet)}>Copy snippet</button>
               </div>
+              <p>Add this tag to the pages served from <strong>{project.origin}</strong> or a verified HTTPS serving domain configured under Domains:</p>
+              <pre className='snippet' role='region' aria-label='Tracking snippet' tabIndex={0}><code>{snippet}</code></pre>
+              {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
+              {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
               <p className='dim footnote'>Install the snippet on the canonical origin or a verified HTTPS serving domain, choose analytics consent in Tracking preferences, then refresh events to confirm delivery. Earlier activity is discarded.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
-              <p className='dim footnote'>After consent, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Vendor tags have their own collection behavior.</p>
+              <Link className='btn' to='/' search={target('events')}>View recent events</Link>
+              <details className='installation-help'>
+                <summary>Custom events and collection details</summary>
+                <p className='dim footnote'>After consent, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Vendor tags have their own collection behavior.</p>
+              </details>
             </section>
             <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>
             <section aria-labelledby='wc-h'>
@@ -707,7 +711,7 @@ function App() {
           </>
         )}
         </>}
-        <footer className='app-footer'><span>ten98-monitor · Self-hosted and open source</span><span>Development build · Implementation and validation are ongoing.</span></footer>
+
         </div>
       </main>
     </div>

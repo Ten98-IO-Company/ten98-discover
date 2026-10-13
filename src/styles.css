@@ -46,8 +46,8 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .side-foot { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
 .side-foot p { font-size: var(--text-xs); }
 .main { min-width: 0; width: 100%; }
-.app-bar { height: var(--topbar-height); padding: 0 34px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.breadcrumbs { display: flex; align-items: center; gap: 12px; min-width: 0; color: var(--muted); font-size: var(--text-xs); }
+.app-bar { min-height: var(--topbar-height); padding: var(--space-2) 34px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.breadcrumbs { display: flex; flex: 1 1 24rem; align-items: center; gap: 12px; min-width: 0; color: var(--muted); font-size: var(--text-xs); }
 .breadcrumbs strong { color: var(--ink); font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .preview-badge { color: var(--caution); background: var(--amber-tint); border: 1px solid var(--color-warning); padding: 3px 8px; border-radius: 5px; font-size: var(--text-xs); white-space: nowrap; }
 .page-content { max-width: var(--content-max); padding: var(--space-6); margin: 0 auto; }
@@ -194,8 +194,8 @@ td select { min-width: 7rem; } tbody tr:last-child td { border-bottom: 0; }
 .eyebrow { display: block; margin-bottom: 12px; font-size: var(--text-xs); font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--blue); }
 .diagnostics summary { cursor: pointer; font-weight: 500; }
 .diagnostics section { margin-top: 20px; }
-.app-footer { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--text-xs); }
-@media (max-width:1100px) { .page-content { padding: 28px var(--space-6); } .app-bar { padding: 0 var(--space-6); } }
+
+@media (max-width:1100px) { .page-content { padding: 28px var(--space-6); } .app-bar { padding-inline: var(--space-6); } }
 @media (max-width:760px) {
   .shell { display: block; }
   .side { position: relative; height: auto; padding: 12px 18px; border-right: 0; border-bottom: 1px solid var(--line); background: var(--surface); overflow: visible; }
@@ -241,3 +241,24 @@ td select { min-width: 7rem; } tbody tr:last-child td { border-bottom: 0; }
 .workspace-tools summary.proj.active {
   color: var(--color-accent);
 }
+
+.skip-link { position: fixed; top: -100%; inset-inline-start: var(--space-2); z-index: var(--z-dialog); max-inline-size: calc(100vw - var(--space-4)); min-height: var(--control-touch); padding: var(--space-2) var(--space-3); display: inline-flex; align-items: center; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.skip-link:focus { top: var(--space-2); outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.page-content > .proj-head { margin-bottom: var(--space-4); }
+.page-content > .proj-head > h1 { margin-bottom: var(--space-1); font-size: var(--text-2xl); line-height: 1.25; font-weight: var(--weight-semibold); letter-spacing: normal; }
+.events-panel .events-toolbar, .installation-panel .installation-toolbar { margin-bottom: var(--space-3); }
+.events-panel h2, .installation-panel h2 { margin: 0; }
+.events-panel .big-num { font-size: var(--text-metric); letter-spacing: normal; }
+.events-panel .empty { padding: var(--space-4); }
+.events-panel p, .events-panel td, .installation-panel p, .installation-panel code { overflow-wrap: anywhere; }
+.events-panel .table-wrap table { min-inline-size: 36rem; }
+.installation-panel .installation-help { margin-top: var(--space-4); }
+.installation-panel .installation-help > summary { cursor: pointer; min-height: var(--control-touch); display: list-item; padding-block: var(--space-2); }
+
+.diagnostics summary { min-height: var(--control-touch); }
+.breadcrumbs > span { min-inline-size: 0; overflow-wrap: anywhere; }
+@media (max-width: 1100px) {
+  .breadcrumbs { display: grid; grid-template-columns: auto minmax(0, 1fr); flex-basis: 100%; row-gap: var(--space-1); }
+  .breadcrumbs > span:first-child { grid-column: 1 / -1; }
+}
+.events-panel th:first-child, .events-panel td:first-child { white-space: nowrap; }
