@@ -49,7 +49,7 @@ Each row is ready to become an issue after M0; issue creation is not required fo
 
 ## Tracking, report imports and alias-domain backlog
 
-Scope and improved prompt: [tracking.md](tracking.md). Development now includes draft/preview/publish/rollback, browser loader adapters, native consent settings and a domain ownership registry; their incomplete coverage is recorded in [foundation.md](foundation.md). Reporting imports and domain traffic consolidation remain unimplemented. Each connector is its own bounded implementation task even when grouped below. API approvals and controlled test access are dependencies, not a reason to claim success from fixtures alone.
+Scope and improved prompt: [tracking.md](tracking.md). Development includes draft/preview/publish/rollback, browser loader adapters, native consent settings, a domain ownership registry and verified serving-domain collection with exact source origins. Bounded native Google report imports are implemented; the other reporting connectors, consolidated cross-provider metrics and redirect-alias observations remain pending. Incomplete coverage is recorded in [foundation.md](foundation.md). Each connector is its own bounded implementation task even when grouped below. API approvals and controlled test access are dependencies, not a reason to claim success from fixtures alone.
 
 | ID / requirement | Owner | Deliverable and dependency | Acceptance |
 |---|---|---|---|
