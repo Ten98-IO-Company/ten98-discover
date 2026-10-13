@@ -59,17 +59,18 @@ export function MetaCampaignView(props: MetaCampaignViewProps) {
 
   return (
     <section className="research-panel stack" style={{ minWidth: 0, ...wrapAnywhere }} aria-labelledby={prefix + 'heading'}>
-      <h2 id={prefix + 'heading'} tabIndex={-1}>Campaign inventory</h2>
+      <div className="row" style={{ ...wrapRow, justifyContent: 'space-between' }}>
+        <h2 id={prefix + 'heading'} tabIndex={-1} style={fieldMargin}>Campaign inventory</h2>
+        <div className="row" style={wrapRow}>
+          <button type="button" id={prefix + 'back'} className="btn" style={controlTarget} disabled={writeState !== 'idle'} onClick={onBack}>Back to reports</button>
+          <button type="button" id={prefix + 'reload'} className="btn" style={controlTarget} disabled={reading || exporting || writeState !== 'idle'} onClick={onReload}>Reload saved inventory</button>
+        </div>
+      </div>
       <p>Read retained campaign metadata, including campaigns without reported activity. This screen does not measure campaign performance.</p>
 
       {error !== '' && <p className="alert" role="alert">{error}</p>}
       {exportError !== '' && <p className="alert" role="alert">{exportError}</p>}
       {notice !== '' && <p className="hint" role="status">{notice}</p>}
-
-      <div className="row" style={wrapRow}>
-        <button type="button" id={prefix + 'back'} className="btn" style={controlTarget} disabled={writeState !== 'idle'} onClick={onBack}>Back to reports</button>
-        <button type="button" id={prefix + 'reload'} className="btn" style={controlTarget} disabled={reading || exporting || writeState !== 'idle'} onClick={onReload}>Reload saved inventory</button>
-      </div>
 
       {!ready && <p role="status">Loading inventory…</p>}
 
@@ -87,10 +88,12 @@ export function MetaCampaignView(props: MetaCampaignViewProps) {
       )}
 
       {known && ready && source !== null && (
-        <div className="card stack">
-          <p className="field" style={fieldMargin}><strong>Source:</strong> {source.label}</p>
-          <p className="field" style={fieldMargin}><strong>Account:</strong> {source.accountLabel}</p>
-          <p className="field" style={fieldMargin}><strong>Status:</strong> {source.statusLabel}</p>
+        <div className="stack">
+          <div className="row" style={wrapRow}>
+            <p className="field" style={fieldMargin}><strong>Source:</strong> {source.label}</p>
+            <p className="field" style={fieldMargin}><strong>Account:</strong> {source.accountLabel}</p>
+            <p className="field" style={fieldMargin}><strong>Source status:</strong> {source.statusLabel}</p>
+          </div>
           <p className="hint">{source.help}</p>
           <p className="hint">Refreshing requests a new read from Meta. Opening this screen or reloading saved inventory does not.</p>
           {role === 'owner' ? (
@@ -103,34 +106,6 @@ export function MetaCampaignView(props: MetaCampaignViewProps) {
         </div>
       )}
 
-      {known && ready && latestAttemptLabel !== '' && <p className="hint">{latestAttemptLabel}</p>}
-
-      {known && ready && (
-        <div className="card stack">
-          <div className="field" style={fieldMargin}>
-            <label htmlFor={prefix + 'history'}>Inventory history</label>
-            <select
-              id={prefix + 'history'}
-              style={{ minHeight: 44, minWidth: 0, maxWidth: '100%' }}
-              value={selectedInventoryId}
-              disabled={source === null || busy}
-              onChange={(event) => onSelectInventory(event.target.value)}
-            >
-              <option value="">Choose an inventory</option>
-              {inventories.map((inventory) => (
-                <option key={inventory.id} value={inventory.id}>{inventory.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="row" style={wrapRow}>
-            <button type="button" id={prefix + 'history-previous'} className="btn" style={controlTarget} disabled={source === null || busy || !canPreviousHistory} onClick={onPreviousHistory}>Previous history page</button>
-            <button type="button" id={prefix + 'history-next'} className="btn" style={controlTarget} disabled={source === null || busy || !canNextHistory} onClick={onNextHistory}>Next history page</button>
-            <button type="button" id={prefix + 'latest'} className="btn" style={controlTarget} disabled={source === null || busy} onClick={onLatest}>Show latest complete</button>
-          </div>
-          <p className="hint">{showingLatest ? 'Latest complete inventory' : 'Selected history receipt'}</p>
-        </div>
-      )}
-
       {known && ready && role === 'owner' && summary !== null && canCancel && (
         <div className="card stack">
           <div className="row" style={wrapRow}>
@@ -140,14 +115,16 @@ export function MetaCampaignView(props: MetaCampaignViewProps) {
         </div>
       )}
 
+      {known && ready && latestAttemptLabel !== '' && <p className="hint">{latestAttemptLabel}</p>}
+      {known && ready && <p className="hint">{showingLatest ? 'Latest complete inventory' : 'Selected history receipt'}</p>}
+
       {known && ready && summary !== null && (
         <div className="card stack">
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,220px),1fr))', gap: 12, minWidth: 0 }}>
           <p className="field" style={fieldMargin}><strong>Status:</strong> {summary.statusLabel}</p>
           <p className="field" style={fieldMargin}><strong>Coverage:</strong> {summary.coverageLabel}</p>
           <p className="field" style={fieldMargin}><strong>Source:</strong> {summary.sourceLabel}</p>
-          <p className="field" style={fieldMargin}><strong>Requested:</strong> {summary.requestedAtLabel}</p>
-          <p className="field" style={fieldMargin}><strong>Completed:</strong> {summary.completedAtLabel}</p>
           <p className="field" style={fieldMargin}><strong>Observation interval:</strong> {summary.intervalLabel}</p>
           <p className="field" style={fieldMargin}><strong>Counts:</strong> {summary.countsLabel}</p>
           </div>
@@ -155,11 +132,52 @@ export function MetaCampaignView(props: MetaCampaignViewProps) {
             <p key={index} style={{ ...fieldMargin, ...wrapAnywhere }}>{warning}</p>
           ))}
           {summary.diagnosticLabel !== '' && <p className="hint" style={wrapAnywhere}>{summary.diagnosticLabel}</p>}
+          <p className="hint">Pages were observed over an interval. Campaigns may change during collection. Missing records do not prove deletion or zero activity.</p>
+          {summary.state === 'available' && (
+            <>
+              <div className="row" style={wrapRow}>
+                <button type="button" id={prefix + 'export'} className="btn" style={controlTarget} disabled={busy || !canExport} onClick={onExport}>Export CSV</button>
+              </div>
+              <p className="hint">Exports this named snapshot with its observation interval and coverage. No campaign activity or performance totals are inferred.</p>
+              {rows.length === 0 ? (
+                <p className="hint">No campaigns returned on this page. Review the snapshot coverage before drawing conclusions.</p>
+              ) : (
+                <div className="table-wrap" role="region" aria-label="Saved campaigns" tabIndex={0} style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
+                    <caption style={{ textAlign: 'left' }}>Saved campaigns</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col" style={columnMin}>Campaign ID</th>
+                        <th scope="col" style={columnMin}>Name</th>
+                        <th scope="col" style={columnMin}>Configured status</th>
+                        <th scope="col" style={columnMin}>Effective status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <tr key={row.id}>
+                          <td style={columnMin}>{row.id}</td>
+                          <td style={columnMin}>{row.nameLabel}</td>
+                          <td style={columnMin}>{row.statusLabel}</td>
+                          <td style={columnMin}>{row.effectiveStatusLabel}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="row" style={wrapRow}>
+                <button type="button" id={prefix + 'rows-previous'} className="btn" style={controlTarget} disabled={busy || !canPreviousRows} onClick={onPreviousRows}>Previous campaign page</button>
+                <button type="button" id={prefix + 'rows-next'} className="btn" style={controlTarget} disabled={busy || !canNextRows} onClick={onNextRows}>Next campaign page</button>
+              </div>
+            </>
+          )}
           <details id={prefix + 'receipt'}>
             <summary style={{ minHeight: 44, cursor: 'pointer' }}>Receipt details</summary>
+            <p className="field" style={fieldMargin}><strong>Requested:</strong> {summary.requestedAtLabel}</p>
+            <p className="field" style={fieldMargin}><strong>Completed:</strong> {summary.completedAtLabel}</p>
             <p style={{ ...fieldMargin, ...wrapAnywhere }}>{summary.id}</p>
           </details>
-          <p className="hint">Pages were observed over an interval. Campaigns may change during collection. Missing records do not prove deletion or zero activity.</p>
         </div>
       )}
 
@@ -175,42 +193,32 @@ export function MetaCampaignView(props: MetaCampaignViewProps) {
         <p className="hint">Campaign data is unavailable for this receipt.</p>
       )}
 
-      {known && ready && summary !== null && summary.state === 'available' && (
-        <div className="stack">
-          {rows.length === 0 ? (
-            <p className="hint">No campaigns returned on this page. Review the snapshot coverage before drawing conclusions.</p>
-          ) : (
-            <div className="table-wrap" role="region" aria-label="Saved campaigns" tabIndex={0} style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
-                <caption style={{ textAlign: 'left' }}>Saved campaigns</caption>
-                <thead>
-                  <tr>
-                    <th scope="col" style={columnMin}>Campaign ID</th>
-                    <th scope="col" style={columnMin}>Name</th>
-                    <th scope="col" style={columnMin}>Configured status</th>
-                    <th scope="col" style={columnMin}>Effective status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.id}>
-                      <td style={columnMin}>{row.id}</td>
-                      <td style={columnMin}>{row.nameLabel}</td>
-                      <td style={columnMin}>{row.statusLabel}</td>
-                      <td style={columnMin}>{row.effectiveStatusLabel}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {known && ready && (
+        <details open={summary === null || !showingLatest}>
+          <summary style={{ minHeight: 44, cursor: 'pointer' }}>Inventory history</summary>
+          <div className="stack">
+            <div className="field" style={fieldMargin}>
+              <label htmlFor={prefix + 'history'}>Inventory history</label>
+              <select
+                id={prefix + 'history'}
+                style={{ minHeight: 44, minWidth: 0, maxWidth: '100%' }}
+                value={selectedInventoryId}
+                disabled={source === null || busy}
+                onChange={(event) => onSelectInventory(event.target.value)}
+              >
+                <option value="">Choose an inventory</option>
+                {inventories.map((inventory) => (
+                  <option key={inventory.id} value={inventory.id}>{inventory.label}</option>
+                ))}
+              </select>
             </div>
-          )}
-          <div className="row" style={wrapRow}>
-            <button type="button" id={prefix + 'rows-previous'} className="btn" style={controlTarget} disabled={busy || !canPreviousRows} onClick={onPreviousRows}>Previous campaign page</button>
-            <button type="button" id={prefix + 'rows-next'} className="btn" style={controlTarget} disabled={busy || !canNextRows} onClick={onNextRows}>Next campaign page</button>
-            <button type="button" id={prefix + 'export'} className="btn" style={controlTarget} disabled={busy || !canExport} onClick={onExport}>Export CSV</button>
+            <div className="row" style={wrapRow}>
+              <button type="button" id={prefix + 'history-previous'} className="btn" style={controlTarget} disabled={source === null || busy || !canPreviousHistory} onClick={onPreviousHistory}>Previous history page</button>
+              <button type="button" id={prefix + 'history-next'} className="btn" style={controlTarget} disabled={source === null || busy || !canNextHistory} onClick={onNextHistory}>Next history page</button>
+              <button type="button" id={prefix + 'latest'} className="btn" style={controlTarget} disabled={source === null || busy} onClick={onLatest}>Show latest complete</button>
+            </div>
           </div>
-          <p className="hint">Exports this named snapshot with its observation interval and coverage. No campaign activity or performance totals are inferred.</p>
-        </div>
+        </details>
       )}
       {known && exporting && (
         <div className="row" style={wrapRow}>

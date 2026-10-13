@@ -18,6 +18,8 @@ try{
  const patch=value=>page.evaluate(value=>window.metaLatestViewFixture.patch(value),value),reset=()=>page.evaluate(()=>window.metaLatestViewFixture.reset()),calls=()=>page.evaluate(()=>window.metaLatestViewFixture.calls()),clear=()=>page.evaluate(()=>window.metaLatestViewFixture.clear());
  const result=value=>page.evaluate(value=>window.metaLatestViewFixture.patch({result:{...window.metaLatestViewFixture.initial.result,...value}}),value);
  const absentOrDisabled=async locator=>assert.ok(await locator.count()===0||await locator.isDisabled());
+ const before=async(first,second)=>assert.equal(await first.evaluate((node,after)=>Boolean(node.compareDocumentPosition(after)&Node.DOCUMENT_POSITION_FOLLOWING),await second.elementHandle()),true,'Results and qualifications follow the intended reading order');
+ const findings=[];
  await page.goto(origin);await page.getByRole('heading',{name:'Latest complete coverage',exact:true}).waitFor();assert.deepEqual(await calls(),[]);
  assert.equal(await page.locator('#meta-latest-fixture-heading').getAttribute('tabindex'),'-1');
  await page.getByText('Read the latest completed imports for this report definition. This view does not request data from Meta.',{exact:true}).waitFor();
@@ -55,9 +57,22 @@ try{
  await reset();await patch({result:null});await page.getByText('Apply a date range to read saved coverage.',{exact:true}).waitFor();assert.equal(await page.locator('main table').count(),0);assert.equal(await page.locator('main').innerText().then(t=>/Second campaign|2 rows returned|123456789012345678901234567890\.123/.test(t)),false);for(const name of ['Export CSV','Previous row page','Next row page'])await absentOrDisabled(button(name));await patch({error:'Coverage changed. Reload.',exportError:'Export unavailable. Reload first.',notice:'Saved rows are ready.'});assert.equal(await page.getByRole('alert').count(),2);await page.getByRole('status').filter({hasText:'Saved rows are ready.'}).waitFor();
  console.log('PASS explicit capability gates, empty date/result handling, coverage-aware empty copy and independent errors.');
 
+ await reset();
+ const replacementHelp='Completed imports replace earlier values for each covered day. Missing values are not zero.',overlapHelp='Spend is provider-estimated. Action types and attribution windows can overlap; they are not additive totals.';
+ const header=page.getByRole('heading',{name:'Latest complete coverage',exact:true}).locator('..');try{assert.equal(await header.getByRole('region').count(),0,'Heading and Back/Reload share a compact header, not the entire panel');for(const name of ['Back to imports','Reload coverage'])assert.equal(await header.getByRole('button',{name,exact:true}).count(),1);}catch(error){findings.push(error.message);console.error('FAIL compact header: '+error.message);}
+ assert.equal(await page.locator('main .card').count(),1);assert.equal(await page.locator('main dl').evaluate(node=>node.closest('.card')===null),true,'Source context is not another card');
+ const resultHeader=page.locator('main div').filter({has:button('Export CSV')}).filter({has:page.getByText(initial.result.rangeLabel,{exact:true})}).last();
+ for(const value of [initial.result.rangeLabel,initial.result.asOfLabel,initial.result.countLabel])assert.equal(await resultHeader.getByText(value,{exact:true}).isVisible(),true);
+ assert.equal(await resultHeader.getByRole('region').count(),0,'Export shares the applied summary, not the entire result card');assert.equal(await button('Export CSV').count(),1);assert.equal(await resultHeader.evaluate(node=>node.nextElementSibling?.id),'meta-latest-fixture-export-help');
+ for(const value of [...Object.values(initial.profile),replacementHelp,dateHelp,overlapHelp]){const item=page.getByText(value,{exact:true});assert.equal(await item.count(),1);assert.equal(await item.isVisible(),true);assert.equal(await item.evaluate(node=>node.closest('details')===null),true);}
+ for(const name of ['From','To'])assert.equal(await label(name).isVisible(),true);assert.equal(await button('Apply date range').isVisible(),true);
+ await before(page.getByText(replacementHelp,{exact:true}),rowsRegion);await before(resultHeader,rowsRegion);await before(rowsRegion,button('Previous row page'));await before(button('Next row page'),page.getByText(overlapHelp,{exact:true}));await before(page.getByText(overlapHelp,{exact:true}),coverage);await before(coverage,page.locator('main summary').filter({hasText:'Selection details'}));
+ assert.equal(await coverage.evaluate(node=>node.closest('details')===null),true);for(const row of await coveredRows.all())assert.equal(await row.isVisible(),true,'Every daily coverage state stays expanded');
+ await patch({result:null});assert.equal(await page.getByText(replacementHelp,{exact:true}).count(),1);assert.equal(await page.getByText(replacementHelp,{exact:true}).isVisible(),true,'No-result profile keeps the missing-is-not-zero qualification');
  await reset();const disclosure=page.locator('main summary').filter({hasText:'Selection details'});await disclosure.waitFor();if(await disclosure.evaluate(node=>node.parentElement.open))await disclosure.click();assert.equal(await page.getByText(initial.result.selectionRevision,{exact:true}).isVisible(),false);
  for(const value of ['AED','Pacific/Kiritimati']){const item=page.getByText(value,{exact:true});await item.waitFor();assert.equal(await item.evaluate(node=>node.closest('details')===null),true);}
  await disclosure.focus();await page.keyboard.press('Enter');assert.equal(await page.getByText(initial.result.selectionRevision,{exact:true}).isVisible(),true);await page.keyboard.press('Enter');assert.equal(await page.getByText(initial.result.selectionRevision,{exact:true}).isVisible(),false);
+ assert.deepEqual(await calls(),[],'Selection disclosure invokes no callback');
  const tops=await Promise.all(['From','To'].map(async name=>(await label(name).boundingBox()).y));tops.push((await button('Apply date range').boundingBox()).y);assert.ok(Math.max(...tops)-Math.min(...tops)<2,'date fields and Apply align on desktop');
  await mkdir(resolve('private/meta-latest-view-evidence'),{recursive:true});await page.screenshot({path:resolve('private/meta-latest-view-evidence/meta-latest-1440.png'),fullPage:true});await page.setViewportSize({width:360,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  for(const [name,width]of [['Daily coverage',720],['Latest daily Meta rows',960]]){const scroll=region(name);assert.ok((await scroll.locator('table').boundingBox()).width>=width);assert.ok(await scroll.evaluate(node=>node.scrollWidth>node.clientWidth));await scroll.focus();assert.equal(await scroll.evaluate(node=>node===document.activeElement),true);}
@@ -67,4 +82,26 @@ try{
  const ids=await page.locator('main [id]').evaluateAll(nodes=>nodes.map(node=>node.id));assert.equal(new Set(ids).size,ids.length);assert.deepEqual(await page.locator('main [aria-describedby]').evaluateAll(nodes=>nodes.flatMap(node=>(node.getAttribute('aria-describedby')??'').split(/\s+/).filter(id=>id&&!document.getElementById(id)))),[]);
  await page.screenshot({path:resolve('private/meta-latest-view-evidence/meta-latest-360.png'),fullPage:true});assert.deepEqual(errors,[]);assert.deepEqual(outbound,[]);
  console.log('PASS exact selection disclosure,1440/360 wrapping, two independent readable scroll regions,44px targets and zero outbound traffic.');
+ await reset();await patch({profile:{...initial.profile,accountLabel:'Account-'+ 'retained-'.repeat(24),reportLabel:'Report-'+ 'campaign'.repeat(24),attributionLabel:initial.profile.attributionLabel+' provenance-'.repeat(16)}});
+ for(const direction of ['ltr','rtl'])for(const width of [320,360,768,1440]){
+  try{
+  await page.evaluate(direction=>{document.documentElement.dir=direction;window.scrollTo(0,0);},direction);await page.setViewportSize({width,height:1000});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,direction+' '+width+' long source labels fit');
+  for(const name of ['From','To']){const box=await label(name).boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=width,'Date input remains inside its grid area');}
+  for(const control of await page.locator('main button,main input,main summary').all()){const box=await control.boundingBox();assert.ok(box&&box.height>=44,'44px controls at '+direction+' '+width);}
+  for(const scroll of [rowsRegion,coverage])await scroll.evaluate(node=>{node.scrollLeft=0;});
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  if(width<=768)for(const [scroll,other]of [[rowsRegion,coverage],[coverage,rowsRegion]]){
+   assert.ok(await scroll.evaluate(node=>node.scrollWidth>node.clientWidth));await scroll.focus();const otherLeft=await other.evaluate(node=>node.scrollLeft),settled=scroll.evaluate(node=>new Promise(resolve=>node.addEventListener('scrollend',()=>resolve(null),{once:true})));await page.keyboard.press(direction==='rtl'?'ArrowLeft':'ArrowRight');
+   await page.waitForFunction(name=>Math.abs(document.querySelector('[role="region"][aria-label="'+name+'"]').scrollLeft)>0,await scroll.getAttribute('aria-label'));
+   await settled;assert.equal(await other.evaluate(node=>node.scrollLeft),otherLeft,'Keyboard scroll affects only the focused table');
+  }
+  for(const scroll of [rowsRegion,coverage])await scroll.evaluate(node=>{node.scrollLeft=0;});
+  assert.equal(await coverage.isVisible(),true);assert.equal(await disclosure.evaluate(node=>node.parentElement.open),false);
+  if(direction==='rtl'&&[320,1440].includes(width))await page.screenshot({path:resolve('private/meta-latest-view-evidence/meta-latest-rtl-'+width+'.png'),fullPage:true});
+  }catch(error){findings.push(direction+' '+width+': '+error.message);console.error('FAIL responsive '+direction+' '+width+': '+error.message);await page.screenshot({path:resolve('private/meta-latest-view-evidence/failure-'+direction+'-'+width+'.png'),fullPage:true});}
+ }
+ await page.evaluate(()=>{document.documentElement.dir='ltr';document.documentElement.style.zoom='2';});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'200% CSS layout zoom fits');for(const name of ['From','To'])assert.equal(await label(name).isVisible(),true);assert.equal(await coverage.isVisible(),true);await page.screenshot({path:resolve('private/meta-latest-view-evidence/meta-latest-layout-zoom-200.png'),fullPage:true});
+ await page.evaluate(()=>{document.documentElement.style.zoom='';});await page.emulateMedia({forcedColors:'active',reducedMotion:'reduce'});await disclosure.focus();assert.notEqual(await disclosure.evaluate(node=>getComputedStyle(node).outlineStyle),'none');assert.equal(await disclosure.evaluate(node=>getComputedStyle(node).display),'list-item','Native disclosure marker remains');await page.keyboard.press('Enter');assert.equal(await page.getByText(initial.result.selectionRevision,{exact:true}).isVisible(),true);await page.screenshot({path:resolve('private/meta-latest-view-evidence/meta-latest-forced-colors.png'),fullPage:true});assert.deepEqual(await calls(),[]);assert.deepEqual(errors,[]);assert.deepEqual(outbound,[]);
+ assert.deepEqual(findings,[],'All layout requirements must pass');console.log('PASS results-first order and visible qualifications;320/360/768/1440 long-text LTR/RTL, independent keyboard scrolling,200% CSS layout zoom and forced-colors disclosure focus.');
 }finally{await browser?.close();await server.close();}
