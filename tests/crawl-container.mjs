@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import {analyzeCrawlPageIsolated} from './src/server/crawl-analysis-isolated.ts';
 import {evaluateCrawlRobotsIsolated} from './src/server/crawl-robots-isolated.ts';
 import {parseCrawlSitemapIsolated} from './src/server/crawl-sitemap-isolated.ts';
+import {executeSiteAudit,reconcileSiteAudits,stopSiteAudits} from './src/server/site-audit-worker.ts';
+import {readFile} from 'node:fs/promises';
 
 assert.equal(process.platform,'linux');assert.equal(process.cwd(),'/app');assert.notEqual(process.getuid(),0);
 const timeout=setTimeout(()=>{process.stderr.write('Crawler runtime check exceeded its deadline.\n');process.exit(1);},15_000);
 try{
+  assert.equal(typeof executeSiteAudit,'function');assert.equal(typeof reconcileSiteAudits,'function');assert.equal(typeof stopSiteAudits,'function');
+  assert.match(await readFile('./migrations/0019_site_audits.sql','utf8'),/CREATE TABLE site_audit_run/);
   const input={url:'https://example.test/',status:200,fetchState:'ok',contentType:'text/html',html:'<title>Container fixture</title><h1>Static page</h1>',bodyComplete:true,responseTimeMs:5,crawlDepth:0};
   const page=await analyzeCrawlPageIsolated(input);
   assert.equal(page.status,'ok');assert.equal(page.analysis.coverage,'analyzed');assert.equal(page.analysis.evidence.title,'Container fixture');
@@ -18,5 +22,5 @@ try{
   assert.ok(['timeout','child_error'].includes(hostile.status));assert.equal('analysis' in hostile,false);
   const controller=new AbortController(),pending=analyzeCrawlPageIsolated({...input,html:'<div>'.repeat(190000)},controller.signal);
   controller.abort();assert.deepEqual(await pending,{status:'aborted'});
-  process.stdout.write('Crawler runtime checks passed: unprivileged source layout, HTML, robots, sitemap, hostile input and cancellation.\n');
+  process.stdout.write('Crawler runtime checks passed: unprivileged worker source layout and migration, HTML, robots, sitemap, hostile input and cancellation.\n');
 }finally{clearTimeout(timeout);}

@@ -1,6 +1,6 @@
 # Static audit admission and pacing
 
-This is a pure coordinator boundary for the first query-free static audit increment. It performs no DNS lookup, network request, database write, sleep, retry or permission grant. P53–P56 remain incomplete until the durable worker and remaining V1 capabilities are integrated. The implementation is original and reuses the existing `redirectUrl` validator; no dependency or upstream code was added.
+This is a pure coordinator boundary used by the [durable query-free static audit worker](site-audit-worker.md). It performs no DNS lookup, network request, database write, sleep, retry or permission grant. P53–P56 remain incomplete until their remaining V1 capabilities pass. The implementation is original and reuses the existing `redirectUrl` validator; no dependency or upstream code was added.
 
 ## URL admission
 

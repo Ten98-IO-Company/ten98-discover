@@ -9,6 +9,8 @@ import { googleQueue, reconcileGoogleImports, startGoogleImportWorker } from './
 import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs} from './keyword-research.ts';
 import {promptExecutionQueue,executePromptComparison,reconcilePromptExecutionJobs} from './prompt-execution.ts';
 import {domainRedirectQueue,executeDomainRedirectCheck,reconcileDomainRedirectChecks} from './domain-redirects.ts';
+import {siteAuditQueue} from './site-audits.ts';
+import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
@@ -31,6 +33,7 @@ export function getBoss(): Promise<PgBoss> {
         await boss.createQueue(keywordQueue);
         await boss.createQueue(promptExecutionQueue);
         await boss.createQueue(domainRedirectQueue);
+        await boss.createQueue(siteAuditQueue);
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -108,6 +111,7 @@ async function heartbeat() {
   await reconcileKeywordJobs();
   await reconcilePromptExecutionJobs();
   await reconcileDomainRedirectChecks();
+  await reconcileSiteAudits();
   // ponytail: one worker health row covers the single-worker Compose profile; use instance IDs before scaling workers.
   return getDatabase().pool.query(
     `INSERT INTO worker_heartbeat(id, last_seen_at) VALUES ('foundation-worker', now())
@@ -146,6 +150,7 @@ export function startWorker(): Promise<void> {
       await boss.work<{runId:string}>(keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
       await boss.work<{comparisonId:string}>(promptExecutionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executePromptComparison(job.data?.comparisonId);});
       await boss.work<{checkId:string}>(domainRedirectQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainRedirectCheck(job.data?.checkId);});
+      await startSiteAuditWorker(boss);
       workerStarted = true;
       await heartbeat();
       heartbeatTimer = setInterval(() => {
@@ -169,6 +174,7 @@ export async function stopJobs() {
   heartbeatTimer = undefined;
   await heartbeatTask;
   await retentionTask;
+  await stopSiteAudits();
   const boss = await bossPromise?.catch(() => undefined);
   try {
     await boss?.stop({ graceful: true, timeout: 30_000 });

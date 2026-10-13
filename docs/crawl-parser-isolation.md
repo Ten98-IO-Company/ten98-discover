@@ -1,6 +1,6 @@
 # Disposable crawl parser process
 
-`analyzeCrawlPageIsolated(input, signal?)` is the required entry for future live static-HTML parsing. It supervises one disposable Node 24 child per call and returns either `{status:'ok', analysis}` or a status-only failure: `invalid_input`, `timeout`, `aborted`, or `child_error`. Robots evaluation and sitemap parsing use the same fixed child and supervisor through the two entries described below. The separate [single-hop download transport](crawl-network.md) is available, but no crawler, scheduler, database or user interface connects these components yet. Pure rule behavior and evidence retention remain documented in [static page analysis](crawl-analysis.md).
+`analyzeCrawlPageIsolated(input, signal?)` is the required entry for live static-HTML parsing. It supervises one disposable Node 24 child per call and returns either `{status:'ok', analysis}` or a status-only failure: `invalid_input`, `timeout`, `aborted`, or `child_error`. Robots evaluation and sitemap parsing use the same fixed child and supervisor through the two entries described below. The [durable static audit worker](site-audit-worker.md) now connects these entries to bounded downloads, cancellation and saved results; its UI and remaining V1 modes are unfinished. Pure rule behavior and evidence retention remain documented in [static page analysis](crawl-analysis.md).
 
 ## Lifetime and protocol
 

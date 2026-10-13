@@ -1,6 +1,6 @@
 # Static page analysis
 
-This is a pure analysis module for the future crawler, not a runnable crawl or completion of P53–P56. It performs no network, database, browser, provider, queue or file operations. No HTML is rendered. `analyzeCrawlPage` uses the already installed parse5 8.0.1 and Node's SHA-256 implementation.
+This pure analysis module is used by the [durable static audit worker](site-audit-worker.md). It does not itself perform network, database, browser, provider, queue or file operations, or complete P53–P56. No HTML is rendered. `analyzeCrawlPage` uses the already installed parse5 8.0.1 and Node's SHA-256 implementation.
 
 ## Input and result
 

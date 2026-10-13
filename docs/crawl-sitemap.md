@@ -1,6 +1,6 @@
 # Supplied sitemap XML analysis
 
-This internal P53 increment parses supplied XML. It does not fetch, decompress, schedule or crawl URLs, authorize domains, or complete sitemap discovery. Text, RSS and Atom sitemap formats remain unsupported here and remain in the V1 scope. There is no application route or worker integration yet.
+This internal P53 component parses supplied XML. It does not itself fetch, decompress, schedule or crawl URLs, or authorize domains. The [durable static audit worker](site-audit-worker.md) now integrates its isolated entry with bounded discovery. Text, RSS and Atom sitemap formats remain unsupported here and remain in the V1 scope.
 
 `parseSitemap({documentUrl, chunks})` in `src/server/crawl-sitemap.ts` accepts a document URL and a synchronous iterable of UTF-8 byte chunks. It returns `status`, `reasons`, `kind`, `entries`, `counts`, `bytesRead` and `entriesComplete`. It uses namespace-aware `saxes@6.0.0` with `xmlchars@2.2.0`; the dependency lock and [full license notices](../THIRD_PARTY_NOTICES.md) pin their provenance. The MIT application retains their ISC/MIT notices. Both dependency repositories are archived, so upgrades require explicit review.
 
