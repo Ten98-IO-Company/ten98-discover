@@ -5,7 +5,7 @@ export type RankBaselineDisplay={days:1|7|30|90;change:string;source:string;targ
 export type RankLatestDisplay={id:string;keywordId:string;keyword:string;device:string;pinned:boolean;attempt:string;observation:string;coverage:string;observedAt:string;availability:string;baselines:readonly RankBaselineDisplay[]};
 export type RankObservationDisplay={id:string;runId:string;device:string;attemptedAt:string;observedAt:string;retrievedAt:string;outcome:string;position:string;coverage:string;target:string;compatibility:string;scope:string;availability:string;rankingUrl:string|null;diagnostic:string|null};
 export type RankHistoryViewProps={
- prefix:string;role:'owner'|'admin'|'editor'|'viewer'|null;phase:'latest'|'keyword';reading:boolean;loaded:boolean;error:string;
+ prefix:string;backLabel?:'Back to tracker'|'Back to reporting';role:'owner'|'admin'|'editor'|'viewer'|null;phase:'latest'|'keyword';reading:boolean;loaded:boolean;error:string;
  target:string;enabledDevices:string;asOf:string;filters:RankObservationFilters;filterDirty:boolean;appliedFilters:string;
  latest:readonly RankLatestDisplay[];keyword:string;removed:boolean;observations:readonly RankObservationDisplay[];nextCursor:string|null;
  onFilters:(value:RankObservationFilters)=>void;onApply:()=>void;onRefresh:()=>void;onMore:()=>void;onBack:()=>void;onLatest:()=>void;
@@ -34,7 +34,7 @@ export function RankHistoryView(p:RankHistoryViewProps):React.JSX.Element{
   const latest=p.phase==='latest';
   const submit=(e:React.FormEvent)=>{e.preventDefault();p.onApply();};
   const moreOff=p.reading||p.filterDirty;
-  const back=<button type="button" className="btn ghost" onClick={p.onBack}>Back to tracker</button>;
+  const back=<button type="button" className="btn ghost" onClick={p.onBack}>{p.backLabel??'Back to tracker'}</button>;
   if(p.role===null){
     return <section className="research-panel stack">
       <div className="row between" style={{flexWrap:'wrap'}}>{back}</div>

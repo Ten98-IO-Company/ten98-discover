@@ -1,6 +1,6 @@
 # Rank reporting contract
 
-Status: proposed P51 reporting UI and read-only service increment. The distribution service, matrix service and their acceptance checks are being developed independently. No reporting presentation has been drafted or accepted yet. This document does not declare P51 or live-provider acceptance complete.
+Status: implemented and accepted locally on 2026-10-13. The distribution service, recent-check matrix, bounded CSV export and reporting UI have database/API and browser acceptance recorded below. This document does not declare P51 or live-provider acceptance complete.
 
 ## Source and reuse
 
@@ -101,3 +101,7 @@ The matrix uses a labelled/focusable region (`table-wrap`, role region, aria-lab
 Show loaded/nonerror/nonreading empty states accurately: rows empty => **No current keywords match these filters.**; otherwise columns empty => **No full started checks are available in this recent window.** Quotes, skipped schedules and subset checks remain in **Check history**, a button calling onCheckHistory. Do not show a wide empty table when either dimension is empty. Footer **First keyword page** calls onFirst, shown when canFirst; **Next keyword page** calls onNext, shown when hasNext. Disable page buttons while reading or matrixDirty. Pagination replaces the full envelope and columns; it is not appending to an immutable report. If the controller masks newly expired data from remembered tombstones, canExport stays false until a fresh authoritative response confirms safe scope; the view must not override it. Explicit button types, associated labels, unique prefix-based IDs, status text and44px native controls are required. No extra configuration/design system or format support.
 
 Observed backend acceptance at this checkpoint: seven synthetic real PostgreSQL groups pass through0024, including real `handleApi` viewer/cookie/Origin/API-key/body/query/rate checks. A fresh1,000-keyword×26-run export produced26,000 rows in1.505seconds on its isolated fixture; a larger URL payload correctly failed the16MiB cap without returning a partial file. This is one measured workload, not a capacity guarantee. Reporting UI/browser and live-provider acceptance remain pending.
+
+## Local acceptance
+
+The implementation and evidence are recorded in [rank tracking](rank-tracking.md#reporting-acceptance-2026-10-13). Six distribution and seven matrix PostgreSQL/API groups, eight reporting browser groups, production build and TypeScript pass. The pure view was drafted by guarded Kimi K3 from this published contract; GPT owns the protected controller, services and acceptance. Preview publication and hosted CI are recorded separately. Latest-results and full-history exports remain separate outstanding contracts.

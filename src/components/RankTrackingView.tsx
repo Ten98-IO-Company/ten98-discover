@@ -31,7 +31,7 @@ export type RankTrackingViewProps = {
   onMatchCase: (v: boolean) => void; onSaveWords: () => void; onCancelWords: () => void;
   onSelect: (id: string, checked: boolean) => void; onSelectAll: (checked: boolean) => void;
   onPin: (pinned: boolean) => void; onRemove: () => void; onRetry: () => void; onReload: () => void;
-  onOpenProviders: () => void; onChecks: () => void; onPrepareCheck: () => void; onPrepareSelected: () => void; onObservations: () => void; onSchedule: () => void;
+  onOpenProviders: () => void; onChecks: () => void; onPrepareCheck: () => void; onPrepareSelected: () => void; onObservations: () => void; onSchedule: () => void; onReporting: () => void;
 };
 
 const DEVICE_LABELS: Record<RankDevices, string> = { desktop: 'Desktop', mobile: 'Mobile', both: 'Desktop & mobile' };
@@ -54,6 +54,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
       {p.error !== '' && <p className="alert" role="alert">{p.error}</p>}
       {p.notice !== '' && <p className="notice" role="status">{p.notice}</p>}
       {p.reading && <p className="dim" role="status">Loading…</p>}
+      {p.mode==='detail'&&p.detail===null&&<div className="row"><button type="button" className="btn ghost" onClick={p.onBack} disabled={p.locked}>Back to trackers</button></div>}
       {p.pending && <div className="banner" role="alert">The change may already be saved. Retry the same request to recover its result.{' '}
         <button type="button" className="btn ghost" onClick={p.onRetry}>Retry same request</button></div>}
       {p.conflict && <div className="banner">The saved tracker has changed.{' '}
@@ -100,7 +101,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
           {t === null || d === null ? <p role="status">{p.reading ? 'Loading tracker…' : 'Tracker unavailable.'}</p> : (
           <>
             <div className="row"><h2 id={pre + 'detail-heading'} tabIndex={-1}>{t.name}</h2><span className="pill">{archived ? 'Archived' : 'Active'}</span></div>
-            <div className="row"><button type="button" className="btn ghost" onClick={p.onObservations} disabled={p.locked}>Latest observations</button><button type="button" className="btn ghost" onClick={p.onChecks} disabled={p.locked}>Check history</button><button type="button" className="btn ghost" onClick={p.onSchedule} disabled={p.locked}>Schedule</button>{writer&&!archived&&<button type="button" className="btn primary" onClick={p.onPrepareCheck} disabled={busy||t.keywordCount===0}>Prepare a rank check</button>}</div>
+            <div className="row"><button type="button" className="btn ghost" onClick={p.onObservations} disabled={p.locked}>Latest observations</button><button type="button" className="btn ghost" onClick={p.onReporting} disabled={p.locked}>Reporting</button><button type="button" className="btn ghost" onClick={p.onChecks} disabled={p.locked}>Check history</button><button type="button" className="btn ghost" onClick={p.onSchedule} disabled={p.locked}>Schedule</button>{writer&&!archived&&<button type="button" className="btn primary" onClick={p.onPrepareCheck} disabled={busy||t.keywordCount===0}>Prepare a rank check</button>}</div>
             <div className="card stack">
               <p>{t.domain} (including subdomains) · {t.locationName}, {t.countryIso} · {t.languageName}</p>
               <p className="hint">Create another tracker to change the target or market.</p>

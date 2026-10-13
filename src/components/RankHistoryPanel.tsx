@@ -4,7 +4,7 @@ import type {RankRole,RankTracker} from './RankTrackingView';
 import type {RankHistoryTarget,RankHistoryObservation,RankLatestRow,RankBaseline} from '../server/rank-history';
 import {RankHistoryView,type RankObservationFilters,type RankLatestDisplay,type RankObservationDisplay} from './RankHistoryView';
 
-type Props={workspaceId:string;projectId:string;userId:string;tracker:RankTracker;active?:boolean;onUnauthorized:()=>void;onBack:()=>void;onOpenRun:(id:string)=>void};
+type Props={workspaceId:string;projectId:string;userId:string;tracker:RankTracker;active?:boolean;entryKeywordId?:string;backLabel?:'Back to tracker'|'Back to reporting';onUnauthorized:()=>void;onBack:()=>void;onOpenRun:(id:string)=>void};
 type Keyword={id:string;keyword:string;matchCase:boolean;removed:boolean};
 type Latest={role:RankRole;trackerId:string;target:RankHistoryTarget;enabledDevices:'desktop'|'mobile'|'both';asOf:string;rows:RankLatestRow[];nextCursor:string|null};
 type History={role:RankRole;trackerId:string;keyword:Keyword;target:RankHistoryTarget;enabledDevices:'desktop'|'mobile'|'both';observations:RankHistoryObservation[];nextCursor:string|null};
@@ -41,7 +41,7 @@ function latestRow(v:unknown):v is RankLatestRow{
 const unique=(values:string[])=>new Set(values.map(v=>v.toLowerCase())).size===values.length;
 const sameFilters=(a:RankObservationFilters,b:RankObservationFilters)=>a.device===b.device&&a.search===b.search&&a.pinned===b.pinned;
 const defaults=():RankObservationFilters=>({device:'both',search:'',pinned:'all'});
-const initial=():State=>({role:null,phase:'latest',reading:false,loaded:false,error:'',target:null,enabledDevices:'',asOf:'',firstRead:'',draft:defaults(),applied:defaults(),latestFilters:defaults(),rows:[],observations:[],keyword:null,keywordId:null,nextCursor:null,focus:false});
+const initial=(entryKeywordId?:string):State=>({role:null,phase:uuid(entryKeywordId)?'keyword':'latest',reading:false,loaded:false,error:'',target:null,enabledDevices:'',asOf:'',firstRead:'',draft:defaults(),applied:defaults(),latestFilters:defaults(),rows:[],observations:[],keyword:null,keywordId:uuid(entryKeywordId)?entryKeywordId:null,nextCursor:null,focus:false});
 const bad=()=>new Error('The server response could not be verified. Refresh these observations.');
 const dateText=(v:string|null)=>v===null?'Unavailable':new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(v));
 const capturedTarget=(v:RankHistoryTarget)=>`${v.domain} and subdomains · Location ${v.locationCode} · ${v.languageCode} · Up to ${v.depth} results · ${v.maxCrawlPages} maximum billable page(s)`;
@@ -49,10 +49,10 @@ const position=(v:RankHistoryObservation|null)=>!v?'Unavailable':v.dataExpiredAt
 const coverage=(v:RankHistoryObservation|null)=>!v?'Not observed':v.dataExpiredAt?'Expired':v.checkedDepth===null?'Not observed':`${v.checkedDepth} organic results observed; ${v.returnedItemCount??'unknown'} returned items`;
 const availability=(v:RankHistoryObservation)=>v.dataExpiredAt?'Observations expired':v.rawExpiredAt?'Raw evidence expired':['ranked','not_found'].includes(v.status)?'Retained observation':'Retained attempt; no rank observation';
 
-export function RankHistoryPanel(props:Props){return <HistoryController key={`${props.userId}:${props.workspaceId}:${props.projectId}:${props.tracker.id}`} {...props}/>;}
+export function RankHistoryPanel(props:Props){return <HistoryController key={`${props.userId}:${props.workspaceId}:${props.projectId}:${props.tracker.id}:${props.entryKeywordId??''}`} {...props}/>;}
 function HistoryController(props:Props){
  const prefix=useId()+'-rank-history-',base=`/api/projects/${props.projectId}/rank-trackers/${props.tracker.id}`;
- const [s,setState]=useState(initial),state=useRef(s),active=useRef<AbortController|null>(null),alive=useRef(true),visible=useRef(true),expiry=useRef(new Map<string,Expiry>());visible.current=props.active!==false;
+ const [s,setState]=useState(()=>initial(props.entryKeywordId)),state=useRef(s),active=useRef<AbortController|null>(null),alive=useRef(true),visible=useRef(true),expiry=useRef(new Map<string,Expiry>());visible.current=props.active!==false;
  function patch(update:Partial<State>){if(alive.current){state.current={...state.current,...update};setState(state.current);}}
  function invalidate(){active.current?.abort();active.current=null;}
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;invalidate();expiry.current.clear();};},[]);
@@ -60,7 +60,7 @@ function HistoryController(props:Props){
  useEffect(()=>{if(!s.focus||props.active===false)return;const h=document.getElementById(prefix+'history-heading');if(h){h.focus();patch({focus:false});}},[s.focus,s.phase,s.loaded,s.role,props.active]);
  const current=(controller:AbortController)=>alive.current&&visible.current&&active.current===controller;
  function begin(){invalidate();const c=new AbortController();active.current=c;patch({reading:true,error:''});return c;}
- function fail(e:unknown,c:AbortController){if(!current(c))return;if(e instanceof ApiError&&[401,403,404].includes(e.status)){invalidate();expiry.current.clear();state.current={...initial(),error:errMsg(e)};setState(state.current);if(e.status===401)props.onUnauthorized();return;}if(e instanceof Error&&e.name==='AbortError')return;patch({error:errMsg(e)});}
+ function fail(e:unknown,c:AbortController){if(!current(c))return;if(e instanceof ApiError&&[401,403,404].includes(e.status)){invalidate();expiry.current.clear();state.current={...initial(props.entryKeywordId),error:errMsg(e)};setState(state.current);if(e.status===401)props.onUnauthorized();return;}if(e instanceof Error&&e.name==='AbortError')return;patch({error:errMsg(e)});}
  function finish(c:AbortController){if(current(c)){active.current=null;patch({reading:false});}}
  function absorb(rows:RankHistoryObservation[]){for(const row of rows){const old=expiry.current.get(row.taskId);if(row.rawExpiredAt||row.dataExpiredAt||old)expiry.current.set(row.taskId,{rawExpiredAt:row.rawExpiredAt??old?.rawExpiredAt??null,dataExpiredAt:row.dataExpiredAt??old?.dataExpiredAt??null});}}
  function masked(row:RankHistoryObservation|null):RankHistoryObservation|null{if(!row)return null;const marker=expiry.current.get(row.taskId);if(!marker)return row;return {...row,...marker,...(marker.dataExpiredAt?{position:null,rankBasis:null,absolutePosition:null,rankingUrl:null,serpFeatures:null,checkedDepth:null,returnedItemCount:null}:{})};}
@@ -94,6 +94,6 @@ function HistoryController(props:Props){
  const observations:RankObservationDisplay[]=s.observations.map(original=>{const o=masked(original)!;return {id:o.taskId,runId:o.runId,device:o.device,attemptedAt:dateText(o.attemptedAt),observedAt:dateText(o.observedAt),retrievedAt:dateText(o.retrievedAt),outcome:o.status,position:position(o),coverage:coverage(o),target:capturedTarget(o.target),compatibility:o.compatible?'Current target/settings':'Different captured settings',scope:o.isSubset?'Selected keyword check':'Full captured keyword check',availability:availability(o),rankingUrl:o.rankingUrl,diagnostic:o.diagnostic};});
  const filters=s.applied,appliedFilters=s.phase==='latest'?`Applied: ${filters.device} devices · ${filters.search?`Contains “${filters.search}”`:'All keywords'} · ${filters.pinned==='all'?'All pin states':filters.pinned==='true'?'Pinned only':'Unpinned only'}`:`Applied: ${filters.device} devices`;
  const targetText=s.target?capturedTarget(s.target):'Target unavailable',asOf=s.asOf?(s.firstRead===s.asOf?dateText(s.asOf):`${dateText(s.firstRead)} to ${dateText(s.asOf)} (paged reads)`):'Unavailable';
- return <RankHistoryView prefix={prefix} role={s.role} phase={s.phase} reading={s.reading} loaded={s.loaded} error={s.error} target={targetText} enabledDevices={s.enabledDevices||props.tracker.devices} asOf={asOf} filters={s.draft} filterDirty={!sameFilters(s.draft,s.applied)} appliedFilters={appliedFilters} latest={rows} keyword={s.keyword?.keyword??''} removed={s.keyword?.removed??false} observations={observations} nextCursor={s.nextCursor}
+ return <RankHistoryView prefix={prefix} backLabel={props.backLabel} role={s.role} phase={s.phase} reading={s.reading} loaded={s.loaded} error={s.error} target={targetText} enabledDevices={s.enabledDevices||props.tracker.devices} asOf={asOf} filters={s.draft} filterDirty={!sameFilters(s.draft,s.applied)} appliedFilters={appliedFilters} latest={rows} keyword={s.keyword?.keyword??''} removed={s.keyword?.removed??false} observations={observations} nextCursor={s.nextCursor}
   onFilters={draft=>{invalidate();patch({draft,reading:false});}} onApply={apply} onRefresh={refresh} onMore={more} onBack={()=>{invalidate();props.onBack();}} onLatest={()=>void latest(state.current.latestFilters,undefined,true)} onKeyword={openKeyword} onRun={openRun}/>;
 }

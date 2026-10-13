@@ -6,6 +6,7 @@ import {RankTrackingView,type RankRole,type RankTracker,type RankKeyword,type Ra
 import {RankCheckPanel,type RankCheckEntry} from './RankCheckPanel';
 import {RankHistoryPanel} from './RankHistoryPanel';
 import {RankSchedulePanel} from './RankSchedulePanel';
+import {RankReportingPanel} from './RankReportingPanel';
 
 type Props={workspaceId:string;projectId:string;userId:string;origin:string;onUnauthorized:()=>void;onOpenProviders:()=>void};
 type Filter='active'|'archived'|'all';
@@ -45,6 +46,7 @@ function RankController(props:Props){
   const prefix=useId()+'-rank-',base=`/api/projects/${props.projectId}/rank-trackers`;
   const [s,setState]=useState(()=>initial(props.origin)),state=useRef(s),operation=useRef<Operation|null>(null),intent=useRef<Intent|null>(null),alive=useRef(true);
   const [check,setCheck]=useState<CheckEntry|null>(null),checkGeneration=useRef(0),[observations,setObservations]=useState(false),[schedule,setSchedule]=useState<ScheduleEntry|null>(null);
+  const [reporting,setReporting]=useState(false),[reportKeyword,setReportKeyword]=useState<string|null>(null);
   function patch(value:Partial<State>){if(!alive.current)return;state.current={...state.current,...value};setState(state.current);}
   function locked(){return operation.current?.write===true||intent.current!==null;}
   function invalidate(){operation.current?.controller.abort();operation.current=null;}
@@ -77,7 +79,7 @@ function RankController(props:Props){
     }catch(e){failure(e,op);}finally{finish(op);}
   }
   async function loadDetail(id:string,focus=false){
-    const op=begin();if(!op)return;patch({mode:'detail',...(state.current.detail?.tracker.id!==id?{detail:null}:{})});
+    const op=begin();if(!op)return;patch({mode:'detail',role:null,detail:null});
     try{const data=await api<unknown>(`${base}/${id}`,{signal:op.controller.signal});if(!current(op))return;if(!validDetail(data,id))throw badResponse();role(data.role);patch({detail:data,edit:editFor(data.tracker),conflict:false,...(focus?{focus:'detail-heading'}:{})});}
     catch(e){failure(e,op);}finally{finish(op);}
   }
@@ -148,18 +150,21 @@ function RankController(props:Props){
   function keywordMutation(kind:'pin'|'remove',pinned?:boolean){const at=state.current;if(locked()||!writer(at.role)||!at.detail||at.selected.length===0||!canLeave())return;if(kind==='remove'&&!window.confirm(`Remove ${at.selected.length} selected keyword(s)?`))return;mutate(`${base}/${at.detail.tracker.id}/keywords/${kind}`,{revision:at.detail.tracker.authoredRevision,keywordIds:at.selected,...(kind==='pin'?{pinned}:{})},at.detail.tracker.id);}
   function checks(mode:'history'|'setup',subset=false){const at=state.current;if(!at.detail||!canLeave()||mode==='setup'&&(!writer(at.role)||at.detail.tracker.archivedAt!==null||!at.detail.keywords.length)||subset&&!at.selected.length)return;const keywordIds=subset?[...at.selected]:undefined;invalidate();resetForms();patch({reading:false});setCheck({generation:++checkGeneration.current,mode,...(keywordIds?{keywordIds}:{})});}
   function latest(){if(!state.current.detail||!canLeave())return;invalidate();resetForms();patch({reading:false});setObservations(true);}
+  function openReporting(){if(!state.current.detail||!canLeave())return;invalidate();resetForms();patch({reading:false});setReporting(true);}
   function openSchedule(){if(!state.current.detail||!canLeave())return;invalidate();resetForms();patch({reading:false});setSchedule({});}
-  const schedulePanel=schedule&&s.detail?<RankSchedulePanel {...props} trackerId={s.detail.tracker.id} trackerName={s.detail.tracker.name} quoteId={schedule.quoteId} knownQuoteExpiresAt={schedule.returnCheck?.knownExpiresAt} backLabel={schedule.returnCheck?'Back to quote':observations?'Back to observations':'Back to tracker'}
-    onBack={()=>{setSchedule(null);if(schedule.returnCheck)setCheck({...schedule.returnCheck,generation:++checkGeneration.current});else if(!observations)void loadDetail(s.detail!.tracker.id,true);}}
+  const schedulePanel=schedule&&s.detail?<RankSchedulePanel {...props} trackerId={s.detail.tracker.id} trackerName={s.detail.tracker.name} quoteId={schedule.quoteId} knownQuoteExpiresAt={schedule.returnCheck?.knownExpiresAt} backLabel={schedule.returnCheck?'Back to quote':observations?'Back to observations':reporting?'Back to reporting':'Back to tracker'}
+    onBack={()=>{setSchedule(null);if(schedule.returnCheck)setCheck({...schedule.returnCheck,generation:++checkGeneration.current});else if(!observations&&!reporting)void loadDetail(s.detail!.tracker.id,true);}}
     onPrepareQuote={()=>{setSchedule(null);setCheck({generation:++checkGeneration.current,mode:'setup',purpose:'schedule',returnToSchedule:true});}}/>:null;
-  const checkPanel=check&&s.detail?<RankCheckPanel key={check.generation} {...props} tracker={s.detail.tracker} connections={s.connections} vaultConfigured={s.vaultConfigured} entry={check} backLabel={check.returnToSchedule?'Back to schedule':observations?'Back to observations':'Back to tracker'}
+  const checkPanel=check&&s.detail?<RankCheckPanel key={check.generation} {...props} tracker={s.detail.tracker} connections={s.connections} vaultConfigured={s.vaultConfigured} entry={check} backLabel={check.returnToSchedule?'Back to schedule':observations?'Back to observations':reporting?'Back to reporting':'Back to tracker'}
     onConfigureSchedule={(quoteId,expiresAt)=>{setCheck(null);setSchedule({quoteId,returnCheck:{...check,mode:'run',runId:quoteId,knownExpiresAt:expiresAt}});}}
-    onBack={()=>{setCheck(null);if(check.returnToSchedule)setSchedule({});else if(!observations)void loadDetail(s.detail!.tracker.id,true);}}/>:null;
-  if(observations&&s.detail)return <><div hidden={check!==null||schedule!==null}><RankHistoryPanel {...props} tracker={s.detail.tracker} active={check===null&&schedule===null} onBack={()=>{setObservations(false);void loadDetail(s.detail!.tracker.id,true);}} onOpenRun={runId=>setCheck({generation:++checkGeneration.current,mode:'run',runId})}/></div>{schedulePanel??checkPanel}</>;
+    onBack={()=>{setCheck(null);if(check.returnToSchedule)setSchedule({});else if(!observations&&!reporting)void loadDetail(s.detail!.tracker.id,true);}}/>:null;
+  const historyPanel=observations&&s.detail?<div hidden={check!==null||schedule!==null}><RankHistoryPanel {...props} tracker={s.detail.tracker} entryKeywordId={reportKeyword??undefined} backLabel={reporting?'Back to reporting':'Back to tracker'} active={check===null&&schedule===null} onBack={()=>{setObservations(false);setReportKeyword(null);if(!reporting)void loadDetail(s.detail!.tracker.id,true);}} onOpenRun={runId=>setCheck({generation:++checkGeneration.current,mode:'run',runId})}/></div>:null;
+  if(reporting&&s.detail)return <><div hidden={observations||check!==null||schedule!==null}><RankReportingPanel {...props} tracker={s.detail.tracker} active={!observations&&check===null&&schedule===null} onBack={()=>{setReporting(false);void loadDetail(s.detail!.tracker.id,true);}} onOpenRun={runId=>setCheck({generation:++checkGeneration.current,mode:'run',runId})} onOpenKeyword={id=>{setReportKeyword(id);setObservations(true);}} onCheckHistory={()=>setCheck({generation:++checkGeneration.current,mode:'history'})}/></div>{historyPanel}{schedulePanel??checkPanel}</>;
+  if(historyPanel)return <>{historyPanel}{schedulePanel??checkPanel}</>;
   if(schedulePanel)return schedulePanel;
   if(checkPanel)return checkPanel;
   return <RankTrackingView {...s} prefix={prefix} locked={s.writing||intent.current!==null} pending={s.pending&&!s.writing}
-    onChecks={()=>checks('history')} onPrepareCheck={()=>checks('setup')} onPrepareSelected={()=>checks('setup',true)} onObservations={latest} onSchedule={openSchedule}
+    onChecks={()=>checks('history')} onPrepareCheck={()=>checks('setup')} onPrepareSelected={()=>checks('setup',true)} onObservations={latest} onSchedule={openSchedule} onReporting={openReporting}
     onRefresh={refresh} onFilter={filter=>{if(canLeave()){resetForms();void loadList(filter);}}} onMore={()=>{if(state.current.nextCursor&&!state.current.reading)void loadList(state.current.filter,state.current.nextCursor);}}
     onNew={newTracker} onOpen={open} onBack={back} onCreateChange={changeCreate} onCatalog={()=>void catalog()} onLocalQuery={localQuery} onSearchLocal={()=>void searchLocal()} onMoreLocal={()=>void searchLocal(true)} onCreate={createTracker} onCancelCreate={back}
     onEdit={edit} onEditChange={changeEdit} onSaveEdit={saveEdit} onCancelEdit={cancelForm} onArchive={archive} onAdd={add} onWords={words=>{if(!locked())patch({words,dirty:true});}} onMatchCase={matchCase=>{if(!locked())patch({matchCase,dirty:true});}} onSaveWords={saveWords} onCancelWords={cancelForm}

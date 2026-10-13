@@ -33,6 +33,8 @@ import {cancelRankRun} from './rank-worker.ts';
 import {reconcileRankCheck} from './rank-reconciliation.ts';
 import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from './rank-history.ts';
 import {getRankSchedule,previewRankSchedule,approveRankSchedule,disableRankSchedule} from './rank-scheduling.ts';
+import {getRankDistribution} from './rank-distribution.ts';
+import {getRankMatrix,exportRankMatrix} from './rank-matrix.ts';
 import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from './saved-keywords.ts';
 import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from './saved-keyword-refresh.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
@@ -332,6 +334,22 @@ export async function handleApi(request: Request): Promise<Response> {
         if(action==='preview')return json(await previewRankSchedule(projectId,user.id,trackerId,input));
         if(action==='approve')return json(await approveRankSchedule(projectId,user.id,trackerId,input));
         return json(await disableRankSchedule(projectId,user.id,trackerId,input));
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const rankReportRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers/(${id})/(distribution|matrix)(/export)?$`,'i'));
+    if(rankReportRoute){
+      const [,projectId,trackerId,rawReport,exportPath]=rankReportRoute,report=rawReport.toLowerCase();
+      await projectAccess(projectId,user.id);
+      await limit(`rank-report:${user.id}`,30);
+      if(request.method==='GET'&&!exportPath)return json(report==='distribution'
+        ?await getRankDistribution(projectId,user.id,trackerId,url.searchParams)
+        :await getRankMatrix(projectId,user.id,trackerId,url.searchParams));
+      if(request.method==='POST'&&report==='matrix'&&exportPath){
+        if(url.searchParams.size)throw new FoundationError(400,'Put rank export filters in the request body.');
+        await limit(`rank-report-export:${user.id}`,6);
+        const result=await exportRankMatrix(projectId,user.id,trackerId,await readJson(request,8192),request.signal);
+        return new Response(result.body,{headers:{'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount),'cache-control':'no-store','x-content-type-options':'nosniff'}});
       }
       return json({error:'Method not allowed.'},405);
     }

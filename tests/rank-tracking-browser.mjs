@@ -156,9 +156,8 @@ try{
  // A current denial must purge the view even when an older detail response arrives later.
  nextGet='hold';await page.getByRole('button',{name:'Refresh tracker',exact:true}).click();
  await page.waitForTimeout(50);assert.ok(held);
- await page.getByRole('button',{name:'Edit settings',exact:true}).click();
- await page.getByLabel('Tracker name',{exact:true}).fill('Denied edit');
- nextWrite=403;await page.getByRole('button',{name:'Save changes',exact:true}).click();
+ assert.equal(await page.getByRole('button',{name:'Edit settings',exact:true}).count(),0,'Pending detail revalidation must not expose cached writer controls');
+ nextGet=403;await page.getByRole('button',{name:'Back to trackers',exact:true}).click();
  await page.getByRole('button',{name:'Reload access',exact:true}).waitFor();
  await fulfill(held.route,held.reply);held=null;
  assert.equal(await page.getByText('literal C++ %20',{exact:true}).count(),0);

@@ -96,26 +96,59 @@ export async function runDomainCollectionChecks() {
   await assert.rejects(updateDomain(project, viewer, domain.id, { role: 'redirect_alias' }), fail(404));
   await assert.rejects(revokeDomain(foreign, owner, domain.id, {}), fail(404));
 
-  // Real revocation waits for an existing project reader, then denies collection
-  // and configuration queued behind it. This fails if domain writes omit the gate.
+  // Prove both directions separately: a real revoker waits for an existing reader;
+  // readers behind an acquired revocation gate recheck after its commit. PostgreSQL
+  // does not promise that a waiting UPDATE will precede every new SHARE reader.
   const lock = await pool.connect();
+  const blockerPid = (await lock.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+  const pending: Promise<unknown>[] = [];
+  function tracked<T>(promise: Promise<T>): Promise<T> {
+    // Attach now: an assertion may reject while a different transaction is held.
+    void promise.catch(() => {}); pending.push(promise); return promise;
+  }
+  async function waitForLocks(sql: string, parameters: unknown[], count: number, message: string) {
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const result = await pool.query<{ pid: number }>(sql, parameters);
+      if (result.rowCount === count) return result.rows;
+      assert.ok(Date.now() < deadline, message);
+      await delay(10);
+    }
+  }
   try {
     await lock.query('BEGIN'); await lock.query('SELECT id FROM project WHERE id=$1 FOR SHARE', [project]);
     let finished = false;
-    const revoked = revokeDomain(project, owner, domain.id, {}).then(value => { finished = true; return value; });
-    const deadline = Date.now() + 5000;
-    for (;;) {
-      const waiting = await pool.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
-        AND wait_event_type='Lock' AND query LIKE '%AND m.role IN%FOR UPDATE OF p%'`);
-      if (waiting.rowCount) break;
-      if (Date.now() > deadline) { await lock.query('ROLLBACK'); await revoked; assert.fail('Domain revocation did not wait on the project gate.'); }
-      await delay(10);
-    }
+    const revoked = tracked(revokeDomain(project, owner, domain.id, {}).then(value => { finished = true; return value; }));
+    await waitForLocks(`SELECT pid FROM pg_stat_activity WHERE datname=current_database()
+      AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%AND m.role IN%FOR UPDATE OF p%'`,
+    [blockerPid], 1, 'Domain revocation must wait on this project reader.');
     assert.equal(finished, false);
-    const pendingNative = assert.rejects(collectNative(new Request(config.appUrl + '/api/collect', { headers: { origin: serving } }), key, event()), fail(403));
-    const pendingConfig = assert.rejects(getPublicDestinations(key, 'live', serving), fail(404));
-    await lock.query('COMMIT'); await revoked; await pendingNative; await pendingConfig;
-  } finally { await lock.query('ROLLBACK').catch(() => {}); lock.release(); }
+    await lock.query('COMMIT'); await revoked;
+    await assert.rejects(collectNative(new Request(config.appUrl + '/api/collect', { headers: { origin: serving } }), key, event()), fail(403), 'Collection after committed revocation must fail.');
+    await assert.rejects(getPublicDestinations(key, 'live', serving), fail(404), 'Configuration after committed revocation must fail.');
+
+    await verify(domain.id);
+    // Hold only the domain row so the actual revoker first owns workspace/project
+    // UPDATE locks, then pauses before changing the domain. No FIFO assumption.
+    await lock.query('BEGIN'); await lock.query('SELECT id FROM project_domain WHERE id=$1 FOR UPDATE', [domain.id]);
+    const revoking = tracked(revokeDomain(project, owner, domain.id, {}));
+    const [revoker] = await waitForLocks(`SELECT pid FROM pg_stat_activity WHERE datname=current_database()
+      AND $1=ANY(pg_blocking_pids(pid)) AND query='SELECT * FROM project_domain WHERE id=$1 AND project_id=$2 FOR UPDATE'`,
+    [blockerPid], 1, 'The real revoker must own the project gate before readers start.');
+    const pendingNative = tracked(assert.rejects(collectNative(new Request(config.appUrl + '/api/collect', { headers: { origin: serving } }), key, event()), fail(403), 'Collection waiting behind revocation must fail.'));
+    const pendingConfig = tracked(assert.rejects(getPublicDestinations(key, 'live', serving), fail(404), 'Configuration waiting behind revocation must fail.'));
+    const readers = await waitForLocks(`WITH RECURSIVE blocked(pid) AS (
+      SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid))
+      UNION SELECT a.pid FROM pg_stat_activity a JOIN blocked b ON b.pid=ANY(pg_blocking_pids(a.pid)) WHERE a.datname=current_database()
+    ) SELECT a.pid FROM blocked b JOIN pg_stat_activity a ON a.pid=b.pid
+      WHERE a.query='SELECT id FROM project WHERE public_key=$1 FOR SHARE'`,
+    [revoker.pid], 2, 'Both public readers must wait behind this revoker.');
+    assert.equal(new Set(readers.map(row => row.pid)).size, 2);
+    await lock.query('COMMIT'); await revoking; await pendingNative; await pendingConfig;
+  } finally {
+    await lock.query('ROLLBACK').catch(() => {}); lock.release();
+    await Promise.allSettled(pending);
+  }
   assert.notEqual(await epoch(), stableEpoch);
   assert.equal((await publicCall('/api/collect', canonical, event(canonical))).data.reason, 'consent_required', 'Eligibility changes invalidate old consent even on the canonical origin.');
   assert.equal((await apiCall(`/api/projects/${project}/events`, { ...apiEvent, eventId: randomUUID() })).status, 400);

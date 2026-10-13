@@ -108,6 +108,8 @@ jobs:
             await client.query('CREATE DATABASE ten98_rank_history_ci');
             await client.query('CREATE DATABASE ten98_rank_scheduling_ci');
             await client.query('CREATE DATABASE ten98_rank_recurring_ci');
+            await client.query('CREATE DATABASE ten98_rank_distribution_ci');
+            await client.query('CREATE DATABASE ten98_rank_matrix_ci');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
@@ -137,6 +139,8 @@ jobs:
               ['ten98_rank_history_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-history-integration.ts']], { TEN98_RANK_HISTORY_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_rank_scheduling_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-scheduling-integration.ts']], { TEN98_RANK_SCHEDULING_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_rank_recurring_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-recurring-integration.ts']], { TEN98_RANK_RECURRING_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_rank_distribution_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-distribution-integration.ts']], { TEN98_RANK_DISTRIBUTION_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_rank_matrix_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-matrix-integration.ts']], { TEN98_RANK_MATRIX_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
             ]) {
               const database = new URL(process.env.DATABASE_URL);
               database.pathname = `/${name}`;

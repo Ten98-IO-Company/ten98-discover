@@ -104,7 +104,7 @@ async function worker() {
   await assertGoogleCredentialsReadable();
   await assertProviderAccountIdentityReadable();
   await startWorker();
-  console.log('Foundation worker ready. Explicit Google imports are enabled; no provider scheduler is active.');
+  console.log('Foundation worker ready. Explicit imports and owner-approved rank schedules are enabled.');
   await new Promise<void>((resolve) => {
     process.once('SIGTERM', resolve);
     process.once('SIGINT', resolve);
