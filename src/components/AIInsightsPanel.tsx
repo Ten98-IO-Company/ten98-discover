@@ -2,6 +2,7 @@ import {useEffect,useId,useRef,useState} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {InsightCoverage,InsightFilters,InsightMetric,PromptInsightsReport} from '../server/prompt-insights';
 import {AIInsightsView,type AIInsightsDraft,type AIInsightsViewProps} from './AIInsightsView';
+import {AIComparisonPanel} from './AIComparisonPanel';
 
 type Props={userId:string;workspaceId:string;projectId:string;onUnauthorized:()=>void;onBack:()=>void;backLabel:string;onOpenComparison:(comparisonId:string,promptId:string)=>void};
 type Role=PromptInsightsReport['role'];
@@ -36,6 +37,7 @@ function validReport(v:unknown,f:InsightFilters,d:Drill,page:number):v is Prompt
  if(!object(v)||!role(v.role)||!equalFilters(v.filters,f)||!object(v.drilldown)||v.drilldown.entityId!==d.entityId||v.drilldown.outcome!==d.outcome||!stamp(v.asOf)||!integer(v.contextRevision,2147483647)||v.contextRevision<1||!hex(v.profileHash)||!hex(v.selectionRevision)||v.matcherVersion!==f.matcher||v.label!==contextLabel||!Array.isArray(v.warnings)||v.warnings.length>10||!v.warnings.every((s:unknown)=>text(s,2048))||!Array.isArray(v.subjects)||v.subjects.length<1||v.subjects.length>101)return false;
  if(!v.subjects.every((s:unknown,i:number)=>object(s)&&(i===0?s.id==='brand':uuid(s.id))&&text(s.name,512,1)&&Array.isArray(s.aliases)&&s.aliases.length<=20&&s.aliases.every((x:unknown)=>text(x,512,1))&&Array.isArray(s.domains)&&s.domains.length<=20&&s.domains.every((x:unknown)=>text(x,253,1))))return false;
  const ids=v.subjects.map((s:{id:string})=>s.id);if(new Set(ids).size!==ids.length||ids.slice(1).some((id:string,i:number)=>i>0&&id<=ids[i])||d.entityId!==null&&!ids.includes(d.entityId)||!validCoverage(v.coverage)||!validMetrics(v.metrics,ids,v.coverage))return false;
+ if(!Array.isArray(v.evidenceStates)||v.evidenceStates.length!==v.coverage.attempted||new Set(v.evidenceStates.map((e:any)=>e?.id)).size!==v.evidenceStates.length||!v.evidenceStates.every((e:unknown)=>object(e)&&uuid(e.id)&&kinds.includes(e.eligibility))||!kinds.every(k=>v.evidenceStates.filter((e:any)=>e.eligibility===k).length===v.coverage[k]))return false;
  const days=1+(Date.parse(f.to)-Date.parse(f.from))/86400000;
  if(!Array.isArray(v.daily)||v.daily.length!==days||!v.daily.every((r:unknown,i:number)=>object(r)&&r.date===new Date(Date.parse(f.from)+i*86400000).toISOString().slice(0,10)&&validCoverage(r.coverage)&&validMetrics(r.metrics,ids,r.coverage)))return false;
  if(!coverageKeys.every(k=>v.daily.reduce((n:number,r:any)=>n+r.coverage[k],0)===v.coverage[k])||!v.metrics.every((m:InsightMetric,i:number)=>v.daily.reduce((n:number,r:any)=>n+r.metrics[i].mentions,0)===m.mentions&&v.daily.reduce((n:number,r:any)=>n+r.metrics[i].citations,0)===m.citations))return false;
@@ -44,6 +46,7 @@ function validReport(v:unknown,f:InsightFilters,d:Drill,page:number):v is Prompt
  const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:f.timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
  return new Set(v.executions.map((e:any)=>e.id)).size===v.executions.length&&v.executions.every((e:unknown)=>{
   if(!object(e)||![e.id,e.comparisonId,e.promptId,e.versionId].every(uuid)||!stamp(e.requestedAt)||!day(e.date)||e.date<f.from||e.date>f.to||!models.includes(e.model)||f.model!==null&&e.model!==f.model||f.promptId!==null&&e.promptId!==f.promptId||!['queued','running','completed','failed','uncertain','cancelled','reconciled'].includes(e.status)||!kinds.includes(e.eligibility)||e.resolvedModel!==null&&e.resolvedModel!==e.model)return false;
+  if(!v.evidenceStates.some((state:any)=>state.id===e.id&&state.eligibility===e.eligibility))return false;
   const parts=formatter.formatToParts(new Date(e.requestedAt)),p=(type:string)=>parts.find(p=>p.type===type)!.value;if(e.date!==`${p('year')}-${p('month')}-${p('day')}`)return false;
   if(e.eligibility==='eligible'){
    if(e.resolvedModel!==e.model||!Array.isArray(e.matches)||e.matches.length!==ids.length||!e.matches.every((m:unknown,i:number)=>object(m)&&m.id===ids[i]&&typeof m.mentioned==='boolean'&&typeof m.cited==='boolean'&&(m.mentioned?text(m.matchedTerm,512,1):m.matchedTerm===null)&&Array.isArray(m.citationIndexes)&&m.citationIndexes.length<=100&&m.cited===(m.citationIndexes.length>0)&&m.citationIndexes.every((n:unknown,j:number)=>integer(n,99)&&(j===0||Number(n)>m.citationIndexes[j-1]))))return false;
@@ -61,6 +64,7 @@ const modelLabel=(v:string)=>v==='openai/gpt-4o-mini'?'GPT-4o mini':v==='openai/
 export function AIInsightsPanel(props:Props){return <Controller key={`${props.userId}:${props.workspaceId}:${props.projectId}`} {...props}/>;}
 function Controller(props:Props){
  const prefix=useId()+'-insights-',base=`/api/projects/${props.projectId}`,first=useRef(initial()).current;
+ const [comparison,setComparison]=useState<{filters:InsightFilters;label:string}|null>(null);
  const [s,setState]=useState<State>({role:null,reading:false,exporting:false,error:'',notice:'',draft:first,applied:first,data:null,pages:[null],promptSearch:'',promptQuery:'',promptPages:[null],promptNext:null,options:[],selected:null,appliedPromptLabel:null,dailyEntity:'brand',focus:false});
  const state=useRef(s),alive=useRef(true),operation=useRef<Op|null>(null),expired=useRef(new Set<string>()),blob=useRef<string|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
  function patch(value:Partial<State>){if(alive.current){state.current={...state.current,...value};setState(state.current);}}
@@ -80,8 +84,8 @@ function Controller(props:Props){
   try{const params=new URLSearchParams();for(const [k,v]of Object.entries(f))if(v!==null)params.set(k,v);params.set('outcome',drill.outcome);if(drill.entityId)params.set('entityId',drill.entityId);if(pages.at(-1))params.set('cursor',pages.at(-1)!);
    const [data,options]=await Promise.all([api<unknown>(base+'/prompt-insights?'+params,{signal:op.signal}),needsOptions?readPrompts(op,'',[null]):Promise.resolve(null)]);if(!current(op))return;
    if(op.signal.aborted)throw new Error('The insight read timed out.');if(!validReport(data,f,drill,pages.length-1))throw new Error('The insight response could not be verified. Reload insights.');
-   if(pages.length>1&&old&&data.selectionRevision!==old.selectionRevision||data.executions.some(e=>expired.current.has(e.id)&&e.eligibility!=='expired')){const e=new ApiError('The insight evidence changed. Reload insights.');e.status=409;throw e;}
-   for(const e of data.executions)if(e.eligibility==='expired')expired.current.add(e.id);
+   if(pages.length>1&&old&&data.selectionRevision!==old.selectionRevision||data.evidenceStates.some(e=>expired.current.has(e.id)&&e.eligibility!=='expired')){const e=new ApiError('The insight evidence changed. Reload insights.');e.status=409;throw e;}
+   for(const e of data.evidenceStates)if(e.eligibility==='expired')expired.current.add(e.id);
    const selected=!draft.promptId?null:options?.options.find(o=>o.id===draft.promptId)??(before.selected?.id===draft.promptId?before.selected:{id:draft.promptId,label:'Selected prompt (outside this option page)'});
    patch({role:data.role,data,pages,applied:{...draft},draft:{...draft},selected,appliedPromptLabel:selected?.label??null,focus:true,dailyEntity:data.subjects.some(s=>s.id===before.dailyEntity)?before.dailyEntity:'brand',...(options?{options:options.options,promptNext:options.nextCursor,promptPages:[null],promptQuery:'',promptSearch:''}:{})});
   }catch(error){fail(error,op);}finally{finish(op);}
@@ -111,5 +115,6 @@ function Controller(props:Props){
   onApply:()=>{if(!busy&&s.role)void load(s.draft);},onReload:()=>{if(!busy)void load(s.applied);},onBack:()=>leave(props.onBack),onDailyEntity:id=>{if(!busy&&!dirty&&d?.subjects.some(s=>s.id===id))patch({dailyEntity:id});},
   onDrilldown:(outcome,entityId)=>{if(busy||dirty||!d)return;const needs=['mentioned','not_mentioned','cited'].includes(outcome);if(!['all','eligible','unavailable','mentioned','not_mentioned','cited'].includes(outcome)||needs&&(!entityId||!d.subjects.some(s=>s.id===entityId)))return;void load(s.applied,[null],{outcome,entityId:needs?entityId!:null});},
   onPrevious:()=>{if(!busy&&!dirty&&d&&s.pages.length>1)void load(s.applied,s.pages.slice(0,-1),d.drilldown);},onNext:()=>{if(!busy&&!dirty&&d?.nextCursor)void load(s.applied,[...s.pages,d.nextCursor],d.drilldown);},onOpenExecution:id=>{const at=state.current,e=at.data?.executions.find(e=>e.id===id);if(!at.reading&&!at.exporting&&same(at.draft,at.applied)&&at.role&&e)leave(()=>props.onOpenComparison(e.comparisonId,e.promptId));},onExport:()=>void download(),onCancelExport:()=>{if(s.exporting){invalidate();patch({exporting:false,notice:'Export cancelled.'});}}};
- return <AIInsightsView {...view}/>;
+ if(comparison)return <AIComparisonPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} filters={comparison.filters} filtersLabel={comparison.label} initialExpiredAnswerIds={[...expired.current]} onAnswerExpired={ids=>{for(const id of ids)expired.current.add(id);}} onUnauthorized={props.onUnauthorized} onBack={()=>{setComparison(null);void load(state.current.applied);}}/>;
+ return <div className="stack" style={{minWidth:0}}>{d&&s.role?<div className="row"><button className="btn ghost" type="button" disabled={busy||dirty} style={{minHeight:44}} onClick={()=>{const at=state.current;if(!at.data||!at.role||at.reading||at.exporting||!same(at.draft,at.applied)||!view.report)return;const entry={filters:{...at.data.filters},label:view.report.scopeLabel};invalidate();purge();patch({reading:false,exporting:false});setComparison(entry);}}>Compare periods</button></div>:null}<AIInsightsView {...view}/></div>;
 }

@@ -54,6 +54,12 @@ and OpenSEO's matched-cell/coverage comparison are not the same formula.
 The existing quote input hash includes pricing and selected model lists; it is
 not a valid semantic comparison-cell identity.
 
+The [adjacent-period comparison](ai-period-comparison.md) adds a separately
+labelled current-context, equal-cell method. It compares equal local-calendar
+ranges, requires retained copied settings to identify cells, and exposes changes
+only for closed periods with shared cells and sufficient collection coverage.
+It does not implement carried values or captured historical identities.
+
 ## Workflow and service boundary
 
 All current project members can read/export. AI insights opens without collection.

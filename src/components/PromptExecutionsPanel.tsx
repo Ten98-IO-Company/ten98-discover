@@ -19,7 +19,7 @@ type Metadata={role:Role;models:Model[];vaultConfigured:boolean;spendingPaused:b
 type DetailResponse={role:Role;comparison:Comparison};
 type ReconcileResponse=DetailResponse&{reconciliation:{status:'matched'|'inconclusive';message:string}};
 export type ExecutionEntry={kind:'configure';promptId:string;versionId:string;authoredText:string}|{kind:'history'}|{kind:'receipt';comparisonId:string;promptId:string};
-type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void;backLabel?:string};
+type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void;backLabel?:string;onEvidenceExpired?:(evidence:{comparisonId:string;answerIds:string[];inputIds:string[]})=>void};
 type Screen='setup'|'quote'|'unknown'|'history'|'detail';
 type Attempt=Readonly<{quoteId:string;requestKey:string}>;
 type Operation={generation:number;controller:AbortController;write:boolean};
@@ -69,7 +69,7 @@ export function PromptExecutionsPanel(props:Props){
   const key=props.entry.kind==='configure'?`${props.entry.promptId}:${props.entry.versionId}`:props.entry.kind==='receipt'?`${props.entry.promptId}:${props.entry.comparisonId}`:'history';
   return <Panel key={`${props.userId}:${props.workspaceId}:${props.projectId}:${props.entry.kind}:${key}`} {...props}/>;
 }
-function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Back to library'}:Props){
+function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/prompt-executions',uid=useId();
   const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   const [metadata,setMetadata]=useState<Metadata|null>(null),[role,setRole]=useState<Role|null>(null);
@@ -83,8 +83,8 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
   const selection=useRef<string|null>(null),attemptRef=useRef<Attempt|null>(null),pollingUntil=useRef(0);
   const restoreReceipt=useRef(entry.kind==='receipt');
   const expiredInputs=useRef(new Set<string>()),expiredResults=useRef(new Set<string>());
-  const initialized=useRef(false),notified=useRef(false),unauthorizedRef=useRef(onUnauthorized),backRef=useRef(onBack);
-  unauthorizedRef.current=onUnauthorized;backRef.current=onBack;
+  const initialized=useRef(false),notified=useRef(false),unauthorizedRef=useRef(onUnauthorized),backRef=useRef(onBack),expiryRef=useRef(onEvidenceExpired);
+  unauthorizedRef.current=onUnauthorized;backRef.current=onBack;expiryRef.current=onEvidenceExpired;
   const heading=useRef<HTMLHeadingElement|null>(null),focusNext=useRef(true);
   const connectionControl=useRef<HTMLSelectElement|null>(null),modelControl=useRef<HTMLInputElement|null>(null);
   const systemControl=useRef<HTMLTextAreaElement|null>(null),tokensControl=useRef<HTMLInputElement|null>(null),fundedControl=useRef<HTMLInputElement|null>(null);
@@ -111,7 +111,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
       if(e.status===401&&!notified.current){notified.current=true;unauthorizedRef.current();}return true;
     }return false;
   }
-  function rememberExpiredResults(c:Summary){for(const run of c.runs)if(run.resultExpired)expiredResults.current.add(run.id);}
+  function rememberExpiredResults(c:Summary){const answerIds=c.runs.filter(run=>run.resultExpired).map(run=>run.id);for(const id of answerIds)expiredResults.current.add(id);if(answerIds.length)expiryRef.current?.({comparisonId:c.id,answerIds,inputIds:[]});}
   async function readMetadata(op:Operation){
     const data=await api<Metadata>(B,{signal:op.controller.signal});if(!current(op))return null;
     try{checkedRole(data?.role);if(!Array.isArray(data.models)||!data.models.every(model)||!Array.isArray(data.connections)||data.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(data.comparisons)||!data.comparisons.every(validSummary)||typeof data.vaultConfigured!=='boolean'||typeof data.spendingPaused!=='boolean')throw new Error();}
@@ -139,7 +139,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
   function setup(){if(operation.current?.write||entry.kind!=='configure'||!mayLeave())return;invalidate();setPending(null);setQuote(null);setError(null);setNotice(null);move('setup');}
   function edit(change:()=>void){if(operation.current?.write||attemptRef.current)return;if(operation.current)invalidate();setQuote(null);setError(null);setNotice(null);change();}
   function showComparison(data:DetailResponse,explicit=true){
-    if(data.comparison.inputExpired)expiredInputs.current.add(data.comparison.id);
+    if(data.comparison.inputExpired){expiredInputs.current.add(data.comparison.id);expiryRef.current?.({comparisonId:data.comparison.id,answerIds:[],inputIds:data.comparison.runs.map(run=>run.id)});}
     rememberExpiredResults(data.comparison);
     data={...data,comparison:{...data.comparison,...(expiredInputs.current.has(data.comparison.id)?{inputExpired:true,input:null,messages:null}:{}),runs:data.comparison.runs.map(run=>expiredResults.current.has(run.id)?{...run,resultExpired:true,result:null}:run)}};
     applyRole(data.role);setComparison(data.comparison);selection.current=data.comparison.id;

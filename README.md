@@ -8,7 +8,7 @@ Rank tracking adds tracker/keyword management, quoted manual checks, retained pe
 
 Native Meta connections now support manual daily reports, latest complete daily coverage, retained campaign inventories and CSV exports. Inventory includes campaigns without reported activity and preserves separate configured/effective statuses. Local synthetic acceptance and remaining provider gates are recorded in [Meta reports](docs/meta-reports.md) and [campaign inventory](docs/meta-campaigns.md).
 
-AI insights analyzes retained prompt answers using the current brand and competitor context. It separates visibility, share of voice and provider citation hits, with eligibility coverage, actual daily observations, filters, execution drilldown and CSV exports. Historical comparison methods and additional provider coverage remain required; see [AI insights](docs/ai-insights.md).
+AI insights analyzes retained prompt answers using the current brand and competitor context. It separates visibility, share of voice and provider citation hits, with eligibility coverage, actual daily observations, filters, execution drilldown and CSV exports. [Adjacent-period comparisons](docs/ai-period-comparison.md) compare equivalent prompt/model/settings cells, with explicit coverage and unavailable-change states. Source-compatible carried trends, captured historical identities and additional provider coverage remain required; see [AI insights](docs/ai-insights.md).
 
 Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, broader rank reporting, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
@@ -39,6 +39,7 @@ The first usable release must reach the complete technical capability baseline o
 19. [Native Meta advertising report contract and provider gates](docs/meta-reports.md)
 20. [Retained Meta campaign inventory and acceptance](docs/meta-campaigns.md)
 21. [Retained-answer AI insights and measurement limits](docs/ai-insights.md)
+22. [Adjacent-period AI comparisons and evidence drilldown](docs/ai-period-comparison.md)
 
 ## Product direction
 

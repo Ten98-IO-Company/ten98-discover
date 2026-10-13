@@ -5,7 +5,7 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {createPrompts} from '../src/server/prompts.ts';
 import {updateProjectContext} from '../src/server/project-context.ts';
-import {getPromptInsights,exportPromptInsights} from '../src/server/prompt-insights.ts';
+import {getPromptInsights,exportPromptInsights,type PromptInsightsReport} from '../src/server/prompt-insights.ts';
 import {handleApi} from '../src/server/api.ts';
 import {getAuth} from '../src/server/auth.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
@@ -52,13 +52,21 @@ export async function runPromptInsightsChecks(){
  }
  const get=(f:Fixture,extra:Record<string,string>={},user=owner)=>getPromptInsights(f.project,user,params(extra));
  const exported=(f:Fixture,r:Awaited<ReturnType<typeof get>>,user=viewer,signal?:AbortSignal)=>exportPromptInsights(f.project,user,{...r.filters,expectedSelectionRevision:r.selectionRevision},signal);
+ function manifest(r:PromptInsightsReport){
+  assert.equal(r.evidenceStates.length,r.coverage.attempted);assert.ok(r.evidenceStates.length<=1000);assert.equal(new Set(r.evidenceStates.map(e=>e.id)).size,r.evidenceStates.length);
+  for(const e of r.evidenceStates)assert.deepEqual(Object.keys(e).sort(),['eligibility','id'],'Only ID and eligibility belong in the whole-selection manifest.');
+  for(const [kind,n]of Object.entries(r.coverage))if(kind!=='attempted')assert.equal(r.evidenceStates.filter(e=>e.eligibility===kind).length,n);
+  for(const {id,eligibility}of r.executions)assert.deepEqual(r.evidenceStates.find(e=>e.id===id),{id,eligibility});
+ }
  try{
   const f=await fixture();await seed(f,[{result:result('Acme Beta Acme')},{result:result('Beta is not recommended.')},{result:result('Other products','stop',[{url:'https://news.acme.com/article',title:'Actual annotation'}])},{result:result('Acme corp'),status:'uncertain'},
    {result:result(' \n ')},{result:result('Acme','length')},{result:result('Acme','content_filter')},{status:'reconciled'},{status:'queued',completed:null},{status:'running',completed:null},{result:{text:'Acme'}},{result:null,purged:true}]);
   const r=await get(f,{},viewer);assert.equal(r.role,'viewer');assert.deepEqual(r.coverage,{attempted:12,eligible:4,queued:1,running:1,no_answer:1,empty:1,truncated:1,content_filtered:1,expired:1,invalid:1});
+  manifest(r);const priorOnly=await seed(f,[{result:result('Prior-only expired answer'),purged:true,at:new Date(Date.now()-86400000).toISOString()}]);
+  const afterPrior=await get(f,{},viewer);manifest(afterPrior);assert.deepEqual(afterPrior.evidenceStates,r.evidenceStates);assert.ok(!afterPrior.evidenceStates.some(e=>e.id===priorOnly[0].id),'An expired prior-period receipt cannot poison a current selection.');
   assert.deepEqual(r.metrics,[{id:'brand',mentions:2,citations:1,eligibleAnswers:4,shareOfVoiceDenominator:4,citationDenominator:4},{id:f.competitor,mentions:2,citations:0,eligibleAnswers:4,shareOfVoiceDenominator:4,citationDenominator:4}]);
   assert.equal(r.executions.find(e=>e.status==='uncertain')?.eligibility,'eligible');assert.equal(r.daily[0].coverage.eligible,4);assert.match(r.label,/current project context/);
-  for(const [outcome,total]of [['mentioned',2],['not_mentioned',2],['cited',1]] as const)assert.equal((await get(f,{entityId:'brand',outcome})).totalRows,total);
+  for(const [outcome,total]of [['mentioned',2],['not_mentioned',2],['cited',1]] as const){const drill=await get(f,{entityId:'brand',outcome});assert.equal(drill.totalRows,total);manifest(drill);assert.deepEqual(drill.evidenceStates,r.evidenceStates,'Drilldown cannot discard hidden selected expiry states.');}
   assert.equal((await get(f,{outcome:'eligible'})).totalRows,4);assert.equal((await get(f,{outcome:'unavailable'})).totalRows,8);
   await assert.rejects(get(f,{},foreign),fail(404));const other=await fixture();await assert.rejects(get(f,{promptId:other.prompt.id}),fail(404));
   const text=JSON.stringify(r);for(const forbidden of ['key_fingerprint','request_actor','Acme Beta Acme','input_hash'])assert.ok(!text.includes(forbidden));
@@ -73,6 +81,7 @@ export async function runPromptInsightsChecks(){
   const empty=await fixture(),er=await get(empty);assert.equal(er.coverage.attempted,0);assert.equal(er.metrics[0].eligibleAnswers,null);assert.equal(er.daily[0].metrics[0].shareOfVoiceDenominator,null);
   const page=await fixture();await seed(page,Array.from({length:53},(_,i)=>({result:result(i<51?'Acme':'Neither')})));const first=await get(page,{entityId:'brand',outcome:'mentioned'});assert.equal(first.totalRows,51);assert.equal(first.executions.length,50);assert.ok(first.nextCursor);
   const next=await get(page,{entityId:'brand',outcome:'mentioned',cursor:first.nextCursor!});assert.equal(next.executions.length,1);assert.equal(next.nextCursor,null);assert.equal(new Set([...first.executions,...next.executions].map(e=>e.id)).size,51);assert.equal(next.metrics[0].eligibleAnswers,53);
+  manifest(first);manifest(next);assert.equal(first.evidenceStates.length,53);assert.deepEqual(next.evidenceStates,first.evidenceStates,'The manifest includes all53 selected observations on either50-row evidence page.');
   await assert.rejects(get(page,{entityId:page.competitor,outcome:'mentioned',cursor:first.nextCursor!}),fail(400));
   await pool.query("UPDATE project_prompt SET user_tags='[\"changed\"]' WHERE id=$1",[page.prompt.id]);await assert.rejects(get(page,{entityId:'brand',outcome:'mentioned',cursor:first.nextCursor!}),fail(409));await assert.rejects(exported(page,first),fail(409));
   assert.equal((await get(page,{tag:'original'})).coverage.attempted,0);assert.equal((await get(page,{tag:'changed'})).coverage.attempted,53);
@@ -83,6 +92,7 @@ export async function runPromptInsightsChecks(){
   let rr=await get(retention);assert.equal(rr.coverage.expired,1);assert.equal(rr.coverage.eligible,1);assert.equal(rr.coverage.no_answer,1);
   await pool.query('UPDATE prompt_execution SET result=NULL,result_purged_at=clock_timestamp() WHERE id=$1',[oldRows[1].id]);await assert.rejects(exported(retention,rr),fail(409));
   await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[retention.workspace]);rr=await get(retention);assert.equal(rr.coverage.expired,1);assert.equal(rr.coverage.eligible,1);
+  manifest(rr);assert.equal(rr.evidenceStates.find(e=>e.id===oldRows[1].id)?.eligibility,'expired');
   const revived=await get(retention);await pool.query("UPDATE prompt_execution SET result=jsonb_set(result,'{text}','\"Beta\"') WHERE id=$1",[oldRows[0].id]);await assert.rejects(exported(retention,revived),fail(409));
   await assert.rejects(exported(retention,await get(retention),viewer,AbortSignal.abort()),fail(499));
   // A database/session timezone may differ from the report timezone. Find a
