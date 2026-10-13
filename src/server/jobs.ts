@@ -17,6 +17,8 @@ import {runMetaDeletionBatch} from './meta-callbacks.ts';
 import {expireMetaFlows} from './meta-auth.ts';
 import {metaQueue,expireMetaImportPages} from './meta-imports.ts';
 import {runMetaImportStep,reconcileMetaImports} from './meta-import-worker.ts';
+import {metaInventoryQueue,expireMetaInventoryPages} from './meta-inventory.ts';
+import {runMetaInventoryStep,reconcileMetaInventories} from './meta-inventory-worker.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
 
 const queueName = 'setup-probe';
@@ -47,6 +49,7 @@ export function getBoss(): Promise<PgBoss> {
         await boss.createQueue(rankQueue);
         await boss.createQueue(rankPollQueue);
         await boss.createQueue(metaQueue);
+        await boss.createQueue(metaInventoryQueue);
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -142,6 +145,7 @@ export function startWorker(): Promise<void> {
       await reconcilePromptExecutionJobs();
       await reconcileDomainRedirectChecks();
       await reconcileMetaImports();
+      await reconcileMetaInventories();
       await boss.work<{ probeId: string }>(queueName, { batchSize: 5 }, async (jobs) => {
         for (const job of jobs) {
           if (typeof job.data?.probeId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(job.data.probeId)) {
@@ -164,6 +168,7 @@ export function startWorker(): Promise<void> {
       });
       await startGoogleImportWorker(boss);
       await boss.work<{importId:string}>(metaQueue,{batchSize:1},async jobs=>{for(const job of jobs)await runMetaImportStep(job.data?.importId);});
+      await boss.work<{inventoryId:string}>(metaInventoryQueue,{batchSize:1},async jobs=>{for(const job of jobs)await runMetaInventoryStep(job.data?.inventoryId);});
       await boss.work<{runId:string}>(keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
       await boss.work<{dispatchId:string}>(rankQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeRankDispatch(job.data?.dispatchId);});
       await boss.work<{dispatchId:string;generation:string}>(rankPollQueue,{batchSize:1},async jobs=>{for(const job of jobs)await pollRankDispatch(job.data?.dispatchId,job.data?.generation);});
@@ -179,7 +184,7 @@ export function startWorker(): Promise<void> {
         if (!retentionTask) retentionTask = runRetentionBatch()
           .catch(() => console.error('Retention cleanup failed; inspect retention status and database availability.'))
           .finally(() => { retentionTask = undefined; });
-        if (!metaDeletionTask) metaDeletionTask = runMetaDeletionBatch().then(() => expireMetaFlows()).then(() => expireMetaImportPages()).then(() => reconcileMetaImports())
+        if (!metaDeletionTask) metaDeletionTask = runMetaDeletionBatch().then(() => expireMetaFlows()).then(() => expireMetaImportPages()).then(() => expireMetaInventoryPages()).then(() => reconcileMetaImports()).then(() => reconcileMetaInventories())
           .catch(() => console.error('Meta data cleanup failed; inspect local deletion status and database availability.'))
           .finally(() => { metaDeletionTask = undefined; });
       }, 10_000);

@@ -6,6 +6,8 @@ An MIT, Docker-first application in development, combining web analytics, SEO re
 
 Rank tracking adds tracker/keyword management, quoted manual checks, retained per-keyword comparisons and owner-approved recurring checks with spending ceilings. Its remaining reporting, metrics and live-provider gates are recorded in the [rank contract](docs/rank-tracking.md).
 
+Native Meta connections now support manual daily reports, latest complete daily coverage, retained campaign inventories and CSV exports. Inventory includes campaigns without reported activity and preserves separate configured/effective statuses. Local synthetic acceptance and remaining provider gates are recorded in [Meta reports](docs/meta-reports.md) and [campaign inventory](docs/meta-campaigns.md).
+
 Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, broader rank reporting, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
 The [current implementation and release gaps](docs/release-status.md) separates usable workflows, partial requirements and pending work across all 81 requirements, with their validation limits.
@@ -33,6 +35,7 @@ The first usable release must reach the complete technical capability baseline o
 17. [Saved keywords, tags, exports and metric refreshes](docs/saved-keywords.md)
 18. [Rank tracking, recurring checks and acceptance evidence](docs/rank-tracking.md)
 19. [Native Meta advertising report contract and provider gates](docs/meta-reports.md)
+20. [Retained Meta campaign inventory and acceptance](docs/meta-campaigns.md)
 
 ## Product direction
 

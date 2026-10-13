@@ -6,6 +6,7 @@ import {disableMetaApp,disconnectMeta,getMetaApp,getMetaConnection,inspectMetaAc
 import {acceptMetaDeletion,getMetaDeletionStatus} from './meta-callbacks.ts';
 import {cancelMetaImport,enqueueMetaImport,listMetaImports,readMetaImport} from './meta-imports.ts';
 import {exportLatestMetaReport,getLatestMetaReport} from './meta-latest.ts';
+import {enqueueMetaInventory,listMetaInventories,readMetaInventory,readLatestMetaInventory,cancelMetaInventory,exportMetaInventory} from './meta-inventory.ts';
 
 const uuid='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 const headers={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
@@ -75,6 +76,25 @@ export async function handleMeta(request:Request):Promise<Response|null>{
  if(!project)return json({error:'Not found.'},404);
  const [,projectId,operation='']=project;
  if(operation===''&&request.method==='GET')return json(await listMetaConnections(projectId,session.user.id,url.searchParams));
+ const inventories=operation.match(new RegExp(`^connections/(${uuid})/campaign-inventories$`));
+ if(inventories){
+  if(request.method==='GET')return json(await listMetaInventories(projectId,session.user.id,inventories[1],url.searchParams));
+  if(url.searchParams.size)throw new FoundationError(400,'Unexpected campaign inventory parameters.');
+  return json(await enqueueMetaInventory(projectId,session.user.id,inventories[1],await readJson(request,32768)));
+ }
+ const currentInventory=operation.match(new RegExp(`^connections/(${uuid})/campaigns/latest$`));
+ if(currentInventory)return request.method==='GET'?json(await readLatestMetaInventory(projectId,session.user.id,currentInventory[1],url.searchParams)):json({error:'Method not allowed.'},405);
+ const inventory=operation.match(new RegExp(`^campaign-inventories/(${uuid})(/(?:cancel|export))?$`));
+ if(inventory){
+  if(!inventory[2]&&request.method==='GET')return json(await readMetaInventory(projectId,session.user.id,inventory[1],url.searchParams));
+  if(inventory[2]&&request.method==='POST'){
+   if(url.searchParams.size)throw new FoundationError(400,'Unexpected campaign inventory parameters.');
+   const body=await readJson(request,32768);
+   if(inventory[2]==='/cancel')return json(await cancelMetaInventory(projectId,session.user.id,inventory[1],body));
+   const result=await exportMetaInventory(projectId,session.user.id,inventory[1],body,request.signal);
+   return new Response(result.body,{headers:{...headers,'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount)}});
+  }return json({error:'Method not allowed.'},405);
+ }
  const latest=operation.match(new RegExp(`^connections/(${uuid})/latest(/export)?$`));
  if(latest){
   if(!latest[2]&&request.method==='GET')return json(await getLatestMetaReport(projectId,session.user.id,latest[1],url.searchParams));

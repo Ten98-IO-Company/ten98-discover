@@ -44,7 +44,7 @@ try {
     const url = new URL(route.request().url())
     if (url.origin !== config.appUrl) { external++; return route.abort() }
     requests.push(url.pathname)
-    if (route.request().method()==='POST' && /\/meta\/(?:connections\/[^/]+\/imports|imports\/[^/]+\/cancel)$/.test(url.pathname)) metaReportWrites.push(url.pathname)
+    if (route.request().method()==='POST' && /\/meta\/(?:connections\/[^/]+\/(?:imports|campaign-inventories)|(?:imports|campaign-inventories)\/[^/]+\/cancel)$/.test(url.pathname)) metaReportWrites.push(url.pathname)
     return route.continue()
   })
   page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', () => errors++)
@@ -239,6 +239,34 @@ try {
   await latest.click();await heading('Latest complete coverage');await page.getByRole('button',{name:'Back to imports',exact:true}).click();await heading('Meta reports')
   assert.deepEqual(metaReportWrites,[]);assert.equal((await pool.query('SELECT count(*) FROM meta_import WHERE connection_id=$1',[metaSource])).rows[0].count,'2')
   console.log('PASS navigation: viewer reads disconnected-source coverage, complete empty day supersedes older rows, exact CSV download and receipt/Back handoff through production UI/API.')
+
+  const inventoryComplete=randomUUID(),inventoryPartial=randomUUID(),inventoryEmpty=randomUUID()
+  const inventoryDefinition={provider:'meta_ads',accountId:metaDefinition.accountId,accountName:metaDefinition.accountName,currency:'AED',timeZone:'Asia/Dubai',graphVersion:'v26.0',definitionVersion:1,kind:'campaign_inventory',effectiveStatuses:['ACTIVE','PAUSED','ARCHIVED','DELETED','IN_PROCESS','WITH_ISSUES']}
+  async function inventory(id:string,status:string,age:number,rows:unknown[]){
+    await pool.query(`INSERT INTO meta_campaign_inventory(id,workspace_id,project_id,user_id,connection_id,grant_id,connection_revision,app_revision,request_id,source,status,created_at,completed_at,first_fetched_at,last_fetched_at,pages,row_count)
+      VALUES($1,$2,$3,$4,$5,$6,1,1,$7,$8,$9,clock_timestamp()-make_interval(mins=>$10),clock_timestamp()-make_interval(mins=>$10)+interval '10 seconds',clock_timestamp()-make_interval(mins=>$10)+interval '1 second',clock_timestamp()-make_interval(mins=>$10)+interval '9 seconds',1,$11)`,[id,b.id,b1,other.id,metaSource,metaGrant,randomUUID(),JSON.stringify(inventoryDefinition),status,age,rows.length])
+    await pool.query('INSERT INTO meta_campaign_inventory_page(inventory_id,project_id,workspace_id,page,rows,row_count,content_hash) VALUES($1,$2,$3,0,$4,$5,$6)',[id,b1,b.id,JSON.stringify(rows),rows.length,createHash('sha256').update(JSON.stringify(rows)).digest('hex')])
+  }
+  await inventory(inventoryComplete,'completed',3,[{id:'1234567890123456789012345678901234567890',accountId:metaDefinition.accountId,name:'=Campaign without activity',status:'PAUSED',effectiveStatus:'NEW_PROVIDER_STATUS'}])
+  await inventory(inventoryPartial,'partial',2,[{id:'2',accountId:metaDefinition.accountId,name:'Partial campaign only',status:null,effectiveStatus:'ARCHIVED'}])
+  await page.getByRole('button',{name:'Campaign inventory',exact:true}).click();await heading('Campaign inventory')
+  const inventoryTable=page.getByRole('region',{name:'Saved campaigns',exact:true})
+  await inventoryTable.getByText('=Campaign without activity',{exact:true}).waitFor();await inventoryTable.getByText('Unknown: NEW_PROVIDER_STATUS',{exact:true}).waitFor()
+  assert.equal(await inventoryTable.locator('tbody tr').count(),1);assert.equal(await page.getByRole('button',{name:'Refresh campaign inventory',exact:true}).count(),0)
+  const inventoryDownloadReady=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();const inventoryDownload=await inventoryDownloadReady
+  assert.equal(inventoryDownload.suggestedFilename(),'meta-campaign-inventory.csv');const inventoryCsv=await readFile(await inventoryDownload.path(),'utf8')
+  assert.match(inventoryCsv,/"coverage"/);assert.match(inventoryCsv,/"complete"/);assert.match(inventoryCsv,/"'=Campaign without activity"/);assert.match(inventoryCsv,/"1234567890123456789012345678901234567890"/);assert.match(inventoryCsv,/"PAUSED","NEW_PROVIDER_STATUS"/)
+  assert.equal(inventoryCsv.split('\r\n').filter(line=>line.startsWith('"campaign",')).length,1)
+  await page.getByLabel('Inventory history',{exact:true}).selectOption(inventoryPartial);await inventoryTable.getByText('Partial campaign only',{exact:true}).waitFor()
+  await page.getByRole('button',{name:'Show latest complete',exact:true}).click();await inventoryTable.getByText('=Campaign without activity',{exact:true}).waitFor()
+  await page.setViewportSize({width:360,height:800});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:'private/navigation-browser/meta-campaign-360.png',fullPage:true});await page.setViewportSize({width:1280,height:900})
+  await inventory(inventoryEmpty,'completed',1,[]);await page.getByRole('button',{name:'Reload saved inventory',exact:true}).click()
+  await page.getByText('No campaigns returned on this page. Review the snapshot coverage before drawing conclusions.',{exact:true}).waitFor();assert.equal(await inventoryTable.count(),0);assert.equal(await page.getByRole('button',{name:'Export CSV',exact:true}).isEnabled(),true)
+  await pool.query('UPDATE meta_campaign_inventory SET data_expired_at=clock_timestamp() WHERE id=$1',[inventoryEmpty]);await page.getByRole('button',{name:'Reload saved inventory',exact:true}).click()
+  await page.getByText(/This snapshot.s campaign data has expired\./,{exact:true}).waitFor();assert.equal(await inventoryTable.count(),0);assert.equal(await page.getByRole('button',{name:'Export CSV',exact:true}).count(),0)
+  await page.getByRole('button',{name:'Back to reports',exact:true}).click();await heading('Meta reports');await page.waitForFunction((id:string)=>(document.querySelector('select[id$="import"]')as HTMLSelectElement|null)?.value===id,metaEmpty)
+  assert.deepEqual(metaReportWrites,[]);assert.equal((await pool.query('SELECT count(*) FROM meta_campaign_inventory WHERE connection_id=$1',[metaSource])).rows[0].count,'3')
+  console.log('PASS navigation: disconnected-source campaign snapshots, exact CSV, explicit partial history, empty/expired latest without fallback, mobile rendering and fresh report handoff; no Meta writes.')
 
   await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
   const oldSession = await hold(`**/api/workspaces/${a.id}/projects`, 401)

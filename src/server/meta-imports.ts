@@ -8,9 +8,31 @@ import {canonicalHash} from './context-input.ts';
 import {contentReceipt,readContentCursor,withContentProject} from './project-context.ts';
 import {prepareMetaReportSource,withMetaReportSource,type MetaReportSource} from './meta-auth.ts';
 import {normalizeMetaRows,type MetaDailyRow,type MetaReportKind} from './meta-report-rows.ts';
+import type {MetaRateHints} from './meta-http.ts';
 
 export const metaQueue='meta-report-import';
 export const metaActive=['queued','submitting','waiting','reading'];
+/** Observed cooldown receipts are shared across both datasets. Account identity,
+ * not connection UUID, scopes account hints; app hints cover the registration. */
+export async function observedMetaCooldown(client:PoolClient,registrationId:string,accountId:string):Promise<Date|null>{
+ return(await client.query<{until:Date|null}>(`SELECT max(until) AS until FROM (
+  SELECT GREATEST(i.app_cooldown_until,CASE WHEN i.source->>'accountId'=$2 THEN i.account_cooldown_until END) AS until FROM meta_import i JOIN meta_oauth_flow f ON f.id=i.grant_id
+   WHERE f.registration_id=$1 AND i.source IS NOT NULL AND i.deleted_at IS NULL AND i.data_expired_at IS NULL
+  UNION ALL
+  SELECT GREATEST(i.app_cooldown_until,CASE WHEN i.source->>'accountId'=$2 THEN i.account_cooldown_until END) AS until FROM meta_campaign_inventory i JOIN meta_oauth_flow f ON f.id=i.grant_id
+   WHERE f.registration_id=$1 AND i.source IS NOT NULL AND i.deleted_at IS NULL AND i.data_expired_at IS NULL
+ ) hints WHERE until>clock_timestamp()`,[registrationId,accountId])).rows[0]?.until??null;
+}
+export class MetaCooldown extends Error {until:Date;constructor(until:Date){super('An observed Meta cooldown is active.');this.until=until;}}
+/** Caller holds its exact source/receipt fence. Only validated HTTP hints enter
+ * these fields; a successful final response must not lose its rate evidence. */
+export async function recordMetaCooldown(client:PoolClient,kind:'report'|'inventory',id:string,rate:MetaRateHints){
+ const app=(rate.appUtilizationPercent??0)>=90,account=(rate.accountUtilizationPercent??0)>=90;
+ const seconds=Math.max(rate.retryAfterSeconds??0,app||account?60:0);if(!seconds)return;
+ const table=kind==='report'?'meta_import':'meta_campaign_inventory';
+ await client.query(`UPDATE ${table} SET app_cooldown_until=CASE WHEN $2 THEN GREATEST(app_cooldown_until,clock_timestamp()+make_interval(secs=>$4)) ELSE app_cooldown_until END,
+  account_cooldown_until=CASE WHEN $3 THEN GREATEST(account_cooldown_until,clock_timestamp()+make_interval(secs=>$4)) ELSE account_cooldown_until END WHERE id=$1`,[id,app,account||!app,seconds]);
+}
 export type MetaReportDefinition={provider:'meta_ads';accountId:string;accountName:string;currency:string;timeZone:string;graphVersion:'v26.0';report:MetaReportKind;definitionVersion:1;level:'account'|'campaign';breakdowns:[];attribution:{mode:'meta_reported';requestedWindows:['7d_click','1d_view'];reportingPolicy:'meta_mixed';effectiveAdSetSettings:'unknown'}};
 export type MetaImport={id:string;workspace_id:string;project_id:string;user_id:string;connection_id:string;grant_id:string;connection_revision:number;app_revision:number;request_id:string;report:MetaReportKind;definition_version:number;date_from:string;date_to:string;source:MetaReportDefinition|null;definition_key:string|null;status:string;generation:string;lease_token:string|null;lease_expires_at:Date|null;provider_report_id:string|null;next_cursor:string|null;cursor_hashes:string[];poll_attempts:number;retry_attempts:number;pages:number;row_count:number;next_attempt_at:Date;deadline_at:Date;submitted_at:Date|null;completed_at:Date|null;diagnostic_code:string|null;warnings:string[];data_expired_at:Date|null;deleted_at:Date|null;payload_cleanup_completed_at:Date|null;created_at:Date;updated_at:Date};
 export const metaImportFields='i.*,i.date_from::text AS date_from,i.date_to::text AS date_to';
@@ -109,7 +131,7 @@ export async function expireMetaImportPages(){
   ORDER BY i.completed_at,i.id LIMIT 1`)).rows[0];if(!candidate)return {imports:0,pages:0};
  return await withMetaImport(candidate.id,async(client,row)=>{
   const state=await accessState(client,row);if(!row.completed_at||!state.expired&&!row.deleted_at)return {imports:0,pages:0};
-  await client.query('UPDATE meta_import SET data_expired_at=COALESCE(data_expired_at,clock_timestamp()),lease_token=NULL,lease_expires_at=NULL,provider_report_id=NULL,next_cursor=NULL,cursor_hashes=\'{}\',updated_at=clock_timestamp() WHERE id=$1',[row.id]);
+  await client.query('UPDATE meta_import SET data_expired_at=COALESCE(data_expired_at,clock_timestamp()),app_cooldown_until=NULL,account_cooldown_until=NULL,lease_token=NULL,lease_expires_at=NULL,provider_report_id=NULL,next_cursor=NULL,cursor_hashes=\'{}\',updated_at=clock_timestamp() WHERE id=$1',[row.id]);
   const deleted=await client.query('DELETE FROM meta_import_page WHERE import_id=$1 AND page IN(SELECT page FROM meta_import_page WHERE import_id=$1 ORDER BY page LIMIT 5)',[row.id]);
   if(!(await client.query('SELECT 1 FROM meta_import_page WHERE import_id=$1 LIMIT 1',[row.id])).rowCount)await client.query('UPDATE meta_import SET payload_cleanup_completed_at=clock_timestamp() WHERE id=$1',[row.id]);
   return {imports:1,pages:deleted.rowCount??0};

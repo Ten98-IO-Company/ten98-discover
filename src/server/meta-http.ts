@@ -26,6 +26,7 @@ const input = z.discriminatedUnion('operation', [
   z.object({ ...base, operation: z.literal('permissions'), token }).strict(),
   z.object({ ...base, operation: z.literal('accounts'), token, after: cursor.optional() }).strict(),
   z.object({ ...base, operation: z.literal('account'), token, accountId: decimalId }).strict(),
+  z.object({ ...base, operation: z.literal('campaigns'), token, accountId: decimalId, after: cursor.optional() }).strict(),
   z.object({ ...base, operation: z.literal('revoke'), token }).strict(),
   z.object({ ...base, operation: z.literal('submitReport'), token, accountId: decimalId, report, from: day, to: day }).strict()
     .refine(value => value.from <= value.to && Date.parse(value.to + 'T00:00:00Z') - Date.parse(value.from + 'T00:00:00Z') <= 30 * 86_400_000),
@@ -98,6 +99,12 @@ function build(raw: MetaRequest) {
       }
       else if (request.operation === 'reportPage') {
         path = request.reportRunId + '/insights'; query.set('fields', reportFields[request.report]); query.set('limit', '500');
+        if (request.after) query.set('after', request.after);
+      }
+      else if (request.operation === 'campaigns') {
+        path = 'act_' + request.accountId + '/campaigns';
+        query.set('fields', 'id,account_id,name,status,effective_status'); query.set('limit', '100');
+        query.set('effective_status', JSON.stringify(['ACTIVE', 'PAUSED', 'ARCHIVED', 'DELETED', 'IN_PROCESS', 'WITH_ISSUES']));
         if (request.after) query.set('after', request.after);
       }
       else {

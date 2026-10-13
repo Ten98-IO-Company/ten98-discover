@@ -1,0 +1,65 @@
+CREATE TABLE meta_campaign_inventory (
+  id uuid PRIMARY KEY,
+  workspace_id text NOT NULL,
+  project_id text NOT NULL,
+  user_id text NOT NULL REFERENCES "user"(id) ON DELETE RESTRICT,
+  connection_id uuid NOT NULL,
+  grant_id uuid NOT NULL,
+  connection_revision integer NOT NULL CHECK(connection_revision>0),
+  app_revision integer NOT NULL CHECK(app_revision>0),
+  request_id uuid NOT NULL,
+  source jsonb,
+  status text NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','reading','completed','partial','failed','denied','cancelled')),
+  generation bigint NOT NULL DEFAULT 0 CHECK(generation>=0),
+  lease_token uuid,
+  lease_expires_at timestamptz,
+  next_cursor text CHECK(octet_length(next_cursor) BETWEEN 1 AND 4096),
+  cursor_hashes text[] NOT NULL DEFAULT '{}',
+  retry_attempts integer NOT NULL DEFAULT 0 CHECK(retry_attempts BETWEEN 0 AND 3),
+  pages integer NOT NULL DEFAULT 0 CHECK(pages BETWEEN 0 AND 50),
+  row_count integer NOT NULL DEFAULT 0 CHECK(row_count BETWEEN 0 AND 5000),
+  next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  deadline_at timestamptz NOT NULL DEFAULT (clock_timestamp()+interval '30 minutes'),
+  first_fetched_at timestamptz,
+  last_fetched_at timestamptz,
+  completed_at timestamptz,
+  diagnostic_code text CHECK(length(diagnostic_code) BETWEEN 1 AND 120),
+  warnings jsonb NOT NULL DEFAULT '[]',
+  data_expired_at timestamptz,
+  deleted_at timestamptz,
+  payload_cleanup_completed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY(connection_id,project_id,workspace_id) REFERENCES meta_connection(id,project_id,workspace_id) ON DELETE CASCADE,
+  FOREIGN KEY(grant_id,connection_id,project_id,workspace_id) REFERENCES meta_oauth_flow(id,connection_id,project_id,workspace_id),
+  UNIQUE(id,project_id,workspace_id),
+  UNIQUE(project_id,request_id),
+  CHECK((deleted_at IS NULL)=(source IS NOT NULL)),
+  CHECK(source IS NULL OR jsonb_typeof(source)='object'),
+  CHECK(jsonb_typeof(warnings)='array' AND jsonb_array_length(warnings)<=32),
+  CHECK(cardinality(cursor_hashes)<=50 AND (cardinality(cursor_hashes)=0 OR (array_ndims(cursor_hashes)=1 AND array_lower(cursor_hashes,1)=1)) AND array_position(cursor_hashes,NULL) IS NULL),
+  CHECK((lease_token IS NULL)=(lease_expires_at IS NULL)),
+  CHECK((first_fetched_at IS NULL)=(last_fetched_at IS NULL)),
+  CHECK(last_fetched_at>=first_fetched_at),
+  CHECK((status IN ('queued','reading'))=(completed_at IS NULL)),
+  CHECK(payload_cleanup_completed_at IS NULL OR data_expired_at IS NOT NULL OR deleted_at IS NOT NULL)
+);
+CREATE UNIQUE INDEX meta_inventory_active_connection_idx ON meta_campaign_inventory(connection_id) WHERE status IN ('queued','reading');
+CREATE INDEX meta_inventory_project_idx ON meta_campaign_inventory(project_id,created_at,id);
+CREATE INDEX meta_inventory_grant_idx ON meta_campaign_inventory(grant_id,id);
+CREATE INDEX meta_inventory_due_idx ON meta_campaign_inventory(next_attempt_at,id) WHERE status IN ('queued','reading');
+CREATE INDEX meta_inventory_retention_idx ON meta_campaign_inventory(project_id,completed_at,id) WHERE status NOT IN ('queued','reading');
+
+CREATE TABLE meta_campaign_inventory_page (
+  inventory_id uuid NOT NULL,
+  project_id text NOT NULL,
+  workspace_id text NOT NULL,
+  page integer NOT NULL CHECK(page BETWEEN 0 AND 49),
+  rows jsonb NOT NULL,
+  row_count integer NOT NULL CHECK(row_count BETWEEN 0 AND 100),
+  content_hash text NOT NULL CHECK(content_hash ~ '^[a-f0-9]{64}$'),
+  fetched_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY(inventory_id,page),
+  FOREIGN KEY(inventory_id,project_id,workspace_id) REFERENCES meta_campaign_inventory(id,project_id,workspace_id) ON DELETE CASCADE,
+  CHECK(jsonb_typeof(rows)='array' AND jsonb_array_length(rows)=row_count)
+);

@@ -52,13 +52,18 @@ export async function getMetaDeletionStatus(code:string):Promise<{status:Deletio
 // access fence for completed erasure. Only a covered CURRENT grant owns its token.
 const importNeedsCleanup=`i.deleted_at IS NULL OR i.source IS NOT NULL OR i.provider_report_id IS NOT NULL OR i.next_cursor IS NOT NULL
   OR cardinality(i.cursor_hashes)>0 OR i.lease_token IS NOT NULL OR i.lease_expires_at IS NOT NULL OR i.payload_cleanup_completed_at IS NULL
+  OR i.app_cooldown_until IS NOT NULL OR i.account_cooldown_until IS NOT NULL
   OR i.status IN ('queued','submitting','waiting','reading')
   OR EXISTS(SELECT 1 FROM meta_import_page ip WHERE ip.import_id=i.id)`;
+const inventoryNeedsCleanup=`i.deleted_at IS NULL OR i.source IS NOT NULL OR i.next_cursor IS NOT NULL OR cardinality(i.cursor_hashes)>0
+  OR i.lease_token IS NOT NULL OR i.lease_expires_at IS NOT NULL OR i.payload_cleanup_completed_at IS NULL OR i.app_cooldown_until IS NOT NULL OR i.account_cooldown_until IS NOT NULL OR i.status IN ('queued','reading')
+  OR EXISTS(SELECT 1 FROM meta_campaign_inventory_page ip WHERE ip.inventory_id=i.id)`;
 const needsCleanup=`f.phase='completed' AND f.registration_id=$1 AND f.subject_hash=$2 AND f.start_epoch<$3::bigint
   AND (f.invalidated_at IS NULL OR f.scopes IS NOT NULL OR f.token_type IS NOT NULL OR f.access_expires_at IS NOT NULL OR f.data_access_expires_at IS NOT NULL
     OR (c.current_grant_id=f.id AND (c.status<>'deleted' OR c.encrypted_token IS NOT NULL OR c.account_id IS NOT NULL OR c.account_name IS NOT NULL
       OR c.currency IS NOT NULL OR c.time_zone IS NOT NULL OR c.account_status IS NOT NULL OR c.validated_at IS NOT NULL))
-    OR EXISTS(SELECT 1 FROM meta_import i WHERE i.grant_id=f.id AND i.connection_id=f.connection_id AND i.project_id=f.project_id AND i.workspace_id=f.workspace_id AND (${importNeedsCleanup})))`;
+    OR EXISTS(SELECT 1 FROM meta_import i WHERE i.grant_id=f.id AND i.connection_id=f.connection_id AND i.project_id=f.project_id AND i.workspace_id=f.workspace_id AND (${importNeedsCleanup}))
+    OR EXISTS(SELECT 1 FROM meta_campaign_inventory i WHERE i.grant_id=f.id AND i.connection_id=f.connection_id AND i.project_id=f.project_id AND i.workspace_id=f.workspace_id AND (${inventoryNeedsCleanup})))`;
 
 /** One restart-safe local batch. No token/key reads, provider traffic or user session.
  * Reports remain linked to their original grant across reconnects. The signed
@@ -105,7 +110,7 @@ export async function runMetaDeletionBatch():Promise<{processedRequests:number;c
             if(report){
               // A tombstone fences publication even if this batch leaves pages.
               // Do not erase the recorded outcome/counts or the immutable grant.
-              await client.query(`UPDATE meta_import SET deleted_at=COALESCE(deleted_at,clock_timestamp()),source=NULL,
+              await client.query(`UPDATE meta_import SET deleted_at=COALESCE(deleted_at,clock_timestamp()),source=NULL,app_cooldown_until=NULL,account_cooldown_until=NULL,
                 provider_report_id=NULL,next_cursor=NULL,cursor_hashes='{}',warnings='[]',lease_token=NULL,lease_expires_at=NULL,
                 generation=LEAST(generation::numeric+1,9223372036854775807)::bigint,
                 diagnostic_code=CASE WHEN status IN ('queued','submitting','waiting','reading') THEN 'grant_deleted' ELSE diagnostic_code END,
@@ -116,6 +121,19 @@ export async function runMetaDeletionBatch():Promise<{processedRequests:number;c
                 (SELECT page FROM meta_import_page WHERE import_id=$1 ORDER BY page LIMIT 5)`,[report.id]);
               await client.query(`UPDATE meta_import SET payload_cleanup_completed_at=clock_timestamp()
                 WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM meta_import_page WHERE import_id=$1)`,[report.id]);
+            }else{
+              // Across both datasets, each batch erases at most one receipt/five pages.
+              const inventory=(await client.query<{id:string}>(`SELECT i.id FROM meta_campaign_inventory i WHERE i.project_id=$1 AND i.workspace_id=$2
+                AND i.grant_id=ANY($3::uuid[]) AND (${inventoryNeedsCleanup}) ORDER BY i.id LIMIT 1 FOR UPDATE`,[project.project_id,project.workspace_id,grants])).rows[0];
+              if(inventory){
+                await client.query(`UPDATE meta_campaign_inventory SET deleted_at=COALESCE(deleted_at,clock_timestamp()),source=NULL,app_cooldown_until=NULL,account_cooldown_until=NULL,next_cursor=NULL,cursor_hashes='{}',warnings='[]',lease_token=NULL,lease_expires_at=NULL,
+                  generation=LEAST(generation::numeric+1,9223372036854775807)::bigint,first_fetched_at=NULL,last_fetched_at=NULL,
+                  diagnostic_code=CASE WHEN status IN ('queued','reading') THEN 'grant_deleted' ELSE diagnostic_code END,
+                  status=CASE WHEN status IN ('queued','reading') THEN 'denied' ELSE status END,
+                  completed_at=COALESCE(completed_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=$1`,[inventory.id]);
+                await client.query('DELETE FROM meta_campaign_inventory_page WHERE inventory_id=$1 AND page IN(SELECT page FROM meta_campaign_inventory_page WHERE inventory_id=$1 ORDER BY page LIMIT 5)',[inventory.id]);
+                await client.query('UPDATE meta_campaign_inventory SET payload_cleanup_completed_at=clock_timestamp() WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM meta_campaign_inventory_page WHERE inventory_id=$1)',[inventory.id]);
+              }
             }
           }
         }

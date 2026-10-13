@@ -117,6 +117,10 @@ jobs:
             await client.query('CREATE DATABASE ten98_meta_auth_imports_ci');
             await client.query('CREATE DATABASE ten98_meta_auth_worker_ci');
             await client.query('CREATE DATABASE ten98_meta_auth_latest_ci');
+            await client.query('CREATE DATABASE ten98_meta_auth_inventory_ci');
+            await client.query('CREATE DATABASE ten98_meta_auth_inventory_worker_ci');
+            await client.query('CREATE DATABASE ten98_meta_auth_inventory_boundary_ci');
+            await client.query('CREATE DATABASE ten98_meta_callbacks_inventory_ci');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
@@ -155,6 +159,10 @@ jobs:
               ['ten98_meta_auth_imports_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-import-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_meta_auth_latest_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-latest-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_meta_auth_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-import-worker-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_meta_auth_inventory_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_meta_auth_inventory_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-worker-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_meta_auth_inventory_boundary_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-boundary-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_meta_callbacks_inventory_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-deletion-integration.ts']], { TEN98_META_CALLBACKS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
             ]) {
               const database = new URL(process.env.DATABASE_URL);
               database.pathname = `/${name}`;
