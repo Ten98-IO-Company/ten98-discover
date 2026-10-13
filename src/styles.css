@@ -71,6 +71,26 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .site-audits table { min-width: 640px; }
 .site-audits .metric-grid { grid-template-columns: repeat(auto-fit,minmax(min(100%,120px),1fr)); }
 .keyword-research td:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
+.conversion-tabs { margin-bottom: 20px; }
+.conversion-fields, .conversions fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
+.conversion-step { min-width: 0; margin: 16px 0; padding: 18px; border: 1px solid var(--line); border-radius: 8px; }
+.conversion-step legend { padding: 0 6px; font-weight: 600; }
+.conversion-match, .conversion-property { display: grid; grid-template-columns: minmax(0,1fr); gap: 10px; }
+.conversion-match > .row, .conversion-property > .row { display: block; min-width: 0; }
+.conversion-match > .hint, .conversion-property > .hint, .conversion-property > .btn { grid-column: 1 / -1; }
+.conversion-property > .btn { justify-self: start; }
+.conversions fieldset.conversion-property { margin: 12px 0; }
+.conversion-match legend, .conversion-property legend { margin-bottom: 8px; }
+@media (min-width:1000px) {
+  .conversion-match { grid-template-columns: 1fr 1fr 1.6fr; }
+  .conversion-property { grid-template-columns: 1.2fr 1fr .8fr 1.4fr; }
+}
+.conversions table { min-width: 720px; }
+.conversions td:not(:first-child) { overflow-wrap: normal; }
+.conversion-bar { height: 6px; margin-top: 10px; background: var(--blue-tint); border-radius: 3px; overflow: hidden; }
+.conversion-bar span { display: block; height: 100%; background: var(--blue); }
+.conversion-witness { padding: 14px 0; border-top: 1px solid var(--line); }
+.conversion-witness li { margin-bottom: 12px; }
 .google-reports .field, .google-reports .stack > p { margin: 0; }
 .google-connect > summary { min-height: 44px; padding: 9px 0; cursor: pointer; font-weight: 600; }
 .google-connect[open] > summary { margin-bottom: 14px; }

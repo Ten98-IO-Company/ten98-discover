@@ -12,6 +12,7 @@ import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import { exploreAnalytics } from './explorer.ts';
+import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
@@ -189,6 +190,24 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`reports:${user.id}:${request.method === 'GET' ? 'read' : 'write'}`, request.method === 'GET' ? 120 : 30);
       const response = await handleReports(request, user.id);
       if (response) return response;
+    }
+    const analysisRoute=path.match(new RegExp(`^/api/projects/(${id})/(funnels|goals)(?:/(${id})(?:/(update|delete|result|witnesses))?)?$`,'i'));
+    if(analysisRoute){
+      const [,projectId,collection,analysisId,action]=analysisRoute,kind=collection.toLowerCase()==='funnels'?'funnel':'goal';
+      await limit(`analyses:${user.id}:${request.method==='GET'?'read':'write'}`,request.method==='GET'?60:30);
+      if(request.method==='GET'){
+        if(!analysisId)return json(await listAnalyses(projectId,user.id,kind,url.searchParams));
+        if(!action){if(url.search)throw new FoundationError(400,'Analysis details do not accept query parameters.');return json(await getAnalysis(projectId,user.id,kind,analysisId));}
+        if(action==='result'||action==='witnesses')return json(await runAnalysis(projectId,user.id,kind,analysisId,url.searchParams,action==='witnesses'));
+      }
+      if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'Analysis changes do not accept query parameters.');
+        const input=await readJson(request,65536);
+        if(!analysisId)return json(await saveAnalysis(projectId,user.id,kind,input));
+        if(action==='update')return json(await saveAnalysis(projectId,user.id,kind,input,analysisId));
+        if(action==='delete')return json(await deleteAnalysis(projectId,user.id,kind,analysisId,input));
+      }
+      return json({error:'Method not allowed.'},405);
     }
     const auditRoute=path.match(new RegExp(`^/api/projects/(${id})/audits(?:/(setup|${id})(?:/(pages|issues|cancel|delete)(?:/(${id})(?:/(links))?)?)?)?$`,'i'));
     if(auditRoute){

@@ -224,3 +224,14 @@ After quota became available, the same bounded CLI **2.1.1**, **kimi-code/k3-256
 | Site Audit screen | None observed; captured output contained only the CLI version event | Runner stopped at the 900-second deadline; no draft artifact returned |
 
 The two deadlines triggered explicit GPT handoffs for the complex execution and evidence-view lifecycle work. No repeated model retry or quota polling was used to infer progress. Only public source/contracts and curated skills were supplied to Kimi; private test environments, credentials, customer data and operational logs were excluded. Browser acceptance is tracked in [research interface evidence](research-ui.md). Per-task tokens, subscription-use deltas, resolved provider effort and savings remain unknown.
+
+### Conversion definition swarm — 2026-10-13
+
+Two smaller, independent tasks used CLI **2.1.1**, **kimi-code/k3-256k**, explicit thinking and maximum effort. The same Skill-only runner, eight-step ceiling, two internal attempts per failing step, private output directories and fixed deadlines applied. GPT coordinated the parallel workers; native Kimi delegation remained disabled. Only reviewed public specifications/source and curated Markdown skills were supplied.
+
+| Task | Observed skills | Observed result |
+|---|---|---|
+| Definition parser | Ponytail | Successful draft; 325.2 seconds between captured output creation and final write |
+| Controlled criteria fields | Ponytail, Design UX Copy | Successful draft; 281.4 seconds of runner wall time within a 600-second deadline |
+
+GPT corrected the parser's disguised sparse-array handling, explicit-undefined optional fields and TypeScript control-flow narrowing. It clarified the fields' null-value copy and added native input limits. Independent parser and controlled-field checks passed. GPT retained the measurement/source contract, PostgreSQL queries, access and revision controls, application lifecycle, migration, performance assessment and final browser testing. See [conversion acceptance](conversions.md). These durations are local observations, not provider latency. Tokens, subscription-use deltas, resolved provider effort and savings remain unknown.

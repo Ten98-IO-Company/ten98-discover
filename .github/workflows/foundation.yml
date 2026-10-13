@@ -92,6 +92,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_site_api');
             await client.query('CREATE DATABASE ten98_site_retention');
             await client.query('CREATE DATABASE ten98_site_worker_ci');
+            await client.query('CREATE DATABASE ten98_funnels_ci');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
@@ -105,6 +106,7 @@ jobs:
               ['ten98_site_api', [['src/server/cli.ts', 'migrate'], ['tests/site-audits-integration.ts']]],
               ['ten98_site_retention', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-retention-integration.ts']]],
               ['ten98_site_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-worker-integration.ts']]],
+              ['ten98_funnels_ci', [['src/server/cli.ts', 'migrate'], ['tests/funnels-integration.ts']]],
             ]) {
               const database = new URL(process.env.DATABASE_URL);
               database.pathname = `/${name}`;

@@ -62,7 +62,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -135,7 +135,7 @@ try {
   assert.deepEqual(await records(), originalRecords, 'Failed migration must preserve original records.');
   console.log('PASS multi-migration transaction rollback');
 
-  stage = 'preserve Google, financial, verified-domain and redirect-evidence records across the 0018-to-0019 upgrade';
+  stage = 'preserve Google, financial, domain and audit records across the 0019-to-0020 upgrade';
   const upgradeClient=await pool.connect();
   try {
     await upgradeClient.query('BEGIN');
@@ -156,20 +156,33 @@ try {
     await upgradeClient.query(`INSERT INTO domain_redirect_check(id,workspace_id,project_id,domain_id,user_id,request_id,domain_revision,hostname,expected_target_host,verified_at,status,observation,completed_at)
       SELECT $1,$2,$3,id,$4,$5,redirect_revision,hostname,expected_target_host,verified_at,'completed','{"fixture":"preserved redirect evidence"}'::jsonb,clock_timestamp()
       FROM project_domain WHERE id=$6`,[randomUUID(),workspace,project,owner,randomUUID(),domain]);
+    const audit=randomUUID(),page=randomUUID();
+    await upgradeClient.query(`INSERT INTO site_audit_run(id,workspace_id,project_id,user_id,request_id,request_hash,origin,config,status,created_at,deadline_at,completed_at,queue_job_id,
+      robots_state,robots_body,robots_digest,coverage,summary)
+      VALUES($1,$2,$3,$4,$5,$6,'https://migration.test','{"mode":"static","startPath":"/","startUrl":"https://migration.test/","maxPages":50}',
+        'completed','2026-01-01T00:00:00Z','2026-01-01T00:30:00Z','2026-01-01T00:01:00Z',$7,'present',$8,$9,
+        '{"reasons":[],"discoveryComplete":true,"linksComplete":true,"scopeExclusions":0,"rawEvidenceRecorded":true}','{"findingsComplete":true,"findings":1}')`,
+      [audit,workspace,project,owner,randomUUID(),'b'.repeat(64),randomUUID(),Buffer.from('User-agent: *\nAllow: /'),'c'.repeat(64)]);
+    await upgradeClient.query(`INSERT INTO site_audit_page(id,run_id,project_id,resource_kind,url,state,fetch_state,analysis_coverage,facts,evidence,evidence_recorded)
+      VALUES($1,$2,$3,'html','https://migration.test/','done','ok','analyzed','{"wordCount":42}','{"title":"Preserved audit evidence"}',true)`,[page,audit,project]);
+    await upgradeClient.query("INSERT INTO site_audit_edge(id,run_id,source_page_id,kind,target_url,anchor) VALUES($1,$2,$3,'link','https://migration.test/next','Preserved anchor')",[randomUUID(),audit,page]);
+    await upgradeClient.query(`INSERT INTO site_audit_issue(id,run_id,page_id,issue_key,rule_version,code,severity,details)
+      VALUES($1,$2,$3,$4,'static-html-v1','missing-description','warning','{"fixture":"Preserved finding"}')`,[randomUUID(),audit,page,'d'.repeat(64)]);
     await upgradeClient.query('COMMIT');
   } catch(error) {await upgradeClient.query('ROLLBACK');throw error;} finally {upgradeClient.release();}
-  const preservedTables=['google_connection','google_import','google_import_page','provider_connection','provider_request','project_prompt','prompt_text_version','project_domain','domain_redirect_check'];
+  const preservedTables=['google_connection','google_import','google_import_page','provider_connection','provider_request','project_prompt','prompt_text_version','project_domain','domain_redirect_check','site_audit_run','site_audit_page','site_audit_edge','site_audit_issue'];
   async function featureRecords() {const snapshot:Record<string,unknown>={};for(const table of preservedTables)snapshot[table]=(await pool.query(`SELECT row_to_json(t) AS data FROM ${table} t`)).rows;return snapshot;}
   const featureSnapshot=await featureRecords();
   const originalDomain=(await pool.query('SELECT row_to_json(d) AS data FROM project_domain d')).rows[0].data;
-  stage = 'upgrade original and feature data through 0019 and rerun idempotently';
+  stage = 'upgrade original and feature data through 0020 and rerun idempotently';
   runMigrate(0);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
   const upgradedDomain=(await pool.query('SELECT row_to_json(d) AS data FROM project_domain d')).rows[0].data;
-  assert.deepEqual(upgradedDomain,originalDomain,'Domain proof, alias settings and revision survive the audit upgrade unchanged.');
+  assert.deepEqual(upgradedDomain,originalDomain,'Domain proof, alias settings and revision survive the conversion upgrade unchanged.');
   assert.equal((await pool.query('SELECT id FROM domain_redirect_check')).rowCount,1,'Upgrade preserves the existing redirect receipt and schedules no extra check.');
-  for(const table of ['site_audit_run','site_audit_page','site_audit_edge','site_audit_issue'])assert.equal((await pool.query(`SELECT id FROM ${table}`)).rowCount,0,'Upgrade must not create or start any audit implicitly.');
+  for(const table of ['site_audit_run','site_audit_page','site_audit_edge','site_audit_issue'])assert.equal((await pool.query(`SELECT id FROM ${table}`)).rowCount,1,'Upgrade must preserve existing audit evidence without starting another audit.');
+  assert.equal((await pool.query('SELECT id FROM analytics_definition')).rowCount,0,'Upgrade must not invent saved funnels or goals.');
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = await records();
@@ -193,7 +206,7 @@ try {
   assert.deepEqual(await records(), upgradedRecords);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
-  console.log('PASS Google snapshots, provider/financial/authored records, verified alias proof and redirect evidence survive 0019 unchanged; no implicit audits');
+  console.log('PASS Google snapshots, provider/financial/authored records, alias proof, redirect and audit evidence survive 0020 unchanged; no implicit audits or definitions');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {
