@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { credentialKeys, decryptCredentials, encryptCredentials } from '../src/server/credential-vault.ts';
 import { providerAccountCheck, usd, usdMicros } from '../src/server/providers.ts';
-import { reserveSpend } from '../src/server/spending.ts';
+import { reserveSpend, settleSpend } from '../src/server/spending.ts';
 
 test('versioned authenticated encryption rejects tampering, missing keys and cross-resource substitution', () => {
   const first = randomBytes(32).toString('base64'), next = randomBytes(32).toString('base64');
@@ -46,7 +46,13 @@ test('USD micro-unit arithmetic preserves cents and rejects ambiguous or unbound
   assert.equal(usdMicros('0.000001'), 1n);
   assert.equal(usd(usdMicros('10.20') + usdMicros('0.000001')), '10.200001');
   assert.equal(usdMicros('1000000'), 1_000_000_000_000n);
-  for (const value of ['-1','01','1e3','NaN','1,000',' 1','1.0000001','1000000.000001','']) assert.throws(() => usdMicros(value), { name: 'ZodError' }, 'Bad money must be a validation error, not a native BigInt failure.');
+  for (const value of ['-1','01','1e3','NaN','1,000',' 1','1.0000001','1000000.000001','','1\n','1.2\r','1.25\u2028']) assert.throws(() => usdMicros(value), { name: 'ZodError' }, 'Bad money must be a validation error, not a native BigInt failure.');
+});
+
+test('settlement rejects trailing line terminators before reading or changing a financial receipt', async () => {
+  for (const amount of ['1\n','1.2\r','1.25\u2028','0.1\u2029']) {
+    await assert.rejects(settleSpend(null as never, randomUUID(), randomUUID(), amount), {name:'ZodError'});
+  }
 });
 
 test('reservation validation rejects malformed and zero estimates before touching the database', async () => {

@@ -210,12 +210,15 @@ export async function pollRankDispatch(id:string,generation?:string,send:typeof 
 /** Internal owner-recovery seam: caller holds W→P and rechecks the selected active
  * credentials/account and owner after its free metadata lookup. Never call from
  * an unverified HTTP body. Only parsed, captured-task-bound evidence is admitted. */
+// Shared by the owner gate and the UI capability query; aliases d,p,r,w are fixed
+// server SQL, never user input. Keep eligibility in one place as recovery evolves.
+export const rankRecoverableSql=`(d.phase='uncertain' AND p.status IN('uncertain','settled')) OR
+  (d.phase='finished' AND p.status='settled' AND r.data_expired_at IS NULL AND EXISTS(
+    SELECT 1 FROM rank_task t WHERE t.dispatch_id=d.id AND t.result_status='unavailable' AND t.provider_task_id IS NOT NULL AND t.data_expired_at IS NULL
+    AND LEAST(COALESCE(t.observed_at,r.started_at,r.created_at),COALESCE(r.started_at,r.created_at))>=clock_timestamp()-w.derived_history_days*interval '24 hours'))`;
 export async function rankRecoveryAvailable(client:PoolClient,row:RankDispatchSnapshot){
-  if(row.phase==='uncertain'&&['uncertain','settled'].includes(row.ledger_status))return true;
-  if(row.phase!=='finished'||row.ledger_status!=='settled')return false;
-  return !!(await client.query(`SELECT 1 FROM rank_task t JOIN rank_run r ON r.id=t.run_id JOIN workspace w ON w.id=r.workspace_id
-    WHERE t.dispatch_id=$1 AND t.result_status='unavailable' AND t.provider_task_id IS NOT NULL AND t.data_expired_at IS NULL AND r.data_expired_at IS NULL
-    AND LEAST(COALESCE(t.observed_at,r.started_at,r.created_at),COALESCE(r.started_at,r.created_at))>=clock_timestamp()-w.derived_history_days*interval '24 hours' LIMIT 1`,[row.id])).rowCount;
+  return !!(await client.query(`SELECT 1 FROM rank_dispatch d JOIN provider_request p ON p.id=d.id
+    JOIN rank_run r ON r.id=d.run_id JOIN workspace w ON w.id=r.workspace_id WHERE d.id=$1 AND (${rankRecoverableSql})`,[row.id])).rowCount;
 }
 export async function applyReconciledRankOutcome(client:PoolClient,id:string,generation:string,outcome:RankDispatchOutcome,recovery:RankRecoveryBinding){
   const row=await rankDispatchSnapshot(client,id);if(!row||row.generation!==generation||!await rankRecoveryAvailable(client,row))throw new FoundationError(409,'The rank charge changed during reconciliation. Reload it.');

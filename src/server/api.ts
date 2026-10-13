@@ -31,6 +31,7 @@ import {listRankTrackers,getRankTracker,getRankCatalog,searchRankLocations,creat
 import {getRankRun,quoteRankCheck,startRankCheck} from './rank-execution.ts';
 import {cancelRankRun} from './rank-worker.ts';
 import {reconcileRankCheck} from './rank-reconciliation.ts';
+import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from './rank-history.ts';
 import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from './saved-keywords.ts';
 import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from './saved-keyword-refresh.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
@@ -317,6 +318,16 @@ export async function handleApi(request: Request): Promise<Response> {
         if(action==='reconcile'){await limit(`rank-reconcile:${projectId}`,3);return json(await reconcileRankCheck(projectId,user.id,runId,input));}
       }
       return json({error:'Method not allowed.'},405);
+    }
+    const rankHistoryRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers/(${id})/(runs|results|keywords/(${id})/history)$`,'i'));
+    if(rankHistoryRoute){
+      const [,projectId,trackerId,action,keywordId]=rankHistoryRoute;
+      await projectAccess(projectId,user.id);
+      await limit(`rank-read:${user.id}`,120);
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(action==='runs')return json(await listRankRuns(projectId,user.id,trackerId,url.searchParams));
+      if(action==='results')return json(await getLatestRankResults(projectId,user.id,trackerId,url.searchParams));
+      return json(await getRankKeywordHistory(projectId,user.id,trackerId,keywordId,url.searchParams));
     }
     const rankRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers(?:/(catalog|locations|${id})(?:/(update|archive|keywords|quote)(?:/(add|remove|pin))?)?)?$`,'i'));
     if(rankRoute){

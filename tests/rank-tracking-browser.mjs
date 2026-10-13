@@ -45,7 +45,7 @@ try{
   }
   if(req.method()==='GET')return fulfill(route,envelope(path.slice(base.length+1)));
   assert.equal(req.method(),'POST');const body=req.postDataJSON();mutations.push({path,body:structuredClone(body)});
-  const mode=nextWrite;nextWrite=null;if(mode===409||mode===403)return fulfill(route,{error:mode===409?'This tracker changed. Reload it before saving.':'Synthetic access lost'},mode);
+  const mode=nextWrite;nextWrite=null;if(mode===409||mode===403||mode===429)return fulfill(route,{error:mode===409?'This tracker changed. Reload it before saving.':mode===429?'Wait before retrying.':'Synthetic access lost'},mode);
   let id=receipts.get(body.requestId);
   if(!id){
    id=path===base?randomUUID():path.slice(base.length+1).split('/')[0];
@@ -103,6 +103,8 @@ try{
  const createdAttempt=structuredClone(mutations.at(-1));
  await page.getByRole('link',{name:'Fixture elsewhere',exact:true}).click();
  assert.equal(new URL(page.url()).pathname,'/','Unknown mutation must block actual router navigation');
+ nextWrite=429;await page.getByRole('button',{name:'Retry same request',exact:true}).click();await page.getByText(/The retry was rate limited/).waitFor();assert.deepEqual(mutations.at(-1),createdAttempt);
+ await page.getByRole('link',{name:'Fixture elsewhere',exact:true}).click();assert.equal(new URL(page.url()).pathname,'/','Rate-limited retry cannot discard the original possibly committed intent');
  nextWrite='malformed-uuid';await page.getByRole('button',{name:'Retry same request',exact:true}).click();
  await page.getByRole('button',{name:'Retry same request',exact:true}).waitFor();
  assert.deepEqual(mutations.at(-1),createdAttempt);

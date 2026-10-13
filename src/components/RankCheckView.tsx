@@ -1,0 +1,71 @@
+import type * as React from 'react';
+
+export type RankQuoteDisplay={
+ connectionName:string;methodLabel:string;targetLabel:string;selectionLabel:string;
+ taskCount:number;dispatchCount:number;estimateUsd:string;priceAsOf:string;expiresAt:string;
+ expired:boolean;canStart:boolean;
+ tasks:readonly {id:string;keyword:string;device:string;maximumUsd:string}[];
+};
+export type RankCheckViewProps={
+ prefix:string;role:'owner'|'admin'|'editor'|'viewer'|null;
+ phase:'setup'|'review';locked:boolean;reading:boolean;pending:boolean;conflict:boolean;
+ error:string;notice:string;selectionLabel:string;canQuote:boolean;
+ connections:readonly {id:string;name:string}[];connectionId:string;
+ method:'queued'|'live';quote:RankQuoteDisplay|null;
+ onConnection:(id:string)=>void;onMethod:(method:'queued'|'live')=>void;
+ onQuote:()=>void;onStart:()=>void;onRefresh:()=>void;onBack:()=>void;onRetry:()=>void;onOpenProviders:()=>void;
+};
+
+export function RankCheckView(p:RankCheckViewProps):React.JSX.Element{
+ const writer=p.role==='owner'||p.role==='admin'||p.role==='editor',hid=p.prefix+'quote-heading',q=p.quote;
+ return <section className="research-panel stack">
+  <div className="row"><button type="button" className="btn ghost" disabled={p.locked} onClick={p.onBack}>Back to tracker</button></div>
+  {p.error!==''&&<p className="alert" role="alert">{p.error}</p>}
+  {p.notice!==''&&<p className="notice" role="status">{p.notice}</p>}
+  {p.reading&&<p role="status">Loading check…</p>}
+  {p.pending&&<div className="banner" role="alert"><p>The request may already be saved. Retry the same request to recover its result.</p> <button type="button" className="btn primary" onClick={p.onRetry}>Retry same request</button></div>}
+  {p.conflict&&<div className="banner" role="alert"><p>The saved check changed. Refresh it before continuing.</p> <button type="button" className="btn primary" disabled={p.locked} onClick={p.onRefresh}>Refresh quote</button></div>}
+  {p.role===null?(!p.reading&&<p>Check access is unavailable. Return to the tracker to reload access.</p>):p.phase==='setup'?<>
+   <h2 id={hid} tabIndex={-1}>Review a rank check</h2>
+   <p>{p.selectionLabel}</p>
+   {writer?<form className="card stack" aria-labelledby={hid} onSubmit={e=>{e.preventDefault();p.onQuote();}}>
+    <div className="field"><label htmlFor={p.prefix+'connection'}>DataForSEO connection</label>
+     <select id={p.prefix+'connection'} value={p.connectionId} disabled={p.locked} onChange={e=>p.onConnection(e.target.value)}>
+      <option value="">Choose a connection</option>{p.connections.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+    <div className="field"><label htmlFor={p.prefix+'method'}>Retrieval method</label>
+     <select id={p.prefix+'method'} value={p.method} disabled={p.locked} onChange={e=>p.onMethod(e.target.value as 'queued'|'live')}>
+      <option value="queued">Queued</option><option value="live">Live</option></select></div>
+    <p className="hint">Both methods may incur provider charges. Preparing a quote does not start a paid check.</p>
+    {p.connections.length===0?(p.role==='owner'
+     ?<button type="button" className="btn ghost" disabled={p.locked} onClick={p.onOpenProviders}>Open providers</button>
+     :<p className="hint">Ask a workspace owner to configure DataForSEO.</p>)
+    :<button type="submit" className="btn primary" disabled={p.locked||p.reading||p.conflict||!p.canQuote||p.connectionId===''}>Prepare quote</button>}
+   </form>:<p>An editor can prepare a check; only its requester can start it.</p>}
+  </>:<>
+   <h2 id={hid} tabIndex={-1}>Review the maximum charge</h2>
+   {q===null?<p>Quote unavailable. Refresh or return to the tracker.</p>:<>
+    <div className="card stack">
+     <p className="dim" id={p.prefix+'max'}>Maximum total</p>
+     <p aria-labelledby={p.prefix+'max'}><strong>{'$'+q.estimateUsd}</strong></p>
+     <p>{q.connectionName} · {q.methodLabel}</p>
+     <p>{q.targetLabel}</p>
+     <p>{q.selectionLabel}</p>
+     <p className="dim">{q.taskCount} keyword/device checks · {q.dispatchCount} provider requests</p>
+     <p className="dim">Prices checked {q.priceAsOf} · Quote expires {q.expiresAt}</p>
+    </div>
+    {q.expired&&<p className="notice">This quote expired. Return to the tracker to prepare a new quote.</p>}
+    <p className="hint">This is an upper bound, not a final bill. Partial or uncertain provider outcomes remain visible until reconciled.</p>
+    <div className="table-wrap" role="region" aria-label="Quoted keyword and device costs" tabIndex={0}>
+     <table style={{minWidth:640}}>
+      <thead><tr><th>Keyword</th><th>Device</th><th>Maximum charge</th></tr></thead>
+      <tbody>{q.tasks.map(t=><tr key={t.id}><td>{t.keyword}</td><td>{t.device}</td><td>{'$'+t.maximumUsd}</td></tr>)}</tbody>
+     </table></div>
+    {writer&&!q.expired&&!q.canStart&&<p className="hint">Only the requester can start an eligible quote.</p>}
+   </>}
+   {(q!==null||!p.conflict)&&<div className="row">
+    {q!==null&&<button type="button" className="btn primary" disabled={p.locked||p.conflict||!writer||!q.canStart||q.expired} onClick={p.onStart}>Start paid rank check</button>}
+    {!p.conflict&&<button type="button" className="btn ghost" disabled={p.locked} onClick={p.onRefresh}>Refresh quote</button>}
+   </div>}
+  </>}
+ </section>;
+}

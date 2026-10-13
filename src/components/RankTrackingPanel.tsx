@@ -3,6 +3,7 @@ import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {RankLocationOption,RankLanguageOption,RankLocationOptions,RankTrackingFieldErrors} from './RankTrackingFields';
 import {RankTrackingView,type RankRole,type RankTracker,type RankKeyword,type RankConnection,type RankDetail,type RankCreate,type RankEdit} from './RankTrackingView';
+import {RankCheckPanel} from './RankCheckPanel';
 
 type Props={workspaceId:string;projectId:string;userId:string;origin:string;onUnauthorized:()=>void;onOpenProviders:()=>void};
 type Filter='active'|'archived'|'all';
@@ -39,6 +40,7 @@ export function RankTrackingPanel(props:Props){return <RankController key={`${pr
 function RankController(props:Props){
   const prefix=useId()+'-rank-',base=`/api/projects/${props.projectId}/rank-trackers`;
   const [s,setState]=useState(()=>initial(props.origin)),state=useRef(s),operation=useRef<Operation|null>(null),intent=useRef<Intent|null>(null),alive=useRef(true);
+  const [check,setCheck]=useState<{generation:number;mode:'history'|'setup';keywordIds?:string[]}|null>(null),checkGeneration=useRef(0);
   function patch(value:Partial<State>){if(!alive.current)return;state.current={...state.current,...value};setState(state.current);}
   function locked(){return operation.current?.write===true||intent.current!==null;}
   function invalidate(){operation.current?.controller.abort();operation.current=null;}
@@ -113,8 +115,8 @@ function RankController(props:Props){
     try{const data=await api<unknown>(saved.path,{method:'POST',body:saved.body,signal:op.controller.signal});if(!current(op))return;if(!validDetail(data,saved.trackerId)||typeof data.replayed!=='boolean')throw badResponse();
       intent.current=null;resetForms();role(data.role);patch({mode:'detail',detail:data,edit:editFor(data.tracker),pending:false,conflict:false,notice:data.replayed?'Saved change recovered.':'Tracker saved.',focus:'detail-heading',catalogReady:false,countries:[],languages:[],localLocations:blankLocal(),create:initial(props.origin).create});
     }catch(e){if(!current(op))return;
-      if(e instanceof ApiError&&e.status>=400&&e.status<500){intent.current=null;patch({pending:false,conflict:e.status===409});failure(e,op);}
-      else{patch({pending:true,error:''});}
+      if(e instanceof ApiError&&e.status>=400&&e.status<500&&![408,429].includes(e.status)){intent.current=null;patch({pending:false,conflict:e.status===409});failure(e,op);}
+      else{patch({pending:true,error:e instanceof ApiError&&e.status===429?'The retry was rate limited. Wait before retrying the same request; its original outcome is still unknown.':''});}
     }finally{finish(op);}
   }
   function mutate(path:string,body:Record<string,unknown>,trackerId?:string){
@@ -140,7 +142,10 @@ function RankController(props:Props){
   function saveWords(){const at=state.current;if(!at.detail)return;const words=at.words.split(/\r?\n/).filter(w=>w.trim()!=='');if(words.length<1||words.length>2000||words.some(w=>!str(w,200))){patch({error:'Enter 1–2,000 nonempty lines, each up to 200 characters. A tracker can contain 1,000 unique keywords.'});return;}mutate(`${base}/${at.detail.tracker.id}/keywords/add`,{revision:at.detail.tracker.authoredRevision,keywords:words,matchCase:at.matchCase},at.detail.tracker.id);}
   function selection(id:string,checked:boolean){const at=state.current;if(locked()||at.conflict||!writer(at.role)||!at.detail?.keywords.some(k=>k.id===id))return;patch({selected:checked?[...new Set([...at.selected,id])]:at.selected.filter(k=>k!==id)});}
   function keywordMutation(kind:'pin'|'remove',pinned?:boolean){const at=state.current;if(locked()||!writer(at.role)||!at.detail||at.selected.length===0||!canLeave())return;if(kind==='remove'&&!window.confirm(`Remove ${at.selected.length} selected keyword(s)?`))return;mutate(`${base}/${at.detail.tracker.id}/keywords/${kind}`,{revision:at.detail.tracker.authoredRevision,keywordIds:at.selected,...(kind==='pin'?{pinned}:{})},at.detail.tracker.id);}
+  function checks(mode:'history'|'setup',subset=false){const at=state.current;if(!at.detail||!canLeave()||mode==='setup'&&(!writer(at.role)||at.detail.tracker.archivedAt!==null||!at.detail.keywords.length)||subset&&!at.selected.length)return;const keywordIds=subset?[...at.selected]:undefined;invalidate();resetForms();patch({reading:false});setCheck({generation:++checkGeneration.current,mode,...(keywordIds?{keywordIds}:{})});}
+  if(check&&s.detail)return <RankCheckPanel key={check.generation} {...props} tracker={s.detail.tracker} connections={s.connections} vaultConfigured={s.vaultConfigured} entry={check} onBack={()=>{setCheck(null);void loadDetail(s.detail!.tracker.id,true);}}/>;
   return <RankTrackingView {...s} prefix={prefix} locked={s.writing||intent.current!==null} pending={s.pending&&!s.writing}
+    onChecks={()=>checks('history')} onPrepareCheck={()=>checks('setup')} onPrepareSelected={()=>checks('setup',true)}
     onRefresh={refresh} onFilter={filter=>{if(canLeave()){resetForms();void loadList(filter);}}} onMore={()=>{if(state.current.nextCursor&&!state.current.reading)void loadList(state.current.filter,state.current.nextCursor);}}
     onNew={newTracker} onOpen={open} onBack={back} onCreateChange={changeCreate} onCatalog={()=>void catalog()} onLocalQuery={localQuery} onSearchLocal={()=>void searchLocal()} onMoreLocal={()=>void searchLocal(true)} onCreate={createTracker} onCancelCreate={back}
     onEdit={edit} onEditChange={changeEdit} onSaveEdit={saveEdit} onCancelEdit={cancelForm} onArchive={archive} onAdd={add} onWords={words=>{if(!locked())patch({words,dirty:true});}} onMatchCase={matchCase=>{if(!locked())patch({matchCase,dirty:true});}} onSaveWords={saveWords} onCancelWords={cancelForm}

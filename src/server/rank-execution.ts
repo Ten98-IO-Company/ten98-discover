@@ -10,6 +10,7 @@ import {reserveSpendInTransaction} from './spending.ts';
 import {microUsd} from './keyword-research-input.ts';
 import {readRankAccount} from './dataforseo-rank.ts';
 import {parseRankBasePrices} from './rank-serp-input.ts';
+import {rankRecoverableSql} from './rank-worker.ts';
 import {compileRankPlan,rankQuoteInput,rankPlanTotal,readRankPlan,rankGroupPayload,type RankPlan} from './rank-execution-plan.ts';
 
 export const rankQueue='rank-dispatch';
@@ -34,8 +35,9 @@ async function runDto(client:PoolClient,row:any,userId:string,role:string){
     FROM rank_dispatch d JOIN provider_request p ON p.id=d.id WHERE d.run_id=$1`,[row.id])).rows[0];
   const plan=readRankPlan(row.request,row.request_hash);
   const dispatches=(await client.query(`SELECT d.id,d.ordinal,d.phase,d.task_count AS "taskCount",d.dispatched_at AS "dispatchedAt",d.completed_at AS "completedAt",d.diagnostic,
+    ($2::boolean AND d.dispatched_at<=clock_timestamp()-interval '2 minutes' AND d.dispatched_at>=clock_timestamp()-interval '28 days' AND (${rankRecoverableSql})) IS TRUE AS "canReconcile",
     CASE WHEN d.phase='uncertain' THEN 'uncertain' ELSE p.status END AS "costStatus",
-    p.estimate_micros,p.actual_micros FROM rank_dispatch d JOIN provider_request p ON p.id=d.id WHERE d.run_id=$1 ORDER BY d.ordinal`,[row.id])).rows.map(({estimate_micros,actual_micros,...dispatch})=>({...dispatch,estimateUsd:microUsd(BigInt(estimate_micros)),actualUsd:actual_micros===null?null:microUsd(BigInt(actual_micros))}));
+    p.estimate_micros,p.actual_micros FROM rank_dispatch d JOIN provider_request p ON p.id=d.id JOIN rank_run r ON r.id=d.run_id JOIN workspace w ON w.id=r.workspace_id WHERE d.run_id=$1 ORDER BY d.ordinal`,[row.id,role==='owner'])).rows.map(({estimate_micros,actual_micros,...dispatch})=>({...dispatch,estimateUsd:microUsd(BigInt(estimate_micros)),actualUsd:actual_micros===null?null:microUsd(BigInt(actual_micros))}));
   // Run tombstones take effect immediately, including children awaiting a bounded
   // cleanup batch. Expired observations must never leak through a detail read.
   const tasks=(await client.query(`SELECT id,keyword_id AS "keywordId",keyword,match_case AS "matchCase",device,result_status AS status,

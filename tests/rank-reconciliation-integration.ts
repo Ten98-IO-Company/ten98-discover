@@ -5,7 +5,7 @@ import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs} from '../src/server/jobs.ts';
 import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
 import {changeRankKeywords,getRankTracker} from '../src/server/rank-tracking.ts';
-import {quoteRankCheck,startRankCheck} from '../src/server/rank-execution.ts';
+import {quoteRankCheck,startRankCheck,getRankRun} from '../src/server/rank-execution.ts';
 import {executeRankDispatch,rankPollQueue} from '../src/server/rank-worker.ts';
 import {reconcileRankCheck} from '../src/server/rank-reconciliation.ts';
 import {keywordAccountEndpoint} from '../src/server/keyword-research-input.ts';
@@ -57,9 +57,11 @@ export async function runRankReconciliationChecks(){
     for(const id of [owner,otherOwner,editor,viewer])await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Rank recovery fixture\',$2)',[id,id+'@integration.test']);
     await(await getBoss()).createQueue(rankPollQueue);
     const guard=await fixture(),foreign=await fixture();let beforeCalls=guard.net.accounts+guard.net.metadata;
+    const capability=async(x:Fixture,uid=owner)=>(await getRankRun(x.f.project,uid,x.f.run)).run.dispatches[0].canReconcile;
+    assert.equal(await capability(guard),true);assert.equal(await capability(guard,editor),false);assert.equal(await capability(guard,viewer),false);
     await assert.rejects(recover(guard,body(guard),editor),fails(404));await assert.rejects(recover(guard,body(guard),viewer),fails(404));
     await assert.rejects(recover(guard,body(guard,{dispatchId:foreign.f.dispatch})),fails(404));await assert.rejects(recover(guard,body(guard,{connectionId:foreign.f.connection})),fails(404));
-    await guard.age('1 minute');await assert.rejects(recover(guard),fails(409));await guard.age('29 days');await assert.rejects(recover(guard),fails(409));assert.equal(guard.net.accounts+guard.net.metadata,beforeCalls);
+    await guard.age('1 minute');assert.equal(await capability(guard),false);await assert.rejects(recover(guard),fails(409));await guard.age('29 days');assert.equal(await capability(guard),false);await assert.rejects(recover(guard),fails(409));assert.equal(guard.net.accounts+guard.net.metadata,beforeCalls);
     await guard.age();guard.net.account='wrong-account@integration.test';const unchanged=await snapshot(guard);await assert.rejects(recover(guard),fails(409));assert.equal(guard.net.metadata,0);assert.deepEqual(await snapshot(guard),unchanged);
     console.log('PASS owner, project, selected connection, closed recovery window and same-account identity gates before metadata mutation');
 
@@ -79,6 +81,13 @@ export async function runRankReconciliationChecks(){
     const retry=await recover(good,input);assert.equal(retry.reconciliation.replayed,true);assert.equal(good.net.accounts,accounts);assert.equal(good.net.metadata,metadata);
     await assert.rejects(recover(good,{...input,dispatchId:foreign.f.dispatch}),fails(409));await assert.rejects(recover(good,input,otherOwner),fails(409));assert.equal(good.net.paid,1);
     console.log('PASS explicit replacement credentials retain original financial binding, paused budget and actor-bound replay before revoked credentials are reopened');
+
+    const retryable=await fixture();await recover(retryable);assert.equal(await capability(retryable),false,'Active result collection is not another owner recovery.');
+    await pool.query("UPDATE rank_dispatch SET phase='finished',next_poll_at=NULL,completed_at=clock_timestamp() WHERE id=$1",[retryable.f.dispatch]);
+    assert.equal(await capability(retryable),true,'A settled charge with a known unavailable retained result supports free recovery.');
+    await pool.query('UPDATE rank_task SET data_expired_at=clock_timestamp(),raw_expired_at=clock_timestamp() WHERE run_id=$1',[retryable.f.run]);
+    assert.equal(await capability(retryable),false,'Expired settled results do not advertise recovery.');
+    console.log('PASS current-owner recovery capability matches closed time windows and retained settled-result eligibility');
 
     const expired=await fixture();await pool.query("UPDATE rank_run SET created_at=clock_timestamp()-interval '400 days',started_at=clock_timestamp()-interval '400 days',raw_expired_at=clock_timestamp(),data_expired_at=clock_timestamp() WHERE id=$1",[expired.f.run]);
     await pool.query("UPDATE rank_task SET raw_expired_at=clock_timestamp(),data_expired_at=clock_timestamp() WHERE run_id=$1",[expired.f.run]);

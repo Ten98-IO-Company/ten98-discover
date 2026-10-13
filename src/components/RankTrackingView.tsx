@@ -31,7 +31,7 @@ export type RankTrackingViewProps = {
   onMatchCase: (v: boolean) => void; onSaveWords: () => void; onCancelWords: () => void;
   onSelect: (id: string, checked: boolean) => void; onSelectAll: (checked: boolean) => void;
   onPin: (pinned: boolean) => void; onRemove: () => void; onRetry: () => void; onReload: () => void;
-  onOpenProviders: () => void;
+  onOpenProviders: () => void; onChecks: () => void; onPrepareCheck: () => void; onPrepareSelected: () => void;
 };
 
 const DEVICE_LABELS: Record<RankDevices, string> = { desktop: 'Desktop', mobile: 'Mobile', both: 'Desktop & mobile' };
@@ -50,7 +50,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
   const submit = (fn: () => void) => (e: React.FormEvent) => { e.preventDefault(); fn(); };
   return (
     <div className="research-panel rank-tracking">
-      <p className="dim">Tracker setup and keyword management are available. Rank checks and history are still being built.</p>
+      <p className="dim">Manage trackers and keywords, review a maximum charge, then start a manual rank check. Recurring schedules are still being built.</p>
       {p.error !== '' && <p className="alert" role="alert">{p.error}</p>}
       {p.notice !== '' && <p className="notice" role="status">{p.notice}</p>}
       {p.reading && <p className="dim" role="status">Loading…</p>}
@@ -100,6 +100,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
           {t === null || d === null ? <p role="status">{p.reading ? 'Loading tracker…' : 'Tracker unavailable.'}</p> : (
           <>
             <div className="row"><h2 id={pre + 'detail-heading'} tabIndex={-1}>{t.name}</h2><span className="pill">{archived ? 'Archived' : 'Active'}</span></div>
+            <div className="row"><button type="button" className="btn ghost" onClick={p.onChecks} disabled={p.locked}>Check history</button>{writer&&!archived&&<button type="button" className="btn primary" onClick={p.onPrepareCheck} disabled={busy||t.keywordCount===0}>Prepare a rank check</button>}</div>
             <div className="card stack">
               <p>{t.domain} (including subdomains) · {t.locationName}, {t.countryIso} · {t.languageName}</p>
               <p className="hint">Create another tracker to change the target or market.</p>
@@ -186,6 +187,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
                 <button type="button" className="btn ghost" onClick={() => p.onPin(true)} disabled={busy || p.selected.length === 0}>Pin selected</button>
                 <button type="button" className="btn ghost" onClick={() => p.onPin(false)} disabled={busy || p.selected.length === 0}>Unpin selected</button>
                 <button type="button" className="btn ghost" onClick={p.onRemove} disabled={busy || p.selected.length === 0}>Remove selected</button>
+                {!archived&&<button type="button" className="btn ghost" onClick={p.onPrepareSelected} disabled={busy||p.selected.length===0}>Check selected keywords</button>}
               </div>}
             </section>
           </>
@@ -195,13 +197,13 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
         <section className="stack">
           <div className="row between">
             <h2 id={pre + 'list-heading'} tabIndex={-1}>Saved trackers</h2>
-            <div className="saved-keyword-filter-grid">
+            <div className="row">
               <button type="button" className="btn ghost" onClick={p.onRefresh} disabled={p.locked}>Refresh</button>
               {writer && <button type="button" className="btn primary" onClick={p.onNew} disabled={p.locked}>New tracker</button>}
-              <label htmlFor={pre + 'filter'}>Show trackers</label>
+              <div className="field" style={{minWidth:160}}><label htmlFor={pre + 'filter'}>Show trackers</label>
               <select id={pre + 'filter'} value={p.filter} disabled={p.locked} onChange={(e) => p.onFilter(e.target.value as RankFilter)}>
                 <option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option>
-              </select>
+              </select></div>
             </div>
           </div>
           {p.loaded && p.trackers.length === 0 && <div className="card">
