@@ -61,12 +61,17 @@ try {
     const button = page.getByRole('button', { name: /^(Menu|Close menu)$/ })
     if (await button.isVisible() && await button.getAttribute('aria-expanded') === 'false') await button.click()
   }
-  async function link(name: string) {
+  async function navigationLink(name: string) {
     await menu()
-    const target = page.getByRole('link', { name, exact: true })
-    if (!await target.isVisible()) await page.getByText('Workspace settings', { exact: true }).click()
-    await target.click()
+    const target = page.locator('#app-navigation').getByRole('link', { name, exact: true, includeHidden: true })
+    await target.waitFor({ state: 'attached' })
+    // Exercise native disclosures, including outer ancestors, rather than changing open in JavaScript.
+    for (const disclosure of await target.locator('xpath=ancestor::details').all()) {
+      if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click()
+    }
+    return target
   }
+  async function link(name: string) { await (await navigationLink(name)).click() }
   async function selected(workspace: string, project: string | null, view: string) {
     await page.waitForFunction(({ workspace, project, view }: any) => {
       const p = new URLSearchParams(location.search)
@@ -92,7 +97,7 @@ try {
   await page.goto(href(a.id, a2, 'events') + '&invite=synthetic&token=synthetic&returnTo=https%3A%2F%2Fexample.test')
   await heading('Recent events'); await selected(a.id, a2, 'events')
   assert.deepEqual([...new URL(page.url()).searchParams.keys()].sort(), ['project', 'view', 'workspace'])
-  await link('Context'); await heading('Project context')
+  await link('Project context'); await heading('Project context')
   await link('Account security'); await heading('Account security')
   await page.goBack(); await heading('Project context'); await selected(a.id, a2, 'context')
   await page.goBack(); await heading('Recent events')
@@ -101,7 +106,7 @@ try {
 
   const original = page.url()
   const opened = context.waitForEvent('page')
-  await page.getByRole('link', { name: 'Recent events', exact: true }).click({ modifiers: ['Control'] })
+  await (await navigationLink('Recent events')).click({ modifiers: ['Control'] })
   const tab = await opened; await tab.getByRole('heading', { name: 'Recent events', exact: true, level: 1 }).waitFor()
   assert.equal(page.url(), original); assert.equal(new URL(tab.url()).searchParams.get('project'), a2); await tab.close()
   await link('+ New project'); await heading('Create a new project'); await selected(a.id, null, 'new-project')
@@ -112,7 +117,7 @@ try {
   await page.goto(href(a.id, foreignProject, 'events')); await heading('Recent events')
   assert.notEqual(new URL(page.url()).searchParams.get('project'), foreignProject)
   assert.equal(requests.some(path => path.startsWith(`/api/projects/${foreignProject}/`)), false)
-  await link('Context'); await heading('Project context')
+  await link('Project context'); await heading('Project context')
   assert.equal(await page.getByRole('alert').filter({ hasText: 'That project is no longer available' }).count(), 0)
   await page.goto(href(foreign.id, foreignProject, 'events')); await heading('Recent events')
   assert.notEqual(new URL(page.url()).searchParams.get('workspace'), foreign.id)
@@ -125,6 +130,69 @@ try {
   await heading('Web analytics'); assert.equal(new URL(page.url()).searchParams.has('invite'), false)
   assert.equal(new URL(page.url()).searchParams.getAll('workspace').length, 1)
   console.log('PASS navigation: malformed, foreign and forbidden targets canonicalize before protected panels mount.')
+
+  const families = ['Analytics', 'AI visibility', 'Search', 'Reports', 'Connections', 'Tracking']
+  const commonSections = ['Analytics', 'Explore', 'Conversions', 'Recent events', 'AI insights', 'Prompts', 'Keywords', 'Rank tracking', 'Site audits', 'Reports', 'Google reports', 'Meta reports', 'Meta ads', 'Install tracker', 'Collection and privacy', 'Project context']
+  for (const [workspace, projectId, isOwner] of [[a.id, a1, true], [b.id, b1, false]] as const) {
+    await page.goto(href(workspace, projectId, 'events')); await heading('Recent events'); await menu()
+    const sections = page.getByRole('navigation', { name: 'Project sections', exact: true })
+    assert.deepEqual(await sections.locator(':scope > details > summary').allTextContents(), families)
+    const expected = isOwner ? [...commonSections.slice(0, 14), 'Destinations', 'Collection and privacy', 'Domains', 'Project context'] : commonSections
+    assert.deepEqual(await sections.getByRole('link', { includeHidden: true }).allTextContents(), expected)
+    assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Recent events'])
+    assert.deepEqual(await page.getByRole('navigation', { name: 'Workspace settings', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), isOwner ? ['Manage team', 'API keys', 'Providers and spending', 'Data retention', 'Create workspace'] : ['Data retention', 'Create workspace'])
+    assert.deepEqual(await page.getByRole('navigation', { name: 'Account', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), ['Account security', 'Identity sign-in'])
+    assert.equal(await page.getByRole('navigation', { name: 'Instance settings', includeHidden: true }).count(), 0)
+    assert.equal(await page.getByRole('link', { name: '+ New project', exact: true, includeHidden: true }).count(), isOwner ? 1 : 0)
+    const search = sections.locator(':scope > details').filter({ has: page.locator('summary', { hasText: /^Search$/ }) })
+    assert.equal(await search.getAttribute('open'), null)
+    const beforeToggle = page.url(), summary = search.locator(':scope > summary')
+    await summary.focus(); await page.keyboard.press('Enter'); assert.notEqual(await search.getAttribute('open'), null)
+    assert.equal(await sections.getByRole('link', { name: 'Keywords', exact: true }).isVisible(), true)
+    await page.keyboard.press('Space'); assert.equal(await search.getAttribute('open'), null); assert.equal(page.url(), beforeToggle)
+    await link('Project context'); await heading('Project context')
+    assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Project context'])
+    await link('Data retention'); await page.getByRole('heading', { name: /retention/i }).first().waitFor()
+    assert.equal(await sections.locator('a[aria-current="page"]').count(), 0)
+    assert.deepEqual(await page.getByRole('navigation', { name: 'Workspace settings', exact: true }).locator('a[aria-current="page"]').allTextContents(), ['Data retention'])
+  }
+  await pool.query("INSERT INTO instance_operator(user_id,source) VALUES($1,'host')", [owner.id])
+  try {
+    await page.reload(); await page.getByRole('heading', { name: /retention/i }).first().waitFor(); await menu()
+    const instance = page.getByRole('navigation', { name: 'Instance settings', exact: true, includeHidden: true })
+    assert.deepEqual(await instance.getByRole('link', { includeHidden: true }).allTextContents(), ['Google app setup', 'Meta app setup'])
+    assert.equal(await page.getByRole('link', { name: 'Providers and spending', exact: true, includeHidden: true }).count(), 0, 'Instance authority does not upgrade a workspace viewer.')
+    await link('Meta app setup'); await heading('Meta app setup'); await selected(b.id, b1, 'meta-app')
+    assert.deepEqual(await instance.locator('a[aria-current="page"]').allTextContents(), ['Meta app setup'])
+  } finally { await pool.query('DELETE FROM instance_operator WHERE user_id=$1', [owner.id]) }
+  await page.reload(); await heading('Web analytics'); await selected(b.id, b1, 'project')
+  assert.equal(await page.getByRole('navigation', { name: 'Instance settings', includeHidden: true }).count(), 0)
+  console.log('PASS navigation: six ordered families, owner/viewer/operator permissions, native keyboard disclosures and scoped current-page markers.')
+
+  await mkdir('private/navigation-browser', { recursive: true })
+  for (const width of [320, 360, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto(href(a.id, a1, 'events')); await heading('Recent events')
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Closed navigation must fit ${width}px.`)
+    await menu()
+    const sections = page.getByRole('navigation', { name: 'Project sections', exact: true })
+    for (const disclosure of await sections.locator(':scope > details').all()) if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click()
+    assert.deepEqual(await sections.locator(':scope > details > summary').allTextContents(), families)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Expanded navigation must fit ${width}px.`)
+    if (width <= 360) {
+      for (const target of await sections.locator('summary, a').all()) {
+        const bounds = await target.boundingBox(); assert.ok(bounds && bounds.height >= 44 && bounds.width >= 44, 'Mobile navigation targets remain at least 44px.')
+      }
+    }
+    await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.side')?.scrollTo(0, 0) })
+    await page.screenshot({ path: `private/navigation-browser/families-${width}.png`, fullPage: true })
+    await link('Project context'); await heading('Project context'); await selected(a.id, a1, 'context')
+    if (width <= 360) assert.equal(await page.getByRole('button', { name: 'Menu', exact: true }).getAttribute('aria-expanded'), 'false')
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await page.screenshot({ path: `private/navigation-browser/context-${width}.png`, fullPage: true })
+  }
+  await page.setViewportSize({ width: 1280, height: 900 })
+  console.log('PASS navigation: real production 320/360/1440 reflow, expanded families, mobile targets and project-selection focus.')
 
   const failedProjects = `**/api/workspaces/${a.id}/projects`
   const unavailable = (route: any) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Synthetic project list unavailable.' }) })
@@ -192,7 +260,7 @@ try {
   assert.equal(await page.getByLabel('Source',{exact:true}).locator('option').count(),1)
   assert.equal(await page.getByRole('button',{name:'Import report',exact:true}).count(),0)
   await page.reload(); await heading('Meta reports'); await page.getByText('No sources on this page.',{exact:true}).waitFor(); await selected(a.id,a2,'meta-reports')
-  await link('Context'); await heading('Project context'); await page.goBack(); await heading('Meta reports'); await selected(a.id,a2,'meta-reports')
+  await link('Project context'); await heading('Project context'); await page.goBack(); await heading('Meta reports'); await selected(a.id,a2,'meta-reports')
   await page.getByRole('button',{name:'Manage connections',exact:true}).click(); await heading('Meta ads'); await selected(a.id,a2,'meta')
   await page.goBack(); await heading('Meta reports'); await selected(a.id,a2,'meta-reports'); await page.getByText('No sources on this page.',{exact:true}).waitFor()
   await page.setViewportSize({width:360,height:800})
@@ -277,7 +345,7 @@ try {
     await page.reload();await heading('AI insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
     await page.getByRole('button',{name:'Back to prompts',exact:true}).click();await heading('Prompt library');await selected(workspace,project,'prompts')
     await page.goBack();await heading('AI insights');await selected(workspace,project,'ai-insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
-    await link('Context');await heading('Project context');await link('AI insights');await heading('AI insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
+    await link('Project context');await heading('Project context');await link('AI insights');await heading('AI insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
   }
   assert.deepEqual(aiWrites,[])
   console.log('PASS navigation: owner/viewer AI insights deep links, reload, native Back and sidebar preserve project scope without quotes or provider writes.')
