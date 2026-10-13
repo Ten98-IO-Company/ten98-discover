@@ -1,8 +1,8 @@
 # Latest complete Meta coverage
 
-GPT-reviewed implementation and presentation contract, 2026-10-13. This is the
-next increment after manual imports, not a claim that the new view is working.
-It implements retained reporting, without contacting Meta or creating imports.
+GPT-reviewed implementation and presentation contract, 2026-10-13. Implemented
+after manual imports with local PostgreSQL/API/browser acceptance below.
+It reads retained reporting, without contacting Meta or creating imports.
 
 ## Selection and journey
 
@@ -147,3 +147,36 @@ null/empty/decimal distinctions, hostile strings, both table scroll regions,
 coverage receipt callbacks, pagination,44px controls and1440/360px rendering.
 Controller/service acceptance separately checks source/role changes,409 revision
 recovery, aborted downloads, exact scoped filters and zero provider requests.
+
+## Recorded local acceptance
+
+Schema27 preserves profile fingerprints for newly enqueued and existing retained
+receipts; account-name changes do not change the measurement definition. The
+original-record upgrade/idempotence test preserves preexisting receipt fields and
+page payloads, backfills equivalent hashes and retains unknown deleted profiles.
+
+- Nine actual PostgreSQL/API groups pass: complete-day replacement and empty
+  coverage, request-order ties, profile isolation, signed deletion before physical
+  cleanup, irreversible expiry, paginated selection changes, strict member/tenant
+  admission, exact formula-safe24-column CSV,25,000-row/16MiB bounds, cancellation
+  before/after FETCH and concurrent repeatable-read snapshots. Tests use a fresh
+  owned database, no live provider requests and no analytics or paid-ledger writes.
+- Eight controller/parent browser groups pass: applied versus draft dates,
+  pagination/409, access purge, real loopback gzip export, bounded/cancelled
+  downloads and fresh access/deletion validation on receipt/Back navigation.
+- Seven independent pure-view groups pass with desktop1440/mobile360 visual
+  review, keyboard controls,44px targets, exact values, readable column minima
+  and two independently scrolling tables without document overflow.
+- Fourteen production navigation groups pass, including the actual viewer
+  journey through disconnected-source retained imports, complete empty-day
+  replacement, CSV download and receipt/Back links. A corrected synthetic fixture
+  supplies the account-status metadata returned by real selected-account flows.
+- The existing eleven import-controller groups pass, including a corrected
+  initial-read error state that no longer remains labelled Loading. The full
+  tracked Node suite records377 passes and two existing skips. Production build,
+  typecheck and diff checks pass.
+
+Kimi K3 drafted the pure display under the reviewed maximum-effort bounded
+profile; GPT implemented/reviewed the selection/security/controller logic and
+independent tests, and corrected table widths/alignment. These are local
+acceptance results, not live Meta reconciliation or a full-V1 release claim.

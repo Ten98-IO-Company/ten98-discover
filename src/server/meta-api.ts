@@ -5,6 +5,7 @@ import {readJson} from './validation.ts';
 import {disableMetaApp,disconnectMeta,getMetaApp,getMetaConnection,inspectMetaAccount,listMetaAccounts,listMetaConnections,metaCallback,saveMetaApp,selectMetaAccount,startMetaConnect} from './meta-auth.ts';
 import {acceptMetaDeletion,getMetaDeletionStatus} from './meta-callbacks.ts';
 import {cancelMetaImport,enqueueMetaImport,listMetaImports,readMetaImport} from './meta-imports.ts';
+import {exportLatestMetaReport,getLatestMetaReport} from './meta-latest.ts';
 
 const uuid='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 const headers={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
@@ -74,6 +75,15 @@ export async function handleMeta(request:Request):Promise<Response|null>{
  if(!project)return json({error:'Not found.'},404);
  const [,projectId,operation='']=project;
  if(operation===''&&request.method==='GET')return json(await listMetaConnections(projectId,session.user.id,url.searchParams));
+ const latest=operation.match(new RegExp(`^connections/(${uuid})/latest(/export)?$`));
+ if(latest){
+  if(!latest[2]&&request.method==='GET')return json(await getLatestMetaReport(projectId,session.user.id,latest[1],url.searchParams));
+  if(latest[2]&&request.method==='POST'){
+   if(url.searchParams.size)throw new FoundationError(400,'Unexpected Meta export parameters.');
+   const result=await exportLatestMetaReport(projectId,session.user.id,latest[1],await readJson(request,32768),request.signal);
+   return new Response(result.body,{headers:{...headers,'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount)}});
+  }return json({error:'Method not allowed.'},405);
+ }
  const imports=operation.match(new RegExp(`^connections/(${uuid})/imports$`));
  if(imports){
   if(request.method==='GET')return json(await listMetaImports(projectId,session.user.id,imports[1],url.searchParams));

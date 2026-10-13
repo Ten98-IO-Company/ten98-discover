@@ -68,7 +68,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -217,7 +217,26 @@ try {
   const rankTables=['rank_config','rank_keyword','rank_run','rank_dispatch','rank_task'];
   async function rankRecords(){const records:Record<string,Record<string,unknown>[]>={};for(const table of rankTables)records[table]=(await pool.query(`SELECT row_to_json(t) AS data FROM ${table} t ORDER BY id`)).rows.map(r=>r.data);return records;}
   const rankBefore=await rankRecords();assert.equal(Object.hasOwn(rankBefore.rank_config[0],'authored_revision'),false);
-  stage = 'upgrade original,0022 features and0023 rank data through0024';
+  stage = 'seed actual0026 Meta receipts before profile fingerprint migration';
+  const metaClient=await pool.connect(),metaApp=randomUUID(),metaConnection=randomUUID(),metaGrant=randomUUID(),metaIds=[randomUUID(),randomUUID(),randomUUID()];
+  const metaDefinition={provider:'meta_ads',accountId:'123',accountName:'Preserved account',currency:'AED',timeZone:'Asia/Dubai',graphVersion:'v26.0',report:'campaign_daily',definitionVersion:1,level:'campaign',breakdowns:[],attribution:{mode:'meta_reported',requestedWindows:['7d_click','1d_view'],reportingPolicy:'meta_mixed',effectiveAdSetSettings:'unknown'}};
+  try{
+    await metaClient.query('BEGIN');
+    for(const migration of sources.filter(m=>m.version>='0024'&&m.version<='0026')){await metaClient.query(migration.sql);await metaClient.query('INSERT INTO schema_version VALUES($1,$2)',[migration.version,migration.checksum]);}
+    await metaClient.query(`INSERT INTO meta_app_registration(id,app_id,config_id,revision,credential_revision,encrypted_config,bound_origin,declared_mode)
+      VALUES($1,'123','456',1,1,'{"synthetic":"preserved encrypted envelope"}',$2,'development')`,[metaApp,config.appUrl]);
+    await metaClient.query("INSERT INTO meta_connection(id,workspace_id,project_id,name,status) VALUES($1,$2,$3,'Preserved source','disconnected')",[metaConnection,workspace,project]);
+    await metaClient.query(`INSERT INTO meta_oauth_flow(id,registration_id,app_revision,start_epoch,workspace_id,project_id,user_id,connection_id,phase,subject_hash,granted_at,expires_at)
+      VALUES($1,$2,1,1,$3,$4,$5,$6,'completed',$7,clock_timestamp(),clock_timestamp())`,[metaGrant,metaApp,workspace,project,owner,metaConnection,'a'.repeat(64)]);
+    for(let i=0;i<metaIds.length;i++)await metaClient.query(`INSERT INTO meta_import(id,workspace_id,project_id,user_id,connection_id,grant_id,connection_revision,app_revision,request_id,report,date_from,date_to,source,status,completed_at,deleted_at,row_count,pages)
+      VALUES($1,$2,$3,$4,$5,$6,1,1,$7,'campaign_daily','2020-01-01','2020-01-01',$8,'completed',clock_timestamp(),CASE WHEN $8::jsonb IS NULL THEN clock_timestamp() END,$9,$9)`,[metaIds[i],workspace,project,owner,metaConnection,metaGrant,randomUUID(),i===2?null:{...metaDefinition,accountName:i?'Renamed account':'Preserved account'},i===0?1:0]);
+    await metaClient.query(`INSERT INTO meta_import_page(import_id,project_id,workspace_id,page,rows,row_count,content_hash) VALUES($1,$2,$3,0,'[{"date":"2020-01-01","accountId":"123","campaignId":"789","campaignName":"Preserved campaign","impressions":"9007199254740993","clicks":null,"spend":"1.2300","actions":null,"actionValues":[]}]',1,$4)`,[metaIds[0],project,workspace,'b'.repeat(64)]);
+    await metaClient.query('COMMIT');
+  }catch(error){await metaClient.query('ROLLBACK');throw error;}finally{metaClient.release();}
+  const metaTables=['meta_app_registration','meta_connection','meta_oauth_flow','meta_deletion_request','meta_import','meta_import_page'];
+  async function metaRecords(){const result:Record<string,Record<string,unknown>[]>={};for(const table of metaTables)result[table]=(await pool.query(`SELECT row_to_json(t) AS data FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows.map(r=>r.data);return result;}
+  const metaBefore=await metaRecords();assert.equal(Object.hasOwn(metaBefore.meta_import[0],'definition_key'),false);assert.equal((await history()).at(-1)?.version,'0026');
+  stage = 'upgrade original,0022 features,0023 rank and0026 Meta data through0027';
   runMigrate(0);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
@@ -240,7 +259,10 @@ try {
   const rankAfter=await rankRecords();
   for(const table of rankTables){assert.equal(rankAfter[table].length,rankBefore[table].length,'Upgrade must not invent rank work.');for(let index=0;index<rankBefore[table].length;index++)assert.deepEqual(Object.fromEntries(Object.keys(rankBefore[table][index]).map(key=>[key,rankAfter[table][index][key]])),rankBefore[table][index],'Existing rank identity, approvals, pins and captured quotes must be preserved.');}
   assert.equal(rankAfter.rank_config[0].authored_revision,1);assert.equal(rankAfter.rank_config[0].revision,7);assert.equal(rankAfter.rank_config[0].keywords_revision,11);assert.equal(rankAfter.rank_config[0].schedule_enabled,true);
-  for(const table of ['meta_app_registration','meta_connection','meta_oauth_flow','meta_deletion_request'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,0,'Upgrade adds Meta storage without inventing registrations, grants or callbacks.');
+  const metaAfter=await metaRecords();
+  for(const table of metaTables){assert.equal(metaAfter[table].length,metaBefore[table].length);for(const old of metaBefore[table]){const current=metaAfter[table].find(r=>table==='meta_import_page'?r.import_id===old.import_id:r.id===old.id)!;assert.deepEqual(Object.fromEntries(Object.keys(old).map(key=>[key,current[key]])),old,'Profile backfill must preserve every existing Meta field, including source, deleted receipts and exact pages.');}}
+  const profileRows=(await pool.query("SELECT id,definition_key,encode(sha256(convert_to((source-'accountName')::text,'UTF8')),'hex') AS expected FROM meta_import ORDER BY id")).rows;
+  for(const row of profileRows)assert.equal(row.definition_key,row.expected);assert.equal(profileRows.find(r=>r.id===metaIds[0]).definition_key,profileRows.find(r=>r.id===metaIds[1]).definition_key,'Account label changes do not change measurement profile.');assert.equal(profileRows.find(r=>r.id===metaIds[2]).definition_key,null,'Already deleted legacy profile stays explicitly unknown.');
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = await records();
@@ -266,8 +288,9 @@ try {
   assert.deepEqual(await featureRecords(),featureSnapshot);
   assert.deepEqual(await rankRecords(),rankAfter,'No-op migration preserves authored revision and every prior rank field.');
   assert.deepEqual((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data,quoteAfter);
-  assert.equal((await pool.query('SELECT 1 FROM meta_import UNION ALL SELECT 1 FROM meta_import_page')).rowCount,0,'Upgrade must not schedule or synthesize Meta imports.');
-  console.log('PASS prior0022 feature evidence and0023 rank identity, approval, pin and quote survive0026; authored revision initializes once; identity capsule preserved; no implicit paid work or Meta grants/imports');
+  assert.deepEqual(await metaRecords(),metaAfter,'No-op migration preserves exact Meta fingerprints and immutable receipts/pages.');
+  assert.equal((await pool.query("SELECT 1 FROM meta_import WHERE status IN ('queued','submitting','waiting','reading')")).rowCount,0,'Upgrade must not schedule or synthesize Meta imports.');
+  console.log('PASS prior0022 feature evidence,0023 rank data and0026 Meta receipts/pages survive0027; profile backfill ignores only account name, preserves unknown deletion and is idempotent; no implicit paid work');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {

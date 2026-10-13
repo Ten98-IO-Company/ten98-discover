@@ -1,6 +1,6 @@
 # Native Meta advertising report imports
 
-**Implementation contract, reviewed 2026-10-13.** Authorization, account selection, local deletion and manual daily report imports are implemented with synthetic API/worker/browser acceptance. Schema26 adds grant-bound report storage and extends keyless deletion to its payloads. Campaign inventory, schedules, latest-overlap views/export and live-provider validation remain required. This is the next native reporting connector after Google. It covers the Meta/Facebook entry in P76 and contributes to P71, P77 and P81. All81 requirements remain required; this document does not complete those rows or the other platforms.
+**Implementation contract, reviewed 2026-10-13.** Authorization, account selection, local deletion, manual daily report imports and latest complete coverage/CSV are implemented with synthetic API/worker/browser acceptance. Schema26 adds grant-bound report storage and extends keyless deletion to its payloads; schema27 preserves profile identity after source erasure. Campaign inventory, schedules and live-provider validation remain required. This is the next native reporting connector after Google. It covers the Meta/Facebook entry in P76 and contributes to P71, P77 and P81. All81 requirements remain required; this document does not complete those rows or the other platforms.
 
 The accepted [tracking contract](tracking.md#automatic-consolidation-without-misleading-totals) requires accessible advertising accounts/campaigns, daily spend, impressions, clicks and available conversion/value fields. Meta Marketing API advertising reports include supported Instagram placements within those advertising accounts. Facebook Page Insights, organic Instagram insights, publishing, inboxes, audiences, campaign editing and Conversions API uploads are not this accepted reporting family. A Meta Pixel ID neither authorizes reports nor identifies an ad account. Report authorization never installs or enables a browser pixel, changes consent, or signs someone into ten98-monitor.
 
@@ -171,6 +171,19 @@ This appendix separates the reviewed request vocabulary from behavior that still
 **Deletion needs retained author provenance.** As an application design requirement, store the immutable Meta app identity and verified app-scoped user subject on connections and the provenance of imports collected through that grant. A later reconnect, app configuration revision or local disconnect must not destroy the mapping needed to process a legitimate signed request. Do not treat the shared advertising account ID as the requesting person: independently authorized sources can use the same account. Subject-scoped deletion must fence matching flows, connections and jobs first, then purge covered retained payloads in bounded transactions. It must work without a local login, current workspace-owner role, or a decryptable user token once the provider signature is verified. The durable deletion receipt/status record supports idempotency and truthful acknowledgement. The callback mechanism is verified below; operator backup obligations and actual completion remain release checks. No deletion completion should be claimed while required cleanup remains pending.
 
 The remaining provider gates are precise: separate deauthorization notification verification; account-specific effective attribution and returned metadata; controlled permission/token-revocation and report acceptance; deletion completion including operator backups. The resolved history, asynchronous and rate vocabularies below do not establish unlimited availability. App limits of31days,25,000rows and30minutes are capacity choices. The smallest implementation remains one native user-token connection, direct account selection, account/day and campaign/day imports, then optional daily refresh after the first successful manual import. Reuse the existing vault, session-bound consent, durable receipt and retention patterns; keep a Meta-specific bounded transport and state machine rather than importing Google's token or network-under-lock behavior.
+
+Primary documentation reviewed on2026-10-13 confirms an App Dashboard
+deauthorization callback when a person removes an app, but the current
+[manual login guide](https://developers.facebook.com/documentation/facebook-login/guides/advanced/manual-flow#deauth-callback),
+updated June30,2026, does not specify its method, payload, acknowledgement,
+retries or delivery timing. The [generic signed-request reference](https://developers.facebook.com/docs/reference/login/signed-request/)
+describes variable payloads and token expiry, not a deauthorization delivery
+deadline. The separately verified [data-deletion callback](https://developers.facebook.com/documentation/development/create-an-app/app-dashboard/data-deletion-callback)
+has explicit POST/signature/status-response requirements; these do not establish
+deauthorization semantics. Its exact notification envelope, app-scoped subject,
+response and late-delivery/reconsent behavior remain contract and controlled
+acceptance gates. Local disconnect and existing source revalidation remain
+implemented independently; no speculative callback is advertised as supported.
 
 ### Signed deletion callback verified after the focused review
 
