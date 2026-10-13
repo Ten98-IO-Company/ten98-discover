@@ -24,7 +24,7 @@ The server stores the authorized event URL origin in `event.dimensions.origin`, 
 
 Legacy event rows without this field use the project's immutable canonical origin, because previous native and API ingestion allowed that origin only. Origin is a reporting dimension, not an additional visitor identity key or automatic cross-domain person match. Removing a serving domain does not change the meaning of its retained history.
 
-DNS verification proves a matching response at verification time. It does not edit DNS or continuously prove ownership. Operators must revoke records when control changes. Observed redirect chains, alias access-log imports, backlink consolidation and imported provider attribution remain separate required work; this increment does not fabricate them.
+DNS verification proves a matching response at verification time. It does not edit DNS or continuously prove ownership. Operators must revoke records when control changes. Verified redirect aliases now support separate [manual HTTP chain checks](domain-redirects.md). Alias access-log imports, backlink consolidation and imported provider attribution remain required work; this increment does not fabricate them.
 
 ## Verification
 

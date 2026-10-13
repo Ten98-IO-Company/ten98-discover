@@ -344,7 +344,8 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
       <p className="hint">
         Verified serving domains can use this project’s snippet at their exact HTTPS origin on port 443. No subdomains,
         HTTP origins or other ports are included. Redirect aliases never enable collection. Verification is a point-in-time
-        DNS proof; it does not change DNS, discover backlinks or observe redirects. The canonical project origin remains allowed.
+        DNS proof; it does not change DNS or discover backlinks. Verified redirect aliases support a manual HTTP check below.
+        The canonical project origin remains allowed.
       </p>
 
       {error && (
@@ -530,6 +531,7 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
                                 Remove
                               </button>
                             )}
+                            {d.role==='redirect_alias' && <RedirectChecks key={`${d.id}:${d.expectedTargetHost}:${d.verifiedAt}:${d.status}`} base={`${base}/${d.id}/redirect-checks`} domain={d} parentBusy={controlsOff} onAccessLoss={handleError} />}
                           </div>
                         </td>
                       </tr>
@@ -540,8 +542,9 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
             </div>
           )}
           <p className="footnote">
-            Expected targets are intended configuration, not observed redirects. “Control verified” records when a DNS
-            proof matched — it is not a health check. Serving eligibility changes require visitors to renew consent.
+            Expected targets are intended configuration. A manual HTTP check observes only that moment’s redirect chain,
+            never visitor counts, backlinks or JavaScript/meta-refresh navigation. “Control verified” records when a DNS
+            proof matched. Serving eligibility changes require visitors to renew consent.
             On narrow screens, scroll the table sideways to see actions.
           </p>
 
@@ -651,4 +654,74 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
       )}
     </section>
   );
+}
+
+type RedirectCheck={id:string;status:'queued'|'running'|'completed'|'stale'|'failed';createdAt:string;startedAt:string|null;completedAt:string|null;
+  expected:{hostname:string;targetHostname:string;verifiedAt:string;revision:string};currentConfiguration:boolean;evidenceExpired:boolean;diagnostic:string|null;
+  observation:{outcome:'response'|'blocked'|'unavailable'|'timeout'|'loop'|'hop_limit';finalUrl:string|null;targetMatches:boolean|null;durationMs:number;
+    hops:{url:string;status:number;durationMs:number;location:string|null}[]}|null};
+type RedirectState={domainId:string;eligible:boolean;checks:RedirectCheck[];nextAllowedAt:string|null};
+const outcomeLabel={response:'Final HTTP response',blocked:'Blocked by network safety rules',unavailable:'Response unavailable',timeout:'Check timed out',loop:'Redirect loop',hop_limit:'Eight-redirect limit reached'};
+function RedirectChecks({base,domain,parentBusy,onAccessLoss}:{base:string;domain:Domain;parentBusy:boolean;onAccessLoss:(error:unknown)=>void}){
+  const [state,setState]=useState<RedirectState|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null),[denied,setDenied]=useState(false);
+  const [retry,setRetry]=useState(false);
+  const alive=useRef(true),generation=useRef(0),lock=useRef(false),abort=useRef<AbortController|null>(null),requestId=useRef<string|null>(null),access=useRef(onAccessLoss);
+  access.current=onAccessLoss;
+  useEffect(()=>{alive.current=true;return()=>{alive.current=false;generation.current++;abort.current?.abort();};},[]);
+  async function run(start=false){
+    if(lock.current||denied||parentBusy)return;
+    lock.current=true;abort.current?.abort();const controller=new AbortController();abort.current=controller;
+    const epoch=++generation.current,current=()=>alive.current&&generation.current===epoch&&!controller.signal.aborted;
+    setBusy(true);setError(null);
+    try{
+      if(start){
+        requestId.current??=crypto.randomUUID();
+        const result=await api<{state:RedirectState}>(base,{method:'POST',body:{requestId:requestId.current},signal:controller.signal});
+        if(!current())return;requestId.current=null;setRetry(false);setState(result.state);
+      }else{
+        const result=await api<RedirectState>(base,{signal:controller.signal});if(!current())return;setState(result);
+      }
+    }catch(failure){
+      if(!current())return;
+      if(failure instanceof ApiError&&[401,403,404].includes(failure.status)){
+        setState(null);setDenied(true);requestId.current=null;setRetry(false);access.current(failure);return;
+      }
+      if(start){
+        const ambiguous=!(failure instanceof ApiError)||failure.status===0||failure.status>=500;
+        if(!ambiguous)requestId.current=null;setRetry(ambiguous);
+      }
+      // A failed refresh keeps the last observation, explicitly labelled as not refreshed.
+      setError(`${start?'The check request was not confirmed.':'History was not refreshed; the last loaded result remains below.'} ${errMsg(failure)}`);
+    }finally{if(current()){lock.current=false;setBusy(false);}}
+  }
+  const active=state?.checks.some(check=>check.status==='queued'||check.status==='running')??false;
+  const cooldown=!!state?.nextAllowedAt&&Date.parse(state.nextAllowedAt)>Date.now();
+  return <details className="field" onToggle={event=>{if(event.currentTarget.open&&!state&&!busy&&!denied)void run();}} style={{minWidth:220,maxWidth:460,whiteSpace:'normal'}}>
+    <summary>HTTP redirect checks</summary>
+    <p className="hint">Manual, headers-only observation. Up to eight redirects; no JavaScript, visitor counting or automatic polling. Query strings and fragments are never saved.</p>
+    {error&&<p role="alert" className="alert">{error}</p>}
+    {busy&&<p role="status">Updating redirect history…</p>}
+    {!denied&&<div className="row">
+      <button type="button" className="btn" onClick={()=>void run(true)} disabled={busy||parentBusy||domain.status!=='verified'||(!retry&&(active||cooldown))}>{retry?'Retry check request':'Check redirect'}</button>
+      <button type="button" className="btn ghost" onClick={()=>void run()} disabled={busy||parentBusy}>Refresh checks</button>
+    </div>}
+    {domain.status!=='verified'&&<p className="hint">Verify this alias with its DNS proof before checking redirects.</p>}
+    {active&&<p className="hint">A check is queued or running. Refresh to see its outcome.</p>}
+    {!active&&cooldown&&<p className="hint">Next check after {fmt(state!.nextAllowedAt)}. Refresh when ready.</p>}
+    {state&&!state.checks.length&&<p className="hint">No redirect checks have been run.</p>}
+    {state?.checks.map(check=><article className="field" key={check.id} aria-label={`Redirect check ${fmt(check.createdAt)}`} style={{overflowWrap:'anywhere'}}>
+      <strong>{check.status==='completed'?'Check finished':check.status==='stale'?'Configuration or access changed':check.status==='failed'?'Check unavailable':check.status==='queued'?'Queued':'Running'}</strong>
+      <p className="hint">Started {fmt(check.startedAt??check.createdAt)} · Expected {check.expected.targetHostname}</p>
+      {!check.currentConfiguration&&<p className="hint">Historical configuration; this check does not describe the current alias settings.</p>}
+      {check.diagnostic&&<p>{check.diagnostic}</p>}
+      {check.evidenceExpired&&<p>Observation expired under workspace retention. Only this check receipt remains.</p>}
+      {check.observation&&<>
+        <p>{outcomeLabel[check.observation.outcome]} · {check.observation.durationMs} ms</p>
+        {check.observation.targetMatches!==null&&<p>{check.observation.targetMatches?'Final hostname matched the expected hostname.':'Final hostname did not match the expected hostname.'} This is a point-in-time observation, not a health guarantee.</p>}
+        {check.observation.finalUrl&&<p className="mono">{check.observation.finalUrl}</p>}
+        <ol>{check.observation.hops.map((hop,index)=><li key={index}><span className="mono">{hop.url}</span> — HTTP {hop.status}, {hop.durationMs} ms{hop.location&&<span> → <span className="mono">{hop.location}</span></span>}</li>)}</ol>
+      </>}
+    </article>)}
+    {state&&state.checks.length===20&&<p className="hint">Showing the most recent 20 checks for this alias.</p>}
+  </details>;
 }

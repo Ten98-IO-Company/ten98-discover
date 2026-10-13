@@ -26,6 +26,7 @@ import { handleGoogle } from './google-api.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
 import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
+import { getDomainRedirectChecks, startDomainRedirectCheck } from './domain-redirects.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
@@ -226,6 +227,17 @@ export async function handleApi(request: Request): Promise<Response> {
           await limit(`keyword-reconcile:${projectId}`,3);
           return json(await reconcileKeywordResearch(projectId,user.id,runId,input));
         }
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const redirectRoute=path.match(new RegExp(`^/api/projects/(${id})/domains/(${id})/redirect-checks$`,'i'));
+    if(redirectRoute){
+      if(url.search)throw new FoundationError(400,'Redirect checks do not accept query parameters.');
+      await limit(`domain-redirect:${user.id}:read`,60);
+      if(request.method==='GET')return json(await getDomainRedirectChecks(redirectRoute[1],user.id,redirectRoute[2]));
+      if(request.method==='POST'){
+        await limit(`domain-redirect:${user.id}:write`,10);
+        return json(await startDomainRedirectCheck(redirectRoute[1],user.id,redirectRoute[2],await readJson(request,4096)),202);
       }
       return json({error:'Method not allowed.'},405);
     }

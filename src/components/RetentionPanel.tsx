@@ -33,6 +33,7 @@ interface PreviewDto {
   derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean };
   rawEvidenceCutoff:string;
   promptEstimate: { status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean };
+  redirectEstimate?:{status:'available'|'unavailable';checks:number|null;atLeast:boolean};
   keywordEstimate: { status: 'available' | 'unavailable'; results: number | null; atLeast: boolean };
   estimate: {
     status: 'available' | 'unavailable';
@@ -64,7 +65,7 @@ const FIELDS: ReadonlyArray<{
 }> = [
   {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep raw analytics events (default 90).'},
   {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep replays (default 7).'},
-  {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep generated answers and copied execution input (default 90). Billing receipts and authored prompts remain.'},
+  {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep generated answers, copied execution input and observed redirect chains (default 90). Receipts and authored prompts remain.'},
   {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google report data and keyword results after completion (default 365). Receipts and charges remain.'},
 ];
 
@@ -431,6 +432,7 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <p style={{margin: '8px 0'}}>{preview.keywordEstimate.status === 'available' && preview.keywordEstimate.results !== null ? `${preview.keywordEstimate.atLeast ? 'At least ' : ''}${preview.keywordEstimate.results.toLocaleString()} keyword results eligible.` : 'Keyword result estimate unavailable.'}</p>
               <p style={{margin:'8px 0'}}>Raw provider evidence cutoff (UTC): {fmtUtc(preview.rawEvidenceCutoff)}</p>
               <p style={{margin:'8px 0'}}>{preview.promptEstimate.status==='available'&&preview.promptEstimate.results!==null?`${preview.promptEstimate.atLeast?'At least ':''}${preview.promptEstimate.results.toLocaleString()} generated prompt answers and ${preview.promptEstimate.inputs?.toLocaleString() ?? "unknown"} copied execution inputs eligible under raw provider evidence retention.`:'Prompt answer estimate unavailable.'}</p>
+              <p style={{margin:'8px 0'}}>{preview.redirectEstimate?.status==='available'&&preview.redirectEstimate.checks!==null?`${preview.redirectEstimate.atLeast?'At least ':''}${preview.redirectEstimate.checks.toLocaleString()} redirect observations eligible. Their check receipts remain.`:'Redirect observation estimate unavailable.'}</p>
               <p className="hint" style={{margin: '8px 0'}}>Google report rows, quality metadata and keyword results expire after the derived-history period. Generated prompt answers and copied execution input follow raw provider evidence retention. Authored prompt versions remain. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Replay stores nothing yet.</p>
               <p className="hint" style={{margin: '8px 0'}}>
                 Kept as-is: authored reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups.
