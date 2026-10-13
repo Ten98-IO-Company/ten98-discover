@@ -28,4 +28,6 @@ Google connections follow the same hierarchy: each source has a heading, provide
 
 ## Verification
 
+The combined Google, keyword, serving-domain and navigation tree passed the production build, TypeScript, plan checks and 153 unit/VM checks (two platform skips). An independent production Edge run passed the navigation scenarios and the serving-domain tracker, consent, Origin filter/CSV and revocation flows. Existing Google, native analytics, retention, Explorer, context/prompts and static report-isolation browser checks also passed with native link semantics. All provider/domain transport in these acceptance fixtures was synthetic.
+
 TypeScript and production build passed. Visual review covers the actual local application, including empty metrics and the compact sidebar. Browser acceptance additionally checks mobile navigation/focus, installation and event-page separation, delayed project loading, report editing/sharing and privacy-setting behavior. Exact completed evidence belongs in the foundation runbook; this document does not certify full V1 parity.

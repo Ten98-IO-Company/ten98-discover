@@ -96,7 +96,7 @@ try {
   async function section(name: string) {
     const toggle = dashboard.getByRole('button', { name: /^(Menu|Close menu)$/ });
     if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
-    await dashboard.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('button', { name, exact: true }).click();
+    await dashboard.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click();
   }
   await dashboard.getByRole('heading', { name: 'Web analytics', exact: true }).waitFor();
   await section('Explore');
