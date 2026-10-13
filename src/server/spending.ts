@@ -30,23 +30,29 @@ async function checkBudget(client: PoolClient, workspaceId: string, connectionId
   return { revision: connection.revision as number, month: budget.month as string };
 }
 
-// Internal server contract only: callers must quote an upper bound and enqueue work in this same transaction.
+// Internal server contract only: callers quote a conservative ceiling under the provider's verified
+// billing contract and enqueue work in the same transaction. Reported overruns still pause spending.
 // No browser/API endpoint accepts a caller-supplied estimate as authorization to spend.
 export async function reserveSpend(workspaceId: string, userId: string, input: unknown, enqueue?: (client: PoolClient, requestId: string) => Promise<void>) {
   const data = reservationInput.parse(input);
-  return providerTransaction(workspaceId, userId, ['owner','admin','editor'], async client => {
-    const existing = (await client.query<LedgerRow>('SELECT * FROM provider_request WHERE workspace_id=$1 AND request_key=$2', [workspaceId, data.requestKey])).rows[0];
-    if (existing) {
-      if (existing.connection_id !== data.connectionId || existing.user_id !== userId || existing.operation !== data.operation || existing.input_hash !== data.inputHash || existing.estimate_micros !== usdMicros(data.estimateUsd).toString()) throw new FoundationError(409, 'This request key was already used for different work.');
-      return { id: existing.id, status: existing.status, created: false };
-    }
-    const { revision, month } = await checkBudget(client, workspaceId, data.connectionId, usdMicros(data.estimateUsd));
-    const id = randomUUID();
-    await client.query(`INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,connection_revision,status,budget_month)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reserved',$10::date)`, [id, workspaceId, data.connectionId, userId, data.requestKey, data.operation, data.inputHash, usdMicros(data.estimateUsd).toString(), revision, month]);
-    if (enqueue) await enqueue(client, id);
-    return { id, status: 'reserved' as const, created: true };
-  });
+  return providerTransaction(workspaceId, userId, ['owner','admin','editor'], client => reserveSpendInTransaction(client, workspaceId, userId, data, enqueue));
+}
+
+// Caller must already hold the workspace mutation gate and recheck the live user's write role.
+// This lets a comparison reserve every child atomically without nested transactions.
+export async function reserveSpendInTransaction(client: PoolClient, workspaceId: string, userId: string, input: unknown, enqueue?: (client: PoolClient, requestId: string) => Promise<void>) {
+  const data = reservationInput.parse(input);
+  const existing = (await client.query<LedgerRow>('SELECT * FROM provider_request WHERE workspace_id=$1 AND request_key=$2', [workspaceId, data.requestKey])).rows[0];
+  if (existing) {
+    if (existing.connection_id !== data.connectionId || existing.user_id !== userId || existing.operation !== data.operation || existing.input_hash !== data.inputHash || existing.estimate_micros !== usdMicros(data.estimateUsd).toString()) throw new FoundationError(409, 'This request key was already used for different work.');
+    return { id: existing.id, status: existing.status, created: false };
+  }
+  const { revision, month } = await checkBudget(client, workspaceId, data.connectionId, usdMicros(data.estimateUsd));
+  const id = randomUUID();
+  await client.query(`INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,connection_revision,status,budget_month)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reserved',$10::date)`, [id, workspaceId, data.connectionId, userId, data.requestKey, data.operation, data.inputHash, usdMicros(data.estimateUsd).toString(), revision, month]);
+  if (enqueue) await enqueue(client, id);
+  return { id, status: 'reserved' as const, created: true };
 }
 
 export async function dispatchSpend(workspaceId: string, userId: string, requestId: string, prepare?: (client: PoolClient, row: LedgerRow) => Promise<void>) {

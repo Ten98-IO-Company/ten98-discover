@@ -2,7 +2,7 @@
 
 An MIT, Docker-first application in development, combining web analytics, SEO research and audits, and AI visibility monitoring.
 
-**Status: development foundation; not a V1 release.** The application includes owner setup, local/OIDC login and authenticator security, multiple workspaces, team invitations and roles, scoped API keys, encrypted provider credentials and spending controls, projects, consent-gated traffic reports and typed custom events, browser destination configuration, static reports with revocable sharing, domain ownership records, configurable retention, project context and a versioned prompt library, bounded native Google report imports, and a durable worker check. Docker runs the web app, worker and PostgreSQL, with explicit upgrade migrations. Other platform reporting imports, advanced analytics, SEO and AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
+**Status: development foundation; not a V1 release.** The application includes owner setup, local/OIDC login and authenticator security, multiple workspaces, team invitations and roles, scoped API keys, encrypted provider credentials and spending controls, projects, consent-gated traffic reports and typed custom events, browser destination configuration, static reports with revocable sharing, domain ownership records, configurable retention, project context and a versioned prompt library, bounded native Google report imports, and a durable worker check. Docker runs the web app, worker and PostgreSQL, with explicit upgrade migrations. Quoted keyword research and explicit two-model prompt comparisons have backend APIs with synthetic provider checks; their execution UIs remain pending. Other platform reporting imports, advanced analytics, SEO and AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
 The first usable release must reach the complete technical capability baseline of Elmo 0.4.4, Umami 3.4.0 and OpenSEO 0.1.12. These source tags match the documented deployment versions and latest release tags checked on 2026-10-12; live image-to-commit equivalence has not been verified. Internal milestones do not reduce that scope. The register now also includes 12 owner-requested tracking, report-import and domain-alias requirements (P70–P81), in addition to the original 69.
 
@@ -21,7 +21,8 @@ The first usable release must reach the complete technical capability baseline o
 11. [Project context and versioned prompt library](docs/project-context.md)
 12. [Native Search Console and GA4 report imports](docs/google-reports.md)
 13. [Quoted keyword research backend and remaining UI](docs/keyword-research.md)
-14. [Setup critique, deployment journey and native connection/OIDC flows](docs/onboarding.md)
+14. [Explicit prompt execution backend and remaining gates](docs/prompt-execution.md)
+15. [Setup critique, deployment journey and native connection/OIDC flows](docs/onboarding.md)
 
 ## Product direction
 

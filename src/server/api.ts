@@ -28,6 +28,8 @@ import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResea
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
+import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
+
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
   const headers = new Headers({ 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
@@ -184,6 +186,27 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`reports:${user.id}:${request.method === 'GET' ? 'read' : 'write'}`, request.method === 'GET' ? 120 : 30);
       const response = await handleReports(request, user.id);
       if (response) return response;
+    }
+    const executionRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-executions(?:/(quote|comparisons|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
+    if(executionRoute){
+      if(url.search)throw new FoundationError(400,'Prompt executions do not accept query parameters.');
+      const [,projectId,action,runId,runAction]=executionRoute;
+      await projectAccess(projectId,user.id,request.method!=='GET');
+      await limit(`execution:${user.id}`,120);
+      if(request.method==='GET'&&!action)return json(await getPromptExecutions(projectId,user.id));
+      if(request.method==='GET'&&action==='comparisons'&&runId&&!runAction)return json(await getPromptComparison(projectId,user.id,runId));
+      if(request.method==='POST'){
+        await limit(`execution-write:${user.id}`,10);
+        const input=await readJson(request,32768);
+        if(!runId&&action==='quote')return json(await quotePromptExecution(projectId,user.id,input));
+        if(!runId&&action==='comparisons')return json(await startPromptExecution(projectId,user.id,input),202);
+        if(action==='comparisons'&&runId&&runAction==='cancel')return json(await cancelPromptComparison(projectId,user.id,runId,input));
+        if(action==='runs'&&runId&&runAction==='reconcile'){
+          await limit(`execution-reconcile:${projectId}`,3);
+          return json(await reconcilePromptExecution(projectId,user.id,runId,input));
+        }
+      }
+      return json({error:'Method not allowed.'},405);
     }
     const keywordRoute=path.match(new RegExp(`^/api/projects/(${id})/keyword-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
     if(keywordRoute){

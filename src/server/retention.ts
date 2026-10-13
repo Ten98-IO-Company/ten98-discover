@@ -5,6 +5,7 @@ import { FoundationError } from './auth.ts';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { expireGoogleImportPages } from './google-retention.ts';
+import { expirePromptResults } from './prompt-execution-retention.ts';
 import { expireKeywordResults } from './keyword-retention.ts';
 
 const days = z.number().int().min(1).max(3650);
@@ -14,7 +15,7 @@ const previewInput = z.object({ revision: z.number().int().positive(), settings:
 const tokenInput = previewInput.extend({ version: z.literal(1), workspaceId: z.uuid(), userId: z.string().min(1).max(128), issuedAt: z.number().int().nonnegative() }).strict();
 const settingsSql = `json_build_object('rawAnalyticsDays',w.raw_analytics_days,'replayDays',w.replay_days,
   'rawProviderEvidenceDays',w.raw_provider_evidence_days,'derivedHistoryDays',w.derived_history_days)`;
-export const retentionCategories = Object.freeze({ rawAnalytics: 'active', replay: 'not_implemented', rawProviderEvidence: 'not_implemented', derivedHistory: 'active' } as const);
+export const retentionCategories = Object.freeze({ rawAnalytics: 'active', replay: 'not_implemented', rawProviderEvidence: 'active', derivedHistory: 'active' } as const);
 
 function parse<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
   const result = schema.safeParse(value);
@@ -64,6 +65,8 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     const cutoff = new Date(asOf.getTime() - input.settings.rawAnalyticsDays * 86_400_000);
     const derivedCutoff = new Date(asOf.getTime() - input.settings.derivedHistoryDays * 86_400_000);
     let derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean } = { status: 'unavailable', imports: null, atLeast: false };
+    const rawEvidenceCutoff=new Date(asOf.getTime()-input.settings.rawProviderEvidenceDays*86_400_000);
+    let promptEstimate: {status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,atLeast:false};
     let keywordEstimate: { status: 'available' | 'unavailable'; results: number | null; atLeast: boolean } = { status: 'unavailable', results: null, atLeast: false };
     let estimate: { status: 'available' | 'unavailable'; rows: number | null; atLeast: boolean; logicalBytes: number | null } = { status: 'unavailable', rows: null, atLeast: false, logicalBytes: null };
     await client.query('SAVEPOINT estimate');
@@ -80,12 +83,18 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       const keywords = await client.query(`SELECT id FROM keyword_research_run
         WHERE workspace_id=$1 AND result IS NOT NULL AND completed_at<$2 LIMIT 10001`, [workspaceId, derivedCutoff]);
       keywordEstimate = { status: 'available', results: Math.min(keywords.rows.length, 10000), atLeast: keywords.rows.length > 10000 };
+      const prompts=await client.query('SELECT id FROM prompt_execution WHERE workspace_id=$1 AND result IS NOT NULL AND completed_at<$2 LIMIT 10001',[workspaceId,rawEvidenceCutoff]);
+      const promptInputs=await client.query(`SELECT q.id FROM prompt_execution_quote q JOIN prompt_comparison c ON c.quote_id=q.id
+       WHERE q.workspace_id=$1 AND q.input_purged_at IS NULL AND EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id)
+        AND NOT EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id
+          AND (r.status IN('queued','running') OR r.completed_at IS NULL OR r.completed_at>=$2)) LIMIT 10001`,[workspaceId,rawEvidenceCutoff]);
+      promptEstimate={status:'available',results:Math.min(prompts.rows.length,10000),inputs:Math.min(promptInputs.rows.length,10000),atLeast:prompts.rows.length>10000||promptInputs.rows.length>10000};
     } catch (error) {
       await client.query('ROLLBACK TO SAVEPOINT estimate');
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, promptEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
@@ -136,7 +145,8 @@ export async function runRetentionBatch(projectId?: string) {
     // Fresh statement after both gates: collection/settings may have committed while we waited.
     const { rows } = await client.query(`SELECT p.retention_cutoff,p.retention_policy_revision,w.retention_revision,
       clock_timestamp()-w.raw_analytics_days*interval '24 hours' AS cutoff,
-      clock_timestamp()-w.derived_history_days*interval '24 hours' AS derived_cutoff
+      clock_timestamp()-w.derived_history_days*interval '24 hours' AS derived_cutoff,
+      clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' AS raw_evidence_cutoff
       FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.id=$1`, [selected]);
     const state = rows[0];
     const cutoff = state.retention_policy_revision === state.retention_revision && state.retention_cutoff ? state.retention_cutoff : state.cutoff;
@@ -159,13 +169,14 @@ export async function runRetentionBatch(projectId?: string) {
         AND NOT EXISTS(SELECT 1 FROM event e WHERE e.project_id=v.project_id AND e.visitor_id=v.id)) AS pending`, [selected, cutoff]);
     const imported = await expireGoogleImportPages(client, selected!, state.derived_cutoff);
     const keywords = await expireKeywordResults(client, selected!, state.derived_cutoff);
-    const complete = !pending.rows[0].pending && !imported.pending && !keywords.pending;
+    const prompts=await expirePromptResults(client,selected!,state.raw_evidence_cutoff);
+    const complete = !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
-    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, complete };
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, complete };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (selected) {

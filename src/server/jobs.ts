@@ -7,6 +7,7 @@ import { registerResourceCleanup } from './resource-cleanup.ts';
 import { runRetentionBatch } from './retention.ts';
 import { googleQueue, reconcileGoogleImports, startGoogleImportWorker } from './google-jobs.ts';
 import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs} from './keyword-research.ts';
+import {promptExecutionQueue,executePromptComparison,reconcilePromptExecutionJobs} from './prompt-execution.ts';
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
@@ -27,6 +28,7 @@ export function getBoss(): Promise<PgBoss> {
         await boss.createQueue(queueName);
         await boss.createQueue(googleQueue);
         await boss.createQueue(keywordQueue);
+        await boss.createQueue(promptExecutionQueue);
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -102,6 +104,7 @@ async function heartbeat() {
   await reconcileProbes();
   await reconcileGoogleImports();
   await reconcileKeywordJobs();
+  await reconcilePromptExecutionJobs();
   // ponytail: one worker health row covers the single-worker Compose profile; use instance IDs before scaling workers.
   return getDatabase().pool.query(
     `INSERT INTO worker_heartbeat(id, last_seen_at) VALUES ('foundation-worker', now())
@@ -114,6 +117,7 @@ export function startWorker(): Promise<void> {
     try {
       const boss = await getBoss();
       await reconcileKeywordJobs();
+      await reconcilePromptExecutionJobs();
       await boss.work<{ probeId: string }>(queueName, { batchSize: 5 }, async (jobs) => {
         for (const job of jobs) {
           if (typeof job.data?.probeId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(job.data.probeId)) {
@@ -136,6 +140,7 @@ export function startWorker(): Promise<void> {
       });
       await startGoogleImportWorker(boss);
       await boss.work<{runId:string}>(keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
+      await boss.work<{comparisonId:string}>(promptExecutionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executePromptComparison(job.data?.comparisonId);});
       workerStarted = true;
       await heartbeat();
       heartbeatTimer = setInterval(() => {

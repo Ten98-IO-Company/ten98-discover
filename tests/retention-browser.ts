@@ -74,6 +74,8 @@ try {
   const save=()=>page.getByRole('button',{name:'Save retention',exact:true});
   await raw().fill('0');assert.equal(await preview().isEnabled(),false);
   await raw().fill('30');await preview().click();await save().waitFor();
+  await page.getByText('0 generated prompt answers and 0 copied execution inputs eligible under raw provider evidence retention.',{exact:true}).waitFor();
+  await page.getByText('Raw provider evidence cutoff (UTC):',{exact:false}).waitFor();
   assert.equal((await pool.query('SELECT raw_analytics_days FROM workspace WHERE id=$1',[workspace.id])).rows[0].raw_analytics_days,90,'Preview must not save.');
   await raw().fill('45');assert.equal(await save().count(),0,'Editing invalidates an earlier confirmation.');
   await preview().click();await save().click();
@@ -102,6 +104,10 @@ try {
   const undersized=await page.getByRole('button').evaluateAll((buttons:HTMLButtonElement[])=>buttons.filter(button=>button.textContent?.includes('retention')||button.textContent?.includes('preview')).filter(button=>button.getBoundingClientRect().height<44).map(button=>button.textContent));
   assert.deepEqual(undersized,[],'Retention controls should provide 44px touch targets.');
   if(artifacts)await page.screenshot({path:join(artifacts,'retention-settings-mobile.png'),fullPage:true});
+  await page.setViewportSize({width:1360,height:900});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Desktop retention must not overflow.');
+  if(artifacts)await page.screenshot({path:join(artifacts,'retention-settings-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:360,height:800});
   const replacement=randomUUID();
   await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)',[replacement,'Remaining owner',`${replacement}@retention-browser.integration.test`]);
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspace.id,replacement]);
