@@ -94,12 +94,30 @@ export async function runPromptExecutionChecks(){
   await saveBudget(uncertain.workspace,owner,{monthlyLimitUsd:'10',paused:false});await assert.rejects(start(uncertain),{status:409});
   await assert.rejects(reconcilePromptExecution(uncertain.project,editor,child.id,{},send),{status:404});
   for(const change of [{id:'gen-other'},{session_id:'foreign'},{external_user:'foreign'},{finish_reason:null},{total_cost:'0.01'}]){receiptChange=change;assert.equal((await reconcilePromptExecution(uncertain.project,owner,child.id,{},send)).reconciliation.status,'inconclusive');assert.equal((await ledger(child.id)).status,'uncertain');}
+  // Expiring copied input must not orphan an unresolved charge or restore payload on recovery.
+  await pool.query("UPDATE prompt_execution SET completed_at=clock_timestamp()-interval '91 days' WHERE comparison_id=$1",[uncertainRun.id]);
+  const preservedSql=`SELECT row_to_json(p) AS ledger,r.generation_id,r.evidence,r.route,r.dispatched_at,
+    q.request_actor,q.key_fingerprint,q.input_hash,q.routes,c.request_key,c.quote_id
+    FROM prompt_execution r JOIN provider_request p ON p.id=r.id JOIN prompt_comparison c ON c.id=r.comparison_id
+    JOIN prompt_execution_quote q ON q.id=c.quote_id WHERE r.id=$1`;
+  const preserved=(await pool.query(preservedSql,[child.id])).rows[0],originalReceipt={...receipts.get(child.generationId)},readsBeforePurge=free;
+  const expiredUncertain=await runRetentionBatch(uncertain.project);
+  assert.equal(expiredUncertain?.expiredPromptInputs,1);assert.equal(expiredUncertain?.expiredPromptResults,0);
+  const purgedUncertain=await detail(uncertain,uncertainRun.id);
+  assert.equal(purgedUncertain.inputExpired,true);assert.equal(purgedUncertain.input,null);assert.equal(purgedUncertain.messages,null);
+  assert.deepEqual(purgedUncertain.runs.map((r:any)=>r.status),['uncertain','cancelled']);assert.equal(purgedUncertain.runs[0].result,null);
+  assert.deepEqual((await pool.query(preservedSql,[child.id])).rows[0],preserved);assert.equal(free,readsBeforePurge);assert.equal(paid,before);
   receiptChange={};assert.equal((await reconcilePromptExecution(uncertain.project,owner,child.id,{},send)).reconciliation.status,'matched');const recovered=(await detail(uncertain,uncertainRun.id)).runs[0];assert.equal(recovered.status,'reconciled');assert.equal(recovered.result,null);assert.equal((await getPromptExecutions(uncertain.project,owner)).spendingPaused,true);assert.equal(paid,before);
+  const recoveredComparison=await detail(uncertain,uncertainRun.id);
+  assert.equal(recoveredComparison.inputExpired,true);assert.equal(recoveredComparison.input,null);assert.equal(recoveredComparison.messages,null);
+  assert.equal(recovered.generationId,child.generationId);assert.equal(recovered.chargeStatus,'settled');assert.equal(recovered.actualUsd,'0.000013');
+  assert.deepEqual(receipts.get(child.generationId),originalReceipt);assert.equal(free,readsBeforePurge+1);
+  await executePromptComparison(uncertainRun.id,send);assert.equal(paid,before);
   mode='ok';const missing=await fixture(),missingRun=await start(missing);mode='unknown';await executePromptComparison(missingRun.id,send);const noId=(await detail(missing,missingRun.id)).runs[0];const freeCount=free;assert.equal((await reconcilePromptExecution(missing.project,owner,noId.id,{},send)).reconciliation.status,'inconclusive');assert.equal(free,freeCount);
   const rotated=await fixture(),rotatedRun=await start(rotated),authBefore=process.env.AUTH_SECRET;
   const storedActor=(await pool.query('SELECT q.request_actor FROM prompt_comparison c JOIN prompt_execution_quote q ON q.id=c.quote_id WHERE c.id=$1',[rotatedRun.id])).rows[0].request_actor;
   try{process.env.AUTH_SECRET=randomBytes(32).toString('hex');mode='truncated';await executePromptComparison(rotatedRun.id,send);const item=(await detail(rotated,rotatedRun.id)).runs[0];assert.equal(receipts.get(item.generationId).external_user,storedActor);assert.equal((await reconcilePromptExecution(rotated.project,owner,item.id,{},send)).reconciliation.status,'matched');}finally{process.env.AUTH_SECRET=authBefore;}
-  console.log('PASS captured generation recovery, exact owner/account/context evidence, no replay and no inferred missing charge');
+  console.log('PASS captured generation recovery after input expiry, exact owner/account/context evidence, no replay and no inferred missing charge');
 
   mode='ok';const crashed=await fixture(),cr=await start(crashed);await pool.query("UPDATE provider_request SET status='dispatched' WHERE id=$1",[cr.runs[0].id]);await pool.query("UPDATE prompt_execution SET status='running',dispatched_at=clock_timestamp()-interval '2 minutes' WHERE id=$1",[cr.runs[0].id]);before=paid;await reconcilePromptExecutionJobs();const stopped=await detail(crashed,cr.id);assert.equal(stopped.runs[0].status,'uncertain');assert.equal(stopped.runs[1].status,'cancelled');assert.equal(paid,before);
   const evidence=(await pool.query('SELECT row_to_json(p) AS ledger,r.evidence FROM provider_request p JOIN prompt_execution r ON r.id=p.id WHERE p.id=$1',[done.runs[0].id])).rows[0];await pool.query("UPDATE prompt_execution SET completed_at=clock_timestamp()-interval '91 days' WHERE comparison_id=$1",[done.id]);const policy=await getRetention(f.workspace,owner);const preview=await previewRetention(f.workspace,owner,{revision:policy.revision,settings:policy.settings});assert.equal(preview.promptEstimate.results,2);
