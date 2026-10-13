@@ -14,7 +14,7 @@ Entry is **Settings → Meta app setup**, including an explicit return from a pr
 
 | Operation | Current behavior and mapping |
 | --- | --- |
-| `getMetaApp(userId, params)` | Params are optional `registrationId` and `cursor`, once each. Returns `operator`, active-app `configured`/`enabled`, `vaultConfigured`, `httpsReady`, exact `redirectUri`, `activeRegistrationId`, selected `registration`, registration page and `nextCursor`. Operator list is 50/page; the selected registration may be outside that page. Preserve its summary independently. |
+| `getMetaApp(userId, params)` | Params are optional `registrationId` or exact operator-only `appId` (mutually exclusive), plus `cursor`, once each. Returns `operator`, active-app `configured`/`enabled`, `vaultConfigured`, `httpsReady`, exact `redirectUri`, `activeRegistrationId`, selected `registration`, registration page and `nextCursor`. A valid missing exact app ID returns selected registration null; it does not prove an earlier secret save failed. Operator list is 50/page; the selected registration may be outside that page. Preserve its summary independently. |
 | Registration metadata | `{id, appId, configId, revision, active, enabled, declaredMode, boundOrigin, deleteDataUrl}`. No app secret. The selected registration's enabled/active values govern its form; the envelope's enabled flag describes the active app and must not overwrite an inactive registration. |
 | `saveMetaApp(userId, body)` | Body is `{activeRegistrationId, revision, appId, configId, appSecret?, activate, enabled, declaredMode}`. Active-registration ID plus selected app-ID revision form the comparison check. New app ID uses revision0 and requires a secret; existing app keeps its secret when the field is omitted. No blank-string secret is submitted. |
 | Activation | `activate:true` explicitly chooses this registration for future new connections and deactivates the previous active registration. `activate:false` preserves this registration's existing active/inactive state; it does not deactivate an already-active app. New registrations default inactive. Enabled and active are different settings. |
@@ -173,6 +173,14 @@ Render rules:
 | Disable | Revoke Meta access | Disable registration | The operation is local and keyless. |
 | Callback | Example address | Exact server-returned address | Origin and registration binding must be preserved. |
 
-Glossary: **registration** is the retained local Meta app identity; **active** chooses the app for new connections; **enabled** allows access through that registration; **connection** is a project source; **grant** is provider permission. No additional product decision is assumed beyond these actual services. Open gate: root review/publication, protected controller mapping and real integration acceptance remain required before this flow is presented as working.
+Glossary: **registration** is the retained local Meta app identity; **active** chooses the app for new connections; **enabled** allows access through that registration; **connection** is a project source; **grant** is provider permission. No additional product decision is assumed beyond these actual services.
+
+Local acceptance, 2026-10-13: the Kimi-built pure view and protected controller
+each pass seven browser groups. Current authorization, metadata recovery,
+write-only secret handling, ambiguous writes, retained registration paging,
+explicit activation and keyless disable were exercised with synthetic responses.
+The production application also passes operator-route enforcement and actual
+empty/readiness screens at 1440px and 360px. Provider app approval and live consent
+remain separate release gates; the local screen does not claim to verify either.
 
 Independent tests must cover active/inactive paging and an off-page selected record; new registration with explicit activation; exact long digit IDs and hostile plain text; no secret returned/refilled; ambiguous Save clears and locks until fresh metadata; malformed2xx and current denial defeating held successes; keyless Disable with unavailable vault and revision cap; inactive-target Disable reread; unknown Disable metadata recovery; current nonoperator purge despite true capability flags; full callback text/copy fallback; keyboard labels,44px controls and360px wrapping. A pure leaf fixture proves presentation only. Real API/local synthetic acceptance must precede integration; no live Meta consent or imports are implied.

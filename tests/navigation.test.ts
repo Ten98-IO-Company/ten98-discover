@@ -27,8 +27,10 @@ test('page guards distinguish account access, membership and administrative priv
   assert.equal(allowedView('providers', 'admin', false), false)
   assert.equal(allowedView('google-app', 'owner', false), false)
   assert.equal(allowedView('google-app', undefined, true), true)
+  assert.equal(allowedView('meta-app', 'owner', false), false)
+  assert.equal(allowedView('meta-app', undefined, true), true)
   assert.equal(allowedView('events', undefined, false), false)
-  for (const view of ['keywords', 'ranks', 'audits', 'conversions'] as const) {
+  for (const view of ['keywords', 'ranks', 'audits', 'conversions', 'meta'] as const) {
     assert.deepEqual(parseNavigation({workspace, project, view}), {workspace, project, view})
     assert.equal(projectView(view), true)
     assert.equal(allowedView(view, 'viewer', false), true)
@@ -50,4 +52,11 @@ test('callbacks reject mixed families, duplicates and double-encoded capabilitie
   assert.deepEqual(parseCallback('#google=failed'), { kind: 'google-error' })
   assert.deepEqual(parseCallback('#' + 'x'.repeat(4096)), { kind: 'invalid' })
   assert.equal(parseCallback(''), null)
+})
+
+test('Meta returns accept only exact sanitized scope and fail without provider text', () => {
+  const meta = `#meta=connected&meta-project=${project}&meta-workspace=${workspace}`
+  assert.deepEqual(parseCallback(meta), { kind: 'meta', workspace, project })
+  assert.deepEqual(parseCallback('#meta=failed'), { kind: 'meta-error' })
+  for (const hash of [meta+'&google=connected', meta+'&oidc-factor=1', meta+'&invite='+'a'.repeat(43), meta+'&meta=connected', meta+'&return=https://example.test', '#meta=failed&error=private-value', '#meta=connected', '#meta=connected&meta-project='+project+'&meta-workspace=bad']) assert.deepEqual(parseCallback(hash), {kind:'invalid'})
 })

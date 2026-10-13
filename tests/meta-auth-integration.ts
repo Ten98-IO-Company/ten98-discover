@@ -53,6 +53,8 @@ export async function runMetaAuthChecks(){
    const input={activeRegistrationId:null,revision:0,appId,configId:'10002',appSecret,activate:true,enabled:true,declaredMode:'development' as const};
    await assert.rejects(saveMetaApp(owner,input),fails(403));let state=await saveMetaApp(operator,input);assert.ok(state.registration);const reg=state.registration.id;
    assert.equal((await getMetaApp(viewer)).registration,null);assert.equal((await getMetaApp(viewer)).registrations.length,0);assert.ok(!JSON.stringify(state).includes(appSecret));
+   assert.equal((await getMetaApp(operator,new URLSearchParams({appId}))).registration!.id,reg);assert.equal((await getMetaApp(operator,new URLSearchParams({appId:'99999'}))).registration,null);
+   await assert.rejects(getMetaApp(viewer,new URLSearchParams({appId})),fails(403));await assert.rejects(getMetaApp(operator,new URLSearchParams({appId,registrationId:reg})),fails(400));
    await assert.rejects(saveMetaApp(operator,{...input,appSecret:'bad\nsecret'}),fails(400));
    const stable=await withMetaRegistration(reg,async(_c,a,s)=>({hash:metaSubjectHash(s,subject),cipher:a.encrypted_config,credential:a.credential_revision}));
    await disableMetaApp(operator,reg,{revision:state.registration.revision});const disabled=await withMetaRegistration(reg,async(_c,a,s)=>({hash:metaSubjectHash(s,subject),cipher:a.encrypted_config,credential:a.credential_revision}));assert.deepEqual(disabled,stable,'Disabling must not invalidate verifier AAD.');

@@ -1,4 +1,4 @@
-export const views = ['project', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'explore', 'google', 'google-app', 'keywords', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'explore', 'google', 'google-app', 'meta', 'meta-app', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type NavigationSearch = { workspace?: string; project?: string; view: AppView }
 
@@ -27,11 +27,11 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
 }
 
 export function projectView(view: AppView): boolean {
-  return ['project', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'explore', 'google', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
+  return ['project', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'explore', 'google', 'meta', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
 }
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {
-  if (view === 'google-app') return operator
+  if (view === 'google-app' || view === 'meta-app') return operator
   if (['security', 'identity', 'workspace', 'project'].includes(view)) return true
   if (!role) return false
   if (view === 'providers') return role === 'owner'
@@ -43,6 +43,8 @@ export function allowedView(view: AppView, role: string | undefined, operator: b
 export type CallbackIntent =
   | { kind: 'google'; workspace: string; project: string }
   | { kind: 'google-error' }
+  | { kind: 'meta'; workspace: string; project: string }
+  | { kind: 'meta-error' }
   | { kind: 'proof'; proof: string }
   | { kind: 'factor' | 'complete' | 'identity-error' }
   | { kind: 'invite'; token: string }
@@ -55,9 +57,16 @@ export function parseCallback(hash: string): CallbackIntent | null {
   const params = new URLSearchParams(hash.replace(/^#/, ''))
   const keys = [...params.keys()]
   const google = keys.some(key => key === 'google' || key.startsWith('google-'))
+  const meta = keys.some(key => key === 'meta' || key.startsWith('meta-'))
   const oidc = keys.some(key => key.startsWith('oidc-'))
   const invite = params.has('invite')
-  if ([google, oidc, invite].filter(Boolean).length !== 1 || keys.some(key => params.getAll(key).length !== 1)) return { kind: 'invalid' }
+  if ([google, meta, oidc, invite].filter(Boolean).length !== 1 || keys.some(key => params.getAll(key).length !== 1)) return { kind: 'invalid' }
+  if (meta) {
+    const workspace = params.get('meta-workspace'), project = params.get('meta-project')
+    if (params.get('meta') === 'connected' && keys.length === 3 && navigationId(workspace) && navigationId(project)) return { kind: 'meta', workspace: workspace.toLowerCase(), project: project.toLowerCase() }
+    if (params.get('meta') === 'failed' && keys.length === 1) return { kind: 'meta-error' }
+    return { kind: 'invalid' }
+  }
   if (google) {
     const workspace = params.get('google-workspace'), project = params.get('google-project')
     if (params.get('google') === 'connected' && keys.length === 3 && navigationId(workspace) && navigationId(project)) return { kind: 'google', workspace: workspace.toLowerCase(), project: project.toLowerCase() }

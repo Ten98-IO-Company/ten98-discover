@@ -34,6 +34,12 @@ the installation's active registration. Rotating an inactive verifier therefore
 does not switch new consent to that app. Deleting verifier rows is not exposed: doing so requires a
 separate lifecycle decision covering outstanding deletion obligations.
 
+An operator-only exact `appId` lookup can recover a new registration after its
+save acknowledgement is lost, without scanning every registration page. It is
+mutually exclusive with `registrationId`; a valid missing app ID returns selected
+registration `null` in a freshly authorized metadata envelope. This is a snapshot,
+not proof that the earlier secret was or was not saved.
+
 ## Consent and account selection
 
 Only a current workspace owner may connect, inspect accounts, select an account,
@@ -203,6 +209,11 @@ pending flows. The worker performs bounded local deletion and unsuccessful-flow
 expiry without overlapping those tasks. `cli.ts meta-cleanup` remains available
 without vault keys for already-admitted deletion receipts.
 
-The pure connection view also passes seven browser groups and desktop/mobile
-layout checks. Protected browser controllers and operator setup are separate
-acceptance work; this increment does not yet offer report imports.
+Protected connection and operator setup are available through the application
+navigation. The connection controller passes 13 browser groups and its pure view
+passes seven; the operator controller and pure view each pass seven. Production
+build, typecheck and all 12 application navigation groups pass, including exact
+callback-family routing, held-response scope changes and forbidden operator views.
+Real empty-source and operator-readiness screens pass desktop/mobile checks
+against an isolated database without outbound requests. App-ID metadata recovery
+also passes the auth/API suite. This increment does not yet offer report imports.

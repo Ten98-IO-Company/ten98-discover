@@ -21,6 +21,8 @@ import { OidcSignIn } from '../components/OidcSignIn'
 import { OidcRecoveryPanel } from '../components/OidcRecoveryPanel'
 import { GoogleReportsPanel } from '../components/GoogleReportsPanel'
 import { GoogleAppPanel } from '../components/GoogleAppPanel'
+import { MetaConnectionPanel } from '../components/MetaConnectionPanel'
+import { MetaAppPanel } from '../components/MetaAppPanel'
 import { KeywordResearchPanel } from '../components/KeywordResearchPanel'
 import { RankTrackingPanel } from '../components/RankTrackingPanel'
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
@@ -128,10 +130,10 @@ function App() {
     callback.current = null
     if (!pending || pending.generation !== intent.current.generation) return
     if (pending.value.kind === 'proof') go({ ...intent.current.search, view: 'identity' }, true)
-    if (pending.value.kind === 'google') {
+    if (pending.value.kind === 'google' || pending.value.kind === 'meta') {
       const value = pending.value
-      if (m.workspaces.some(workspace => workspace.id === value.workspace)) go({ workspace: value.workspace, project: value.project, view: 'google' }, true)
-      else setAuthNotice({ kind: 'error', message: 'Google reporting returned, but that workspace is no longer available. Choose a current workspace.' })
+      if (m.workspaces.some(workspace => workspace.id === value.workspace)) go({ workspace: value.workspace, project: value.project, view: value.kind }, true)
+      else setAuthNotice({ kind: 'error', message: 'Authorization returned, but that workspace is no longer available. Choose a current workspace.' })
     }
   }
 
@@ -158,6 +160,8 @@ function App() {
       else if (value.kind === 'invite') setInviteToken(value.token)
       else if (value.kind === 'google') setAuthNotice({ kind: 'info', message: 'Google authorization returned. Review your connection and choose a property to import reports.' })
       else if (value.kind === 'google-error') setAuthNotice({ kind: 'error', message: 'Google reporting could not be connected. Start the connection again and grant read access.' })
+      else if (value.kind === 'meta') setAuthNotice({ kind: 'info', message: 'Meta access approved. Review the connection and choose an ad account. This does not install a pixel or import a report.' })
+      else if (value.kind === 'meta-error') setAuthNotice({ kind: 'error', message: 'Meta access could not be approved. Start authorization again and grant advertising read access.' })
       else if (value.kind === 'invalid' || value.kind === 'identity-error') setAuthNotice({ kind: 'error', message: 'The return link is invalid or ambiguous. Start the connection again, or reopen the original invitation.' })
       // Capabilities live only in memory. Let the router own its history entry.
       await navigate({ search: intent.current.search, hash: '', replace: true })
@@ -460,7 +464,7 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
-  const pageTitles: Record<AppView, string> = {project: 'Web analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageTitles: Record<AppView, string> = {project: 'Web analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   const projectDescriptions: Partial<Record<AppView, string>> = {project: 'Understand how people find and use your website.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', google: 'Import Search Console and GA4 reports without changing browser tracking.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
   return (
@@ -506,6 +510,7 @@ function App() {
           <Link className={view === 'keywords' ? 'proj active' : 'proj'} aria-current={view === 'keywords' ? 'page' : undefined} to='/' search={target('keywords')}>Keywords</Link>
           <Link className={view === 'ranks' ? 'proj active' : 'proj'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}>Rank tracking</Link>
           <p className='side-label section-label'>Connect</p>
+          <Link className={view === 'meta' ? 'proj active' : 'proj'} aria-current={view === 'meta' ? 'page' : undefined} to='/' search={target('meta')}>Meta ads</Link>
           <Link className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}>Install tracker</Link>
           {['owner','admin'].includes(workspace.role) && <Link className={view === 'destinations' ? 'proj active' : 'proj'} aria-current={view === 'destinations' ? 'page' : undefined} to='/' search={target('destinations')}>Destinations</Link>}
           <Link className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}>Collection and privacy</Link>
@@ -521,6 +526,7 @@ function App() {
             <Link className={view === 'security' ? 'proj active' : 'proj'} to='/' search={target('security')}>Account security</Link>
             <Link className={view === 'identity' ? 'proj active' : 'proj'} to='/' search={target('identity')}>Identity sign-in</Link>
             {me?.instanceOperator && <Link className={view === 'google-app' ? 'proj active' : 'proj'} to='/' search={target('google-app')}>Google app setup</Link>}
+            {me?.instanceOperator && <Link className={view === 'meta-app' ? 'proj active' : 'proj'} to='/' search={target('meta-app')}>Meta app setup</Link>}
             <Link className={view === 'workspace' ? 'proj active' : 'proj'} to='/' search={target('workspace')}>Create workspace</Link>
           </nav>
         </details>
@@ -563,6 +569,8 @@ function App() {
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'meta' && project && me && <MetaConnectionPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenAppSetup={() => go(target('meta-app'))} />}
+        {view === 'meta-app' && me?.instanceOperator && <MetaAppPanel userId={me.user.id} onUnauthorized={unauthorized} onBack={() => go(target(project?'meta':'security'))} backLabel={project?'Back to connections':'Back to account'} />}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />

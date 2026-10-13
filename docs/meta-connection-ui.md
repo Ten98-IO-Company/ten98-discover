@@ -1,6 +1,15 @@
 # Meta connection and account selection
 
-**GPT-reviewed presentation contract, 2026-10-13; auth wire DTO mapping pending.** This specifies connection setup, not a working importer. Publish before Kimi receives the approved leaf. No private transcript, token or customer data is a draft input.
+**Implemented connection workflow, locally accepted 2026-10-13.** The Kimi-built presentation is connected to the protected authorization APIs. This supplies connection setup, not report imports. No private transcript, token or customer data was a draft input.
+
+The production controller passes 13 browser groups covering current permissions,
+scope changes, held responses, exact acknowledgement retries, ambiguous writes,
+account paging, explicit disconnect, rejected authorization URLs and mobile/keyboard
+interaction. Seven separate groups cover the pure presentation. The production
+build and 12 application navigation groups pass, including sanitized Meta/Google
+callback routing and operator-only setup. Real empty-source and operator-readiness
+screens were inspected at 1440px and 360px against a fresh isolated database.
+All provider responses were synthetic; no live Meta account was connected.
 
 ## Goal and existing patterns
 

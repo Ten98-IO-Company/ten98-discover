@@ -116,6 +116,7 @@ try {
   await page.goto(href(b.id, b1, 'providers')); await heading('Web analytics'); await selected(b.id, b1, 'project')
   await page.goto(href(b.id, b1, 'retention')); await page.getByRole('heading', { name: /retention/i }).first().waitFor(); await selected(b.id, b1, 'retention')
   await page.goto(href(a.id, a1, 'google-app')); await heading('Web analytics')
+  await page.goto(href(a.id, a1, 'meta-app')); await heading('Web analytics')
   await page.goto(`${config.appUrl}/?workspace=${a.id}&workspace=${foreign.id}&project=${foreignProject}&view=security&view=providers&invite=do-not-store`)
   await heading('Web analytics'); assert.equal(new URL(page.url()).searchParams.has('invite'), false)
   assert.equal(new URL(page.url()).searchParams.getAll('workspace').length, 1)
@@ -168,15 +169,18 @@ try {
   assert.equal(new URL(page.url()).searchParams.get('view'), 'security')
   console.log('PASS navigation: workspace creation/membership refresh preserves newer valid viewer navigation.')
 
-  const callback = await hold(`**/api/workspaces/${a.id}/projects`)
-  await page.goto(`${href(b.id, b1, 'events')}#google=connected&google-project=${a2}&google-workspace=${a.id}`); await callback.began
-  await link('Account security'); await heading('Account security'); callback.release(); await callback.remove(); await delay(150)
-  await heading('Account security'); assert.equal(new URL(page.url()).hash, '')
-  await page.goto(`${href(b.id, b1, 'events')}#google=connected&google-project=${a2}&google-workspace=${a.id}`)
-  await heading('Google reports'); await selected(a.id, a2, 'google'); assert.equal(new URL(page.url()).hash, '')
-  await page.goto(`${href(a.id, a1, 'events')}#google=connected&google-project=${a2}&google-workspace=${a.id}&oidc-factor=1`)
-  await heading('Recent events'); await page.getByRole('alert').filter({ hasText: 'invalid or ambiguous' }).waitFor()
-  assert.equal(new URL(page.url()).hash, '')
+  for (const family of ['google','meta']) {
+    const fragment=`#${family}=connected&${family}-project=${a2}&${family}-workspace=${a.id}`
+    const callback = await hold(`**/api/workspaces/${a.id}/projects`)
+    await page.goto(href(b.id, b1, 'events')+fragment); await callback.began
+    await link('Account security'); await heading('Account security'); callback.release(); await callback.remove(); await delay(150)
+    await heading('Account security'); assert.equal(new URL(page.url()).hash, '')
+    await page.goto(href(b.id, b1, 'events')+fragment)
+    await heading(family==='meta'?'Meta ads':'Google reports'); await selected(a.id, a2, family); assert.equal(new URL(page.url()).hash, '')
+    await page.goto(href(a.id, a1, 'events')+fragment+'&oidc-factor=1')
+    await heading('Recent events'); await page.getByRole('alert').filter({ hasText: 'invalid or ambiguous' }).waitFor()
+    assert.equal(new URL(page.url()).hash, '')
+  }
   console.log('PASS navigation: callback has one-shot priority, yields to user intent, and rejects mixed fragments.')
 
   await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')

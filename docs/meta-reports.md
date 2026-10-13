@@ -1,6 +1,6 @@
 # Native Meta advertising report imports
 
-**Implementation contract, reviewed 2026-10-13; not implemented or provider-validated.** This is the next native reporting connector after Google. It covers the Meta/Facebook entry in P76 and contributes to P71, P77 and P81. All 81 requirements remain required; this document does not complete those rows or the other platforms.
+**Implementation contract, reviewed 2026-10-13.** Authorization, account selection and local deletion are implemented with synthetic API/browser acceptance; report imports and live-provider validation remain pending. This is the next native reporting connector after Google. It covers the Meta/Facebook entry in P76 and contributes to P71, P77 and P81. All 81 requirements remain required; this document does not complete those rows or the other platforms.
 
 The accepted [tracking contract](tracking.md#automatic-consolidation-without-misleading-totals) requires accessible advertising accounts/campaigns, daily spend, impressions, clicks and available conversion/value fields. Meta Marketing API advertising reports include supported Instagram placements within those advertising accounts. Facebook Page Insights, organic Instagram insights, publishing, inboxes, audiences, campaign editing and Conversions API uploads are not this accepted reporting family. A Meta Pixel ID neither authorizes reports nor identifies an ad account. Report authorization never installs or enables a browser pixel, changes consent, or signs someone into ten98-monitor.
 
