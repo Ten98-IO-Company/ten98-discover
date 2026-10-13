@@ -26,6 +26,12 @@ The citation increment presents two plain period summaries and a compact action 
 
 The rank family now loads through one native dynamic-import boundary on entry. Navigation stays usable during a delayed download; a failed download offers an explicit reload without mounting the rank controller. Nine production-loading groups, all 45 existing rank-controller groups and all 20 production-navigation groups pass, together with TypeScript, build and a selected server-only browser-bundle marker scan. Tests cover cold entry, delayed downloads, scope/session changes, failed-download recovery, denied access and mobile layout. The measured initial JavaScript changed from 1,186,223 raw / 308,951 gzip bytes to 1,045,784 raw / 275,656 gzip bytes; the deferred rank chunk is 141,820 raw / 34,497 gzip bytes. Both measurements use the same per-asset Node gzip method. This snapshot also includes the comparison redesign, so the entire reduction is not attributed solely to deferred loading. Tests used synthetic local state and no paid providers or live-preview database.
 
+The Meta report increment puts saved-data navigation above imports, moves retained daily rows before the full coverage table, and presents campaign results before inventory history. Import and history controls use native disclosures while preserving mounted drafts, visible uncertainty and permission checks. First-use empty source lists show one actionable message. Compact headers retain Back and Reload; exports retain their exact applied scope. Campaign configured/effective statuses, observation intervals, coverage qualifications, expiry and report-versus-pixel distinctions remain explicit.
+
+All 56 focused Meta browser groups pass: imports/navigation eight presentation and twelve controller groups; latest coverage eight and eight; campaign inventory nine and eleven. Checks preserve the original assertions and cover native disclosures, draft retention, unknown writes, role loss, source/receipt return, bounded exports, stale responses, 320/360/768/1440px layouts, long names, LTR/RTL, keyboard scrolling, 44px targets, CSS layout zoom and forced colors. TypeScript and the combined production build pass. Each of the three view drafts used one bounded repair: compact Latest header actions, preserving the Campaign mode label without a selected summary, and singular Import empty-state copy. Navigation needed no repair. The accepted product diff is exactly the reviewed Kimi output; controllers, types, APIs, dependencies and shared styles remain unchanged apart from moving the existing parent navigation JSX.
+
+The Meta build also passes all 20 production-navigation groups against a separately owned synthetic database, including retained imports, coverage, inventory, CSV and return paths. Desktop/mobile screenshots were inspected. One new navigation assertion initially ran before its receipt finished loading; the harness now waits for the corresponding button before asserting its count and order, preserving all prior groups. Source and emitted bundle hashes stayed fixed during this test-only adjustment. The temporary server was stopped and the fixture database had no remaining clients. No live-preview update or provider request occurred.
+
 ## Kimi execution record
 
 Native CLI 2.1.1, `kimi-code/k3-256k`, thinking enabled and maximum-effort override; Skill-only profile with no shell/filesystem/network/delegation tools. GPT supplied explicit public contracts, reviewed exact output paths, applied drafts and tested independently. This profile is not an operating-system sandbox.
@@ -44,10 +50,14 @@ Native CLI 2.1.1, `kimi-code/k3-256k`, thinking enabled and maximum-effort overr
 | AI period-comparison presentation | Ponytail | about242 s | Five exact scoped replacements accepted; no repair |
 | Citation presentation | Ponytail | about128 s | Five exact scoped replacements; eleven view and ten controller groups pass; no repair |
 | Deferred rank-family loading | Ponytail | about30 s | Three exact scoped replacements accepted; no repair |
+| Meta latest coverage | Ponytail and UX Copy Refiner | about 227 s + 40 s repair | One scoped return replacement and one bounded header repair; 16 focused groups pass |
+| Meta campaign inventory | Ponytail and UX Copy Refiner | about 284 s + 17 s repair | One scoped return replacement and one bounded mode-label repair; 20 focused groups pass |
+| Meta saved imports | Ponytail and UX Copy Refiner | about 89 s + 31 s repair | Three scoped spans and one bounded empty-state repair; 20 import/navigation groups pass |
+| Meta report navigation | Ponytail | about 121 s | Existing guarded buttons moved above imports; no repair |
 
 Intervals come from private capture-file timestamps and are approximate, not model token usage. The token batch remained below its combined 20-minute ceiling; the stylesheet batch used one repair and also remained below that ceiling. An oversized earlier stylesheet prompt failed local preflight before invoking Kimi. The prompt-size guard was preserved.
 
-The read-only allowance check during this work reported 39% five-hour usage and 84% weekly usage. Per-batch usage deltas, cost and savings are unknown. No HighSpeed substitution, account-plan change or model fallback occurred.
+The earlier read-only allowance check reported 39% five-hour usage and 84% weekly usage; those values are not a current allowance claim. Per-batch usage deltas, cost and savings are unknown. Each Meta view had a 420-second initial deadline and at most one 120-second repair; all stayed below those bounds. Meta navigation used one draft within its 180-second deadline. No HighSpeed substitution, account-plan change or model fallback occurred.
 
 ## Still in progress
 

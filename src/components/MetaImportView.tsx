@@ -91,7 +91,7 @@ export function MetaImportView(props: MetaImportViewProps) {
       style={wrapStyle}
     >
       <h2 id={props.prefix + 'heading'} tabIndex={-1}>
-        Meta reports
+        Saved imports
       </h2>
       <p className="hint">
         Import read-only advertising reports. Browser pixels and native analytics remain separate sources.
@@ -144,7 +144,18 @@ export function MetaImportView(props: MetaImportViewProps) {
       </div>
       {props.role !== null && (
         <>
-          <div className="card stack">
+          <div className="stack">
+            {props.loaded && !props.reading && props.error === '' && props.sources.length === 0 && props.selectedSourceId === '' && props.source === null && !props.canPreviousSources && !props.canNextSources ? (
+              <>
+                <p className="hint">No sources on this page.</p>
+                <p className="hint">
+                  {isOwner
+                    ? 'Use Manage connections to connect a reporting source.'
+                    : 'Use Manage connections to review access, or ask a workspace owner to connect a reporting source.'}
+                </p>
+              </>
+            ) : (
+            <>
             <div className="row" style={{ alignItems: 'end' }}>
             <div className="field" style={toolbarFieldStyle}>
               <label htmlFor={props.prefix + 'source'}>Source</label>
@@ -184,12 +195,14 @@ export function MetaImportView(props: MetaImportViewProps) {
               </button>
             </div>
             </div>
-            {props.loaded && props.sources.length === 0 && (
+            {props.loaded && !props.reading && props.error === '' && props.sources.length === 0 && (
               <p className="hint">No sources on this page.</p>
+            )}
+            </>
             )}
           {props.source !== null && (
             <>
-              <dl style={metadataStyle}>
+              <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 8rem), 1fr))', gap: '8px 16px', margin: 0, minWidth: 0 }}>
                 <div style={wrapStyle}>
                   <dt>Name</dt>
                   <dd style={ddStyle}>{props.source.name}</dd>
@@ -213,7 +226,8 @@ export function MetaImportView(props: MetaImportViewProps) {
               </dl>
               <p className="hint">{props.source.help}</p>
               {isOwner ? (
-                <>
+                <details id={props.prefix + 'new-import'} open={summary === null || submitting || unknown}>
+                  <summary style={controlStyle}>Import a report</summary>
                   <div style={metadataStyle}>
                   <div className="field" style={fieldStyle}>
                     <label htmlFor={props.prefix + 'report'}>Report</label>
@@ -267,7 +281,7 @@ export function MetaImportView(props: MetaImportViewProps) {
                       Import report
                     </button>
                   </div>
-                </>
+                </details>
               ) : (
                 <p className="hint">
                   A workspace owner can start or cancel imports. You can read retained reports.
@@ -277,7 +291,7 @@ export function MetaImportView(props: MetaImportViewProps) {
           )}
           </div>
           {props.selectedSourceId !== '' && (
-            <div className="card stack">
+            <div className="stack">
               <div className="row" style={{ alignItems: 'end' }}>
               <div className="field" style={toolbarFieldStyle}>
                 <label htmlFor={props.prefix + 'import'}>Import history</label>
