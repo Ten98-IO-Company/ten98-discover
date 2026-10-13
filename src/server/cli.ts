@@ -6,6 +6,7 @@ import { assertSchema, closeDatabase, getDatabase, migrationSources, pendingMigr
 import { startWorker, stopJobs } from './jobs.ts';
 import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts';
 import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
+import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
 import { setInstanceOperator } from './instance-operators.ts';
 
 class CliError extends Error {}
@@ -64,6 +65,7 @@ async function diagnose(checkWorker: boolean) {
     ['Database schema', assertSchema],
     ['Provider credential keyring', assertCredentialKeys],
     ['Identity credential keyring', assertOidcCredentialsReadable],
+    ['Google reporting credential keyring', assertGoogleCredentialsReadable],
     ['Artifact directory', async () => {
       await mkdir(config.artifactDir, { recursive: true, mode: 0o700 });
       const path = join(config.artifactDir, `.write-check-${randomUUID()}`);
@@ -93,6 +95,7 @@ async function worker() {
   await assertSchema();
   await assertCredentialKeys();
   await assertOidcCredentialsReadable();
+  await assertGoogleCredentialsReadable();
   await startWorker();
   console.log('Foundation worker ready. No external providers are scheduled.');
   await new Promise<void>((resolve) => {
@@ -114,7 +117,9 @@ try {
       await assertSchema();
       const providers = await rotateCredentialEncryption();
       const identities = await rotateOidcCredentials();
+      await rotateGoogleCredentials();
       console.log(`Re-encrypted ${providers} provider connections and ${identities} identity records with the active key. Keep old keys for backups.`);
+      console.log('Google reporting credentials re-encrypted with the active key.');
       break;
     }
     case 'operator': await assertSchema(); await setInstanceOperator(extra[0], option === 'grant'); console.log('Instance operator role updated and audited.'); break;

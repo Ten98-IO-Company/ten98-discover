@@ -19,6 +19,8 @@ import { DestinationsPanel } from '../components/DestinationsPanel'
 import { OidcPanel } from '../components/OidcPanel'
 import { OidcSignIn } from '../components/OidcSignIn'
 import { OidcRecoveryPanel } from '../components/OidcRecoveryPanel'
+import { GoogleReportsPanel } from '../components/GoogleReportsPanel'
+import { GoogleAppPanel } from '../components/GoogleAppPanel'
 
 export const Route = createFileRoute('/')({ component: App })
 
@@ -29,7 +31,7 @@ type Project = { id: string; name: string; origin: string; publicKey: string; ev
 type EventsData = { events: { id: string; eventName: string; path: string; receivedAt: string }[]; total: number; retainedFrom: string | null }
 type Job = { id: string; status: string; createdAt: string; completedAt: string | null; error: string | null }
 type SetupValues = { token: string; name: string; email: string; password: string; workspaceName: string }
-type AppView = 'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports' | 'installation' | 'events' | 'retention' | 'context' | 'prompts' | 'explore'
+type AppView = 'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports' | 'installation' | 'events' | 'retention' | 'context' | 'prompts' | 'explore' | 'google' | 'google-app'
 
 function fmt(iso: string): string {
   const d = new Date(iso)
@@ -86,6 +88,7 @@ function App() {
   const [authNotice, setAuthNotice] = useState('')
   const oidcProof = useRef<string | undefined>(undefined)
   const oidcFactor = useRef(false)
+  const googleTarget = useRef<{workspaceId:string;projectId:string} | null>(null)
   const [inviteToken, setInviteToken] = useState('')
   const [inviteSigningIn, setInviteSigningIn] = useState(false)
   const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -97,6 +100,17 @@ function App() {
   useEffect(() => {
     function captureInvitation() {
       const params = new URLSearchParams(window.location.hash.slice(1))
+      if (params.has('google')) {
+        const projectId = params.get('google-project') ?? '', workspaceId = params.get('google-workspace') ?? ''
+        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        const connected = params.getAll('google').length === 1 && params.get('google') === 'connected'
+          && params.getAll('google-project').length === 1 && params.getAll('google-workspace').length === 1 && uuid.test(projectId) && uuid.test(workspaceId)
+        googleTarget.current = connected ? {projectId,workspaceId} : null
+        setAuthNotice(connected ? 'Google authorization returned. Review the source status and select a property to import reports. Browser tracking was not changed.' : 'Google reporting could not be connected. Start the connection again and grant read access.')
+        if (connected) setView('google')
+        window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+        return
+      }
       if ([...params.keys()].some(key => key.startsWith('oidc-'))) {
         oidcProof.current = undefined; setOidcProofId(undefined); oidcFactor.current = false
         setInviteToken(''); setInviteSigningIn(false); setAuthNotice('')
@@ -156,12 +170,14 @@ function App() {
   function enterApp(m: Me, preferredId?: string) {
     oidcFactor.current = false
     setMe(m)
-    const ws = m.workspaces.find((w) => w.id === preferredId) ?? m.workspaces[0]
+    const ws = m.workspaces.find((w) => w.id === (preferredId ?? googleTarget.current?.workspaceId)) ?? m.workspaces[0]
     activeWorkspace.current = ws?.id ?? ''
     wsGen.current += 1
     setWorkspaceId(ws?.id ?? '')
     selectProject('')
     if (oidcProof.current) setView('identity')
+    else if (googleTarget.current && ws?.id === googleTarget.current.workspaceId) setView('google')
+    else googleTarget.current = null
     setProjects(null)
     setProjectsError('')
     setPhase('app')
@@ -179,6 +195,7 @@ function App() {
   }
 
   function changeWorkspace(id: string) {
+    googleTarget.current = null
     activeWorkspace.current = id
     wsGen.current += 1
     setWorkspaceId(id)
@@ -189,6 +206,7 @@ function App() {
   }
 
   function resetSession() {
+    googleTarget.current = null
     oidcFactor.current = false; oidcProof.current = undefined; setOidcProofId(undefined)
     activeWorkspace.current = ''
     wsGen.current += 1
@@ -210,7 +228,16 @@ function App() {
       const d = await api<{ projects: Project[] }>(`/api/workspaces/${wsId}/projects`)
       if (activeWorkspace.current === wsId && wsGen.current === gen) {
         setProjects(d.projects)
-        if (!activeProject.current && d.projects[0] && projGen.current === selection && viewRef.current === 'project') {
+        const target = googleTarget.current
+        if (target?.workspaceId === wsId) {
+          googleTarget.current = null
+          if (!activeProject.current && d.projects.some(project => project.id === target.projectId) && projGen.current === selection && viewRef.current === 'google') {
+            selectProject(target.projectId, false)
+            void loadEvents(target.projectId); void loadJobs(target.projectId)
+          } else if (viewRef.current === 'google' && !activeProject.current) {
+            setView('project'); setAuthNotice('Google reporting returned, but that project is no longer available. Choose a current project.')
+          }
+        } else if (!activeProject.current && d.projects[0] && projGen.current === selection && viewRef.current === 'project') {
           selectProject(d.projects[0].id, false)
           void loadEvents(d.projects[0].id); void loadJobs(d.projects[0].id)
         }
@@ -368,9 +395,9 @@ function App() {
   const appUrl = (status?.appUrl ?? '').replace(/\/+$/, '')
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
-  const projectView = ['project','destinations','collection','domains','reports','installation','events','context','prompts','explore'].includes(view)
-  const pageTitles: Record<AppView, string> = {project: 'Web analytics', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', explore: 'Explore analytics'}
-  const projectDescriptions: Partial<Record<AppView, string>> = {project: 'Understand how people find and use your website.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize questions and preserve their history before tracking is configured.', explore: 'Break down events by campaign, page or property in your time zone.'}
+  const projectView = ['project','destinations','collection','domains','reports','installation','events','context','prompts','explore','google'].includes(view)
+  const pageTitles: Record<AppView, string> = {project: 'Web analytics', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup'}
+  const projectDescriptions: Partial<Record<AppView, string>> = {project: 'Understand how people find and use your website.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize questions and preserve their history before tracking is configured.', google: 'Import Search Console and GA4 reports without changing browser tracking.', explore: 'Break down events by campaign, page or property in your time zone.'}
 
   return (
     <div className='shell'>
@@ -407,6 +434,7 @@ function App() {
           <button className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} onClick={() => setView('explore')}>Explore</button>
           <button className={view === 'events' ? 'proj active' : 'proj'} aria-current={view === 'events' ? 'page' : undefined} onClick={() => setView('events')}>Recent events</button>
           <button className={view === 'reports' ? 'proj active' : 'proj'} aria-current={view === 'reports' ? 'page' : undefined} onClick={() => setView('reports')}>Reports</button>
+          <button className={view === 'google' ? 'proj active' : 'proj'} aria-current={view === 'google' ? 'page' : undefined} onClick={() => setView('google')}>Google reports</button>
           <p className='side-label section-label'>Research</p>
           <button className={view === 'context' ? 'proj active' : 'proj'} aria-current={view === 'context' ? 'page' : undefined} onClick={() => setView('context')}>Context</button>
           <button className={view === 'prompts' ? 'proj active' : 'proj'} aria-current={view === 'prompts' ? 'page' : undefined} onClick={() => setView('prompts')}>Prompts</button>
@@ -425,6 +453,7 @@ function App() {
             {workspace && <button className={view === 'retention' ? 'proj active' : 'proj'} onClick={() => setView('retention')}>Data retention</button>}
             <button className={view === 'security' ? 'proj active' : 'proj'} onClick={() => setView('security')}>Account security</button>
             <button className={view === 'identity' ? 'proj active' : 'proj'} onClick={() => setView('identity')}>Identity sign-in</button>
+            {me?.instanceOperator && <button className={view === 'google-app' ? 'proj active' : 'proj'} onClick={() => setView('google-app')}>Google app setup</button>}
             <button className={view === 'workspace' ? 'proj active' : 'proj'} onClick={() => setView('workspace')}>Create workspace</button>
           </nav>
         </details>
@@ -460,6 +489,8 @@ function App() {
         {view === 'context' && project && me && <ContextPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'prompts' && project && me && <PromptsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
+        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
+        {view === 'google-app' && me && <GoogleAppPanel userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />

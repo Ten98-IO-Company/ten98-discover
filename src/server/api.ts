@@ -21,6 +21,8 @@ import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, sav
 import { assertOidcCredentialsReadable, handleOidc } from './oidc.ts';
 import { isInstanceOperator } from './instance-operators.ts';
 import { handleReports } from './reports.ts';
+import { handleGoogle } from './google-api.ts';
+import { assertGoogleCredentialsReadable } from './google.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
@@ -94,6 +96,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if (path === '/api/health/ready' && request.method === 'GET') {
       await assertCredentialKeys();
       await assertOidcCredentialsReadable();
+      await assertGoogleCredentialsReadable();
       await access(config.artifactDir, constants.W_OK);
       return json({ status: 'ready' });
     }
@@ -124,6 +127,8 @@ export async function handleApi(request: Request): Promise<Response> {
       return json(await collectNative(request, event.siteKey, event, extractAnalyticsPeer(request)), 202, cors);
     }
     if (!principal && request.method === 'POST' && request.headers.get('origin') !== config.appUrl) throw new FoundationError(403, 'This action must originate from the application.');
+    const googleResponse = await handleGoogle(request);
+    if (googleResponse) return googleResponse;
     const oidcResponse = await handleOidc(request);
     if (oidcResponse) return oidcResponse;
     const accountResponse = await handleAccountSecurity(request);

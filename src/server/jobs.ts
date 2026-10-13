@@ -5,6 +5,7 @@ import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
 import { registerResourceCleanup } from './resource-cleanup.ts';
 import { runRetentionBatch } from './retention.ts';
+import { googleQueue, reconcileGoogleImports, startGoogleImportWorker } from './google-jobs.ts';
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
@@ -23,6 +24,7 @@ export function getBoss(): Promise<PgBoss> {
       try {
         await boss.start();
         await boss.createQueue(queueName);
+        await boss.createQueue(googleQueue);
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -96,6 +98,7 @@ async function heartbeat() {
   const boss = await getBoss();
   if (!await boss.getQueue(queueName)) throw new Error('Worker queue is unavailable');
   await reconcileProbes();
+  await reconcileGoogleImports();
   // ponytail: one worker health row covers the single-worker Compose profile; use instance IDs before scaling workers.
   return getDatabase().pool.query(
     `INSERT INTO worker_heartbeat(id, last_seen_at) VALUES ('foundation-worker', now())
@@ -127,6 +130,7 @@ export function startWorker(): Promise<void> {
           );
         }
       });
+      await startGoogleImportWorker(boss);
       workerStarted = true;
       await heartbeat();
       heartbeatTimer = setInterval(() => {
