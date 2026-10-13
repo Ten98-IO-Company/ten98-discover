@@ -412,6 +412,10 @@ try {
   for(const email of [other.email,owner.email]) {
     assert.equal((await context.request.post(`${config.appUrl}/api/auth/sign-out`,{headers:{origin:config.appUrl},data:{}})).status(),200)
     await auth(email);await page.goto(href(b.id,b1,'ai-insights'));await heading('AI insights')
+    await page.getByRole('region',{name:'Entity metrics',exact:true}).waitFor()
+    const reportFilters=page.locator('details').filter({has:page.locator('summary',{hasText:/^Report filters$/})})
+    assert.equal(await reportFilters.getAttribute('open'),null,'Applied-report filters start collapsed.')
+    await reportFilters.locator(':scope > summary').click()
     await page.getByRole('button',{name:'Apply filters',exact:true}).waitFor()
     await page.getByLabel('From',{exact:true}).fill(currentDay);await page.getByLabel('To',{exact:true}).fill(currentDay);await page.getByLabel('Timezone',{exact:true}).fill('UTC')
     await page.getByLabel('Model',{exact:true}).selectOption('openai/gpt-4o-mini');await page.getByLabel('Prompt',{exact:true}).selectOption(insightPrompt.id)

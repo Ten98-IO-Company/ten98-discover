@@ -10,7 +10,9 @@ Native Meta connections now support manual daily reports, latest complete daily 
 
 AI insights analyzes retained prompt answers using the current brand and competitor context. It separates visibility, share of voice and provider citation hits, with eligibility coverage, actual daily observations, filters, execution drilldown and CSV exports. [Adjacent-period comparisons](docs/ai-period-comparison.md) compare equivalent prompt/model/settings cells, with explicit coverage and unavailable-change states. Source-compatible carried trends, captured historical identities and additional provider coverage remain required; see [AI insights](docs/ai-insights.md).
 
-[Citation analysis](docs/citation-analysis.md) is under review: retained URL/domain/category reports, source filters, annotation evidence, CSV and inline domain tracking have local backend/controller acceptance. Two presentation capability-handler fixes remain before accepting or deploying the interface.
+[Citation analysis](docs/citation-analysis.md) includes retained URL/domain/category reports, source filters, annotation evidence, CSV and inline domain tracking. Backend, presentation, controller and production-navigation checks pass locally; this increment has not been deployed to the preserved preview.
+
+The [UI redesign](docs/ui-redesign/acceptance.md) introduces tested semantic tokens and grouped navigation. Further report and setup flows are still being rebuilt; production dark mode and a complete-interface acceptance claim remain pending.
 
 Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, broader rank reporting, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 

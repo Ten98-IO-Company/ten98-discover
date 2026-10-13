@@ -124,10 +124,13 @@ try {
   await mobile.getByRole('button', {name: `Tracking preferences for ${config.appUrl}`, exact: true}).click();
   const mobileDialog = mobile.getByRole('dialog', {name: 'Tracking preferences', exact: true});
   await mobileDialog.waitFor();
-  const size = await mobile.evaluate(() => { const dialog = document.querySelector('dialog')!; const box = dialog.getBoundingClientRect(); return {width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollWidth, left: box.left, right: box.right, top: box.top, bottom: box.bottom, overflow: getComputedStyle(dialog).overflowY, targets: [...dialog.querySelectorAll('label,button')].map(node => node.getBoundingClientRect().height)}; });
-  assert.ok(size.scroll <= size.width && size.left >= 0 && size.right <= size.width && size.top >= 0 && size.bottom <= size.height, 'The embedded dialog must fit a 360px viewport.');
-  assert.equal(size.overflow, 'auto'); assert.ok(size.targets.every((height: number) => height >= 44));
-  if (process.env.BROWSER_ARTIFACT_DIR) { await mkdir(process.env.BROWSER_ARTIFACT_DIR, {recursive: true}); await mobile.screenshot({path: join(process.env.BROWSER_ARTIFACT_DIR, 'native-consent-mobile.png'), fullPage: true}); }
+  for (const width of [360,320]) {
+    await mobile.setViewportSize({width,height:740});
+    const size = await mobile.evaluate(() => { const dialog = document.querySelector('dialog')!; const box = dialog.getBoundingClientRect(); return {width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollWidth, left: box.left, right: box.right, top: box.top, bottom: box.bottom, overflow: getComputedStyle(dialog).overflowY, targets: [...dialog.querySelectorAll('label,button')].map(node => node.getBoundingClientRect().height)}; });
+    assert.ok(size.scroll <= size.width && size.left >= 0 && size.right <= size.width && size.top >= 0 && size.bottom <= size.height, `The embedded dialog must fit a ${width}px viewport.`);
+    assert.equal(size.overflow, 'auto'); assert.ok(size.targets.every((height: number) => height >= 44));
+    if (process.env.BROWSER_ARTIFACT_DIR) { await mkdir(process.env.BROWSER_ARTIFACT_DIR, {recursive: true}); await mobile.screenshot({path: join(process.env.BROWSER_ARTIFACT_DIR, width===360?'native-consent-mobile.png':'native-consent-320.png'), fullPage: true}); }
+  }
   await mobileDialog.getByRole('button', {name: 'Deny all', exact: true}).click();
   assert.equal(outbound.length, 0); assert.equal(await count(), 2);
 
@@ -143,7 +146,10 @@ try {
     await navigation(target);await target.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name,exact:true}).click();
   }
   async function section(target:any,name:string) {
-    await navigation(target);await target.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name,exact:true}).click();
+    await navigation(target);
+    const link=target.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name,exact:true,includeHidden:true});
+    for(const disclosure of await link.locator('xpath=ancestor::details').all())if(await disclosure.getAttribute('open')===null)await disclosure.locator(':scope > summary').click();
+    await link.click();
   }
   await dashboard.goto(config.appUrl, {waitUntil: 'networkidle'});
   await dashboard.getByRole('heading',{name:'Web analytics',level:1,exact:true}).waitFor();
@@ -159,12 +165,18 @@ try {
     assert.ok(boxes.every((box: any) => box.left >= 0 && box.right <= box.width));
     if (process.env.BROWSER_ARTIFACT_DIR) await dashboard.screenshot({path: join(process.env.BROWSER_ARTIFACT_DIR, name), fullPage: true});
   }
+  await dashboard.setViewportSize({width:1440,height:900});await capture('native-metrics-known-desktop.png');
+  await dashboard.setViewportSize({width:360,height:740});
   await capture('native-metrics-known-mobile.png');
+  await dashboard.setViewportSize({width:320,height:740});await capture('native-metrics-known-320.png');
+  await dashboard.setViewportSize({width:360,height:740});
   await selectProject(dashboard,'Unmeasured native sandbox');
   await metric('Estimated visitors').filter({hasText: /^Unavailable$/}).waitFor();
   for (const name of ['Visits', 'Bounce rate', 'Average observed visit']) assert.equal(await metric(name).textContent(), 'Unavailable');
   assert.equal(await metric('Page views').textContent(), '1');
   await capture('native-metrics-unavailable-mobile.png');
+  await dashboard.setViewportSize({width:320,height:740});await capture('native-metrics-unavailable-320.png');
+  await dashboard.setViewportSize({width:360,height:740});
   await selectProject(dashboard,'Native consent sandbox');
   await section(dashboard,'Collection and privacy');
   const settingsPanel = dashboard.locator('section.card').filter({has: dashboard.getByRole('heading', {name: 'Collection and privacy', exact: true})});
@@ -193,6 +205,8 @@ try {
   await paths.fill('invalid'); assert.equal(await save.isDisabled(), true, 'Confirmation must revalidate fields edited while it is visible.');
   await settingsPanel.getByRole('button', {name: 'Keep editing', exact: true}).click(); await settingsPanel.getByRole('button', {name: 'Cancel changes', exact: true}).click();
   await capture('native-settings-mobile.png');
+  await dashboard.setViewportSize({width:320,height:740});await capture('native-settings-320.png');
+  await dashboard.setViewportSize({width:360,height:740});
 
   const viewerId = randomUUID(), viewerEmail = `${randomUUID()}@native-viewer.integration.test`, viewerPassword = randomBytes(24).toString('base64url');
   await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [viewerId, 'Native browser viewer', viewerEmail]);

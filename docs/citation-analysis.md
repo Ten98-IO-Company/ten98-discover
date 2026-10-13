@@ -1,6 +1,6 @@
 # Citation analysis contract
 
-Status: implementation under review for issue 48, 2026-10-13. Backend, context migration, controller and production-navigation acceptance passed locally with synthetic data. The Kimi presentation draft has two open capability-handler defects; it is not accepted or deployed. This contract does not claim live-provider acceptance or full V1 parity.
+Status: local acceptance completed for issue 48, 2026-10-13. Backend, context migration, presentation, controller and production-navigation checks pass with synthetic data. The two presentation capability-handler defects were corrected and independently rechecked; draft PR51 and its CI pass. This increment is not deployed and does not claim live-provider acceptance or full V1 parity.
 
 ## Measurement and source boundary
 
