@@ -25,7 +25,7 @@ function DeviceField({id,value,onChange}:{id:string;value:string;onChange:(v:Ran
 }
 
 function Scope({target,devices,asOf}:{target:string;devices:string;asOf?:string}):React.JSX.Element{
-  return <div className="card stack"><p>{target}</p><p className="dim">{'Enabled devices: '+devices}</p>
+  return <div className="stack" style={{gap:'var(--space-1)'}}><p>{target}</p><p className="dim">{'Enabled devices: '+devices}</p>
     {asOf!==undefined&&<p className="dim">{'Results as of: '+asOf}</p>}</div>;
 }
 
@@ -36,7 +36,7 @@ export function RankHistoryView(p:RankHistoryViewProps):React.JSX.Element{
   const moreOff=p.reading||p.filterDirty;
   const back=<button type="button" className="btn ghost" onClick={p.onBack}>{p.backLabel??'Back to tracker'}</button>;
   if(p.role===null){
-    return <section className="research-panel stack">
+    return <section className="research-panel stack" style={{'--control-md':'var(--control-touch)',display:'grid',gap:'var(--space-3)'} as React.CSSProperties}>
       <div className="row between" style={{flexWrap:'wrap'}}>{back}</div>
       {p.error!==''&&<p role="alert" className="alert">{p.error}</p>}
       {p.reading?<p role="status">Loading rank observations…</p>:<>
@@ -45,35 +45,38 @@ export function RankHistoryView(p:RankHistoryViewProps):React.JSX.Element{
       </>}
     </section>;
   }
-  return <section className="research-panel stack">
-    <div className="row between" style={{flexWrap:'wrap'}}>{back}
-      {!latest&&<span className="row" style={{flexWrap:'wrap'}}>
-        <button type="button" className="btn ghost" onClick={p.onLatest}>Latest observations</button>
-        <button type="button" className="btn ghost" onClick={p.onRefresh}>Refresh history</button>
-      </span>}
+  return <section className="research-panel stack" style={{'--control-md':'var(--control-touch)',display:'grid',gap:'var(--space-3)'} as React.CSSProperties}>
+    <div className="row between" style={{flexWrap:'wrap',gap:'var(--space-3)'}}>
+      <h2 id={hid} tabIndex={-1} style={{margin:0,fontSize:'var(--text-lg)',minWidth:0}}>{latest?'Latest rank observations':'Keyword rank history'}</h2>
+      <span className="row" style={{flexWrap:'wrap'}}>{back}
+        {latest?<button type="button" className="btn ghost" onClick={p.onRefresh}>Refresh observations</button>:<>
+          <button type="button" className="btn ghost" onClick={p.onLatest}>Latest observations</button>
+          <button type="button" className="btn ghost" onClick={p.onRefresh}>Refresh history</button>
+        </>}
+      </span>
     </div>
-    <h2 id={hid} tabIndex={-1}>{latest?'Latest rank observations':'Keyword rank history'}</h2>
     {p.error!==''&&<p role="alert" className="alert">{p.error}</p>}
     {p.reading&&<p role="status">Loading rank observations…</p>}
     {latest?<>
       <Scope target={p.target} devices={p.enabledDevices} asOf={p.asOf}/>
-      <form className="card stack" onSubmit={submit}>
-        <div className="row" style={{flexWrap:'wrap'}}>
-          <DeviceField id={p.prefix+'device'} value={p.filters.device} onChange={v=>p.onFilters({...p.filters,device:v})}/>
-          <label className="field">Keyword contains
-            <input value={p.filters.search} maxLength={200} onChange={e=>p.onFilters({...p.filters,search:e.target.value})}/></label>
-          <div className="field"><label htmlFor={p.prefix+'pinned'}>Pinned keywords</label>
-            <select id={p.prefix+'pinned'} value={p.filters.pinned} onChange={e=>p.onFilters({...p.filters,pinned:e.target.value as RankObservationFilters['pinned']})}>
-              <option value="all">All keywords</option><option value="true">Pinned</option><option value="false">Unpinned</option>
-            </select></div>
-        </div>
-        <div className="row">
-          <button type="submit" className="btn primary">Apply filters</button>
-          <button type="button" className="btn ghost" onClick={p.onRefresh}>Refresh observations</button>
-        </div>
-      </form>
       <p className="dim">{p.appliedFilters}</p>
       {p.filterDirty&&<p className="hint">Apply filters to update these observations.</p>}
+      <details key="latest-filters"><summary>Observation filters</summary>
+        <form className="stack" onSubmit={submit}>
+          <div className="row" style={{flexWrap:'wrap'}}>
+            <DeviceField id={p.prefix+'device'} value={p.filters.device} onChange={v=>p.onFilters({...p.filters,device:v})}/>
+            <label className="field">Keyword contains
+              <input value={p.filters.search} maxLength={200} onChange={e=>p.onFilters({...p.filters,search:e.target.value})}/></label>
+            <div className="field"><label htmlFor={p.prefix+'pinned'}>Pinned keywords</label>
+              <select id={p.prefix+'pinned'} value={p.filters.pinned} onChange={e=>p.onFilters({...p.filters,pinned:e.target.value as RankObservationFilters['pinned']})}>
+                <option value="all">All keywords</option><option value="true">Pinned</option><option value="false">Unpinned</option>
+              </select></div>
+          </div>
+          <div className="row">
+            <button type="submit" className="btn primary">Apply filters</button>
+          </div>
+        </form>
+      </details>
       <div className="table-wrap" role="region" aria-label="Latest rank observations" tabIndex={0}>
         <table style={{minWidth:1410,tableLayout:'fixed'}}>
           <colgroup>{[180,90,200,220,180,180,180,180].map((width,i)=><col key={i} style={{width}}/>)}</colgroup>
@@ -97,14 +100,17 @@ export function RankHistoryView(p:RankHistoryViewProps):React.JSX.Element{
       <p>{p.keyword}</p>
       {p.removed&&<p className="notice">This keyword was removed from the tracker. Its retained history remains available.</p>}
       <Scope target={p.target} devices={p.enabledDevices}/>
-      <form className="card stack" onSubmit={submit}>
-        <div className="row" style={{flexWrap:'wrap'}}>
-          <DeviceField id={p.prefix+'device'} value={p.filters.device} onChange={v=>p.onFilters({...p.filters,device:v})}/>
-        </div>
-        <div className="row"><button type="submit" className="btn primary">Apply device filter</button></div>
-      </form>
       <p className="dim">{p.appliedFilters}</p>
       {p.filterDirty&&<p className="hint">Apply filters to update these observations.</p>}
+      <details key="history-filters"><summary>History filters</summary>
+        <form className="stack" onSubmit={submit}>
+          <div className="row" style={{flexWrap:'wrap'}}>
+            <DeviceField id={p.prefix+'device'} value={p.filters.device} onChange={v=>p.onFilters({...p.filters,device:v})}/>
+          </div>
+          <div className="row"><button type="submit" className="btn primary">Apply device filter</button></div>
+        </form>
+      </details>
+      <p className="hint">History includes failed and incompatible attempts. Opening a check does not run it again.</p>
       <div className="table-wrap" role="region" aria-label="Keyword rank history" tabIndex={0}>
         <table style={{minWidth:1430,tableLayout:'fixed'}}>
           <colgroup>{[180,90,240,160,190,210,260].map((width,i)=><col key={i} style={{width}}/>)}</colgroup>
@@ -123,7 +129,6 @@ export function RankHistoryView(p:RankHistoryViewProps):React.JSX.Element{
           </tr>)}</tbody>
         </table>
       </div>
-      <p className="hint">History includes failed and incompatible attempts. Opening a check does not run it again.</p>
       {p.loaded&&p.error===''&&p.observations.length===0&&<p>No retained attempts match this device filter.</p>}
       {p.nextCursor!==null&&<div className="row"><button type="button" className="btn ghost" onClick={p.onMore} disabled={moreOff}>Load more history</button></div>}
     </>}
