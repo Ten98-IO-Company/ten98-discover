@@ -38,6 +38,12 @@ test('HTML preparation uses isolated facts, keeps links separate and does not gr
   assert.equal('body' in result,false);assert.equal('html' in result,false);
 });
 
+test('slow response findings use the same total duration as persisted page timing, not headers alone',async()=>{
+  const download=complete('<title>A useful title</title><h1>Page</h1>');download.headersMs=20;download.durationMs=1601;
+  const result=await prepare(download);assert.equal(result.status,'prepared');
+  if(result.status==='prepared'&&result.kind==='html')assert.deepEqual(result.analysis.findings.find(f=>f.code==='slow-response'),{code:'slow-response',severity:'info',details:{responseTimeMs:1601}});
+});
+
 test('HTML URL discovery cannot normalize away raw authority or percent rejection before admission',async()=>{
   const html='<title>Discovery</title><h1>Links</h1>'+['https://@example.com/empty-user','//user@example.com/private','https:example.com/repair','https://%65xample.com/encoded-host','/path%FF','/path%5c'].map(href=>`<a href="${href}">Bad</a>`).join('')+'<a href="/A%2fb%3Fc">Valid reserved path</a>';
   const result=await prepare(complete(html));assert.equal(result.status,'prepared');
