@@ -10,6 +10,7 @@ import { eventInput, InputError, projectInput, readJson } from './validation.ts'
 import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
 import { projectAnalytics } from './analytics.ts';
+import { exploreAnalytics } from './explorer.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
@@ -80,7 +81,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
       const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
-      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics)$`, 'i'));
+      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|explore)$`, 'i'));
       if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
         await authorizeApiKey(apiToken!, workspaceRoute[1], workspaceRoute[2] === 'team' ? 'team:read' : request.method === 'GET' ? 'projects:read' : 'projects:write');
       } else if (projectRoute && (request.method === 'GET' || (request.method === 'POST' && projectRoute[2] === 'events'))) {
@@ -330,7 +331,7 @@ export async function handleApi(request: Request): Promise<Response> {
         finally { client.release(); }
       }
     }
-    match = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|jobs|check-worker)$`, 'i'));
+    match = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|explore|jobs|check-worker)$`, 'i'));
     if (match) {
       const target = await projectAccess(match[1], user.id, request.method !== 'GET');
       if (principal && request.method === 'POST' && match[2] === 'events') {
@@ -348,6 +349,10 @@ export async function handleApi(request: Request): Promise<Response> {
         finally { client.release(); }
       }
       if (request.method === 'GET' && match[2] === 'analytics') return json(await projectAnalytics(match[1], user.id, url.searchParams));
+      if (request.method === 'GET' && match[2] === 'explore') {
+        await limit(`explore:${user.id}`,30);
+        return json(await exploreAnalytics(match[1],user.id,url.searchParams));
+      }
       if (request.method === 'GET' && match[2] === 'events') {
         const { rows } = await getDatabase().pool.query(`WITH retained AS MATERIALIZED (
           SELECT e.* FROM event e JOIN project p ON p.id=e.project_id WHERE p.id=$1

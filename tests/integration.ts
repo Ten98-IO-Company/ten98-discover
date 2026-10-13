@@ -17,6 +17,7 @@ import { runNativeAnalyticsChecks } from './native-analytics-integration.ts';
 import { runReportsChecks } from './reports-integration.ts';
 import { runRetentionChecks } from './retention-integration.ts';
 import { runRetentionCoverageChecks } from './retention-coverage-integration.ts';
+import { runExplorerChecks } from './explorer-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -347,6 +348,7 @@ try {
   await runRetentionChecks({ ownerId: owner.body.user.id });
   stage = 'retention coverage and historical availability';
   await runRetentionCoverageChecks();
+  await runExplorerChecks();
   stage = 'scoped API keys';
   await runApiKeyChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'account security lifecycle';
