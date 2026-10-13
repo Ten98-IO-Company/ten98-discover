@@ -46,6 +46,7 @@ export async function runRetentionChecks({ ownerId }: { ownerId: string }): Prom
   }
   async function waitBlocked(blocker: PoolClient) {
     for (let attempt = 0; attempt < 100; attempt++) {
+      await blocker.query('SELECT pg_stat_clear_snapshot()');
       const result = await blocker.query('SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pg_backend_pid()=ANY(pg_blocking_pids(pid))');
       if (result.rowCount) return;
       await new Promise(resolve => setTimeout(resolve, 20));

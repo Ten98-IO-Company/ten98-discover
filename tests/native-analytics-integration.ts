@@ -58,10 +58,13 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   try {
     await blocker.query('BEGIN');
     await blocker.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[projectId]);
+    // Prime an earlier activity snapshot so the polling must refresh it.
+    await blocker.query('SELECT count(*) FROM pg_stat_activity');
     pending=collectNative(new Request(origin,{headers:{origin,'user-agent':'Acceptance browser'}}),siteKey,{...event(),consent:staleConsent},'127.0.0.1');
     let waiting=false;
     for(let n=0;n<100;n++) {
-      const blocked=await blocker.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM project WHERE public_key=%'");
+      await blocker.query('SELECT pg_stat_clear_snapshot()');
+      const blocked=await blocker.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pg_backend_pid()=ANY(pg_blocking_pids(pid)) AND query='SELECT id FROM project WHERE public_key=$1 FOR SHARE'");
       if(blocked.rowCount){waiting=true;break;} await new Promise(resolve=>setTimeout(resolve,20));
     }
     assert.ok(waiting,'Collector must wait on the publication gate.');
