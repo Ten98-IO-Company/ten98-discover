@@ -50,7 +50,7 @@ function projectDto(row: { id: string; origin: string }): Project {
   catch { return { ...row, canonicalHost: hostname, canonicalVerifiable: false }; }
 }
 
-async function withProject<T>(projectId: unknown, userId: unknown, operation: (client: PoolClient, project: Project) => Promise<T>): Promise<T> {
+export async function withDomainProject<T>(projectId: unknown, userId: unknown, operation: (client: PoolClient, project: Project) => Promise<T>): Promise<T> {
   const pid = parse(idSchema, projectId), uid = parse(idSchema, userId);
   const client = await getDatabase().pool.connect();
   try {
@@ -108,12 +108,12 @@ function expectedTarget(project: Project, hostname: string, details: z.infer<typ
 }
 
 export async function getDomains(projectId: unknown, userId: unknown) {
-  return withProject(projectId, userId, stateDto);
+  return withDomainProject(projectId, userId, stateDto);
 }
 
 export async function addDomain(projectId: unknown, userId: unknown, input: unknown) {
   const details = parse(addSchema, input), hostname = normalizeDomainHost(details.hostname);
-  return withProject(projectId, userId, async (client, project) => {
+  return withDomainProject(projectId, userId, async (client, project) => {
     const target = expectedTarget(project, hostname, details);
     const count = await client.query('SELECT count(*)::int AS count FROM project_domain WHERE project_id=$1', [project.id]);
     if (count.rows[0].count >= DOMAIN_LIMIT) throw new FoundationError(409, 'This project has reached its 50-domain limit.');
@@ -126,11 +126,11 @@ export async function addDomain(projectId: unknown, userId: unknown, input: unkn
 
 export async function updateDomain(projectId: unknown, userId: unknown, domainId: unknown, input: unknown) {
   const details = parse(detailsSchema, input);
-  return withProject(projectId, userId, async (client, project) => {
+  return withDomainProject(projectId, userId, async (client, project) => {
     const row = await domainRow(client, project.id, domainId);
     if (row.role === 'canonical') throw new FoundationError(409, 'The canonical domain is fixed by the project origin.');
     const target = expectedTarget(project, row.hostname, details);
-    await client.query('UPDATE project_domain SET role=$1,expected_target_host=$2 WHERE id=$3 AND project_id=$4', [details.role, target, row.id, project.id]);
+    await client.query('UPDATE project_domain SET role=$1,expected_target_host=$2,redirect_revision=redirect_revision+CASE WHEN role IS DISTINCT FROM $1 OR expected_target_host IS DISTINCT FROM $2 THEN 1 ELSE 0 END WHERE id=$3 AND project_id=$4', [details.role, target, row.id, project.id]);
     await rotateCollectionConsent(client, project, row, { role: details.role });
     return stateDto(client, project);
   });
@@ -138,11 +138,11 @@ export async function updateDomain(projectId: unknown, userId: unknown, domainId
 
 export async function issueDomainChallenge(projectId: unknown, userId: unknown, domainId: unknown, input: unknown) {
   parse(emptySchema, input);
-  return withProject(projectId, userId, async (client, project) => {
+  return withDomainProject(projectId, userId, async (client, project) => {
     const row = await domainRow(client, project.id, domainId);
     const value = `ten98-verification=${project.id}.${row.id}.${randomBytes(32).toString('base64url')}`;
     const result = await client.query(`UPDATE project_domain SET challenge_hash=$1,challenge_expires_at=clock_timestamp()+interval '24 hours',
-      verified_at=NULL,revoked_at=NULL WHERE id=$2 AND project_id=$3 RETURNING challenge_expires_at`, [createHash('sha256').update(value).digest('hex'), row.id, project.id]);
+      verified_at=NULL,revoked_at=NULL,redirect_revision=redirect_revision+1 WHERE id=$2 AND project_id=$3 RETURNING challenge_expires_at`, [createHash('sha256').update(value).digest('hex'), row.id, project.id]);
     await rotateCollectionConsent(client, project, row, { verified_at: null, revoked_at: null });
     return { state: await stateDto(client, project), challenge: { domainId: row.id, name: `_ten98-challenge.${row.hostname}`,
       type: 'TXT' as const, value, expiresAt: result.rows[0].challenge_expires_at.toISOString() as string } };
@@ -180,7 +180,7 @@ export function hasDomainProof(records: string[][], hash: string): boolean {
 export async function verifyDomain(projectId: unknown, userId: unknown, domainId: unknown, input: unknown,
   lookup: (name: string) => Promise<string[][]> = lookupDomainTxt) {
   parse(emptySchema, input);
-  const snapshot = await withProject(projectId, userId, async (client, project) => {
+  const snapshot = await withDomainProject(projectId, userId, async (client, project) => {
     const row = await domainRow(client, project.id, domainId);
     if (!row.challenge_hash || !row.challenge_expires_at || row.challenge_expires_at.getTime() <= Date.now()) {
       throw new FoundationError(409, 'Create a new DNS proof before verifying.');
@@ -191,14 +191,14 @@ export async function verifyDomain(projectId: unknown, userId: unknown, domainId
   let matched = false, unavailable = false;
   try { matched = hasDomainProof(await lookup(`_ten98-challenge.${snapshot.hostname}`), snapshot.hash); }
   catch (error) { unavailable = !['ENODATA', 'ENOTFOUND'].includes((error as { code?: string })?.code ?? ''); }
-  return withProject(projectId, userId, async (client, project) => {
+  return withDomainProject(projectId, userId, async (client, project) => {
     const row = await domainRow(client, project.id, domainId);
     if (row.challenge_hash !== snapshot.hash || !row.challenge_expires_at || row.challenge_expires_at.getTime() <= Date.now()) {
       throw new FoundationError(409, 'The DNS proof changed or expired. Refresh and create a new proof if needed.');
     }
     if (unavailable) throw new FoundationError(503, 'DNS could not be checked. Try again shortly.');
     if (!matched) throw new FoundationError(422, 'The exact TXT proof was not found. Check the record and allow time for DNS propagation.');
-    const changed = await client.query(`UPDATE project_domain SET verified_at=clock_timestamp(),challenge_hash=NULL,challenge_expires_at=NULL,revoked_at=NULL
+    const changed = await client.query(`UPDATE project_domain SET verified_at=clock_timestamp(),challenge_hash=NULL,challenge_expires_at=NULL,revoked_at=NULL,redirect_revision=redirect_revision+1
       WHERE id=$1 AND project_id=$2 AND challenge_hash=$3 AND challenge_expires_at>clock_timestamp() RETURNING id`, [row.id, project.id, snapshot.hash]);
     if (!changed.rowCount) throw new FoundationError(409, 'The DNS proof expired. Create a new proof.');
     await rotateCollectionConsent(client, project, row, { verified_at: new Date(), revoked_at: null });
@@ -208,9 +208,9 @@ export async function verifyDomain(projectId: unknown, userId: unknown, domainId
 
 export async function revokeDomain(projectId: unknown, userId: unknown, domainId: unknown, input: unknown) {
   parse(emptySchema, input);
-  return withProject(projectId, userId, async (client, project) => {
+  return withDomainProject(projectId, userId, async (client, project) => {
     const row = await domainRow(client, project.id, domainId);
-    await client.query(`UPDATE project_domain SET verified_at=NULL,challenge_hash=NULL,challenge_expires_at=NULL,revoked_at=clock_timestamp()
+    await client.query(`UPDATE project_domain SET verified_at=NULL,challenge_hash=NULL,challenge_expires_at=NULL,revoked_at=clock_timestamp(),redirect_revision=redirect_revision+1
       WHERE id=$1 AND project_id=$2`, [row.id, project.id]);
     await rotateCollectionConsent(client, project, row, { verified_at: null, revoked_at: new Date() });
     return stateDto(client, project);
@@ -219,7 +219,7 @@ export async function revokeDomain(projectId: unknown, userId: unknown, domainId
 
 export async function removeDomain(projectId: unknown, userId: unknown, domainId: unknown, input: unknown) {
   parse(emptySchema, input);
-  return withProject(projectId, userId, async (client, project) => {
+  return withDomainProject(projectId, userId, async (client, project) => {
     const row = await domainRow(client, project.id, domainId);
     if (row.role === 'canonical') throw new FoundationError(409, 'The canonical domain cannot be removed.');
     await client.query('DELETE FROM project_domain WHERE id=$1 AND project_id=$2', [row.id, project.id]);

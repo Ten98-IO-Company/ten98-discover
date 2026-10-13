@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomUUID, webcrypto } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
-import { BlockList, isIP } from 'node:net';
+import { isIP } from 'node:net';
+import { addressKey, publicNetworkAddress } from './public-network.ts';
 import { authorizationCodeRequest, createAuthorizationURL, verifyProviderIdToken } from 'better-auth/oauth2';
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
@@ -44,27 +45,11 @@ function unavailable(message = 'The identity provider could not be verified. Che
   throw new FoundationError(400, message);
 }
 
-const reserved = new BlockList();
-for (const [address, prefix] of [
-  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
-  ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24],
-  ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 3],
-] as const) reserved.addSubnet(address, prefix, 'ipv4');
-for (const [address, prefix] of [['2001::', 32], ['2001:db8::', 32], ['2002::', 16]] as const) reserved.addSubnet(address, prefix, 'ipv6');
-
-function addressKey(address: string): string {
-  if (isIP(address) === 4) return address;
-  if (isIP(address) === 6) return new URL(`http://[${address}]`).hostname.slice(1, -1);
-  return '';
-}
-
 export function permittedOidcAddress(address: string, explicitlyAllowed: readonly string[]): boolean {
   const canonical = addressKey(address);
   if (!canonical) return false;
   if (explicitlyAllowed.some((allowed) => addressKey(allowed) === canonical)) return true;
-  if (isIP(address) === 4) return !reserved.check(address, 'ipv4');
-  // Global unicast only; mapped IPv4, loopback, link-local, ULA and multicast fail closed.
-  return /^[23]/.test(canonical) && !reserved.check(address, 'ipv6');
+  return publicNetworkAddress(address);
 }
 
 function endpoint(raw: string, settings: OidcSettings): URL {
