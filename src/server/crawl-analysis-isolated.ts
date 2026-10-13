@@ -66,6 +66,13 @@ export async function analyzeCrawlPageIsolated(input:CrawlPageInput,signal?:Abor
   let payload:Buffer|null;
   try{payload=encode(input);}catch{return {status:'invalid_input'};}
   if(!payload)return {status:'invalid_input'};
+  return runCrawlParser(payload,started,signal,result);
+}
+
+/** Shared lifetime for the two fixed child operations; validators never select executable code. */
+export async function runCrawlParser<T>(payload:Buffer,started:number,signal:AbortSignal|undefined,validate:(value:unknown)=>T|null):Promise<T|{status:'timeout'|'aborted'|'child_error'}> {
+  if(signal?.aborted)return {status:'aborted'};
+  if(payload.length>crawlParserLimits.inputBytes)return {status:'child_error'};
   if(performance.now()-started>=crawlParserLimits.deadlineMs)return {status:'timeout'};
   const env:NodeJS.ProcessEnv={NODE_ENV:'production',TZ:'UTC'};
   // Node's Windows runtime may need the operating-system directory; no PATH, HOME, NODE_OPTIONS or app configuration.
@@ -75,9 +82,9 @@ export async function analyzeCrawlPageIsolated(input:CrawlPageInput,signal?:Abor
     try{child=childProcess.spawn(process.execPath,['--max-old-space-size=64',resolve(process.cwd(),'src/server/crawl-analysis-child.ts')],{
       cwd:process.cwd(),env,stdio:['pipe','pipe','pipe'],shell:false,windowsHide:true,
     });}catch{resolveResult({status:'child_error'});return;}
-    let failure:Exclude<IsolatedCrawlResult['status'],'ok'>|null=null,closed=false,outputBytes=0,stderrBytes=0;
+    let failure:'timeout'|'aborted'|'child_error'|null=null,closed=false,outputBytes=0,stderrBytes=0;
     const output:Buffer[]=[];
-    const stop=(status:Exclude<IsolatedCrawlResult['status'],'ok'>)=>{
+    const stop=(status:'timeout'|'aborted'|'child_error')=>{
       if(closed)return;failure??=status;output.length=0;child.stdin?.destroy();
       // This fixed child cannot spawn descendants. Never look up or kill any unrelated PID/process group.
       try{child.kill('SIGKILL');}catch{/* The close/error event is still authoritative. */}
@@ -103,7 +110,7 @@ export async function analyzeCrawlPageIsolated(input:CrawlPageInput,signal?:Abor
       if(performance.now()-started>=crawlParserLimits.deadlineMs){resolveResult({status:'timeout'});return;}
       if(code!==0||exitSignal){resolveResult({status:'child_error'});return;}
       try{
-        const parsed=result(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(output,outputBytes))));
+        const parsed=validate(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(output,outputBytes))));
         resolveResult(performance.now()-started>=crawlParserLimits.deadlineMs?{status:'timeout'}:parsed??{status:'child_error'});
       }catch{resolveResult({status:'child_error'});}
     });

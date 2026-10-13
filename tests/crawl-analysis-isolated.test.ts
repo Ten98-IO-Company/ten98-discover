@@ -86,7 +86,7 @@ test('Node24 source entry works in the copied Docker-style server layout; wrong 
   const original=process.cwd(),prefix=join(tmpdir(),'ten98-parser-layout-'),directory=await mkdtemp(prefix);
   try{
     await mkdir(join(directory,'src/server'),{recursive:true});
-    for(const file of ['crawl-analysis.ts','crawl-analysis-child.ts'])await copyFile(join(original,'src/server',file),join(directory,'src/server',file));
+    for(const file of ['crawl-analysis.ts','crawl-analysis-child.ts','crawl-robots.ts'])await copyFile(join(original,'src/server',file),join(directory,'src/server',file));
     await writeFile(join(directory,'package.json'),'{"type":"module"}');
     await symlink(await realpath(join(original,'node_modules')),join(directory,'node_modules'),process.platform==='win32'?'junction':'dir');
     process.chdir(directory);assert.deepEqual(await analyzeCrawlPageIsolated(input),{status:'ok',analysis:analyzeCrawlPage(input)});
