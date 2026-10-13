@@ -112,3 +112,12 @@ TypeScript String.isWellFormed library declaration.
 
 GPT owns independent tests and downstream transport/storage/UI integration.
 Do not generate a test file or call this parser directly from a live provider.
+
+### Parser acceptance
+
+The pure parser was drafted by Kimi K3 with maximum-effort thinking under the
+bounded public-input profile. GPT review and eight independent Node test groups
+pass: strict IDs/account scope,100-record limit/duplicates/sparse arrays,
+Unicode/control/status boundaries, null versus empty, own-property evidence,
+exact output projection and input immutability. The inventory workflow remains
+under implementation; parser acceptance alone does not complete it.
