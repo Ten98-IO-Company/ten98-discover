@@ -13,6 +13,8 @@ import {siteAuditQueue} from './site-audits.ts';
 import {rankQueue} from './rank-execution.ts';
 import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} from './rank-worker.ts';
 import {claimDueRankOccurrence} from './rank-recurring.ts';
+import {runMetaDeletionBatch} from './meta-callbacks.ts';
+import {expireMetaFlows} from './meta-auth.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
 
 const queueName = 'setup-probe';
@@ -21,6 +23,7 @@ let workerPromise: Promise<void> | undefined;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 let heartbeatTask: Promise<unknown> | undefined;
 let retentionTask: Promise<unknown> | undefined;
+let metaDeletionTask: Promise<unknown> | undefined;
 let recurringTimer: ReturnType<typeof setInterval> | undefined;
 let recurringTask: Promise<unknown> | undefined;
 let workerStarted = false;
@@ -171,6 +174,9 @@ export function startWorker(): Promise<void> {
         if (!retentionTask) retentionTask = runRetentionBatch()
           .catch(() => console.error('Retention cleanup failed; inspect retention status and database availability.'))
           .finally(() => { retentionTask = undefined; });
+        if (!metaDeletionTask) metaDeletionTask = runMetaDeletionBatch().then(() => expireMetaFlows())
+          .catch(() => console.error('Meta data cleanup failed; inspect local deletion status and database availability.'))
+          .finally(() => { metaDeletionTask = undefined; });
       }, 10_000);
       // Keep provider preflight outside heartbeat/healthcheck and never overlap a
       // prior claim. ponytail: one due tracker per tick caps this worker at six
@@ -195,6 +201,7 @@ export async function stopJobs() {
   recurringTimer = undefined;
   await heartbeatTask;
   await retentionTask;
+  await metaDeletionTask;
   await recurringTask;
   await stopSiteAudits();
   const boss = await bossPromise?.catch(() => undefined);

@@ -83,7 +83,7 @@ async function rejectMissingCapsule(){
 
 try{
   assert.equal((await pool.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN('r','p','v','m','S','f') LIMIT 1")).rowCount,0,'Use an initially empty owned database.');
-  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0024');
+  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0025');
   if(scenario==='deferred'||scenario==='rank'){
     stage='fresh install without credential vault';noVault();cli('migrate',0);await assertSchema();await assertProviderAccountIdentityReadable();assert.equal(await capsule(),null);
     await assert.rejects(getProviderAccountIdentityKey(2),failed(503));assert.equal(await capsule(),null);assert.equal(accountCalls,0);
@@ -135,7 +135,7 @@ try{
     const storedEnvelope=await capsule();assert.deepEqual(storedEnvelope,priorEnvelope);
     const quotesBefore=digest((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q ORDER BY id')).rows);
     async function unchanged22(){
-      assert.equal((await pool.query("SELECT 1 FROM schema_version WHERE version IN('0023','0024')")).rowCount,0);
+      assert.equal((await pool.query("SELECT 1 FROM schema_version WHERE version IN('0023','0024','0025')")).rowCount,0);
       assert.equal((await pool.query("SELECT to_regclass('public.rank_config') AS relation")).rows[0].relation,null);
       assert.equal(digest((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q ORDER BY id')).rows),quotesBefore);
     }
@@ -155,7 +155,7 @@ try{
     const f=await fixture(),lost=await fixture(),correct=await legacy(f,original.auth!),orphan=await legacy(lost,randomBytes(32).toString('hex'));
     const oldRecords=digest((await pool.query('SELECT id,account_fingerprint,request FROM keyword_quote ORDER BY id')).rows);
     stage='legacy no-vault migration fails atomically';noVault();cli('migrate',1);
-    assert.equal((await pool.query("SELECT 1 FROM schema_version WHERE version IN('0022','0023','0024')")).rowCount,0);assert.equal((await pool.query("SELECT to_regclass('public.rank_config') AS relation")).rows[0].relation,null);assert.equal((await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='installation' AND column_name='provider_account_identity'")).rowCount,0);assert.equal(digest((await pool.query('SELECT id,account_fingerprint,request FROM keyword_quote ORDER BY id')).rows),oldRecords);
+    assert.equal((await pool.query("SELECT 1 FROM schema_version WHERE version IN('0022','0023','0024','0025')")).rowCount,0);assert.equal((await pool.query("SELECT to_regclass('public.rank_config') AS relation")).rows[0].relation,null);assert.equal((await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='installation' AND column_name='provider_account_identity'")).rowCount,0);assert.equal(digest((await pool.query('SELECT id,account_fingerprint,request FROM keyword_quote ORDER BY id')).rows),oldRecords);
     stage='capture legacy identity in0022 transaction';initialVault();cli('migrate',0);await assertSchema();assert.equal(await getProviderAccountIdentityKey(1),original.auth);const stable=await getProviderAccountIdentityKey(2);assert.notEqual(stable,original.auth);assert.equal(digest((await pool.query('SELECT id,account_fingerprint,request FROM keyword_quote ORDER BY id')).rows),oldRecords);
     assert.ok((await pool.query('SELECT account_fingerprint_version FROM keyword_quote')).rows.every(row=>row.account_fingerprint_version===1));
     const encrypted=JSON.stringify(await capsule());assert.ok(!encrypted.includes(original.auth!)&&!encrypted.includes(stable));const firstCapsule=digest(await capsule());cli('migrate',0);assert.equal(digest(await capsule()),firstCapsule);

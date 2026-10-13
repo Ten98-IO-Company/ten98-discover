@@ -68,7 +68,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -240,6 +240,7 @@ try {
   const rankAfter=await rankRecords();
   for(const table of rankTables){assert.equal(rankAfter[table].length,rankBefore[table].length,'Upgrade must not invent rank work.');for(let index=0;index<rankBefore[table].length;index++)assert.deepEqual(Object.fromEntries(Object.keys(rankBefore[table][index]).map(key=>[key,rankAfter[table][index][key]])),rankBefore[table][index],'Existing rank identity, approvals, pins and captured quotes must be preserved.');}
   assert.equal(rankAfter.rank_config[0].authored_revision,1);assert.equal(rankAfter.rank_config[0].revision,7);assert.equal(rankAfter.rank_config[0].keywords_revision,11);assert.equal(rankAfter.rank_config[0].schedule_enabled,true);
+  for(const table of ['meta_app_registration','meta_connection','meta_oauth_flow','meta_deletion_request'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,0,'Upgrade adds Meta storage without inventing registrations, grants or callbacks.');
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = await records();
@@ -265,7 +266,7 @@ try {
   assert.deepEqual(await featureRecords(),featureSnapshot);
   assert.deepEqual(await rankRecords(),rankAfter,'No-op migration preserves authored revision and every prior rank field.');
   assert.deepEqual((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data,quoteAfter);
-  console.log('PASS prior0022 feature evidence and0023 rank identity, approval, pin and quote survive0024; authored revision initializes once; identity capsule preserved; no implicit paid work');
+  console.log('PASS prior0022 feature evidence and0023 rank identity, approval, pin and quote survive0025; authored revision initializes once; identity capsule preserved; no implicit paid work or Meta grants');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {

@@ -10,6 +10,8 @@ import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './goog
 import {initializeProviderAccountIdentity,assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
 import { setInstanceOperator } from './instance-operators.ts';
 import { quarantineRestoredSpending } from './restore-quarantine.ts';
+import {assertMetaCredentialsReadable,quarantineMetaConnections,rotateMetaCredentials} from './meta-auth.ts';
+import {runMetaDeletionBatch} from './meta-callbacks.ts';
 
 class CliError extends Error {}
 
@@ -71,6 +73,7 @@ async function diagnose(checkWorker: boolean) {
     ['Provider credential keyring', assertCredentialKeys],
     ['Identity credential keyring', assertOidcCredentialsReadable],
     ['Google reporting credential keyring', assertGoogleCredentialsReadable],
+    ['Meta connection credential keyring', assertMetaCredentialsReadable],
     ['Provider account recovery keyring', assertProviderAccountIdentityReadable],
     ['Artifact directory', async () => {
       await mkdir(config.artifactDir, { recursive: true, mode: 0o700 });
@@ -113,7 +116,7 @@ async function worker() {
 
 try {
   const [command, option, ...extra] = process.argv.slice(2);
-  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | worker | diagnose [worker] | operator grant|revoke <existing-account-email>';
+  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | meta-cleanup | worker | diagnose [worker] | operator grant|revoke <existing-account-email>';
   if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
     throw new CliError(usage);
   }
@@ -123,7 +126,9 @@ try {
     case 'restore-quarantine': {
       await assertSchema();
       const result = await quarantineRestoredSpending();
+      const meta = await quarantineMetaConnections();
       console.log(`Restore spending quarantine applied: ${result.pausedBudgets} budgets paused, ${result.cancelledReservations} reservations cancelled, ${result.disabledSchedules} schedules disabled.`);
+      console.log(`Meta connections disabled for review; ${meta.invalidatedFlows} pending authorizations invalidated.`);
       console.log('Keep workers stopped until restored imports, crawls and provider receipts are reviewed. No provider requests were made.');
       break;
     }
@@ -132,13 +137,21 @@ try {
       const providers = await rotateCredentialEncryption();
       const identities = await rotateOidcCredentials();
       await rotateGoogleCredentials();
+      await rotateMetaCredentials();
       await rotateProviderAccountIdentityEncryption();
       console.log(`Re-encrypted ${providers} provider connections and ${identities} identity records with the active key. Keep old keys for backups.`);
       console.log('Google reporting credentials re-encrypted with the active key.');
+      console.log('Meta connection credentials and deletion receipts re-encrypted with the active key.');
       console.log('Provider account recovery keys re-encrypted with the active key.');
       break;
     }
     case 'operator': await assertSchema(); await setInstanceOperator(extra[0], option === 'grant'); console.log('Instance operator role updated and audited.'); break;
+    case 'meta-cleanup': {
+      await assertSchema();
+      const result = await runMetaDeletionBatch();
+      console.log(result.pending ? 'Bounded Meta cleanup applied. More local cleanup remains; run again or start the worker.' : 'Bounded Meta cleanup applied. No local deletion work remains.');
+      break;
+    }
     case 'worker': await worker(); break;
     case 'diagnose': await diagnose(option === 'worker'); break;
     default: throw new CliError(usage);

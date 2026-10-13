@@ -24,6 +24,8 @@ import { assertOidcCredentialsReadable, handleOidc } from './oidc.ts';
 import { isInstanceOperator } from './instance-operators.ts';
 import { handleReports } from './reports.ts';
 import { handleGoogle } from './google-api.ts';
+import {handleMeta} from './meta-api.ts';
+import {assertMetaCredentialsReadable} from './meta-auth.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
 import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
 import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
@@ -116,6 +118,7 @@ export async function handleApi(request: Request): Promise<Response> {
       await assertCredentialKeys();
       await assertOidcCredentialsReadable();
       await assertGoogleCredentialsReadable();
+      await assertMetaCredentialsReadable();
       await assertProviderAccountIdentityReadable();
       await access(config.artifactDir, constants.W_OK);
       return json({ status: 'ready' });
@@ -145,6 +148,9 @@ export async function handleApi(request: Request): Promise<Response> {
       // Origin and a site key are public routing values, never visitor identity proof.
       return json(await collectNative(request, event.siteKey, event, extractAnalyticsPeer(request)), 202, cors);
     }
+    // Meta verifies provider-signed callbacks itself; its browser writes still require Origin and a session.
+    const metaResponse = await handleMeta(request);
+    if (metaResponse) return metaResponse;
     if (!principal && request.method === 'POST' && request.headers.get('origin') !== config.appUrl) throw new FoundationError(403, 'This action must originate from the application.');
     const googleResponse = await handleGoogle(request);
     if (googleResponse) return googleResponse;
