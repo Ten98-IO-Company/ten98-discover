@@ -12,6 +12,7 @@ import {domainRedirectQueue,executeDomainRedirectCheck,reconcileDomainRedirectCh
 import {siteAuditQueue} from './site-audits.ts';
 import {rankQueue} from './rank-execution.ts';
 import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} from './rank-worker.ts';
+import {claimDueRankOccurrence} from './rank-recurring.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
 
 const queueName = 'setup-probe';
@@ -20,6 +21,8 @@ let workerPromise: Promise<void> | undefined;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 let heartbeatTask: Promise<unknown> | undefined;
 let retentionTask: Promise<unknown> | undefined;
+let recurringTimer: ReturnType<typeof setInterval> | undefined;
+let recurringTask: Promise<unknown> | undefined;
 let workerStarted = false;
 
 export function getBoss(): Promise<PgBoss> {
@@ -169,6 +172,14 @@ export function startWorker(): Promise<void> {
           .catch(() => console.error('Retention cleanup failed; inspect retention status and database availability.'))
           .finally(() => { retentionTask = undefined; });
       }, 10_000);
+      // Keep provider preflight outside heartbeat/healthcheck and never overlap a
+      // prior claim. ponytail: one due tracker per tick caps this worker at six
+      // starts/minute; use a bounded claim queue if workload requires more.
+      recurringTimer = setInterval(() => {
+        if (!recurringTask) recurringTask = claimDueRankOccurrence()
+          .catch(() => console.error('Rank schedule check failed; inspect schedule status and database availability.'))
+          .finally(() => { recurringTask = undefined; });
+      }, 10_000);
     } catch (error) {
       await stopJobs();
       throw error;
@@ -180,8 +191,11 @@ export function startWorker(): Promise<void> {
 export async function stopJobs() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = undefined;
+  if (recurringTimer) clearInterval(recurringTimer);
+  recurringTimer = undefined;
   await heartbeatTask;
   await retentionTask;
+  await recurringTask;
   await stopSiteAudits();
   const boss = await bossPromise?.catch(() => undefined);
   try {

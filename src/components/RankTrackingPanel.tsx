@@ -3,12 +3,16 @@ import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {RankLocationOption,RankLanguageOption,RankLocationOptions,RankTrackingFieldErrors} from './RankTrackingFields';
 import {RankTrackingView,type RankRole,type RankTracker,type RankKeyword,type RankConnection,type RankDetail,type RankCreate,type RankEdit} from './RankTrackingView';
-import {RankCheckPanel} from './RankCheckPanel';
+import {RankCheckPanel,type RankCheckEntry} from './RankCheckPanel';
+import {RankHistoryPanel} from './RankHistoryPanel';
+import {RankSchedulePanel} from './RankSchedulePanel';
 
 type Props={workspaceId:string;projectId:string;userId:string;origin:string;onUnauthorized:()=>void;onOpenProviders:()=>void};
 type Filter='active'|'archived'|'all';
 type Intent={path:string;body:Record<string,unknown>;trackerId?:string};
 type Operation={controller:AbortController;write:boolean};
+type CheckEntry=RankCheckEntry&{generation:number;returnToSchedule?:boolean};
+type ScheduleEntry={quoteId?:string;returnCheck?:CheckEntry};
 type State={role:RankRole|null;mode:'list'|'new'|'detail';loaded:boolean;filter:Filter;trackers:RankTracker[];nextCursor:string|null;connections:RankConnection[];vaultConfigured:boolean;detail:RankDetail|null;
   create:RankCreate;catalogReady:boolean;countries:RankLocationOption[];languages:RankLanguageOption[];localLocations:RankLocationOptions;localOffset:number|null;appliedQuery:string;fieldErrors:RankTrackingFieldErrors;
   editing:boolean;edit:RankEdit;adding:boolean;words:string;matchCase:boolean;selected:string[];dirty:boolean;reading:boolean;writing:boolean;pending:boolean;conflict:boolean;error:string;notice:string;focus:string|null};
@@ -40,7 +44,7 @@ export function RankTrackingPanel(props:Props){return <RankController key={`${pr
 function RankController(props:Props){
   const prefix=useId()+'-rank-',base=`/api/projects/${props.projectId}/rank-trackers`;
   const [s,setState]=useState(()=>initial(props.origin)),state=useRef(s),operation=useRef<Operation|null>(null),intent=useRef<Intent|null>(null),alive=useRef(true);
-  const [check,setCheck]=useState<{generation:number;mode:'history'|'setup';keywordIds?:string[]}|null>(null),checkGeneration=useRef(0);
+  const [check,setCheck]=useState<CheckEntry|null>(null),checkGeneration=useRef(0),[observations,setObservations]=useState(false),[schedule,setSchedule]=useState<ScheduleEntry|null>(null);
   function patch(value:Partial<State>){if(!alive.current)return;state.current={...state.current,...value};setState(state.current);}
   function locked(){return operation.current?.write===true||intent.current!==null;}
   function invalidate(){operation.current?.controller.abort();operation.current=null;}
@@ -143,9 +147,19 @@ function RankController(props:Props){
   function selection(id:string,checked:boolean){const at=state.current;if(locked()||at.conflict||!writer(at.role)||!at.detail?.keywords.some(k=>k.id===id))return;patch({selected:checked?[...new Set([...at.selected,id])]:at.selected.filter(k=>k!==id)});}
   function keywordMutation(kind:'pin'|'remove',pinned?:boolean){const at=state.current;if(locked()||!writer(at.role)||!at.detail||at.selected.length===0||!canLeave())return;if(kind==='remove'&&!window.confirm(`Remove ${at.selected.length} selected keyword(s)?`))return;mutate(`${base}/${at.detail.tracker.id}/keywords/${kind}`,{revision:at.detail.tracker.authoredRevision,keywordIds:at.selected,...(kind==='pin'?{pinned}:{})},at.detail.tracker.id);}
   function checks(mode:'history'|'setup',subset=false){const at=state.current;if(!at.detail||!canLeave()||mode==='setup'&&(!writer(at.role)||at.detail.tracker.archivedAt!==null||!at.detail.keywords.length)||subset&&!at.selected.length)return;const keywordIds=subset?[...at.selected]:undefined;invalidate();resetForms();patch({reading:false});setCheck({generation:++checkGeneration.current,mode,...(keywordIds?{keywordIds}:{})});}
-  if(check&&s.detail)return <RankCheckPanel key={check.generation} {...props} tracker={s.detail.tracker} connections={s.connections} vaultConfigured={s.vaultConfigured} entry={check} onBack={()=>{setCheck(null);void loadDetail(s.detail!.tracker.id,true);}}/>;
+  function latest(){if(!state.current.detail||!canLeave())return;invalidate();resetForms();patch({reading:false});setObservations(true);}
+  function openSchedule(){if(!state.current.detail||!canLeave())return;invalidate();resetForms();patch({reading:false});setSchedule({});}
+  const schedulePanel=schedule&&s.detail?<RankSchedulePanel {...props} trackerId={s.detail.tracker.id} trackerName={s.detail.tracker.name} quoteId={schedule.quoteId} knownQuoteExpiresAt={schedule.returnCheck?.knownExpiresAt} backLabel={schedule.returnCheck?'Back to quote':observations?'Back to observations':'Back to tracker'}
+    onBack={()=>{setSchedule(null);if(schedule.returnCheck)setCheck({...schedule.returnCheck,generation:++checkGeneration.current});else if(!observations)void loadDetail(s.detail!.tracker.id,true);}}
+    onPrepareQuote={()=>{setSchedule(null);setCheck({generation:++checkGeneration.current,mode:'setup',purpose:'schedule',returnToSchedule:true});}}/>:null;
+  const checkPanel=check&&s.detail?<RankCheckPanel key={check.generation} {...props} tracker={s.detail.tracker} connections={s.connections} vaultConfigured={s.vaultConfigured} entry={check} backLabel={check.returnToSchedule?'Back to schedule':observations?'Back to observations':'Back to tracker'}
+    onConfigureSchedule={(quoteId,expiresAt)=>{setCheck(null);setSchedule({quoteId,returnCheck:{...check,mode:'run',runId:quoteId,knownExpiresAt:expiresAt}});}}
+    onBack={()=>{setCheck(null);if(check.returnToSchedule)setSchedule({});else if(!observations)void loadDetail(s.detail!.tracker.id,true);}}/>:null;
+  if(observations&&s.detail)return <><div hidden={check!==null||schedule!==null}><RankHistoryPanel {...props} tracker={s.detail.tracker} active={check===null&&schedule===null} onBack={()=>{setObservations(false);void loadDetail(s.detail!.tracker.id,true);}} onOpenRun={runId=>setCheck({generation:++checkGeneration.current,mode:'run',runId})}/></div>{schedulePanel??checkPanel}</>;
+  if(schedulePanel)return schedulePanel;
+  if(checkPanel)return checkPanel;
   return <RankTrackingView {...s} prefix={prefix} locked={s.writing||intent.current!==null} pending={s.pending&&!s.writing}
-    onChecks={()=>checks('history')} onPrepareCheck={()=>checks('setup')} onPrepareSelected={()=>checks('setup',true)}
+    onChecks={()=>checks('history')} onPrepareCheck={()=>checks('setup')} onPrepareSelected={()=>checks('setup',true)} onObservations={latest} onSchedule={openSchedule}
     onRefresh={refresh} onFilter={filter=>{if(canLeave()){resetForms();void loadList(filter);}}} onMore={()=>{if(state.current.nextCursor&&!state.current.reading)void loadList(state.current.filter,state.current.nextCursor);}}
     onNew={newTracker} onOpen={open} onBack={back} onCreateChange={changeCreate} onCatalog={()=>void catalog()} onLocalQuery={localQuery} onSearchLocal={()=>void searchLocal()} onMoreLocal={()=>void searchLocal(true)} onCreate={createTracker} onCancelCreate={back}
     onEdit={edit} onEditChange={changeEdit} onSaveEdit={saveEdit} onCancelEdit={cancelForm} onArchive={archive} onAdd={add} onWords={words=>{if(!locked())patch({words,dirty:true});}} onMatchCase={matchCase=>{if(!locked())patch({matchCase,dirty:true});}} onSaveWords={saveWords} onCancelWords={cancelForm}

@@ -9,7 +9,7 @@ import {getBoss} from './jobs.ts';
 import {reserveSpendInTransaction} from './spending.ts';
 import {microUsd} from './keyword-research-input.ts';
 import {readRankAccount} from './dataforseo-rank.ts';
-import {parseRankBasePrices} from './rank-serp-input.ts';
+import {parseRankBasePrices,parseRankSerpRequest} from './rank-serp-input.ts';
 import {rankRecoverableSql} from './rank-worker.ts';
 import {compileRankPlan,rankQuoteInput,rankPlanTotal,readRankPlan,rankGroupPayload,type RankPlan} from './rank-execution-plan.ts';
 
@@ -33,7 +33,12 @@ async function runDto(client:PoolClient,row:any,userId:string,role:string){
     COALESCE(sum(p.actual_micros) FILTER(WHERE p.status='settled'),0)::text AS known_micros,
     count(*) FILTER(WHERE p.status='cancelled')::integer AS cancelled
     FROM rank_dispatch d JOIN provider_request p ON p.id=d.id WHERE d.run_id=$1`,[row.id])).rows[0];
-  const plan=readRankPlan(row.request,row.request_hash);
+  let plan:Pick<RankPlan,'target'|'tasks'|'groups'>;
+  if(row.status==='skipped'){
+    if(row.trigger!=='scheduled'||row.task_count!==0||row.estimate_micros!=='0'||charges.total!==0||row.request?.version!==1||row.request?.skipped!==true||canonicalHash(row.request)!==row.request_hash)throw new FoundationError(409,'The skipped rank receipt is inconsistent.');
+    const {keyword:_keyword,device:_device,...target}=parseRankSerpRequest({...row.request.target,keyword:'scope',device:'desktop'});
+    plan={target,tasks:[],groups:[]};
+  }else plan=readRankPlan(row.request,row.request_hash);
   const dispatches=(await client.query(`SELECT d.id,d.ordinal,d.phase,d.task_count AS "taskCount",d.dispatched_at AS "dispatchedAt",d.completed_at AS "completedAt",d.diagnostic,
     ($2::boolean AND d.dispatched_at<=clock_timestamp()-interval '2 minutes' AND d.dispatched_at>=clock_timestamp()-interval '28 days' AND (${rankRecoverableSql})) IS TRUE AS "canReconcile",
     CASE WHEN d.phase='uncertain' THEN 'uncertain' ELSE p.status END AS "costStatus",
@@ -55,7 +60,7 @@ async function runDto(client:PoolClient,row:any,userId:string,role:string){
     target:plan.target,connectionName:row.connection_name,taskCount:row.task_count,dispatchCount:plan.groups.length,
     estimateUsd:microUsd(BigInt(row.estimate_micros)),knownChargeUsd:microUsd(BigInt(charges.known_micros)),
     costStatus:charges.uncertain?'uncertain':charges.pending||charges.reserved?'pending':charges.total?'final':'not_started',
-    priceAsOf:row.price_as_of,expiresAt:row.expires_at,createdAt:row.created_at,startedAt:row.started_at,completedAt:row.completed_at,
+    priceAsOf:row.status==='skipped'?null:row.price_as_of,expiresAt:row.expires_at,createdAt:row.created_at,scheduledFor:row.scheduled_for,startedAt:row.started_at,completedAt:row.completed_at,
     quoteExpired:row.status==='quoted'&&row.expires_at.getTime()<=Date.now(),
     canStart:row.status==='quoted'&&row.user_id===userId&&writers.includes(role)&&row.expires_at.getTime()>Date.now(),
     canCancel:!!charges.reserved&&writers.includes(role)&&(row.user_id===userId||role==='owner'),diagnostic:row.diagnostic,rawExpiredAt:row.raw_expired_at,dataExpiredAt:row.data_expired_at,
@@ -98,6 +103,27 @@ export async function quoteRankCheck(projectId:string,userId:string,configId:str
     await receipt.save({id});return {role,run:await runDto(client,await runRow(client,projectId,id),userId,role),replayed:false};
   });
 }
+/** Internal transaction seam. Caller holds W→P→tracker and has validated the
+ * immutable run and current authority. A failed child always rolls back all work. */
+export async function enqueueRankPlan(client:PoolClient,boss:Awaited<ReturnType<typeof getBoss>>,input:{runId:string;workspaceId:string;projectId:string;userId:string;connectionId:string;plan:RankPlan}):Promise<void>{
+  const {runId:id,workspaceId:wid,projectId,userId,connectionId,plan}=input,tasks=new Map(plan.tasks.map(task=>[task.id,task]));
+  for(const [ordinal,group] of plan.groups.entries()){
+    const payload=rankGroupPayload(plan,group),hash=canonicalHash({runId:id,method:plan.method,payload});
+    const reservation=await reserveSpendInTransaction(client,wid,userId,{connectionId,requestKey:group.requestKey,operation:'rank.'+plan.method,inputHash:hash,estimateUsd:microUsd(BigInt(group.maximumMicros))},async(client,dispatchId)=>{
+      await client.query(`INSERT INTO rank_dispatch(id,workspace_id,project_id,run_id,ordinal,method,task_count,request,request_hash,phase)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reserved')`,[dispatchId,wid,projectId,id,ordinal,plan.method,group.taskIds.length,JSON.stringify(payload),hash]);
+      for(const taskId of group.taskIds){const task=tasks.get(taskId)!;
+        await client.query(`INSERT INTO rank_task(id,workspace_id,project_id,run_id,dispatch_id,keyword_id,keyword,match_case,device,result_status)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')`,[task.id,wid,projectId,id,dispatchId,task.keywordId,task.keyword,task.matchCase,task.device]);
+      }
+      const job=await boss.send(rankQueue,{dispatchId},{id:dispatchId,retryLimit:0,expireInSeconds:360,db:{executeSql:(text,values)=>client.query(text,values)}});
+      if(!job)throw new Error('Rank check could not be queued.');
+    });
+    // A valid retry is handled by the parent receipt. An orphan ledger must not
+    // silently skip child rows/jobs and leave a permanently queued run.
+    if(!reservation.created)throw new FoundationError(409,'A reservation already exists for this quote. Ask the host operator to review it before proceeding.');
+  }
+}
 export async function startRankCheck(projectId:string,userId:string,id:string,raw:unknown){
   id=parse(z.uuid(),id);const input=parse(runInput,raw),receiptInput={userId,...input};
   await withKeywordProject(projectId,userId,writers,async(client)=>{const row=await runRow(client,projectId,id);if(row.user_id!==userId)throw new FoundationError(403,'Only the user who requested this quote can start it.');});
@@ -110,24 +136,9 @@ export async function startRankCheck(projectId:string,userId:string,id:string,ra
     currentConfig(await config(client,projectId,row.config_id),row.config_revision,row.keywords_revision);
     await keywordConnection(client,wid,row.connection_id,row.connection_revision);
     if((await client.query("SELECT id FROM rank_run WHERE config_id=$1 AND status IN('queued','running','waiting')",[row.config_id])).rowCount)throw new FoundationError(409,'This tracker already has a check in progress.');
-    const plan=readRankPlan(row.request,row.request_hash),tasks=new Map(plan.tasks.map(task=>[task.id,task]));
+    const plan=readRankPlan(row.request,row.request_hash);
     if(plan.method!==row.method||plan.tasks.length!==row.task_count||rankPlanTotal(plan).toString()!==row.estimate_micros)throw new FoundationError(409,'The saved quote is inconsistent.');
-    for(const [ordinal,group] of plan.groups.entries()){
-      const payload=rankGroupPayload(plan,group),hash=canonicalHash({runId:id,method:plan.method,payload});
-      const reservation=await reserveSpendInTransaction(client,wid,userId,{connectionId:row.connection_id,requestKey:group.requestKey,operation:'rank.'+plan.method,inputHash:hash,estimateUsd:microUsd(BigInt(group.maximumMicros))},async(client,dispatchId)=>{
-        await client.query(`INSERT INTO rank_dispatch(id,workspace_id,project_id,run_id,ordinal,method,task_count,request,request_hash,phase)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reserved')`,[dispatchId,wid,projectId,id,ordinal,plan.method,group.taskIds.length,JSON.stringify(payload),hash]);
-        for(const taskId of group.taskIds){const task=tasks.get(taskId)!;
-          await client.query(`INSERT INTO rank_task(id,workspace_id,project_id,run_id,dispatch_id,keyword_id,keyword,match_case,device,result_status)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')`,[task.id,wid,projectId,id,dispatchId,task.keywordId,task.keyword,task.matchCase,task.device]);
-        }
-        const job=await boss.send(rankQueue,{dispatchId},{id:dispatchId,retryLimit:0,expireInSeconds:360,db:{executeSql:(text,values)=>client.query(text,values)}});
-        if(!job)throw new Error('Rank check could not be queued.');
-      });
-      // A valid retry returned through the parent receipt above. An orphan ledger
-      // must not silently skip child rows/jobs and leave a permanently queued run.
-      if(!reservation.created)throw new FoundationError(409,'A reservation already exists for this quote. Ask the host operator to review it before proceeding.');
-    }
+    await enqueueRankPlan(client,boss,{runId:id,workspaceId:wid,projectId,userId,connectionId:row.connection_id,plan});
     await client.query("UPDATE rank_run SET status='queued',request_key=$2,started_at=clock_timestamp() WHERE id=$1",[id,input.requestId]);
     await receipt.save({id});return {role,run:await runDto(client,await runRow(client,projectId,id),userId,role),replayed:false};
   });

@@ -32,6 +32,7 @@ import {getRankRun,quoteRankCheck,startRankCheck} from './rank-execution.ts';
 import {cancelRankRun} from './rank-worker.ts';
 import {reconcileRankCheck} from './rank-reconciliation.ts';
 import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from './rank-history.ts';
+import {getRankSchedule,previewRankSchedule,approveRankSchedule,disableRankSchedule} from './rank-scheduling.ts';
 import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from './saved-keywords.ts';
 import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from './saved-keyword-refresh.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
@@ -316,6 +317,21 @@ export async function handleApi(request: Request): Promise<Response> {
         if(action==='start')return json(await startRankCheck(projectId,user.id,runId,input),202);
         if(action==='cancel')return json(await cancelRankRun(projectId,user.id,runId,input));
         if(action==='reconcile'){await limit(`rank-reconcile:${projectId}`,3);return json(await reconcileRankCheck(projectId,user.id,runId,input));}
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const rankScheduleRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers/(${id})/schedule(?:/(preview|approve|disable))?$`,'i'));
+    if(rankScheduleRoute){
+      const [,projectId,trackerId,action]=rankScheduleRoute;
+      if(url.searchParams.size)throw new FoundationError(400,'Rank schedule actions do not accept query parameters.');
+      await projectAccess(projectId,user.id,request.method!=='GET');
+      await limit(`rank-read:${user.id}`,120);
+      if(request.method==='GET'&&!action)return json(await getRankSchedule(projectId,user.id,trackerId));
+      if(request.method==='POST'&&action){
+        await limit(`rank-schedule-write:${user.id}`,10);const input=await readJson(request,8192);
+        if(action==='preview')return json(await previewRankSchedule(projectId,user.id,trackerId,input));
+        if(action==='approve')return json(await approveRankSchedule(projectId,user.id,trackerId,input));
+        return json(await disableRankSchedule(projectId,user.id,trackerId,input));
       }
       return json({error:'Method not allowed.'},405);
     }

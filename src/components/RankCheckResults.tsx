@@ -5,7 +5,7 @@ export type RankResultDisplay={status:string;target:string;method:string;selecti
  diagnostic:string|null;expired:boolean;rawExpired:boolean;canCancel:boolean;
  tasks:readonly {id:string;keyword:string;device:string;outcome:string;position:string;coverage:string;observedAt:string;rankingUrl:string|null}[];
  dispatches:readonly {id:string;label:string;status:string;estimateUsd:string;actualUsd:string|null;canRecover:boolean;diagnostic:string|null}[]};
-export type RankCheckResultsProps={prefix:string;role:'owner'|'admin'|'editor'|'viewer'|null;phase:'history'|'run';
+export type RankCheckResultsProps={prefix:string;backLabel:string;role:'owner'|'admin'|'editor'|'viewer'|null;phase:'history'|'run';
  locked:boolean;reading:boolean;pending:boolean;error:string;notice:string;loaded:boolean;
  history:readonly RankHistoryDisplay[];nextCursor:string|null;run:RankResultDisplay|null;
  canPrepare:boolean;connections:readonly {id:string;name:string}[];recoveryConnectionId:string;
@@ -15,9 +15,9 @@ export function RankCheckResults(p:RankCheckResultsProps):React.JSX.Element{
  const w=p.role==='owner'||p.role==='admin'||p.role==='editor',r=p.run;
  const hd={id:p.prefix+'results-heading',tabIndex:-1} as const,rg={className:'table-wrap',role:'region',tabIndex:0} as const,tw={minWidth:720};
  const b=(t:string,f:()=>void,d:boolean,c:string='btn ghost')=><button type="button" className={c} onClick={f} disabled={d}>{t}</button>;
- if(p.role===null)return <div className="research-panel stack">{b('Back to tracker',p.onBack,p.locked)}{p.reading?<p role="status">Loading checks…</p>:<p className="alert" role="alert">{p.error||'Access is unavailable. Return to the tracker to reload access.'}</p>}</div>;
+ if(p.role===null)return <div className="research-panel stack">{b(p.backLabel,p.onBack,p.locked)}{p.reading?<p role="status">Loading checks…</p>:<p className="alert" role="alert">{p.error||'Access is unavailable. Return to the tracker to reload access.'}</p>}</div>;
  return <div className="research-panel stack">
-  {b('Back to tracker',p.onBack,p.locked)}
+  {b(p.backLabel,p.onBack,p.locked)}
   {p.error!==''&&<p className="alert" role="alert">{p.error}</p>}
   {p.notice!==''&&<p className="notice" role="status">{p.notice}</p>}
   {p.reading&&<p role="status">Loading checks…</p>}
@@ -39,10 +39,10 @@ export function RankCheckResults(p:RankCheckResultsProps):React.JSX.Element{
      <div className="row between"><span className="pill">{r.status}</span><span className="dim">{r.method} · {r.selection}</span></div>
      <p>{r.target}</p>
      <div className="row between"><span className="field">Created {r.createdAt}</span><span className="field">Started {r.startedAt}</span><span className="field">Completed {r.completedAt}</span></div>
-     <div className="row between"><span className="field">Quoted maximum ${r.estimateUsd}</span><span className="field">Known charges ${r.knownChargeUsd}</span><span className="field">Charge status {r.costStatus}</span></div>
+     <div className="row between"><span className="field">{r.status==='skipped'?'No quote applied':'Quoted maximum $'+r.estimateUsd}</span><span className="field">Known charges ${r.knownChargeUsd}</span><span className="field">Charge status {r.costStatus}</span></div>
      {r.costStatus==='uncertain'&&<p className="alert" role="alert">Some charges are unresolved. Known charges are not the final total. Recovery does not submit another paid check or unpause spending.</p>}
      {r.costStatus==='pending'&&<p className="hint">The provider is still processing work or confirming charges. Known charges are not the final total.</p>}
-     {r.costStatus==='not_started'&&<p className="hint">This check has not started.</p>}
+     {r.costStatus==='not_started'&&<p className="hint">{r.status==='skipped'?'No paid check started.':'This check has not started.'}</p>}
      {r.diagnostic!==null&&<p className="alert" role="alert">{r.diagnostic}</p>}
     </div>
     {r.expired&&<p className="notice" role="status">Rank observations expired under workspace retention. The check outcome and financial receipt remain.</p>}

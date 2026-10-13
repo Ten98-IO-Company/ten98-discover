@@ -15,6 +15,7 @@ import {readRankPlan,rankGroupTasks,rankGroupPayload,rankPlanTotal,type RankPlan
 import {parseRankBasePrices,type RankMethod} from './rank-serp-input.ts';
 import {readRankAccount,requestRankTasks,readRankTask} from './dataforseo-rank.ts';
 import {parseRankDispatchOutcome,type RankDispatchOutcome,type RankExpectedTask} from './rank-provider-outcome.ts';
+import {assertRankRecurringAuthority} from './rank-recurring.ts';
 import type {DataforseoResponse} from './dataforseo-transport.ts';
 
 export const rankPollQueue='rank-poll';
@@ -28,10 +29,11 @@ const writers=['owner','admin','editor'];
 const uncertainMessage='The provider charge or result could not be confirmed. An owner must reconcile this check; it will not be sent again.';
 const cancelledMessage='This check was cancelled before dispatch because its permissions, settings, connection or spending approval changed.';
 export type RankDispatchSnapshot={id:string;workspace_id:string;project_id:string;run_id:string;ordinal:number;method:RankMethod;task_count:number;request:unknown;request_hash:string;phase:string;generation:string;lease_owner:string|null;lease_expires_at:Date|null;lease_current:boolean;dispatched_at:Date|null;collect_deadline:Date|null;next_poll_at:Date|null;poll_attempts:number;charge_evidence:Record<string,unknown>|null;
-  user_id:string;connection_id:string;connection_revision:number;account_fingerprint:string;account_fingerprint_version:number;config_id:string;config_revision:number;keywords_revision:number;run_request:unknown;run_hash:string;run_estimate:string;run_task_count:number;run_status:string;run_created_at:Date;run_started_at:Date|null;run_raw_expired_at:Date|null;run_data_expired_at:Date|null;expires_at:Date;ledger_status:string;estimate_micros:string;actual_micros:string|null;ledger_hash:string};
+  trigger:'manual'|'scheduled';approval_id:string|null;approval_snapshot:unknown;scheduled_for:Date|null;
+  user_id:string;connection_id:string;connection_revision:number;account_fingerprint:string;account_fingerprint_version:number;config_id:string;config_revision:number;keywords_revision:number;run_request:unknown;run_hash:string;run_estimate:string;run_task_count:number;run_status:string;run_created_at:Date;run_started_at:Date|null;run_raw_expired_at:Date|null;run_data_expired_at:Date|null;expires_at:Date|null;ledger_status:string;estimate_micros:string;actual_micros:string|null;ledger_hash:string};
 export async function rankDispatchSnapshot(client:PoolClient,id:string):Promise<RankDispatchSnapshot|null>{
   return (await client.query<RankDispatchSnapshot>(`SELECT d.*,d.generation::text,COALESCE(d.lease_expires_at>clock_timestamp(),false) AS lease_current,
-    r.user_id,r.connection_id,r.connection_revision,r.account_fingerprint,r.account_fingerprint_version,r.config_id,r.config_revision,r.keywords_revision,r.request AS run_request,r.request_hash AS run_hash,r.estimate_micros AS run_estimate,r.task_count AS run_task_count,r.status AS run_status,r.created_at AS run_created_at,r.started_at AS run_started_at,r.raw_expired_at AS run_raw_expired_at,r.data_expired_at AS run_data_expired_at,r.expires_at,
+    r.trigger,r.approval_id,r.approval_snapshot,r.scheduled_for,r.user_id,r.connection_id,r.connection_revision,r.account_fingerprint,r.account_fingerprint_version,r.config_id,r.config_revision,r.keywords_revision,r.request AS run_request,r.request_hash AS run_hash,r.estimate_micros AS run_estimate,r.task_count AS run_task_count,r.status AS run_status,r.created_at AS run_created_at,r.started_at AS run_started_at,r.raw_expired_at AS run_raw_expired_at,r.data_expired_at AS run_data_expired_at,r.expires_at,
     p.status AS ledger_status,p.estimate_micros,p.actual_micros,p.input_hash AS ledger_hash
     FROM rank_dispatch d JOIN rank_run r ON r.id=d.run_id JOIN provider_request p ON p.id=d.id WHERE d.id=$1`,[id])).rows[0]??null;
 }
@@ -64,6 +66,9 @@ async function paidEligibility(client:PoolClient,row:RankDispatchSnapshot){
   const {plan}=binding(row),ids=[...new Set(plan.tasks.map(task=>task.keywordId))],current=(await client.query('SELECT id,keyword,match_case FROM rank_keyword WHERE config_id=$1 AND project_id=$2 AND id=ANY($3::uuid[])',[row.config_id,row.project_id,ids])).rows;
   const map=new Map(current.map(item=>[item.id,item]));
   if(current.length!==ids.length||plan.tasks.some(task=>{const item=map.get(task.keywordId);return !item||item.keyword!==task.keyword||item.match_case!==task.matchCase;}))throw new FoundationError(409,cancelledMessage);
+  // This shared gate runs both before free preflight and at the final paid
+  // dispatch transaction, so a revoked standing grant cannot spend later.
+  await assertRankRecurringAuthority(client,row,plan);
   await expectedTasks(client,row);return keywordConnection(client,row.workspace_id,row.connection_id,row.connection_revision);
 }
 export async function aggregateRankRun(client:PoolClient,runId:string){

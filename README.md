@@ -4,7 +4,9 @@ An MIT, Docker-first application in development, combining web analytics, SEO re
 
 **Status: development foundation; not a V1 release.** The application includes local/OIDC login, authenticator security, workspaces and team roles, provider credentials and spending controls, consent-gated analytics and an event explorer, saved funnels and goals, browser destination configuration, static report sharing, domains, retention, project context, prompt comparisons, keyword research, native Google report imports, and site audits. The research, audit and conversion workflows have browser interfaces. Saved keyword lists, tags, exports and quoted metric refreshes are implemented and checked locally; the source contract and acceptance evidence are recorded in [saved keywords](docs/saved-keywords.md).
 
-Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, rankings, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
+Rank tracking adds tracker/keyword management, quoted manual checks, retained per-keyword comparisons and owner-approved recurring checks with spending ceilings. Its remaining reporting, metrics and live-provider gates are recorded in the [rank contract](docs/rank-tracking.md).
+
+Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, broader rank reporting, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
 The [current implementation and release gaps](docs/release-status.md) separates usable workflows, partial requirements and pending work across all 81 requirements, with their validation limits.
 
@@ -29,6 +31,8 @@ The first usable release must reach the complete technical capability baseline o
 15. [Setup critique, deployment journey and native connection/OIDC flows](docs/onboarding.md)
 16. [Saved funnels and goals](docs/conversions.md)
 17. [Saved keywords, tags, exports and metric refreshes](docs/saved-keywords.md)
+18. [Rank tracking, recurring checks and acceptance evidence](docs/rank-tracking.md)
+19. [Native Meta advertising report contract and provider gates](docs/meta-reports.md)
 
 ## Product direction
 

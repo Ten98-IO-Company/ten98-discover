@@ -18,7 +18,7 @@ export type RankHistoryObservation={
   serpFeatures:string[]|null;checkedDepth:number|null;returnedItemCount:number|null;
   rawExpiredAt:string|null;dataExpiredAt:string|null;diagnostic:string|null;
 };
-export type RankRunSummary={id:string;status:string;trigger:string;method:string;isSubset:boolean;taskCount:number;
+export type RankRunSummary={id:string;status:string;trigger:string;method:string;isSubset:boolean;taskCount:number;scheduledFor:string|null;
   createdAt:string;startedAt:string|null;completedAt:string|null;quoteExpired:boolean;rawExpiredAt:string|null;dataExpiredAt:string|null;
   costStatus:'not_started'|'pending'|'uncertain'|'final';estimateUsd:string;knownChargeUsd:string;diagnostic:string|null};
 export type RankBaseline={days:1|7|30|90;targetAt:string;source:'at_or_before'|'earliest_available'|'unavailable';
@@ -52,14 +52,14 @@ export async function listRankRuns(projectId:string,userId:string,trackerId:stri
   trackerId=parse(z.uuid(),trackerId);const input=parse(z.object({cursor:page}).strict(),fields(params,['cursor']));
   return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>{
     await tracker(client,projectId,trackerId);const scope={projectId,trackerId,list:'rank-runs'},after=readContentCursor(input.cursor??null,scope);
-    const rows=(await client.query(`SELECT r.id,r.status,r.trigger,r.method,r.is_subset,r.task_count,r.created_at,r.started_at,r.completed_at,r.expires_at,r.raw_expired_at,r.data_expired_at,r.diagnostic,r.estimate_micros,
+    const rows=(await client.query(`SELECT r.id,r.status,r.trigger,r.method,r.is_subset,r.task_count,r.scheduled_for,r.created_at,r.started_at,r.completed_at,r.expires_at,r.raw_expired_at,r.data_expired_at,r.diagnostic,r.estimate_micros,
       ${sqlTime('r.created_at')} AS cursor_at,c.* FROM rank_run r LEFT JOIN LATERAL (
       SELECT count(*)::int AS charge_count,bool_or(p.status='uncertain' OR d.phase='uncertain') AS uncertain,bool_or(p.status IN ('reserved','dispatched')) AS pending,
       COALESCE(sum(p.actual_micros) FILTER(WHERE p.status='settled'),0)::text AS known_micros FROM rank_dispatch d JOIN provider_request p ON p.id=d.id AND p.workspace_id=d.workspace_id WHERE d.run_id=r.id) c ON true
       WHERE r.project_id=$1 AND r.config_id=$2 AND ($3::timestamptz IS NULL OR (r.created_at,r.id)<($3::timestamptz,$4::uuid))
       ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,[projectId,trackerId,after?.at??null,after?.id??null])).rows;
     const runs:RankRunSummary[]=rows.slice(0,50).map(r=>({id:r.id,status:r.status,trigger:r.trigger,method:r.method,isSubset:r.is_subset,taskCount:r.task_count,
-      createdAt:iso(r.created_at)!,startedAt:iso(r.started_at),completedAt:iso(r.completed_at),quoteExpired:r.status==='quoted'&&r.expires_at.getTime()<=Date.now(),
+      createdAt:iso(r.created_at)!,scheduledFor:iso(r.scheduled_for),startedAt:iso(r.started_at),completedAt:iso(r.completed_at),quoteExpired:r.status==='quoted'&&r.expires_at.getTime()<=Date.now(),
       rawExpiredAt:iso(r.raw_expired_at),dataExpiredAt:iso(r.data_expired_at),diagnostic:r.diagnostic,estimateUsd:microUsd(BigInt(r.estimate_micros)),knownChargeUsd:microUsd(BigInt(r.known_micros)),
       costStatus:r.uncertain?'uncertain':r.pending?'pending':r.charge_count?'final':'not_started'}));
     return {role,trackerId,runs,nextCursor:cursor(rows,scope)};
@@ -132,6 +132,6 @@ export async function getRankKeywordHistory(projectId:string,userId:string,track
       CROSS JOIN (SELECT $8::text AS keyword,$9::boolean AS match_case) k WHERE t.project_id=$1 AND r.config_id=$2 AND t.keyword_id=$3 AND ($5='both' OR t.device=$5)
       AND ($6::timestamptz IS NULL OR (COALESCE(r.started_at,r.created_at),t.id)<($6::timestamptz,$7::uuid)) ORDER BY COALESCE(r.started_at,r.created_at) DESC,t.id DESC LIMIT 51`,[projectId,trackerId,keywordId,JSON.stringify(currentTarget),input.device,after?.at??null,after?.id??null,keyword.keyword,keyword.match_case])).rows;
     const observations:RankHistoryObservation[]=rows.slice(0,50).map(({id,cursor_at,...r})=>r as RankHistoryObservation);
-    return {role,trackerId,keyword:{id:keywordId,keyword:keyword.keyword,matchCase:keyword.match_case,removed},target:currentTarget,observations,nextCursor:cursor(rows,scope)};
+    return {role,trackerId,keyword:{id:keywordId,keyword:keyword.keyword,matchCase:keyword.match_case,removed},target:currentTarget,enabledDevices:config.devices,observations,nextCursor:cursor(rows,scope)};
   });
 }

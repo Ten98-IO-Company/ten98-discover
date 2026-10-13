@@ -16,16 +16,16 @@ async function checkBudget(client: PoolClient, workspaceId: string, connectionId
   const budget = (await client.query("SELECT *,to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-01') AS month FROM workspace_budget WHERE workspace_id=$1", [workspaceId])).rows[0];
   const connection = (await client.query('SELECT monthly_limit_micros,revoked_at,revision FROM provider_connection WHERE id=$1 AND workspace_id=$2', [connectionId, workspaceId])).rows[0];
   if (!connection || connection.revoked_at) throw new FoundationError(404, 'Provider connection is unavailable.');
-  if (!budget || budget.paused) throw new FoundationError(409, 'Provider spending is paused. An owner must configure and enable limits.');
+  if (!budget || budget.paused) throw Object.assign(new FoundationError(409, 'Provider spending is paused. An owner must configure and enable limits.'), {code:'SPENDING_BUDGET'});
   const totals = (await client.query(`SELECT
     COALESCE(sum(CASE WHEN status='settled' THEN actual_micros ELSE estimate_micros END),0)::text AS workspace,
     COALESCE(sum(CASE WHEN status='settled' THEN actual_micros ELSE estimate_micros END) FILTER(WHERE connection_id=$2),0)::text AS connection,
     count(*) FILTER(WHERE status='uncertain')::int AS uncertain
     FROM provider_request WHERE workspace_id=$1 AND status<>'cancelled' AND ($3::uuid IS NULL OR id<>$3)
       AND (budget_month=$4::date OR status IN ('reserved','dispatched','uncertain'))`, [workspaceId, connectionId, except ?? null, budget.month])).rows[0];
-  if (totals.uncertain) throw new FoundationError(409, 'An earlier request has an uncertain charge. Reconcile it before spending again.');
+  if (totals.uncertain) throw Object.assign(new FoundationError(409, 'An earlier request has an uncertain charge. Reconcile it before spending again.'), {code:'SPENDING_BUDGET'});
   if (BigInt(totals.workspace) + amount > BigInt(budget.monthly_limit_micros) || BigInt(totals.connection) + amount > BigInt(connection.monthly_limit_micros)) {
-    throw new FoundationError(409, 'The estimated cost exceeds a workspace or connection budget.');
+    throw Object.assign(new FoundationError(409, 'The estimated cost exceeds a workspace or connection budget.'), {code:'SPENDING_BUDGET'});
   }
   return { revision: connection.revision as number, month: budget.month as string };
 }

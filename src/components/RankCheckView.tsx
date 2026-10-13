@@ -7,7 +7,8 @@ export type RankQuoteDisplay={
  tasks:readonly {id:string;keyword:string;device:string;maximumUsd:string}[];
 };
 export type RankCheckViewProps={
- prefix:string;role:'owner'|'admin'|'editor'|'viewer'|null;
+ prefix:string;backLabel:string;role:'owner'|'admin'|'editor'|'viewer'|null;
+ schedulePurpose:boolean;canConfigureSchedule:boolean;onConfigureSchedule:()=>void;
  phase:'setup'|'review';locked:boolean;reading:boolean;pending:boolean;conflict:boolean;
  error:string;notice:string;selectionLabel:string;canQuote:boolean;
  connections:readonly {id:string;name:string}[];connectionId:string;
@@ -19,7 +20,7 @@ export type RankCheckViewProps={
 export function RankCheckView(p:RankCheckViewProps):React.JSX.Element{
  const writer=p.role==='owner'||p.role==='admin'||p.role==='editor',hid=p.prefix+'quote-heading',q=p.quote;
  return <section className="research-panel stack">
-  <div className="row"><button type="button" className="btn ghost" disabled={p.locked} onClick={p.onBack}>Back to tracker</button></div>
+  <div className="row"><button type="button" className="btn ghost" disabled={p.locked} onClick={p.onBack}>{p.backLabel}</button></div>
   {p.error!==''&&<p className="alert" role="alert">{p.error}</p>}
   {p.notice!==''&&<p className="notice" role="status">{p.notice}</p>}
   {p.reading&&<p role="status">Loading check…</p>}
@@ -28,19 +29,19 @@ export function RankCheckView(p:RankCheckViewProps):React.JSX.Element{
   {p.role===null?(!p.reading&&<p>Check access is unavailable. Return to the tracker to reload access.</p>):p.phase==='setup'?<>
    <h2 id={hid} tabIndex={-1}>Review a rank check</h2>
    <p>{p.selectionLabel}</p>
-   {writer?<form className="card stack" aria-labelledby={hid} onSubmit={e=>{e.preventDefault();p.onQuote();}}>
+   {writer&&(!p.schedulePurpose||p.role==='owner')?<form className="card stack" aria-labelledby={hid} onSubmit={e=>{e.preventDefault();p.onQuote();}}>
     <div className="field"><label htmlFor={p.prefix+'connection'}>DataForSEO connection</label>
      <select id={p.prefix+'connection'} value={p.connectionId} disabled={p.locked} onChange={e=>p.onConnection(e.target.value)}>
       <option value="">Choose a connection</option>{p.connections.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-    <div className="field"><label htmlFor={p.prefix+'method'}>Retrieval method</label>
+    {p.schedulePurpose?<p>Retrieval method: Queued. This quote includes all current keywords and configured devices.</p>:<div className="field"><label htmlFor={p.prefix+'method'}>Retrieval method</label>
      <select id={p.prefix+'method'} value={p.method} disabled={p.locked} onChange={e=>p.onMethod(e.target.value as 'queued'|'live')}>
-      <option value="queued">Queued</option><option value="live">Live</option></select></div>
-    <p className="hint">Both methods may incur provider charges. Preparing a quote does not start a paid check.</p>
+      <option value="queued">Queued</option><option value="live">Live</option></select></div>}
+    <p className="hint">Preparing a quote does not start a paid check. {p.schedulePurpose?'You will review the schedule and approve recurring spending separately.':'Both retrieval methods may incur provider charges.'}</p>
     {p.connections.length===0?(p.role==='owner'
      ?<button type="button" className="btn ghost" disabled={p.locked} onClick={p.onOpenProviders}>Open providers</button>
      :<p className="hint">Ask a workspace owner to configure DataForSEO.</p>)
     :<button type="submit" className="btn primary" disabled={p.locked||p.reading||p.conflict||!p.canQuote||p.connectionId===''}>Prepare quote</button>}
-   </form>:<p>An editor can prepare a check; only its requester can start it.</p>}
+   </form>:<p>{p.schedulePurpose?'Only workspace owners can prepare a recurring-spend approval.':'An editor can prepare a check; only its requester can start it.'}</p>}
   </>:<>
    <h2 id={hid} tabIndex={-1}>Review the maximum charge</h2>
    {q===null?<p>Quote unavailable. Refresh or return to the tracker.</p>:<>
@@ -63,7 +64,8 @@ export function RankCheckView(p:RankCheckViewProps):React.JSX.Element{
     {writer&&!q.expired&&!q.canStart&&<p className="hint">Only the requester can start an eligible quote.</p>}
    </>}
    {(q!==null||!p.conflict)&&<div className="row">
-    {q!==null&&<button type="button" className="btn primary" disabled={p.locked||p.conflict||!writer||!q.canStart||q.expired} onClick={p.onStart}>Start paid rank check</button>}
+    {q!==null&&(p.schedulePurpose?<button type="button" className="btn primary" disabled={p.locked||!p.canConfigureSchedule} onClick={p.onConfigureSchedule}>Configure schedule</button>:<button type="button" className="btn primary" disabled={p.locked||p.conflict||!writer||!q.canStart||q.expired} onClick={p.onStart}>Start paid rank check</button>)}
+    {!p.schedulePurpose&&p.canConfigureSchedule&&<button type="button" className="btn ghost" disabled={p.locked} onClick={p.onConfigureSchedule}>Set up recurring checks</button>}
     {!p.conflict&&<button type="button" className="btn ghost" disabled={p.locked} onClick={p.onRefresh}>Refresh quote</button>}
    </div>}
   </>}
