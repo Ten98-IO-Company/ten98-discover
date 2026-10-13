@@ -91,6 +91,8 @@ jobs:
             await client.query('CREATE DATABASE ten98_paid');
             await client.query('CREATE DATABASE ten98_prompt_insights_ci');
             await client.query('CREATE DATABASE ten98_prompt_insights_comparison_ci');
+            await client.query('CREATE DATABASE ten98_citation_context_ci');
+            await client.query('CREATE DATABASE ten98_prompt_citations_ci');
             await client.query('CREATE DATABASE ten98_site_api');
             await client.query('CREATE DATABASE ten98_site_retention');
             await client.query('CREATE DATABASE ten98_site_worker_ci');
@@ -135,6 +137,8 @@ jobs:
               ['ten98_paid', [['src/server/cli.ts', 'migrate'], ['tests/keyword-research-integration.ts'], ['tests/prompt-execution-integration.ts'], ['tests/google-retention-integration.ts']]],
               ['ten98_prompt_insights_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-insights-integration.ts']], { TEN98_PROMPT_INSIGHTS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_prompt_insights_comparison_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-insights-comparison-integration.ts']], { TEN98_PROMPT_INSIGHTS_COMPARISON_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_citation_context_ci', [['src/server/cli.ts', 'migrate'], ['tests/citation-context-integration.ts']], { TEN98_CITATION_CONTEXT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_prompt_citations_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-citations-integration.ts']], { TEN98_PROMPT_CITATIONS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_site_api', [['src/server/cli.ts', 'migrate'], ['tests/site-audits-integration.ts']]],
               ['ten98_site_retention', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-retention-integration.ts']]],
               ['ten98_site_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-worker-integration.ts']]],

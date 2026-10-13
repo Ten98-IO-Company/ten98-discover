@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {canonicalHash,classifyPrompt,contextHost,keyPageUrl,parse,contextPatch,promptBatch,promptPatch} from '../src/server/context-input.ts';
+import {canonicalHash,citationPublisherCategories,classifyPrompt,contextHost,keyPageUrl,parse,contextPatch,promptBatch,promptPatch} from '../src/server/context-input.ts';
 import {contentCursor,readContentCursor} from '../src/server/project-context.ts';
 
 test('context metadata preserves exact hosts, schemes and meaningful query URLs without credentials',()=>{
@@ -18,6 +18,22 @@ test('strict bounded context input distinguishes absent fields from explicit cle
   for(const op of [{kind:'section',key:'current_goal',content:'x'.repeat(4001)},{kind:'section',key:'custom:bad_slug',content:'x'},{kind:'research',summary:'\0'},{kind:'research',summary:'x',createdBy:'forged'},{kind:'profile',aliases:Array(21).fill('Alias')}]) assert.throws(()=>parse(contextPatch,{...base,updates:[op]}));
   assert.throws(()=>parse(contextPatch,{...base,updates:Array(51).fill({kind:'research',summary:'x'})}));
   assert.throws(()=>parse(contextPatch,{...base,updates:[{kind:'research',summary:'\ud800'}]}));
+});
+test('citation context operations normalize exact hosts and distinguish explicit other from removing an override',()=>{
+  const base={revision:1,requestId:randomUUID()};
+  assert.deepEqual(citationPublisherCategories,['editorial','reviews','ecommerce','social','developer','pr','reference','institutional','other']);
+  const result=parse(contextPatch,{...base,updates:[{kind:'citation-brand-domain',domain:' BÜCHER.example.com. ',action:'add'},{kind:'citation-category',domain:'WWW.example.com',category:'other'},{kind:'citation-category',domain:'example.com',category:null}]});
+  assert.deepEqual(result.updates,[{kind:'citation-brand-domain',domain:'xn--bcher-kva.example.com',action:'add'},{kind:'citation-category',domain:'www.example.com',category:'other'},{kind:'citation-category',domain:'example.com',category:null}]);
+  for(const op of [
+    {kind:'citation-brand-domain',domain:'example.com',action:'verify'},
+    {kind:'citation-brand-domain',domain:'example.com',action:'add',verified:true},
+    {kind:'citation-brand-domain',domain:'127.0.0.1',action:'add'},
+    {kind:'citation-brand-domain',domain:'https://example.com',action:'remove'},
+    {kind:'citation-category',domain:'example.com',category:'editorial\n'},
+    {kind:'citation-category',domain:'example.com',category:undefined},
+    {kind:'citation-category',domain:'*.example.com',category:'social'},
+    {kind:'citation-category',domain:'example.com',category:'other',projectId:randomUUID()},
+  ]) assert.throws(()=>parse(contextPatch,{...base,updates:[op]}));
 });
 test('prompt text remains exact after trim, user tags normalize, and system fields are not writable',()=>{
   const result=parse(promptBatch,{requestId:randomUUID(),prompts:[{text:'  Exact CASE?\nSecond line.  ',tags:['TOPIC','topic','branded']}]});

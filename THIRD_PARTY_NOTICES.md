@@ -1,6 +1,20 @@
 # Upstream provenance and reuse gate
 
-The project-context implementation now includes the attributed Elmo classifier adaptation recorded below. Earlier statements describing an empty application import ledger refer to the planning/foundation stage before this addition.
+The application includes the attributed Elmo adaptations recorded below. Statements describing an empty application import ledger refer to the earlier planning/foundation stage.
+
+## Citation classification adaptation
+
+The following files reuse Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`, covered by the complete MIT notice below (Copyright 2026 Blue Whale Software, LLC):
+
+| Upstream file under `apps/web/src/lib/` | Destination |
+|---|---|
+| `domain-categories.ts` | `src/server/citation-taxonomy.ts` |
+| `domain-categories.server.ts` | `src/server/citation-domain-categories.ts` |
+| `editorial-domains.ts` | `src/server/citation-editorial-domains.ts` |
+
+Source: [pinned Elmo library](https://github.com/elmohq/elmo/tree/3c673d0253d01ae030fa41519f62ad7e54f2281b/apps/web/src/lib). Imports are renamed and provenance headers added. Google host detection replaces the upstream permissive regular expression with exact/subdomain matching against a factual snapshot of Google's [supported domains](https://www.google.com/supported_domains), retrieved 2026-10-13; its date and SHA-256 identifier are exposed with report provenance. Path/query classification and the optional Elmo URL-grouping behavior remain attributed upstream heuristics. Original `citation-classification.ts` separates publisher, page type, source surface and current tracked identity; it validates retained inputs and adds explicit host overrides without mutating retained evidence. The lists and classification code remain server-only.
+
+Upstream curated-list provenance comments, including Wikipedia seed references, are retained. The pinned repository's root MIT notice covers these files; no separate list license or external dataset/generator attribution was found during source review. This records the available upstream provenance, not an independent reconstruction of every list entry. No upstream logos, fonts, application UI, dependency manifests or private provider responses are imported with this adaptation.
 
 ## Project-context classifier adaptation
 

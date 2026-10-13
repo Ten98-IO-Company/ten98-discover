@@ -10,6 +10,8 @@ Native Meta connections now support manual daily reports, latest complete daily 
 
 AI insights analyzes retained prompt answers using the current brand and competitor context. It separates visibility, share of voice and provider citation hits, with eligibility coverage, actual daily observations, filters, execution drilldown and CSV exports. [Adjacent-period comparisons](docs/ai-period-comparison.md) compare equivalent prompt/model/settings cells, with explicit coverage and unavailable-change states. Source-compatible carried trends, captured historical identities and additional provider coverage remain required; see [AI insights](docs/ai-insights.md).
 
+[Citation analysis](docs/citation-analysis.md) is under review: retained URL/domain/category reports, source filters, annotation evidence, CSV and inline domain tracking have local backend/controller acceptance. Two presentation capability-handler fixes remain before accepting or deploying the interface.
+
 Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, broader rank reporting, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
 The [current implementation and release gaps](docs/release-status.md) separates usable workflows, partial requirements and pending work across all 81 requirements, with their validation limits.
@@ -40,6 +42,7 @@ The first usable release must reach the complete technical capability baseline o
 20. [Retained Meta campaign inventory and acceptance](docs/meta-campaigns.md)
 21. [Retained-answer AI insights and measurement limits](docs/ai-insights.md)
 22. [Adjacent-period AI comparisons and evidence drilldown](docs/ai-period-comparison.md)
+23. [Retained citation analysis, domain tracking and acceptance checkpoint](docs/citation-analysis.md)
 
 ## Product direction
 
@@ -57,7 +60,7 @@ The application is free and fully featured for everyone: no SaaS subscription sa
 
 ## Reuse and evidence
 
-This is a new combined project, with selective reuse planned from three MIT upstream repositories. It is not an official product of those projects. The prompt classifier selectively adapts Elmo's MIT substring-matching behavior with attribution; remaining application code is original. See [third-party provenance and dependency notices](THIRD_PARTY_NOTICES.md).
+This is a new combined project, with selective reuse from three MIT upstream repositories. It is not an official product of those projects. Prompt matching and citation classification selectively reuse Elmo's MIT code and curated domain lists with attribution. See [third-party provenance and dependency notices](THIRD_PARTY_NOTICES.md).
 
 Research is static source inspection at pinned commits plus sanitized deployment lessons. Foundation checks do not establish full runtime parity, provider integration, capacity or security certification.
 

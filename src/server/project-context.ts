@@ -3,7 +3,7 @@ import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
-import {canonicalHash,contextPatch,parse,sectionKeys} from './context-input.ts';
+import {canonicalHash,contextHost,contextPatch,parse,sectionKeys,type CitationPublisherCategory} from './context-input.ts';
 
 export type ContentProject={id:string;name:string;origin:string;role:'owner'|'admin'|'editor'|'viewer'};
 export async function withContentProject<T>(projectId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,project:ContentProject)=>Promise<T>):Promise<T> {
@@ -47,9 +47,10 @@ function onlyCursor(params:URLSearchParams) {
   if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1) throw new FoundationError(400,'Use one page cursor.');
   return params.get('cursor');
 }
-export async function contentProfile(client:PoolClient,project:ContentProject) {
-  const result=await client.query('SELECT revision,brand_name AS name,brand_aliases AS aliases FROM project_context WHERE project_id=$1',[project.id]);
-  return result.rows[0]??{revision:1,name:project.name,aliases:[]};
+export type ContentProfile={revision:number;name:string;aliases:string[];citationDomains:string[];citationCategoryOverrides:{domain:string;category:CitationPublisherCategory}[]};
+export async function contentProfile(client:PoolClient,project:ContentProject):Promise<ContentProfile> {
+  const result=await client.query<ContentProfile>('SELECT revision,brand_name AS name,brand_aliases AS aliases,brand_citation_domains AS "citationDomains",citation_category_overrides AS "citationCategoryOverrides" FROM project_context WHERE project_id=$1',[project.id]);
+  return result.rows[0]??{revision:1,name:project.name,aliases:[],citationDomains:[],citationCategoryOverrides:[]};
 }
 async function researchPage(client:PoolClient,projectId:string,cursorValue:string|null=null) {
   const scope={projectId,list:'research'},cursor=readContentCursor(cursorValue,scope);
@@ -69,7 +70,7 @@ async function contextDto(client:PoolClient,project:ContentProject) {
   const keyPages=(await client.query(`SELECT id,url,role,topic,notes,updated_at AS "updatedAt",updated_by AS "updatedBy" FROM context_key_page WHERE project_id=$1 ORDER BY url`,[project.id])).rows;
   const research=await researchPage(client,project.id);
   const templates=(await client.query(`SELECT id,name,left(brief,200) AS preview,length(brief)>200 AS truncated FROM report_template WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 21`,[project.id])).rows;
-  return {project:{id:project.id,name:project.name,origin:project.origin},role:project.role,revision:profile.revision,profile:{name:profile.name,aliases:profile.aliases},
+  return {project:{id:project.id,name:project.name,origin:project.origin},role:project.role,revision:profile.revision,profile:{name:profile.name,aliases:profile.aliases,citationDomains:profile.citationDomains},citationCategoryOverrides:profile.citationCategoryOverrides,
     sections:sectionKeys.flatMap(key=>sections.filter(row=>row.key===key)),missingSections:sectionKeys.filter(key=>!sections.some(row=>row.key===key)),
     customSections:sections.filter(row=>row.key.startsWith('custom:')),competitors,keyPages,researchLog:research.entries,researchLogNextCursor:research.nextCursor,
     reportTemplates:templates.slice(0,20),reportTemplatesTruncated:templates.length>20};
@@ -89,6 +90,25 @@ export async function updateProjectContext(projectId:unknown,userId:unknown,raw:
         case 'profile':
           if(op.name===undefined&&op.aliases===undefined) throw new FoundationError(400,'Choose a brand field to update.');
           await client.query('UPDATE project_context SET brand_name=COALESCE($2,brand_name),brand_aliases=COALESCE($3,brand_aliases) WHERE project_id=$1',[project.id,op.name??null,op.aliases===undefined?null:JSON.stringify(op.aliases)]);break;
+        case 'citation-brand-domain': {
+          let origin:string|null=null;try {origin=contextHost(new URL(project.origin).hostname);} catch {}
+          if(op.domain===origin) {
+            if(op.action==='remove') throw new FoundationError(400,'The project origin is an implicit read-only citation identity.');
+            break;
+          }
+          const domains=new Set(profile.citationDomains);
+          if(op.action==='add') domains.add(op.domain);else domains.delete(op.domain);
+          if(domains.size>19) throw new FoundationError(400,'A brand can have at most 19 additional citation domains.');
+          profile.citationDomains=[...domains].sort();
+          await client.query('UPDATE project_context SET brand_citation_domains=$2 WHERE project_id=$1',[project.id,JSON.stringify(profile.citationDomains)]);break;
+        }
+        case 'citation-category': {
+          const overrides=profile.citationCategoryOverrides.filter(row=>row.domain!==op.domain);
+          if(op.category!==null) overrides.push({domain:op.domain,category:op.category});
+          if(overrides.length>100) throw new FoundationError(400,'A project can have at most 100 publisher category overrides.');
+          profile.citationCategoryOverrides=overrides.sort((a,b)=>a.domain<b.domain?-1:a.domain>b.domain?1:0);
+          await client.query('UPDATE project_context SET citation_category_overrides=$2 WHERE project_id=$1',[project.id,JSON.stringify(profile.citationCategoryOverrides)]);break;
+        }
         case 'section':
           if(!op.content) {await client.query('DELETE FROM context_section WHERE project_id=$1 AND key=$2',[project.id,op.key]);break;}
           if(!op.key.startsWith('custom:')&&op.title!==undefined) throw new FoundationError(400,'Standard section titles cannot be changed.');

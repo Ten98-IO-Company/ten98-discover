@@ -6,6 +6,8 @@ import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 
 export const sectionKeys=['business_overview','current_goal','positioning','writing_preferences'] as const;
+export const citationPublisherCategories=['editorial','reviews','ecommerce','social','developer','pr','reference','institutional','other'] as const;
+export type CitationPublisherCategory=typeof citationPublisherCategories[number];
 export const cleanText=(value:string)=>toUSVString(value)===value&&!value.includes('\0');
 export const text=(max:number,min=0)=>z.string().trim().min(min).max(max).refine(cleanText);
 export const revision=z.number().int().positive().max(2147483646);
@@ -40,6 +42,8 @@ const sectionKey=z.union([z.enum(sectionKeys),z.string().max(67).regex(/^custom:
 const host=text(1024,1).transform(contextHost);
 export const contextOp=z.discriminatedUnion('kind',[
   z.object({kind:z.literal('profile'),name:text(120,1).optional(),aliases:names.optional()}).strict(),
+  z.object({kind:z.literal('citation-brand-domain'),domain:host,action:z.enum(['add','remove'])}).strict(),
+  z.object({kind:z.literal('citation-category'),domain:host,category:z.enum(citationPublisherCategories).nullable()}).strict(),
   z.object({kind:z.literal('section'),key:sectionKey,title:text(120,1).optional(),content:text(4000)}).strict(),
   z.object({kind:z.literal('remove-section'),key:z.string().max(67).regex(/^custom:[a-z0-9]+(?:-[a-z0-9]+)*$(?![\s\S])/)}).strict(),
   z.object({kind:z.literal('competitor'),primaryDomain:host,name:text(120).optional(),domains:z.array(host).min(1).max(20).optional(),aliases:names.optional(),notes:text(500).optional()}).strict(),

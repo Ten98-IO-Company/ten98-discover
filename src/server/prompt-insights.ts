@@ -69,13 +69,14 @@ function error(error:unknown):never{if((error as {code?:string})?.code==='57014'
 /** Current membership is admitted into one repeatable-read snapshot. Report dates
  * describe comparison requests; missing days are not carried or seeded. No ledger
  * join can accidentally remove a valid answer whose charge is still uncertain. */
-export async function selectPromptInsights(client:PoolClient,p:ContentProject,filters:InsightFilters,check:()=>void,comparison=false){
+export async function selectPromptInsights(client:PoolClient,p:ContentProject,filters:InsightFilters,check:()=>void,comparison=false,citationOnly=false){
  await client.query("SET LOCAL statement_timeout='5s'");check();
  if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[filters.timeZone])).rowCount)throw bad();
  if(filters.promptId&&!(await client.query('SELECT 1 FROM project_prompt WHERE project_id=$1 AND id=$2',[p.id,filters.promptId])).rowCount)throw new FoundationError(404,'Prompt not found or unavailable.');
  const profile=await contentProfile(client,p),competitors=(await client.query<{id:string;name:string|null;primary_domain:string;aliases:string[];domains:string[]}>('SELECT id,name,primary_domain,aliases,domains FROM context_competitor WHERE project_id=$1 ORDER BY id LIMIT 101',[p.id])).rows;
  if(competitors.length>100)throw cap();const warnings:string[]=[];let domain:string[]=[];
  try{domain=[contextHost(new URL(p.origin).hostname)];}catch{warnings.push('The project origin is not a public citation identity. Brand name and aliases still apply.');}
+ domain=[...new Set([...domain,...(profile.citationDomains??[])])];
  const subjects:MentionSubject[]=[{id:'brand',name:profile.name,aliases:profile.aliases,domains:domain},...competitors.map(c=>({id:c.id,name:c.name||c.primary_domain,aliases:c.aliases,domains:c.domains}))];
  // Validate authored identities even for an empty report, without scanning text.
  try{matchAnswer({text:'',subjects,citationUrls:[],method:filters.matcher});}catch(e){if(e instanceof AnswerMentionError)throw new FoundationError(409,'Current project identities cannot be analyzed. Review the brand and competitor names, aliases and domains.');throw e;}
@@ -114,7 +115,7 @@ export async function selectPromptInsights(client:PoolClient,p:ContentProject,fi
  }
  const payloadIds=stored.filter(r=>r.hasResult&&!r.expired).map(r=>r.id);
  const payloads=new Map<string,unknown>(payloadIds.length?(await client.query<{id:string;result:unknown}>('SELECT id,result FROM prompt_execution WHERE project_id=$1 AND id=ANY($2::uuid[])',[p.id,payloadIds])).rows.map(r=>[r.id,r.result]):[]);
- const observations:InsightExecution[]=[];let work=0;
+ const observations:InsightExecution[]=[],citationEvidence=new Map<string,{url:string;title:string|null}[]>();let work=0;
  // Conservative upper bound, before matching: includes duplicates and domains
  // even when a method would deduplicate/omit them. This is not silent sampling.
  const terms=Math.max(1,subjects.reduce((n,s)=>n+1+s.aliases.length+(filters.matcher==='elmo-substring-v1'?s.domains.length:0),0));
@@ -126,16 +127,17 @@ export async function selectPromptInsights(client:PoolClient,p:ContentProject,fi
    else{parsed=result.data;eligibility=parsed.finishReason==='length'?'truncated':parsed.finishReason==='content_filter'?'content_filtered':!parsed.text.trim()?'empty':'eligible';}
   }
   if(eligibility==='eligible'){
-   work+=parsed!.text.length*terms;if(work>100_000_000)throw cap();
-   try{matches=matchAnswer({text:parsed!.text,subjects,citationUrls:parsed!.citations.map(c=>c.url),method:filters.matcher});}catch(e){if(e instanceof AnswerMentionError)throw cap();throw e;}
+   if(citationOnly)citationEvidence.set(row.id,parsed!.citations);
+   else{work+=parsed!.text.length*terms;if(work>100_000_000)throw cap();
+    try{matches=matchAnswer({text:parsed!.text,subjects,citationUrls:parsed!.citations.map(c=>c.url),method:filters.matcher});}catch(e){if(e instanceof AnswerMentionError)throw cap();throw e;}}
   }
   observations.push({id:row.id,comparisonId:row.comparisonId,promptId:row.promptId,versionId:row.versionId,requestedAt:row.requestedAt,date:row.date,model:row.model,status:row.status,resolvedModel:parsed?.resolvedModel??null,eligibility,matches});
  }
  check();const asOf=(await client.query<{at:string}>(`SELECT ${stamp('transaction_timestamp()')} AS at`)).rows[0].at;
  const scope=canonicalHash({projectId:p.id,filters}),selectionRevision=canonicalHash({scope,contextRevision:profile.revision,profileHash,stored});
  const daily:PromptInsightsReport['daily']=[];
- for(let day=Date.parse(filters.from);day<=Date.parse(filters.to);day+=86400000){const date=new Date(day).toISOString().slice(0,10),rows=observations.filter(r=>r.date===date);daily.push({date,coverage:count(rows),metrics:metrics(subjects,rows)});}
- return {scope,observations,identities,report:{role:p.role,filters,asOf,contextRevision:profile.revision,profileHash,matcherVersion:filters.matcher,selectionRevision,label,warnings,subjects,coverage:count(observations),evidenceStates:observations.map(({id,eligibility})=>({id,eligibility})),metrics:metrics(subjects,observations),daily}};
+ for(let day=Date.parse(filters.from);day<=Date.parse(filters.to);day+=86400000){const date=new Date(day).toISOString().slice(0,10),rows=observations.filter(r=>r.date===date);daily.push({date,coverage:count(rows),metrics:citationOnly?[]:metrics(subjects,rows)});}
+ return {scope,observations,identities,citationEvidence,citationCategoryOverrides:profile.citationCategoryOverrides??[],report:{role:p.role,filters,asOf,contextRevision:profile.revision,profileHash,matcherVersion:filters.matcher,selectionRevision,label,warnings,subjects,coverage:count(observations),evidenceStates:observations.map(({id,eligibility})=>({id,eligibility})),metrics:citationOnly?[]:metrics(subjects,observations),daily}};
 }
 const cursorSchema=z.object({scope:hex,revision:hex,offset:z.number().int().min(1).max(999)}).strict();
 function pageOffset(raw:string|null,scope:string,revision:string){
