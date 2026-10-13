@@ -128,7 +128,8 @@ SHA256: 374938C4A7ABA06F5D2C181A2E7DB75A8A0873A1471168726269D6CDEAF2954F
 ```tsx
       <h2 id={props.prefix + 'heading'} tabIndex={-1}>
         Meta reports
-      </h2>```
+      </h2>
+```
 
 ## Original exact block I2
 
