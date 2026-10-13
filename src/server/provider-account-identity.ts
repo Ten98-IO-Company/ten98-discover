@@ -20,9 +20,13 @@ function open(envelope:unknown):Payload {
 }
 async function quoteState(client:Pick<PoolClient,'query'>) {
   return (await client.query(`SELECT
-    EXISTS(SELECT 1 FROM keyword_quote) OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan) AS present,
+    EXISTS(SELECT 1 FROM keyword_quote) OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan)
+      OR EXISTS(SELECT 1 FROM rank_run)
+      OR EXISTS(SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL) AS present,
     EXISTS(SELECT 1 FROM keyword_quote WHERE account_fingerprint_version=2)
-      OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan WHERE account_fingerprint_version=2) AS modern`)).rows[0] as {present:boolean;modern:boolean};
+      OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan WHERE account_fingerprint_version=2)
+      OR EXISTS(SELECT 1 FROM rank_run)
+      OR EXISTS(SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL) AS modern`)).rows[0] as {present:boolean;modern:boolean};
 }
 
 // Only the explicit 0022 migration may capture the current login secret for
@@ -58,7 +62,9 @@ export async function getProviderAccountIdentityKey(version:1|2):Promise<string>
 export async function assertProviderAccountIdentityReadable():Promise<void> {
   const {pool}=getDatabase();
   const row=(await pool.query(`SELECT provider_account_identity,
-    EXISTS(SELECT 1 FROM keyword_quote) OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan) AS present
+    EXISTS(SELECT 1 FROM keyword_quote) OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan)
+      OR EXISTS(SELECT 1 FROM rank_run)
+      OR EXISTS(SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL) AS present
     FROM installation WHERE id='instance'`)).rows[0];
   if(!row)unavailable();
   if(row.provider_account_identity!==null){open(row.provider_account_identity);return;}

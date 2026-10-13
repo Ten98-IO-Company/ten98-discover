@@ -7,17 +7,18 @@ import {getDatabase,closeDatabase,migrationSources,assertSchema} from '../src/se
 import {stopJobs} from '../src/server/jobs.ts';
 import {saveProvider,saveBudget,assertCredentialKeys} from '../src/server/providers.ts';
 import {getProviderAccountIdentityKey,assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from '../src/server/provider-account-identity.ts';
+import {encryptCredentials} from '../src/server/credential-vault.ts';
 import {readKeywordAccount} from '../src/server/dataforseo-keywords.ts';
 import {quoteKeywordResearch,executeKeywordResearch,reconcileKeywordResearch} from '../src/server/keyword-research.ts';
 import {quoteSavedKeywordRefresh,startSavedKeywordRefresh} from '../src/server/saved-keyword-refresh.ts';
 import {saveSavedKeywords} from '../src/server/saved-keywords.ts';
 import {keywordAccountEndpoint,keywordReconcileEndpoint,keywordEndpoints,keywordPayload,type KeywordRequest} from '../src/server/keyword-research-input.ts';
 
-// Two invocations, each with a different initially empty owned database:
-// TEN98_IDENTITY_TEST_CASE=legacy|deferred node --env-file=<private env> tests/provider-account-identity-integration.ts
+// Four invocations, each with a different initially empty owned database:
+// TEN98_IDENTITY_TEST_CASE=legacy|deferred|rank|upgrade22 node --env-file=<private env> tests/provider-account-identity-integration.ts
 // Fixtures are retained; this test never drops a database/schema or clears user data.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
-const scenario=process.env.TEN98_IDENTITY_TEST_CASE;assert.ok(scenario==='legacy'||scenario==='deferred');
+const scenario=process.env.TEN98_IDENTITY_TEST_CASE;assert.ok(scenario==='legacy'||scenario==='deferred'||scenario==='rank'||scenario==='upgrade22');
 const config=getConfig(),url=new URL(config.databaseUrl);
 const hostedCi=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&url.pathname===`/ten98_provider_identity_${scenario}_ci`;
 assert.ok(['localhost','127.0.0.1','[::1]'].includes(url.hostname));assert.equal(url.port,hostedCi?'5432':'55501');assert.equal(url.search,'');assert.equal(url.hash,'');
@@ -69,11 +70,21 @@ async function charge(id:string){return (await pool.query('SELECT status,actual_
 async function capsule(){return (await pool.query("SELECT provider_account_identity FROM installation WHERE id='instance'")).rows[0].provider_account_identity;}
 function noVault(){delete process.env.CREDENTIAL_KEYS;delete process.env.CREDENTIAL_ACTIVE_KEY;}
 function initialVault(){process.env.CREDENTIAL_KEYS=original.keys;process.env.CREDENTIAL_ACTIVE_KEY=original.active;}
+async function rejectMissingCapsule(){
+  const saved=await capsule();await pool.query("UPDATE installation SET provider_account_identity=NULL WHERE id='instance'");
+  try{
+    await assert.rejects(getProviderAccountIdentityKey(2),failed(503));
+    await assert.rejects(assertProviderAccountIdentityReadable(),failed(503));
+    await assert.rejects(rotateProviderAccountIdentityEncryption(),failed(503));
+    assert.equal(await capsule(),null);
+    cli('migrate',0);assert.equal(await capsule(),null,'A no-op migrate must never guess missing recovery keys.');
+  }finally{await pool.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[saved]);}
+}
 
 try{
   assert.equal((await pool.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN('r','p','v','m','S','f') LIMIT 1")).rowCount,0,'Use an initially empty owned database.');
-  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0022');
-  if(scenario==='deferred'){
+  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0023');
+  if(scenario==='deferred'||scenario==='rank'){
     stage='fresh install without credential vault';noVault();cli('migrate',0);await assertSchema();await assertProviderAccountIdentityReadable();assert.equal(await capsule(),null);
     await assert.rejects(getProviderAccountIdentityKey(2),failed(503));assert.equal(await capsule(),null);assert.equal(accountCalls,0);
     await assert.rejects(readKeywordAccount({login:account,password:'synthetic-never-live'},'overview',send),failed(503));assert.equal(accountCalls,0,'Missing recovery keys must fail before provider account traffic.');assert.equal(await capsule(),null);
@@ -89,18 +100,62 @@ try{
     stage='concurrent deferred initialization';initialVault();const keys=await Promise.all(Array.from({length:12},()=>getProviderAccountIdentityKey(2)));assert.ok(keys.every(key=>key===keys[0]));assert.equal(Buffer.from(keys[0],'base64').length,32);const before=digest(await capsule());
     process.env.AUTH_SECRET=randomBytes(32).toString('hex');assert.equal(await getProviderAccountIdentityKey(2),keys[0]);assert.equal(digest(await capsule()),before);await assertProviderAccountIdentityReadable();
     console.log('PASS concurrent initialization produces one encrypted stable identity across login-secret rotation');
+    if(scenario==='rank'){
+    stage='approval-only and rank-only missing-capsule guards';
+    const rank=await fixture(),rankConfig=randomUUID();
+    await pool.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages,approval_account_fingerprint)
+      VALUES($1,$2,$3,'Identity reference','identity.integration.test',2840,'United States','Country',2840,'US','en','English',clock_timestamp(),'desktop',10,1,$4)`,[rankConfig,rank.workspace,rank.project,'c'.repeat(64)]);
+    assert.equal((await pool.query('SELECT 1 FROM keyword_quote UNION ALL SELECT 1 FROM saved_keyword_refresh_plan UNION ALL SELECT 1 FROM rank_run LIMIT 1')).rowCount,0);
+    await rejectMissingCapsule();
+    // Clear only this synthetic inactive approval to isolate the rank-run branch.
+    await pool.query('UPDATE rank_config SET approval_account_fingerprint=NULL WHERE id=$1',[rankConfig]);
+    assert.equal((await pool.query('SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL LIMIT 1')).rowCount,0);
+    await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,estimate_micros,price_as_of,expires_at)
+      VALUES($1,$2,$3,$4,$5,'manual','live','quoted',1,1,$6,1,$7,'Synthetic only','{}',$7,1,10000,clock_timestamp(),clock_timestamp()+interval '5 minutes')`,[randomUUID(),rank.workspace,rank.project,rankConfig,rank.owner,rank.connection,'d'.repeat(64)]);
+    await rejectMissingCapsule();assert.equal(await getProviderAccountIdentityKey(2),keys[0]);
+    console.log('PASS approval-only and rank-only references independently block key/readiness/rekey replacement; no-op migrate does not repair missing keys');
+    }else{
     stage='modern-only missing capsule fails closed';const modern=await fixture();await quoteKeywordResearch(modern.project,modern.owner,modern.request,send);
     assert.ok((await pool.query('SELECT account_fingerprint_version FROM keyword_quote')).rows.every(row=>row.account_fingerprint_version===2));const savedCapsule=await capsule();await pool.query("UPDATE installation SET provider_account_identity=NULL WHERE id='instance'");
     try{await assert.rejects(getProviderAccountIdentityKey(2),failed(503));await assert.rejects(assertProviderAccountIdentityReadable(),failed(503));assert.equal(await capsule(),null);}
     finally{await pool.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[savedCapsule]);}
     console.log('PASS even modern-only existing quotes prohibit guessing a missing identity capsule');
+    }
+  }else if(scenario==='upgrade22'){
+    stage='seed actual0022 schema and existing encrypted capsule';const client=await pool.connect();
+    const priorStable=randomBytes(32).toString('base64');
+    const priorEnvelope=encryptCredentials({version:1,legacyV1:original.auth!,stableV2:priorStable},{workspaceId:'instance',id:'provider-account-identity',provider:'dataforseo-account',revision:1});
+    try{
+      await client.query('BEGIN');await client.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');
+      for(const migration of sources.filter(m=>m.version<='0022')){await client.query(migration.sql);await client.query('INSERT INTO schema_version VALUES($1,$2)',[migration.version,migration.checksum]);}
+      await client.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[priorEnvelope]);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+    const f=await fixture();await legacy(f,original.auth!);
+    const storedEnvelope=await capsule();assert.deepEqual(storedEnvelope,priorEnvelope);
+    const quotesBefore=digest((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q ORDER BY id')).rows);
+    async function unchanged22(){
+      assert.equal((await pool.query("SELECT 1 FROM schema_version WHERE version='0023'")).rowCount,0);
+      assert.equal((await pool.query("SELECT to_regclass('public.rank_config') AS relation")).rows[0].relation,null);
+      assert.equal(digest((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q ORDER BY id')).rows),quotesBefore);
+    }
+    stage='0023 missing-vault upgrade rolls back';noVault();cli('migrate',1);await unchanged22();assert.equal(digest(await capsule()),digest(storedEnvelope));
+    stage='0023 cannot recapture a missing legacy capsule';initialVault();process.env.AUTH_SECRET=randomBytes(32).toString('hex');
+    await pool.query("UPDATE installation SET provider_account_identity=NULL WHERE id='instance'");
+    try{cli('migrate',1);await unchanged22();assert.equal(await capsule(),null);}
+    finally{await pool.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[priorEnvelope]);}
+    stage='0023 preserves existing capsule across login-secret rotation';cli('migrate',0);await assertSchema();
+    assert.equal(digest(await capsule()),digest(storedEnvelope));assert.equal(await getProviderAccountIdentityKey(1),original.auth);assert.equal(await getProviderAccountIdentityKey(2),priorStable);
+    assert.equal(digest((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q ORDER BY id')).rows),quotesBefore);
+    cli('migrate',0);assert.equal(digest(await capsule()),digest(storedEnvelope));
+    console.log('PASS existing0022 capsule preservation,0023 missing-vault/legacy-key rollback, no legacy recapture and idempotent migration');
   }else{
     stage='create actual legacy rows before0022';const client=await pool.connect();
     try{await client.query('BEGIN');await client.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');for(const migration of sources.filter(m=>m.version<'0022')){await client.query(migration.sql);await client.query('INSERT INTO schema_version VALUES($1,$2)',[migration.version,migration.checksum]);}await client.query('COMMIT');}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
     const f=await fixture(),lost=await fixture(),correct=await legacy(f,original.auth!),orphan=await legacy(lost,randomBytes(32).toString('hex'));
     const oldRecords=digest((await pool.query('SELECT id,account_fingerprint,request FROM keyword_quote ORDER BY id')).rows);
     stage='legacy no-vault migration fails atomically';noVault();cli('migrate',1);
-    assert.equal((await pool.query("SELECT 1 FROM schema_version WHERE version='0022'")).rowCount,0);assert.equal((await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='installation' AND column_name='provider_account_identity'")).rowCount,0);assert.equal(digest((await pool.query('SELECT id,account_fingerprint,request FROM keyword_quote ORDER BY id')).rows),oldRecords);
+    assert.equal((await pool.query("SELECT 1 FROM schema_version WHERE version IN('0022','0023')")).rowCount,0);assert.equal((await pool.query("SELECT to_regclass('public.rank_config') AS relation")).rows[0].relation,null);assert.equal((await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='installation' AND column_name='provider_account_identity'")).rowCount,0);assert.equal(digest((await pool.query('SELECT id,account_fingerprint,request FROM keyword_quote ORDER BY id')).rows),oldRecords);
     stage='capture legacy identity in0022 transaction';initialVault();cli('migrate',0);await assertSchema();assert.equal(await getProviderAccountIdentityKey(1),original.auth);const stable=await getProviderAccountIdentityKey(2);assert.notEqual(stable,original.auth);assert.equal(digest((await pool.query('SELECT id,account_fingerprint,request FROM keyword_quote ORDER BY id')).rows),oldRecords);
     assert.ok((await pool.query('SELECT account_fingerprint_version FROM keyword_quote')).rows.every(row=>row.account_fingerprint_version===1));
     const encrypted=JSON.stringify(await capsule());assert.ok(!encrypted.includes(original.auth!)&&!encrypted.includes(stable));const firstCapsule=digest(await capsule());cli('migrate',0);assert.equal(digest(await capsule()),firstCapsule);

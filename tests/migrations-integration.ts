@@ -9,7 +9,8 @@ import { getConfig } from '../src/server/config.ts';
 import { assertSchema, closeDatabase, getDatabase, migrationSource, migrationSources } from '../src/server/db.ts';
 import { saveAnalysis } from '../src/server/funnels.ts';
 import {saveSavedKeywords} from '../src/server/saved-keywords.ts';
-import {assertProviderAccountIdentityReadable} from '../src/server/provider-account-identity.ts';
+import {assertProviderAccountIdentityReadable,getProviderAccountIdentityKey} from '../src/server/provider-account-identity.ts';
+import {encryptCredentials} from '../src/server/credential-vault.ts';
 
 // This consumes a separate empty local database and retains its synthetic fixtures.
 // It never drops a schema/database or clears existing data.
@@ -21,7 +22,9 @@ const config = (() => {
     process.exit(1);
   }
 })();
-assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(new URL(config.databaseUrl).hostname), 'Migration tests require a local database.');
+const databaseUrl=new URL(config.databaseUrl);
+assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(databaseUrl.hostname), 'Migration tests require a local database.');
+assert.equal(databaseUrl.search,'');assert.equal(databaseUrl.hash,'');
 const { pool } = getDatabase();
 const checkout = process.cwd();
 const cli = join(checkout, 'src/server/cli.ts');
@@ -65,7 +68,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -138,11 +141,14 @@ try {
   assert.deepEqual(await records(), originalRecords, 'Failed migration must preserve original records.');
   console.log('PASS multi-migration transaction rollback');
 
-  stage = 'seed prior Google, financial, keyword, domain, audit and conversion records at 0021';
+  stage = 'seed prior Google, financial, keyword, domain, audit and conversion records at 0022';
+  const priorAccountKey=randomBytes(32).toString('base64');
+  const priorAccountEnvelope=encryptCredentials({version:1,legacyV1:config.authSecret,stableV2:priorAccountKey},{workspaceId:'instance',id:'provider-account-identity',provider:'dataforseo-account',revision:1});
   const upgradeClient=await pool.connect();
   try {
     await upgradeClient.query('BEGIN');
     for(const migration of sources.slice(1,-1)) {await upgradeClient.query(migration.sql);await upgradeClient.query('INSERT INTO schema_version(version,checksum) VALUES($1,$2)',[migration.version,migration.checksum]);}
+    await upgradeClient.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[priorAccountEnvelope]);
     const owner=originalRecords.user[0].id,workspace=originalRecords.workspace[0].id,project=originalRecords.project[0].id,connection=randomUUID(),report=randomUUID(),provider=randomUUID(),research=randomUUID(),quote=randomUUID();
     await upgradeClient.query("INSERT INTO google_connection(id,workspace_id,project_id,name,provider,revision,app_revision,status) VALUES($1,$2,$3,'Upgrade fixture','gsc',1,1,'disconnected')",[connection,workspace,project]);
     await upgradeClient.query(`INSERT INTO google_import(id,connection_id,project_id,user_id,request_id,connection_revision,app_revision,report,date_from,date_to,status,pages,row_count,source,quality,completed_at)
@@ -192,7 +198,7 @@ try {
   const quoteBefore=(await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data;
   const policyBefore=(await pool.query('SELECT raw_analytics_days,replay_days,raw_provider_evidence_days,derived_history_days,retention_revision FROM workspace')).rows;
   const originalDomain=(await pool.query('SELECT row_to_json(d) AS data FROM project_domain d')).rows[0].data;
-  stage = 'upgrade original and feature data through 0022 and rerun idempotently';
+  stage = 'upgrade original and feature data through 0023 and rerun idempotently';
   runMigrate(0);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
@@ -206,11 +212,13 @@ try {
   assert.equal(quoteAfter.saved_refresh_plan_id,null);assert.equal(quoteAfter.saved_target_ids,null,'Prior research must not become an approved saved refresh.');
   assert.equal(quoteAfter.account_fingerprint_version,1,'Legacy fingerprints retain their explicit version and original hash.');
   await assertProviderAccountIdentityReadable();
-  assert.ok((await pool.query("SELECT provider_account_identity IS NOT NULL AS captured FROM installation WHERE id='instance'")).rows[0].captured,'Upgrade captures recovery material before committing legacy history.');
+  assert.deepEqual((await pool.query("SELECT provider_account_identity FROM installation WHERE id='instance'")).rows[0].provider_account_identity,priorAccountEnvelope,'0023 preserves the exact existing encrypted capsule.');
+  assert.equal(await getProviderAccountIdentityKey(1),config.authSecret);assert.equal(await getProviderAccountIdentityKey(2),priorAccountKey);
   assert.deepEqual((await pool.query('SELECT raw_analytics_days,replay_days,raw_provider_evidence_days,derived_history_days,retention_revision FROM workspace')).rows,policyBefore,'Upgrade must preserve retention policy and revision.');
   assert.deepEqual((await pool.query('SELECT saved_keywords_revision,saved_keyword_metrics_revision::text FROM project')).rows,[{saved_keywords_revision:2,saved_keyword_metrics_revision:'1'}]);
   for(const table of ['saved_keyword','saved_keyword_tag','saved_keyword_tag_assignment'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,1,'Upgrade must preserve the authored keyword and tag without inventing another.');
   assert.equal((await pool.query('SELECT 1 FROM saved_keyword_refresh_plan')).rowCount,0,'Upgrade must not invent paid refresh work.');
+  for(const table of ['rank_config','rank_keyword','rank_run','rank_dispatch','rank_task'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,0,'Upgrade must not invent trackers, approvals or paid rank work.');
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = await records();
@@ -235,7 +243,7 @@ try {
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
   assert.deepEqual((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data,quoteAfter);
-  console.log('PASS prior keyword evidence, charge ledger, authored keywords/tags, funnels/goals and receipts, Google snapshots, alias proof and audits survive 0022; no implicit paid refreshes');
+  console.log('PASS prior keyword evidence, charge ledger, authored keywords/tags, funnels/goals and receipts, Google snapshots, alias proof and audits survive 0023; existing identity capsule preserved; no implicit paid work');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {

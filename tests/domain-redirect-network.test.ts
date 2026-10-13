@@ -46,6 +46,30 @@ test('redirect observations strip queries/fragments while following transient pa
   assert.equal(requested[1],'https://target.example.com/final?token=secret');assert.ok(!JSON.stringify(result).includes('secret'));assert.ok(!JSON.stringify(result).includes('private'));
   const mismatch=await observeDomainRedirect('alias.example.com','target.example.com',{resolve,request:async()=>({status:200,location:null})});assert.equal(mismatch.targetMatches,false);
 });
+
+test('253-byte redirect hops and targets remain valid while every DNS answer is still vetted',async()=>{
+  const middle=['a'.repeat(63),'b'.repeat(63),'c'.repeat(63),'d'.repeat(57),'com'].join('.');
+  const target='z'+middle.slice(1),lookups:string[]=[],requests:string[]=[];
+  assert.equal(middle.length,253);assert.equal(redirectUrl(`https://${middle}/step`).hostname,middle);
+  for(const invalid of ['x'+middle,'a'.repeat(64)+'.com'])assert.throws(()=>redirectUrl(`https://${invalid}/`));
+  const result=await observeDomainRedirect('alias.example.com',target,{
+    resolve:async host=>{lookups.push(host);return [publicAddress];},
+    request:async(url,address)=>{
+      assert.deepEqual(address,publicAddress);requests.push(url.href);
+      return requests.length===1?{status:301,location:`https://${middle}/step?transient=1#fragment`}
+        :requests.length===2?{status:302,location:`https://${target}/final`}:{status:200,location:null};
+    },
+  });
+  assert.equal(result.outcome,'response');assert.equal(result.targetMatches,true);assert.equal(result.finalUrl,`https://${target}/final`);
+  assert.deepEqual(lookups,['alias.example.com',middle,target]);assert.equal(requests.length,3);
+  assert.equal(result.hops[1].url,`https://${middle}/step`);assert.ok(!JSON.stringify(result).includes('transient'));
+  let connected=0;
+  const blocked=await observeDomainRedirect('alias.example.com',target,{
+    resolve:async host=>host===middle?[publicAddress,{address:'127.0.0.1',family:4}]:[publicAddress],
+    request:async()=>{connected++;return {status:302,location:`https://${middle}/`};},
+  });
+  assert.equal(blocked.outcome,'blocked');assert.equal(blocked.hops.length,1);assert.equal(connected,1);
+});
 test('loop and eight redirect boundary never make an extra request or execute a body/meta refresh',async()=>{
   const loop=await observeDomainRedirect('alias.example.com','target.example.com',{resolve,request:async()=>({status:302,location:'#ignored'})});assert.equal(loop.outcome,'loop');assert.equal(loop.hops.length,1);
   let requests=0;

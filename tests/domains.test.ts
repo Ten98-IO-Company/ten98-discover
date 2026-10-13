@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { Resolver } from 'node:dns/promises';
 import test from 'node:test';
 import { FoundationError } from '../src/server/auth.ts';
-import { hasDomainProof, lookupDomainTxt, normalizeDomainHost } from '../src/server/domains.ts';
+import { hasDomainProof, lookupDomainTxt, normalizeDomainHost, normalizePublicHostname } from '../src/server/domains.ts';
 
 test('domain normalization preserves the exact host and canonicalizes IDNs', () => {
   assert.equal(normalizeDomainHost('Alias.Example.COM.'), 'alias.example.com');
@@ -19,9 +19,25 @@ test('domain fields reject URLs, ambiguous labels, IP spellings and local names'
     '_ten98-challenge.example.com', 'ex%61mple.com', '-x.example.com', 'x-.example.com', 'example..com', 'example.com..',
     'localhost', 'foo.localhost', 'local', 'example.local', 'example.internal', 'foo.home.arpa', 'foo.invalid', 'foo.test',
     'foo.onion', '127.0.0.1', '10.1.2.3', '8.8.8.8', '[::1]', '::1', '2130706433', '0x7f000001', '0177.0.0.1',
-    '127.1', 'example.123', 'xn--.example.com', `${'x'.repeat(64)}.example.com`, '\u0000example.com',
-    `${'x'.repeat(63)}.${'x'.repeat(63)}.${'x'.repeat(63)}.${'x'.repeat(48)}.com`];
-  for (const host of invalid) assert.throws(() => normalizeDomainHost(host), error => error instanceof FoundationError && error.status === 400, String(host));
+    '127.1', 'example.123', 'xn--.example.com', `${'x'.repeat(64)}.example.com`, '\u0000example.com'];
+  for (const host of invalid) for (const normalize of [normalizeDomainHost,normalizePublicHostname]) {
+    assert.throws(() => normalize(host), error => error instanceof FoundationError && error.status === 400, String(host));
+  }
+});
+
+test('public hostname capacity stays separate from the ownership-proof record capacity', () => {
+  const hostname=(length:number)=>['a'.repeat(63),'b'.repeat(63),'c'.repeat(63),'d'.repeat(length-196),'com'].join('.');
+  for(const length of [236,237,244,253]){
+    const host=hostname(length);assert.equal(host.length,length);
+    assert.equal(normalizePublicHostname(host.toUpperCase()+'.'),host);
+    if(length===236)assert.equal(normalizeDomainHost(host),host);
+    else assert.throws(()=>normalizeDomainHost(host),error=>error instanceof FoundationError&&error.status===400);
+  }
+  for(const normalize of [normalizePublicHostname,normalizeDomainHost]){
+    assert.throws(()=>normalize(hostname(254)));
+    assert.throws(()=>normalize('a'.repeat(64)+'.com'));
+  }
+  assert.equal(normalizePublicHostname('BÜCHER.example.com.'),'xn--bcher-kva.example.com');
 });
 
 test('TXT proof joins one record fragments but never joins unrelated records or accepts a prefix', () => {

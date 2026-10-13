@@ -3,7 +3,7 @@ import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
-import {normalizeDomainHost} from './domains.ts';
+import {normalizePublicHostname} from './domains.ts';
 import {getBoss} from './jobs.ts';
 import {resolveAuditCandidate} from './site-audit-policy.ts';
 import type {CrawlFacts,CrawlCoverage,CrawlPageInput} from './crawl-analysis.ts';
@@ -80,7 +80,7 @@ export async function auditAuthorityCurrent(client:PoolClient,run:AuditRunRow):P
 }
 
 function publicHttpsOrigin(value:string):string|null{
- try{const u=new URL(value);if(u.protocol!=='https:'||u.port||u.username||u.password||u.origin!==value)return null;return normalizeDomainHost(u.hostname)===u.hostname?u.origin:null;}catch{return null;}
+ try{const u=new URL(value);if(u.protocol!=='https:'||u.port||u.username||u.password||u.origin!==value)return null;return normalizePublicHostname(u.hostname)===u.hostname?u.origin:null;}catch{return null;}
 }
 
 export function auditRunDto(run:AuditRunRow,role:AuditRole|null){

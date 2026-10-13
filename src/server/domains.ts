@@ -11,7 +11,7 @@ const DOMAIN_LIMIT = 50;
 const specialSuffixes = ['localhost', 'local', 'internal', 'invalid', 'test', 'example', 'onion', 'home.arpa'];
 
 /** Accept a DNS host, never a URL, address, wildcard or DNS-provider record-name shortcut. */
-export function normalizeDomainHost(input: unknown): string {
+export function normalizePublicHostname(input: unknown): string {
   const invalid = () => new FoundationError(400, 'Enter a public hostname only, without a scheme, path, port or wildcard.');
   if (typeof input !== 'string' || !input || input.length > 1024 || /[\s\u0000-\u001f\u007f%/\\:@?#*]/u.test(input)) throw invalid();
   const raw = input.endsWith('.') ? input.slice(0, -1) : input;
@@ -24,7 +24,13 @@ export function normalizeDomainHost(input: unknown): string {
     const parsed = new URL(`https://${ascii}`);
     if (parsed.hostname !== ascii || isIP(parsed.hostname) || parsed.port || parsed.username || parsed.password) throw invalid();
   } catch { throw invalid(); }
-  // _ten98-challenge. adds 17 bytes; a TXT proof must still fit a DNS name.
+  return ascii;
+}
+
+/** Registry hosts also need space for their ownership-proof record. */
+export function normalizeDomainHost(input: unknown): string {
+  const ascii = normalizePublicHostname(input);
+  // The challenge prefix must also fit within the DNS name limit.
   if (`_ten98-challenge.${ascii}`.length > 253) throw new FoundationError(400, 'This hostname is too long for the DNS proof record.');
   return ascii;
 }
@@ -102,7 +108,7 @@ function expectedTarget(project: Project, hostname: string, details: z.infer<typ
     if (details.expectedTargetHost !== undefined) throw new FoundationError(400, 'Only redirect aliases have an expected target.');
     return null;
   }
-  const target = normalizeDomainHost(details.expectedTargetHost ?? (project.canonicalVerifiable ? project.canonicalHost : undefined));
+  const target = normalizePublicHostname(details.expectedTargetHost ?? project.canonicalHost);
   if (target === hostname) throw new FoundationError(400, 'A redirect alias must point to a different expected hostname.');
   return target;
 }

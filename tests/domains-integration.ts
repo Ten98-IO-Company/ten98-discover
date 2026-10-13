@@ -49,9 +49,20 @@ try {
   await assert.rejects(addDomain(localProject, owner, { hostname: 'old.example.com', role: 'redirect_alias' }), fail(400));
   assert.equal((await addDomain(localProject, owner, { hostname: 'old.example.com', role: 'redirect_alias', expectedTargetHost: 'new.example.com' })).domains.length, 1);
 
+  // A public expected target is intent only; only the registered alias needs a TXT name.
+  const longTarget=['a'.repeat(63),'b'.repeat(63),'c'.repeat(63),'d'.repeat(57),'com'].join('.'),longProject=randomUUID();
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,'Long canonical fixture',$3,$4)",[longProject,workspace,`https://${longTarget}`,randomUUID()]);
+  const longCanonical=await getDomains(longProject,owner);
+  assert.equal(longCanonical.project.canonicalVerifiable,false);assert.equal(longCanonical.domains.length,0);
+  const defaultTarget=select(await addDomain(longProject,owner,{hostname:'short-proof.example.com',role:'redirect_alias'}),'short-proof.example.com');
+  assert.equal(defaultTarget.expectedTargetHost,longTarget);
+  assert.equal((await issueDomainChallenge(longProject,owner,defaultTarget.id,{})).challenge.name,'_ten98-challenge.short-proof.example.com');
+  await assert.rejects(addDomain(project,owner,{hostname:longTarget,role:'serving'}),fail(400));
+
   state = await addDomain(project, manager, { hostname: 'BÜCHER.example.com.', role: 'redirect_alias' });
   const alias = select(state, 'xn--bcher-kva.example.com');
   assert.equal(alias.expectedTargetHost, 'canonical.example.com');
+  assert.equal(select(await updateDomain(project,owner,alias.id,{role:'redirect_alias',expectedTargetHost:longTarget}),alias.hostname).expectedTargetHost,longTarget);
   await assert.rejects(addDomain(project, owner, { hostname: alias.hostname, role: 'serving' }), fail(409));
   await assert.rejects(addDomain(project, owner, { hostname: 'invalid.example.com', role: 'canonical' }), fail(400));
   await assert.rejects(addDomain(project, owner, { hostname: 'invalid.example.com', role: 'serving', expectedTargetHost: 'canonical.example.com' }), fail(400));

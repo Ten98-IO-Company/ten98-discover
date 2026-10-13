@@ -96,6 +96,9 @@ jobs:
             await client.query('CREATE DATABASE ten98_saved_keywords_ci');
             await client.query('CREATE DATABASE ten98_provider_identity_legacy_ci');
             await client.query('CREATE DATABASE ten98_provider_identity_deferred_ci');
+            await client.query('CREATE DATABASE ten98_provider_identity_rank_ci');
+            await client.query('CREATE DATABASE ten98_provider_identity_upgrade22_ci');
+            await client.query('CREATE DATABASE ten98_rank_schedule_ci');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
@@ -113,6 +116,9 @@ jobs:
               ['ten98_saved_keywords_ci', [['src/server/cli.ts', 'migrate'], ['tests/saved-keywords-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_provider_identity_legacy_ci', [['tests/provider-account-identity-integration.ts']], { TEN98_IDENTITY_TEST_CASE: 'legacy', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_provider_identity_deferred_ci', [['tests/provider-account-identity-integration.ts']], { TEN98_IDENTITY_TEST_CASE: 'deferred', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_provider_identity_rank_ci', [['tests/provider-account-identity-integration.ts']], { TEN98_IDENTITY_TEST_CASE: 'rank', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_provider_identity_upgrade22_ci', [['tests/provider-account-identity-integration.ts']], { TEN98_IDENTITY_TEST_CASE: 'upgrade22', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_rank_schedule_ci', [['tests/rank-schedule-integration.ts'], ['tests/rank-schema-review.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
             ]) {
               const database = new URL(process.env.DATABASE_URL);
               database.pathname = `/${name}`;

@@ -4,7 +4,7 @@ import {Resolver} from 'node:dns/promises';
 import {isIP} from 'node:net';
 import {performance} from 'node:perf_hooks';
 import {toUSVString} from 'node:util';
-import {normalizeDomainHost} from './domains.ts';
+import {normalizePublicHostname} from './domains.ts';
 import {addressKey,publicNetworkAddress} from './public-network.ts';
 
 const URL_LIMIT=2048, HEADER_LIMIT=16384, HOP_MS=5000, TOTAL_MS=30000;
@@ -31,12 +31,12 @@ export function redirectUrl(raw:string,base?:URL):URL {
     if(authority.includes('%')||!host)throw new RedirectFailure('blocked');
     const literal=host.replace(/^\[|\]$/g,'');
     try{
-      if(isIP(literal)?addressKey(literal)!==addressKey(url.hostname.replace(/^\[|\]$/g,'')):normalizeDomainHost(host)!==url.hostname)throw new Error();
+      if(isIP(literal)?addressKey(literal)!==addressKey(url.hostname.replace(/^\[|\]$/g,'')):normalizePublicHostname(host)!==url.hostname)throw new Error();
     }catch{throw new RedirectFailure('blocked');}
   }else if(/^[a-z][a-z0-9+.-]*:/i.test(raw))throw new RedirectFailure('blocked');
   const hostname=url.hostname.replace(/^\[|\]$/g,'');
   if(isIP(hostname)){if(!publicNetworkAddress(hostname))throw new RedirectFailure('blocked');}
-  else {try{if(normalizeDomainHost(hostname)!==hostname)throw new Error();}catch{throw new RedirectFailure('blocked');}}
+  else {try{if(normalizePublicHostname(hostname)!==hostname)throw new Error();}catch{throw new RedirectFailure('blocked');}}
   url.hash='';
   return url;
 }
@@ -102,7 +102,7 @@ export async function observeDomainRedirect(hostname:string,expectedHostname:str
   let current:URL;
   const finish=(outcome:RedirectObservation['outcome'],final:URL|null=null):RedirectObservation=>({outcome,hops,finalUrl:final?cleanUrl(final):null,targetMatches:outcome==='response'&&final?final.hostname===expectedHostname:null,durationMs:Math.round(performance.now()-started)});
   try{
-    current=redirectUrl(`https://${normalizeDomainHost(hostname)}/`);normalizeDomainHost(expectedHostname);
+    current=redirectUrl(`https://${normalizePublicHostname(hostname)}/`);normalizePublicHostname(expectedHostname);
     for(let index=0;index<=8;index++){
       controller.signal.throwIfAborted();
       if(visited.has(current.href))return finish('loop',current);visited.add(current.href);

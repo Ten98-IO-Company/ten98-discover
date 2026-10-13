@@ -45,10 +45,12 @@ async function migrate() {
     const current = await client.query<{ version: string; checksum: string }>('SELECT version, checksum FROM schema_version ORDER BY version');
     for (const migration of await pendingMigrations(current.rows)) {
       await client.query(migration.sql);
-      if(migration.version==='0022')await initializeProviderAccountIdentity(client,true);
       await client.query('INSERT INTO schema_version(version, checksum) VALUES ($1, $2)', [migration.version, migration.checksum]);
       applied.push(migration.version);
     }
+    // Identity guards inspect every financial-reference table. Create all pending
+    // tables first, but keep key capture and the entire upgrade in one transaction.
+    if(applied.includes('0022')||applied.includes('0023'))await initializeProviderAccountIdentity(client,applied.includes('0022'));
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);

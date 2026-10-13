@@ -31,3 +31,20 @@ Google connections follow the same hierarchy: each source has a heading, provide
 The combined Google, keyword, serving-domain and navigation tree passed the production build, TypeScript, plan checks and 153 unit/VM checks (two platform skips). An independent production Edge run passed the navigation scenarios and the serving-domain tracker, consent, Origin filter/CSV and revocation flows. Existing Google, native analytics, retention, Explorer, context/prompts and static report-isolation browser checks also passed with native link semantics. All provider/domain transport in these acceptance fixtures was synthetic.
 
 TypeScript and production build passed. Visual review covers the actual local application, including empty metrics and the compact sidebar. Browser acceptance additionally checks mobile navigation/focus, installation and event-page separation, delayed project loading, report editing/sharing and privacy-setting behavior. Exact completed evidence belongs in the foundation runbook; this document does not certify full V1 parity.
+
+## Next usability corrections — reviewed, not implemented
+
+A further source review of the implemented Saved keywords workflow and the planned rank workflow keeps Umami's compact scope/metrics/drill-down order, OpenSEO's contextual table actions and Elmo's distinct pre-data state. The current empty analytics screen was also inspected in the local preview. Other findings below come from code; they still need production-browser acceptance after implementation.
+
+| Priority | Smallest correction | Required acceptance |
+|---|---|---|
+| First | Make human-readable markets the normal saved-keyword input; keep manual provider codes in an explicit advanced fallback. Saving remains free without credentials. | First install, absent/cached catalog, unusual market and preserved selection. |
+| First | Link a missing DataForSEO connection to Providers and spending for owners. Tell admins/editors to ask an owner, matching existing permissions. | Owner round trip, other roles, unreadable vault, live access loss and an unresolved paid mutation. |
+| Next | Keep Research/Saved keywords in strictly parsed URL state. | Reload, new tab, Back/Forward, invalid subsection, project changes and unsaved/unknown-write guards. |
+| Next | Put selection actions in one contextual bar; collapse inactive exports, tagging and refresh history. | Exact all-matches versus selected counts, pagination, dirty filters and an unknown charge that remains visible. |
+| Next | Consolidate repeated empty analytics panels into one useful state while retaining date controls. | Never-collected, quiet range, anonymous-only and retention-expired data stay distinct. Zero observations alone do not prove missing installation. |
+| Next | Show a selected keyword's evidence in a full-width section with a clear return to its row. | Keyboard focus restoration, 360px width, 200% zoom and table-only horizontal scrolling. |
+
+Group keyword research, rank tracking and site audits together as Search/SEO; keep web analytics, AI work, connections and workspace settings distinct. Preserve existing deep links and permissions. This is a navigation-label change, not a new dashboard framework.
+
+For rank creation, use one complete validated country select, then optional city/region search with explicit selection and paging. Enter in local search performs only that search and cannot submit the enclosing setup form. Existing trackers show their immutable target as a read-only summary. Keep requested result depth and billable page limit independent; saving never starts a check. The separate owner scheduling flow previews local/UTC occurrences and requires an explicit spending approval. See the [rank contract](rank-tracking.md).
