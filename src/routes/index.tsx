@@ -23,6 +23,7 @@ import { GoogleReportsPanel } from '../components/GoogleReportsPanel'
 import { GoogleAppPanel } from '../components/GoogleAppPanel'
 import { MetaConnectionPanel } from '../components/MetaConnectionPanel'
 import { MetaAppPanel } from '../components/MetaAppPanel'
+import { MetaImportPanel } from '../components/MetaImportPanel'
 import { KeywordResearchPanel } from '../components/KeywordResearchPanel'
 import { RankTrackingPanel } from '../components/RankTrackingPanel'
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
@@ -464,7 +465,7 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
-  const pageTitles: Record<AppView, string> = {project: 'Web analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageTitles: Record<AppView, string> = {project: 'Web analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   const projectDescriptions: Partial<Record<AppView, string>> = {project: 'Understand how people find and use your website.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', google: 'Import Search Console and GA4 reports without changing browser tracking.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
   return (
@@ -511,6 +512,7 @@ function App() {
           <Link className={view === 'ranks' ? 'proj active' : 'proj'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}>Rank tracking</Link>
           <p className='side-label section-label'>Connect</p>
           <Link className={view === 'meta' ? 'proj active' : 'proj'} aria-current={view === 'meta' ? 'page' : undefined} to='/' search={target('meta')}>Meta ads</Link>
+          <Link className={view === 'meta-reports' ? 'proj active' : 'proj'} aria-current={view === 'meta-reports' ? 'page' : undefined} to='/' search={target('meta-reports')}>Meta reports</Link>
           <Link className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}>Install tracker</Link>
           {['owner','admin'].includes(workspace.role) && <Link className={view === 'destinations' ? 'proj active' : 'proj'} aria-current={view === 'destinations' ? 'page' : undefined} to='/' search={target('destinations')}>Destinations</Link>}
           <Link className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}>Collection and privacy</Link>
@@ -570,6 +572,7 @@ function App() {
         {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'meta' && project && me && <MetaConnectionPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenAppSetup={() => go(target('meta-app'))} />}
+        {view === 'meta-reports' && project && me && <MetaImportPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onConnections={() => go(target('meta'))} />}
         {view === 'meta-app' && me?.instanceOperator && <MetaAppPanel userId={me.user.id} onUnauthorized={unauthorized} onBack={() => go(target(project?'meta':'security'))} backLabel={project?'Back to connections':'Back to account'} />}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>

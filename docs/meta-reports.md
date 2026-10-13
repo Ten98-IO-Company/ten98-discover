@@ -1,6 +1,6 @@
 # Native Meta advertising report imports
 
-**Implementation contract, reviewed 2026-10-13.** Authorization, account selection and local deletion are implemented with synthetic API/browser acceptance; report imports and live-provider validation remain pending. This is the next native reporting connector after Google. It covers the Meta/Facebook entry in P76 and contributes to P71, P77 and P81. All 81 requirements remain required; this document does not complete those rows or the other platforms.
+**Implementation contract, reviewed 2026-10-13.** Authorization, account selection, local deletion and manual daily report imports are implemented with synthetic API/worker/browser acceptance. Schema26 adds grant-bound report storage and extends keyless deletion to its payloads. Campaign inventory, schedules, latest-overlap views/export and live-provider validation remain required. This is the next native reporting connector after Google. It covers the Meta/Facebook entry in P76 and contributes to P71, P77 and P81. All81 requirements remain required; this document does not complete those rows or the other platforms.
 
 The accepted [tracking contract](tracking.md#automatic-consolidation-without-misleading-totals) requires accessible advertising accounts/campaigns, daily spend, impressions, clicks and available conversion/value fields. Meta Marketing API advertising reports include supported Instagram placements within those advertising accounts. Facebook Page Insights, organic Instagram insights, publishing, inboxes, audiences, campaign editing and Conversions API uploads are not this accepted reporting family. A Meta Pixel ID neither authorizes reports nor identifies an ad account. Report authorization never installs or enables a browser pixel, changes consent, or signs someone into ten98-monitor.
 
@@ -87,7 +87,7 @@ No cross-platform unique-conversion, reach or person totals. Account and campaig
 
 An explicit import binds actor, project, source, current app/connection revision, report definition and date range to a request UUID and canonical hash. Same ID/same request returns the durable receipt, including after expiry; changed body or actor is409. Replay never restarts a provider report. Enqueue and receipt commit together. At most one active import per connection; different snapshots are not added together as fresh events.
 
-Use one Meta queue and a short database lease/generation per import step. Lock workspace → project → connection → import; verify current owner, enabled app, selected account and captured revisions before each outbound operation and again before accepting its result. Release all SQL locks for network, polling and backoff. A late result cannot publish after disable, disconnect, role loss, cancel, lease replacement or expiry. The worker can resume saved report ID/cursor after restart, but cannot create the same logical report repeatedly.
+Use one Meta queue and a short database lease/generation per import step. Lock registration → workspace → project → connection → import; verify current owner, enabled app, selected account and captured revisions before each outbound operation and again before accepting its result. Release all SQL locks for network, polling and backoff. A late result cannot publish after disable, disconnect, role loss, cancel, lease replacement or expiry. The worker can resume saved report ID/cursor after restart, but cannot create the same logical report repeatedly.
 
 State sequence: `queued → submitting → waiting → reading → completed|partial`; terminal alternatives are `failed|denied|cancelled|submission_unknown`. Persist `submitting` before report-creation POST. A lost response/crash before saving the report ID is `submission_unknown`: no automatic POST retry or invented zero. An explicit new import may supersede it; acknowledge that Meta may still have an uncollected report. Cancel stops local work and fences late responses; do not claim remote report cancellation without a verified endpoint.
 
@@ -97,11 +97,11 @@ HTTP status and Graph's structured error must both be checked. Credential/permis
 
 Scheduled imports remain part of P76/P81. After a successful manual import, an owner may enable daily refresh at a displayed IANA wall time, with next occurrence and last successful coverage visible. Default re-fetch is the preceding28 closed account-local days, bounded to the supported attribution/history contract; this is a proposed correction lookback, not a promise of final conversions after28 days. Disable by default, retain the approving actor and immutable definition, recheck current permission, deduplicate each occurrence, skip missed intervals without an unbounded catch-up burst, and pause on changed app/account/definition or lost access. Longer manual historical backfills remain available. Native PostgreSQL calendar logic and the existing non-overlapping worker pattern suffice; no new scheduler service.
 
-Publish a validated snapshot atomically after pagination. A new complete snapshot replaces the displayed values for the same logical daily keys; partial/failed refresh does not erase a prior complete snapshot or turn omitted rows into zero. Reconcile a completed empty query as an explicit successful-empty range, with its coverage receipt, rather than synthesizing rows. Keep old immutable receipts for audit and expose snapshot IDs in drilldown. Selection between overlapping snapshots uses request creation order, not response completion order, so an older slow request cannot overwrite a newer result.
+The current service publishes a validated immutable receipt atomically after pagination, with separate history and row pagination. **Latest-overlap selection remains pending.** That required view will select complete snapshots for the same logical daily keys; a partial/failed refresh must not erase a prior complete snapshot or turn omitted rows into zero. Reconcile a completed empty query as an explicit successful-empty range, with its coverage receipt, rather than synthesizing rows. Keep old immutable receipts for audit and expose snapshot IDs in drilldown. Selection between overlapping snapshots must use request creation order, not response completion order, so an older slow request cannot overwrite a newer result.
 
 ## Storage and returned interface
 
-Use six narrow tables, mirroring existing import storage rather than generalizing it prematurely: `meta_app_registration`, `meta_oauth_flow`, `meta_connection`, `meta_deletion_request`, `meta_import`, `meta_import_page`. Retained app registrations and signed deletion receipts are required lifecycle data, not an optional generic webhook framework. Composite foreign keys bind workspace/project/source; unique actor-bound request receipts and one-active-source constraints are enforced in SQL. Connection fields also hold opt-in schedule/revision/next-due metadata. Import fields include captured source/definition, original actor and app-scoped grant subject, schedule occurrence, status, lease/generation, provider report ID, submitted/read timestamps, retry/deadline/cursor, recorded counts, diagnostic code, outcome and irreversible expiry marker. Page rows have stable normalized row keys and hashes; public report pagination is50 rows.
+Six narrow tables mirror existing import storage: `meta_app_registration`, `meta_oauth_flow`, `meta_connection`, `meta_deletion_request`, `meta_import`, `meta_import_page`. Retained app registrations and signed deletion receipts are required lifecycle data. Composite foreign keys bind workspace/project/source; unique actor-bound request receipts and one-active-source constraints are enforced in SQL. Import fields include captured source/definition, original actor and app-scoped grant provenance, status, lease/generation, provider report ID, submitted/read timestamps, retry/deadline/cursor, recorded counts, diagnostic code, outcome and irreversible expiry marker. Page rows have stable normalized row keys and hashes; public report pagination is50 rows. Schedule authority, revision/next-due metadata and deduplicated occurrence storage are future required schema; migrations25/26 do not implement them.
 
 Proposed source DTO (all timestamps ISO strings; no token or provider cursor):
 
@@ -117,7 +117,7 @@ type MetaSource = {
 type MetaReportPage = {
   role: 'owner' | 'admin' | 'editor' | 'viewer';
   import: { id: string; status: string; dataStatus: 'available' | 'pending' | 'unavailable' | 'expired';
-    source: MetaSource; from: string; to: string; requestedAt: string;
+    source: MetaSource | null; from: string; to: string; requestedAt: string;
     completedAt: string | null; recordedRows: number; readableRows: number | null;
     coverage: 'complete' | 'partial' | 'unavailable'; warnings: string[];
     nextRetryAt: string | null; diagnosticCode: string | null };
@@ -133,7 +133,12 @@ type MetaDailyRow = {
 
 Keep status values closed to the sequence above in implementation. Available empty reports return rows`[]`, readableRows`0`; failed/pending/expired reports return rows`[]`, readableRows`null`. Dates, names and IDs remain data rendered as text. Any CSV export uses the existing formula-injection protection and preserves exact decimals/source definitions.
 
-Proposed service seam: `get/saveMetaApp`, `startMetaConnect`, `metaCallback`, `listMetaAccounts`, `selectMetaAccount`, `listMetaCampaigns`, `enqueue/read/listMetaImports`, `cancelMetaImport`, `disconnectMeta`, `runMetaImportStep`, and `expireMetaImportPages`. App settings use `/api/meta/app`; authenticated project routes use `/api/projects/:projectId/meta/...`; import create/cancel are POST with request ID, source revision and strict Origin/body limits. Browser account/asset selection sends an ID plus connection revision; the server verifies it rather than trusting cached options. Discovery/list responses include live role, current revision, completeness and opaque continuation. Public callback routes are explicitly separate from authenticated mutations.
+Signed deletion additionally returns a null source and unavailable payload at its
+grant fence, before cleanup reaches that particular import. Ordinary retention
+expiry preserves the captured source label and minimal receipt; it never exposes
+residual rows. Neither state is a successful empty report.
+
+Implemented service seams are `get/saveMetaApp`, `startMetaConnect`, `metaCallback`, `listMetaAccounts`, `selectMetaAccount`, `enqueue/read/listMetaImports`, `cancelMetaImport`, `disconnectMeta`, `runMetaImportStep`, and `expireMetaImportPages`. Campaign inventory (`listMetaCampaigns` and the campaigns transport row above) remains pending. App settings use `/api/meta/app`; authenticated project routes use `/api/projects/:projectId/meta/...`; import create/cancel are POST with request ID and strict Origin/body limits. Create also requires the source revision. Browser account selection sends an ID plus connection revision; the server verifies it rather than trusting cached options. Public callback routes are explicitly separate from authenticated mutations.
 
 Only extract a shared OAuth cookie/cursor helper from Google if both actual implementations need exactly the same contract. Keep transport/auth/report parsing/jobs independently testable with injected synthetic fetch. GPT owns auth, tenancy, transport, state machine and measurement; appropriate Kimi leaves are a pure controlled account picker and a decimal/action report normalizer supplied with a frozen public schema and adversarial fixtures.
 
@@ -141,7 +146,7 @@ Only extract a shared OAuth cookie/cursor helper from Google if both actual impl
 
 Normalized aggregate rows use workspace derived-history retention (365-day default). Raw provider JSON is not persisted; any deliberately added raw evidence later uses the90-day provider-evidence policy. Preserve connection/account configuration and minimal idempotency/source/outcome/count receipts. Mark a terminal import expired before bounded page deletion; API responses mask residual pages immediately. Once marked, finish physical cleanup despite policy extension. Retrying an expired request returns the expired receipt; an old worker/restart cannot restore payloads. A separately requested fresh report is new evidence, not resurrection of that receipt. Provider-mandated deletion/revocation obligations remain a distinct verified release requirement, including operator backups.
 
-The user flow is **Connections → Meta ads → Connect → Choose account → Confirm source scope → Import report → Review data → Optionally schedule**. Explain missing operator configuration without exposing secret fields. Account cards show name and stable ID, currency/timezone and access result; an empty list offers reconnect/check assigned assets, not “no ad accounts exist.” Report view shows source and last success before the table, distinct failed refresh/last retained snapshot, partial/expired/empty labels, attribution profile and next retry. Cancel/back preserves already authorized durable work; ambiguous acknowledgement offers only same-request retry. A 360px table scrolls horizontally with readable columns, keyboard focus and reachable actions.
+The required end-to-end flow is **Meta ads → Connect → Choose account → Meta reports → Import report → Review data → Optionally schedule**. The schedule and latest-success/overlap workflows remain pending. Explain missing operator configuration without exposing secret fields. Account cards show name and stable ID, currency/timezone and access result; an empty list offers reconnect/check assigned assets, not “no ad accounts exist.” The manual report view selects one retained receipt, preserving partial/expired/empty labels and attribution. Cancel/back preserves already authorized durable work; ambiguous acknowledgement offers only same-request retry. A 360px table scrolls horizontally with readable columns, keyboard focus and reachable actions.
 
 Required acceptance before claiming this adapter works:
 
@@ -193,4 +198,82 @@ The primary asynchronous example returns `report_run_id` as a JSON number. Nativ
 
 The first code checkpoint implements only `meta-http.ts` and `meta-signed-request.ts`, with 17 synthetic test groups. Fixed Graph v26.0 auth/account operations enforce bounded streaming, strict UTF-8, lossless decimal IDs, cancellation, sanitized failures and no redirects. Current primary [token-error guidance](https://developers.facebook.com/docs/facebook-login/access-tokens/debugging-and-error-handling) documents code 190 for expired, invalidated and deauthorized tokens; these errors request reconnect without automatic retry. Other unmapped provider errors remain explicit failures.
 
-The signed deletion verifier validates canonical encoding and current-secret HMAC before reading the subject. Exact IDs and timestamps cannot be rounded by JSON parsing, duplicate root fields are rejected, and the receipt digest identifies the original encoded payload rather than its signature. Legitimate redelivery signed after secret rotation therefore has the same identity. Optional timestamps are metadata; this primitive does not invent a delivery-age rule or delete any records. The [reviewed connection presentation contract](meta-connection-ui.md) guides the next Kimi leaf. Auth storage, lifecycle, API, worker and UI integration are still being built; these primitives are not a connected Meta account or an imported report.
+The signed deletion verifier validates canonical encoding and current-secret HMAC before reading the subject. Exact IDs and timestamps cannot be rounded by JSON parsing, duplicate root fields are rejected, and the receipt digest identifies the original encoded payload rather than its signature. Legitimate redelivery signed after secret rotation therefore has the same identity. Optional timestamps are metadata; this primitive does not invent a delivery-age rule or delete any records. This paragraph records the first primitives checkpoint; the later [auth implementation and browser acceptance](meta-auth.md) supersede its scope. Neither synthetic checkpoint establishes a connected live Meta account.
+
+### Schema 26 authorization and deletion acceptance
+
+The later [auth implementation](meta-auth.md) supplies the ready-source gate used
+by report work. It rechecks current owner, immutable account, app/connection
+revision, grant and deletion state before local publication; unknown data-access
+expiry is inspected freshly, without SQL locks across network. Seven independent
+PostgreSQL gate groups passed with synthetic responses.
+
+`0026_meta_imports.sql` adds only `meta_import` and `meta_import_page`. Scoped
+foreign keys bind each retained import to its original grant/connection/project/
+workspace and bind each page to its import. A partial unique index permits one
+active import per connection. The existing actor-bound content receipt stores the
+request hash and import ID; the import row keeps immutable request identity,
+captured source, bounded lease/progress fields and separate expiry/deletion markers.
+No new scheduling authority is introduced by this migration.
+
+The deletion worker includes these tables in its covered-data completion test,
+fences late publication and removes at most five pages from one import per batch.
+It requires no vault access after signed admission and preserves minimal outcome
+receipts, later reconsent and replacement-app sources. Eight existing callback
+groups and six new report-deletion groups passed on separate fresh PostgreSQL 18
+databases through migration 26. The checks include rollback after payload writes,
+residual pages under an earlier expiry marker, old grants already invalidated and
+cross-app provenance. They establish local synthetic behavior, not report-worker,
+scheduled-refresh, live-account or backup-deletion acceptance.
+
+The separate original-record upgrade suite passes through migration 26, including
+prior feature and identity-capsule preservation, migration rollback and repeat-run
+idempotence. CI assigns report authorization, report deletion, import service and
+import worker suites separate fresh databases; hosted execution is a separate
+result from these local checks.
+
+### Manual report acceptance, 2026-10-13
+
+Owners can explicitly request **Account by day** or **Campaign by day**, inspect
+the durable receipt, cancel local work and read retained report history. Members
+can read existing reports. The **Meta reports** screen separates source, import
+history and row pagination and links back to connection management. It preserves
+exact decimal strings and distinguishes unavailable, zero, empty, partial,
+expired and deleted data. Known active imports explain why a second request is
+disabled. A lost or malformed acknowledgement retains the exact original request;
+a deletion-masked replay still proves that request's identity without exposing
+its former source.
+
+The following local checks passed with contained synthetic provider responses:
+
+- Ten pure normalizer groups cover dates, exact IDs/decimals, nested actions,
+  duplicate/foreign rows, strict grain shape and input immutability. The complete
+  Node test run recorded377 passes and two existing skips.
+- Ten PostgreSQL service/API groups cover owner/member scope, atomic queue and
+  receipt rollback, identical replay, concurrent admission, account-local dates,
+  staged and terminal rows, history cursors, expiry, signed deletion and the
+  current session/Origin/method boundary. Retention preview checks include
+  workspace isolation, irreversible markers,10000-candidate caps and a real lock
+  timeout that returns unavailable rather than zero.
+- Twelve PostgreSQL worker groups cover submission ambiguity, leases, late
+  responses, revoked authority, invalid pages, quotas, retry limits and cleanup.
+  Two use actual `startWorker`/pg-boss dispatch and graceful **in-process**
+  stop/start recovery from a saved report ID and cursor without a second POST.
+  They do not establish OS-process kill/restart acceptance at every checkpoint.
+- Eleven controller browser groups and seven independent Kimi-view groups cover
+  immutable retry identity, live-role purge, stale scope responses, immediate
+  hiding of deleted source metadata, off-page selection and nested DTO validation.
+  Desktop1440/mobile360 visual checks verify readable horizontal table scrolling,
+ 44px controls and keyboard/disclosure access.
+- Production build/typecheck, all13 application navigation groups and the actual
+  retention browser suite pass against an isolated local database. The new view
+  works through real application routes for owner/viewer empty states without
+  starting an import. The shared cleanup confirmation names Meta rows and shows
+  unavailable estimates explicitly. Plan and diff checks pass.
+
+The normalizer and pure report view were drafted by the existing verified Kimi
+K3 CLI with thinking/maximum effort, public contracts and reviewed skills under
+the bounded draft profile. GPT reviewed and repaired confirmed compatibility,
+design and security issues, and ran independent acceptance. No customer data or
+provider credentials were supplied to the draft. No live provider calls, real
+Ads Manager reconciliation or provider-approval claims follow from these checks.

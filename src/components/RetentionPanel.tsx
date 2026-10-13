@@ -31,6 +31,7 @@ interface PreviewDto {
   cutoff: string;
   derivedCutoff: string;
   derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean };
+  metaEstimate?: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean };
   rawEvidenceCutoff:string;
   promptEstimate: { status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean };
   redirectEstimate?:{status:'available'|'unavailable';checks:number|null;atLeast:boolean};
@@ -67,7 +68,7 @@ const FIELDS: ReadonlyArray<{
   {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep raw analytics events (default 90).'},
   {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep replays (default 7).'},
   {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep generated answers, copied execution input and observed redirect chains (default 90). Receipts and authored prompts remain.'},
-  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google report data, keyword research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
+  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google and Meta reports, keyword research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
 ];
 
 function toDraft(s: RetentionSettings): Draft {
@@ -430,17 +431,18 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
                 </p>
               )}
               <p style={{margin: '8px 0'}}>Derived data cutoff (UTC): {fmtUtc(preview.derivedCutoff)}. {preview.derivedEstimate.status === 'available' && preview.derivedEstimate.imports !== null ? `${preview.derivedEstimate.atLeast ? 'At least ' : ''}${preview.derivedEstimate.imports.toLocaleString()} finished Google imports eligible.` : 'Import estimate unavailable.'}</p>
+              <p style={{margin: '8px 0'}}>{preview.metaEstimate?.status === 'available' && preview.metaEstimate.imports !== null ? `${preview.metaEstimate.atLeast ? 'At least ' : ''}${preview.metaEstimate.imports.toLocaleString()} finished Meta imports eligible or already awaiting cleanup. Their receipts remain.` : 'Meta import estimate unavailable. Finished Meta report rows still follow this policy.'}</p>
               <p style={{margin: '8px 0'}}>{preview.keywordEstimate.status === 'available' && preview.keywordEstimate.results !== null ? `${preview.keywordEstimate.atLeast ? 'At least ' : ''}${preview.keywordEstimate.results.toLocaleString()} keyword results eligible.` : 'Keyword result estimate unavailable.'}</p>
               <p style={{margin: '8px 0'}}>{preview.savedKeywordEstimate.status === 'available' && preview.savedKeywordEstimate.metrics !== null ? `${preview.savedKeywordEstimate.atLeast ? 'At least ' : ''}${preview.savedKeywordEstimate.metrics.toLocaleString()} saved keyword metric snapshots eligible. Authored keywords and tags remain.` : 'Saved keyword metric estimate unavailable. Authored keywords and tags remain.'}</p>
               <p style={{margin:'8px 0'}}>Raw provider evidence cutoff (UTC): {fmtUtc(preview.rawEvidenceCutoff)}</p>
               <p style={{margin:'8px 0'}}>{preview.promptEstimate.status==='available'&&preview.promptEstimate.results!==null?`${preview.promptEstimate.atLeast?'At least ':''}${preview.promptEstimate.results.toLocaleString()} generated prompt answers and ${preview.promptEstimate.inputs?.toLocaleString() ?? "unknown"} copied execution inputs eligible under raw provider evidence retention.`:'Prompt answer estimate unavailable.'}</p>
               <p style={{margin:'8px 0'}}>{preview.redirectEstimate?.status==='available'&&preview.redirectEstimate.checks!==null?`${preview.redirectEstimate.atLeast?'At least ':''}${preview.redirectEstimate.checks.toLocaleString()} redirect observations eligible. Their check receipts remain.`:'Redirect observation estimate unavailable.'}</p>
-              <p className="hint" style={{margin: '8px 0'}}>Google report rows, quality metadata, keyword results and saved keyword metrics expire after the derived-history period. Saving or refreshing a list does not extend an older observation's expiry. Authored keywords, tags and prompt versions remain. Generated prompt answers and copied execution input follow raw provider evidence retention. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Replay stores nothing yet.</p>
+              <p className="hint" style={{margin: '8px 0'}}>Google and Meta report rows, Google quality metadata, keyword results and saved keyword metrics expire after the derived-history period. Saving or refreshing a list does not extend an older observation's expiry. Authored keywords, tags and prompt versions remain. Generated prompt answers and copied execution input follow raw provider evidence retention. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Replay stores nothing yet.</p>
               <p className="hint" style={{margin: '8px 0'}}>
                 Kept as-is: authored reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups.
               </p>
               <div className="alert" style={{margin: '8px 0'}}>
-                Older analytics, finished Google reports, keyword results, saved keyword metrics, generated prompt answers and copied execution input will be deleted automatically. Authored keyword lists and tags remain. Increasing these periods later cannot restore deleted data.
+                Older analytics, finished Google and Meta reports, keyword results, saved keyword metrics, generated prompt answers and copied execution input will be deleted automatically. Authored keyword lists and tags remain. Increasing these periods later cannot restore deleted data.
               </div>
               <div className="row" style={{flexWrap: 'wrap', gap: 8}}>
                 <button type="button" className="btn primary" style={BTN} onClick={() => void onSave()} disabled={busy !== null}>
@@ -468,7 +470,7 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <span className="dim">Latest completed project cleanup: </span>
               {dto.lastCompletedAt ? fmtUtc(dto.lastCompletedAt) : 'No cleanup completed yet'}
             </p>
-            <p className="hint" style={{margin: '4px 0'}}>The latest finish of one project — not proof every project is caught up.</p>
+            <p className="hint" style={{margin: '4px 0'}}>The latest finish of one project — not proof every project is caught up. Meta report payloads use a separate bounded cleanup task; this timestamp does not confirm that task is complete.</p>
             {dto.failedProjects > 0 && (
               <p className="alert" style={{margin: '8px 0'}}>
                 The last cleanup failed for {dto.failedProjects} {dto.failedProjects === 1 ? 'project' : 'projects'}.

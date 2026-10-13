@@ -39,11 +39,12 @@ try {
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true })
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
   let external = 0, errors = 0
-  const requests: string[] = []
+  const requests: string[] = [], metaReportWrites: string[] = []
   await context.route('**/*', (route: any) => {
     const url = new URL(route.request().url())
     if (url.origin !== config.appUrl) { external++; return route.abort() }
     requests.push(url.pathname)
+    if (route.request().method()==='POST' && /\/meta\/(?:connections\/[^/]+\/imports|imports\/[^/]+\/cancel)$/.test(url.pathname)) metaReportWrites.push(url.pathname)
     return route.continue()
   })
   page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', () => errors++)
@@ -182,6 +183,27 @@ try {
     assert.equal(new URL(page.url()).hash, '')
   }
   console.log('PASS navigation: callback has one-shot priority, yields to user intent, and rejects mixed fragments.')
+
+  await page.goto(href(a.id,a2,'meta-reports')); await heading('Meta reports'); await selected(a.id,a2,'meta-reports')
+  await page.getByText('No sources on this page.',{exact:true}).waitFor()
+  assert.equal(await page.getByLabel('Source',{exact:true}).locator('option').count(),1)
+  assert.equal(await page.getByRole('button',{name:'Import report',exact:true}).count(),0)
+  await page.reload(); await heading('Meta reports'); await page.getByText('No sources on this page.',{exact:true}).waitFor(); await selected(a.id,a2,'meta-reports')
+  await link('Context'); await heading('Project context'); await page.goBack(); await heading('Meta reports'); await selected(a.id,a2,'meta-reports')
+  await page.getByRole('button',{name:'Manage connections',exact:true}).click(); await heading('Meta ads'); await selected(a.id,a2,'meta')
+  await page.goBack(); await heading('Meta reports'); await selected(a.id,a2,'meta-reports'); await page.getByText('No sources on this page.',{exact:true}).waitFor()
+  await page.setViewportSize({width:360,height:800})
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
+  await mkdir('private/navigation-browser',{recursive:true}); await page.screenshot({path:'private/navigation-browser/meta-reports-360.png',fullPage:true})
+  await page.setViewportSize({width:1280,height:900})
+  await page.goto(href(b.id,b1,'meta-reports')); await heading('Meta reports'); await selected(b.id,b1,'meta-reports'); await page.getByText('No sources on this page.',{exact:true}).waitFor()
+  const memberSources=await context.request.get(`${config.appUrl}/api/projects/${b1}/meta`)
+  assert.equal(memberSources.status(),200); assert.equal((await memberSources.json()).role,'viewer')
+  assert.equal(await page.getByRole('button',{name:'Import report',exact:true}).count(),0)
+  assert.equal(await page.getByRole('button',{name:'Cancel local import',exact:true}).count(),0)
+  assert.deepEqual(metaReportWrites,[])
+  assert.equal((await pool.query('SELECT count(*) FROM meta_import WHERE project_id=ANY($1::text[])',[[a2,b1]])).rows[0].count,'0')
+  console.log('PASS navigation: Meta reports realAPI empty state, deep link/reload/Back, Manage connections, viewer read access and no automatic imports.')
 
   await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
   const oldSession = await hold(`**/api/workspaces/${a.id}/projects`, 401)

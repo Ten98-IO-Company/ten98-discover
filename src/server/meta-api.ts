@@ -4,6 +4,7 @@ import {getDatabase} from './db.ts';
 import {readJson} from './validation.ts';
 import {disableMetaApp,disconnectMeta,getMetaApp,getMetaConnection,inspectMetaAccount,listMetaAccounts,listMetaConnections,metaCallback,saveMetaApp,selectMetaAccount,startMetaConnect} from './meta-auth.ts';
 import {acceptMetaDeletion,getMetaDeletionStatus} from './meta-callbacks.ts';
+import {cancelMetaImport,enqueueMetaImport,listMetaImports,readMetaImport} from './meta-imports.ts';
 
 const uuid='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 const headers={'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'};
@@ -73,6 +74,21 @@ export async function handleMeta(request:Request):Promise<Response|null>{
  if(!project)return json({error:'Not found.'},404);
  const [,projectId,operation='']=project;
  if(operation===''&&request.method==='GET')return json(await listMetaConnections(projectId,session.user.id,url.searchParams));
+ const imports=operation.match(new RegExp(`^connections/(${uuid})/imports$`));
+ if(imports){
+  if(request.method==='GET')return json(await listMetaImports(projectId,session.user.id,imports[1],url.searchParams));
+  if(url.searchParams.size)throw new FoundationError(400,'Unexpected Meta import parameters.');
+  return json(await enqueueMetaImport(projectId,session.user.id,imports[1],await readJson(request,32768)));
+ }
+ const imported=operation.match(new RegExp(`^imports/(${uuid})(/cancel)?$`));
+ if(imported){
+  if(!imported[2]&&request.method==='GET')return json(await readMetaImport(projectId,session.user.id,imported[1],url.searchParams));
+  if(imported[2]&&request.method==='POST'){
+   if(url.searchParams.size)throw new FoundationError(400,'Unexpected Meta import parameters.');
+   return json(await cancelMetaImport(projectId,session.user.id,imported[1],await readJson(request,32768)));
+  }
+  return json({error:'Method not allowed.'},405);
+ }
  if(url.searchParams.size)throw new FoundationError(400,'Unexpected Meta connection parameters.');
  if(operation==='connect'&&request.method==='POST'){
   const {cookie,...body}=await startMetaConnect(projectId,session,await readJson(request));return json(body,200,{'set-cookie':cookie});

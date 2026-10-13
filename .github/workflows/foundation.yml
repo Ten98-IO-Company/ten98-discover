@@ -112,6 +112,10 @@ jobs:
             await client.query('CREATE DATABASE ten98_rank_matrix_ci');
             await client.query('CREATE DATABASE ten98_meta_auth_ci');
             await client.query('CREATE DATABASE ten98_meta_callbacks_ci');
+            await client.query('CREATE DATABASE ten98_meta_auth_reports_ci');
+            await client.query('CREATE DATABASE ten98_meta_callbacks_imports_ci');
+            await client.query('CREATE DATABASE ten98_meta_auth_imports_ci');
+            await client.query('CREATE DATABASE ten98_meta_auth_worker_ci');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
@@ -145,6 +149,10 @@ jobs:
               ['ten98_rank_matrix_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-matrix-integration.ts']], { TEN98_RANK_MATRIX_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_meta_auth_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-auth-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_meta_callbacks_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-callbacks-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_meta_auth_reports_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-report-auth-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_meta_callbacks_imports_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-import-deletion-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_meta_auth_imports_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-import-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_meta_auth_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-import-worker-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
             ]) {
               const database = new URL(process.env.DATABASE_URL);
               database.pathname = `/${name}`;

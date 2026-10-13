@@ -1,8 +1,9 @@
 # Meta account connection and deletion lifecycle
 
-This increment supplies the native Meta Ads authorization boundary described in
-[Meta reports](meta-reports.md). It does not yet import reports, schedule jobs,
-or authorize reporting from a browser pixel. Provider approval, supported API
+This document describes the native Meta Ads authorization boundary and its
+schema 26 report-lifecycle hooks. Report execution and scheduling acceptance are
+tracked separately in [Meta reports](meta-reports.md); a browser pixel grants no
+reporting authority. Provider approval, supported API
 version and operational release gates remain in that contract. No provider
 approval or live-account acceptance is implied by synthetic tests.
 
@@ -133,8 +134,9 @@ Migration `0025_meta_auth.sql` adds only:
 Completed flows clear browser/state/session hashes and temporary source names.
 They retain registration, pseudonymous subject, grant epoch, project, connection
 and grant timestamps. Reconnect replaces the connection's current grant pointer
-without deleting prior grant provenance. Future report imports must bind their
-own immutable grant ID, not infer authority from the connection's latest pointer.
+without deleting prior grant provenance. Schema 26 report imports bind their own
+immutable grant ID, connection, project and workspace through a composite foreign
+key. They never infer historical provenance from the connection's latest pointer.
 Expired unsuccessful flows may be deleted in batches of 100; successful receipts
 are never ordinary flow-TTL cleanup. Local user deletion is explicitly restricted
 until a user lifecycle safely handles pending flows and retained provenance.
@@ -158,10 +160,19 @@ signed payload cannot invalidate it. Different signed payloads are distinct
 requests. Receipt and confirmation capabilities do not disclose user, workspace,
 account, project or historical grant identifiers to the public status reader.
 
-`local_deleted` means this application's current Meta connection storage has been
-cleaned. It does not certify removal from operator backups or Meta. Before imports
-are enabled, their grant-bound payload tables must participate in the same
-completion gate. Backup retention, restores and deletion obligations remain an
+Schema 26 extends the same completion predicate to every covered import, including
+reports whose grant was already invalidated or whose ordinary retention cleanup
+left residual pages. One batch fences one import and removes at most five pages;
+it does not declare completion while another covered import still holds data.
+The tombstone clears captured source metadata, provider report ID, cursor, warning
+payload and lease. Terminal outcome/count receipts and immutable grant links stay
+retained. A live import becomes denied; an expired completed import keeps its
+original outcome and timestamps. A newer grant under the same or a replacement
+app is not erased by the old grant's callback.
+
+`local_deleted` means covered connection and report payloads in this application's
+current storage have been cleaned. It does not certify removal from operator
+backups or Meta. Backup retention, restores and deletion obligations remain an
 operator release gate; this implementation invents no automatic backup deletion
 or provider-specific deadline.
 
@@ -175,6 +186,18 @@ Origin checks, body/rate limits, cookie headers and `no-store` responses.
 
 Callback-only helpers are `withMetaRegistration`, `metaSubjectHash`,
 `metaDeletionContext` and `assertMetaGrantAllowed`. They are not public endpoints.
+Report workers reuse `prepareMetaReportSource`, `withMetaReportSource` and
+`inspectMetaReportSource`. The private snapshot holds credentials in worker memory,
+never in a job or browser DTO. Every publication gate locks registration → workspace
+→ project → connection before the import lease, and checks current owner, ready
+account, app/connection revisions, original grant and signed-deletion fences.
+Unknown data-access expiry triggers fresh inspection, with the caller's lease and
+deadline check before each request. All network waits occur outside SQL locks.
+Historical reads instead require current project membership and the immutable
+grant's deletion fence; disconnect or unavailable vault keys do not alone erase
+retained reports. Signed deletion masks source metadata and rows before physical
+cleanup. A keyless local gate can terminate unusable durable work without reviving
+provider authority.
 `expireMetaFlows` performs bounded unsuccessful-flow cleanup.
 `assertMetaCredentialsReadable`, `rotateMetaCredentials` and
 `quarantineMetaConnections` integrate readiness, offline vault rotation and
@@ -216,4 +239,21 @@ build, typecheck and all 12 application navigation groups pass, including exact
 callback-family routing, held-response scope changes and forbidden operator views.
 Real empty-source and operator-readiness screens pass desktop/mobile checks
 against an isolated database without outbound requests. App-ID metadata recovery
-also passes the auth/API suite. This increment does not yet offer report imports.
+also passes the auth/API suite. These results describe the auth checkpoint;
+the later [manual import implementation](meta-reports.md) has separate acceptance.
+
+Seven independent report-authorization PostgreSQL groups pass for ready-source,
+role, account, revision, expiry and deletion gates. Migration 26 and the extended
+cleanup pass the existing eight callback/API/keyless-CLI groups and six additional
+report-deletion groups on separate fresh databases. These cover composite scope
+constraints, late-transaction rollback, eleven-page bounded erasure, expired
+residual pages, stale leases, prior invalidation, old callback replay and a
+replacement app's preserved source. No provider requests were made. Import
+execution and its interface require their separate acceptance; these checks are
+not a live Meta report or provider compliance certification.
+
+The original-install upgrade test also passes through migration 26 on a fresh
+isolated database. Original credentials, sessions and project data, existing
+feature records and the encrypted provider identity capsule survive; repeated
+migration is idempotent. Invalid migration histories and a failing SQL batch
+still reject or roll back without admitting partial schema changes.

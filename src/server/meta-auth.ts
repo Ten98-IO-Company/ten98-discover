@@ -102,12 +102,15 @@ export async function startMetaConnect(projectId:string,session:MetaSession,raw:
 }
 const tokenResponse=z.object({access_token:secret(4096),token_type:z.string().refine(v=>v.toLowerCase()==='bearer'),expires_in:z.number().int().positive().max(31536000)});
 const epoch=z.number().int().nonnegative().max(253402300799);
-async function inspected(app:MetaRegistration,secrets:MetaSecrets,token:string,accessDeadline:number,signal?:AbortSignal){
+async function inspected(app:MetaRegistration,secrets:MetaSecrets,token:string,accessDeadline:number,signal?:AbortSignal,beforeRequest?:()=>Promise<void>){
+ await beforeRequest?.();
  const raw=await metaRequest({operation:'inspectToken',appId:app.app_id,appSecret:secrets.appSecret,token},signal);
  const data=provider(z.object({data:z.object({app_id:decimal,user_id:decimal,type:z.literal('USER'),is_valid:z.literal(true),scopes:z.array(text(100).min(1)).max(100),expires_at:epoch.optional(),data_access_expires_at:epoch.optional()})}),raw.data).data;
  if(data.app_id!==app.app_id||!data.scopes.includes('ads_read'))throw new FoundationError(409,'Grant Meta advertising read access to this app.');
  const accessExpiresAt=Math.min(accessDeadline,data.expires_at?data.expires_at*1000:accessDeadline),dataExpiresAt=data.data_access_expires_at?data.data_access_expires_at*1000:null;
  if(!Number.isFinite(accessExpiresAt)||accessExpiresAt<=Date.now()||dataExpiresAt!==null&&dataExpiresAt<=Date.now())throw new FoundationError(409,'The Meta grant expired. Connect again.');
+ await beforeRequest?.();
+ if(accessExpiresAt<=Date.now()||dataExpiresAt!==null&&dataExpiresAt<=Date.now())throw new FoundationError(409,'The Meta grant expired. Connect again.');
  const permissions=provider(z.object({data:z.array(z.object({permission:text(100).min(1),status:z.enum(['granted','declined','expired'])})).max(100)}),(await metaRequest({operation:'permissions',appId:app.app_id,appSecret:secrets.appSecret,token},signal)).data).data;
  if(new Set(permissions.map(p=>p.permission)).size!==permissions.length||!permissions.some(p=>p.permission==='ads_read'&&p.status==='granted'))throw new FoundationError(409,'Grant Meta advertising read access to this app.');
  return {subjectHash:metaSubjectHash(secrets,data.user_id),scopes:[...new Set(data.scopes)].sort(),accessExpiresAt:new Date(accessExpiresAt),dataExpiresAt:dataExpiresAt===null?null:new Date(dataExpiresAt)};
@@ -166,9 +169,29 @@ export async function getMetaConnection(projectId:string,userId:string,connectio
 type Snapshot={app:MetaRegistration;secrets:MetaSecrets;row:Connection;flow:Flow;accessToken:string;operationExpiresAt?:number};
 async function usable(client:PoolClient,app:MetaRegistration,row:Connection){appReady(app);const f=await grant(client,row);if(['disconnected','deleted','reconnect'].includes(row.status)||f.invalidated_at||f.registration_id!==app.id||f.app_revision!==app.revision||!f.access_expires_at||f.access_expires_at.getTime()<=Date.now()||f.data_access_expires_at&&f.data_access_expires_at.getTime()<=Date.now())changed();await assertMetaGrantAllowed(client,{registrationId:app.id,subjectHash:f.subject_hash!,startEpoch:f.start_epoch});return f;}
 async function beforeAccount(projectId:string,userId:string,connectionId:string,expected:number):Promise<Snapshot>{const appId=await connectionAppId(projectId,connectionId);return transaction(async client=>{const app=await registration(client,appId);await scope(client,projectId,userId);const row=await connection(client,projectId,connectionId);cas(row,expected);const flow=await usable(client,app,row),secrets=appSecrets(app),accessToken=provider(z.object({accessToken:secret(4096)}).strict(),decryptCredentials(row.encrypted_token,metaConnectionContext(row))).accessToken;return {app,secrets,row,flow,accessToken};});}
-async function unknownExpiry(snapshot:Snapshot){if(snapshot.flow.data_access_expires_at===null){const checked=await inspected(snapshot.app,snapshot.secrets,snapshot.accessToken,snapshot.flow.access_expires_at!.getTime());if(checked.subjectHash!==snapshot.flow.subject_hash)throw new MetaRequestError('invalid_response');snapshot.operationExpiresAt=Math.min(checked.accessExpiresAt.getTime(),checked.dataExpiresAt?.getTime()??Infinity);}}
+async function unknownExpiry(snapshot:Snapshot,beforeRequest?:()=>Promise<void>){if(snapshot.flow.data_access_expires_at===null){const checked=await inspected(snapshot.app,snapshot.secrets,snapshot.accessToken,snapshot.flow.access_expires_at!.getTime(),undefined,beforeRequest);if(checked.subjectHash!==snapshot.flow.subject_hash)throw new MetaRequestError('invalid_response');snapshot.operationExpiresAt=Math.min(checked.accessExpiresAt.getTime(),checked.dataExpiresAt?.getTime()??Infinity);}}
 function inspectedStillValid(snapshot:Snapshot){if(snapshot.operationExpiresAt!==undefined&&snapshot.operationExpiresAt<=Date.now())changed();}
 async function afterAccount<T>(snapshot:Snapshot,userId:string,work:(client:PoolClient,row:Connection)=>Promise<T>){return transaction(async client=>{const app=await registration(client,snapshot.app.id);await scope(client,snapshot.row.project_id,userId);const row=await connection(client,snapshot.row.project_id,snapshot.row.id);cas(row,snapshot.row.revision);if(app.revision!==snapshot.app.revision||row.current_grant_id!==snapshot.flow.id)changed();await usable(client,app,row);inspectedStillValid(snapshot);return work(client,row);});}
+
+function reportAccount(row:Connection){
+ if(row.status!=='ready'||!row.account_id)changed();
+ return accountDto({id:'act_'+row.account_id,account_id:row.account_id,name:row.account_name,currency:row.currency,timezone_name:row.time_zone,account_status:row.account_status});
+}
+export type MetaReportSource=Snapshot&{account:ReturnType<typeof reportAccount>};
+/** Internal credentials stay in the worker; never serialize this snapshot to a browser or job. */
+export async function prepareMetaReportSource(projectId:string,userId:string,connectionId:string,expectedRevision:number):Promise<MetaReportSource>{
+ const snapshot=await beforeAccount(projectId,userId,connectionId,parse(revision,expectedRevision));
+ return {...snapshot,account:reportAccount(snapshot.row)};
+}
+/** Only local SQL belongs in work. The import service takes its lease lock after this source gate. */
+export async function withMetaReportSource<T>(snapshot:MetaReportSource,userId:string,work:(client:PoolClient,row:Connection)=>Promise<T>){
+ return afterAccount(snapshot,userId,async(client,row)=>{if(JSON.stringify(reportAccount(row))!==JSON.stringify(snapshot.account))changed();return work(client,row);});
+}
+/** Each fresh inspection request gets a current gate; no SQL transaction spans a network wait. */
+export async function inspectMetaReportSource(snapshot:MetaReportSource,userId:string,checkImport:(client:PoolClient)=>Promise<void>=async()=>{}){
+ const check=()=>withMetaReportSource(snapshot,userId,checkImport);
+ await check();await unknownExpiry(snapshot,check);await check();
+}
 export async function listMetaAccounts(projectId:string,userId:string,connectionId:string,raw:unknown){
  const input=parse(z.object({revision,cursor:text(20000).optional()}).strict(),raw),before=await beforeAccount(projectId,userId,connectionId,input.revision);let after:string|undefined;
  const context={workspaceId:before.row.workspace_id,id:before.row.id,provider:'meta-accounts:'+userId,revision:before.row.revision};

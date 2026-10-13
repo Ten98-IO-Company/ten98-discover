@@ -120,3 +120,102 @@ test('closed errors and rate hints expose no arbitrary provider text and never r
   await run(async()=>json('{"error":{"code":1.5,"error_subcode":999999999999,"message":"'+token+'"}}',400),()=>assert.rejects(metaRequest(request),error=>{assert.ok(error instanceof MetaRequestError);assert.equal(error.providerCode,null);assert.equal(error.providerSubcode,null);return clean('unavailable')(error);}));
   await run(async()=>json('{}',200,{'retry-after':'99999999999999999','x-fb-ads-insights-throttle':'{"app_id_util_pct":"99","acc_id_util_pct":-1}'}),async()=>assert.deepEqual((await metaRequest(request)).rate,{retryAfterSeconds:null,appUtilizationPercent:null,accountUtilizationPercent:null}));
 });
+
+const reportId='9'.repeat(39)+'7';
+const accountId='9'.repeat(39)+'8';
+const submit:MetaRequest={...credentials,token,operation:'submitReport',accountId,report:'account_daily',from:'2024-01-31',to:'2024-03-01'};
+const commonFields='account_id,account_name,account_currency,date_start,date_stop,impressions,clicks,spend,actions,action_values';
+
+test('async Insights uses only fixed report POST and saved report GET routes with exact grain fields',async()=>{
+ const captured:{url:URL;init:RequestInit}[]=[];
+ await run(async(raw,init)=>{captured.push({url:new URL(raw),init});return Response.json({data:[]});},async()=>{
+  await metaRequest(submit);
+  await metaRequest({...submit,report:'campaign_daily'});
+  await metaRequest({...credentials,token,operation:'reportStatus',reportRunId:reportId});
+  await metaRequest({...credentials,token,operation:'reportPage',reportRunId:reportId,report:'account_daily'});
+  await metaRequest({...credentials,token,operation:'reportPage',reportRunId:reportId,report:'campaign_daily',after:'opaque+%/?#&fields=spend 🛰'});
+ });
+ assert.equal(captured.length,5);
+ assert.deepEqual(captured.map(({url,init})=>[url.pathname,init.method]),[
+  ['/v26.0/act_'+accountId+'/insights','POST'],['/v26.0/act_'+accountId+'/insights','POST'],
+  ['/v26.0/'+reportId,'GET'],['/v26.0/'+reportId+'/insights','GET'],['/v26.0/'+reportId+'/insights','GET'],
+ ]);
+ const proof=createHmac('sha256',credentials.appSecret).update(token).digest('hex');
+ for(const {url,init}of captured){
+  assert.equal(url.origin,'https://graph.facebook.com');assert.equal(url.hash,'');assert.equal(url.searchParams.get('appsecret_proof'),proof);
+  assert.equal(new Headers(init.headers).get('authorization'),'Bearer '+token);assert.equal(url.searchParams.has('access_token'),false);
+  assert.equal(init.redirect,'error');assert.equal(init.credentials,'omit');assert.equal(init.cache,'no-store');
+  assert.ok(!url.href.includes(token)&&!url.href.includes(credentials.appSecret));
+ }
+ for(const [i,level]of ['account','campaign'].entries()){
+  const {url,init}=captured[i],form=new URLSearchParams(String(init.body));
+  assert.deepEqual([...url.searchParams.keys()],['appsecret_proof']);
+  assert.equal(new Headers(init.headers).get('content-type'),'application/x-www-form-urlencoded');
+  assert.deepEqual(Object.fromEntries(form),{fields:commonFields+(i?',campaign_id,campaign_name':''),level,time_increment:'1',time_range:'{"since":"2024-01-31","until":"2024-03-01"}',action_breakdowns:'["action_type"]',action_attribution_windows:'["7d_click","1d_view"]'});
+  assert.ok(!String(init.body).includes(token)&&!String(init.body).includes(credentials.appSecret));
+ }
+ assert.equal(captured[2].url.searchParams.get('fields'),'id,account_id,async_status,async_percent_completion,date_start,date_stop');
+ for(const item of captured.slice(2))assert.equal(item.init.body,undefined);
+ assert.equal(captured[3].url.searchParams.get('fields'),commonFields);assert.equal(captured[3].url.searchParams.get('limit'),'500');assert.equal(captured[3].url.searchParams.has('after'),false);
+ assert.equal(captured[4].url.searchParams.get('fields'),commonFields+',campaign_id,campaign_name');assert.equal(captured[4].url.searchParams.get('limit'),'500');assert.equal(captured[4].url.searchParams.get('after'),'opaque+%/?#&fields=spend 🛰');
+ assert.deepEqual([...captured[4].url.searchParams.keys()],['appsecret_proof','fields','limit','after']);
+});
+
+test('report dates accept Gregorian early years and31 days but reject caller profile/route overrides before sending',async()=>{
+ let calls=0;
+ await run(async()=>{calls++;return Response.json({});},async()=>{
+  for(const date of ['0001-01-01','0096-02-29','0099-12-31','2000-02-29','9999-12-31'])await metaRequest({...submit,from:date,to:date});
+  await metaRequest(submit);assert.equal(calls,6);
+  const invalid:unknown[]=[
+   {...submit,from:'2024-01-31',to:'2024-03-02'},{...submit,from:'2024-03-01',to:'2024-02-29'},
+   ...['0000-01-01','0099-02-29','1900-02-29','2024-02-30','2024-13-01','2024-00-01','2024-01-00','2024-2-01','2024-02-29\n','2024-02-29T00:00:00Z'].map(date=>({...submit,from:date,to:date})),
+   ...['from','to','accountId','report'].map(key=>{const value={...submit}as Record<string,unknown>;delete value[key];return value;}),
+   {...submit,report:'ad_daily'}, {...submit,from:null}, {...submit,from:20240229},
+   ...['fields','level','breakdowns','action_breakdowns','action_attribution_windows','action_report_time','use_account_attribution_setting','use_unified_attribution_setting','time_range','time_ranges','time_increment','filtering','async','limit','url','body','method','version'].map(key=>({...submit,[key]:'unreviewed'})),
+   {...credentials,token,operation:'reportStatus',reportRunId:reportId,fields:'access_token'},
+   {...credentials,token,operation:'reportPage',reportRunId:reportId,report:'campaign_daily',after:''},
+   {...credentials,token,operation:'reportPage',reportRunId:reportId,report:'campaign_daily',after:'x\n'},
+   {...credentials,token,operation:'reportPage',reportRunId:reportId,report:'campaign_daily',after:'é'.repeat(2049)},
+   {...credentials,token,operation:'reportPage',reportRunId:reportId,report:'campaign_daily',after:'\ud800'},
+   {...credentials,token,operation:'reportPage',reportRunId:reportId,report:'campaign_daily',next:'https://evil.test'},
+   {...credentials,token,operation:'reportPage',reportRunId:reportId,report:'campaign_daily',limit:501},
+  ];
+  for(const id of ['0','01','act_123','123/insights','../me','1?fields=access_token','1\n','1e3','1.0','1'.repeat(41),123,null]){
+   invalid.push({...submit,accountId:id},{...credentials,token,operation:'reportStatus',reportRunId:id},{...credentials,token,operation:'reportPage',reportRunId:id,report:'account_daily'});
+  }
+  for(const value of invalid)await assert.rejects(metaRequest(value as MetaRequest),clean('invalid_request'));
+  assert.equal(calls,6);
+ });
+});
+
+test('report IDs and campaign IDs retain exact numeric lexemes without following returned continuations',async()=>{
+ let calls=0;
+ const response=await run(async()=>{calls++;return json('{"report_run_id":'+reportId+',"data":[{"campaign_id":'+accountId+'}],"paging":{"next":"https://evil.test/?token=secret","cursors":{"after":"opaque"}},"async_report_url":"https://evil.test/export"}');},()=>metaRequest(submit));
+ assert.equal(calls,1);assert.equal((response.data as any).report_run_id,reportId);assert.equal((response.data as any).data[0].campaign_id,accountId);
+ for(const literal of ['1e3','1.0','-1','0','1'.repeat(41)])await run(async()=>json('{"data":[{"campaign_id":'+literal+'}]}'),()=>assert.rejects(metaRequest({...credentials,token,operation:'reportPage',reportRunId:reportId,report:'campaign_daily'}),clean('invalid_response')));
+});
+
+test('a report submission is one attempt and never exposes a retryable creation failure',async()=>{
+ const failures:MetaTransport[]=[
+  async()=>{throw new Error(token+' sensitive-provider-message');},
+  async()=>json('{"error":{"code":4,"message":"sensitive-provider-message"}}',429,{'retry-after':'20'}),
+  async()=>json('{"error":{"code":999}}',503),
+  async()=>json('{"error":{"code":190,"error_subcode":463}}',400),
+  async()=>json('{"report_run_id":'),
+  async()=>new Response('',{status:307,headers:{location:'https://evil.test'}}),
+ ];
+ for(const transport of failures){let calls=0;await run(async(...args)=>{calls++;return transport(...args);},()=>assert.rejects(metaRequest(submit),error=>{assert.ok(clean()(error));assert.equal((error as MetaRequestError).retryable,false);return true;}));assert.equal(calls,1);}
+ const originalTimeout=AbortSignal.timeout;AbortSignal.timeout=()=>originalTimeout(10);const keepAlive=setTimeout(()=>{},500);
+ try{let calls=0;await run(async()=>{calls++;return new Promise<Response>(()=>{});},()=>assert.rejects(metaRequest(submit),error=>{assert.ok(clean('timeout')(error));assert.equal((error as MetaRequestError).retryable,false);return true;}));assert.equal(calls,1);}finally{AbortSignal.timeout=originalTimeout;clearTimeout(keepAlive);}
+ const controller=new AbortController();let calls=0;
+ await run(async()=>{calls++;controller.abort();return new Promise<Response>(()=>{});},()=>assert.rejects(metaRequest(submit,controller.signal),error=>{assert.ok(clean('aborted')(error));assert.equal((error as MetaRequestError).retryable,false);return true;}));assert.equal(calls,1);
+});
+
+test('report pages retain shared byte, Unicode and abort bounds without publishing a successful prefix',async()=>{
+ const page:MetaRequest={...credentials,token,operation:'reportPage',reportRunId:reportId,report:'account_daily'};
+ let cancelled=false;
+ const stream=new ReadableStream<Uint8Array>({start(controller){controller.enqueue(new TextEncoder().encode('{"data":[]}'));controller.enqueue(new Uint8Array(4_194_304));},cancel(){cancelled=true;}});
+ await run(async()=>new Response(stream,{headers:{'content-length':'11'}}),()=>assert.rejects(metaRequest(page),clean('invalid_response')));assert.equal(cancelled,true);
+ for(const body of [Uint8Array.of(0xc3,0x28),' {"data":[{"campaign_name":"\\ud800"}]}','{"data":[]} trailing'])await run(async()=>new Response(body),()=>assert.rejects(metaRequest(page),clean('invalid_response')));
+ const controller=new AbortController();controller.abort();let calls=0;await run(async()=>{calls++;return Response.json({data:[]});},()=>assert.rejects(metaRequest(page,controller.signal),clean('aborted')));assert.equal(calls,0);
+});

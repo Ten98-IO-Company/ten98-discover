@@ -12,6 +12,13 @@ const secret = (maximum: number) => z.string().min(1).max(maximum).regex(/^[\x21
 const base = { appId: decimalId, appSecret: secret(512) };
 const token = secret(4096);
 const cursor = z.string().min(1).max(4096).refine(value => toUSVString(value) === value && !/[\x00-\x1f\x7f]/.test(value) && Buffer.byteLength(value) <= 4096);
+const report = z.enum(['account_daily', 'campaign_daily']);
+const day = z.string().length(10).regex(/^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}$(?![\s\S])/).refine(value => {
+  const date = new Date(value + 'T00:00:00Z');
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+});
+const commonReportFields = 'account_id,account_name,account_currency,date_start,date_stop,impressions,clicks,spend,actions,action_values';
+const reportFields = { account_daily: commonReportFields, campaign_daily: commonReportFields + ',campaign_id,campaign_name' };
 const input = z.discriminatedUnion('operation', [
   z.object({ ...base, operation: z.literal('exchangeCode'), code: secret(4096) }).strict(),
   z.object({ ...base, operation: z.literal('extendUserToken'), token }).strict(),
@@ -20,6 +27,10 @@ const input = z.discriminatedUnion('operation', [
   z.object({ ...base, operation: z.literal('accounts'), token, after: cursor.optional() }).strict(),
   z.object({ ...base, operation: z.literal('account'), token, accountId: decimalId }).strict(),
   z.object({ ...base, operation: z.literal('revoke'), token }).strict(),
+  z.object({ ...base, operation: z.literal('submitReport'), token, accountId: decimalId, report, from: day, to: day }).strict()
+    .refine(value => value.from <= value.to && Date.parse(value.to + 'T00:00:00Z') - Date.parse(value.from + 'T00:00:00Z') <= 30 * 86_400_000),
+  z.object({ ...base, operation: z.literal('reportStatus'), token, reportRunId: decimalId }).strict(),
+  z.object({ ...base, operation: z.literal('reportPage'), token, reportRunId: decimalId, report, after: cursor.optional() }).strict(),
 ]);
 export type MetaRequest = z.infer<typeof input>;
 export type MetaRateHints = { retryAfterSeconds: number | null; appUtilizationPercent: number | null; accountUtilizationPercent: number | null };
@@ -43,7 +54,7 @@ export class MetaRequestError extends FoundationError {
   constructor(reason: MetaFailure, options: { retryable?: boolean; code?: number | null; subcode?: number | null; rate?: MetaRateHints } = {}) {
     super(reason === 'invalid_request' ? 400 : reason === 'configuration' ? 503 : reason === 'aborted' ? 499 : reason === 'unauthorized' || reason === 'access_denied' ? 409 : reason === 'throttled' ? 429 : 502, messages[reason]);
     this.name = 'MetaRequestError'; this.reason = reason;
-    this.retryable = reason === 'throttled' || reason === 'timeout' || options.retryable === true;
+    this.retryable = options.retryable ?? (reason === 'throttled' || reason === 'timeout');
     this.reauthorize = reason === 'unauthorized' || reason === 'access_denied';
     this.providerCode = options.code ?? null; this.providerSubcode = options.subcode ?? null; this.rate = options.rate ?? emptyRate();
   }
@@ -57,7 +68,7 @@ function build(raw: MetaRequest) {
   let origin: URL;
   try { origin = new URL(getConfig().appUrl); } catch { throw new MetaRequestError('configuration'); }
   if (origin.protocol !== 'https:' && !fixture.getStore()) throw new MetaRequestError('configuration');
-  const query = new URLSearchParams(); let path: string, method = 'GET';
+  const query = new URLSearchParams(); let path: string, method = 'GET', body: string | undefined;
   switch (request.operation) {
     case 'exchangeCode':
       path = 'oauth/access_token'; query.set('client_id', request.appId); query.set('client_secret', request.appSecret);
@@ -72,13 +83,30 @@ function build(raw: MetaRequest) {
       query.set('appsecret_proof', createHmac('sha256', request.appSecret).update(request.token).digest('hex'));
       if (request.operation === 'permissions') path = 'me/permissions';
       else if (request.operation === 'revoke') { path = 'me/permissions'; method = 'DELETE'; }
+      else if (request.operation === 'submitReport') {
+        // Fixed read-report profile: callers cannot add filters, attribution overrides or ad mutations.
+        path = 'act_' + request.accountId + '/insights'; method = 'POST';
+        const form = new URLSearchParams({
+          fields: reportFields[request.report], level: request.report === 'account_daily' ? 'account' : 'campaign',
+          time_increment: '1', time_range: JSON.stringify({ since: request.from, until: request.to }),
+          action_breakdowns: JSON.stringify(['action_type']), action_attribution_windows: JSON.stringify(['7d_click', '1d_view']),
+        });
+        headers['content-type'] = 'application/x-www-form-urlencoded'; body = form.toString();
+      }
+      else if (request.operation === 'reportStatus') {
+        path = request.reportRunId; query.set('fields', 'id,account_id,async_status,async_percent_completion,date_start,date_stop');
+      }
+      else if (request.operation === 'reportPage') {
+        path = request.reportRunId + '/insights'; query.set('fields', reportFields[request.report]); query.set('limit', '500');
+        if (request.after) query.set('after', request.after);
+      }
       else {
         path = request.operation === 'accounts' ? 'me/adaccounts' : 'act_' + request.accountId;
         query.set('fields', 'id,account_id,name,currency,timezone_name,account_status');
         if (request.operation === 'accounts') { query.set('limit', '100'); if (request.after) query.set('after', request.after); }
       }
   }
-  return { url: graph + path + '?' + query.toString(), method, headers };
+  return { url: graph + path + '?' + query.toString(), method, headers, body };
 }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function rateHints(headers: Headers): MetaRateHints {
@@ -101,7 +129,7 @@ function rateHints(headers: Headers): MetaRateHints {
   } catch { /* A malformed usage hint cannot change report authority or invalidate valid data. */ }
   return result;
 }
-const idKeys = new Set(['id', 'account_id', 'app_id', 'user_id', 'report_run_id']);
+const idKeys = new Set(['id', 'account_id', 'app_id', 'user_id', 'report_run_id', 'campaign_id']);
 function parseJson(text: string): unknown {
   let nodes = 0;
   return JSON.parse(text, (key: string, value: unknown, context?: { source?: string }) => {
@@ -134,14 +162,14 @@ export async function metaRequest(raw: MetaRequest, callerSignal?: AbortSignal):
   let request: ReturnType<typeof build>;
   try { request = build(raw); } catch (error) { if (error instanceof MetaRequestError) throw error; throw new MetaRequestError('invalid_request'); }
   const timeout = AbortSignal.timeout(30_000), signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
-  const abortError = () => new MetaRequestError(callerSignal?.aborted ? 'aborted' : 'timeout');
+  const abortError = () => new MetaRequestError(callerSignal?.aborted ? 'aborted' : 'timeout', request.method === 'POST' ? { retryable: false } : {});
   if (signal.aborted) throw abortError();
   let rejectAbort!: (reason: MetaRequestError) => void;
   const abort = new Promise<never>((_, reject) => { rejectAbort = reject; });
   const onAbort = () => rejectAbort(abortError()); signal.addEventListener('abort', onAbort, { once: true });
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    const pending = (fixture.getStore() ?? fetch)(request.url, { method: request.method, headers: request.headers, redirect: 'error', credentials: 'omit', cache: 'no-store', signal });
+    const pending = (fixture.getStore() ?? fetch)(request.url, { method: request.method, headers: request.headers, body: request.body, redirect: 'error', credentials: 'omit', cache: 'no-store', signal });
     // An injected or nonconforming transport may ignore abort; discard its eventual response.
     void pending.then(response => { if (signal.aborted) void response.body?.cancel().catch(() => undefined); }, () => undefined);
     const response = await Promise.race([pending, abort]), rate = rateHints(response.headers);
@@ -151,7 +179,7 @@ export async function metaRequest(raw: MetaRequest, callerSignal?: AbortSignal):
     const length = response.headers.get('content-length'), type = response.headers.get('content-type');
     if (length !== null && (!/^[0-9]+$(?![\s\S])/.test(length) || Number(length) > maximum)) throw new MetaRequestError('invalid_response', { rate });
     if (type && !/^application\/json(?:\s*;\s*charset=utf-8)?\s*$(?![\s\S])/i.test(type)) throw providerFailure(response.status, null, rate) ?? new MetaRequestError('invalid_response', { rate });
-    // ponytail: auth/account pages are small; a fixed4MiB buffer avoids tiny-chunk object amplification.
+    // ponytail: each auth/account/report page is capped at4MiB; a fixed buffer avoids tiny-chunk object amplification.
     const bytes = Buffer.alloc(maximum); let size = 0;
     for (;;) {
       const part = await Promise.race([reader.read(), abort]); if (part.done) break;
@@ -167,8 +195,10 @@ export async function metaRequest(raw: MetaRequest, callerSignal?: AbortSignal):
     return { data, rate };
   } catch (error) {
     if (signal.aborted) throw abortError();
-    if (error instanceof MetaRequestError) throw error;
-    throw new MetaRequestError('unavailable', { retryable: true });
+    const failure = error instanceof MetaRequestError ? error : new MetaRequestError('unavailable', { retryable: true });
+    // A failed creation attempt may still have created a report. Only a new explicit import may resubmit.
+    if (request.method === 'POST') throw new MetaRequestError(failure.reason, { retryable: false, code: failure.providerCode, subcode: failure.providerSubcode, rate: failure.rate });
+    throw failure;
   } finally {
     signal.removeEventListener('abort', onAbort);
     if (reader) { void reader.cancel().catch(() => undefined); reader.releaseLock(); }

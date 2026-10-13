@@ -1,8 +1,9 @@
 # Meta report import workflow
 
-GPT-reviewed presentation contract, 2026-10-13. This document specifies the next
-bounded Kimi presentation task. Authorization, queue/lease handling and API DTO
-validation remain GPT-owned; this contract does not claim a working report screen.
+GPT-reviewed presentation contract, 2026-10-13. The bounded Kimi presentation
+task is implemented and independently accepted in [Meta reports](meta-reports.md#manual-report-acceptance-2026-10-13).
+Authorization, queue/lease handling and API DTO validation remain GPT-owned.
+This contract is not live-provider or full-feature acceptance.
 
 ## Journey and truthful states
 

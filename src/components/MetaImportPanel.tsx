@@ -1,0 +1,139 @@
+import {useEffect,useId,useRef,useState} from 'react';
+import {useBlocker} from '@tanstack/react-router';
+import {api,ApiError,errMsg} from '../lib/api';
+import {MetaImportView,type MetaImportSummary,type MetaImportTableRow} from './MetaImportView';
+
+type Role='owner'|'admin'|'editor'|'viewer';
+type Report='account_daily'|'campaign_daily';
+type Account={id:string;name:string;currency:string;timeZone:string;status:number};
+type Connection={id:string;name:string;revision:number;status:'select_account'|'ready'|'reconnect'|'disconnected'|'deleted';account:Account|null;scopes:string[];accessExpiresAt:string|null;dataAccessExpiresAt:string|null;validatedAt:string|null;updatedAt:string};
+type Source={provider:'meta_ads';accountId:string;accountName:string;currency:string;timeZone:string;graphVersion:'v26.0';report:Report;definitionVersion:1;level:'account'|'campaign';breakdowns:[];attribution:{mode:'meta_reported';requestedWindows:['7d_click','1d_view'];reportingPolicy:'meta_mixed';effectiveAdSetSettings:'unknown'}};
+type Import={id:string;connectionId:string;status:string;dataStatus:'pending'|'available'|'unavailable'|'expired';source:Source|null;from:string;to:string;requestedAt:string;completedAt:string|null;recordedRows:number;readableRows:number|null;coverage:'complete'|'partial'|'unavailable';warnings:string[];nextRetryAt:string|null;diagnosticCode:string|null};
+type Action={type:string;value:string|null;windows:Record<string,string|null>};
+type Row={date:string;accountId:string;campaignId:string|null;campaignName:string|null;impressions:string|null;clicks:string|null;spend:string|null;actions:Action[]|null;actionValues:Action[]|null};
+type Props={userId:string;workspaceId:string;projectId:string;onUnauthorized:()=>void;onConnections:()=>void};
+type Intent={kind:'start';connectionId:string;body:{requestId:string;revision:number;report:Report;from:string;to:string}}|{kind:'cancel';connectionId:string;importId:string;body:{requestId:string}};
+type Operation={controller:AbortController;signal:AbortSignal;write:boolean};
+type State={role:Role|null;loaded:boolean;reading:boolean;writeState:'idle'|'submitting'|'unknown';error:string;notice:string;sources:Connection[];source:Connection|null;sourceCursors:(string|undefined)[];nextSources:string|null;report:Report;from:string;to:string;imports:Import[];importCursors:(string|undefined)[];nextImports:string|null;selected:Import|null;rows:Row[];rowsLoaded:boolean;rowCursors:(string|undefined)[];nextRows:string|null;focus:boolean};
+const obj=(v:unknown):v is Record<string,any>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+const text=(v:unknown,max=2048,min=0):v is string=>typeof v==='string'&&v.length>=min&&v.length<=max&&!/[\x00-\x1f\x7f\uD800-\uDFFF]/u.test(v);
+const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)&&v.length===36;
+const id=(v:unknown):v is string=>typeof v==='string'&&/^[1-9][0-9]{0,39}$(?![\s\S])/.test(v);
+const role=(v:unknown):v is Role=>['owner','admin','editor','viewer'].includes(v as string);
+const revision=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>=1&&Number(v)<=2147483647;
+const timestamp=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$/.test(v)&&Number.isFinite(Date.parse(v));
+const nullableTime=(v:unknown)=>v===null||timestamp(v);
+const day=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\d$/.test(v)&&v.slice(0,4)!=='0000'&&Number.isFinite(Date.parse(v+'T00:00:00Z'))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v;
+const currency=(v:unknown)=>typeof v==='string'&&/^[A-Z]{3}$/.test(v);
+const count=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>=0&&Number(v)<=25000;
+const cursor=(v:unknown)=>v===null||text(v,1024,1);
+const decimal=(v:unknown)=>v===null||typeof v==='string'&&/^(?:0|[1-9][0-9]{0,29})(?:\.[0-9]{1,18})?$(?![\s\S])/.test(v);
+const integer=(v:unknown)=>v===null||typeof v==='string'&&/^(?:0|[1-9][0-9]{0,29})$(?![\s\S])/.test(v);
+const kinds=['account_daily','campaign_daily'];
+const statuses=['queued','submitting','waiting','reading','completed','partial','failed','denied','cancelled','submission_unknown'];
+const active=['queued','submitting','waiting','reading'];
+const windows=['1d_click','7d_click','28d_click','1d_view','7d_view','28d_view'];
+function account(v:unknown):v is Account{return obj(v)&&id(v.id)&&text(v.name,512,1)&&currency(v.currency)&&text(v.timeZone,120,1)&&Number.isSafeInteger(v.status)&&v.status>=0;}
+function connection(v:unknown):v is Connection{return obj(v)&&uuid(v.id)&&text(v.name,120,1)&&revision(v.revision)&&['select_account','ready','reconnect','disconnected','deleted'].includes(v.status)&&(v.account===null||account(v.account))&&(v.status!=='ready'||v.account!==null)&&(v.status!=='deleted'||v.account===null)&&Array.isArray(v.scopes)&&v.scopes.length<=100&&v.scopes.every((s:unknown)=>text(s,100,1))&&nullableTime(v.accessExpiresAt)&&nullableTime(v.dataAccessExpiresAt)&&nullableTime(v.validatedAt)&&timestamp(v.updatedAt);}
+function source(v:unknown):v is Source{return obj(v)&&v.provider==='meta_ads'&&id(v.accountId)&&text(v.accountName,512,1)&&currency(v.currency)&&text(v.timeZone,120,1)&&v.graphVersion==='v26.0'&&kinds.includes(v.report)&&v.definitionVersion===1&&v.level===(v.report==='account_daily'?'account':'campaign')&&Array.isArray(v.breakdowns)&&v.breakdowns.length===0&&obj(v.attribution)&&v.attribution.mode==='meta_reported'&&v.attribution.reportingPolicy==='meta_mixed'&&v.attribution.effectiveAdSetSettings==='unknown'&&Array.isArray(v.attribution.requestedWindows)&&v.attribution.requestedWindows.length===2&&v.attribution.requestedWindows[0]==='7d_click'&&v.attribution.requestedWindows[1]==='1d_view';}
+function metadata(v:unknown):v is Import{
+ if(!obj(v)||!uuid(v.id)||!uuid(v.connectionId)||!statuses.includes(v.status)||!['pending','available','unavailable','expired'].includes(v.dataStatus)||(v.source!==null&&!source(v.source))||!day(v.from)||!day(v.to)||v.from>v.to||Date.parse(v.to)-Date.parse(v.from)>30*86400000||!timestamp(v.requestedAt)||!nullableTime(v.completedAt)||!count(v.recordedRows)||(v.readableRows!==null&&!count(v.readableRows))||!['complete','partial','unavailable'].includes(v.coverage)||!Array.isArray(v.warnings)||v.warnings.length>50||!v.warnings.every((s:unknown)=>text(s,100,1))||!nullableTime(v.nextRetryAt)||(v.diagnosticCode!==null&&!text(v.diagnosticCode,100,1)))return false;
+ if(v.source===null)return v.dataStatus==='unavailable'&&v.diagnosticCode==='data_deleted'&&v.readableRows===null&&v.coverage==='unavailable'&&v.warnings.length===0&&v.nextRetryAt===null;
+ if(v.diagnosticCode==='data_deleted')return false;
+ if(v.dataStatus==='available')return ['completed','partial'].includes(v.status)&&v.readableRows===v.recordedRows&&v.coverage===(v.status==='completed'?'complete':'partial');
+ return v.readableRows===null&&v.coverage==='unavailable'&&(v.dataStatus!=='pending'||active.includes(v.status));
+}
+function actions(v:unknown):v is Action[]|null{return v===null||Array.isArray(v)&&v.length<=200&&v.every(a=>obj(a)&&text(a.type,200,1)&&decimal(a.value)&&obj(a.windows)&&Object.keys(a.windows).length<=6&&Object.entries(a.windows).every(([k,n])=>windows.includes(k)&&decimal(n)))&&new Set(v.map(a=>a.type)).size===v.length;}
+function row(v:unknown,report:Import):v is Row{return obj(v)&&day(v.date)&&v.date>=report.from&&v.date<=report.to&&v.accountId===report.source?.accountId&&(report.source?.report==='account_daily'?v.campaignId===null&&v.campaignName===null:id(v.campaignId)&&(v.campaignName===null||text(v.campaignName,512)))&&integer(v.impressions)&&integer(v.clicks)&&decimal(v.spend)&&actions(v.actions)&&actions(v.actionValues);}
+const invalid=()=>new Error('The saved response could not be verified. Reload reports before continuing.');
+const label=(v:string|null)=>v===null?'Not recorded':new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(v));
+const statusLabels:Record<string,string>={queued:'Queued',submitting:'Submitting',waiting:'Waiting for Meta',reading:'Reading report pages',completed:'Completed',partial:'Partial report',failed:'Failed',denied:'Source unavailable',cancelled:'Cancelled locally',submission_unknown:'Submission not confirmed'};
+const diagnostics:Record<string,string>={data_deleted:'The source grant requested local deletion. Report data is unavailable.',grant_deleted:'The source grant was deleted. No further data will be collected.',cancelled_locally:'Local work was cancelled. A request already sent to Meta may continue there.',source_unavailable:'The source is no longer available for this import.',deadline_reached:'The report reached its collection deadline.',page_limit:'The import reached its page limit.',poll_limit:'Collection stopped after its bounded status checks.',generation_limit:'This import reached its processing limit.',app_throttled:'Meta asked this app to slow down.',account_throttled:'Meta asked this account to slow down.',provider_retry:'A temporary provider response delayed collection.',submission_unconfirmed:'Submission was not confirmed. It will not be sent again automatically.',invalid_provider_report:'Meta returned an unsupported report.',provider_unavailable:'Meta could not be reached to complete this report.',provider_access_lost:'Meta access changed. Review the connection before a new import.',provider_report_failed:'Meta reported that this report failed.'};
+const warningLabels:Record<string,string>={current_day_provisional:'The current account-local day is provisional.',deadline_limit:'Collection stopped at its deadline.',row_limit:'Collection stopped at the row or page limit.'};
+function defaultDates(zone:string){try{const parts=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()),get=(key:string)=>parts.find(p=>p.type===key)?.value;const today=`${get('year')}-${get('month')}-${get('day')}`;if(!day(today))return {from:'',to:''};const end=Date.parse(today+'T00:00:00Z')-86400000;return {from:new Date(end-27*86400000).toISOString().slice(0,10),to:new Date(end).toISOString().slice(0,10)};}catch{return {from:'',to:''};}}
+const qs=(value:string|undefined)=>value?'?'+new URLSearchParams({cursor:value}):'';
+
+export function MetaImportPanel(props:Props){return <Controller key={`${props.userId}:${props.workspaceId}:${props.projectId}`} {...props}/>;}
+function Controller(props:Props){
+ const prefix=useId()+'-meta-import-',base=`/api/projects/${props.projectId}/meta`;
+ const initial=():State=>({role:null,loaded:false,reading:false,writeState:'idle',error:'',notice:'',sources:[],source:null,sourceCursors:[undefined],nextSources:null,report:'account_daily',from:'',to:'',imports:[],importCursors:[undefined],nextImports:null,selected:null,rows:[],rowsLoaded:false,rowCursors:[undefined],nextRows:null,focus:false});
+ const [s,setState]=useState(initial),state=useRef(s),alive=useRef(true),operation=useRef<Operation|null>(null),intent=useRef<Intent|null>(null),expired=useRef(new Set<string>()),deleted=useRef(new Set<string>()),sourceRecheck=useRef(new Set<string>());
+ function patch(value:Partial<State>){if(alive.current){state.current={...state.current,...value};setState(state.current);}}
+ function invalidate(){operation.current?.controller.abort();operation.current=null;}
+ const locked=()=>operation.current?.write===true||intent.current!==null;
+ useBlocker({withResolver:false,shouldBlockFn:()=>locked(),enableBeforeUnload:()=>locked()});
+ useEffect(()=>{alive.current=true;void loadSources();return()=>{alive.current=false;invalidate();intent.current=null;};},[]);
+ useEffect(()=>{if(s.focus){document.getElementById(prefix+'heading')?.focus();patch({focus:false});}},[s.focus]);
+ function begin(write=false){if(!alive.current||operation.current?.write||!write&&intent.current)return null;invalidate();const controller=new AbortController(),value={controller,signal:AbortSignal.any([controller.signal,AbortSignal.timeout(150000)]),write};operation.current=value;patch({reading:!write,error:'',notice:'',...(write?{writeState:'submitting' as const}:{})});return value;}
+ const current=(value:Operation)=>alive.current&&operation.current===value;
+ function finish(value:Operation){if(current(value)){operation.current=null;patch({reading:false,...(state.current.writeState==='submitting'?{writeState:'idle' as const}:{})});}}
+ function purge(message:string,unauthorized=false){invalidate();intent.current=null;patch({...initial(),loaded:true,error:message});if(unauthorized)props.onUnauthorized();}
+ function failed(error:unknown,value:Operation){if(!current(value))return;if(error instanceof ApiError&&[401,403,404].includes(error.status)){purge(errMsg(error),error.status===401);return;}patch({error:error instanceof Error&&error.name==='AbortError'?'The read timed out. Reload reports to try again.':errMsg(error)});}
+ function clearRows(){patch({selected:null,rows:[],rowsLoaded:false,rowCursors:[undefined],nextRows:null});}
+ function remember(item:Import){if(item.dataStatus==='expired')expired.current.add(item.id);if(item.source===null&&!deleted.current.has(item.id)){deleted.current.add(item.id);sourceRecheck.current.add(item.connectionId);patch({role:null,source:null,sources:state.current.sources.filter(c=>c.id!==item.connectionId)});}return mask(item);}
+ function mask(item:Import):Import{if(deleted.current.has(item.id))return {...item,source:null,dataStatus:'unavailable',readableRows:null,coverage:'unavailable',warnings:[],diagnosticCode:'data_deleted'};if(expired.current.has(item.id))return {...item,dataStatus:'expired',readableRows:null,coverage:'unavailable'};return item;}
+ function absorb(items:Import[]){const rows=items.map(remember),selected=state.current.selected?mask(state.current.selected):null;patch({imports:state.current.imports.map(mask),selected,...(selected&&selected.dataStatus!=='available'?{rows:[],nextRows:null,rowsLoaded:false}:{})});return rows;}
+ async function recheckSource(value:Operation,sourceId:string){
+  if(!sourceRecheck.current.has(sourceId))return;patch({role:null,source:null});
+  const detail=await api<unknown>(`${base}/connections/${sourceId}`,{signal:value.signal});if(!current(value))return;
+  if(!obj(detail)||!role(detail.role)||!connection(detail.connection)||detail.connection.id!==sourceId)throw invalid();
+  sourceRecheck.current.delete(sourceId);patch({role:detail.role,source:detail.connection,sources:[...state.current.sources.filter(c=>c.id!==sourceId),detail.connection]});
+ }
+ async function loadSources(cursors:(string|undefined)[]=[undefined]){
+  const value=begin();if(!value)return;patch({...initial(),reading:true,focus:true});
+  try{const data=await api<unknown>(base+qs(cursors.at(-1)),{signal:value.signal});if(!current(value))return;
+   if(!obj(data)||!role(data.role)||!Array.isArray(data.connections)||data.connections.length>50||!data.connections.every(connection)||new Set(data.connections.map(c=>c.id)).size!==data.connections.length||!cursor(data.nextCursor))throw invalid();
+   patch({role:data.role,loaded:true,sources:data.connections,sourceCursors:cursors,nextSources:data.nextCursor});
+  }catch(error){failed(error,value);}finally{finish(value);}
+ }
+ async function loadHistory(sourceId:string,cursors:(string|undefined)[]=[undefined],refreshSource=false,selectedId?:string){
+  if(!uuid(sourceId))return;const value=begin();if(!value)return;const old=state.current.source;clearRows();patch({imports:[],nextImports:null,importCursors:cursors,...(refreshSource?{role:null,source:null}:{}),focus:true});
+  try{
+   if(refreshSource){const detail=await api<unknown>(`${base}/connections/${sourceId}`,{signal:value.signal});if(!current(value))return;if(!obj(detail)||!role(detail.role)||!connection(detail.connection)||detail.connection.id!==sourceId)throw invalid();
+    const c=detail.connection;patch({role:detail.role,source:c,sources:state.current.sources.map(item=>item.id===c.id?c:item),...(old?.id!==c.id?{report:'account_daily',...defaultDates(c.account?.timeZone??'')}: {})});
+   }
+   const data=await api<unknown>(`${base}/connections/${sourceId}/imports`+qs(cursors.at(-1)),{signal:value.signal});if(!current(value))return;
+   if(!obj(data)||!role(data.role)||!Array.isArray(data.imports)||data.imports.length>50||!data.imports.every((item:unknown)=>metadata(item)&&item.connectionId===sourceId)||new Set(data.imports.map(i=>i.id)).size!==data.imports.length||!cursor(data.nextCursor))throw invalid();
+   const imports=absorb(data.imports);patch({role:sourceRecheck.current.has(sourceId)?null:data.role,imports,importCursors:cursors,nextImports:data.nextCursor});
+   await recheckSource(value,sourceId);if(!current(value))return;
+   if(selectedId)await readWithin(value,sourceId,selectedId,[undefined]);
+  }catch(error){failed(error,value);}finally{finish(value);}
+ }
+ async function readWithin(value:Operation,sourceId:string,importId:string,cursors:(string|undefined)[]){
+  const data=await api<unknown>(`${base}/imports/${importId}`+qs(cursors.at(-1)),{signal:value.signal});if(!current(value))return;
+  if(!obj(data)||!role(data.role)||!metadata(data.import)||data.import.id!==importId||data.import.connectionId!==sourceId||!Array.isArray(data.rows)||data.rows.length>50||!data.rows.every((item:unknown)=>row(item,data.import))||new Set(data.rows.map(r=>r.date+':'+(r.campaignId??''))).size!==data.rows.length||!cursor(data.nextCursor)||data.import.dataStatus!=='available'&&(data.rows.length!==0||data.nextCursor!==null))throw invalid();
+  if(data.import.dataStatus==='available'&&(data.import.readableRows===null||data.rows.length>data.import.readableRows||data.rows.length===0&&(data.nextCursor!==null||cursors.length===1&&data.import.readableRows>0)))throw invalid();
+  const item=remember(data.import);patch({role:sourceRecheck.current.has(sourceId)?null:data.role,selected:item,rows:item.dataStatus==='available'?data.rows:[],rowsLoaded:true,rowCursors:cursors,nextRows:item.dataStatus==='available'?data.nextCursor:null,imports:state.current.imports.map(old=>old.id===item.id?item:mask(old))});
+  await recheckSource(value,sourceId);
+ }
+ async function readImport(id:string,cursors:(string|undefined)[]=[undefined],sourceId=state.current.source?.id,notice=''){if(!sourceId||!uuid(id))return;const value=begin();if(!value)return;patch({selected:null,rows:[],rowsLoaded:false,rowCursors:cursors,nextRows:null,focus:true});try{await readWithin(value,sourceId,id,cursors);if(current(value)&&notice)patch({notice});}catch(error){failed(error,value);}finally{finish(value);}}
+ function changeSource(id:string){if(locked()||state.current.reading)return;if(!id){invalidate();clearRows();patch({source:null,imports:[],nextImports:null,importCursors:[undefined],from:'',to:''});return;}if(state.current.sources.some(c=>c.id===id))void loadHistory(id,[undefined],true);}
+ async function send(saved:Intent){
+  if(!alive.current||operation.current?.write||state.current.role!=='owner')return;intent.current=saved;const value=begin(true);if(!value)return;let accepted:string|null=null;
+  try{const path=saved.kind==='start'?`${base}/connections/${saved.connectionId}/imports`:`${base}/imports/${saved.importId}/cancel`;const data=await api<unknown>(path,{method:'POST',body:saved.body,signal:value.signal});if(!current(value))return;
+   if(!obj(data)||!role(data.role))throw invalid();if(data.role!=='owner'){purge('Your role changed. Reload reports to review your current access.');return;}
+   if(!obj(data.acknowledgement)||data.acknowledgement.requestId!==saved.body.requestId||!uuid(data.acknowledgement.importId)||!metadata(data.import)||data.import.id!==data.acknowledgement.importId||data.import.connectionId!==saved.connectionId||typeof data.replayed!=='boolean')throw invalid();
+   const ack=data.acknowledgement;
+   if(saved.kind==='start'){if(ack.connectionId!==saved.connectionId||ack.revision!==saved.body.revision||ack.report!==saved.body.report||ack.from!==saved.body.from||ack.to!==saved.body.to||data.import.from!==saved.body.from||data.import.to!==saved.body.to||data.import.source!==null&&data.import.source.report!==saved.body.report)throw invalid();}
+   else if(ack.importId!==saved.importId)throw invalid();
+   accepted=data.import.id;const item=remember(data.import);intent.current=null;patch({writeState:'idle',selected:item,rows:[],rowsLoaded:false,rowCursors:[undefined],nextRows:null,imports:[item,...state.current.imports.filter(old=>old.id!==item.id)].slice(0,50),notice:saved.kind==='start'?'Import request acknowledged. This is its latest saved state.':item.status==='cancelled'?'Local import cancelled. Requests already sent to Meta may continue there.':'Cancellation request acknowledged. This import had already reached its current state.'});
+  }catch(error){if(!current(value))return;
+   if(error instanceof ApiError&&error.status>=400&&error.status<500&&![408,429].includes(error.status)){intent.current=null;patch({writeState:'idle'});if(error.status===409)purge('This source or import changed. Reload reports and review it before making another request.');else failed(error,value);}
+   else patch({writeState:'unknown',error:'The result is not confirmed. Retry the same request to check its saved result.'});
+  }finally{finish(value);}
+  if(accepted&&alive.current)void readImport(accepted,[undefined],saved.connectionId,state.current.notice);
+ }
+ function hasActive(){const c=state.current.source;return !!c&&[...state.current.imports,...(state.current.selected?[state.current.selected]:[])].some(i=>i.connectionId===c.id&&i.dataStatus==='pending');}
+ function start(){const c=state.current.source;if(locked()||state.current.reading||state.current.role!=='owner'||c?.status!=='ready'||!c.account||hasActive())return;
+  if(!day(state.current.from)||!day(state.current.to)||state.current.from>state.current.to||Date.parse(state.current.to)-Date.parse(state.current.from)>30*86400000){patch({error:'Choose a valid range of at most 31 account-local calendar days.'});return;}
+  void send({kind:'start',connectionId:c.id,body:{requestId:crypto.randomUUID(),revision:c.revision,report:state.current.report,from:state.current.from,to:state.current.to}});
+ }
+ function cancel(){const item=state.current.selected;if(locked()||state.current.reading||state.current.role!=='owner'||!item||item.dataStatus!=='pending')return;void send({kind:'cancel',connectionId:item.connectionId,importId:item.id,body:{requestId:crypto.randomUUID()}});}
+ function reload(){if(locked())return;const c=state.current.source;if(c)void loadHistory(c.id,state.current.importCursors,true,state.current.selected?.id);else void loadSources(state.current.sourceCursors);}
+ const busy=s.reading||s.writeState!=='idle',item=s.selected?mask(s.selected):null;
+ const summary:MetaImportSummary|null=item?{id:item.id,statusLabel:statusLabels[item.status],dataStateLabel:{pending:'Not yet available',available:'Saved report',unavailable:'Data unavailable',expired:'Data expired'}[item.dataStatus],rangeLabel:`${item.from} to ${item.to} (account-local dates)`,requestedAtLabel:label(item.requestedAt),completedAtLabel:label(item.completedAt),sourceLabel:item.source?`${item.source.accountName} · Account ${item.source.accountId}`:'Source unavailable',currencyLabel:item.source?.currency??'Unavailable',timeZoneLabel:item.source?.timeZone??'Unavailable',attributionLabel:item.source?'Meta reported · requested 7-day click and 1-day view · mixed reporting · effective ad-set settings unknown':'Unavailable',countsLabel:`${item.recordedRows} recorded rows · ${item.readableRows===null?'readable count unavailable':item.readableRows+' readable rows'}`,diagnosticLabel:item.diagnosticCode?(diagnostics[item.diagnosticCode]??'This import could not collect all requested data. Review its saved status.'):'',warnings:item.warnings.map(w=>warningLabels[w]??'Meta returned a report warning.'),state:item.dataStatus==='available'&&!s.rowsLoaded?'unavailable':item.dataStatus,coverage:item.coverage}:null;
+ const formatActions=(values:Action[]|null)=>values?.flatMap(a=>[{label:a.type,value:a.value??'Unavailable'},...Object.entries(a.windows).map(([window,value])=>({label:`${a.type} · ${window.replace('_',' ')}`,value:value??'Unavailable'}))])??null;
+ const rows:MetaImportTableRow[]=item?.dataStatus==='available'&&s.rowsLoaded?s.rows.map((r,i)=>({key:`${item.id}:${s.rowCursors.at(-1)??'first'}:${i}`,date:r.date,campaignLabel:r.campaignId?`${r.campaignName??'Name unavailable'} · ${r.campaignId}`:'Account total',impressions:r.impressions??'Unavailable',clicks:r.clicks??'Unavailable',spend:r.spend??'Unavailable',actions:formatActions(r.actions),actionValues:formatActions(r.actionValues)})):[];
+ return <MetaImportView prefix={prefix} role={s.role} loaded={s.loaded} reading={s.reading} writeState={s.writeState} error={s.error} notice={s.notice} sources={s.sources.map(c=>({id:c.id,label:`${c.name} · ${c.account?.name??'No account selected'}`}))} selectedSourceId={s.source?.id??''} source={s.source?{name:s.source.name,accountId:s.source.account?.id??'Unavailable',currency:s.source.account?.currency??'Unavailable',timeZone:s.source.account?.timeZone??'Unavailable',statusLabel:{ready:'Account selected',select_account:'Account selection needed',reconnect:'Reconnect needed',disconnected:'Disconnected',deleted:'Deleted locally'}[s.source.status],help:s.source.status==='ready'?(hasActive()?'An import is in progress for this source. Select it in history to review or cancel it.':'Importing is explicit. Dates follow this account’s time zone.'):'Retained reports can still be read. Manage connections before starting a new import.'}:null} canPreviousSources={s.sourceCursors.length>1} canNextSources={s.nextSources!==null} report={s.report} from={s.from} to={s.to} canImport={s.role==='owner'&&s.source?.status==='ready'&&s.source.account!==null&&!hasActive()} canCancel={s.role==='owner'&&item?.dataStatus==='pending'} canRetrySame={intent.current!==null&&s.role==='owner'} pendingActionLabel={intent.current?.kind==='cancel'?'Cancelling local import…':'Requesting a Meta report…'} imports={(item&&!s.imports.some(i=>i.id===item.id)?[item,...s.imports]:s.imports).map(i=>({id:i.id,label:`${i.from} to ${i.to} · ${statusLabels[i.status]} · requested ${label(i.requestedAt)}`}))} selectedImportId={item?.id??''} canPreviousImports={s.importCursors.length>1} canNextImports={s.nextImports!==null} summary={summary} rows={rows} canPreviousRows={s.rowCursors.length>1} canNextRows={s.nextRows!==null}
+  onSource={changeSource} onPreviousSources={()=>{if(!busy&&s.sourceCursors.length>1)void loadSources(s.sourceCursors.slice(0,-1));}} onNextSources={()=>{if(!busy&&s.nextSources)void loadSources([...s.sourceCursors,s.nextSources]);}} onReport={report=>{if(!busy&&kinds.includes(report))patch({report});}} onFrom={from=>{if(!busy)patch({from});}} onTo={to=>{if(!busy)patch({to});}} onImport={start} onSelectImport={id=>{if(busy)return;if(!id)clearRows();else if(s.imports.some(i=>i.id===id))void readImport(id);}} onPreviousImports={()=>{if(!busy&&s.source&&s.importCursors.length>1)void loadHistory(s.source.id,s.importCursors.slice(0,-1));}} onNextImports={()=>{if(!busy&&s.source&&s.nextImports)void loadHistory(s.source.id,[...s.importCursors,s.nextImports]);}} onPreviousRows={()=>{if(!busy&&item&&s.rowCursors.length>1)void readImport(item.id,s.rowCursors.slice(0,-1));}} onNextRows={()=>{if(!busy&&item&&s.nextRows)void readImport(item.id,[...s.rowCursors,s.nextRows]);}} onCancel={cancel} onRetrySame={()=>{if(s.writeState==='unknown'&&intent.current&&!operation.current)void send(intent.current);}} onReload={reload} onConnections={()=>{if(!locked()){invalidate();patch({reading:false});props.onConnections();}}}/>;
+}
