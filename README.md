@@ -10,7 +10,9 @@ Native Meta connections now support manual daily reports, latest complete daily 
 
 AI insights analyzes retained prompt answers using the current brand and competitor context. It separates visibility, share of voice and provider citation hits, with eligibility coverage, actual daily observations, filters, execution drilldown and CSV exports. [Adjacent-period comparisons](docs/ai-period-comparison.md) compare equivalent prompt/model/settings cells, with explicit coverage and unavailable-change states. Source-compatible carried trends, captured historical identities and additional provider coverage remain required; see [AI insights](docs/ai-insights.md).
 
-[Citation analysis](docs/citation-analysis.md) is under review: retained URL/domain/category reports, source filters, annotation evidence, CSV and inline domain tracking have local backend/controller acceptance. Two presentation capability-handler fixes remain before accepting or deploying the interface.
+[Citation analysis](docs/citation-analysis.md) includes retained URL/domain/category reports, source filters, annotation evidence, CSV and inline domain tracking. Backend, presentation, controller and production-navigation checks pass locally; this increment has not been deployed to the preserved preview.
+
+[Specialized citation reports](docs/citation-specializations.md) group retained Reddit communities, Shopping labels and search-query links, with evidence-linked citation gaps and full-report CSV. Service, browser and production-navigation checks pass locally; real-provider and operational release acceptance remain. Retained links do not prove Google consumer module placement.
 
 Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, broader rank reporting, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
@@ -43,6 +45,7 @@ The first usable release must reach the complete technical capability baseline o
 21. [Retained-answer AI insights and measurement limits](docs/ai-insights.md)
 22. [Adjacent-period AI comparisons and evidence drilldown](docs/ai-period-comparison.md)
 23. [Retained citation analysis, domain tracking and acceptance checkpoint](docs/citation-analysis.md)
+24. [Specialized citation reports and gap-evidence acceptance](docs/citation-specializations.md)
 
 ## Product direction
 

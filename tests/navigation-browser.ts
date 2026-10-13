@@ -419,6 +419,48 @@ try {
   assert.deepEqual((await pool.query('SELECT * FROM provider_request WHERE id=$1',[previousRun])).rows[0],previousFinancialBefore)
   console.log('PASS navigation: owner/viewer adjacent closed-period equal-cell rates and CSV; exact current/prior receipts return to fresh selected cell/cohort/outcome and preserve Insights filters.')
 
+  // Extend the retained fixture only after the existing single-annotation checks.
+  // No provider request, quote, job or new financial record is created.
+  const redditUrl='https://www.reddit.com/r/NavigationFixture/comments/retained/example?fixture=1#annotation'
+  await pool.query("UPDATE prompt_execution SET result=jsonb_set(result,'{citations}',(result->'citations')||$2::jsonb) WHERE id=$1",[insightRun,JSON.stringify([{url:redditUrl,title:'Retained Reddit navigation annotation'}])])
+  const specializedEndpoint=`/api/projects/${b1}/prompt-insights/citation-specializations`
+  const specializedRead=()=>page.waitForResponse((response:any)=>new URL(response.url()).pathname===specializedEndpoint&&response.request().method()==='GET')
+  await page.setViewportSize({width:360,height:900})
+  const specializedEntry=page.getByRole('button',{name:'Specialized citation reports',exact:true})
+  await specializedEntry.scrollIntoViewIfNeeded();assert.equal(await specializedEntry.isEnabled(),true)
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
+  const [specializedResponse]=await Promise.all([specializedRead(),specializedEntry.click()])
+  assert.equal(specializedResponse.status(),200)
+  const specialized=await specializedResponse.json();assert.equal(specialized.role,'viewer');assert.equal(specialized.current.coverage.eligible,1)
+  assert.equal(specialized.page.kind,'reddit');assert.equal(specialized.page.rows.length,1)
+  assert.equal(specialized.page.rows[0].communityKey,'r/navigationfixture');assert.equal(specialized.page.rows[0].current.annotations,1)
+  assert.deepEqual([specialized.filters.from,specialized.filters.to,specialized.filters.model,specialized.filters.promptId,specialized.filters.tag],[currentDay,currentDay,'openai/gpt-4o-mini',insightPrompt.id,'navigation-comparison'])
+  await heading('Reddit communities');await page.getByRole('region',{name:'Group comparison results',exact:true}).getByText('r/navigationfixture',{exact:true}).waitFor()
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
+  await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'private/navigation-browser/ai-specializations-360.png',fullPage:true})
+  await page.setViewportSize({width:1440,height:900})
+  await page.getByRole('button',{name:/^Current pages for r\/navigationfixture /}).click();await heading('Community pages')
+  await page.getByText('Retained Reddit navigation annotation',{exact:true}).waitFor()
+  await page.getByRole('button',{name:'View community annotations',exact:true}).click();await heading('Retained annotations')
+  const specializedRows=page.getByRole('region',{name:'Retained annotation evidence',exact:true})
+  await specializedRows.getByText('Retained Reddit navigation annotation',{exact:true}).waitFor()
+  assert.equal(await specializedRows.getByRole('link',{name:redditUrl,exact:true}).getAttribute('href'),redditUrl)
+  await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'private/navigation-browser/ai-specializations-evidence-1440.png',fullPage:true})
+  await specializedRows.getByRole('button',{name:/^Open saved comparison for /}).click();await page.getByText(insightAnswer,{exact:true}).waitFor()
+  const beforeSpecializedReturn=requests.length
+  await page.getByRole('button',{name:'Back to specialized citations',exact:true}).click();await heading('Retained annotations')
+  await specializedRows.getByText('Retained Reddit navigation annotation',{exact:true}).waitFor();assert.ok(requests.slice(beforeSpecializedReturn).includes(specializedEndpoint))
+  await page.getByRole('button',{name:'Back to previous report',exact:true}).click();await heading('Community pages')
+  await page.getByRole('button',{name:'Back to previous report',exact:true}).click();await heading('Reddit communities')
+  const beforeSpecializedBack=requests.length
+  await page.getByRole('button',{name:'Back to insights',exact:true}).click();await heading('AI insights')
+  await page.getByRole('region',{name:'Entity metrics',exact:true}).getByText('1 / 1 (100%)',{exact:true}).first().waitFor()
+  assert.ok(requests.slice(beforeSpecializedBack).includes(`/api/projects/${b1}/prompt-insights`))
+  for(const [label,value]of [['From',currentDay],['To',currentDay],['Timezone','UTC'],['Model','openai/gpt-4o-mini'],['Prompt',insightPrompt.id],['Current tag','navigation-comparison']])assert.equal(await page.getByLabel(label,{exact:true}).inputValue(),value)
+  assert.equal(new URL(page.url()).searchParams.get('view'),'ai-insights');assert.equal(page.url().includes(specialized.page.rows[0].id),false)
+  await page.setViewportSize({width:1280,height:900})
+  console.log('PASS navigation: viewer/mobile specialized citations entry, real retained Reddit group/pages/evidence and exact saved receipt return through fresh filtered Insights; no provider work.')
+
   // Back must recompute current context, rather than restore cached denominators.
   await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click();await page.getByText(insightAnswer,{exact:true}).waitFor()
   await updateProjectContext(b1,other.id,{requestId:randomUUID(),revision:1,updates:[{kind:'profile',name:'Renamed insight brand',aliases:[]}]})

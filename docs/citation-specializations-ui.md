@@ -1,6 +1,6 @@
 # Specialized citation reports — interface contract
 
-Status: original presentation contract for review; implementation and browser acceptance are pending. This read-only P19 increment uses retained annotations, not a new provider request or a fetched source page. It does not complete the full release plan or capture Google consumer shopping modules.
+Status: implemented locally with ten presentation and ten controller browser groups passing on 2026-10-14; see the [acceptance record](citation-specializations.md#local-implementation-and-acceptance--2026-10-14). All19 production navigation groups also pass; operational release acceptance remains separate. This read-only P19 increment uses retained annotations, not a new provider request or a fetched source page. It does not complete the full release plan or capture Google consumer shopping modules.
 
 ## Journey and protected controller
 

@@ -1,4 +1,4 @@
-import type {CitationReport,CitationFilters,CitationNavigation,CitationCount,CitationAxes,CitationPeriod} from '../server/prompt-citations';
+import type {CitationReport,CitationFilters,CitationNavigation,CitationCount,CitationAxes,CitationPeriod,CitationEvidence} from '../server/prompt-citations';
 
 // Browser-side enum values only: never import the server's domain lists/classifier.
 export const citationPublishers=['editorial','reviews','ecommerce','social','developer','pr','reference','institutional','other'] as const;
@@ -98,13 +98,23 @@ function report(v:unknown,f:CitationFilters,n:CitationNavigation,pageIndex:numbe
     });
   }
   if(n.view!=='evidence'||!n.period||v.totalRows>v[n.period].annotations||!n.urlId&&!n.domainId&&v.totalRows!==v[n.period].annotations)return false;
-  return rows.every((r:any)=>{
-    if(!object(r)||!hex(r.id)||!hex(r.urlId)||![r.executionId,r.comparisonId,r.promptId,r.versionId].every(uuid)||r.period!==n.period||!eligible(r.executionId,r.period)||!stamp(r.requestedAt)||!day(r.date)||localDay(r.requestedAt)!==r.date||r.date<v[r.period].from||r.date>v[r.period].to||!models.includes(r.model)||f.model!==null&&r.model!==f.model||f.promptId!==null&&r.promptId!==f.promptId||!integer(r.retainedCitationIndex,99)||!retained(r.retainedUrl)||(r.retainedTitle!==null&&!prose(r.retainedTitle))||!prose(r.groupedUrl,20480)||citationSafeHref(r.groupedUrl)===null||r.hostname!==citationRetainedHost(r.retainedUrl)||r.trackable!==(r.hostname!==null)||n.urlId!==null&&r.urlId!==n.urlId)return false;
+  return rows.every((r:unknown)=>validCitationEvidence(r,f,{period:n.period!,from:v[n.period!].from,to:v[n.period!].to,eligible:id=>eligible(id,n.period!),competitorIds:ids,urlId:n.urlId}));
+}
+
+export type CitationEvidenceScope={period:'current'|'previous';from:string;to:string;eligible:(executionId:string)=>boolean;competitorIds:readonly string[];urlId?:string|null;applySourceFilters?:boolean};
+// Shared record boundary; each report keeps its own page, navigation and population checks.
+export function validCitationEvidence(r:unknown,f:CitationFilters,scope:CitationEvidenceScope):r is CitationEvidence {
+  try{
+    if(!validCitationFilters(f))return false;
+    const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:f.timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
+    const localDay=(timestamp:string)=>{const parts=formatter.formatToParts(new Date(timestamp)),p=(type:string)=>parts.find(p=>p.type===type)!.value;return `${p('year')}-${p('month')}-${p('day')}`;};
+    if(!object(r)||!hex(r.id)||!hex(r.urlId)||![r.executionId,r.comparisonId,r.promptId,r.versionId].every(uuid)||r.period!==scope.period||!scope.eligible(r.executionId)||!stamp(r.requestedAt)||!day(r.date)||localDay(r.requestedAt)!==r.date||r.date<scope.from||r.date>scope.to||!models.includes(r.model)||f.model!==null&&r.model!==f.model||f.promptId!==null&&r.promptId!==f.promptId||!integer(r.retainedCitationIndex,99)||!retained(r.retainedUrl)||(r.retainedTitle!==null&&!prose(r.retainedTitle))||!prose(r.groupedUrl,20480)||citationSafeHref(r.groupedUrl)===null||r.hostname!==citationRetainedHost(r.retainedUrl)||r.trackable!==(r.hostname!==null)||scope.urlId!=null&&r.urlId!==scope.urlId)return false;
     const c=r.classification,o=c?.ownership;
-    if(!object(c)||!object(o)||typeof o.brand!=='boolean'||!Array.isArray(o.competitorIds)||o.competitorIds.length>100||!o.competitorIds.every((id:unknown,i:number)=>uuid(id)&&ids.includes(id)&&(i===0||o.competitorIds[i-1]<id))||o.ambiguous!==(o.competitorIds.length>1||o.brand&&o.competitorIds.length>0)||!member(c.publisherCategory,citationPublishers)||!member(c.automaticPublisherCategory,citationPublishers)||!member(c.publisherBasis,['override','elmo-automatic','unclassified'])||!member(c.pageType,citationPageTypes)||c.pageTypeBasis!=='elmo-url-title-heuristic-v1'||!member(c.sourceType,citationSources))return false;
+    if(!object(c)||!object(o)||typeof o.brand!=='boolean'||!Array.isArray(o.competitorIds)||o.competitorIds.length>100||!o.competitorIds.every((id:unknown,i:number)=>uuid(id)&&scope.competitorIds.includes(id)&&(i===0||o.competitorIds[i-1]<id))||o.ambiguous!==(o.competitorIds.length>1||o.brand&&o.competitorIds.length>0)||!member(c.publisherCategory,citationPublishers)||!member(c.automaticPublisherCategory,citationPublishers)||!member(c.publisherBasis,['override','elmo-automatic','unclassified'])||!member(c.pageType,citationPageTypes)||c.pageTypeBasis!=='elmo-url-title-heuristic-v1'||!member(c.sourceType,citationSources))return false;
     if(r.hostname===null?(c.publisherBasis!=='unclassified'||c.sourceType!=='unclassified'||c.publisherCategory!=='other'||c.automaticPublisherCategory!=='other'||o.brand||o.competitorIds.length>0):(c.publisherBasis==='unclassified'||c.sourceType==='unclassified'))return false;
     if(c.publisherBasis==='elmo-automatic'&&c.publisherCategory!==c.automaticPublisherCategory)return false;
     const owner=o.ambiguous?'ambiguous':o.brand?'brand':o.competitorIds.length?'competitor':'untracked';
-    return (!f.query||[r.retainedUrl,r.retainedTitle??'',r.hostname??''].some(s=>s.toLowerCase().includes(f.query!.toLowerCase())))&&(!f.publisherCategory||f.publisherCategory===c.publisherCategory)&&(!f.pageType||f.pageType===c.pageType)&&(!f.sourceType||f.sourceType===c.sourceType)&&(!f.ownership||f.ownership===owner)&&(!f.entityId||(f.entityId==='brand'?o.brand:o.competitorIds.includes(f.entityId)));
-  });
+    return scope.applySourceFilters===false||(!f.query||[r.retainedUrl,r.retainedTitle??'',r.hostname??''].some(s=>s.toLowerCase().includes(f.query!.toLowerCase())))&&(!f.publisherCategory||f.publisherCategory===c.publisherCategory)&&(!f.pageType||f.pageType===c.pageType)&&(!f.sourceType||f.sourceType===c.sourceType)&&(!f.ownership||f.ownership===owner)&&(!f.entityId||(f.entityId==='brand'?o.brand:o.competitorIds.includes(f.entityId)));
+
+  }catch{return false;}
 }
