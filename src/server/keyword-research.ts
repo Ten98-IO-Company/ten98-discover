@@ -155,23 +155,3 @@ export async function reconcileKeywordJobs(){
        OR (r.status='running' AND r.dispatched_at<clock_timestamp()-interval '90 seconds') ORDER BY r.created_at LIMIT 50`,[keywordQueue]);
   for(const row of rows.rows){if(row.status==='queued')await cancelUndispatched(row.id,'The queued research did not run. Prepare a new quote to try again.');else await finishResearch(row.id,{cost:null,reference:null,result:null,diagnostic:'The worker stopped after dispatch. The provider charge must be reconciled before spending again.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}},true);}
 }
-export async function pruneKeywordResults(workspaceId?:string){
-  // ponytail: one short workspace batch shares the worker heartbeat; increase measured throughput before adding cleanup jobs.
-  const client=await getDatabase().pool.connect();
-  try{
-    await client.query('BEGIN');await client.query("SET LOCAL lock_timeout='250ms'");await client.query("SET LOCAL statement_timeout='2s'");
-    const candidate=(await client.query(`SELECT w.id FROM workspace w WHERE ($1::text IS NULL OR w.id=$1) AND (
-      EXISTS(SELECT 1 FROM keyword_research_run r WHERE r.workspace_id=w.id AND r.result IS NOT NULL AND r.completed_at<clock_timestamp()-w.derived_history_days*interval '1 day')
-      OR EXISTS(SELECT 1 FROM keyword_quote q WHERE q.workspace_id=w.id AND q.expires_at<clock_timestamp()-interval '1 day' AND NOT EXISTS(SELECT 1 FROM keyword_research_run r WHERE r.quote_id=q.id)))
-      ORDER BY w.id LIMIT 1 FOR UPDATE OF w SKIP LOCKED`,[workspaceId??null])).rows[0];
-    if(candidate){
-      // Read the current policy after its serialization lock; a concurrent extension must protect its newly retained data.
-      const cutoff=(await client.query("SELECT clock_timestamp()-derived_history_days*interval '1 day' AS cutoff FROM workspace WHERE id=$1",[candidate.id])).rows[0].cutoff;
-      await client.query(`WITH expired AS (SELECT id FROM keyword_research_run WHERE workspace_id=$1 AND result IS NOT NULL AND completed_at<$2 ORDER BY completed_at,id LIMIT 100)
-        UPDATE keyword_research_run r SET result=NULL,result_purged_at=clock_timestamp() FROM expired e WHERE r.id=e.id`,[candidate.id,cutoff]);
-      await client.query(`DELETE FROM keyword_quote WHERE id IN(SELECT q.id FROM keyword_quote q WHERE q.workspace_id=$1 AND q.expires_at<clock_timestamp()-interval '1 day'
-        AND NOT EXISTS(SELECT 1 FROM keyword_research_run r WHERE r.quote_id=q.id) ORDER BY q.expires_at,q.id LIMIT 100)`,[candidate.id]);
-    }
-    await client.query('COMMIT');
-  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
-}

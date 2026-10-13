@@ -5,6 +5,7 @@ import { getConfig } from '../src/server/config.ts';
 import { closeDatabase, getDatabase } from '../src/server/db.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { expireGoogleImportPages } from '../src/server/google-retention.ts';
+import { expireKeywordResults } from '../src/server/keyword-retention.ts';
 import { enqueueGoogleImport, listGoogleConnections, readGoogleImport } from '../src/server/google-jobs.ts';
 import { getRetention, previewRetention, saveRetention, runRetentionBatch } from '../src/server/retention.ts';
 import { stopJobs } from '../src/server/jobs.ts';
@@ -21,6 +22,18 @@ export async function runGoogleRetentionChecks() {
     return { id, workspaceId: workspace.id };
   }
   const primary = await project(), foreign = await project();
+  async function keyword(p: typeof primary, completedAt: Date) {
+    const connectionId=randomUUID(),id=randomUUID(),quoteId=randomUUID();
+    await pool.query("INSERT INTO provider_connection(id,workspace_id,provider,name) VALUES($1,$2,'dataforseo','Retention fixture')",[connectionId,p.workspaceId]);
+    await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,actual_micros,status,budget_month,provider_reference)
+      VALUES($1,$2,$3,1,$4,$5,'keyword.overview',$6,12120,12120,'settled','2026-01-01','retained-task')`,[id,p.workspaceId,connectionId,owner,randomUUID(),'a'.repeat(64)]);
+    await pool.query(`INSERT INTO keyword_quote(id,workspace_id,project_id,user_id,connection_id,connection_revision,request,account_fingerprint,per_task_micros,per_item_micros,estimate_micros,price_as_of,expires_at)
+      VALUES($1,$2,$3,$4,$5,1,'{"mode":"overview","keywords":["synthetic"]}',$6,12000,120,12120,clock_timestamp(),clock_timestamp()+interval '5 minutes')`,[quoteId,p.workspaceId,p.id,owner,connectionId,'b'.repeat(64)]);
+    await pool.query(`INSERT INTO keyword_research_run(id,workspace_id,project_id,user_id,quote_id,status,result,reconciliation_evidence,completed_at)
+      VALUES($1,$2,$3,$4,$5,'completed','{"rows":[{"keyword":"synthetic","searchVolume":0}]}','{"taskId":"retained-task","reportedCost":0.01212}',$6)`,[id,p.workspaceId,p.id,owner,quoteId,completedAt]);
+    return {id,quoteId};
+  }
+
   const cutoff = new Date(Date.now() - 30 * 86_400_000), old = new Date(cutoff.getTime() - 1);
   async function receipt(p = primary, status = 'completed', completedAt: Date | null = old) {
     const connectionId = randomUUID(), id = randomUUID(), requestId = randomUUID();
@@ -88,11 +101,21 @@ export async function runGoogleRetentionChecks() {
     assert.equal((await afterCommit).import.dataStatus, 'expired');
   } finally { await gate.query('ROLLBACK').catch(() => {}); gate.release(); }
 
+  const oldKeyword=await keyword(primary,old), exactKeyword=await keyword(primary,cutoff),newKeyword=await keyword(primary,new Date(cutoff.getTime()+1)),foreignKeyword=await keyword(foreign,old);
+  const evidenceBefore=(await pool.query('SELECT row_to_json(p) AS ledger,r.reconciliation_evidence FROM provider_request p JOIN keyword_research_run r ON r.id=p.id WHERE p.id=$1',[oldKeyword.id])).rows[0];
+  const keywordGate=await pool.connect();try{await keywordGate.query('BEGIN');await keywordGate.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[primary.workspaceId]);await keywordGate.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[primary.id]);assert.deepEqual(await expireKeywordResults(keywordGate,primary.id,cutoff),{expiredKeywordResults:1,pending:false});await keywordGate.query('COMMIT');}finally{await keywordGate.query('ROLLBACK').catch(()=>{});keywordGate.release();}
+  for(const retained of [exactKeyword,newKeyword,foreignKeyword])assert.notEqual((await pool.query('SELECT result FROM keyword_research_run WHERE id=$1',[retained.id])).rows[0].result,null);
+  for(let n=0;n<101;n++)await keyword(primary,old);
   const policy = await getRetention(primary.workspaceId, owner);
   const preview = await previewRetention(primary.workspaceId, owner, { revision: policy.revision, settings: { ...policy.settings, derivedHistoryDays: 1 } });
   assert.equal(preview.derivedEstimate.status, 'available'); assert.equal(preview.derivedEstimate.imports, 2);
+  assert.deepEqual(preview.keywordEstimate,{status:'available',results:103,atLeast:false});
   await saveRetention(primary.workspaceId, owner, { previewToken: preview.previewToken });
-  assert.equal((await runRetentionBatch(primary.id))?.expiredGoogleImports, 2);
+  const partial=await runRetentionBatch(primary.id);assert.equal(partial?.expiredGoogleImports,2);assert.equal(partial?.expiredKeywordResults,100);assert.equal(partial?.complete,false);
+  const last=await runRetentionBatch(primary.id);assert.equal(last?.expiredKeywordResults,3);assert.equal(last?.complete,true);
+  const evidenceAfter=(await pool.query('SELECT row_to_json(p) AS ledger,r.reconciliation_evidence FROM provider_request p JOIN keyword_research_run r ON r.id=p.id WHERE p.id=$1',[oldKeyword.id])).rows[0];assert.deepEqual(evidenceAfter,evidenceBefore);assert.equal((await pool.query('SELECT id FROM keyword_quote WHERE id=$1',[oldKeyword.quoteId])).rowCount,1);
+  assert.notEqual((await pool.query('SELECT result FROM keyword_research_run WHERE id=$1',[foreignKeyword.id])).rows[0].result,null);
+  console.log('PASS shared Google/keyword cutoff, separate workspace preview counts, partial-batch scheduling and financial receipt preservation');
   assert.equal((await readGoogleImport(primary.id, owner, exact.id, 0)).import.dataStatus, 'expired');
   const extended = await getRetention(primary.workspaceId, owner);
   const longer = await previewRetention(primary.workspaceId, owner, { revision: extended.revision, settings: { ...extended.settings, derivedHistoryDays: 3650 } });

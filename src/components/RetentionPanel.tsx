@@ -31,6 +31,7 @@ interface PreviewDto {
   cutoff: string;
   derivedCutoff: string;
   derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean };
+  keywordEstimate: { status: 'available' | 'unavailable'; results: number | null; atLeast: boolean };
   estimate: {
     status: 'available' | 'unavailable';
     rows: number | null;
@@ -62,7 +63,7 @@ const FIELDS: ReadonlyArray<{
   {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep raw analytics events (default 90).'},
   {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep replays (default 7).'},
   {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep raw provider evidence (default 90).'},
-  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep imported Google report data after each import finishes (default 365). Import receipts remain.'},
+  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google report data and keyword results after completion (default 365). Receipts and charges remain.'},
 ];
 
 function toDraft(s: RetentionSettings): Draft {
@@ -424,13 +425,14 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
                   About {fmtBytes(preview.estimate.logicalBytes)} in sampled event-row bytes — an approximation, not guaranteed disk savings.
                 </p>
               )}
-              <p style={{margin: '8px 0'}}>Google report data cutoff (UTC): {fmtUtc(preview.derivedCutoff)}. {preview.derivedEstimate.status === 'available' && preview.derivedEstimate.imports !== null ? `${preview.derivedEstimate.atLeast ? 'At least ' : ''}${preview.derivedEstimate.imports.toLocaleString()} finished imports eligible.` : 'Import estimate unavailable.'}</p>
-              <p className="hint" style={{margin: '8px 0'}}>Google report rows and quality metadata expire after the derived-history period. Outcomes and recorded row counts remain as receipts. Active imports are preserved. Replay and raw provider evidence store nothing yet.</p>
+              <p style={{margin: '8px 0'}}>Derived data cutoff (UTC): {fmtUtc(preview.derivedCutoff)}. {preview.derivedEstimate.status === 'available' && preview.derivedEstimate.imports !== null ? `${preview.derivedEstimate.atLeast ? 'At least ' : ''}${preview.derivedEstimate.imports.toLocaleString()} finished Google imports eligible.` : 'Import estimate unavailable.'}</p>
+              <p style={{margin: '8px 0'}}>{preview.keywordEstimate.status === 'available' && preview.keywordEstimate.results !== null ? `${preview.keywordEstimate.atLeast ? 'At least ' : ''}${preview.keywordEstimate.results.toLocaleString()} keyword results eligible.` : 'Keyword result estimate unavailable.'}</p>
+              <p className="hint" style={{margin: '8px 0'}}>Google report rows, quality metadata and normalized keyword results expire after the derived-history period. Outcomes, recorded counts, used quotes and charge evidence remain as receipts. Active imports are preserved. Replay and raw provider evidence store nothing yet.</p>
               <p className="hint" style={{margin: '8px 0'}}>
                 Kept as-is: authored reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups.
               </p>
               <div className="alert" style={{margin: '8px 0'}}>
-                Older analytics and finished Google report data will be deleted automatically. Increasing these periods later cannot restore deleted data.
+                Older analytics, finished Google report data and keyword result payloads will be deleted automatically. Increasing these periods later cannot restore deleted data.
               </div>
               <div className="row" style={{flexWrap: 'wrap', gap: 8}}>
                 <button type="button" className="btn primary" style={BTN} onClick={() => void onSave()} disabled={busy !== null}>

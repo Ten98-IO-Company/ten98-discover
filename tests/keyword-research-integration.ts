@@ -6,7 +6,8 @@ import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
 import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
 import {keywordPayload,keywordEndpoints,keywordAccountEndpoint,keywordCatalogEndpoint,keywordReconcileEndpoint,type KeywordRequest} from '../src/server/keyword-research-input.ts';
-import {refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,executeKeywordResearch,getKeywordRun,getKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch,reconcileKeywordJobs,pruneKeywordResults} from '../src/server/keyword-research.ts';
+import {refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,executeKeywordResearch,getKeywordRun,getKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch,reconcileKeywordJobs} from '../src/server/keyword-research.ts';
+import {runRetentionBatch} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 
@@ -90,9 +91,9 @@ export async function runKeywordResearchChecks(){
 
   mode='ok';const crashed=await fixture(),crashRun=await start(crashed);await pool.query("UPDATE provider_request SET status='dispatched' WHERE id=$1",[crashRun.run.id]);await pool.query("UPDATE keyword_research_run SET status='running',dispatched_at=clock_timestamp()-interval '2 minutes' WHERE id=$1",[crashRun.run.id]);await reconcileKeywordJobs();assert.equal((await charge(crashRun.run.id)).status,'uncertain');assert.equal(paidCalls,before);
   await pool.query("UPDATE keyword_research_run SET completed_at=clock_timestamp()-interval '366 days' WHERE id=$1",[first.run.id]);
-  const policy=await pool.connect();try{await policy.query('BEGIN');await policy.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[f.workspace]);await policy.query('UPDATE workspace SET derived_history_days=400 WHERE id=$1',[f.workspace]);await pruneKeywordResults(f.workspace);assert.notEqual((await getDatabase().pool.query('SELECT result FROM keyword_research_run WHERE id=$1',[first.run.id])).rows[0].result,null);await policy.query('COMMIT');}finally{await policy.query('ROLLBACK').catch(()=>{});policy.release();}
-  await pruneKeywordResults(f.workspace);assert.notEqual((await getKeywordRun(f.project,owner,first.run.id)).run.result,null);
-  await pool.query('UPDATE workspace SET derived_history_days=365 WHERE id=$1',[f.workspace]);await pruneKeywordResults(f.workspace);const purged=(await getKeywordRun(f.project,owner,first.run.id)).run;assert.equal(purged.result,null);assert.equal(purged.resultExpired,true);assert.equal(purged.actualUsd,'0.012120');assert.equal((await charge(first.run.id)).status,'settled');
+  const policy=await pool.connect();try{await policy.query('BEGIN');await policy.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[f.workspace]);await policy.query('UPDATE workspace SET derived_history_days=400 WHERE id=$1',[f.workspace]);await runRetentionBatch(f.project);assert.notEqual((await getDatabase().pool.query('SELECT result FROM keyword_research_run WHERE id=$1',[first.run.id])).rows[0].result,null);await policy.query('COMMIT');}finally{await policy.query('ROLLBACK').catch(()=>{});policy.release();}
+  await runRetentionBatch(f.project);assert.notEqual((await getKeywordRun(f.project,owner,first.run.id)).run.result,null);
+  await pool.query('UPDATE workspace SET derived_history_days=365 WHERE id=$1',[f.workspace]);await runRetentionBatch(f.project);const purged=(await getKeywordRun(f.project,owner,first.run.id)).run;assert.equal(purged.result,null);assert.equal(purged.resultExpired,true);assert.equal(purged.actualUsd,'0.012120');assert.equal((await charge(first.run.id)).status,'settled');
   console.log('PASS keyword stale dispatch becomes uncertain and retention extension race preserves results and financial evidence');
 
   for(const outcome of ['ok','conflict'] as const){

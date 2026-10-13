@@ -62,7 +62,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -135,9 +135,28 @@ try {
   assert.deepEqual(await records(), originalRecords, 'Failed migration must preserve original records.');
   console.log('PASS multi-migration transaction rollback');
 
-  stage = 'upgrade original data and rerun idempotently';
+  stage = 'preserve Google and financial records across the 0015-to-0016 upgrade';
+  const upgradeClient=await pool.connect();
+  try {
+    await upgradeClient.query('BEGIN');
+    for(const migration of sources.slice(1,-1)) {await upgradeClient.query(migration.sql);await upgradeClient.query('INSERT INTO schema_version(version,checksum) VALUES($1,$2)',[migration.version,migration.checksum]);}
+    const owner=originalRecords.user[0].id,workspace=originalRecords.workspace[0].id,project=originalRecords.project[0].id,connection=randomUUID(),report=randomUUID(),provider=randomUUID();
+    await upgradeClient.query("INSERT INTO google_connection(id,workspace_id,project_id,name,provider,revision,app_revision,status) VALUES($1,$2,$3,'Upgrade fixture','gsc',1,1,'disconnected')",[connection,workspace,project]);
+    await upgradeClient.query(`INSERT INTO google_import(id,connection_id,project_id,user_id,request_id,connection_revision,app_revision,report,date_from,date_to,status,pages,row_count,source,quality,completed_at)
+      VALUES($1,$2,$3,$4,$5,1,1,'gsc_daily','2026-01-01','2026-01-01','completed',1,1,'{"provider":"gsc"}','{"warnings":[],"metadata":{}}',clock_timestamp())`,[report,connection,project,owner,randomUUID()]);
+    await upgradeClient.query(`INSERT INTO google_import_page(import_id,page,rows) VALUES($1,0,'[{"dimensions":["2026-01-01"],"metrics":{"clicks":1}}]')`,[report]);
+    await upgradeClient.query("INSERT INTO provider_connection(id,workspace_id,provider,name) VALUES($1,$2,'dataforseo','Upgrade fixture')",[provider,workspace]);
+    await upgradeClient.query(`INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,actual_micros,status,budget_month)
+      VALUES($1,$2,$3,1,$4,$5,'preserved.operation',$6,12120,12120,'settled','2026-01-01')`,[randomUUID(),workspace,provider,owner,randomUUID(),'a'.repeat(64)]);
+    await upgradeClient.query('COMMIT');
+  } catch(error) {await upgradeClient.query('ROLLBACK');throw error;} finally {upgradeClient.release();}
+  const preservedTables=['google_connection','google_import','google_import_page','provider_connection','provider_request'];
+  async function featureRecords() {const snapshot:Record<string,unknown>={};for(const table of preservedTables)snapshot[table]=(await pool.query(`SELECT row_to_json(t) AS data FROM ${table} t`)).rows;return snapshot;}
+  const featureSnapshot=await featureRecords();
+  stage = 'upgrade original and Google data through 0016 and rerun idempotently';
   runMigrate(0);
   await assertSchema();
+  assert.deepEqual(await featureRecords(),featureSnapshot);
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = await records();
@@ -160,6 +179,8 @@ try {
   assert.deepEqual(await schemaSnapshot(), upgradedSchema);
   assert.deepEqual(await records(), upgradedRecords);
   await assertSchema();
+  assert.deepEqual(await featureRecords(),featureSnapshot);
+  console.log('PASS 0015 Google snapshots, provider connections and financial records survive 0016 unchanged');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {

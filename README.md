@@ -20,7 +20,8 @@ The first usable release must reach the complete technical capability baseline o
 10. [One-snippet pixels, platform report imports and alias domains](docs/tracking.md)
 11. [Project context and versioned prompt library](docs/project-context.md)
 12. [Native Search Console and GA4 report imports](docs/google-reports.md)
-13. [Setup critique, deployment journey and native connection/OIDC flows](docs/onboarding.md)
+13. [Quoted keyword research backend and remaining UI](docs/keyword-research.md)
+14. [Setup critique, deployment journey and native connection/OIDC flows](docs/onboarding.md)
 
 ## Product direction
 

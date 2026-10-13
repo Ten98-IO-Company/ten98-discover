@@ -6,7 +6,7 @@ import { FoundationError } from './auth.ts';
 import { registerResourceCleanup } from './resource-cleanup.ts';
 import { runRetentionBatch } from './retention.ts';
 import { googleQueue, reconcileGoogleImports, startGoogleImportWorker } from './google-jobs.ts';
-import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs,pruneKeywordResults} from './keyword-research.ts';
+import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs} from './keyword-research.ts';
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
@@ -142,7 +142,7 @@ export function startWorker(): Promise<void> {
         if (!heartbeatTask) heartbeatTask = heartbeat()
           .catch(() => console.error('Worker heartbeat failed; check database availability.'))
           .finally(() => { heartbeatTask = undefined; });
-        if (!retentionTask) retentionTask = runRetentionBatch().then(async result=>{await pruneKeywordResults();return result;})
+        if (!retentionTask) retentionTask = runRetentionBatch()
           .catch(() => console.error('Retention cleanup failed; inspect retention status and database availability.'))
           .finally(() => { retentionTask = undefined; });
       }, 10_000);
