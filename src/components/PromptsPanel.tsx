@@ -29,7 +29,7 @@ type ListResponse = {
   role: Role;
   items: Prompt[];
   nextCursor: string | null;
-  execution: {available: false; nextRunAt: null};
+  execution: {available: true; schedulingAvailable: false; nextRunAt: null};
 };
 
 type PromptVersion = {
@@ -541,7 +541,7 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
       <div className="row between">
         <div>
           <h2>Prompt library</h2>
-          <p className="footnote">Saved prompts do not start tracking. Provider execution is not available yet.</p>
+          <p className="footnote">Saving prompts does not run them. Automatic scheduling is not available yet.</p>
         </div>
         <div className="row">
           <button type="button" className="btn ghost" onClick={onRefresh} disabled={busy || loading || loadingMore}>
@@ -680,7 +680,7 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
             <label htmlFor="pl-enabled">
               <input style={{width: 'auto'}} id="pl-enabled" disabled={busy || !!retryAttempt} type="checkbox" checked={fEnabled} onChange={e => setFEnabled(e.target.checked)} /> Include when tracking is configured
             </label>
-            <p className="hint">Saved prompts do not start tracking. Provider execution is not available yet.</p>
+            <p className="hint">Saving prompts does not run them. Automatic scheduling is not available yet.</p>
           </div>
 
           {conflict && (
@@ -744,7 +744,9 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
           {hasFilter ? 'No prompts match these filters. Adjust them and apply again.' : canEdit ? 'No prompts yet. Use "Add prompt" to create the first one.' : 'No prompts yet.'}
         </p>
       ) : (
-        <div className="table-wrap" style={{overflowX: 'auto'}}>
+        <>
+        <p id="pl-table-hint" className="hint">On narrow screens, scroll across for details and actions. Focus the table and use the arrow keys.</p>
+        <div className="table-wrap prompt-table" role="region" aria-label="Prompt library table" aria-describedby="pl-table-hint" tabIndex={0}>
           <table>
             <thead>
               <tr>
@@ -813,6 +815,7 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
             </tbody>
           </table>
         </div>
+        </>
       )}
       {!loading && nextCursor && (
         <button type="button" className="btn ghost" onClick={() => load(nextCursor, applied)} disabled={loadingMore || busy}>

@@ -5,7 +5,7 @@ import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
 import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
-import {createPrompts,updatePrompt,setPromptArchived} from '../src/server/prompts.ts';
+import {createPrompts,updatePrompt,setPromptArchived,listPrompts} from '../src/server/prompts.ts';
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,executePromptComparison,reconcilePromptExecution,reconcilePromptExecutionJobs} from '../src/server/prompt-execution.ts';
 import {runRetentionBatch,previewRetention,getRetention} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
@@ -50,6 +50,7 @@ export async function runPromptExecutionChecks(){
  const ledger=async(id:string)=>(await pool.query('SELECT status,actual_micros,provider_reference FROM provider_request WHERE id=$1',[id])).rows[0];
  try{
   const f=await fixture(),freeBefore=free;assert.equal((await getPromptExecutions(f.project,viewer)).role,'viewer');assert.equal(free,freeBefore);assert.equal(paid,0);
+  assert.deepEqual((await listPrompts(f.project,viewer,new URLSearchParams())).execution,{available:true,schedulingAvailable:false,nextRunAt:null});assert.equal(free,freeBefore);
   await assert.rejects(quote(f,viewer),{status:404});await assert.rejects(getPromptExecutions(f.project,foreign),{status:404});
   const q=await quote(f),key=randomUUID();assert.equal(q.estimateUsd,'0.040858');assert.deepEqual(q.messages,[{role:'system',content:'Explicit system text'},{role:'user',content:'Exact original prompt'}]);
   const [first,retry]=await Promise.all([startPromptExecution(f.project,owner,{quoteId:q.id,requestKey:key}),startPromptExecution(f.project,owner,{quoteId:q.id,requestKey:key})]);assert.equal(first.comparison.id,retry.comparison.id);assert.equal(first.comparison.runs.length,2);
@@ -57,8 +58,31 @@ export async function runPromptExecutionChecks(){
   await updatePrompt(f.project,owner,f.prompt.id,{requestId:randomUUID(),revision:1,text:'Later prompt text'});
   await Promise.all([executePromptComparison(first.comparison.id,send),executePromptComparison(first.comparison.id,send)]);assert.equal(paid,2);const done=await detail(f,first.comparison.id);assert.equal(done.messages[1].content,'Exact original prompt');assert.deepEqual(done.runs.map((r:any)=>r.status),['completed','completed']);assert.equal(done.runs[0].actualUsd,'0.000013');
   await executePromptComparison(done.id,send);assert.equal(paid,2);assert.equal((await startPromptExecution(f.project,owner,{quoteId:q.id,requestKey:key})).comparison.id,done.id);
+  assert.deepEqual(done.prompt,{id:f.prompt.id,versionId:f.request.versionId,textPreview:'Exact original prompt'});assert.equal(done.canCancel,false);
   const other=await fixture();await assert.rejects(getPromptComparison(other.project,owner,done.id),{status:404});
   console.log('PASS actor/project/immutable-version binding, exact quote, atomic retry and one dispatch per comparison child');
+
+  const permissions=await fixture(),authored='a'.repeat(159)+'😀'+'later text';
+  const longPrompt=(await createPrompts(permissions.project,owner,{requestId:randomUUID(),prompts:[{text:authored,enabled:false}]})).items[0];
+  permissions.request.promptId=longPrompt.id;permissions.request.versionId=longPrompt.currentVersionId;
+  const permissionQuote=await quotePromptExecution(permissions.project,editor,permissions.request,send);assert.equal(permissionQuote.role,'editor');
+  const permissionKey=randomUUID(),permissionStart=await startPromptExecution(permissions.project,editor,{quoteId:permissionQuote.quote.id,requestKey:permissionKey});
+  assert.equal(permissionStart.role,'editor');assert.equal(permissionStart.comparison.canCancel,true);
+  assert.deepEqual(permissionStart.comparison.prompt,{id:longPrompt.id,versionId:longPrompt.currentVersionId,textPreview:'a'.repeat(159)+'😀'});
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'admin')",[permissions.workspace,foreign]);
+  for(const [user,role,canCancel] of [[owner,'owner',true],[editor,'editor',true],[viewer,'viewer',false],[foreign,'admin',false]] as const){
+   const response=await getPromptComparison(permissions.project,user,permissionStart.comparison.id);
+   assert.equal(response.role,role);assert.equal(response.comparison.canCancel,canCancel);
+   const listed=await getPromptExecutions(permissions.project,user);assert.equal(listed.comparisons[0].canCancel,canCancel);assert.deepEqual(listed.comparisons[0].prompt,response.comparison.prompt);
+  }
+  await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[permissions.workspace,editor]);
+  const demoted=await getPromptComparison(permissions.project,editor,permissionStart.comparison.id);assert.equal(demoted.role,'viewer');assert.equal(demoted.comparison.canCancel,false);
+  await assert.rejects(cancelPromptComparison(permissions.project,editor,permissionStart.comparison.id,{}),{status:404});
+  const cancelledByOwner=await cancelPromptComparison(permissions.project,owner,permissionStart.comparison.id,{});assert.equal(cancelledByOwner.role,'owner');assert.equal(cancelledByOwner.comparison.canCancel,false);
+  await pool.query("UPDATE membership SET role='editor' WHERE workspace_id=$1 AND user_id=$2",[permissions.workspace,editor]);
+  await pool.query("UPDATE prompt_execution_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[permissionQuote.quote.id]);
+  const recoveredStart=await startPromptExecution(permissions.project,editor,{quoteId:permissionQuote.quote.id,requestKey:permissionKey});assert.equal(recoveredStart.role,'editor');assert.equal(recoveredStart.comparison.id,permissionStart.comparison.id);assert.equal(recoveredStart.comparison.canCancel,false);assert.equal(paid,2);
+  console.log('PASS current-role cancellation metadata, immutable bounded authored preview and accepted-start recovery after quote expiry');
 
   const budget=await fixture();await saveBudget(budget.workspace,owner,{monthlyLimitUsd:'0.03',paused:false});await assert.rejects(start(budget),{status:409});assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM prompt_comparison WHERE workspace_id=$1',[budget.workspace])).rowCount,0);
   const rollback=await fixture(),rq=await quote(rollback),boss=await getBoss(),originalSend=boss.send.bind(boss);let insertedQueueId:string|undefined;boss.send=(async(...args:any[])=>{insertedQueueId=await (originalSend as any)(...args);throw new Error('Synthetic failure after queue insertion');}) as typeof boss.send;
@@ -105,6 +129,7 @@ export async function runPromptExecutionChecks(){
   assert.equal(expiredUncertain?.expiredPromptInputs,1);assert.equal(expiredUncertain?.expiredPromptResults,0);
   const purgedUncertain=await detail(uncertain,uncertainRun.id);
   assert.equal(purgedUncertain.inputExpired,true);assert.equal(purgedUncertain.input,null);assert.equal(purgedUncertain.messages,null);
+  assert.deepEqual(purgedUncertain.prompt,{id:uncertain.prompt.id,versionId:uncertain.request.versionId,textPreview:'Exact original prompt'});assert.equal(purgedUncertain.canCancel,false);
   assert.deepEqual(purgedUncertain.runs.map((r:any)=>r.status),['uncertain','cancelled']);assert.equal(purgedUncertain.runs[0].result,null);
   assert.deepEqual((await pool.query(preservedSql,[child.id])).rows[0],preserved);assert.equal(free,readsBeforePurge);assert.equal(paid,before);
   receiptChange={};assert.equal((await reconcilePromptExecution(uncertain.project,owner,child.id,{},send)).reconciliation.status,'matched');const recovered=(await detail(uncertain,uncertainRun.id)).runs[0];assert.equal(recovered.status,'reconciled');assert.equal(recovered.result,null);assert.equal((await getPromptExecutions(uncertain.project,owner)).spendingPaused,true);assert.equal(paid,before);

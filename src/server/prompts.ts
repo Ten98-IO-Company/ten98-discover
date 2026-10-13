@@ -44,7 +44,7 @@ export async function listPrompts(projectId:unknown,userId:unknown,params:URLSea
       SELECT * FROM matches WHERE ($7='' OR branded=($7='branded')) ORDER BY created_at DESC,id DESC LIMIT 51`,
       [project.id,input.status,input.q.toLowerCase(),input.tag,cursor?.at??null,cursor?.id??null,input.classification,terms]);
     const items=rows.slice(0,50).map(row=>dto(row,project,profile));
-    return {role:project.role,items,nextCursor:rows.length>50?contentCursor({id:rows[49].id,createdAt:rows[49].created_at},scope):null,execution:{available:false,nextRunAt:null}};
+    return {role:project.role,items,nextCursor:rows.length>50?contentCursor({id:rows[49].id,createdAt:rows[49].created_at},scope):null,execution:{available:true,schedulingAvailable:false,nextRunAt:null}};
   });
 }
 export async function getPrompt(projectId:unknown,userId:unknown,promptId:unknown) {

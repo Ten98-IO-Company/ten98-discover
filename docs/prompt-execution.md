@@ -2,6 +2,8 @@
 
 This internal backend increment implements explicit paid requests for one or both of `openai/gpt-4o-mini` and `openai/gpt-4o` through the standard OpenAI route on OpenRouter. It does not complete V1 AI monitoring. Execution UI, scheduling, the seven-day result cache, other provider/model routes, visibility analysis and live paid acceptance remain pending. Saving or enabling a library prompt does not start a request.
 
+The approved [execution UI contract](prompt-execution-ui.md) describes the pending manual flow, exact implemented DTOs, immutable authored previews, current-role cancellation metadata and required future UI acceptance. Its metadata preparation and existing prompt-library mobile checks are tested; the execution UI itself remains pending.
+
 ## Authorization and API
 
 All routes require browser sign-in. API keys have no implied execution scope. Owners, admins and editors can quote/start; all current project members can read. Only the initiating user or workspace owner can cancel a comparison; only the owner can reconcile a charge. POST requires the application Origin. Every mutation rechecks current membership under the workspace gate.

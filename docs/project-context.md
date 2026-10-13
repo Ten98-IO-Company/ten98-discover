@@ -10,7 +10,7 @@ Updates carry a context revision and UUID request ID. A whole batch (up to 50 op
 
 ## Prompts
 
-Prompts have stable IDs, an optimistic revision, and immutable numbered text versions. Text edits append a version; topic, tags, enabled preference and archive changes preserve existing versions. An active exact duplicate is rejected, including an atomic bulk batch of up to 100 entries. Archiving keeps history and supports restore. Enabled defaults to false and is only a saved preference while execution is unavailable.
+Prompts have stable IDs, an optimistic revision, and immutable numbered text versions. Text edits append a version; topic, tags, enabled preference and archive changes preserve existing versions. An active exact duplicate is rejected, including an atomic bulk batch of up to 100 entries. Archiving keeps history and supports restore. Enabled defaults to false and is only a saved preference while automatic scheduling is unavailable. The separate [manual execution API](prompt-execution.md) requires an explicit quote and start; saving a prompt never starts work.
 
 Lists paginate 50 entries and support active/archived/all, literal text search, user tag and branded classification filters. Histories paginate by immutable version number, independently of timestamps. System classification preserves Elmo's versioned substring heuristic; user branded/unbranded tags remain separate. Exactly one of those tags overrides the automatic result; both or neither use the automatic result. The heuristic can overmatch short brand terms. See THIRD_PARTY_NOTICES.md for source and MIT notice.
 
