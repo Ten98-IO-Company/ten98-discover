@@ -1,6 +1,6 @@
 # Prompt execution UI contract
 
-Status: approved design for the next UI increment. The execution backend and the metadata boundary in section 7 are implemented and tested. The execution UI described here is still pending; its acceptance criteria in section 8 are future work. This document authorizes neither paid provider requests nor an automatic Kimi launch.
+Status: the execution backend, metadata boundary and manual interface are implemented. The [integration record](research-ui.md) and [public production-browser harness](../tests/research-ui/README.md) document synthetic acceptance. Desktop/360px answer layouts, immutable version selection, library return state/focus, costs, expiry, lost acknowledgements, cancellation, stale responses, permissions and reconciliation passed against real local routes and receipts. GPT inspected the rendered answer screens. No live-provider compatibility, full AI visibility parity or accessibility certification is claimed.
 
 ## 1. Goal, reference patterns and critique
 
@@ -12,7 +12,7 @@ Apply the source patterns already recorded in `docs/interface.md` and `docs/rese
 
 | Current issue | Impact | Design decision |
 |---|---|---|
-| Saving a prompt can be mistaken for permission to run it | Users may expect automatic tracking or hidden spending | The existing library now says saving does not run prompts and scheduling is unavailable. Add quote-review copy when the execution surface is implemented. |
+| Saving a prompt can be mistaken for permission to run it | Users may expect automatic tracking or hidden spending | The library says saving does not run prompts; the execution surface requires quote review and a separate deliberate Start action. |
 | Library already contains filters, bulk entry, edits and history | Adding a second full form below everything creates a long, unclear page | Use an inline execution detail surface within Prompts, with a clear Back to library action; preserve the library's filter state. |
 | A generic Run button could hide two charges | User cannot distinguish a saved preference from permission to spend | Row action is “Review a run”; the only paid CTA appears after an explicit quote review. |
 | “Failed” alone says nothing about cost | Users could repeat charged requests | Present answer state and charge state separately; uncertainty has no automatic paid retry. |

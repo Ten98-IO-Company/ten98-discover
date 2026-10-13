@@ -61,6 +61,16 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .alert { background: var(--red-tint); border: 1px solid #f0cec8; color: #882a22; }
 .notice { background: var(--blue-tint); border: 1px solid #dcd5f6; color: #45339c; }
 .google-reports .stack { display: grid; gap: 14px; }
+.research-panel { min-width: 0; overflow-wrap: anywhere; }
+.research-panel .stack { display: grid; gap: 14px; min-width: 0; }
+.research-panel .stack > p, .research-panel .stack > h3 { margin: 0; }
+.research-panel details > summary { min-height: 44px; padding: 10px 0; cursor: pointer; font-weight: 550; }
+.research-panel .metric-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,160px),1fr)); gap: 16px; }
+.research-panel .metric-value { font-size: 25px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.research-panel .metric-label { color: var(--muted); font-size: 12px; }
+.site-audits table { min-width: 640px; }
+.site-audits .metric-grid { grid-template-columns: repeat(auto-fit,minmax(min(100%,120px),1fr)); }
+.keyword-research td:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
 .google-reports .field, .google-reports .stack > p { margin: 0; }
 .google-connect > summary { min-height: 44px; padding: 9px 0; cursor: pointer; font-weight: 600; }
 .google-connect[open] > summary { margin-bottom: 14px; }

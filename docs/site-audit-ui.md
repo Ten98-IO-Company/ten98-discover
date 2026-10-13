@@ -1,6 +1,6 @@
 # Site Audit UI contract
 
-Status: GPT-reviewed interface contract awaiting implementation, against the implemented manual static API/worker; no UI or browser acceptance claimed. This document authorizes no live crawl or Kimi launch. Full P53–P56 parity remains required: protected-site access, local/Cloudflare rendering, Lighthouse and lifecycle. Scheduling remains required too; unavailable capabilities must not appear as working controls.
+Status: manual static interface implemented against the existing API/worker. The [integration record](research-ui.md) and [public browser harness](../tests/research-ui/README.md) document passing synthetic production-browser checks, including desktop/360px evidence views, real contained crawl handlers, immutable retries, cancellation, permission changes, focus, expiry races and confirmed deletion. GPT inspected rendered evidence screens. No live crawl or full P53–P56 parity is claimed: protected-site access, local/Cloudflare rendering, Lighthouse and scheduling remain required.
 
 ## 1. Goal, source patterns and critique
 

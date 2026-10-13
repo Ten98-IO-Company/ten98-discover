@@ -1,5 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
+import {PromptExecutionsPanel} from './PromptExecutionsPanel';
+import type {ExecutionEntry} from './PromptExecutionsPanel';
 
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 
@@ -93,14 +95,20 @@ function fmtDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-export function PromptsPanel(props: {projectId: string; userId: string; onUnauthorized: () => void}) {
+export function PromptsPanel(props: {workspaceId: string; projectId: string; userId: string; onUnauthorized: () => void}) {
   // Keyed on projectId + userId: switching either remounts everything, so no
   // stale items, drafts, errors or pagination can leak across contexts.
   return <PromptsPanelInner key={props.projectId + ':' + props.userId} {...props} />;
 }
 
-function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; userId: string; onUnauthorized: () => void}) {
+function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {workspaceId: string; projectId: string; userId: string; onUnauthorized: () => void}) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/prompts`;
+
+  const [execution, setExecution] = useState<{generation: number; entry: ExecutionEntry} | null>(null);
+  const [returning, setReturning] = useState(false);
+  const entryGeneration = useRef(0);
+  const returnFocus = useRef<string | null>(null);
+  const libraryHeading = useRef<HTMLHeadingElement>(null);
 
   const [role, setRole] = useState<Role | null>(null);
   const [items, setItems] = useState<Prompt[]>([]);
@@ -203,9 +211,10 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
     setShowCreate(false);
     closeVersions();
     setNotice(null);
+    setExecution(null);
   }
 
-  async function load(cursor: string | null, filters: Filters) {
+  async function load(cursor: string | null, filters: Filters, accessOnly = false) {
     const gen = ++genRef.current;
     acRef.current?.abort();
     const ac = new AbortController();
@@ -223,8 +232,10 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
       const r = await api<ListResponse>(`${base}?${p.toString()}`, {signal: ac.signal});
       if (!aliveRef.current || gen !== genRef.current) return;
       setRole(r.role);
-      setItems(prev => (cursor ? [...prev, ...r.items] : r.items));
-      setNextCursor(r.nextCursor);
+      if (!accessOnly) {
+        setItems(prev => (cursor ? [...prev, ...r.items] : r.items));
+        setNextCursor(r.nextCursor);
+      }
     } catch (e) {
       if (!aliveRef.current || gen !== genRef.current) return; // stale/aborted
       if (e instanceof ApiError && e.status === 401) {
@@ -232,7 +243,7 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
         unauthorizedRef.current();
         return;
       }
-      if (e instanceof ApiError && (e.status === 403 || e.status === 404)) purge();
+      if (accessOnly || e instanceof ApiError && (e.status === 403 || e.status === 404)) purge();
       setErr(errMsg(e));
     } finally {
       if (aliveRef.current && gen === genRef.current) {
@@ -387,6 +398,37 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
     return !formDirty() || window.confirm('You have unsaved changes. Select OK to discard them, or Cancel to keep editing.');
   }
 
+  function openExecution(entry: ExecutionEntry, triggerId: string) {
+    if (opRef.current || returning || !confirmDiscard()) return;
+    // Library state stays in memory; its outstanding reads cannot affect a run.
+    genRef.current += 1;
+    verGenRef.current += 1;
+    acRef.current?.abort();
+    verAcRef.current?.abort();
+    setLoading(false);
+    setLoadingMore(false);
+    setVerLoading(false);
+    closeForm();
+    setShowCreate(false);
+    returnFocus.current = triggerId;
+    setExecution({generation: ++entryGeneration.current, entry});
+  }
+
+  async function backToLibrary() {
+    setExecution(null);
+    setReturning(true);
+    // Recheck current access without discarding the loaded pages or filters.
+    await load(null, applied, true);
+    if (aliveRef.current) setReturning(false);
+  }
+
+  useEffect(() => {
+    if (execution || returning || !returnFocus.current) return;
+    const trigger = document.getElementById(returnFocus.current);
+    (trigger instanceof HTMLButtonElement && !trigger.disabled ? trigger : libraryHeading.current)?.focus();
+    returnFocus.current = null;
+  }, [execution, returning]);
+
   const onApply = () => {
     if (!confirmDiscard()) return;
     closeForm();
@@ -536,14 +578,19 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
   const hasFilter = applied.status !== 'active' || applied.q.trim() !== '' || applied.tag.trim() !== '' || applied.classification !== '';
   const formOpen = showCreate || editing !== null;
 
+  if (execution) return <PromptExecutionsPanel key={execution.generation} workspaceId={workspaceId} projectId={projectId} userId={userId}
+    entry={execution.entry} onBack={() => void backToLibrary()} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
+  if (returning) return <section className="card"><p role="status">Checking access to the prompt library…</p></section>;
+
   return (
     <section className="card" aria-label="Prompt library">
       <div className="row between">
         <div>
-          <h2>Prompt library</h2>
+          <h2 ref={libraryHeading} tabIndex={-1}>Prompt library</h2>
           <p className="footnote">Saving prompts does not run them. Automatic scheduling is not available yet.</p>
         </div>
         <div className="row">
+          {role && <button id="pl-recent-runs" type="button" className="btn ghost" onClick={() => openExecution({kind: 'history'}, 'pl-recent-runs')} disabled={busy || loading}>Recent runs</button>}
           <button type="button" className="btn ghost" onClick={onRefresh} disabled={busy || loading || loadingMore}>
             Refresh
           </button>
@@ -790,6 +837,8 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
                   </td>
                   <td>
                     <div className="row">
+                      {canEdit && !p.archivedAt && <button id={`pl-run-${p.id}`} type="button" className="btn ghost"
+                        onClick={() => openExecution({kind: 'configure', promptId: p.id, versionId: p.currentVersionId, authoredText: p.text}, `pl-run-${p.id}`)} disabled={busy}>Review a run</button>}
                       <button type="button" className="btn ghost" onClick={() => onVersions(p)} disabled={busy}>
                         View versions
                       </button>
@@ -859,6 +908,8 @@ function PromptsPanelInner({projectId, onUnauthorized}: {projectId: string; user
                   <div className="mono" style={{whiteSpace: 'pre-wrap', wordBreak: 'break-word'}}>
                     {v.text}
                   </div>
+                  {canEdit && !versionsFor.archivedAt && <button id={`pl-version-run-${v.id}`} type="button" className="btn ghost"
+                    onClick={() => openExecution({kind: 'configure', promptId: versionsFor.id, versionId: v.id, authoredText: v.text}, `pl-version-run-${v.id}`)} disabled={busy}>Review this version</button>}
                 </li>
               ))}
             </ol>

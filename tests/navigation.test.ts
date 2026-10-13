@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation } from '../src/lib/navigation.ts'
+import { allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView } from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
@@ -28,6 +28,12 @@ test('page guards distinguish account access, membership and administrative priv
   assert.equal(allowedView('google-app', 'owner', false), false)
   assert.equal(allowedView('google-app', undefined, true), true)
   assert.equal(allowedView('events', undefined, false), false)
+  for (const view of ['keywords', 'audits'] as const) {
+    assert.deepEqual(parseNavigation({workspace, project, view}), {workspace, project, view})
+    assert.equal(projectView(view), true)
+    assert.equal(allowedView(view, 'viewer', false), true)
+    assert.equal(allowedView(view, undefined, false), false)
+  }
 })
 
 test('callbacks reject mixed families, duplicates and double-encoded capabilities', () => {

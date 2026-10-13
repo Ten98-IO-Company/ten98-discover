@@ -211,4 +211,16 @@ The same bounded CLI2.1.1/K3-256K maximum-effort, explicit-thinking and Skill-on
 
 The approved [public issue20 UI contract](https://github.com/Ten98-IO-Company/ten98-monitor/issues/20#issuecomment-6135229497) was supplied to CLI **2.1.1**, **kimi-code/k3-256k**, with thinking enabled and maximum effort requested. The fixed Skill-only profile, curated Ponytail/frontend-design/UX-copy skills, eight-step ceiling and 900-second process-tree deadline remained in force. No private source, configuration, fixtures, customer data or credentials were included.
 
-The single attempt exited after **3.6 seconds of observed runner wall time** with a provider 403 five-hour usage limit. It returned no usable draft, and no skill invocation or implementation is credited to it. No retry or automatic GPT routine-UI substitution was made. GPT continued the already assigned paid-call security, server architecture and independent synthetic validation. The UI remains pending an owner decision or restored quota. Duration is not provider latency; per-task tokens, quota delta, resolved provider effort and savings were not measured.
+The single attempt exited after **3.6 seconds of observed runner wall time** with a provider 403 five-hour usage limit. It returned no usable draft, and no skill invocation or implementation is credited to it. No immediate retry or automatic GPT routine-UI substitution was made. GPT continued the already assigned paid-call security, server architecture and independent synthetic validation. The later resumed attempt is recorded below. Duration is not provider latency; per-task tokens, quota delta, resolved provider effort and savings were not measured.
+
+### Research and audit interface swarm — 2026-10-13
+
+After quota became available, the same bounded CLI **2.1.1**, **kimi-code/k3-256k**, explicit-thinking and maximum-effort workflow received three separate, reviewed public contracts. The Skill-only profile, curated Markdown skills, eight-step ceiling, two attempts per failing step and 900-second process-tree deadline remained in force. K3 speed mode was unavailable; no other model was substituted. Native Kimi delegation remained disabled. GPT coordinated disjoint tasks and retained application of drafts, shared navigation, security, interaction design and independent validation.
+
+| Task | Observable skill calls | Observed result |
+|---|---|---|
+| Keyword research screen | Ponytail and UX copy refiner | Usable draft returned in 572.8 seconds; GPT corrected lost-acknowledgement recovery, live access checks, interruptible polling and response validation |
+| Prompt comparison screen | Ponytail and UX copy refiner | Runner stopped at 900.2 seconds; no draft artifact returned |
+| Site Audit screen | None observed; captured output contained only the CLI version event | Runner stopped at the 900-second deadline; no draft artifact returned |
+
+The two deadlines triggered explicit GPT handoffs for the complex execution and evidence-view lifecycle work. No repeated model retry or quota polling was used to infer progress. Only public source/contracts and curated skills were supplied to Kimi; private test environments, credentials, customer data and operational logs were excluded. Browser acceptance is tracked in [research interface evidence](research-ui.md). Per-task tokens, subscription-use deltas, resolved provider effort and savings remain unknown.
