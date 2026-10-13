@@ -8,7 +8,7 @@ import {canonicalHash} from './context-input.ts';
 import {prepareMetaReportSource,inspectMetaReportSource,withMetaReportSource,type MetaReportSource} from './meta-auth.ts';
 import {metaRequest,MetaRequestError,type MetaRequest,type MetaRateHints} from './meta-http.ts';
 import {normalizeMetaRows} from './meta-report-rows.ts';
-import {metaActive,metaQueue,metaImportFields,metaImportRow,withMetaImport,type MetaImport} from './meta-imports.ts';
+import {metaActive,metaQueue,metaImportFields,metaImportRow,withMetaImport,observedMetaCooldown,recordMetaCooldown,MetaCooldown,type MetaImport} from './meta-imports.ts';
 
 const uuid=z.uuid(),decimal=z.string().regex(/^[1-9][0-9]{0,39}$(?![\s\S])/);
 const text=(max:number)=>z.string().min(1).max(max).refine(s=>toUSVString(s)===s&&!/[\x00-\x1f\x7f]/.test(s));
@@ -57,10 +57,8 @@ export async function runMetaImportStep(importId:string):Promise<void>{
    if(row.status==='submitting'){await finish(client,row,'submission_unknown','submission_unconfirmed');return;}
    if(row.deadline_at.getTime()<=Date.now()){await finish(client,row,row.status==='reading'&&row.row_count>0?'partial':'failed','deadline_reached',[...new Set([...row.warnings,'deadline_limit'])]);return;}
    if(row.generation==='9223372036854775807'){await finish(client,row,'failed','generation_limit');return;}
-   // Reuse other active import cooldown receipts without exposing foreign account/workspace existence.
-   const cooldown=(await client.query<{until:Date|null}>(`SELECT max(i.next_attempt_at) AS until FROM meta_import i JOIN meta_oauth_flow f ON f.id=i.grant_id
-    WHERE f.registration_id=$1 AND i.status=ANY($2::text[]) AND i.deleted_at IS NULL AND i.data_expired_at IS NULL AND i.next_attempt_at>clock_timestamp()
-    AND (i.diagnostic_code='app_throttled' OR i.diagnostic_code='account_throttled' AND i.source->>'accountId'=$3)`,[snapshot.app.id,metaActive,snapshot.account.id])).rows[0]?.until;
+   // Share only observed hints; terminal outcomes do not erase their deadlines.
+   const cooldown=await observedMetaCooldown(client,snapshot.app.id,snapshot.account.id);
    if(cooldown){await client.query('UPDATE meta_import SET next_attempt_at=LEAST(deadline_at,$2),updated_at=clock_timestamp() WHERE id=$1',[row.id,cooldown]);return;}
    return(await client.query<MetaImport>(`UPDATE meta_import AS i SET generation=generation+1,lease_token=$2,lease_expires_at=clock_timestamp()+interval '3 minutes',
     status=CASE WHEN status='queued' THEN 'submitting' ELSE status END,submitted_at=CASE WHEN status='queued' THEN clock_timestamp() ELSE submitted_at END,updated_at=clock_timestamp() WHERE id=$1 RETURNING ${metaImportFields}`,[row.id,randomUUID()])).rows[0];
@@ -68,14 +66,17 @@ export async function runMetaImportStep(importId:string):Promise<void>{
  }catch{await deny(initial);return;}
  if(!claim)return;
  const owned=claim;
- const gate=()=>withMetaReportSource(snapshot,owned.user_id,client=>lease(client,owned));
+ const admission=async(client:PoolClient)=>{await lease(client,owned);const until=await observedMetaCooldown(client,snapshot.app.id,snapshot.account.id);if(until)throw new MetaCooldown(until);};
+ const gate=()=>withMetaReportSource(snapshot,owned.user_id,admission);
  const credentials={appId:snapshot.app.app_id,appSecret:snapshot.secrets.appSecret,token:snapshot.accessToken};
- let submitted=false;
+ let submitted=false,lastRate:MetaRateHints|undefined;
  try{
-  await inspectMetaReportSource(snapshot,owned.user_id,async client=>{await lease(client,owned);});
+  await inspectMetaReportSource(snapshot,owned.user_id,admission,async rate=>{lastRate=rate;await withMetaReportSource(snapshot,owned.user_id,async client=>{await lease(client,owned,false);await recordMetaCooldown(client,'report',owned.id,rate);});});
   // Account-local dates cannot be safely relabelled if the remote account's timezone/currency changes.
-  await gate();const account=provider(z.object({id:text(44),account_id:decimal,name:text(512),currency:z.string().regex(/^[A-Z]{3}$(?![\s\S])/),timezone_name:text(120),account_status:z.number().int().nonnegative()}),(await metaRequest({operation:'account',...credentials,accountId:snapshot.account.id})).data);
-  if(account.id!=='act_'+snapshot.account.id||account.account_id!==snapshot.account.id||account.currency!==snapshot.account.currency||account.timezone_name!==snapshot.account.timeZone||account.name!==snapshot.account.name)throw new MetaRequestError('invalid_response');
+  await gate();const accountResponse=await metaRequest({operation:'account',...credentials,accountId:snapshot.account.id});lastRate=accountResponse.rate;
+  const account=provider(z.object({id:text(44),account_id:decimal,name:text(512),currency:z.string().regex(/^[A-Z]{3}$(?![\s\S])/),timezone_name:text(120),account_status:z.number().int().nonnegative()}),accountResponse.data);
+  if(account.id!=='act_'+snapshot.account.id||account.account_id!==snapshot.account.id||account.currency!==snapshot.account.currency||account.timezone_name!==snapshot.account.timeZone||account.name!==snapshot.account.name||account.account_status!==snapshot.account.status)throw new MetaRequestError('invalid_response');
+  await withMetaReportSource(snapshot,owned.user_id,async client=>{await lease(client,owned,false);await recordMetaCooldown(client,'report',owned.id,accountResponse.rate);});
   await gate();let request:MetaRequest;
   if(owned.status==='submitting')request={operation:'submitReport',...credentials,accountId:snapshot.account.id,report:owned.report,from:owned.date_from,to:owned.date_to};
   else if(owned.status==='waiting'){
@@ -84,30 +85,33 @@ export async function runMetaImportStep(importId:string):Promise<void>{
   }else if(owned.status==='reading')request={operation:'reportPage',...credentials,reportRunId:owned.provider_report_id!,report:owned.report,...(owned.next_cursor?{after:owned.next_cursor}:{})};
   else throw new LostLease();
   submitted=owned.status==='submitting';
-  const response=await metaRequest(request);
+  const response=await metaRequest(request);lastRate=response.rate;
   await withMetaReportSource(snapshot,owned.user_id,async client=>{
-   const row=await lease(client,owned),delay=rateDelay(response.rate),diagnostic=delay?rateCode(response.rate):null;
+   const row=await lease(client,owned,false),delay=rateDelay(response.rate),diagnostic=delay?rateCode(response.rate):null;
+   await recordMetaCooldown(client,'report',row.id,response.rate);
    if(row.status==='submitting'){
     const id=provider(z.object({report_run_id:decimal}),response.data).report_run_id;
+    if(row.deadline_at.getTime()<=Date.now())throw new Deadline();
     await client.query("UPDATE meta_import SET status='waiting',provider_report_id=$2,retry_attempts=0,updated_at=clock_timestamp() WHERE id=$1",[row.id,id]);
     await retryAt(client,row,Math.max(15,delay),diagnostic,0);return;
    }
    if(row.status==='waiting'){
     const status=provider(z.object({id:decimal,account_id:decimal,async_status:z.enum(['Job Not Started','Job Started','Job Running','Job Completed','Job Failed','Job Skipped']),async_percent_completion:z.number().int().min(0).max(100),date_start:z.iso.date(),date_stop:z.iso.date()}),response.data);
-    if(status.id!==row.provider_report_id||status.account_id!==snapshot.account.id||status.date_start!==row.date_from||status.date_stop!==row.date_to)throw new MetaRequestError('invalid_response');
+    if(status.id!==row.provider_report_id||status.account_id!==snapshot.account.id||status.date_start!==row.date_from||status.date_stop!==row.date_to||status.async_status==='Job Completed'&&status.async_percent_completion!==100)throw new MetaRequestError('invalid_response');
+    if(row.deadline_at.getTime()<=Date.now())throw new Deadline();
     await client.query('UPDATE meta_import SET poll_attempts=poll_attempts+1 WHERE id=$1',[row.id]);
     if(['Job Failed','Job Skipped'].includes(status.async_status)){await finish(client,row,'failed','provider_report_failed');return;}
-    if(status.async_status==='Job Completed'&&status.async_percent_completion!==100)throw new MetaRequestError('invalid_response');
     if(status.async_status==='Job Completed')await client.query("UPDATE meta_import SET status='reading' WHERE id=$1",[row.id]);
     await retryAt(client,row,Math.max(status.async_status==='Job Completed'?0:15,delay),diagnostic,0);return;
    }
    const page=provider(z.object({data:z.unknown(),paging:z.object({next:text(16000).optional(),cursors:z.object({after:cursor.optional()}).optional()}).optional()}),response.data);
-   const rows=normalizeMetaRows(page.data,{report:row.report,accountId:snapshot.account.id,currency:snapshot.account.currency,from:row.date_from,to:row.date_to});
+   let rows:ReturnType<typeof normalizeMetaRows>;try{rows=normalizeMetaRows(page.data,{report:row.report,accountId:snapshot.account.id,currency:snapshot.account.currency,from:row.date_from,to:row.date_to});}catch{throw new MetaRequestError('invalid_response');}
    const after=page.paging?.next?page.paging.cursors?.after:null;
    if(page.paging?.next&&(!after||!rows.length)||after&&row.cursor_hashes.includes(canonicalHash(after)))throw new MetaRequestError('invalid_response');
    if(row.pages>=50||row.row_count+rows.length>25000)throw new MetaRequestError('invalid_response');
    if((await client.query(`SELECT 1 FROM meta_import_page p CROSS JOIN LATERAL jsonb_array_elements(p.rows) old_row
     JOIN jsonb_array_elements($2::jsonb) new_row ON old_row->>'date'=new_row->>'date' AND (old_row->'campaignId')=(new_row->'campaignId') WHERE p.import_id=$1 LIMIT 1`,[row.id,JSON.stringify(rows)])).rowCount)throw new MetaRequestError('invalid_response');
+   if(row.deadline_at.getTime()<=Date.now())throw new Deadline();
    await client.query('INSERT INTO meta_import_page(import_id,project_id,workspace_id,page,rows,row_count,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7)',[row.id,row.project_id,row.workspace_id,row.pages,JSON.stringify(rows),rows.length,canonicalHash(rows)]);
    const pages=row.pages+1;
    await client.query('UPDATE meta_import SET pages=$2,row_count=row_count+$3,next_cursor=$4,cursor_hashes=cursor_hashes||$5::text[],retry_attempts=0 WHERE id=$1',[row.id,pages,rows.length,after??null,after?[canonicalHash(after)]:[]]);
@@ -121,10 +125,18 @@ export async function runMetaImportStep(importId:string):Promise<void>{
    // A matching token/generation may close its expired lease; it can never close a replacement's lease.
    const row=await metaImportRow(client,owned.id,true);
    if(!row||row.generation!==owned.generation||row.lease_token!==owned.lease_token||!metaActive.includes(row.status)||row.deleted_at||row.data_expired_at)return;
-   if(error instanceof MetaRequestError&&error.reauthorize)await client.query("UPDATE meta_connection SET status='reconnect',updated_at=clock_timestamp() WHERE id=$1 AND current_grant_id=$2 AND status='ready'",[row.connection_id,row.grant_id]);
+   if(lastRate)await recordMetaCooldown(client,'report',row.id,lastRate);
+   if(error instanceof MetaRequestError)await recordMetaCooldown(client,'report',row.id,error.rate);
+   if(error instanceof MetaRequestError&&error.reauthorize){await client.query("UPDATE meta_connection SET status='reconnect',updated_at=clock_timestamp() WHERE id=$1 AND current_grant_id=$2 AND status='ready'",[row.connection_id,row.grant_id]);await finish(client,row,'denied','provider_access_lost');return;}
    if(submitted){await finish(client,row,'submission_unknown','submission_unconfirmed');return;}
+   if(error instanceof MetaRequestError&&error.reason==='invalid_response'){await finish(client,row,'failed','invalid_provider_report');return;}
    if(error instanceof Deadline||row.deadline_at.getTime()<=Date.now()){await finish(client,row,row.status==='reading'&&row.row_count>0?'partial':'failed','deadline_reached',[...new Set([...row.warnings,'deadline_limit'])]);return;}
-   if(error instanceof MetaRequestError&&error.reauthorize){await finish(client,row,'denied','provider_access_lost');return;}
+   if(error instanceof MetaCooldown){
+    // This process still owns the lease and knows it has not called POST. A
+    // deferral here must not manufacture an ambiguous report submission.
+    if(row.status==='submitting')await client.query("UPDATE meta_import SET status='queued',submitted_at=NULL WHERE id=$1",[row.id]);
+    await retryAt(client,row,Math.max(0,Math.ceil((error.until.getTime()-Date.now())/1000)),'observed_cooldown');return;
+   }
    if(error instanceof MetaRequestError&&error.retryable&&row.status!=='submitting'&&row.retry_attempts<3){const delay=Math.max(15*2**row.retry_attempts,rateDelay(error.rate));await retryAt(client,row,delay,error.reason==='throttled'?rateCode(error.rate):'provider_retry',row.retry_attempts+1);return;}
    await finish(client,row,'failed',error instanceof MetaRequestError?error.reason==='invalid_response'?'invalid_provider_report':'provider_unavailable':'invalid_provider_report');
   });}catch{await deny(owned);}

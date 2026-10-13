@@ -68,7 +68,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -229,14 +229,32 @@ try {
     await metaClient.query(`INSERT INTO meta_oauth_flow(id,registration_id,app_revision,start_epoch,workspace_id,project_id,user_id,connection_id,phase,subject_hash,granted_at,expires_at)
       VALUES($1,$2,1,1,$3,$4,$5,$6,'completed',$7,clock_timestamp(),clock_timestamp())`,[metaGrant,metaApp,workspace,project,owner,metaConnection,'a'.repeat(64)]);
     for(let i=0;i<metaIds.length;i++)await metaClient.query(`INSERT INTO meta_import(id,workspace_id,project_id,user_id,connection_id,grant_id,connection_revision,app_revision,request_id,report,date_from,date_to,source,status,completed_at,deleted_at,row_count,pages)
-      VALUES($1,$2,$3,$4,$5,$6,1,1,$7,'campaign_daily','2020-01-01','2020-01-01',$8,'completed',clock_timestamp(),CASE WHEN $8::jsonb IS NULL THEN clock_timestamp() END,$9,$9)`,[metaIds[i],workspace,project,owner,metaConnection,metaGrant,randomUUID(),i===2?null:{...metaDefinition,accountName:i?'Renamed account':'Preserved account'},i===0?1:0]);
+      VALUES($1,$2,$3,$4,$5,$6,1,1,$7,'campaign_daily','2020-01-01','2020-01-01',$8,CASE WHEN $10 THEN 'queued' ELSE 'completed' END,CASE WHEN NOT $10 THEN clock_timestamp() END,CASE WHEN $8::jsonb IS NULL THEN clock_timestamp() END,$9,$9)`,[metaIds[i],workspace,project,owner,metaConnection,metaGrant,randomUUID(),i===2?null:{...metaDefinition,accountName:i?'Renamed account':'Preserved account'},i===0?1:0,i===1]);
+    await metaClient.query("UPDATE meta_import SET diagnostic_code='app_throttled',next_attempt_at=clock_timestamp()+interval '15 minutes' WHERE id=ANY($1::uuid[])",[metaIds.slice(0,2)]);
     await metaClient.query(`INSERT INTO meta_import_page(import_id,project_id,workspace_id,page,rows,row_count,content_hash) VALUES($1,$2,$3,0,'[{"date":"2020-01-01","accountId":"123","campaignId":"789","campaignName":"Preserved campaign","impressions":"9007199254740993","clicks":null,"spend":"1.2300","actions":null,"actionValues":[]}]',1,$4)`,[metaIds[0],project,workspace,'b'.repeat(64)]);
     await metaClient.query('COMMIT');
   }catch(error){await metaClient.query('ROLLBACK');throw error;}finally{metaClient.release();}
   const metaTables=['meta_app_registration','meta_connection','meta_oauth_flow','meta_deletion_request','meta_import','meta_import_page'];
   async function metaRecords(){const result:Record<string,Record<string,unknown>[]>={};for(const table of metaTables)result[table]=(await pool.query(`SELECT row_to_json(t) AS data FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows.map(r=>r.data);return result;}
   const metaBefore=await metaRecords();assert.equal(Object.hasOwn(metaBefore.meta_import[0],'definition_key'),false);assert.equal((await history()).at(-1)?.version,'0026');
-  stage = 'upgrade original,0022 features,0023 rank and0026 Meta data through0027';
+  const profileSource=sources.find(s=>s.version==='0027')!;
+  const profileClient=await pool.connect();await profileClient.query('BEGIN');
+  try{await profileClient.query(profileSource.sql);await profileClient.query('INSERT INTO schema_version(version,checksum) VALUES($1,$2)',[profileSource.version,profileSource.checksum]);await profileClient.query('COMMIT');}catch(error){await profileClient.query('ROLLBACK');throw error;}finally{profileClient.release();}
+  const meta27=await metaRecords();
+  stage = 'seed actual0028 campaign receipts before independent cooldown migration';
+  const inventoryMigration=sources.find(s=>s.version==='0028')!,inventoryClient=await pool.connect(),inventoryIds=[randomUUID(),randomUUID()];
+  try{
+    await inventoryClient.query('BEGIN');await inventoryClient.query(inventoryMigration.sql);await inventoryClient.query('INSERT INTO schema_version(version,checksum) VALUES($1,$2)',[inventoryMigration.version,inventoryMigration.checksum]);
+    for(let n=0;n<2;n++)await inventoryClient.query(`INSERT INTO meta_campaign_inventory(id,workspace_id,project_id,user_id,connection_id,grant_id,connection_revision,app_revision,request_id,source,status,completed_at,pages,row_count,first_fetched_at,last_fetched_at,diagnostic_code,next_attempt_at)
+      VALUES($1,$2,$3,$4,$5,$6,1,1,$7,$8,CASE WHEN $9 THEN 'queued' ELSE 'completed' END,CASE WHEN NOT $9 THEN clock_timestamp() END,CASE WHEN $9 THEN 0 ELSE 1 END,CASE WHEN $9 THEN 0 ELSE 1 END,CASE WHEN NOT $9 THEN clock_timestamp() END,CASE WHEN NOT $9 THEN clock_timestamp() END,'account_throttled',clock_timestamp()+interval '15 minutes')`,[inventoryIds[n],workspace,project,owner,metaConnection,metaGrant,randomUUID(),{provider:'meta_ads',accountId:'123',accountName:'Preserved account',currency:'AED',timeZone:'Asia/Dubai',graphVersion:'v26.0',definitionVersion:1,kind:'campaign_inventory',effectiveStatuses:['ACTIVE','PAUSED','ARCHIVED','DELETED','IN_PROCESS','WITH_ISSUES']},n===1]);
+    await inventoryClient.query(`INSERT INTO meta_campaign_inventory_page(inventory_id,project_id,workspace_id,page,rows,row_count,content_hash) VALUES($1,$2,$3,0,'[{"id":"789","name":"Preserved campaign","configuredStatus":"PAUSED","effectiveStatus":"ACTIVE"}]',1,$4)`,[inventoryIds[0],project,workspace,'c'.repeat(64)]);
+    await inventoryClient.query('COMMIT');
+  }catch(error){await inventoryClient.query('ROLLBACK');throw error;}finally{inventoryClient.release();}
+  assert.deepEqual(await metaRecords(),meta27,'Applying0028 preserves every existing Meta receipt and fingerprint.');
+  const inventoryTables=['meta_campaign_inventory','meta_campaign_inventory_page'];
+  async function inventoryRecords(){const records:Record<string,Record<string,unknown>[]>={};for(const table of inventoryTables)records[table]=(await pool.query(`SELECT row_to_json(t) AS data FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows.map(r=>r.data);return records;}
+  const inventoryBefore=await inventoryRecords();
+  stage = 'upgrade original,0022 features,0023 rank and0026–28 Meta data through0029';
   runMigrate(0);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
@@ -260,6 +278,11 @@ try {
   for(const table of rankTables){assert.equal(rankAfter[table].length,rankBefore[table].length,'Upgrade must not invent rank work.');for(let index=0;index<rankBefore[table].length;index++)assert.deepEqual(Object.fromEntries(Object.keys(rankBefore[table][index]).map(key=>[key,rankAfter[table][index][key]])),rankBefore[table][index],'Existing rank identity, approvals, pins and captured quotes must be preserved.');}
   assert.equal(rankAfter.rank_config[0].authored_revision,1);assert.equal(rankAfter.rank_config[0].revision,7);assert.equal(rankAfter.rank_config[0].keywords_revision,11);assert.equal(rankAfter.rank_config[0].schedule_enabled,true);
   const metaAfter=await metaRecords();
+  for(const table of metaTables)assert.deepEqual(metaAfter[table].map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>!['app_cooldown_until','account_cooldown_until'].includes(key)))),meta27[table],'Cooldown schema preserves every existing Meta field.');
+  const inventoryAfter=await inventoryRecords();
+  for(const table of inventoryTables)assert.deepEqual(inventoryAfter[table].map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>!['app_cooldown_until','account_cooldown_until'].includes(key)))),inventoryBefore[table],'Cooldown schema preserves existing campaign receipts/pages and does not enqueue work.');
+  for(const row of metaAfter.meta_import){assert.equal(row.app_cooldown_until,row.id===metaIds[1]?row.next_attempt_at:null);assert.equal(row.account_cooldown_until,null);}
+  for(const row of inventoryAfter.meta_campaign_inventory){assert.equal(row.account_cooldown_until,row.id===inventoryIds[1]?row.next_attempt_at:null);assert.equal(row.app_cooldown_until,null);}
   for(const table of metaTables){assert.equal(metaAfter[table].length,metaBefore[table].length);for(const old of metaBefore[table]){const current=metaAfter[table].find(r=>table==='meta_import_page'?r.import_id===old.import_id:r.id===old.id)!;assert.deepEqual(Object.fromEntries(Object.keys(old).map(key=>[key,current[key]])),old,'Profile backfill must preserve every existing Meta field, including source, deleted receipts and exact pages.');}}
   const profileRows=(await pool.query("SELECT id,definition_key,encode(sha256(convert_to((source-'accountName')::text,'UTF8')),'hex') AS expected FROM meta_import ORDER BY id")).rows;
   for(const row of profileRows)assert.equal(row.definition_key,row.expected);assert.equal(profileRows.find(r=>r.id===metaIds[0]).definition_key,profileRows.find(r=>r.id===metaIds[1]).definition_key,'Account label changes do not change measurement profile.');assert.equal(profileRows.find(r=>r.id===metaIds[2]).definition_key,null,'Already deleted legacy profile stays explicitly unknown.');
@@ -289,8 +312,10 @@ try {
   assert.deepEqual(await rankRecords(),rankAfter,'No-op migration preserves authored revision and every prior rank field.');
   assert.deepEqual((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data,quoteAfter);
   assert.deepEqual(await metaRecords(),metaAfter,'No-op migration preserves exact Meta fingerprints and immutable receipts/pages.');
-  assert.equal((await pool.query("SELECT 1 FROM meta_import WHERE status IN ('queued','submitting','waiting','reading')")).rowCount,0,'Upgrade must not schedule or synthesize Meta imports.');
-  console.log('PASS prior0022 feature evidence,0023 rank data and0026 Meta receipts/pages survive0027; profile backfill ignores only account name, preserves unknown deletion and is idempotent; no implicit paid work');
+  assert.deepEqual(await inventoryRecords(),inventoryAfter,'No-op migration preserves independent cooldowns and every campaign field.');
+  assert.equal((await pool.query("SELECT 1 FROM meta_import WHERE status IN ('queued','submitting','waiting','reading')")).rowCount,1,'Only the prior captured import remains active; migration creates no work.');
+  assert.equal((await pool.query("SELECT 1 FROM meta_campaign_inventory WHERE status IN ('queued','reading')")).rowCount,1,'Only the prior captured inventory remains active; migration creates no work.');
+  console.log('PASS prior0022 feature evidence,0023 rank and0026–28 Meta receipts/pages survive0029; profile and active evidenced cooldown backfills preserve all prior fields and are idempotent; no implicit paid work');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {

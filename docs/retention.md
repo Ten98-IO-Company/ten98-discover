@@ -7,13 +7,13 @@ Workspace members can inspect retention. Owners can preview and explicitly save 
 | Raw analytics | 90 | Events, their properties/dimensions and unreferenced visitor identities |
 | Replay | 7 | Not implemented; policy saved for future storage |
 | Raw provider evidence | 90 | Generated prompt answers/citations, copied execution input and completed manual redirect-chain observations, measured from completion; authored prompt versions and financial/idempotency receipts remain |
-| Derived history | 365 | Finished Google and Meta import rows, Google quality metadata and normalized keyword results, measured from completion; original outcomes, used quotes, charge evidence and idempotency receipts remain |
+| Derived history | 365 | Finished Google and Meta import rows, Meta campaign inventories, Google quality metadata and normalized keyword results, measured from completion; original outcomes, used quotes, charge evidence and idempotency receipts remain |
 
 All provider spending and request-deduplication records are preserved, including reserved, dispatched, uncertain, settled and cancelled requests. Authored project context, research notes, prompts and immutable versions, mutation receipts, reports, templates, shared snapshots, credentials, accounts, teams and configuration are also preserved. The worker does not scan or delete arbitrary artifact files. This increment implements part of P31/P68, not complete retention/export/erasure parity.
 
 ## Preview and save
 
-The preview estimates eligible event rows and their approximate logical size. It examines at most 10,001 candidates and labels a capped count as at least 10,000. Bytes describe the first 10,000 sampled rows; they are not a complete storage inventory or a promise of reclaimed filesystem space. Query timeouts appear as an unavailable estimate, never zero. Separate previews count eligible finished Google imports, Meta imports and keyword result payloads against the derived cutoff, and generated prompt answers, copied inputs and redirect observations against the raw-evidence cutoff. Each uses the same 10,001-candidate bound and explicit unavailable state. The Meta estimate also includes unfinished cleanup already marked for expiry or deletion; extending the policy cannot reverse that work. Replay storage remains unimplemented.
+The preview estimates eligible event rows and their approximate logical size. It examines at most 10,001 candidates and labels a capped count as at least 10,000. Bytes describe the first 10,000 sampled rows; they are not a complete storage inventory or a promise of reclaimed filesystem space. Query timeouts appear as an unavailable estimate, never zero. Separate previews count eligible finished Google imports, Meta imports, Meta campaign inventories and keyword result payloads against the derived cutoff, and generated prompt answers, copied inputs and redirect observations against the raw-evidence cutoff. Each uses the same 10,001-candidate bound and explicit unavailable state. Both Meta estimates also include unfinished cleanup already marked for expiry or deletion; extending the policy cannot reverse that work. Replay storage remains unimplemented.
 
 Saving requires a preview bound to the exact policy, workspace, owner and current revision. It expires after five minutes. The API rechecks live ownership under the workspace lock. Stale or expired previews require a new preview; changing the draft invalidates the browser confirmation. The preview is advisory: data arriving after it may change the eventual eligible count.
 
@@ -25,14 +25,14 @@ The existing worker attempts one project per ten-second tick, with at most 1,000
 
 Projects with pending work become eligible again after ten seconds; completed projects after an hour. This is a bounded maintenance cadence, not a deletion deadline under arbitrary load or an unavailable worker. Inspect failed-project status and database/worker health when cleanup falls behind. Latest completed project cleanup is not proof that every project has caught up.
 
-Meta imports use a separate non-overlapping task because their lock order starts
-with the app registration before workspace/project/source/import. Each pass removes
-at most five pages from one finished import. Read APIs mask expired rows at the
+Meta imports and campaign inventories use separate non-overlapping tasks because their lock order starts
+with the app registration before workspace/project/source/receipt. Each task removes
+at most five pages from one finished receipt per pass. Read APIs mask expired rows at the
 deadline even before physical cleanup. Once marked, cleanup continues despite a
 later policy extension, retaining outcome, count, request and grant receipts.
 Signed provider deletion separately masks and removes captured source metadata.
-The project cleanup timestamp does not attest completion of this Meta task.
-See [Meta reports](meta-reports.md).
+The project cleanup timestamp does not attest completion of these Meta tasks.
+See [Meta reports](meta-reports.md) and [campaign inventory](meta-campaigns.md).
 
 Google snapshot cleanup retains the original status, counts, request ID and source; it marks the data expired and removes rows/quality metadata only for completed, partial, failed or denied imports. Queued/running imports are excluded. Expired data is unavailable rather than an empty successful result, and repeated requests return the original receipt. See [Google imports](google-reports.md). Keyword cleanup clears only normalized result payloads and marks them expired; used quotes, requests, reconciliation evidence and all financial ledger fields remain. An abandoned quote without a run can expire after 24 hours. See [keyword research](keyword-research.md).
 

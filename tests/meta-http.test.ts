@@ -219,3 +219,17 @@ test('report pages retain shared byte, Unicode and abort bounds without publishi
  for(const body of [Uint8Array.of(0xc3,0x28),' {"data":[{"campaign_name":"\\ud800"}]}','{"data":[]} trailing'])await run(async()=>new Response(body),()=>assert.rejects(metaRequest(page),clean('invalid_response')));
  const controller=new AbortController();controller.abort();let calls=0;await run(async()=>{calls++;return Response.json({data:[]});},()=>assert.rejects(metaRequest(page,controller.signal),clean('aborted')));assert.equal(calls,0);
 });
+
+test('campaign enumeration has a fixed complete-status GET profile and opaque cursor boundary',async()=>{
+ const command:MetaRequest={...credentials,token,operation:'campaigns',accountId,after:'opaque%+cursor'};let calls=0;
+ await run(async(raw,init)=>{calls++;const url=new URL(raw);assert.equal(url.origin,'https://graph.facebook.com');assert.equal(url.pathname,'/v26.0/act_'+accountId+'/campaigns');assert.equal(init.method,'GET');assert.equal(init.body,undefined);assert.equal(init.redirect,'error');assert.equal(init.credentials,'omit');
+  assert.equal(new Headers(init.headers).get('authorization'),'Bearer '+token);assert.equal(url.searchParams.get('appsecret_proof'),createHmac('sha256',credentials.appSecret).update(token).digest('hex'));
+  assert.equal(url.searchParams.get('fields'),'id,account_id,name,status,effective_status');assert.equal(url.searchParams.get('limit'),'100');assert.equal(url.searchParams.get('after'),'opaque%+cursor');assert.deepEqual(JSON.parse(url.searchParams.get('effective_status')!),['ACTIVE','PAUSED','ARCHIVED','DELETED','IN_PROCESS','WITH_ISSUES']);
+  assert.deepEqual([...url.searchParams.keys()].sort(),['after','appsecret_proof','effective_status','fields','limit']);return Response.json({data:[],paging:{next:'https://evil.test',cursors:{after:'next'}}});
+ },()=>metaRequest(command));assert.equal(calls,1);
+ await run(async()=>{calls++;return Response.json({data:[]});},async()=>{
+  for(const key of ['fields','effective_status','filtering','since','until','limit','method','url','next','version'])await assert.rejects(metaRequest({...command,[key]:'override'}as MetaRequest),clean('invalid_request'));
+  for(const account of ['0','01','act_123','1/campaigns','1?token=x','1\n'])await assert.rejects(metaRequest({...command,accountId:account}),clean('invalid_request'));
+  for(const after of ['', 'x\n','é'.repeat(2049),'\ud800'])await assert.rejects(metaRequest({...command,after}),clean('invalid_request'));
+ });assert.equal(calls,1);
+});
