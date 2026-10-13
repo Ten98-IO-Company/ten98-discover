@@ -69,7 +69,7 @@ export async function analyzeCrawlPageIsolated(input:CrawlPageInput,signal?:Abor
   return runCrawlParser(payload,started,signal,result);
 }
 
-/** Shared lifetime for the two fixed child operations; validators never select executable code. */
+/** Shared lifetime for fixed parser operations; validators never select executable code. */
 export async function runCrawlParser<T>(payload:Buffer,started:number,signal:AbortSignal|undefined,validate:(value:unknown)=>T|null):Promise<T|{status:'timeout'|'aborted'|'child_error'}> {
   if(signal?.aborted)return {status:'aborted'};
   if(payload.length>crawlParserLimits.inputBytes)return {status:'child_error'};

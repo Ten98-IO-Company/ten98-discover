@@ -1,6 +1,6 @@
 # Disposable crawl parser process
 
-`analyzeCrawlPageIsolated(input, signal?)` is the required entry for future live static-HTML parsing. It supervises one disposable Node 24 child per call and returns either `{status:'ok', analysis}` or a status-only failure: `invalid_input`, `timeout`, `aborted`, or `child_error`. Robots evaluation uses the same fixed child and supervisor through `evaluateCrawlRobotsIsolated`, described below. No crawler, network transport, scheduler, database or user interface is connected in this increment. Pure rule behavior and evidence retention remain documented in [static page analysis](crawl-analysis.md).
+`analyzeCrawlPageIsolated(input, signal?)` is the required entry for future live static-HTML parsing. It supervises one disposable Node 24 child per call and returns either `{status:'ok', analysis}` or a status-only failure: `invalid_input`, `timeout`, `aborted`, or `child_error`. Robots evaluation and sitemap parsing use the same fixed child and supervisor through the two entries described below. The separate [single-hop download transport](crawl-network.md) is available, but no crawler, scheduler, database or user interface connects these components yet. Pure rule behavior and evidence retention remain documented in [static page analysis](crawl-analysis.md).
 
 ## Lifetime and protocol
 
@@ -16,7 +16,7 @@ Stdout is bounded to 12 MiB, enough for expanded bounded URL/text evidence; stde
 
 Call from the **application-root working directory**, the same convention already used by the worker CLI and migration discovery. Never change cwd or select an entry path from project/provider/request data. The supervisor does not search for fallback files and has no caller-supplied executable, script, argument or environment options. A wrong cwd fails closed with `child_error`.
 
-The existing Dockerfile sets `WORKDIR /app`, runs Node 24, and copies `src/server`, package.json and production node_modules into the runtime image. Therefore `/app/src/server/crawl-analysis-child.ts` and its analyzer/parse5 imports exist for the native worker without bundling another executable. No Dockerfile edit is needed. This increment tested a copied Docker-style directory with the actual source entry and dependencies under native Node 24; it did not build or run a new Docker image. A future integration must retain these source files in its deployment artifact and test the actual container worker.
+The existing Dockerfile sets `WORKDIR /app`, runs Node 24, and copies `src/server`, package.json and production node_modules into the runtime image. Therefore `/app/src/server/crawl-analysis-child.ts` and its analyzer/parse5/saxes imports exist for the native worker without bundling another executable. No Dockerfile edit is needed. The combined increment built the Linux amd64 runtime image and passed the synthetic HTML, robots, sitemap, hostile-input and cancellation checks as its unprivileged user, with networking disabled, read-only filesystem, one CPU, 256 MiB container memory and 64 PIDs. This checks packaged parser execution; the future durable worker still needs its own integration checks.
 
 ## Limits and remaining integration work
 
@@ -36,14 +36,31 @@ Every decision retains the pure matcher's cumulative 2,000,000-step bound. The w
 
 Sitemap URLs are untrusted discovery observations, potentially including query values. They neither authorize fetching nor belong in diagnostics. Future persistence must apply raw-evidence retention and trusted domain scope. The digest identifies supplied bytes; it does not prove freshness, authenticity or continuous ownership. The supervisor's resource and OS-permission limitations above also apply to robots.
 
+## Sitemap XML
+
+`parseCrawlSitemapIsolated({documentUrl, body}, signal?)` accepts at most 5 MiB of complete expanded bytes. This operational capacity matches the initial download transport and is smaller than the pure [sitemap format parser's](crawl-sitemap.md) 50 MiB format limit. The parent rejects excess before spawning; the child independently validates canonical base64 and decoded size. The encoded maximum body fits the existing 7 MiB stdin cap. The same two-second deadline and 64 MiB old-space limit apply. Valid but expensive documents may be unavailable at those limits; do not report their unobserved pages as absent.
+
+The result is `{status:'ok', analysis}` with the pure parser's complete, partial or unavailable result, or a status-only protocol failure. The parent validates stable reasons, bounded URLs, input byte receipt, exact count relationships and completeness flags after clean child closure. An unavailable document returns no entries or prefix counts. Queries and foreign/private-looking hosts remain transient discovery evidence; neither parser success nor a listed URL grants permission to fetch. No raw XML or parser diagnostic is returned, persisted or logged. The caller must supply complete transport bodies only, apply current scope and robots decisions to every discovered URL, and interpret transport-capacity failures as unavailable coverage.
+
 ## Verification
 
 Run on Node 24 from the application root:
 
 ```sh
-node --test tests/crawl-robots.test.ts tests/crawl-analysis.test.ts tests/crawl-analysis-isolated.test.ts tests/crawl-robots-isolated.test.ts
+node --test tests/crawl-robots.test.ts tests/crawl-analysis.test.ts tests/crawl-sitemap.test.ts tests/crawl-analysis-isolated.test.ts tests/crawl-robots-isolated.test.ts tests/crawl-sitemap-isolated.test.ts
 ```
 
 The eight isolation groups cover ordinary output equivalence, pre-spawn input rejection, real hostile-depth termination, real pre/in-flight cancellation with closed pipes, fixed arguments and environment, simulated malformed/overflow/nonzero/spawn/pipe failure paths, a copied production source layout and wrong cwd, plus the child's own malformed/oversized stdin boundary. Test doubles replace the Node spawn method only inside tests; there is no runtime arbitrary-execution injection option. All fixture data is synthetic. No network, database, live site, paid call or build is needed.
 
 Seven robots-isolation groups cover batched outcomes and digest, fatal UTF-8/origin/delay semantics, exact 512 KiB and 100-target boundaries, pre-spawn rejection, hostile matching with a responsive parent, real cancellation, malformed/mismatched child envelopes and independent child operation/base64 rejection. All eight existing HTML-isolation groups still pass through the shared supervisor.
+
+Seven sitemap-isolation groups cover complete/partial equivalence, failed-document prefix disposal, the exact 5 MiB body boundary, invalid inputs without spawning, unfinished hostile tokens with a responsive parent, cancellation, inconsistent output/count/URL rejection and independent child base64/capacity rejection. The maximum-body fixture completed in 583 ms in one local Windows Node 24.19.0 run; this is fixture evidence, not an arbitrary-document throughput guarantee. All 22 HTML/robots/sitemap isolation groups passed together, including the copied Docker-style source layout.
+
+`pnpm test` bounds concurrent test files to two. The unbounded full run caused the exact 5 MiB acceptance fixture to exceed the unchanged two-second deadline under CPU contention; the focused run and the bounded full run passed. The exact input, success assertion and runtime resource limits remain unchanged. This is test workload control, not production concurrency admission. The combined suite passed 237 checks with two existing platform skips.
+
+The packaged-runtime check is repeatable without credentials, databases or a live site:
+
+```sh
+docker build -t ten98-crawl-test .
+docker run --rm --network none --read-only --memory 256m --pids-limit 64 --cpus 1 -i ten98-crawl-test node --input-type=module < tests/crawl-container.mjs
+```
