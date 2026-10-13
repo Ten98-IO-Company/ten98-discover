@@ -11,6 +11,8 @@ import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSe
 import { extractAnalyticsPeer } from './analytics-network.ts';
 import { projectAnalytics } from './analytics.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
+import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
+import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey } from './api-keys.ts';
@@ -195,6 +197,29 @@ export async function handleApi(request: Request): Promise<Response> {
         if (domainRoute[3] === 'remove') return json(await removeDomain(...args));
       }
       return json({ error: 'Method not allowed.' }, 405);
+    }
+    const contextRoute=path.match(new RegExp(`^/api/projects/(${id})/context(?:/(update|research-log))?$`,'i'));
+    if(contextRoute) {
+      await limit(`project-content:${user.id}`,120);
+      if(request.method==='GET'&&!contextRoute[2]&&!url.search) return json(await getProjectContext(contextRoute[1],user.id));
+      if(request.method==='GET'&&contextRoute[2]==='research-log') return json(await getContextResearch(contextRoute[1],user.id,url.searchParams));
+      if(request.method==='POST'&&contextRoute[2]==='update'&&!url.search) return json(await updateProjectContext(contextRoute[1],user.id,await readJson(request,262144)));
+      return json({error:'Method or parameters not allowed.'},405);
+    }
+    const promptRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?$`,'i'));
+    if(promptRoute) {
+      await limit(`project-content:${user.id}`,120);
+      const pid=promptRoute[1],promptId=promptRoute[3],action=promptRoute[4];
+      if(request.method==='GET'&&!promptRoute[2]) return json(await listPrompts(pid,user.id,url.searchParams));
+      if(request.method==='GET'&&promptId&&!action&&!url.search) return json(await getPrompt(pid,user.id,promptId));
+      if(request.method==='GET'&&action==='versions') return json(await promptVersions(pid,user.id,promptId,url.searchParams));
+      if(request.method==='POST'&&!url.search) {
+        const input=await readJson(request,262144);
+        if(promptRoute[2]==='bulk') return json(await createPrompts(pid,user.id,input),201);
+        if(action==='update') return json(await updatePrompt(pid,user.id,promptId,input));
+        if(action==='archive'||action==='restore') return json(await setPromptArchived(pid,user.id,promptId,action==='archive',input));
+      }
+      return json({error:'Method or parameters not allowed.'},405);
     }
     const analyticsSettingsRoute = path.match(new RegExp(`^/api/projects/(${id})/analytics-settings$`, 'i'));
     if (analyticsSettingsRoute) {

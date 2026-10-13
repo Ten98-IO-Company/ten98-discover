@@ -1,5 +1,23 @@
 # Upstream provenance and reuse gate
 
+The project-context implementation now includes the attributed Elmo classifier adaptation recorded below. Earlier statements describing an empty application import ledger refer to the planning/foundation stage before this addition.
+
+## Project-context classifier adaptation
+
+`src/server/context-input.ts` functions `classificationTerms` and `classifyPrompt` adapt the behavior and structure of [`packages/lib/src/tag-utils.ts`](https://github.com/elmohq/elmo/blob/3c673d0253d01ae030fa41519f62ad7e54f2281b/packages/lib/src/tag-utils.ts) from Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`. The implementation combines substring classification and explicit user-tag overrides, adds a classifier version, and uses stored project profile aliases. Tests are newly authored synthetic fixtures. Other context and prompt storage/API code is original, informed by the pinned schemas documented in `docs/research.md`; no upstream dependency manifest or assets were copied.
+
+Elmo notice, retained with this adaptation:
+
+> MIT License
+>
+> Copyright (c) 2026 Blue Whale Software, LLC
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 The planning commit contains original documentation and a small documentation checker. It does not contain copied upstream application code, logos, fonts, datasets or vendor credentials. References and behavioral research do not grant permission to redistribute every upstream dependency or asset.
 
 | Reference | Pinned commit | Root notice inspected |
