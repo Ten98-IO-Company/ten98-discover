@@ -9,6 +9,7 @@ import {handleApi} from '../src/server/api.ts';
 import {getContextResearch,getProjectContext,updateProjectContext} from '../src/server/project-context.ts';
 import {getPrompt,createPrompts,listPrompts,promptVersions,setPromptArchived,updatePrompt} from '../src/server/prompts.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
+import {runRetentionBatch} from '../src/server/retention.ts';
 
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
 assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(getConfig().databaseUrl).hostname));
@@ -134,8 +135,14 @@ try {
   const key=await createApiKey(workspace,owner,{name:'Restricted fixture',scopes:['projects:read'],expiresInDays:1});
   assert.equal((await handleApi(new Request(url+root+'/context',{headers:{authorization:`Bearer ${key.token}`}}))).status,403);
   assert.equal((await http(`${root}/prompts`,'GET',undefined,{cookie:''})).status,401);
+  const authoredTables=['project_context','context_section','context_competitor','context_key_page','context_research','project_content_request','project_prompt','prompt_text_version'];
+  async function authoredSnapshot(){const result=[];for(const table of authoredTables)result.push((await pool.query(`SELECT count(*)::int AS count,md5(string_agg(row_to_json(t)::text,'' ORDER BY row_to_json(t)::text)) AS digest FROM ${table} t WHERE project_id=$1`,[project])).rows[0]);return result;}
+  const beforeCleanup=await authoredSnapshot();
+  await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at) VALUES($1,$2,'page_view','/expired',now()-interval '400 days')",[randomUUID(),project]);
+  const cleanup=await runRetentionBatch(project);assert.equal(cleanup?.deletedEvents,1);
+  assert.deepEqual(await authoredSnapshot(),beforeCleanup,'Analytics retention preserves authored context, prompt versions and mutation receipts.');
   assert.equal(fetches,0);assert.equal(dnsLookups,0);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM provider_request')).rows[0].count,0);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM import_probe')).rows[0].count,0);
-  console.log('Project context/prompts integration passed: isolated roles, atomic caps, retries, retained notes, exact metadata, immutable versions, filters/pagination, demotion race, cookie-only HTTP; zero provider/DNS/job activity.');
+  console.log('Project context/prompts integration passed: isolated roles, atomic caps, retries, retained notes, exact metadata, immutable versions, filters/pagination, demotion race, cookie-only HTTP, authored-data retention protection; zero provider/DNS/job activity.');
 } finally {globalThis.fetch=fetchOriginal;Resolver.prototype.resolveTxt=dnsOriginal;await closeDatabase();}

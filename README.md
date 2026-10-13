@@ -2,7 +2,7 @@
 
 An MIT, Docker-first application in development, combining web analytics, SEO research and audits, and AI visibility monitoring.
 
-**Status: development foundation; not a V1 release.** The application includes owner setup, local/OIDC login and authenticator security, multiple workspaces, team invitations and roles, scoped API keys, encrypted provider credentials and spending controls, projects, consent-gated traffic reports and typed custom events, browser destination configuration, static reports with revocable sharing, domain ownership records and a durable worker check. Docker runs the web app, worker and PostgreSQL, with explicit upgrade migrations. Provider reporting imports, advanced analytics, SEO and AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
+**Status: development foundation; not a V1 release.** The application includes owner setup, local/OIDC login and authenticator security, multiple workspaces, team invitations and roles, scoped API keys, encrypted provider credentials and spending controls, projects, consent-gated traffic reports and typed custom events, browser destination configuration, static reports with revocable sharing, domain ownership records, configurable retention, project context and a versioned prompt library, and a durable worker check. Docker runs the web app, worker and PostgreSQL, with explicit upgrade migrations. Provider reporting imports, advanced analytics, SEO and AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
 The first usable release must reach the complete technical capability baseline of Elmo 0.4.4, Umami 3.4.0 and OpenSEO 0.1.12. These source tags match the documented deployment versions and latest release tags checked on 2026-10-12; live image-to-commit equivalence has not been verified. Internal milestones do not reduce that scope. The register now also includes 12 owner-requested tracking, report-import and domain-alias requirements (P70–P81), in addition to the original 69.
 
@@ -18,7 +18,8 @@ The first usable release must reach the complete technical capability baseline o
 8. [Milestones, acceptance gates and work packages](docs/roadmap.md)
 9. [Kimi/GPT development workflow and guardrails](docs/kimi-workflow.md)
 10. [One-snippet pixels, platform report imports and alias domains](docs/tracking.md)
-11. [Setup critique, deployment journey and native connection/OIDC flows](docs/onboarding.md)
+11. [Project context and versioned prompt library](docs/project-context.md)
+12. [Setup critique, deployment journey and native connection/OIDC flows](docs/onboarding.md)
 
 ## Product direction
 
@@ -36,7 +37,7 @@ The application is free and fully featured for everyone: no SaaS subscription sa
 
 ## Reuse and evidence
 
-This is a new combined project, with selective reuse planned from three MIT upstream repositories. It is not an official product of those projects. No upstream application source has been copied into the current foundation. See [third-party provenance and dependency notices](THIRD_PARTY_NOTICES.md).
+This is a new combined project, with selective reuse planned from three MIT upstream repositories. It is not an official product of those projects. The prompt classifier selectively adapts Elmo's MIT substring-matching behavior with attribution; remaining application code is original. See [third-party provenance and dependency notices](THIRD_PARTY_NOTICES.md).
 
 Research is static source inspection at pinned commits plus sanitized deployment lessons. Foundation checks do not establish full runtime parity, provider integration, capacity or security certification.
 

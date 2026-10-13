@@ -9,7 +9,7 @@ Workspace members can inspect retention. Owners can preview and explicitly save 
 | Raw provider evidence | 90 | Not implemented; policy saved for future storage |
 | Derived history | 365 | No stored rollups yet; policy does not preserve a year of analytics |
 
-All provider spending and request-deduplication records are preserved, including reserved, dispatched, uncertain, settled and cancelled requests. Authored reports, templates, shared snapshots, credentials, accounts, teams and configuration are also preserved. The worker does not scan or delete arbitrary artifact files. This increment implements part of P31/P68, not complete retention/export/erasure parity.
+All provider spending and request-deduplication records are preserved, including reserved, dispatched, uncertain, settled and cancelled requests. Authored project context, research notes, prompts and immutable versions, mutation receipts, reports, templates, shared snapshots, credentials, accounts, teams and configuration are also preserved. The worker does not scan or delete arbitrary artifact files. This increment implements part of P31/P68, not complete retention/export/erasure parity.
 
 ## Preview and save
 

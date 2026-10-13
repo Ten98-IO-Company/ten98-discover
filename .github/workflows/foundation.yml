@@ -76,7 +76,7 @@ jobs:
           pnpm typecheck
           pnpm test
           pnpm check:plan
-      - name: Verify original-install upgrade and domain isolation
+      - name: Verify original-install upgrade, domain isolation and project content
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -87,6 +87,7 @@ jobs:
             await client.connect();
             await client.query('CREATE DATABASE ten98_upgrade');
             await client.query('CREATE DATABASE ten98_domains');
+            await client.query('CREATE DATABASE ten98_context');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
@@ -95,6 +96,7 @@ jobs:
             for (const [name, commands] of [
               ['ten98_upgrade', [['tests/migrations-integration.ts']]],
               ['ten98_domains', [['src/server/cli.ts', 'migrate'], ['tests/domains-integration.ts']]],
+              ['ten98_context', [['src/server/cli.ts', 'migrate'], ['tests/project-context-integration.ts']]],
             ]) {
               const database = new URL(process.env.DATABASE_URL);
               database.pathname = `/${name}`;

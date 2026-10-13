@@ -4,9 +4,9 @@
 
 Related: [README](../README.md) · [Feature parity](parity.md) · [Kimi workflow](kimi-workflow.md)
 
-The [interface refresh](interface.md) groups measurement and connection pages under the selected project, with workspace tools in a separate menu. On narrow screens, choose **Menu** to navigate. **Install tracker** contains the snippet and collapsed worker diagnostics; **Recent events** contains received observations. The overview opens the first available project without overriding newer navigation or identity verification.
+The [interface refresh](interface.md) groups measurement, research and connection pages under the selected project, with workspace tools in a separate menu. **Context** and **Prompts** store project knowledge and immutable prompt text history; neither starts provider work. On narrow screens, choose **Menu** to navigate. **Install tracker** contains the snippet and collapsed worker diagnostics; **Recent events** contains received observations. The overview opens the first available project without overriding newer navigation or identity verification.
 
-The refreshed production UI passed independent Edge checks at desktop and360px widths: consent/privacy flows, known/unavailable metrics, report editing/sharing, stale responses, permissions, keyboard menu operation, focus transfer and delayed initial-project loading. No fake measurements were added. Existing database accounts and projects are preserved.
+The refreshed production UI passed independent Edge checks at desktop and 360px widths: consent/privacy flows, known/unavailable metrics, report editing/sharing, stale responses, permissions, keyboard menu operation, focus transfer and delayed initial-project loading. No fake measurements were added. Existing database accounts and projects are preserved.
 
 ## Requirements
 
@@ -143,7 +143,7 @@ For an existing development install, back up its database and stop web/worker be
 - Not a public V1/release. No published Docker image — build locally.
 - The optional Caddy recipe has local proxy/configuration checks; public certificate issuance is not yet verified. A host-local tracker snippet only works for another local origin; remote visitors cannot reach a localhost collector until a proper HTTPS deployment exists.
 - No provider reporting imports, SEO or AI visibility yet. The browser loader implements ten tag adapters with synthetic checks; real vendor-account validation remains a release gate.
-- No unique-visitor claims, bot filtering, retention/data lifecycle, or advanced reports / full analytics parity yet.
+- Identity coverage and visit semantics remain limited as documented below; bot filtering and advanced reports / full analytics parity remain unfinished. Workspace retention is implemented for native analytics; replay, provider evidence and derived-history policies await their storage implementations.
 - No email password recovery, workspace-wide identity/2FA enforcement, automatic invitation email delivery or project/workspace deletion yet. Local authenticator/recovery-code and generic OIDC flows are implemented; invitations currently support manually shared links.
 - SPA tracking observes pathname changes; hash-based routes, native event properties, HTML event attributes, referrers and visitor/session identity are not implemented yet. The tag loader accepts only its bounded canonical properties. The custom-event API does not buffer calls made before the script loads.
 - No SaaS billing.
@@ -189,7 +189,7 @@ Stored credentials bind encryption to the workspace, connection, provider and re
 
 To rotate encryption keys, stop all web and worker writers, add the new key while retaining old entries, choose it as active, and run `docker compose run --rm web node src/server/cli.ts rekey`. Recreate every web/worker process with the same updated configuration before accepting writes. Keep old keys for every retained backup that needs them. Provider connections and OIDC credentials rotate in separate transactions: a failure rolls back its own credential family, and rerunning safely resumes the other. Keep both keys until the whole command succeeds and readiness passes. An old process still using the old active key can otherwise write old-key ciphertext after rotation.
 
-The owner approved configurable retention defaults: raw analytics 90 days, replays 7 days, raw provider evidence 90 days and derived history 1 year. Retention execution is not active yet. No history migration from the three replaced apps is required; native provider report imports and this app's backup/export remain included. Shared reports use revocable slugs under `APP_URL`, without separate per-client domain provisioning.
+The owner approved configurable retention defaults: raw analytics 90 days, replays 7 days, raw provider evidence 90 days and derived history 1 year. Workspace retention controls and the bounded worker are active for implemented data types; see [retention](retention.md) for exclusions and execution limits. No history migration from the three replaced apps is required; native provider report imports and this app's backup/export remain included. Shared reports use revocable slugs under `APP_URL`, without separate per-client domain provisioning.
 
 ## Identity provider setup and recovery
 
@@ -246,3 +246,10 @@ Security/tracking increment checked locally on 2026-10-13: production build, Typ
 Edge production-build checks passed OIDC-only invited signup, fresh provider verification, authenticator enrollment, replacement recovery codes, optional local password, local/recovery login and callback-error recovery. Destination checks passed save/preview/publish/rollback, actual tracker/loader/preferences integration, stored-consent restoration and withdrawal reload. Desktop 1360 px and mobile 360 px were checked without document overflow. Vendor scripts were intercepted with local stubs: no real vendor-account delivery claim.
 
 The integrated Linux amd64 Docker image built and its fresh `0001`–`0009` migrations, web/worker readiness, keyring diagnostics, owner claim, operator role, event collection, analytics and queued worker operation passed on an isolated local installation. Docker helper checks ran with networking disabled; the synthetic shell regression requires an executable container temporary mount. Packaging tests do not establish public HTTPS, ARM, performance or full V1 completion. Detailed setup/backup checks are in [docker-setup.md](docker-setup.md).
+
+
+## Project knowledge and prompt library
+
+**Research > Context** stores brand aliases, business guidance, competitors, key pages and authored research notes. **Research > Prompts** supports single/bulk entry, user tags, automatic/manual branded classification, filters, archive/restore and immutable numbered text history. Editors can write and viewers can read. Saving an enabled preference does not activate provider execution, scheduling or spending. Research and prompt history survive analytics retention. See the [contract, source provenance and verification](project-context.md).
+
+The integrated checkpoint passed TypeScript, production build, 135 unit checks (two platform-specific skips), isolated project-content database/API checks, and original-install upgrades through 0014 with rollback/history checks. Real production Edge checks exercised both panels and actual navigation at desktop and 360px, with conflict preservation, lost-response retry, permission purge and project/account isolation. These synthetic local checks do not establish upstream runtime parity, provider behavior, capacity, public HTTPS or a V1 release. The existing retention worker and shutdown cleanup remain unchanged.
