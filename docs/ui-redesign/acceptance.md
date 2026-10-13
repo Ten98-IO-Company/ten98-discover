@@ -20,6 +20,8 @@ The shell increment adds a native keyboard skip link without changing identity-c
 
 N02 passed the four navigation units and all20 existing production-navigation groups. Independent screenshot review caught small diagnostics touch targets, a lost native disclosure marker and a long-name header reflow defect. Kimi's single bounded repair fixed touch/marker/event-name issues. At the specified stop checkpoint, Astra Ultra handled the remaining responsive design defect with four scoped header/breadcrumb CSS edits: natural header height, wrapping, and a two-row narrow-layout breadcrumb grid. No further Kimi retry occurred. A hash reversal proves all other CSS bytes stayed unchanged. The final production build and all five focused shell groups pass with unchanged thresholds:320/360/768/1440px, long names, LTR/RTL, keyboard focus and unchanged hash,44px targets, native markers, retained data/loading/errors, clipboard recovery, scoped navigation, worker role/busy/errors, CSS200% zoom and forced colors. CSS zoom is a layout check, not a claim of complete assistive-technology acceptance.
 
+The AI period-comparison increment moves equal-cell rate results before coverage and evidence, flattens the paired coverage presentation, compacts the cohort control and places the full-report export in the header. All formatted values, cohort/denominator caveats, current-context qualifications, seven coverage fields and original callbacks remain. All nine presentation and nine controller browser groups pass, including320/360/768/1440px layouts, native disabled controls, dirty/busy/export cancellation, expiry and saved-answer return paths. TypeScript and the subsequent combined production build pass. No controller/source-data behavior changed; narrow table scrolling remains explicit.
+
 ## Kimi execution record
 
 Native CLI 2.1.1, `kimi-code/k3-256k`, thinking enabled and maximum-effort override; Skill-only profile with no shell/filesystem/network/delegation tools. GPT supplied explicit public contracts, reviewed exact output paths, applied drafts and tested independently. This profile is not an operating-system sandbox.
@@ -35,6 +37,7 @@ Native CLI 2.1.1, `kimi-code/k3-256k`, thinking enabled and maximum-effort overr
 | AI insights presentation | Ponytail | about 607 s | Exact TSX applied; no repair; all exported types preserved |
 | Shell and installation | Ponytail and UX Copy Refiner | about239 s | Seven exact original-boundary replacements plus scoped CSS |
 | Shell repair | Ponytail | about65 s | One repair; remaining header defect handed to Astra Ultra design at the stop checkpoint |
+| AI period-comparison presentation | Ponytail | about242 s | Five exact scoped replacements accepted; no repair |
 
 Intervals come from private capture-file timestamps and are approximate, not model token usage. The token batch remained below its combined 20-minute ceiling; the stylesheet batch used one repair and also remained below that ceiling. An oversized earlier stylesheet prompt failed local preflight before invoking Kimi. The prompt-size guard was preserved.
 
@@ -42,4 +45,4 @@ The read-only allowance check during this work reported 39% five-hour usage and 
 
 ## Still in progress
 
-AI comparison and citation-view presentation updates and a bounded rank-family loading improvement are in progress. Remaining view families, setup flows, production dark preference, cross-interface theme coverage and final accessibility/release acceptance remain open. No existing workflow is considered retired until its replacement preserves capabilities and passes its relevant checks. The user's preserved preview remains on its previous accepted build.
+Citation-view presentation and a bounded rank-family loading improvement are in progress. Remaining view families, setup flows, production dark preference, cross-interface theme coverage and final accessibility/release acceptance remain open. No existing workflow is considered retired until its replacement preserves capabilities and passes its relevant checks. The user's preserved preview remains on its previous accepted build.

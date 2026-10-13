@@ -38,10 +38,10 @@ export type AIComparisonViewProps = {
 const controlStyle = { minHeight: 44, maxWidth: '100%' } as const;
 const nowrapStyle = { whiteSpace: 'nowrap' } as const;
 const scrollRegionStyle = { overflowX: 'auto' } as const;
-const wrapRowStyle = { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' } as const;
-const formStyle = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' } as const;
-const coverageGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,240px),1fr))', gap: 12 } as const;
-const coverageCardStyle = { border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, background: '#ffffff', minWidth: 0 } as const;
+const wrapRowStyle = { display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', alignItems: 'center' } as const;
+const formStyle = { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 'var(--space-3)', width: '100%', minWidth: 0 } as const;
+const coverageGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,240px),1fr))', gap: 'var(--space-3)' } as const;
+const coverageCardStyle = { display: 'flex', flexDirection: 'column', minWidth: 0, borderBlockStart: '1px solid var(--color-border)', paddingBlock: 'var(--space-3)' } as const;
 
 export function AIComparisonView(props: AIComparisonViewProps) {
   const {
@@ -63,11 +63,22 @@ export function AIComparisonView(props: AIComparisonViewProps) {
 
   return (
     <section className="research-panel stack" aria-labelledby={headingId} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-      <h2 id={headingId} tabIndex={-1}>Compare AI periods</h2>
       <div className="row between" style={wrapRowStyle}>
+        <h2 id={headingId} tabIndex={-1} style={{ margin: 0, marginInlineEnd: 'auto' }}>Compare AI periods</h2>
         <button type="button" className="btn ghost" style={controlStyle} onClick={onBack}>Back to insights</button>
         <button type="button" className="btn ghost" style={controlStyle} onClick={onReload} disabled={busy}>Reload comparison</button>
+        {role !== null && report !== null && (
+          <>
+            <button type="button" className="btn" style={controlStyle} disabled={reportLocked || !report.canExport} onClick={onExport}>Export comparison CSV</button>
+            {exporting && (
+              <button type="button" className="btn ghost" style={controlStyle} onClick={onCancelExport}>Cancel export</button>
+            )}
+          </>
+        )}
       </div>
+      {role !== null && report !== null && (
+        <p className="hint">Exports both periods, all cells and executions in the applied comparison; not only this page.</p>
+      )}
       {error !== null && <p className="alert" role="alert">{error}</p>}
       {notice !== null && <p className="hint" role="status">{notice}</p>}
       {reading && <p className="hint" role="status">Loading comparison…</p>}
@@ -80,11 +91,11 @@ export function AIComparisonView(props: AIComparisonViewProps) {
             if (!busy && canApply) onApply();
           }}
         >
-          <div className="field" style={{ width: '100%', minWidth: 0 }}>
+          <div className="field" style={{ width: '100%', minWidth: 0, margin: 0 }}>
             <strong>Applied filters</strong>
-            <p id={filtersId} aria-label="Applied filters" className="hint">{filtersLabel}</p>
+            <p id={filtersId} aria-label="Applied filters" className="hint" style={{ margin: 0 }}>{filtersLabel}</p>
           </div>
-          <div className="field">
+          <div className="field" style={{ margin: 0 }}>
             <label htmlFor={cohortId}>Prompt cohort</label>
             <select
               id={cohortId}
@@ -98,38 +109,22 @@ export function AIComparisonView(props: AIComparisonViewProps) {
             </select>
           </div>
           <button type="submit" className="btn" style={controlStyle} disabled={busy || !canApply}>Apply cohort</button>
-          {dirty && <p className="hint" role="status">Unapplied cohort change. The report below still uses the applied cohort.</p>}
+          {dirty && <p className="hint" role="status" style={{ width: '100%', margin: 0 }}>Unapplied cohort change. The report below still uses the applied cohort.</p>}
         </form>
       )}
       {role !== null && report !== null && (
         <>
-          <div>
-            <p>{report.scopeLabel}</p>
-            <p>{report.snapshotLabel}</p>
-            <p>{report.cohortLabel}</p>
-            <p>{report.statusLabel}</p>
-            <p>{report.basisLabel}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <p style={{ margin: 0 }}><strong>{report.scopeLabel}</strong></p>
+            <p className="hint" style={{ margin: 0 }}>{report.snapshotLabel}</p>
+            <p style={{ margin: 0 }}>{report.cohortLabel}</p>
+            <p style={{ margin: 0 }}>{report.statusLabel}</p>
+            <p style={{ margin: 0 }}>{report.basisLabel}</p>
             {report.warnings.map((warning, index) => (
-              <p className="hint" key={index}>{warning}</p>
+              <p className="hint" key={index} style={{ margin: 0 }}>{warning}</p>
             ))}
-            <p className="hint">Recomputed using current project context; historical identities were not captured.</p>
-            <p className="hint">OpenRouter API · web search off</p>
-          </div>
-          <h3>Period coverage</h3>
-          <div style={coverageGridStyle}>
-            {report.periods.map((period) => (
-              <div key={period.id} style={coverageCardStyle}>
-                <p><strong>{period.label}</strong></p>
-                <p className="hint">{period.range}</p>
-                <div className="row between"><span>Attempted</span><span>{period.attempted}</span></div>
-                <div className="row between"><span>Eligible</span><span>{period.eligible}</span></div>
-                <div className="row between"><span>Usable</span><span>{period.usable}</span></div>
-                <div className="row between"><span>Identity unavailable</span><span>{period.identityUnavailable}</span></div>
-                <div className="row between"><span>Identity invalid</span><span>{period.identityInvalid}</span></div>
-                <div className="row between"><span>Matched</span><span>{period.matched}</span></div>
-                <div className="row between"><span>Details</span><span>{period.details}</span></div>
-              </div>
-            ))}
+            <p className="hint" style={{ margin: 0 }}>Recomputed using current project context; historical identities were not captured.</p>
+            <p className="hint" style={{ margin: 0 }}>OpenRouter API · web search off</p>
           </div>
           <h3>Equal-cell mention and citation rates</h3>
           <div role="region" aria-label="Equal-cell mention and citation rates" aria-describedby={metricsHintId} tabIndex={0} style={scrollRegionStyle}>
@@ -161,6 +156,22 @@ export function AIComparisonView(props: AIComparisonViewProps) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <h3>Period coverage</h3>
+          <div style={coverageGridStyle}>
+            {report.periods.map((period) => (
+              <div key={period.id} style={coverageCardStyle}>
+                <p><strong>{period.label}</strong></p>
+                <p className="hint">{period.range}</p>
+                <div className="row between"><span>Attempted</span><span>{period.attempted}</span></div>
+                <div className="row between"><span>Eligible</span><span>{period.eligible}</span></div>
+                <div className="row between"><span>Usable</span><span>{period.usable}</span></div>
+                <div className="row between"><span>Identity unavailable</span><span>{period.identityUnavailable}</span></div>
+                <div className="row between"><span>Identity invalid</span><span>{period.identityInvalid}</span></div>
+                <div className="row between"><span>Matched</span><span>{period.matched}</span></div>
+                <div className="row between"><span>Details</span><span>{period.details}</span></div>
+              </div>
+            ))}
           </div>
           <h3>Comparison evidence</h3>
           <div className="row between" style={wrapRowStyle}>
@@ -314,15 +325,7 @@ export function AIComparisonView(props: AIComparisonViewProps) {
             <button type="button" className="btn ghost" style={controlStyle} disabled={reportLocked || !report.canPrevious} onClick={onPrevious}>Previous page</button>
             <button type="button" className="btn ghost" style={controlStyle} disabled={reportLocked || !report.canNext} onClick={onNext}>Next page</button>
           </div>
-          <div style={formStyle}>
-            <div style={wrapRowStyle}>
-              <button type="button" className="btn" style={controlStyle} disabled={reportLocked || !report.canExport} onClick={onExport}>Export comparison CSV</button>
-              {exporting && (
-                <button type="button" className="btn ghost" style={controlStyle} onClick={onCancelExport}>Cancel export</button>
-              )}
-            </div>
-            <p className="hint">Exports both periods, all cells and executions in the applied comparison; not only this page.</p>
-          </div>
+
         </>
       )}
     </section>
