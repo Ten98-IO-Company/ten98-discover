@@ -49,7 +49,7 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
   const noProvider = !p.vaultConfigured || p.connections.length === 0;
   const submit = (fn: () => void) => (e: React.FormEvent) => { e.preventDefault(); fn(); };
   return (
-    <div className="research-panel rank-tracking">
+    <div className="research-panel rank-tracking" style={{ '--control-md': 'var(--control-touch)' } as React.CSSProperties}>
       <p className="dim">Manage trackers and keywords, review a maximum charge, then start a manual rank check. Owners can separately approve recurring checks.</p>
       {p.error !== '' && <p className="alert" role="alert">{p.error}</p>}
       {p.notice !== '' && <p className="notice" role="status">{p.notice}</p>}
@@ -94,17 +94,25 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
         </section>
       ) : p.mode === 'detail' ? (
         <section className="stack">
-          <div className="row between">
+          <div className="row between" style={{ gap: 'var(--space-3)' }}>
+            {t !== null && d !== null && (
+            <>
+              <h2 id={pre + 'detail-heading'} tabIndex={-1} style={{ margin: 0, fontSize: 'var(--text-lg)', minWidth: 0 }}>{t.name}</h2>
+              <span className="pill">{archived ? 'Archived' : 'Active'}</span>
+            </>
+            )}
             <button type="button" className="btn ghost" onClick={p.onBack} disabled={p.locked}>Back to trackers</button>
             <button type="button" className="btn ghost" onClick={p.onRefresh} disabled={p.locked}>Refresh tracker</button>
           </div>
           {t === null || d === null ? <p role="status">{p.reading ? 'Loading tracker…' : 'Tracker unavailable.'}</p> : (
           <>
-            <div className="row"><h2 id={pre + 'detail-heading'} tabIndex={-1}>{t.name}</h2><span className="pill">{archived ? 'Archived' : 'Active'}</span></div>
             <div className="row"><button type="button" className="btn ghost" onClick={p.onObservations} disabled={p.locked}>Latest observations</button><button type="button" className="btn ghost" onClick={p.onReporting} disabled={p.locked}>Reporting</button><button type="button" className="btn ghost" onClick={p.onChecks} disabled={p.locked}>Check history</button><button type="button" className="btn ghost" onClick={p.onSchedule} disabled={p.locked}>Schedule</button>{writer&&!archived&&<button type="button" className="btn primary" onClick={p.onPrepareCheck} disabled={busy||t.keywordCount===0}>Prepare a rank check</button>}</div>
-            <div className="card stack">
-              <p>{t.domain} (including subdomains) · {t.locationName}, {t.countryIso} · {t.languageName}</p>
-              <p className="hint">Create another tracker to change the target or market.</p>
+            <p>{t.domain} (including subdomains) · {t.locationName}, {t.countryIso} · {t.languageName}</p>
+            <p className="hint">Create another tracker to change the target or market.</p>
+            {!(p.editing && writer) && <p className="dim">Devices: {DEVICE_LABELS[t.devices]} · Requested results: {t.depth} · Maximum billable pages: {t.maxCrawlPages}</p>}
+            {writer && (
+            <details open={p.editing}>
+              <summary>Tracker settings</summary>
               {p.editing && writer ? (
               <form className="stack" onSubmit={submit(p.onSaveEdit)}>
                 <h3 id={pre + 'edit-heading'} tabIndex={-1}>Edit settings</h3>
@@ -134,17 +142,16 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
               </form>
               ) : (
               <>
-                <p className="dim">Devices: {DEVICE_LABELS[t.devices]} · Requested results: {t.depth} · Maximum billable pages: {t.maxCrawlPages}</p>
                 {writer && <div className="row">
                   <button type="button" className="btn ghost" onClick={p.onEdit} disabled={p.locked}>Edit settings</button>
                   <button type="button" className="btn ghost" onClick={p.onArchive} disabled={busy}>{archived ? 'Reactivate tracker' : 'Archive tracker'}</button>
                 </div>}
               </>
               )}
-            </div>
+            </details>
+            )}
             <section className="stack">
-              <div className="row between"><h3>Keywords</h3><span className="dim">{d.keywords.length} of 1,000 keywords</span></div>
-              {writer && !archived && !p.adding && <p><button type="button" className="btn primary" onClick={p.onAdd} disabled={p.locked}>Add keywords</button></p>}
+              <div className="row between"><h3>Keywords</h3><span className="dim">{d.keywords.length} of 1,000 keywords</span>{writer && !archived && !p.adding && <button type="button" className="btn primary" onClick={p.onAdd} disabled={p.locked}>Add keywords</button>}</div>
               {writer && p.adding && (
               <form className="card stack" onSubmit={submit(p.onSaveWords)}>
                 <h3 id={pre + 'add-heading'} tabIndex={-1}>Add keywords</h3>
@@ -161,19 +168,26 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
                 </div>
               </form>
               )}
+              {writer && <div className="row">
+                <span className="dim">{p.selected.length} selected</span>
+                <button type="button" className="btn ghost" onClick={() => p.onPin(true)} disabled={busy || p.selected.length === 0}>Pin selected</button>
+                <button type="button" className="btn ghost" onClick={() => p.onPin(false)} disabled={busy || p.selected.length === 0}>Unpin selected</button>
+                <button type="button" className="btn ghost" onClick={p.onRemove} disabled={busy || p.selected.length === 0}>Remove selected</button>
+                {!archived&&<button type="button" className="btn ghost" onClick={p.onPrepareSelected} disabled={busy||p.selected.length===0}>Check selected keywords</button>}
+              </div>}
               {d.keywords.length === 0 ? <p className="dim">No keywords yet</p> : (
               <div className="table-wrap" role="region" aria-label="Keywords" tabIndex={0}>
                 <table style={{ minWidth: 640 }}>
                   <thead><tr>
-                    {writer && <th><input type="checkbox" aria-label="Select all keywords" disabled={busy}
+                    {writer && <th><label style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 'var(--control-touch)', minHeight: 'var(--control-touch)' }}><input type="checkbox" aria-label="Select all keywords" disabled={busy}
                       checked={d.keywords.every((k) => p.selected.includes(k.id))}
-                      onChange={(e) => p.onSelectAll(e.target.checked)} /></th>}
+                      onChange={(e) => p.onSelectAll(e.target.checked)} /></label></th>}
                     <th>Keyword</th><th>Case</th><th>Pinned</th><th>Created</th>
                   </tr></thead>
                   <tbody>{d.keywords.map((k) => (
                     <tr key={k.id}>
-                      {writer && <td><input type="checkbox" aria-label={'Select ' + k.keyword} disabled={busy}
-                        checked={p.selected.includes(k.id)} onChange={(e) => p.onSelect(k.id, e.target.checked)} /></td>}
+                      {writer && <td><label style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 'var(--control-touch)', minHeight: 'var(--control-touch)' }}><input type="checkbox" aria-label={'Select ' + k.keyword} disabled={busy}
+                        checked={p.selected.includes(k.id)} onChange={(e) => p.onSelect(k.id, e.target.checked)} /></label></td>}
                       <td>{k.keyword}</td>
                       <td>{k.matchCase ? 'Preserved' : 'Lowercased on add'}</td>
                       <td>{k.pinnedAt === null ? 'Not pinned' : 'Pinned'}</td>
@@ -183,13 +197,6 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
                 </table>
               </div>
               )}
-              {writer && <div className="row">
-                <span className="dim">{p.selected.length} selected</span>
-                <button type="button" className="btn ghost" onClick={() => p.onPin(true)} disabled={busy || p.selected.length === 0}>Pin selected</button>
-                <button type="button" className="btn ghost" onClick={() => p.onPin(false)} disabled={busy || p.selected.length === 0}>Unpin selected</button>
-                <button type="button" className="btn ghost" onClick={p.onRemove} disabled={busy || p.selected.length === 0}>Remove selected</button>
-                {!archived&&<button type="button" className="btn ghost" onClick={p.onPrepareSelected} disabled={busy||p.selected.length===0}>Check selected keywords</button>}
-              </div>}
             </section>
           </>
           )}
