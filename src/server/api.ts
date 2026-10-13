@@ -9,6 +9,7 @@ import { enqueueProbe, reconcileProbes } from './jobs.ts';
 import { eventInput, InputError, projectInput, readJson } from './validation.ts';
 import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
+import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import { exploreAnalytics } from './explorer.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
@@ -109,8 +110,7 @@ export async function handleApi(request: Request): Promise<Response> {
       const origin = request.headers.get('origin');
       if (!origin) throw new FoundationError(403, 'A configured website origin is required.');
       await limit('collector:global', 6000);
-      const allowed = await getDatabase().pool.query('SELECT 1 FROM project WHERE origin=$1 LIMIT 1', [origin]);
-      if (!allowed.rowCount) throw new FoundationError(403, 'Website origin is not configured.');
+      if (!await collectionOriginAllowed(getDatabase().pool, origin)) throw new FoundationError(403, 'Website origin is not configured.');
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405, cors);
@@ -122,7 +122,7 @@ export async function handleApi(request: Request): Promise<Response> {
       const event = eventInput.parse(await readJson(request, 16384));
       const { rows } = await getDatabase().pool.query('SELECT id,origin FROM project WHERE public_key=$1', [event.siteKey]);
       const project = rows[0];
-      if (!project || project.origin !== origin || new URL(event.url).origin !== project.origin) throw new FoundationError(403, 'Event does not match the configured website.');
+      if (!project || new URL(event.url).origin !== origin || !await collectionOriginAllowed(getDatabase().pool, origin, project)) throw new FoundationError(403, 'Event does not match an allowed website origin.');
       await limit(`collector:${project.id}`, 3000);
       // Origin and a site key are public routing values, never visitor identity proof.
       return json(await collectNative(request, event.siteKey, event, extractAnalyticsPeer(request)), 202, cors);
@@ -363,7 +363,6 @@ export async function handleApi(request: Request): Promise<Response> {
       const target = await projectAccess(match[1], user.id, request.method !== 'GET');
       if (principal && request.method === 'POST' && match[2] === 'events') {
         const input = eventInput.omit({ siteKey: true, consent: true, context: true }).parse(await readJson(request, 16384));
-        if (new URL(input.url).origin !== target.origin) throw new FoundationError(400, 'Event URL must use the project origin.');
         const client = await getDatabase().pool.connect();
         try {
           await client.query('BEGIN');
@@ -382,9 +381,9 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if (request.method === 'GET' && match[2] === 'events') {
         const { rows } = await getDatabase().pool.query(`WITH retained AS MATERIALIZED (
-          SELECT e.* FROM event e JOIN project p ON p.id=e.project_id WHERE p.id=$1
+          SELECT e.*,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN project p ON p.id=e.project_id WHERE p.id=$1
             AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
-        ), recent AS (SELECT id,event_name AS "eventName",path,received_at AS "receivedAt" FROM retained ORDER BY received_at DESC,id DESC LIMIT 50)
+        ), recent AS (SELECT id,event_name AS "eventName",path,origin,received_at AS "receivedAt" FROM retained ORDER BY received_at DESC,id DESC LIMIT 50)
         SELECT (SELECT analytics_retained_from FROM project WHERE id=$1) AS "retainedFrom",(SELECT count(*) FROM retained) AS total,
           COALESCE((SELECT json_agg(recent ORDER BY "receivedAt" DESC,id DESC) FROM recent),'[]'::json) AS events`, [match[1]]);
         return json({ ...rows[0], total: Number(rows[0].total) });

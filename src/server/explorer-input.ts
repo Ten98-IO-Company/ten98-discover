@@ -3,8 +3,8 @@ import { normalizeProperties } from './analytics-input.ts';
 import { analyticsRange } from './analytics.ts';
 import { InputError } from './validation.ts';
 
-export const explorerGroups = ['event','path','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','screenWidth','screenHeight','property'] as const;
-export const explorerFilters = ['eventName','path','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent'] as const;
+export const explorerGroups = ['event','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','screenWidth','screenHeight','property'] as const;
+export const explorerFilters = ['eventName','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent'] as const;
 const parameterNames = new Set(['from','to','timeZone','kind','groupBy','groupProperty','propertyKey','propertyType','propertyValue',...explorerFilters]);
 function bad(message = 'Check the exploration filters and try again.'): never { throw new InputError(400, message); }
 function text(value: string, maximum: number, empty = false) {
@@ -32,7 +32,11 @@ export function explorerQuery(params: URLSearchParams, now = new Date()) {
   if (params.has('groupProperty') !== (groupBy === 'property')) bad('Choose a property key only when grouping by a property.');
   const groupProperty = groupBy === 'property' ? text(params.get('groupProperty')!,320) : null;
   const filters: Record<string,string> = {};
-  for (const key of explorerFilters) if (params.has(key)) filters[key] = text(params.get(key)!,key === 'path' ? 2048 : 320,true);
+  for (const key of explorerFilters) if (params.has(key)) filters[key] = text(params.get(key)!,['path','origin'].includes(key) ? 2048 : 320,true);
+  if (filters.origin !== undefined) {
+    try { const url = new URL(filters.origin); if (!['https:','http:'].includes(url.protocol) || url.origin !== filters.origin) bad('Enter an exact origin, such as https://www.example.com, without a path.'); }
+    catch { bad('Enter an exact origin, such as https://www.example.com, without a path.'); }
+  }
   let property: {key:string;type:string;value:unknown} | null = null;
   if (['propertyKey','propertyType','propertyValue'].some(key => params.has(key))) {
     const key = text(params.get('propertyKey') ?? '',320), type = params.get('propertyType');

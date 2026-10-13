@@ -30,7 +30,7 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   assert.deepEqual(duplicate.data,{accepted:true,duplicate:true});
   const stored=(await pool.query('SELECT row_to_json(e) AS value FROM event e WHERE project_id=$1 AND id=$2',[projectId,acceptedEvent.eventId])).rows[0].value;
   assert.equal(stored.path,'/hello'); assert.equal(stored.source,'browser');
-  assert.deepEqual(stored.dimensions,{language:'en-US'});
+  assert.deepEqual(stored.dimensions,{language:'en-US',origin});
   assert.deepEqual(stored.properties,{'plan':{type:'string',value:'starter'},'nested.count':{type:'number',value:2},when:{type:'date',value:'2024-02-29T08:00:00.000Z'}});
   for(const text of ['private-query','private-fragment','private-referrer','private-campaign','private-distinct','192.0.2.99','Ten98 acceptance browser'])assert.equal(JSON.stringify(stored).includes(text),false);
   for(const headers of [{'dnt':'1'},{'sec-gpc':'1'},{'user-agent':'Example crawler'}] as Record<string,string>[])assert.equal((await call('/api/collect',{...event(),consent:consent()},true,headers)).data.accepted,false);
@@ -47,7 +47,7 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   const enabled={...acceptedEvent,eventId:randomUUID(),consent:consent()};
   assert.equal((await call('/api/collect',enabled,true)).data.accepted,true);
   const dimensions=(await pool.query('SELECT dimensions FROM event WHERE project_id=$1 AND id=$2',[projectId,enabled.eventId])).rows[0].dimensions;
-  assert.deepEqual(dimensions,{language:'en-US',referrerHost:'private-referrer.example',campaign:{source:'private-campaign'},screenWidth:1024,screenHeight:768});
+  assert.deepEqual(dimensions,{origin,language:'en-US',referrerHost:'private-referrer.example',campaign:{source:'private-campaign'},screenWidth:1024,screenHeight:768});
 
   // A real PostgreSQL wait reproduces the stale-statement-snapshot consent bug.
   await saveDestinationsDraft(projectId,options.ownerId,'live',{expectedVersion:0,configuration:{destinations:[]}});

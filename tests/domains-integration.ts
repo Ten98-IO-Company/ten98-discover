@@ -89,7 +89,7 @@ try {
   ] as const) {
     const response = await handleApi(new Request(`${getConfig().appUrl}${path}`, { method: 'POST',
       headers: { origin: aliasOrigin, 'content-type': 'application/json' }, body: JSON.stringify(body) }));
-    assert.equal(response.status, 403, 'Domain proof must not enable collector or destination configuration access.');
+    assert.equal(response.status, 403, 'A verified redirect alias must never enable collector or destination configuration access.');
   }
 
   // Challenge replacement while DNS is pending invalidates the observed old token.
@@ -191,5 +191,5 @@ try {
   for (let index = 0; index < 49; index++) await addDomain(project, owner, { hostname: `limit-${index}.example.com`, role: 'serving' });
   assert.equal((await getDomains(project, owner)).domains.length, 50);
   await assert.rejects(addDomain(project, owner, { hostname: 'over-limit.example.com', role: 'serving' }), fail(409));
-  console.log('Domain integration passed: canonical/IDN registry, role/tenant isolation, hash-only exact TXT proof, expiry/reissue/revoke races, cookie API boundaries, unchanged collection origin and 50-domain limit. DNS was mocked; no external DNS checks ran.');
+  console.log('Domain integration passed: canonical/IDN registry, role/tenant isolation, hash-only exact TXT proof, expiry/reissue/revoke races, cookie API boundaries, unchanged canonical origin, excluded redirect aliases and 50-domain limit. DNS was mocked; no external DNS checks ran.');
 } finally { await closeDatabase(); }

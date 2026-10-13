@@ -21,7 +21,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     // neighbouring offsets for the first midnight; binary-search only missing
     // midnights to find a gap's first real instant (including skipped dates).
     const {rows} = await client.query(`WITH RECURSIVE target AS MATERIALIZED (
-      SELECT p.id,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
+      SELECT p.id,p.origin,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
     ), raw_days AS (
       SELECT day,day AT TIME ZONE $5 AS nominal FROM generate_series($3::date::timestamp,($4::date+1)::timestamp,interval '1 day') day
     ), exact_days AS MATERIALIZED (
@@ -45,12 +45,13 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     ), bounds AS (
       SELECT min(instant) AS start,max(last_instant) AS finish FROM midnights
     ), scope AS MATERIALIZED (
-      SELECT e.* FROM event e JOIN target p ON p.id=e.project_id CROSS JOIN bounds b
+      SELECT e.*,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN target p ON p.id=e.project_id CROSS JOIN bounds b
       WHERE e.received_at>=b.start AND e.received_at<b.finish AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
         AND (e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date
         AND ($6='all' OR ($6='pageviews' AND e.event_name='page_view') OR ($6='custom' AND e.event_name<>'page_view'))
         AND (NOT $7::jsonb ? 'eventName' OR e.event_name=$7::jsonb->>'eventName')
         AND (NOT $7::jsonb ? 'path' OR e.path=$7::jsonb->>'path')
+        AND (NOT $7::jsonb ? 'origin' OR COALESCE(e.dimensions->>'origin',p.origin)=$7::jsonb->>'origin')
         AND (NOT $7::jsonb ? 'referrer' OR e.dimensions->>'referrerHost'=$7::jsonb->>'referrer')
         AND (NOT $7::jsonb ? 'language' OR e.dimensions->>'language'=$7::jsonb->>'language')
         AND (NOT $7::jsonb ? 'campaignSource' OR e.dimensions->'campaign'->>'source'=$7::jsonb->>'campaignSource')
@@ -63,6 +64,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       SELECT *,CASE $11::text
         WHEN 'event' THEN jsonb_build_object('type','string','value',event_name)
         WHEN 'path' THEN jsonb_build_object('type','string','value',path)
+        WHEN 'origin' THEN jsonb_build_object('type','string','value',origin)
         WHEN 'property' THEN COALESCE(properties->$12::text,'{"type":"missing","value":null}'::jsonb)
         ELSE CASE WHEN dimension IS NULL THEN '{"type":"missing","value":null}'::jsonb
           ELSE jsonb_build_object('type',jsonb_typeof(dimension),'value',dimension) END END AS label

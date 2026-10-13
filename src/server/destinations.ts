@@ -4,6 +4,7 @@ import type {PoolClient} from 'pg';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
 import {publicAnalyticsSettings, trackingConsentEpoch} from './native-analytics.ts';
+import {collectionOriginAllowed} from './collection-origins.ts';
 
 export const PROVIDERS = ['meta', 'ga4', 'google_ads', 'cloudflare', 'tiktok', 'linkedin', 'microsoft_ads', 'pinterest', 'snapchat', 'x'] as const;
 export const CANONICAL_EVENTS = ['page_view', 'sign_up', 'generate_lead', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'refund'] as const;
@@ -514,8 +515,12 @@ export async function getPublicDestinations(siteKey: unknown, environment: unkno
   const key = parseOr400(z.string().uuid(), siteKey, 'Invalid site key');
   const env = parseOr400(environmentSchema, environment, 'Invalid environment');
   const requestedOrigin = parseOr400(z.string().min(1).max(2048), origin, 'Invalid origin');
-  const result = await getDatabase().pool.query(
-    `SELECT p.origin, p.analytics_settings, p.analytics_epoch, r.id AS revision_id, r.consent_epoch, r.configuration
+  const client = await getDatabase().pool.connect();
+  try {
+  await client.query('BEGIN');
+  await client.query('SELECT id FROM project WHERE public_key=$1 FOR SHARE', [key]);
+  const result = await client.query(
+    `SELECT p.id, p.origin, p.analytics_settings, p.analytics_epoch, r.id AS revision_id, r.consent_epoch, r.configuration
      FROM project p
      LEFT JOIN tracking_state s ON s.project_id = p.id AND s.environment = $2
      LEFT JOIN tracking_revision r ON r.id = s.active_revision AND r.project_id = p.id AND r.environment = $2
@@ -523,17 +528,21 @@ export async function getPublicDestinations(siteKey: unknown, environment: unkno
     [key, env],
   );
   const row = result.rows[0];
-  if (!row || row.origin !== requestedOrigin) throw new FoundationError(404, 'Not found');
+  if (!row || !await collectionOriginAllowed(client, requestedOrigin, row)) throw new FoundationError(404, 'Not found');
   const hasActive = typeof row.revision_id === 'string';
-  return {
+  const configuration = {
     schemaVersion: 2 as const,
     siteKey: key,
     environment: env,
-    origin: row.origin as string,
+    origin: requestedOrigin,
     revisionId: hasActive ? (row.revision_id as string) : null,
     consentEpoch: trackingConsentEpoch(row.analytics_epoch, hasActive ? row.consent_epoch : null),
     nativeTracking: publicAnalyticsSettings(row.analytics_settings),
     validUntil: new Date(Date.now() + 60_000).toISOString(),
     configuration: hasActive ? parseDestinationConfiguration(row.configuration) : {destinations: []},
   };
+  await client.query('COMMIT');
+  return configuration;
+  } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+  finally { client.release(); }
 }

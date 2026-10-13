@@ -28,7 +28,7 @@ type Status = { configured: boolean; appUrl: string }
 type Workspace = { id: string; name: string; role: string }
 type Me = { user: { id: string; name: string; email: string }; instanceOperator: boolean; workspaces: Workspace[] }
 type Project = { id: string; name: string; origin: string; publicKey: string; eventCount: number; lastEventAt: string | null; retainedFrom: string | null }
-type EventsData = { events: { id: string; eventName: string; path: string; receivedAt: string }[]; total: number; retainedFrom: string | null }
+type EventsData = { events: { id: string; eventName: string; path: string; origin: string; receivedAt: string }[]; total: number; retainedFrom: string | null }
 type Job = { id: string; status: string; createdAt: string; completedAt: string | null; error: string | null }
 type SetupValues = { token: string; name: string; email: string; password: string; workspaceName: string }
 type AppView = 'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports' | 'installation' | 'events' | 'retention' | 'context' | 'prompts' | 'explore' | 'google' | 'google-app'
@@ -540,10 +540,10 @@ function App() {
                 <>
                   <div className='table-wrap'>
                     <table>
-                      <thead><tr><th scope='col'>Event</th><th scope='col'>Path</th><th scope='col'>Received</th></tr></thead>
+                      <thead><tr><th scope='col'>Event</th><th scope='col'>Origin</th><th scope='col'>Path</th><th scope='col'>Received</th></tr></thead>
                       <tbody>
                         {events.events.map((ev) => (
-                          <tr key={ev.id}><td>{ev.eventName}</td><td className='mono'>{ev.path}</td><td className='mono'>{fmt(ev.receivedAt)}</td></tr>
+                          <tr key={ev.id}><td>{ev.eventName}</td><td className='mono'>{ev.origin}</td><td className='mono'>{ev.path}</td><td className='mono'>{fmt(ev.receivedAt)}</td></tr>
                         ))}
                       </tbody>
                     </table>
@@ -557,14 +557,14 @@ function App() {
           <>
             <section className='card' aria-labelledby='snip-h'>
               <h2 id='snip-h'>Install the tracker</h2>
-              <p>Add this tag to the pages served from <strong>{project.origin}</strong>:</p>
+              <p>Add this tag to the pages served from <strong>{project.origin}</strong> or a verified HTTPS serving domain configured under Domains:</p>
               <pre className='snippet'><code>{snippet}</code></pre>
               <div className='row'>
                 <button className='btn' onClick={() => void copySnippet(snippet)}>Copy snippet</button>
                 {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
                 {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
               </div>
-              <p className='dim footnote'>Install the snippet on {project.origin}, choose analytics consent in Tracking preferences, then refresh events to confirm delivery. Earlier activity is discarded.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
+              <p className='dim footnote'>Install the snippet on the canonical origin or a verified HTTPS serving domain, choose analytics consent in Tracking preferences, then refresh events to confirm delivery. Earlier activity is discarded.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
               <p className='dim footnote'>After consent, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Vendor tags have their own collection behavior.</p>
             </section>
             <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>

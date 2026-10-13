@@ -8,6 +8,7 @@ import { getDatabase } from './db.ts';
 import { normalizeDimensions, normalizeProperties } from './analytics-input.ts';
 import { resolveAnalyticsNetwork } from './analytics-network.ts';
 import { eventPath } from './validation.ts';
+import { collectionOriginAllowed } from './collection-origins.ts';
 
 const settingsInput = z.object({
   enabled: z.boolean(), consentMode: z.enum(['builtin', 'external']),
@@ -90,7 +91,7 @@ async function writeObservation(client: PoolClient, project: Project, input: Obs
   const inserted = await client.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,properties,dimensions,source,metric_version)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(project_id,id) DO NOTHING RETURNING id`,
     [input.eventId, project.id, input.name, eventPath(input.url), now, identity?.visitor ?? null, identity?.visit ?? null,
-      JSON.stringify(properties), JSON.stringify(dimensions), source, identity?.metricVersion ?? 'observations-v2']);
+      JSON.stringify(properties), JSON.stringify({ ...dimensions, origin: new URL(input.url).origin }), source, identity?.metricVersion ?? 'observations-v2']);
   if (inserted.rowCount && identity) await client.query(`INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,$3,$3)
     ON CONFLICT(project_id,id) DO UPDATE SET first_seen_at=LEAST(analytics_visitor.first_seen_at,excluded.first_seen_at),last_seen_at=GREATEST(analytics_visitor.last_seen_at,excluded.last_seen_at)`, [project.id, identity.visitor, now]);
   return { accepted: true, duplicate: !inserted.rowCount, ...(inserted.rowCount && identity ? { context: identity.context } : {}) };
@@ -108,7 +109,8 @@ export async function collectNative(request: Request, siteKey: string, input: Ob
       LEFT JOIN tracking_revision r ON r.id=s.active_revision AND r.project_id=p.id AND r.environment=s.environment
       WHERE p.public_key=$1`, [siteKey]);
     const project = result.rows[0];
-    if (!project || project.origin !== request.headers.get('origin') || project.origin !== new URL(input.url).origin) throw new FoundationError(403, 'Event does not match the configured website.');
+    const origin = request.headers.get('origin');
+    if (!project || origin !== new URL(input.url).origin || !await collectionOriginAllowed(client, origin, project)) throw new FoundationError(403, 'Event does not match an allowed website origin.');
     const settings = publicAnalyticsSettings(project.analytics_settings), path = eventPath(input.url);
     const ua = request.headers.get('user-agent') ?? '';
     // ponytail: conservative named-bot heuristic; use a reviewed maintained detector
@@ -133,7 +135,7 @@ export async function collectNative(request: Request, siteKey: string, input: Ob
 export async function insertApiObservation(client: PoolClient, projectId: string, input: Observation) {
   const result = await client.query<Project>('SELECT * FROM project WHERE id=$1 FOR SHARE', [projectId]);
   const project = result.rows[0];
-  if (!project || project.origin !== new URL(input.url).origin) throw new FoundationError(400, 'Event URL must use the project origin.');
+  if (!project || !await collectionOriginAllowed(client, new URL(input.url).origin, project)) throw new FoundationError(400, 'Event URL must use an allowed project origin.');
   const settings = publicAnalyticsSettings(project.analytics_settings);
   if (!settings.enabled || analyticsPathExcluded(new URL(input.url).pathname, settings.excludedPaths)) return { accepted: false, reason: 'collection_disabled' };
   return writeObservation(client, project, input, 'api', null, new Date());

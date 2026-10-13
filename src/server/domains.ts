@@ -60,7 +60,7 @@ async function withProject<T>(projectId: unknown, userId: unknown, operation: (c
     // All domain writes and role changes share this lock; re-read membership after acquiring it.
     await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [found.rows[0].workspace_id]);
     const authorized = await client.query(`SELECT p.id,p.origin FROM project p JOIN membership m ON m.workspace_id=p.workspace_id
-      WHERE p.id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin')`, [pid, uid]);
+      WHERE p.id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') FOR UPDATE OF p`, [pid, uid]);
     if (!authorized.rowCount) throw new FoundationError(404, 'Project not found or unavailable.');
     const project = projectDto(authorized.rows[0]);
     if (project.canonicalVerifiable) await client.query(`INSERT INTO project_domain(id,project_id,hostname,role)
@@ -90,6 +90,11 @@ async function domainRow(client: PoolClient, projectId: string, domainId: unknow
   const result = await client.query<DomainRow>('SELECT * FROM project_domain WHERE id=$1 AND project_id=$2 FOR UPDATE', [id, projectId]);
   if (!result.rowCount) throw new FoundationError(404, 'Domain not found or unavailable.');
   return result.rows[0];
+}
+
+async function rotateCollectionConsent(client: PoolClient, project: Project, row: DomainRow, change: Partial<DomainRow>) {
+  const eligible = (domain: DomainRow) => domain.role === 'serving' && !!domain.verified_at && !domain.revoked_at && `https://${domain.hostname}` !== project.origin;
+  if (eligible(row) !== eligible({ ...row, ...change })) await client.query('UPDATE project SET analytics_epoch=$2 WHERE id=$1', [project.id, randomUUID()]);
 }
 
 function expectedTarget(project: Project, hostname: string, details: z.infer<typeof detailsSchema>): string | null {
@@ -126,6 +131,7 @@ export async function updateDomain(projectId: unknown, userId: unknown, domainId
     if (row.role === 'canonical') throw new FoundationError(409, 'The canonical domain is fixed by the project origin.');
     const target = expectedTarget(project, row.hostname, details);
     await client.query('UPDATE project_domain SET role=$1,expected_target_host=$2 WHERE id=$3 AND project_id=$4', [details.role, target, row.id, project.id]);
+    await rotateCollectionConsent(client, project, row, { role: details.role });
     return stateDto(client, project);
   });
 }
@@ -137,6 +143,7 @@ export async function issueDomainChallenge(projectId: unknown, userId: unknown, 
     const value = `ten98-verification=${project.id}.${row.id}.${randomBytes(32).toString('base64url')}`;
     const result = await client.query(`UPDATE project_domain SET challenge_hash=$1,challenge_expires_at=clock_timestamp()+interval '24 hours',
       verified_at=NULL,revoked_at=NULL WHERE id=$2 AND project_id=$3 RETURNING challenge_expires_at`, [createHash('sha256').update(value).digest('hex'), row.id, project.id]);
+    await rotateCollectionConsent(client, project, row, { verified_at: null, revoked_at: null });
     return { state: await stateDto(client, project), challenge: { domainId: row.id, name: `_ten98-challenge.${row.hostname}`,
       type: 'TXT' as const, value, expiresAt: result.rows[0].challenge_expires_at.toISOString() as string } };
   });
@@ -194,6 +201,7 @@ export async function verifyDomain(projectId: unknown, userId: unknown, domainId
     const changed = await client.query(`UPDATE project_domain SET verified_at=clock_timestamp(),challenge_hash=NULL,challenge_expires_at=NULL,revoked_at=NULL
       WHERE id=$1 AND project_id=$2 AND challenge_hash=$3 AND challenge_expires_at>clock_timestamp() RETURNING id`, [row.id, project.id, snapshot.hash]);
     if (!changed.rowCount) throw new FoundationError(409, 'The DNS proof expired. Create a new proof.');
+    await rotateCollectionConsent(client, project, row, { verified_at: new Date(), revoked_at: null });
     return stateDto(client, project);
   });
 }
@@ -204,6 +212,7 @@ export async function revokeDomain(projectId: unknown, userId: unknown, domainId
     const row = await domainRow(client, project.id, domainId);
     await client.query(`UPDATE project_domain SET verified_at=NULL,challenge_hash=NULL,challenge_expires_at=NULL,revoked_at=clock_timestamp()
       WHERE id=$1 AND project_id=$2`, [row.id, project.id]);
+    await rotateCollectionConsent(client, project, row, { verified_at: null, revoked_at: new Date() });
     return stateDto(client, project);
   });
 }
@@ -214,6 +223,7 @@ export async function removeDomain(projectId: unknown, userId: unknown, domainId
     const row = await domainRow(client, project.id, domainId);
     if (row.role === 'canonical') throw new FoundationError(409, 'The canonical domain cannot be removed.');
     await client.query('DELETE FROM project_domain WHERE id=$1 AND project_id=$2', [row.id, project.id]);
+    await rotateCollectionConsent(client, project, row, { verified_at: null });
     return stateDto(client, project);
   });
 }

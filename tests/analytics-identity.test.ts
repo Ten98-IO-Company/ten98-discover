@@ -165,7 +165,7 @@ test('API observations cannot impersonate a browser identity or retain disabled 
   assert.equal(values[5], null);
   assert.equal(values[6], null);
   assert.deepEqual(JSON.parse(values[7] as string), { plan: { type: 'string', value: 'basic' } });
-  assert.deepEqual(JSON.parse(values[8] as string), { language: 'en-US' });
+  assert.deepEqual(JSON.parse(values[8] as string), { language: 'en-US', origin: 'https://site.example' });
   assert.equal(values[9], 'api');
   assert.equal(values[10], 'observations-v2');
   const serialized = JSON.stringify(values);
@@ -180,7 +180,7 @@ test('enabled dimension capture remains bounded and raw distinct ID is removed',
   await insertApiObservation(fixture.client, projectId, { eventId: randomUUID(), name: 'page_view', url: 'https://site.example/',
     dimensions: { referrer: 'https://referrer.example:8443/private?secret=1', campaign: { source: 'newsletter' }, screen: { width: 1000, height: 800 }, distinctId: 'private-distinct-sentinel' } });
   assert.deepEqual(JSON.parse(fixture.writes[0][8] as string), {
-    referrerHost: 'referrer.example', campaign: { source: 'newsletter' }, screenWidth: 1000, screenHeight: 800,
+    origin: 'https://site.example', referrerHost: 'referrer.example', campaign: { source: 'newsletter' }, screenWidth: 1000, screenHeight: 800,
   });
 });
 

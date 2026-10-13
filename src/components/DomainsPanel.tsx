@@ -251,7 +251,7 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
     if (lockRef.current || denied) return;
     if (d.status === 'pending' || d.status === 'verified') {
       const ok = window.confirm(
-        `Replace the DNS proof for ${d.hostname}? The current proof and any existing verification are invalidated immediately.`,
+        `Replace the DNS proof for ${d.hostname}? Verification is cleared immediately. A serving domain stops accepting new collection until reverified; visitors must renew consent. The canonical project origin remains allowed.`,
       );
       if (!ok) return;
     }
@@ -286,7 +286,7 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
 
   const onRevoke = (d: Domain) => {
     if (lockRef.current || denied) return;
-    if (!window.confirm(`Revoke the proof for ${d.hostname}? Verification is cleared. Collection settings are separate. You can create a new proof later.`)) return;
+    if (!window.confirm(`Revoke the proof for ${d.hostname}? A serving domain stops accepting collection immediately. The canonical project origin remains allowed. You can create a new proof later.`)) return;
     void runMutation(async (signal, current) => {
       const s = await api<State>(`${base}/${encodeURIComponent(d.id)}/revoke`, {method: 'POST', body: {}, signal});
       if (!current()) return;
@@ -298,7 +298,7 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
 
   const onRemove = (d: Domain) => {
     if (lockRef.current || denied) return;
-    if (!window.confirm(`Remove ${d.hostname} from this project? This cannot be undone.`)) return;
+    if (!window.confirm(`Remove ${d.hostname} from this project? A verified serving domain stops accepting collection immediately. This cannot be undone.`)) return;
     void runMutation(async (signal, current) => {
       const s = await api<State>(`${base}/${encodeURIComponent(d.id)}/remove`, {method: 'POST', body: {}, signal});
       if (!current()) return;
@@ -342,9 +342,9 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
         </button>
       </div>
       <p className="hint">
-        Prove control of the hostnames that serve this project or redirect to it. Verification is a point-in-time DNS
-        proof, not ongoing monitoring: it does not enable collection, change the project origin, discover backlinks,
-        or observe redirects.
+        Verified serving domains can use this project’s snippet at their exact HTTPS origin on port 443. No subdomains,
+        HTTP origins or other ports are included. Redirect aliases never enable collection. Verification is a point-in-time
+        DNS proof; it does not change DNS, discover backlinks or observe redirects. The canonical project origin remains allowed.
       </p>
 
       {error && (
@@ -541,7 +541,8 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
           )}
           <p className="footnote">
             Expected targets are intended configuration, not observed redirects. “Control verified” records when a DNS
-            proof matched — it is not a health check. On narrow screens, scroll the table sideways to see actions.
+            proof matched — it is not a health check. Serving eligibility changes require visitors to renew consent.
+            On narrow screens, scroll the table sideways to see actions.
           </p>
 
           {edit && editingDomain && (

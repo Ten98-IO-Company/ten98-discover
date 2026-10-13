@@ -18,6 +18,7 @@ import { runReportsChecks } from './reports-integration.ts';
 import { runRetentionChecks } from './retention-integration.ts';
 import { runRetentionCoverageChecks } from './retention-coverage-integration.ts';
 import { runExplorerChecks } from './explorer-integration.ts';
+import { runDomainCollectionChecks } from './domain-collection-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -342,6 +343,8 @@ try {
   await runAnalyticsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, workspaceId: workspaceA, foreignProjectId: projectB.id });
   stage = 'native analytics consent and measured visits';
   await runNativeAnalyticsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  stage = 'verified serving-domain collection';
+  await runDomainCollectionChecks();
   stage = 'reports and revocable snapshot shares';
   await runReportsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'retention policy, cleanup and authorization';
