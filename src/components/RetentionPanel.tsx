@@ -29,6 +29,8 @@ interface PreviewDto {
   settings: RetentionSettings;
   asOf: string;
   cutoff: string;
+  derivedCutoff: string;
+  derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean };
   estimate: {
     status: 'available' | 'unavailable';
     rows: number | null;
@@ -60,7 +62,7 @@ const FIELDS: ReadonlyArray<{
   {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep raw analytics events (default 90).'},
   {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep replays (default 7).'},
   {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep raw provider evidence (default 90).'},
-  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep derived history (default 365).'},
+  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep imported Google report data after each import finishes (default 365). Import receipts remain.'},
 ];
 
 function toDraft(s: RetentionSettings): Draft {
@@ -422,12 +424,13 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
                   About {fmtBytes(preview.estimate.logicalBytes)} in sampled event-row bytes — an approximation, not guaranteed disk savings.
                 </p>
               )}
-              <p className="hint" style={{margin: '8px 0'}}>Estimates cover raw analytics only; other categories store nothing yet.</p>
+              <p style={{margin: '8px 0'}}>Google report data cutoff (UTC): {fmtUtc(preview.derivedCutoff)}. {preview.derivedEstimate.status === 'available' && preview.derivedEstimate.imports !== null ? `${preview.derivedEstimate.atLeast ? 'At least ' : ''}${preview.derivedEstimate.imports.toLocaleString()} finished imports eligible.` : 'Import estimate unavailable.'}</p>
+              <p className="hint" style={{margin: '8px 0'}}>Google report rows and quality metadata expire after the derived-history period. Outcomes and recorded row counts remain as receipts. Active imports are preserved. Replay and raw provider evidence store nothing yet.</p>
               <p className="hint" style={{margin: '8px 0'}}>
-                Kept as-is: reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups. Derived history has no stored rollups yet.
+                Kept as-is: authored reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups.
               </p>
               <div className="alert" style={{margin: '8px 0'}}>
-                Older analytics will be deleted automatically. Increasing this period later cannot restore deleted data.
+                Older analytics and finished Google report data will be deleted automatically. Increasing these periods later cannot restore deleted data.
               </div>
               <div className="row" style={{flexWrap: 'wrap', gap: 8}}>
                 <button type="button" className="btn primary" style={BTN} onClick={() => void onSave()} disabled={busy !== null}>

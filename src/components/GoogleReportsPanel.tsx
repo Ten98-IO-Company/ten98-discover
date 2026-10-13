@@ -309,7 +309,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
     setSnap(previous => {
       const receipt = previous && conn.imports.find(item => item.id === previous.id);
       return previous && receipt?.dataStatus === 'expired' && previous.imp.dataStatus !== 'expired'
-        ? { ...previous, imp: receipt, rows: [], next: null } : previous;
+        ? { ...previous, imp: receipt, rows: [], warnings: [], next: null } : previous;
     });
   }, [conn.imports]);
 

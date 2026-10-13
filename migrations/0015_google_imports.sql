@@ -69,10 +69,13 @@ CREATE TABLE google_import (
   diagnostic text,
   created_at timestamptz NOT NULL DEFAULT now(),
   completed_at timestamptz,
+  data_expired_at timestamptz,
   FOREIGN KEY(connection_id,project_id) REFERENCES google_connection(id,project_id),
   UNIQUE(project_id,request_id)
 );
 CREATE INDEX google_import_connection_idx ON google_import(connection_id,created_at DESC,id DESC);
+CREATE INDEX google_import_retention_idx ON google_import(project_id,completed_at,id)
+  WHERE data_expired_at IS NULL AND status IN ('completed','partial','failed','denied');
 CREATE UNIQUE INDEX google_import_active_idx ON google_import(connection_id) WHERE status IN ('queued','running');
 CREATE TABLE google_import_page (
   import_id uuid NOT NULL REFERENCES google_import(id) ON DELETE CASCADE,

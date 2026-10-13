@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
+import { expireGoogleImportPages } from './google-retention.ts';
 
 const days = z.number().int().min(1).max(3650);
 export const retentionSettingsInput = z.object({ rawAnalyticsDays: days, replayDays: days, rawProviderEvidenceDays: days, derivedHistoryDays: days }).strict();
@@ -12,7 +13,7 @@ const previewInput = z.object({ revision: z.number().int().positive(), settings:
 const tokenInput = previewInput.extend({ version: z.literal(1), workspaceId: z.uuid(), userId: z.string().min(1).max(128), issuedAt: z.number().int().nonnegative() }).strict();
 const settingsSql = `json_build_object('rawAnalyticsDays',w.raw_analytics_days,'replayDays',w.replay_days,
   'rawProviderEvidenceDays',w.raw_provider_evidence_days,'derivedHistoryDays',w.derived_history_days)`;
-export const retentionCategories = Object.freeze({ rawAnalytics: 'active', replay: 'not_implemented', rawProviderEvidence: 'not_implemented', derivedHistory: 'not_implemented' } as const);
+export const retentionCategories = Object.freeze({ rawAnalytics: 'active', replay: 'not_implemented', rawProviderEvidence: 'not_implemented', derivedHistory: 'active' } as const);
 
 function parse<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
   const result = schema.safeParse(value);
@@ -60,6 +61,8 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     if (current.rows[0].revision !== input.revision) throw new FoundationError(409, 'Retention changed. Reload and preview again.');
     const asOf = current.rows[0].now as Date;
     const cutoff = new Date(asOf.getTime() - input.settings.rawAnalyticsDays * 86_400_000);
+    const derivedCutoff = new Date(asOf.getTime() - input.settings.derivedHistoryDays * 86_400_000);
+    let derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean } = { status: 'unavailable', imports: null, atLeast: false };
     let estimate: { status: 'available' | 'unavailable'; rows: number | null; atLeast: boolean; logicalBytes: number | null } = { status: 'unavailable', rows: null, atLeast: false, logicalBytes: null };
     await client.query('SAVEPOINT estimate');
     try {
@@ -68,12 +71,16 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
         WHERE p.workspace_id=$1 AND e.received_at<$2 ORDER BY p.id,e.received_at,e.id LIMIT 10001`, [workspaceId, cutoff]);
       estimate = { status: 'available', rows: Math.min(sample.rows.length, 10000), atLeast: sample.rows.length > 10000,
         logicalBytes: sample.rows.slice(0, 10000).reduce((sum, row) => sum + row.bytes, 0) };
+      const imports = await client.query(`SELECT i.id FROM project p JOIN google_import i ON i.project_id=p.id
+        WHERE p.workspace_id=$1 AND i.completed_at<$2 AND i.data_expired_at IS NULL
+          AND i.status IN ('completed','partial','failed','denied') LIMIT 10001`, [workspaceId, derivedCutoff]);
+      derivedEstimate = { status: 'available', imports: Math.min(imports.rows.length, 10000), atLeast: imports.rows.length > 10000 };
     } catch (error) {
       await client.query('ROLLBACK TO SAVEPOINT estimate');
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
@@ -123,7 +130,8 @@ export async function runRetentionBatch(projectId?: string) {
     await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE', [selected]);
     // Fresh statement after both gates: collection/settings may have committed while we waited.
     const { rows } = await client.query(`SELECT p.retention_cutoff,p.retention_policy_revision,w.retention_revision,
-      clock_timestamp()-w.raw_analytics_days*interval '24 hours' AS cutoff
+      clock_timestamp()-w.raw_analytics_days*interval '24 hours' AS cutoff,
+      clock_timestamp()-w.derived_history_days*interval '24 hours' AS derived_cutoff
       FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.id=$1`, [selected]);
     const state = rows[0];
     const cutoff = state.retention_policy_revision === state.retention_revision && state.retention_cutoff ? state.retention_cutoff : state.cutoff;
@@ -144,13 +152,14 @@ export async function runRetentionBatch(projectId?: string) {
     const pending = await client.query(`SELECT EXISTS(SELECT 1 FROM event WHERE project_id=$1 AND received_at<$2)
       OR EXISTS(SELECT 1 FROM analytics_visitor v WHERE v.project_id=$1 AND v.last_seen_at<$2
         AND NOT EXISTS(SELECT 1 FROM event e WHERE e.project_id=v.project_id AND e.visitor_id=v.id)) AS pending`, [selected, cutoff]);
-    const complete = !pending.rows[0].pending;
+    const imported = await expireGoogleImportPages(client, selected!, state.derived_cutoff);
+    const complete = !pending.rows[0].pending && !imported.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
-    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, complete };
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, complete };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (selected) {

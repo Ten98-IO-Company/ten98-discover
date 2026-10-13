@@ -15,7 +15,8 @@ import { assertGoogleCredentialsReadable, rotateGoogleCredentials, googleConnect
 import { decryptCredentials } from '../src/server/credential-vault.ts';
 import { createApiKey } from '../src/server/api-keys.ts';
 
-export async function runGoogleChecks() {
+export type GoogleBrowserFixture = { email: string; password: string; userId: string; projectId: string; workspaceId: string; clientSecret: string; authorize: (url: string) => string; transport: (url: string, init: RequestInit) => Promise<Response> };
+export async function runGoogleChecks(browserCheck?: (fixture: GoogleBrowserFixture) => Promise<void>) {
   assert.equal(process.env.TEN98_INTEGRATION_TEST, '1');
   const config = getConfig(), { pool } = getDatabase(), local = ['localhost', '127.0.0.1', '[::1]'];
   for (const url of [config.appUrl, config.databaseUrl]) assert.ok(local.includes(new URL(url).hostname));
@@ -233,6 +234,16 @@ export async function runGoogleChecks() {
       const erased = await disconnectGoogle(projectId, userId, lostKey.id, { revokeAtGoogle: true });
       assert.equal(erased.remoteRevocation, 'unconfirmed'); assert.equal(providerCalls, beforeLostKey);
       assert.equal((await pool.query('SELECT encrypted_tokens FROM google_connection WHERE id=$1', [lostKey.id])).rows[0].encrypted_tokens, null, 'Lost keys must never block local disconnect.');
+      if (browserCheck) {
+        await pool.query('DELETE FROM request_limit WHERE key IN ($1,$2)', [`google:write:${userId}`, `google:read:${userId}`]);
+        await browserCheck({ email, password, userId, projectId, workspaceId: workspace.id, clientSecret, transport, authorize: value => {
+          const url = new URL(value);
+          assert.equal(url.origin, 'https://accounts.google.com');
+          const code = randomBytes(24).toString('base64url');
+          codes.set(code, { challenge: url.searchParams.get('code_challenge')!, scope: url.searchParams.get('scope')! });
+          return `${config.appUrl}/api/google/callback?state=${url.searchParams.get('state')}&code=${code}`;
+        } });
+      }
       assert.equal(fixtureErrors, 0, 'Synthetic provider assertions must hold.');
       console.log('PASS actual PostgreSQL queue worker and explicit remote revocation with synthetic HTTP only');
     });

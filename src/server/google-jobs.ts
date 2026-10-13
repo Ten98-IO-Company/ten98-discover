@@ -9,11 +9,11 @@ import { GoogleRequestError, googleRequest } from './google-http.ts';
 import { googleImportInput, googleInput, googleReportRequest, googleReports, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
 
 export const googleQueue = 'google-report-import';
-type ImportRow = { id: string; connection_id: string; project_id: string; user_id: string; request_id: string; connection_revision: number; app_revision: number; report: GoogleReport; date_from: string; date_to: string; status: string; pages: number; row_count: number; provider_row_count: number | null; source: Record<string, unknown>; quality: { warnings: string[]; metadata: Record<string, unknown> }; diagnostic: string | null; created_at: Date; completed_at: Date | null };
+type ImportRow = { id: string; connection_id: string; project_id: string; user_id: string; request_id: string; connection_revision: number; app_revision: number; report: GoogleReport; date_from: string; date_to: string; status: string; pages: number; row_count: number; provider_row_count: number | null; source: Record<string, unknown>; quality: { warnings: string[]; metadata: Record<string, unknown> }; diagnostic: string | null; created_at: Date; completed_at: Date | null; data_expired_at: Date | null };
 // Explicit text dates keep provider-local calendar boundaries independent of the host timezone.
 const importFields = 'i.*,i.date_from::text AS date_from,i.date_to::text AS date_to';
 export function googleImportDto(row: ImportRow) {
-  return { id: row.id, report: row.report, from: row.date_from, to: row.date_to, status: row.status, pages: row.pages, rowCount: row.row_count, diagnostic: row.diagnostic, createdAt: row.created_at, completedAt: row.completed_at };
+  return { id: row.id, report: row.report, from: row.date_from, to: row.date_to, status: row.status, dataStatus: row.data_expired_at ? 'expired' : 'available', pages: row.pages, rowCount: row.row_count, diagnostic: row.diagnostic, createdAt: row.created_at, completedAt: row.completed_at };
 }
 
 export async function listGoogleConnections(projectId: string, userId: string) {
@@ -61,7 +61,7 @@ export async function readGoogleImport(projectId: string, userId: string, import
     const definition = googleReports[row.report];
     // A running/failed snapshot is not a successful zero-row report. Only finished
     // complete or explicitly partial snapshots expose persisted observations.
-    const readable = row.status === 'completed' || row.status === 'partial';
+    const readable = !row.data_expired_at && (row.status === 'completed' || row.status === 'partial');
     const page = readable ? await client.query<{ row: ReportRow }>(`SELECT item.value AS row FROM google_import_page p CROSS JOIN LATERAL jsonb_array_elements(p.rows) WITH ORDINALITY AS item(value,n)
       WHERE import_id=$1 ORDER BY p.page,item.n LIMIT 51 OFFSET $2`, [row.id, offset]) : { rows: [] };
     return { import: googleImportDto(row), source: row.source, dimensions: definition.dimensions, metrics: definition.metrics, rows: page.rows.slice(0, 50).map(item => item.row), quality: row.quality, nextOffset: page.rows.length > 50 ? offset + 50 : null };
