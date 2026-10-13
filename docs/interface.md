@@ -20,6 +20,8 @@ The palette is cool neutral with graphite text and a restrained violet accent. S
 
 The first available project opens after loading, unless the user has already chosen another page or started a new project. Delayed requests must not replace an identity verification or newer navigation. Project/account changes continue clearing panel state through the existing keys and authorization handlers.
 
+Google connections follow the same hierarchy: each source has a heading, provider label, explicit status and separated import rows. Once a project has connections, adding another is a native disclosure so setup controls do not displace existing reports. A successful Google authorization return uses a polite informational notice; failed authorization remains an alert. Disconnected sources explain that retained snapshots can still be read.
+
 ## Verification
 
 TypeScript and production build passed. Visual review covers the actual local application, including empty metrics and the compact sidebar. Browser acceptance additionally checks mobile navigation/focus, installation and event-page separation, delayed project loading, report editing/sharing and privacy-setting behavior. Exact completed evidence belongs in the foundation runbook; this document does not certify full V1 parity.

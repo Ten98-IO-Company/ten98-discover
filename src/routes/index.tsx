@@ -85,7 +85,7 @@ function App() {
     if (menuOpen) { setMenuOpen(false); requestAnimationFrame(() => mainRef.current?.focus()) }
   }
   const [oidcProofId, setOidcProofId] = useState<string>()
-  const [authNotice, setAuthNotice] = useState('')
+  const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
   const oidcProof = useRef<string | undefined>(undefined)
   const oidcFactor = useRef(false)
   const googleTarget = useRef<{workspaceId:string;projectId:string} | null>(null)
@@ -106,14 +106,14 @@ function App() {
         const connected = params.getAll('google').length === 1 && params.get('google') === 'connected'
           && params.getAll('google-project').length === 1 && params.getAll('google-workspace').length === 1 && uuid.test(projectId) && uuid.test(workspaceId)
         googleTarget.current = connected ? {projectId,workspaceId} : null
-        setAuthNotice(connected ? 'Google authorization returned. Review the source status and select a property to import reports. Browser tracking was not changed.' : 'Google reporting could not be connected. Start the connection again and grant read access.')
+        setAuthNotice(connected ? {kind: 'info', message: 'Google authorization returned. Review your connection and choose a property to import reports.'} : {kind: 'error', message: 'Google reporting could not be connected. Start the connection again and grant read access.'})
         if (connected) setView('google')
         window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
         return
       }
       if ([...params.keys()].some(key => key.startsWith('oidc-'))) {
         oidcProof.current = undefined; setOidcProofId(undefined); oidcFactor.current = false
-        setInviteToken(''); setInviteSigningIn(false); setAuthNotice('')
+        setInviteToken(''); setInviteSigningIn(false); setAuthNotice(null)
         const kinds = ['oidc-proof', 'oidc-factor', 'oidc-complete', 'oidc-error'].filter(key => params.has(key))
         const kind = kinds.length === 1 && params.getAll(kinds[0]).length === 1 ? kinds[0] : null
         const proof = kind === 'oidc-proof' ? params.get(kind) : null
@@ -122,7 +122,7 @@ function App() {
         } else if (kind === 'oidc-factor' && params.get(kind) === '1') {
           oidcFactor.current = true
         } else if (kind !== 'oidc-complete' || params.get(kind) !== '1') {
-          setAuthNotice('Identity sign-in could not be completed. Start again, or use local sign-in. For an invitation, reopen its original link.')
+          setAuthNotice({kind: 'error', message: 'Identity sign-in could not be completed. Start again, or use local sign-in. For an invitation, reopen its original link.'})
         }
         window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
         return
@@ -154,7 +154,7 @@ function App() {
         if (e instanceof ApiError && e.status === 401) {
           if (oidcProof.current) {
             oidcProof.current = undefined; setOidcProofId(undefined)
-            setAuthNotice('The account session for this identity verification ended. Sign in, then start the verification again.')
+            setAuthNotice({kind: 'error', message: 'The account session for this identity verification ended. Sign in, then start the verification again.'})
           }
           setPhase(oidcFactor.current ? 'factor' : 'signin')
         }
@@ -235,7 +235,7 @@ function App() {
             selectProject(target.projectId, false)
             void loadEvents(target.projectId); void loadJobs(target.projectId)
           } else if (viewRef.current === 'google' && !activeProject.current) {
-            setView('project'); setAuthNotice('Google reporting returned, but that project is no longer available. Choose a current project.')
+            setView('project'); setAuthNotice({kind: 'error', message: 'Google reporting returned, but that project is no longer available. Choose a current project.'})
           }
         } else if (!activeProject.current && d.projects[0] && projGen.current === selection && viewRef.current === 'project') {
           selectProject(d.projects[0].id, false)
@@ -306,7 +306,7 @@ function App() {
   }
 
   async function handleSignIn(email: string, password: string) {
-    setAuthNotice('')
+    setAuthNotice(null)
     const response = await api<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/email', { method: 'POST', body: { email, password } })
     if (response.twoFactorRedirect) { setPhase('factor'); return }
     setPhase('loading'); setInviteSigningIn(false)
@@ -466,7 +466,7 @@ function App() {
       <main className='main' ref={mainRef} tabIndex={-1}>
         <header className='app-bar'><div className='breadcrumbs'><span>{workspace?.name ?? 'Your workspace'}</span>{project && <><span aria-hidden='true'>/</span><strong>{project.name}</strong></>}</div><span className='preview-badge'>Development preview</span></header>
         <div className='page-content'>
-        {authNotice && <div role='alert' className='alert'>{authNotice} <button className='btn ghost' onClick={() => setAuthNotice('')}>Dismiss</button></div>}
+        {authNotice && <div role={authNotice.kind === 'error' ? 'alert' : 'status'} className={authNotice.kind === 'error' ? 'alert' : 'notice'}>{authNotice.message} <button className='btn ghost' onClick={() => setAuthNotice(null)}>Dismiss</button></div>}
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError}</div>}
         {project && workspace && projectView && <header className='proj-head'>
@@ -649,7 +649,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   )
 }
 
-function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onCancel?: () => void; notice?: string }) {
+function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onCancel?: () => void; notice?: {message: string; kind: 'info' | 'error'} | null }) {
   const [email, setEmail] = useState(initialEmail)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -670,7 +670,7 @@ function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail
       <form className='card auth' onSubmit={(e) => void submit(e)}>
         <p className='auth-brand'>ten98 / monitor</p>
         <h1>Sign in</h1>
-        {notice && <p className='alert' role='alert'>{notice}</p>}
+        {notice && <p className={notice.kind === 'error' ? 'alert' : 'notice'} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.message}</p>}
         <div className='field'><label htmlFor='si-email'>Email</label>
           <input id='si-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         <div className='field'><label htmlFor='si-pw'>Password</label>

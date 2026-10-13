@@ -54,9 +54,20 @@ button { touch-action: manipulation; }
 .card { min-width: 0; margin-bottom: 20px; padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 2px 3px #20212b02; }
 .card h2 { margin-bottom: 12px; }
 .card > h1 { font-size: 22px; }
-.banner, .alert { margin: 12px 0 18px; padding: 12px 15px; border-radius: 8px; font-size: 13px; }
+.banner, .alert, .notice { margin: 12px 0 18px; padding: 12px 15px; border-radius: 8px; font-size: 13px; }
 .banner { background: var(--amber-tint); border: 1px solid #eddfbf; }
 .alert { background: var(--red-tint); border: 1px solid #f0cec8; color: #882a22; }
+.notice { background: var(--blue-tint); border: 1px solid #dcd5f6; color: #45339c; }
+.google-reports .stack { display: grid; gap: 14px; }
+.google-reports .field, .google-reports .stack > p { margin: 0; }
+.google-connect > summary { min-height: 44px; padding: 9px 0; cursor: pointer; font-weight: 600; }
+.google-connect[open] > summary { margin-bottom: 14px; }
+.google-connection h2 { margin: 0; }
+.google-connection > .row p { margin: 4px 0 0; }
+.google-connection { overflow-wrap: anywhere; }
+.google-imports { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.google-imports > li { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.google-imports > li:last-child { border-bottom: 0; padding-bottom: 0; }
 .empty { margin-top: 12px; padding: 26px 20px; background: #fafafb; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 13px; }
 .empty p { margin: 0 0 5px; } .empty strong { color: var(--ink); }
 .btn { min-height: 40px; padding: 8px 14px; border: 1px solid #dcdce5; border-radius: 7px; background: white; color: var(--ink); font: inherit; font-size: 13px; font-weight: 550; cursor: pointer; transition: background .12s, border-color .12s; }

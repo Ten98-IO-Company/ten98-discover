@@ -226,14 +226,16 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
   const appOn = overview.app.configured && overview.app.enabled;
 
   return (
-    <div className="stack">
+    <div className="google-reports stack">
       {!overview.app.configured && <p className="hint">The instance operator has not configured the Google OAuth app yet.</p>}
       {overview.app.configured && !overview.app.enabled && <p className="hint">Google connections are disabled by the instance operator.</p>}
       {overview.app.configured && overview.app.testing && <p className="hint">The Google consent app is in testing mode; refresh tokens may expire after seven days.</p>}
       {!owner && <p className="hint">Only workspace owners can connect Google sources, choose properties, or queue imports. You can view existing connections and reports.</p>}
 
       {owner && appOn && (
-        <div className="card stack">
+        <details className="card google-connect" open={overview.connections.length === 0}>
+          <summary>Add a Google connection</summary>
+          <div className="stack">
           <div className="field">
             <label htmlFor="g-provider">Provider</label>
             <select id="g-provider" disabled={pending} value={cProvider} onChange={e => setCProvider(e.target.value as Provider)}>
@@ -248,7 +250,8 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
           <button type="button" className="btn primary" style={BTN} disabled={pending || cBusy || cName.trim() === ''} onClick={() => void connect(cProvider, cName.trim())}>Connect to Google</button>
           <p className="hint">You are sent to Google to approve read-only access and then return here.</p>
           {cErr !== '' && <p role="alert" className="alert">{cErr}</p>}
-        </div>
+          </div>
+        </details>
       )}
 
       {overview.connections.length === 0 && (
@@ -477,10 +480,10 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
   });
 
   return (
-    <section className="card stack">
-      <div className="row">
-        <strong>{conn.name}</strong>
-        <span className="dim">{PROVIDER_LABEL[conn.provider]} · {connStatus(conn.status)}</span>
+    <section className="card stack google-connection">
+      <div className="row between">
+        <div><h2>{conn.name}</h2><p className="dim">{PROVIDER_LABEL[conn.provider]}</p></div>
+        <span className={conn.status === 'ready' ? 'pill good' : conn.status === 'reconnect' ? 'pill bad' : 'pill'}>{connStatus(conn.status)}</span>
       </div>
       <p className="dim">
         Property: {conn.propertyName ?? 'Not selected'}{conn.propertyId ? ` (${conn.propertyId})` : ''} · Time zone: {conn.timeZone ?? 'Not set'} · Currency: {conn.currencyCode ?? 'Not set'}
@@ -488,7 +491,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
 
       {(conn.status === 'reconnect' || conn.status === 'disconnected') && owner && appOn && (
         <div className="row">
-          <p className="hint">Google access needs renewal for this connection.</p>
+          <p className="hint">{conn.status === 'disconnected' ? 'Reconnect to import new reports. Existing snapshots remain available until they expire.' : 'Google access needs renewal for this connection.'}</p>
           <button type="button" className="btn primary" style={BTN} disabled={busy} onClick={() => onReconnect(conn)}>Reconnect to Google</button>
         </div>
       )}
@@ -558,7 +561,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
       {conn.imports.length === 0 ? (
         <p className="dim">No imports yet{owner && conn.status === 'ready' ? '; queue one above to get started.' : '.'}</p>
       ) : (
-        <ul className="stack">
+        <ul className="google-imports">
           {conn.imports.map(imp => (
             <li key={imp.id} className="stack">
               <div className="row">

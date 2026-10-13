@@ -70,10 +70,14 @@ try {
       assert.equal(await page.getByLabel('Client secret', { exact: true }).inputValue(), '');
       assert.equal(await page.getByLabel(/Callback URI/).inputValue(), `${config.appUrl}/api/google/callback`);
       await section('Google reports');
+      assert.equal(await page.getByLabel('Connection name', { exact: true }).isVisible(), false, 'Existing reports take priority over adding another connection.');
+      await page.getByText('Add a Google connection', { exact: true }).click();
       await page.getByLabel('Connection name', { exact: true }).fill('Browser Search Console');
       await page.getByRole('button', { name: 'Connect to Google', exact: true }).click();
       await page.getByRole('heading', { name: 'Google reports', exact: true }).waitFor();
       await page.getByText('Browser Search Console', { exact: true }).waitFor();
+      await page.getByRole('status').filter({ hasText: 'Google authorization returned.' }).waitFor();
+      assert.equal(await page.getByRole('alert').filter({ hasText: 'Google authorization returned.' }).count(), 0, 'A successful return must not be announced as an error.');
       assert.equal(new URL(page.url()).hash, '', 'OAuth state/code/target fragment must be cleared from browser history.');
       assert.equal(await page.getByLabel('Workspace', { exact: true }).inputValue(), fixture.workspaceId, 'Callback must select its authorized workspace, not the first membership.');
       assert.equal(await page.getByRole('navigation', { name: 'Projects', exact: true }).getByRole('button', { name: 'Google imports fixture', exact: true }).getAttribute('aria-current'), 'true');
@@ -100,6 +104,7 @@ try {
       await connection.getByText(/original report rows are unavailable/).waitFor();
       assert.equal(await connection.getByRole('table').count(), 0, 'Refresh must clear data that expired while open.');
       await mkdir('private/google-browser', { recursive: true });
+      await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({ path: 'private/google-browser/desktop.png', fullPage: true });
       await page.setViewportSize({ width: 360, height: 800 });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -123,6 +128,8 @@ try {
       await context.unroute(targetPath, holdTarget);
       await delay(150);
       assert.equal(await page.getByRole('heading', { name: 'Google reports', exact: true }).count(), 0, 'Delayed callback project loading must not override newer account navigation.');
+      await page.goto(`${config.appUrl}/#google=failed`);
+      await page.getByRole('alert').filter({ hasText: 'Google reporting could not be connected.' }).waitFor();
       assert.equal(external, 0); assert.equal(pageErrors, 0);
       console.log('PASS production Google UI with real local API, PKCE callback, worker import, retention expiry, local disconnect, mobile bounds and zero external requests');
     } finally {
