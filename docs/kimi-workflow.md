@@ -206,3 +206,9 @@ Independent checks found and corrected shared report read/write rate-limit accou
 ### Retention, project content and exploration
 
 The same bounded CLI2.1.1/K3-256K maximum-effort, explicit-thinking and Skill-only workflow produced the retention UI in386.8seconds, Prompts UI in610.4seconds and Explorer UI in389.4seconds. Each successful task loaded only the reviewed Ponytail and UX Copy Refiner skills. Context drafting stopped after900.2seconds and a final300.1-second retry without a final file; an explicit GPT checkpoint handoff completed its design and lifecycle work. See [content evidence](project-context.md) and [Explorer evidence](explorer.md). GPT owned backend/security, integration, corrections and independent database/browser acceptance. These are observed output durations, not token, subscription-use or savings measurements.
+
+### Keyword research UI attempt — 2026-10-13
+
+The approved [public issue20 UI contract](https://github.com/Ten98-IO-Company/ten98-monitor/issues/20#issuecomment-6135229497) was supplied to CLI **2.1.1**, **kimi-code/k3-256k**, with thinking enabled and maximum effort requested. The fixed Skill-only profile, curated Ponytail/frontend-design/UX-copy skills, eight-step ceiling and 900-second process-tree deadline remained in force. No private source, configuration, fixtures, customer data or credentials were included.
+
+The single attempt exited after **3.6 seconds of observed runner wall time** with a provider 403 five-hour usage limit. It returned no usable draft, and no skill invocation or implementation is credited to it. No retry or automatic GPT routine-UI substitution was made. GPT continued the already assigned paid-call security, server architecture and independent synthetic validation. The UI remains pending an owner decision or restored quota. Duration is not provider latency; per-task tokens, quota delta, resolved provider effort and savings were not measured.

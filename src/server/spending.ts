@@ -49,7 +49,7 @@ export async function reserveSpend(workspaceId: string, userId: string, input: u
   });
 }
 
-export async function dispatchSpend(workspaceId: string, userId: string, requestId: string) {
+export async function dispatchSpend(workspaceId: string, userId: string, requestId: string, prepare?: (client: PoolClient, row: LedgerRow) => Promise<void>) {
   z.uuid().parse(requestId);
   return providerTransaction(workspaceId, userId, ['owner','admin','editor'], async client => {
     const row = (await client.query<LedgerRow>('SELECT * FROM provider_request WHERE id=$1 AND workspace_id=$2 FOR UPDATE', [requestId, workspaceId])).rows[0];
@@ -57,6 +57,8 @@ export async function dispatchSpend(workspaceId: string, userId: string, request
     if (row.status !== 'reserved') throw new FoundationError(409, 'This request has already been dispatched or cancelled. Reconcile it before retrying.');
     const { revision, month } = await checkBudget(client, workspaceId, row.connection_id, BigInt(row.estimate_micros), row.id);
     if (revision !== row.connection_revision) throw new FoundationError(409, 'Provider credentials changed. Cancel this reservation and request a new quote.');
+    // Optional execution-specific validation shares this authorization/budget transaction.
+    if (prepare) await prepare(client, row);
     // Persist dispatch BEFORE the network call. An interrupted dispatch must never be replayed automatically.
     await client.query("UPDATE provider_request SET status='dispatched',budget_month=$2::date,updated_at=now() WHERE id=$1", [requestId, month]);
     return row;

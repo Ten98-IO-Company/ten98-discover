@@ -6,6 +6,7 @@ import { FoundationError } from './auth.ts';
 import { registerResourceCleanup } from './resource-cleanup.ts';
 import { runRetentionBatch } from './retention.ts';
 import { googleQueue, reconcileGoogleImports, startGoogleImportWorker } from './google-jobs.ts';
+import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs,pruneKeywordResults} from './keyword-research.ts';
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
@@ -25,6 +26,7 @@ export function getBoss(): Promise<PgBoss> {
         await boss.start();
         await boss.createQueue(queueName);
         await boss.createQueue(googleQueue);
+        await boss.createQueue(keywordQueue);
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -99,6 +101,7 @@ async function heartbeat() {
   if (!await boss.getQueue(queueName)) throw new Error('Worker queue is unavailable');
   await reconcileProbes();
   await reconcileGoogleImports();
+  await reconcileKeywordJobs();
   // ponytail: one worker health row covers the single-worker Compose profile; use instance IDs before scaling workers.
   return getDatabase().pool.query(
     `INSERT INTO worker_heartbeat(id, last_seen_at) VALUES ('foundation-worker', now())
@@ -110,6 +113,7 @@ export function startWorker(): Promise<void> {
   if (!workerPromise) workerPromise = (async () => {
     try {
       const boss = await getBoss();
+      await reconcileKeywordJobs();
       await boss.work<{ probeId: string }>(queueName, { batchSize: 5 }, async (jobs) => {
         for (const job of jobs) {
           if (typeof job.data?.probeId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(job.data.probeId)) {
@@ -131,13 +135,14 @@ export function startWorker(): Promise<void> {
         }
       });
       await startGoogleImportWorker(boss);
+      await boss.work<{runId:string}>(keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
       workerStarted = true;
       await heartbeat();
       heartbeatTimer = setInterval(() => {
         if (!heartbeatTask) heartbeatTask = heartbeat()
           .catch(() => console.error('Worker heartbeat failed; check database availability.'))
           .finally(() => { heartbeatTask = undefined; });
-        if (!retentionTask) retentionTask = runRetentionBatch()
+        if (!retentionTask) retentionTask = runRetentionBatch().then(async result=>{await pruneKeywordResults();return result;})
           .catch(() => console.error('Retention cleanup failed; inspect retention status and database availability.'))
           .finally(() => { retentionTask = undefined; });
       }, 10_000);

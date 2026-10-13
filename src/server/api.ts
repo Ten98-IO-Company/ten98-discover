@@ -23,6 +23,7 @@ import { isInstanceOperator } from './instance-operators.ts';
 import { handleReports } from './reports.ts';
 import { handleGoogle } from './google-api.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
+import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
@@ -183,6 +184,27 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`reports:${user.id}:${request.method === 'GET' ? 'read' : 'write'}`, request.method === 'GET' ? 120 : 30);
       const response = await handleReports(request, user.id);
       if (response) return response;
+    }
+    const keywordRoute=path.match(new RegExp(`^/api/projects/(${id})/keyword-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
+    if(keywordRoute){
+      const [,projectId,action,runId,runAction]=keywordRoute;
+      await projectAccess(projectId,user.id,request.method!=='GET');
+      await limit(`keyword:${user.id}`,120);
+      if(request.method==='GET'&&!action)return json(await getKeywordResearch(projectId,user.id));
+      if(request.method==='GET'&&action==='runs'&&runId&&!runAction)return json(await getKeywordRun(projectId,user.id,runId));
+      if(request.method==='POST'){
+        await limit(`keyword-write:${user.id}`,10);
+        const input=await readJson(request);
+        if(!runId&&action==='catalog')return json(await refreshKeywordMarkets(projectId,user.id,input));
+        if(!runId&&action==='quote')return json(await quoteKeywordResearch(projectId,user.id,input));
+        if(!runId&&action==='runs')return json(await startKeywordResearch(projectId,user.id,input),202);
+        if(action==='runs'&&runId&&runAction==='cancel')return json(await cancelKeywordResearch(projectId,user.id,runId,input));
+        if(action==='runs'&&runId&&runAction==='reconcile'){
+          await limit(`keyword-reconcile:${projectId}`,3);
+          return json(await reconcileKeywordResearch(projectId,user.id,runId,input));
+        }
+      }
+      return json({error:'Method not allowed.'},405);
     }
     const domainRoute = path.match(new RegExp(`^/api/projects/(${id})/domains(?:/(${id})/(update|challenge|verify|revoke|remove))?$`, 'i'));
     if (domainRoute) {
