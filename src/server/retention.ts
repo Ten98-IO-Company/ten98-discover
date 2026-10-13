@@ -8,6 +8,7 @@ import { expireGoogleImportPages } from './google-retention.ts';
 import { expirePromptResults } from './prompt-execution-retention.ts';
 import { expireDomainRedirectEvidence } from './domain-redirects.ts';
 import { expireKeywordResults } from './keyword-retention.ts';
+import { expireSiteAuditData, previewSiteAuditRetention } from './site-audit-retention.ts';
 
 const days = z.number().int().min(1).max(3650);
 export const retentionSettingsInput = z.object({ rawAnalyticsDays: days, replayDays: days, rawProviderEvidenceDays: days, derivedHistoryDays: days }).strict();
@@ -69,6 +70,8 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     const rawEvidenceCutoff=new Date(asOf.getTime()-input.settings.rawProviderEvidenceDays*86_400_000);
     let promptEstimate: {status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,atLeast:false};
     let redirectEstimate:{status:'available'|'unavailable';checks:number|null;atLeast:boolean}={status:'unavailable',checks:null,atLeast:false};
+    let auditEstimate: { status: 'available' | 'unavailable'; rawRuns: number | null; rawPages: number | null; rawEdges: number | null; derivedRuns: number | null; derivedPages: number | null; atLeast: boolean } =
+      { status: 'unavailable', rawRuns: null, rawPages: null, rawEdges: null, derivedRuns: null, derivedPages: null, atLeast: false };
     let keywordEstimate: { status: 'available' | 'unavailable'; results: number | null; atLeast: boolean } = { status: 'unavailable', results: null, atLeast: false };
     let estimate: { status: 'available' | 'unavailable'; rows: number | null; atLeast: boolean; logicalBytes: number | null } = { status: 'unavailable', rows: null, atLeast: false, logicalBytes: null };
     await client.query('SAVEPOINT estimate');
@@ -93,12 +96,13 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       promptEstimate={status:'available',results:Math.min(prompts.rows.length,10000),inputs:Math.min(promptInputs.rows.length,10000),atLeast:prompts.rows.length>10000||promptInputs.rows.length>10000};
       const redirects=await client.query("SELECT id FROM domain_redirect_check WHERE workspace_id=$1 AND status='completed' AND observation IS NOT NULL AND completed_at<$2 LIMIT 10001",[workspaceId,rawEvidenceCutoff]);
       redirectEstimate={status:'available',checks:Math.min(redirects.rows.length,10000),atLeast:redirects.rows.length>10000};
+      auditEstimate = await previewSiteAuditRetention(client, workspaceId, { rawCutoff: rawEvidenceCutoff, derivedCutoff });
     } catch (error) {
       await client.query('ROLLBACK TO SAVEPOINT estimate');
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, promptEstimate, redirectEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, promptEstimate, redirectEstimate, auditEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
@@ -175,13 +179,16 @@ export async function runRetentionBatch(projectId?: string) {
     const keywords = await expireKeywordResults(client, selected!, state.derived_cutoff);
     const prompts=await expirePromptResults(client,selected!,state.raw_evidence_cutoff);
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
-    const complete = !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending;
+    const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
+    const complete = !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
-    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects, complete };
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
+      expiredAuditRuns: audits.expiredAuditRuns, removedAuditPages: audits.removedAuditPages, removedAuditEdges: audits.removedAuditEdges,
+      removedAuditIssues: audits.removedAuditIssues, clearedAuditEvidence: audits.clearedAuditEvidence, complete };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     if (selected) {
