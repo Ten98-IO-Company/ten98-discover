@@ -61,6 +61,7 @@ function parse(params:URLSearchParams){
   view!=='evidence'&&['period','urlId','domainId'].some(k=>params.has(k))||view!=='changes'&&params.has('changeKind'))throw bad();
  return {filters,navigation:{view,period:view==='evidence'?period??'current':null,urlId,domainId,changeKind} as CitationNavigation,cursor:params.get('cursor')};
 }
+export const citationFilters=(params:URLSearchParams):CitationFilters=>parse(params).filters;
 function previousRange(f:CitationFilters){const days=1+(Date.parse(f.to)-Date.parse(f.from))/86400000;
  const from=new Date(Date.parse(f.from)-days*86400000).toISOString().slice(0,10),to=new Date(Date.parse(f.from)-86400000).toISOString().slice(0,10);
  if(!/^\d{4}-\d\d-\d\d$/.test(from)||from.startsWith('0000'))throw bad();return {from,to};}
@@ -85,7 +86,7 @@ function representative(rows:CitationEvidence[]):CitationRepresentative|null{
   if(!selected||nonempty&&!oldNonempty||nonempty===oldNonempty&&evidenceOrder(row,selected)<0)selected=row;}
  const r=selected!;return {executionId:r.executionId,comparisonId:r.comparisonId,retainedCitationIndex:r.retainedCitationIndex,retainedUrl:r.retainedUrl,retainedTitle:r.retainedTitle,requestedAt:r.requestedAt};
 }
-function matches(row:CitationEvidence,f:CitationFilters){const c=row.classification;
+export function matchesCitationEvidence(row:CitationEvidence,f:CitationFilters){const c=row.classification;
  if(f.publisherCategory&&c.publisherCategory!==f.publisherCategory||f.pageType&&c.pageType!==f.pageType||f.sourceType&&c.sourceType!==f.sourceType||f.ownership&&ownership(row)!==f.ownership)return false;
  if(f.entityId&&(f.entityId==='brand'?!c.ownership.brand:!c.ownership.competitorIds.includes(f.entityId)))return false;
  if(f.query){const query=f.query.toLowerCase();if(![row.retainedUrl,row.retainedTitle??'',row.hostname??''].some(v=>v.toLowerCase().includes(query)))return false;}return true;
@@ -108,7 +109,7 @@ function changesFor(urls:Map<string,Group>,domains:Map<string,Group>,status:Cita
  }
  return changes.sort((a,b)=>changesKinds.indexOf(a.kind)-changesKinds.indexOf(b.kind)||(a.kind==='newly_observed'?b.current.annotations-a.current.annotations:b.previous.annotations-a.previous.annotations)||cmp(a.targetId,b.targetId));
 }
-async function select(client:PoolClient,p:ContentProject,filters:CitationFilters,check:()=>void){
+export async function selectCitationEvidence(client:PoolClient,p:ContentProject,filters:CitationFilters,check:()=>void){
  const previous=previousRange(filters),base={from:previous.from,to:filters.to,timeZone:filters.timeZone,model:filters.model,promptId:filters.promptId,tag:filters.tag,matcher:'unicode-boundary-v1' as const};
  const selected=await selectPromptInsights(client,p,base,check,false,true),r=selected.report;
  if(filters.entityId&&!r.subjects.some(s=>s.id===filters.entityId))throw bad();
@@ -118,9 +119,14 @@ async function select(client:PoolClient,p:ContentProject,filters:CitationFilters
   for(const [retainedCitationIndex,citation]of citations.entries()){check();const groupedUrl=groupCitationUrl(citation.url,filters.urlGrouping),classified=classify(citation.url,citation.title);
    const row:CitationEvidence={id:canonicalHash({projectId:p.id,executionId:observation.id,retainedCitationIndex}),executionId:observation.id,comparisonId:observation.comparisonId,promptId:observation.promptId,versionId:observation.versionId,
     requestedAt:observation.requestedAt,date:observation.date,period:observation.date<filters.from?'previous':'current',model:observation.model,retainedCitationIndex,retainedUrl:citation.url,retainedTitle:citation.title,
-    urlId:canonicalHash({kind:'url',url:groupedUrl}),groupedUrl,...classified};if(matches(row,filters))evidence.push(row);
+    urlId:canonicalHash({kind:'url',url:groupedUrl}),groupedUrl,...classified};evidence.push(row);
   }
  }
+ return {previous,selected,evidence};
+}
+async function select(client:PoolClient,p:ContentProject,filters:CitationFilters,check:()=>void){
+ const {previous,selected,evidence:allEvidence}=await selectCitationEvidence(client,p,filters,check),r=selected.report,observations=selected.observations;
+ const evidence=allEvidence.filter(row=>matchesCitationEvidence(row,filters));
  const currentRows=evidence.filter(e=>e.period==='current'),previousRows=evidence.filter(e=>e.period==='previous');
  const current=summary(filters.from,filters.to,observations.filter(o=>o.date>=filters.from),currentRows),before=summary(previous.from,previous.to,observations.filter(o=>o.date<filters.from),previousRows);
  const localDate=(await client.query('SELECT (transaction_timestamp() AT TIME ZONE $1)::date::text AS date',[filters.timeZone])).rows[0].date,periodOpen=filters.to>=localDate;

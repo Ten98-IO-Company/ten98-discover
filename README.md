@@ -14,6 +14,8 @@ AI insights analyzes retained prompt answers using the current brand and competi
 
 The [UI redesign](docs/ui-redesign/acceptance.md) introduces tested semantic tokens and grouped navigation. Further report and setup flows are still being rebuilt; production dark mode and a complete-interface acceptance claim remain pending.
 
+[Specialized citation reports](docs/citation-specializations.md) group retained Reddit communities, Shopping labels and search-query links, with evidence-linked citation gaps and full-report CSV. Service, browser and production-navigation checks pass locally; real-provider and operational release acceptance remain. Retained links do not prove Google consumer module placement.
+
 Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, broader rank reporting, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
 The [current implementation and release gaps](docs/release-status.md) separates usable workflows, partial requirements and pending work across all 81 requirements, with their validation limits.
@@ -45,6 +47,7 @@ The first usable release must reach the complete technical capability baseline o
 21. [Retained-answer AI insights and measurement limits](docs/ai-insights.md)
 22. [Adjacent-period AI comparisons and evidence drilldown](docs/ai-period-comparison.md)
 23. [Retained citation analysis, domain tracking and acceptance checkpoint](docs/citation-analysis.md)
+24. [Specialized citation reports and gap-evidence acceptance](docs/citation-specializations.md)
 
 ## Product direction
 

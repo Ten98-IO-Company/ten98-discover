@@ -49,6 +49,7 @@ import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPrompt
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
+import {getPromptCitationSpecializations,exportPromptCitationSpecializations} from './prompt-citation-specializations.ts';
 
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
@@ -253,6 +254,19 @@ export async function handleApi(request: Request): Promise<Response> {
           if(action==='cancel')return json(await cancelSiteAudit(projectId,user.id,runOrSetup,input));
           if(action==='delete')return json(await deleteSiteAudit(projectId,user.id,runOrSetup,input));
         }
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const specializedCitationRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-insights/citation-specializations(?:/(export))?$`,'i'));
+    if(specializedCitationRoute){
+      const [,projectId,action]=specializedCitationRoute;await projectAccess(projectId,user.id,false);
+      await limit(`prompt-insights:${user.id}`,30);
+      if(request.method==='GET'&&!action)return json(await getPromptCitationSpecializations(projectId,user.id,url.searchParams,request.signal));
+      if(request.method==='POST'&&action==='export'){
+        if(url.search)throw new FoundationError(400,'Citation exports do not accept query parameters.');
+        await limit(`prompt-insights-export:${user.id}`,5);
+        const result=await exportPromptCitationSpecializations(projectId,user.id,await readJson(request,4096),request.signal);
+        return new Response(result.body,{headers:{'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount),'cache-control':'no-store','x-content-type-options':'nosniff'}});
       }
       return json({error:'Method not allowed.'},405);
     }
