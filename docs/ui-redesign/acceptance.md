@@ -22,6 +22,10 @@ N02 passed the four navigation units and all20 existing production-navigation gr
 
 The AI period-comparison increment moves equal-cell rate results before coverage and evidence, flattens the paired coverage presentation, compacts the cohort control and places the full-report export in the header. All formatted values, cohort/denominator caveats, current-context qualifications, seven coverage fields and original callbacks remain. All nine presentation and nine controller browser groups pass, including320/360/768/1440px layouts, native disabled controls, dirty/busy/export cancellation, expiry and saved-answer return paths. TypeScript and the subsequent combined production build pass. No controller/source-data behavior changed; narrow table scrolling remains explicit.
 
+The citation increment presents two plain period summaries and a compact action header. Source filters uses a native disclosure, automatically exposing dirty drafts; all applied scope, coverage, measurement limits and warnings remain visible. Tracking/category forms, safe links, export scope, unknown-write recovery and capability guards are unchanged. Eleven presentation groups and ten controller groups pass, including 320/360/768/1440px reflow, keyboard disclosure operation, draft preservation, guarded actions, expiry and evidence return. TypeScript and the full unit suite pass (411 passed, two existing Windows-specific skips, no failures). The existing harness conditionally reopens Source filters after reverting the only dirty field; no prior assertion was removed. The combined citation/rank build subsequently passed all 20 production-navigation and five shell-flow groups; desktop/mobile screenshots were inspected.
+
+The rank family now loads through one native dynamic-import boundary on entry. Navigation stays usable during a delayed download; a failed download offers an explicit reload without mounting the rank controller. Nine production-loading groups, all 45 existing rank-controller groups and all 20 production-navigation groups pass, together with TypeScript, build and a selected server-only browser-bundle marker scan. Tests cover cold entry, delayed downloads, scope/session changes, failed-download recovery, denied access and mobile layout. The measured initial JavaScript changed from 1,186,223 raw / 308,951 gzip bytes to 1,045,784 raw / 275,656 gzip bytes; the deferred rank chunk is 141,820 raw / 34,497 gzip bytes. Both measurements use the same per-asset Node gzip method. This snapshot also includes the comparison redesign, so the entire reduction is not attributed solely to deferred loading. Tests used synthetic local state and no paid providers or live-preview database.
+
 ## Kimi execution record
 
 Native CLI 2.1.1, `kimi-code/k3-256k`, thinking enabled and maximum-effort override; Skill-only profile with no shell/filesystem/network/delegation tools. GPT supplied explicit public contracts, reviewed exact output paths, applied drafts and tested independently. This profile is not an operating-system sandbox.
@@ -38,6 +42,8 @@ Native CLI 2.1.1, `kimi-code/k3-256k`, thinking enabled and maximum-effort overr
 | Shell and installation | Ponytail and UX Copy Refiner | about239 s | Seven exact original-boundary replacements plus scoped CSS |
 | Shell repair | Ponytail | about65 s | One repair; remaining header defect handed to Astra Ultra design at the stop checkpoint |
 | AI period-comparison presentation | Ponytail | about242 s | Five exact scoped replacements accepted; no repair |
+| Citation presentation | Ponytail | about128 s | Five exact scoped replacements; eleven view and ten controller groups pass; no repair |
+| Deferred rank-family loading | Ponytail | about30 s | Three exact scoped replacements accepted; no repair |
 
 Intervals come from private capture-file timestamps and are approximate, not model token usage. The token batch remained below its combined 20-minute ceiling; the stylesheet batch used one repair and also remained below that ceiling. An oversized earlier stylesheet prompt failed local preflight before invoking Kimi. The prompt-size guard was preserved.
 
@@ -45,4 +51,4 @@ The read-only allowance check during this work reported 39% five-hour usage and 
 
 ## Still in progress
 
-Citation-view presentation and a bounded rank-family loading improvement are in progress. Remaining view families, setup flows, production dark preference, cross-interface theme coverage and final accessibility/release acceptance remain open. No existing workflow is considered retired until its replacement preserves capabilities and passes its relevant checks. The user's preserved preview remains on its previous accepted build.
+Remaining view families, setup flows, production dark preference, cross-interface theme coverage and final accessibility/release acceptance remain open. No existing workflow is considered retired until its replacement preserves capabilities and passes its relevant checks. The user's preserved preview remains on its previous accepted build.

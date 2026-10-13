@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { AnalyticsPanel } from '../components/AnalyticsPanel'
@@ -27,7 +27,20 @@ import { MetaConnectionPanel } from '../components/MetaConnectionPanel'
 import { MetaAppPanel } from '../components/MetaAppPanel'
 import { MetaImportPanel } from '../components/MetaImportPanel'
 import { KeywordResearchPanel } from '../components/KeywordResearchPanel'
-import { RankTrackingPanel } from '../components/RankTrackingPanel'
+const RankTrackingPanel = lazy(() =>
+  import('../components/RankTrackingPanel')
+    .then((module) => ({ default: module.RankTrackingPanel }))
+    .catch(() => ({ default: RankTrackingLoadFailed }))
+)
+
+function RankTrackingLoadFailed() {
+  return (
+    <div role="alert">
+      <p>Rank tracking couldn’t load. Reload this page to try again.</p>
+      <button className="btn" type="button" style={{ minHeight: 44 }} onClick={() => window.location.reload()}>Reload page</button>
+    </div>
+  )
+}
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
 import { allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
@@ -595,7 +608,7 @@ function App() {
         {view === 'prompts' && project && me && <PromptsPanel key={`${me.user.id}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'ai-insights' && project && me && <AIInsightsSection key={`${me.user.id}:${workspaceId}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onBack={() => go(target('prompts'))} />}
         {view === 'keywords' && project && me && <KeywordResearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'ranks' && project && me && <RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} />}
+        {view === 'ranks' && project && me && <Suspense fallback={<p role="status">Loading rank tracking…</p>}><RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} /></Suspense>}
         {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}

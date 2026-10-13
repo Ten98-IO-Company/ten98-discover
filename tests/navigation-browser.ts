@@ -57,6 +57,11 @@ try {
     assert.equal(response.status(), 200)
   }
   async function heading(name: string) { await page.getByRole('heading', { name: name === 'Account security' ? 'Account' : name, exact: true }).first().waitFor() }
+  async function sourceFilters() {
+    const disclosure = page.locator('details').filter({ has: page.locator('summary', { hasText: /^Source filters$/ }) })
+    await disclosure.waitFor()
+    if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click()
+  }
   async function menu() {
     const button = page.getByRole('button', { name: /^(Menu|Close menu)$/ })
     if (await button.isVisible() && await button.getAttribute('aria-expanded') === 'false') await button.click()
@@ -455,6 +460,7 @@ try {
     await page.getByText('Classified using current project context; historical ownership was not captured.',{exact:true}).waitFor()
     for(const view of ['domains','categories','page-types','daily','changes','urls']) {
       await page.getByRole('combobox',{name:/^View/}).selectOption(view)
+      await sourceFilters()
       await page.getByRole('button',{name:'Apply source filters',exact:true}).waitFor()
       assert.equal(await page.getByRole('combobox',{name:/^View/}).inputValue(),view)
       if(view==='categories')assert.equal(await sources.locator('tbody tr').count(),9)
@@ -464,7 +470,9 @@ try {
     assert.equal(await page.getByRole('button',{name:'Export full analysis CSV',exact:true}).isDisabled(),true)
     await page.getByRole('button',{name:'Apply source filters',exact:true}).click()
     await page.getByText('No retained annotations match the applied source filters. Eligible answers can also have no annotations.',{exact:true}).waitFor()
-    assert.equal(await page.getByText('Eligible answers: 1',{exact:true}).count(),2,'Source filtering preserves both full answer denominators')
+    const denominators=page.locator('dt').filter({hasText:/^Eligible answers:$/}).locator('..').locator('dd')
+    assert.deepEqual(await denominators.allTextContents(),['1','1'],'Source filtering preserves both full answer denominators')
+    await sourceFilters()
     await page.getByRole('textbox',{name:/^Source query/}).fill('');await page.getByRole('button',{name:'Apply source filters',exact:true}).click()
     await sources.getByText(insightOrigin+'/reference',{exact:true}).waitFor()
     const [citationDownload]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Export full analysis CSV',exact:true}).click()])

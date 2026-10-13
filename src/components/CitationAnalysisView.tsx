@@ -134,11 +134,13 @@ function PagerControls({ pager, disabled, onPrevious, onNext }: { pager: Citatio
 
 function HeaderSummary({ header }: { header: CitationHeader }) {
   return (
-    <div style={{ display: 'grid', gap: '0.25rem' }}>
-      <p className="hint" style={{ margin: 0 }}>{header.scopeLabel}</p>
-      <p className="hint" style={{ margin: 0 }}>{header.snapshotLabel}</p>
-      <p className="hint" style={{ margin: 0 }}>{header.groupingLabel}</p>
+    <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
+      <p style={{ margin: 0, fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)', color: 'var(--color-text)' }}>{header.scopeLabel}</p>
       <p className="hint" style={{ margin: 0 }}>{header.appliedFiltersLabel}</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1) var(--space-4)' }}>
+        <p className="hint" style={{ margin: 0 }}>{header.snapshotLabel}</p>
+        <p className="hint" style={{ margin: 0 }}>{header.groupingLabel}</p>
+      </div>
       <p className="hint" style={{ margin: 0 }}>{header.measurementLabel}</p>
       <p className="hint" style={{ margin: 0 }}>{header.filterScopeLabel}</p>
       <p className="hint" style={{ margin: 0 }}>{header.overlapLabel}</p>
@@ -146,17 +148,34 @@ function HeaderSummary({ header }: { header: CitationHeader }) {
       {header.warnings.map((warning, index) => (
         <p key={index} className="alert" style={{ margin: 0 }}>{warning}</p>
       ))}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 'var(--space-3)' }}>
         {header.periods.map((period) => (
-          <section key={period.id} style={{ flex: '1 1 240px', minWidth: 0 }}>
-            <h3>{period.label}</h3>
+          <section key={period.id} style={{ minWidth: 0, borderBlockStart: '1px solid var(--color-border)', paddingBlockStart: 'var(--space-3)' }}>
+            <h3 style={{ margin: 0 }}>{period.label}</h3>
             <p className="hint" style={{ margin: 0 }}>{period.range}</p>
-            <p style={{ margin: 0 }}>Eligible answers: {period.eligibleAnswers}</p>
-            <p style={{ margin: 0 }}>Answers with citations: {period.citingAnswers}</p>
-            <p style={{ margin: 0 }}>Annotation occurrences: {period.annotations}</p>
-            <p style={{ margin: 0 }}>Unique grouped URLs: {period.uniqueUrls}</p>
-            <p style={{ margin: 0 }}>Unique domains: {period.uniqueDomains}</p>
-            <p style={{ margin: 0 }}>Coverage: {period.coverage}</p>
+            <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 120px), 1fr))', gap: 'var(--space-2)', margin: 0, marginBlockStart: 'var(--space-2)' }}>
+              <div style={{ minWidth: 0 }}>
+                <dt style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)' }}>Eligible answers:</dt>
+                <dd style={{ margin: 0, fontVariantNumeric: 'tabular-nums' }}>{period.eligibleAnswers}</dd>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <dt style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)' }}>Answers with citations:</dt>
+                <dd style={{ margin: 0, fontVariantNumeric: 'tabular-nums' }}>{period.citingAnswers}</dd>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <dt style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)' }}>Annotation occurrences:</dt>
+                <dd style={{ margin: 0, fontVariantNumeric: 'tabular-nums' }}>{period.annotations}</dd>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <dt style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)' }}>Unique grouped URLs:</dt>
+                <dd style={{ margin: 0, fontVariantNumeric: 'tabular-nums' }}>{period.uniqueUrls}</dd>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <dt style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)' }}>Unique domains:</dt>
+                <dd style={{ margin: 0, fontVariantNumeric: 'tabular-nums' }}>{period.uniqueDomains}</dd>
+              </div>
+            </dl>
+            <p style={{ margin: 0, marginBlockStart: 'var(--space-2)' }}>Coverage: {period.coverage}</p>
           </section>
         ))}
       </div>
@@ -369,7 +388,9 @@ function ReportSection({ screen, props, ready, writer }: { screen: CitationRepor
         )}
       </div>
       {screen.view === 'changes' && <p className="hint">{screen.changesStatusLabel}</p>}
-      <form onSubmit={(event) => { event.preventDefault(); if (applyAllowed) props.onApplyFilters(); }} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem', alignItems: 'start' }}>
+      <details open={screen.dirty}>
+        <summary>Source filters</summary>
+        <form onSubmit={(event) => { event.preventDefault(); if (applyAllowed) props.onApplyFilters(); }} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: 'var(--space-3)', alignItems: 'start', marginBlockStart: 'var(--space-3)' }}>
         <label className="field" style={{ margin: 0 }}>
           <span>URL grouping</span>
           <select style={controlStyle} value={draft.grouping} disabled={!ready} onChange={(event) => { if (ready) props.onFiltersChange({ ...draft, grouping: event.currentTarget.value as CitationGrouping }); }}>
@@ -384,7 +405,7 @@ function ReportSection({ screen, props, ready, writer }: { screen: CitationRepor
         </label>
         <details>
           <summary>More source filters</summary>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: 'var(--space-3)' }}>
             <label className="field" style={{ margin: 0 }}>
               <span>Ownership</span>
               <select style={controlStyle} value={draft.ownership} disabled={!ready} onChange={(event) => { if (ready) props.onFiltersChange({ ...draft, ownership: event.currentTarget.value as CitationOwnershipFilter | 'all' }); }}>
@@ -428,7 +449,8 @@ function ReportSection({ screen, props, ready, writer }: { screen: CitationRepor
           </div>
         </details>
         <button type="submit" className="btn" style={buttonStyle} disabled={!applyAllowed}>Apply source filters</button>
-      </form>
+        </form>
+      </details>
       <p className="hint">Grouping changes which retained URLs are counted together. Evidence preserves the retained URL and title. Neither mode fetches a page.</p>
       {screen.dirty && <p className="hint">Unapplied source filters. The report still uses the applied selection.</p>}
       {screen.view === 'daily' ? (
@@ -636,14 +658,12 @@ export function CitationAnalysisView(props: CitationAnalysisViewProps) {
   const heading = screen === null || screen.kind === 'report' ? 'Citations' : screen.kind === 'evidence' ? 'Citation evidence' : 'Track or classify domain';
   return (
     <section className="research-panel stack" aria-labelledby={props.prefix + 'heading'} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-      <h2 id={props.prefix + 'heading'} tabIndex={-1}>{heading}</h2>
-      <div className="row between" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button type="button" className="btn ghost" style={buttonStyle} disabled={!backAllowed} onClick={() => { if (backAllowed) props.onBack(); }}>{props.backLabel}</button>
-          <button type="button" className="btn ghost" style={buttonStyle} disabled={!reloadAllowed} onClick={() => { if (reloadAllowed) props.onReload(); }}>{props.reloadLabel}</button>
-        </div>
+      <div className="row" style={{ flexWrap: 'wrap', gap: 'var(--space-2)', alignItems: 'center' }}>
+        <h2 id={props.prefix + 'heading'} tabIndex={-1} style={{ margin: 0, marginInlineEnd: 'auto' }}>{heading}</h2>
+        <button type="button" className="btn ghost" style={buttonStyle} disabled={!backAllowed} onClick={() => { if (backAllowed) props.onBack(); }}>{props.backLabel}</button>
+        <button type="button" className="btn ghost" style={buttonStyle} disabled={!reloadAllowed} onClick={() => { if (reloadAllowed) props.onReload(); }}>{props.reloadLabel}</button>
         {exportVisible && (
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
             {props.exporting ? (
               <button type="button" className="btn ghost" style={buttonStyle} disabled={!cancelExportAllowed} onClick={() => { if (cancelExportAllowed) props.onCancelExport(); }}>Cancel export</button>
             ) : (
