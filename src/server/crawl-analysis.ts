@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {toUSVString} from 'node:util';
+import {MIMEType,toUSVString} from 'node:util';
 import {parse, type DefaultTreeAdapterTypes as Html} from 'parse5';
 
 export const crawlAnalysisLimits=Object.freeze({htmlBytes:1048576,headerBytes:16384,urlBytes:2048,nodes:20000,depth:128,links:1000,images:1000,headings:1000,annotations:100,text:2048});
@@ -46,6 +46,10 @@ const executable=(n:Html.Element)=>n.tagName==='script'&&['','module','text/java
 /** Analysis only: successful normalization never authorizes a network request. */
 function resolvedUrl(raw:string,base?:string):string|null {
   if(!goodText(raw)||Buffer.byteLength(raw)>crawlAnalysisLimits.urlBytes||/[\u0000-\u0020\u007f\\]/u.test(raw))return null;
+  // Preserve the admission boundary before URL() can erase empty userinfo or repair authorities.
+  const authority=/^(?:[a-z][a-z0-9+.-]*:)?\/\/([^/?#]*)/iu.exec(raw)?.[1];
+  if(authority!==undefined?(!authority||/[@%]/u.test(authority)):/^[a-z][a-z0-9+.-]*:/iu.test(raw))return null;
+  try{if(/[\p{Cc}\\]/u.test(decodeURIComponent(raw)))return null;}catch{return null;}
   try{const url=new URL(raw,base);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||Buffer.byteLength(url.href)>crawlAnalysisLimits.urlBytes)return null;url.hash='';return url.href;}catch{return null;}
 }
 /** Split only outside quoted strings and <URI> values; commas inside Link targets are data. */
@@ -57,6 +61,20 @@ function splitHeader(value:string,separator:string):string[]|null {
     else if(c===separator&&!quoted&&!angle){parts.push(value.slice(start,i).trim());start=i+1;}
   }
   if(quoted||angle||escaped)return null;parts.push(value.slice(start).trim());return parts;
+}
+const utf8Labels=new Set(['utf-8','utf8','unicode-1-1-utf-8']);
+/** HTTP declarations are inspected without interpreting bytes under a guessed legacy encoding. */
+export function inspectCrawlCharset(contentType:string|null):'absent'|'utf8'|'unsupported'|'invalid' {
+  if(contentType===null)return 'absent';
+  if(typeof contentType!=='string'||contentType.length>1024||!goodText(contentType)||/[\r\n]/u.test(contentType))return 'invalid';
+  try{new MIMEType(contentType);}catch{return 'invalid';}
+  const parts=splitHeader(contentType,';');if(!parts)return 'invalid';
+  const declarations=parts.slice(1).filter(part=>/^charset(?:\s*=|\s*$)/iu.test(part));
+  if(declarations.length>1)return 'invalid';
+  if(!declarations.length)return 'absent';
+  const label=new MIMEType('text/html;'+declarations[0]).params.get('charset');
+  if(!label)return 'invalid';
+  return utf8Labels.has(label.toLowerCase())?'utf8':'unsupported';
 }
 function canonicalMention(value:string):boolean {
   const relation=/(?:^|;)\s*rel\s*=\s*"?([^;"]*)/iu.exec(value)?.[1];
@@ -122,6 +140,8 @@ export function analyzeCrawlPage(input:CrawlPageInput):CrawlAnalysis {
   if(input.contentType===null){out.reasons.push('content_type_unavailable');return out;}
   if(typeof input.contentType!=='string'||!goodText(input.contentType)||/[\r\n]/u.test(input.contentType)||input.contentType.length>1024){out.reasons.push('content_type_invalid');return out;}
   if(input.contentType.split(';',1)[0].trim().toLowerCase()!=='text/html'){out.coverage='non_html';return out;}
+  const charset=inspectCrawlCharset(input.contentType);
+  if(charset==='invalid'||charset==='unsupported'){out.coverage='partial';out.reasons.push(charset==='invalid'?'invalid_charset':'unsupported_charset');return out;}
   if(!input.bodyComplete||input.html===null){out.coverage='partial';out.reasons.push('body_incomplete');return out;}
   if(typeof input.html!=='string'||!goodText(input.html)){out.coverage='partial';out.reasons.push('invalid_text');return out;}
   if(Buffer.byteLength(input.html)>crawlAnalysisLimits.htmlBytes){out.coverage='partial';out.reasons.push('html_limit');return out;}
@@ -152,6 +172,16 @@ export function analyzeCrawlPage(input:CrawlPageInput):CrawlAnalysis {
     }return normalizeText(pieces.join(''));
   }
   const headNodes=nodes.filter(n=>inside(n,head)&&!excluded(n));
+  // Inspect real DOM declarations only; comment/script text is not a charset declaration.
+  for(const node of nodes){
+    if(node.tagName!=='meta')continue;
+    const label=attr(node,'charset');
+    const httpEquiv=attr(node,'http-equiv')?.trim().toLowerCase();
+    const declared=httpEquiv==='content-type'?inspectCrawlCharset(attr(node,'content')??''):null;
+    if(label!==undefined&&!utf8Labels.has(label.trim().toLowerCase())||declared==='invalid'||declared==='unsupported'){
+      out.coverage='partial';out.reasons.push('unsupported_charset');return out;
+    }
+  }
   const baseNode=headNodes.find(n=>n.tagName==='base'&&attr(n,'href')!==undefined);
   const base=baseNode?resolvedUrl(attr(baseNode,'href')!.trim(),url):url;
   if(base===null){out.coverage='partial';out.reasons.push('base_url_invalid');return out;}
