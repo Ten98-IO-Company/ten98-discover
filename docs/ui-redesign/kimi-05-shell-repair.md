@@ -1,0 +1,5 @@
+Use Kimi K3 maximum thinking. Load Ponytail only. One bounded180-second repair for approved N02 shell presentation, then stop; no further repair. Skill-only profile; no shell/filesystem/network/subagents/API/provider calls. Return bare JSON {"appendCss":"EXACT ONE CSS RULE"}. No prose, other files or tests.
+
+Independent browser evidence: Background worker diagnostics summary is21px tall at320px and360px widths, failing the44px touch target. Other viewport/reflow/keyboard/RTL/zoom/forced-color assertions pass. Preserve all existing diagnostics JSX/controllers/guards and native summary disclosure marker/display:list-item. Existing public src/styles.css rule:
+.diagnostics summary { cursor: pointer; font-weight: 500; }
+The accepted token --control-touch is44px. Supply one narrowly scoped appended rule on `.diagnostics > summary` setting only min-height:var(--control-touch). No new dependency, token, wrapper, display/layout change or guessed successful test. GPT applies and independently checks.
