@@ -7,13 +7,13 @@ Workspace members can inspect retention. Owners can preview and explicitly save 
 | Raw analytics | 90 | Events, their properties/dimensions and unreferenced visitor identities |
 | Replay | 7 | Not implemented; policy saved for future storage |
 | Raw provider evidence | 90 | Not implemented; policy saved for future storage |
-| Derived history | 365 | No stored rollups yet; policy does not preserve a year of analytics |
+| Derived history | 365 | Finished Google import rows and quality metadata, measured from import completion; original outcome and idempotency receipts remain |
 
 All provider spending and request-deduplication records are preserved, including reserved, dispatched, uncertain, settled and cancelled requests. Authored project context, research notes, prompts and immutable versions, mutation receipts, reports, templates, shared snapshots, credentials, accounts, teams and configuration are also preserved. The worker does not scan or delete arbitrary artifact files. This increment implements part of P31/P68, not complete retention/export/erasure parity.
 
 ## Preview and save
 
-The preview estimates eligible event rows and their approximate logical size. It examines at most 10,001 candidates and labels a capped count as at least 10,000. Bytes describe the first 10,000 sampled rows; they are not a complete storage inventory or a promise of reclaimed filesystem space. Query timeouts appear as an unavailable estimate, never zero. Other categories show their unavailable storage status rather than claiming zero usage.
+The preview estimates eligible event rows and their approximate logical size. It examines at most 10,001 candidates and labels a capped count as at least 10,000. Bytes describe the first 10,000 sampled rows; they are not a complete storage inventory or a promise of reclaimed filesystem space. Query timeouts appear as an unavailable estimate, never zero. A separate preview counts eligible finished Google imports against their completion-time cutoff, with the same 10,001-candidate bound. Replay and raw provider evidence still show unavailable storage.
 
 Saving requires a preview bound to the exact policy, workspace, owner and current revision. It expires after five minutes. The API rechecks live ownership under the workspace lock. Stale or expired previews require a new preview; changing the draft invalidates the browser confirmation. The preview is advisory: data arriving after it may change the eventual eligible count.
 
@@ -21,11 +21,13 @@ Shorter periods permanently remove older observations. Extending retention stops
 
 ## Worker and reporting
 
-The existing worker attempts one project per ten-second tick, with at most 1,000 event deletions and 1,000 orphan visitor deletions in each transaction. Workspace then project locks serialize policy changes and collection. A two-second statement timeout and a short lock timeout bound contention; failures roll back the batch and expose a redacted cleanup status. No provider scheduler is enabled. Shutdown waits for the active batch.
+The existing worker attempts one project per ten-second tick, with at most 1,000 event deletions, 1,000 orphan visitor deletions and 20 expired Google imports (each at most ten pages) in each transaction. Workspace then project locks serialize policy changes, collection and Google import publication. A two-second statement timeout and a short lock timeout bound contention; failures roll back the batch and expose a redacted cleanup status. No provider scheduler is enabled. Shutdown waits for the active batch.
 
 Projects with pending work become eligible again after ten seconds; completed projects after an hour. This is a bounded maintenance cadence, not a deletion deadline under arbitrary load or an unavailable worker. Inspect failed-project status and database/worker health when cleanup falls behind. Latest completed project cleanup is not proof that every project has caught up.
 
-Each successful batch records a monotonic history boundary. While a multi-batch pass is in progress, older observations are excluded from reports so partial deletion cannot be mistaken for a complete total. A later policy extension does not move this boundary backward. Daily buckets before it are unavailable rather than zero; a day crossing it is partial. Recent-event counts describe retained observations, never a lifetime total. Visitor first/last timestamps describe their remaining observations. Analytics event-ID deduplication lasts only while the event exists; financial request deduplication is preserved separately.
+Google snapshot cleanup retains the original status, counts, request ID and source; it marks the data expired and removes rows/quality metadata only for completed, partial, failed or denied imports. Queued/running imports are excluded. Expired data is unavailable rather than an empty successful result, and repeated requests return the original receipt. See [Google imports](google-reports.md).
+
+Each successful raw-analytics batch records a monotonic history boundary. While a multi-batch pass is in progress, older observations are excluded from reports so partial deletion cannot be mistaken for a complete total. A later policy extension does not move this boundary backward. Daily buckets before it are unavailable rather than zero; a day crossing it is partial. Recent-event counts describe retained observations, never a lifetime total. Visitor first/last timestamps describe their remaining observations. Analytics event-ID deduplication lasts only while the event exists; financial request deduplication is preserved separately.
 
 ## Upgrade and verification
 

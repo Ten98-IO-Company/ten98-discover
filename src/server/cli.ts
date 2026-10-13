@@ -97,7 +97,7 @@ async function worker() {
   await assertOidcCredentialsReadable();
   await assertGoogleCredentialsReadable();
   await startWorker();
-  console.log('Foundation worker ready. No external providers are scheduled.');
+  console.log('Foundation worker ready. Explicit Google imports are enabled; no provider scheduler is active.');
   await new Promise<void>((resolve) => {
     process.once('SIGTERM', resolve);
     process.once('SIGINT', resolve);

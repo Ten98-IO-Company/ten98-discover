@@ -118,7 +118,7 @@ try {
       await Promise.race([started, delay(15000).then(() => { throw new Error('Callback project request did not start.'); })]);
       await navigation();
       await page.getByRole('button', { name: 'Account security', exact: true }).click();
-      releaseTarget();
+      releaseTarget?.();
       await page.getByRole('heading', { name: 'Account security', exact: true }).waitFor();
       await context.unroute(targetPath, holdTarget);
       await delay(150);

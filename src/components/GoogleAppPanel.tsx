@@ -153,6 +153,7 @@ function AppInner({ onUnauthorized }: { onUnauthorized: () => void }) {
           <input id="g-client-secret" type="password" autoComplete="new-password" maxLength={4096} value={secret} onChange={e => setSecret(e.target.value)} required />
         </div>
         <p className="hint">The secret is sent once and cleared immediately; enter it again for every change. It is never shown or retried automatically.</p>
+        {dto.configured && <p className="hint">Every save, including changing these flags, requires existing sources to reconnect and cancels pending connections. Imported snapshots remain available.</p>}
         <label className="row" style={{ minHeight: 44 }}>
           <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
           <span>Enable Google connections</span>
