@@ -26,14 +26,14 @@ const stateCode=(code:string)=>(error:unknown)=>!!error&&typeof error==='object'
 try{
   assert.equal((await pool.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN('r','p','v','m','S','f') LIMIT 1")).rowCount,0,'Use a fresh empty owned rank schedule database.');
   stage='base and new migration';
-  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0023');
+  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0024');
   const noNetwork='data:text/javascript,'+encodeURIComponent("globalThis.fetch=async()=>{throw new Error('Provider traffic forbidden in migration');}");
   const migrated=spawnSync(process.execPath,['--import',noNetwork,join(process.cwd(),'src/server/cli.ts'),'migrate'],{cwd:process.cwd(),env:process.env,encoding:'utf8',timeout:45_000,maxBuffer:256_000,windowsHide:true});
   assert.equal(migrated.status,0,'Base migration failed (inspect privately; configuration is never printed).');
   for(const secret of [config.databaseUrl,config.authSecret,config.bootstrapToken,process.env.CREDENTIAL_KEYS])if(secret)assert.ok(!(migrated.stdout+migrated.stderr).includes(secret),'Migration output exposed private configuration.');
   await assertSchema();
-  assert.equal((await pool.query('SELECT version FROM schema_version ORDER BY version')).rows.at(-1)?.version,'0023');
-  console.log('PASS fresh registered0001–0023 migration through production CLI');
+  assert.equal((await pool.query('SELECT version FROM schema_version ORDER BY version')).rows.at(-1)?.version,'0024');
+  console.log('PASS fresh registered0001–0024 migration through production CLI');
 
   stage='New York gap and fold';
   assert.equal(await next('daily','America/New_York',2,30,null,'2026-03-08T05:00:00Z'),'2026-03-08T07:30:00.000Z');

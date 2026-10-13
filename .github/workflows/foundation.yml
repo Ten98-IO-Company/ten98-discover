@@ -99,6 +99,12 @@ jobs:
             await client.query('CREATE DATABASE ten98_provider_identity_rank_ci');
             await client.query('CREATE DATABASE ten98_provider_identity_upgrade22_ci');
             await client.query('CREATE DATABASE ten98_rank_schedule_ci');
+            await client.query('CREATE DATABASE ten98_restore_quarantine_ci');
+            await client.query('CREATE DATABASE ten98_rank_tracking_ci');
+            await client.query('CREATE DATABASE ten98_rank_execution_ci');
+            await client.query('CREATE DATABASE ten98_rank_worker_ci');
+            await client.query('CREATE DATABASE ten98_rank_retention_ci');
+            await client.query('CREATE DATABASE ten98_rank_reconciliation_ci');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
@@ -119,6 +125,12 @@ jobs:
               ['ten98_provider_identity_rank_ci', [['tests/provider-account-identity-integration.ts']], { TEN98_IDENTITY_TEST_CASE: 'rank', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_provider_identity_upgrade22_ci', [['tests/provider-account-identity-integration.ts']], { TEN98_IDENTITY_TEST_CASE: 'upgrade22', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_rank_schedule_ci', [['tests/rank-schedule-integration.ts'], ['tests/rank-schema-review.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_restore_quarantine_ci', [['src/server/cli.ts', 'migrate'], ['tests/restore-quarantine-integration.ts']], { TEN98_RESTORE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_rank_tracking_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-tracking-integration.ts']], { TEN98_RANK_TRACKING_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_rank_execution_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-execution-integration.ts']], { TEN98_RANK_EXECUTION_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_rank_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-worker-integration.ts']], { TEN98_RANK_WORKER_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_rank_retention_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-retention-integration.ts']], { TEN98_RANK_RETENTION_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_rank_reconciliation_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-reconciliation-integration.ts']], { TEN98_RANK_RECONCILIATION_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
             ]) {
               const database = new URL(process.env.DATABASE_URL);
               database.pathname = `/${name}`;

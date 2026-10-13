@@ -74,3 +74,11 @@ test('provider account checks use fixed read-only URLs, reject redirects, bound 
   const failure = await providerAccountCheck('openrouter', { apiKey: secret }, (async () => { throw new Error(secret); }) as typeof fetch);
   assert.ok(!JSON.stringify(failure).includes(secret));
 });
+
+test('provider credential validation rejects strings the shared authenticated transport cannot send',async()=>{
+  let calls=0;const send:typeof fetch=async()=>{calls++;return Response.json({});};
+  for(const password of ['bad\0secret','bad\tsecret','bad\u007fsecret','bad\ud800secret']){
+    await assert.rejects(providerAccountCheck('dataforseo',{login:'synthetic@example.com',password},send),{name:'ZodError'});
+  }
+  assert.equal(calls,0);
+});

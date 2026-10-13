@@ -2,6 +2,7 @@ import {createHmac} from 'node:crypto';
 import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
 import {getProviderAccountIdentityKey} from './provider-account-identity.ts';
+import {dataforseoJson} from './dataforseo-transport.ts';
 import {keywordAccountEndpoint,keywordCatalogEndpoint,keywordEndpoints,keywordPayload,keywordReconcileEndpoint,matchesKeywordPayload,microUsd,providerMicros,validText,type KeywordMarket,type KeywordMode,type KeywordRequest,type KeywordResult,type KeywordRow} from './keyword-research-input.ts';
 
 type ObjectValue=Record<string,any>;
@@ -11,21 +12,9 @@ function invalid():never {throw new Error('Unsupported provider response.');}
 // statuses do not establish a final charge, even when their current cost is zero.
 const finalTaskStatuses=new Set([20000,40102,40103,40106,40501,40502,40503,40504,40505,40506]);
 function finalTaskStatus(value:unknown):value is number {return typeof value==='number'&&finalTaskStatuses.has(value);}
-function auth(credentials:unknown) {
-  if(!object(credentials)||!validText(credentials.login,254)||typeof credentials.password!=='string'||credentials.password.length<1||credentials.password.length>4096||/[\r\n]/.test(credentials.password))invalid();
-  return 'Basic '+Buffer.from(`${credentials.login}:${credentials.password}`).toString('base64');
-}
-async function boundedJson(response:Response,maxBytes:number) {
-  if(!response.body)invalid();
-  const reader=response.body.getReader(),parts:Uint8Array[]=[];let length=0;
-  try {for(;;){const {value,done}=await reader.read();if(done)break;length+=value.byteLength;if(length>maxBytes)invalid();parts.push(value);}return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));}
-  finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
-}
 export async function keywordProviderJson(url:string,credentials:unknown,body:unknown,send:typeof fetch=fetch) {
   if(![keywordAccountEndpoint,keywordCatalogEndpoint,keywordReconcileEndpoint,...Object.values(keywordEndpoints)].includes(url))invalid();
-  const response=await send(url,{method:body===undefined?'GET':'POST',headers:{authorization:auth(credentials),accept:'application/json',...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'error',credentials:'omit',signal:AbortSignal.timeout(30_000)});
-  const value=await boundedJson(response,4_194_304);
-  return {httpStatus:response.status,body:value};
+  return dataforseoJson(url,credentials,body===undefined?'GET':'POST',body,send);
 }
 function taskEnvelope(body:unknown) {
   if(!object(body)||!Number.isInteger(body.status_code)||!Array.isArray(body.tasks)||body.tasks.length!==1||body.tasks_count!==1||!object(body.tasks[0]))invalid();

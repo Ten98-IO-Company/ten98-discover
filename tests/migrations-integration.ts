@@ -68,7 +68,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024']);
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -147,7 +147,7 @@ try {
   const upgradeClient=await pool.connect();
   try {
     await upgradeClient.query('BEGIN');
-    for(const migration of sources.slice(1,-1)) {await upgradeClient.query(migration.sql);await upgradeClient.query('INSERT INTO schema_version(version,checksum) VALUES($1,$2)',[migration.version,migration.checksum]);}
+    for(const migration of sources.filter(m=>m.version>'0001'&&m.version<='0022')) {await upgradeClient.query(migration.sql);await upgradeClient.query('INSERT INTO schema_version(version,checksum) VALUES($1,$2)',[migration.version,migration.checksum]);}
     await upgradeClient.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[priorAccountEnvelope]);
     const owner=originalRecords.user[0].id,workspace=originalRecords.workspace[0].id,project=originalRecords.project[0].id,connection=randomUUID(),report=randomUUID(),provider=randomUUID(),research=randomUUID(),quote=randomUUID();
     await upgradeClient.query("INSERT INTO google_connection(id,workspace_id,project_id,name,provider,revision,app_revision,status) VALUES($1,$2,$3,'Upgrade fixture','gsc',1,1,'disconnected')",[connection,workspace,project]);
@@ -198,7 +198,26 @@ try {
   const quoteBefore=(await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data;
   const policyBefore=(await pool.query('SELECT raw_analytics_days,replay_days,raw_provider_evidence_days,derived_history_days,retention_revision FROM workspace')).rows;
   const originalDomain=(await pool.query('SELECT row_to_json(d) AS data FROM project_domain d')).rows[0].data;
-  stage = 'upgrade original and feature data through 0023 and rerun idempotently';
+  stage = 'seed actual0023 rank definitions and captured quote before authored revision';
+  assert.equal((await history()).at(-1)?.version,'0022','Keep the historical feature baseline explicit.');
+  const rankMigration=sources.find(m=>m.version==='0023')!,rankId=randomUUID(),rankKeyword=randomUUID(),rankRun=randomUUID();
+  const owner=originalRecords.user[0].id,workspace=originalRecords.workspace[0].id,project=originalRecords.project[0].id;
+  const provider=(await pool.query('SELECT id FROM provider_connection')).rows[0].id;
+  const rankClient=await pool.connect();
+  try{
+    await rankClient.query('BEGIN');await rankClient.query(rankMigration.sql);await rankClient.query('INSERT INTO schema_version VALUES($1,$2)',[rankMigration.version,rankMigration.checksum]);
+    await rankClient.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages,revision,keywords_revision,schedule_interval,schedule_timezone,schedule_hour,schedule_minute,schedule_enabled,approval_id,approval_user_id,approval_config_revision,approval_keywords_revision,approval_request_hash,approval_connection_id,approval_connection_revision,approval_account_fingerprint,approval_account_fingerprint_version,approval_max_micros,approved_at,next_due_at)
+      VALUES($1,$2,$3,'Preserved rank tracker','example.com',2840,'United States','Country',2840,'US','en','English',clock_timestamp(),'both',100,3,7,11,'daily','UTC',9,0,true,$4,$5,7,11,$6,$7,1,$6,2,10000,clock_timestamp(),'2027-01-01T09:00:00Z')`,[rankId,workspace,project,randomUUID(),owner,'f'.repeat(64),provider]);
+    await rankClient.query("INSERT INTO rank_keyword(id,workspace_id,project_id,config_id,keyword,match_case,pinned_at) VALUES($1,$2,$3,$4,'C++ %20',true,'2026-01-01T00:00:00.123456Z')",[rankKeyword,workspace,project,rankId]);
+    await rankClient.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,estimate_micros,price_as_of,expires_at)
+      VALUES($1,$2,$3,$4,$5,'manual','live','quoted',7,11,$6,1,$7,'Preserved account','{"immutable":"captured quote"}',$7,2,10000,clock_timestamp(),clock_timestamp()+interval '5 minutes')`,[rankRun,workspace,project,rankId,owner,provider,'f'.repeat(64)]);
+    await rankClient.query('COMMIT');
+  }catch(error){await rankClient.query('ROLLBACK');throw error;}finally{rankClient.release();}
+  assert.deepEqual(await featureRecords(),featureSnapshot,'Applying0023 must not change existing0022 feature records.');
+  const rankTables=['rank_config','rank_keyword','rank_run','rank_dispatch','rank_task'];
+  async function rankRecords(){const records:Record<string,Record<string,unknown>[]>={};for(const table of rankTables)records[table]=(await pool.query(`SELECT row_to_json(t) AS data FROM ${table} t ORDER BY id`)).rows.map(r=>r.data);return records;}
+  const rankBefore=await rankRecords();assert.equal(Object.hasOwn(rankBefore.rank_config[0],'authored_revision'),false);
+  stage = 'upgrade original,0022 features and0023 rank data through0024';
   runMigrate(0);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
@@ -212,13 +231,15 @@ try {
   assert.equal(quoteAfter.saved_refresh_plan_id,null);assert.equal(quoteAfter.saved_target_ids,null,'Prior research must not become an approved saved refresh.');
   assert.equal(quoteAfter.account_fingerprint_version,1,'Legacy fingerprints retain their explicit version and original hash.');
   await assertProviderAccountIdentityReadable();
-  assert.deepEqual((await pool.query("SELECT provider_account_identity FROM installation WHERE id='instance'")).rows[0].provider_account_identity,priorAccountEnvelope,'0023 preserves the exact existing encrypted capsule.');
+  assert.deepEqual((await pool.query("SELECT provider_account_identity FROM installation WHERE id='instance'")).rows[0].provider_account_identity,priorAccountEnvelope,'0024 preserves the exact existing encrypted capsule.');
   assert.equal(await getProviderAccountIdentityKey(1),config.authSecret);assert.equal(await getProviderAccountIdentityKey(2),priorAccountKey);
   assert.deepEqual((await pool.query('SELECT raw_analytics_days,replay_days,raw_provider_evidence_days,derived_history_days,retention_revision FROM workspace')).rows,policyBefore,'Upgrade must preserve retention policy and revision.');
   assert.deepEqual((await pool.query('SELECT saved_keywords_revision,saved_keyword_metrics_revision::text FROM project')).rows,[{saved_keywords_revision:2,saved_keyword_metrics_revision:'1'}]);
   for(const table of ['saved_keyword','saved_keyword_tag','saved_keyword_tag_assignment'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,1,'Upgrade must preserve the authored keyword and tag without inventing another.');
   assert.equal((await pool.query('SELECT 1 FROM saved_keyword_refresh_plan')).rowCount,0,'Upgrade must not invent paid refresh work.');
-  for(const table of ['rank_config','rank_keyword','rank_run','rank_dispatch','rank_task'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,0,'Upgrade must not invent trackers, approvals or paid rank work.');
+  const rankAfter=await rankRecords();
+  for(const table of rankTables){assert.equal(rankAfter[table].length,rankBefore[table].length,'Upgrade must not invent rank work.');for(let index=0;index<rankBefore[table].length;index++)assert.deepEqual(Object.fromEntries(Object.keys(rankBefore[table][index]).map(key=>[key,rankAfter[table][index][key]])),rankBefore[table][index],'Existing rank identity, approvals, pins and captured quotes must be preserved.');}
+  assert.equal(rankAfter.rank_config[0].authored_revision,1);assert.equal(rankAfter.rank_config[0].revision,7);assert.equal(rankAfter.rank_config[0].keywords_revision,11);assert.equal(rankAfter.rank_config[0].schedule_enabled,true);
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = await records();
@@ -242,8 +263,9 @@ try {
   assert.deepEqual(await records(), upgradedRecords);
   await assertSchema();
   assert.deepEqual(await featureRecords(),featureSnapshot);
+  assert.deepEqual(await rankRecords(),rankAfter,'No-op migration preserves authored revision and every prior rank field.');
   assert.deepEqual((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data,quoteAfter);
-  console.log('PASS prior keyword evidence, charge ledger, authored keywords/tags, funnels/goals and receipts, Google snapshots, alias proof and audits survive 0023; existing identity capsule preserved; no implicit paid work');
+  console.log('PASS prior0022 feature evidence and0023 rank identity, approval, pin and quote survive0024; authored revision initializes once; identity capsule preserved; no implicit paid work');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {

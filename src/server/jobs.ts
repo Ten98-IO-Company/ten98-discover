@@ -10,6 +10,8 @@ import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs} from './keywor
 import {promptExecutionQueue,executePromptComparison,reconcilePromptExecutionJobs} from './prompt-execution.ts';
 import {domainRedirectQueue,executeDomainRedirectCheck,reconcileDomainRedirectChecks} from './domain-redirects.ts';
 import {siteAuditQueue} from './site-audits.ts';
+import {rankQueue} from './rank-execution.ts';
+import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} from './rank-worker.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
 
 const queueName = 'setup-probe';
@@ -34,6 +36,8 @@ export function getBoss(): Promise<PgBoss> {
         await boss.createQueue(promptExecutionQueue);
         await boss.createQueue(domainRedirectQueue);
         await boss.createQueue(siteAuditQueue);
+        await boss.createQueue(rankQueue);
+        await boss.createQueue(rankPollQueue);
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -109,6 +113,7 @@ async function heartbeat() {
   await reconcileProbes();
   await reconcileGoogleImports();
   await reconcileKeywordJobs();
+  await reconcileRankJobs();
   await reconcilePromptExecutionJobs();
   await reconcileDomainRedirectChecks();
   await reconcileSiteAudits();
@@ -124,6 +129,7 @@ export function startWorker(): Promise<void> {
     try {
       const boss = await getBoss();
       await reconcileKeywordJobs();
+      await reconcileRankJobs();
       await reconcilePromptExecutionJobs();
       await reconcileDomainRedirectChecks();
       await boss.work<{ probeId: string }>(queueName, { batchSize: 5 }, async (jobs) => {
@@ -148,6 +154,8 @@ export function startWorker(): Promise<void> {
       });
       await startGoogleImportWorker(boss);
       await boss.work<{runId:string}>(keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
+      await boss.work<{dispatchId:string}>(rankQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeRankDispatch(job.data?.dispatchId);});
+      await boss.work<{dispatchId:string;generation:string}>(rankPollQueue,{batchSize:1},async jobs=>{for(const job of jobs)await pollRankDispatch(job.data?.dispatchId,job.data?.generation);});
       await boss.work<{comparisonId:string}>(promptExecutionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executePromptComparison(job.data?.comparisonId);});
       await boss.work<{checkId:string}>(domainRedirectQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainRedirectCheck(job.data?.checkId);});
       await startSiteAuditWorker(boss);

@@ -1,8 +1,8 @@
 # Explicit prompt execution and comparison backend
 
-This internal backend increment implements explicit paid requests for one or both of `openai/gpt-4o-mini` and `openai/gpt-4o` through the standard OpenAI route on OpenRouter. It does not complete V1 AI monitoring. Execution UI, scheduling, the seven-day result cache, other provider/model routes, visibility analysis and live paid acceptance remain pending. Saving or enabling a library prompt does not start a request.
+This internal increment implements explicit paid requests for one or both of `openai/gpt-4o-mini` and `openai/gpt-4o` through the standard OpenAI route on OpenRouter. It does not complete V1 AI monitoring. The manual execution UI is implemented; scheduling, the seven-day result cache, other provider/model routes, visibility analysis and live paid acceptance remain pending. Saving or enabling a library prompt does not start a request.
 
-The approved [execution UI contract](prompt-execution-ui.md) describes the pending manual flow, exact implemented DTOs, immutable authored previews, current-role cancellation metadata and required future UI acceptance. Its metadata preparation and existing prompt-library mobile checks are tested; the execution UI itself remains pending.
+The approved [execution UI contract](prompt-execution-ui.md) describes the implemented manual flow, current DTOs, immutable authored previews and current-role cancellation metadata. Its metadata preparation and existing prompt-library mobile checks are tested, and the execution UI has synthetic production-browser evidence in [research UI](research-ui.md); live provider acceptance and full V1 coverage remain open.
 
 ## Authorization and API
 

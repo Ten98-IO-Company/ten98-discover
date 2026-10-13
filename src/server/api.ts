@@ -27,6 +27,10 @@ import { handleGoogle } from './google-api.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
 import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
 import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
+import {listRankTrackers,getRankTracker,getRankCatalog,searchRankLocations,createRankTracker,updateRankTracker,archiveRankTracker,changeRankKeywords} from './rank-tracking.ts';
+import {getRankRun,quoteRankCheck,startRankCheck} from './rank-execution.ts';
+import {cancelRankRun} from './rank-worker.ts';
+import {reconcileRankCheck} from './rank-reconciliation.ts';
 import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from './saved-keywords.ts';
 import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from './saved-keyword-refresh.ts';
 import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
@@ -294,6 +298,49 @@ export async function handleApi(request: Request): Promise<Response> {
         if(action==='refreshes'&&targetId){
           if(operation==='cancel')return json(await cancelSavedKeywordRefresh(projectId,user.id,targetId,input));
           if(operation==='reconcile'){await limit(`saved-keyword-reconcile:${projectId}`,3);return json(await reconcileSavedKeywordRefresh(projectId,user.id,targetId,input));}
+        }
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const rankCheckRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-checks/(${id})(?:/(start|cancel|reconcile))?$`,'i'));
+    if(rankCheckRoute){
+      const [,projectId,runId,action]=rankCheckRoute;
+      if(url.searchParams.size)throw new FoundationError(400,'Rank check actions do not accept query parameters.');
+      await projectAccess(projectId,user.id,request.method!=='GET');
+      await limit(`rank-read:${user.id}`,120);
+      if(request.method==='GET'&&!action)return json(await getRankRun(projectId,user.id,runId));
+      if(request.method==='POST'){
+        await limit(`rank-check-write:${user.id}`,10);
+        const input=await readJson(request,8192);
+        if(action==='start')return json(await startRankCheck(projectId,user.id,runId,input),202);
+        if(action==='cancel')return json(await cancelRankRun(projectId,user.id,runId,input));
+        if(action==='reconcile'){await limit(`rank-reconcile:${projectId}`,3);return json(await reconcileRankCheck(projectId,user.id,runId,input));}
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const rankRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers(?:/(catalog|locations|${id})(?:/(update|archive|keywords|quote)(?:/(add|remove|pin))?)?)?$`,'i'));
+    if(rankRoute){
+      const [,projectId,target,action,keywordAction]=rankRoute;
+      await projectAccess(projectId,user.id,request.method!=='GET'||target==='locations');
+      await limit(`rank-read:${user.id}`,120);
+      if(request.method==='GET'&&!target)return json(await listRankTrackers(projectId,user.id,url.searchParams));
+      if(request.method==='GET'&&target==='locations'&&!action){await limit(`rank-catalog:${user.id}`,30);return json(await searchRankLocations(projectId,user.id,url.searchParams));}
+      if(request.method==='GET'&&target&&target!=='catalog'&&!action){
+        if(url.searchParams.size)throw new FoundationError(400,'This tracker detail does not accept filters.');
+        return json(await getRankTracker(projectId,user.id,target));
+      }
+      if(request.method==='POST'){
+        if(url.searchParams.size)throw new FoundationError(400,'Put tracker changes in the request body.');
+        await limit(`rank-write:${user.id}`,30);
+        // Up to2,000 bounded raw terms (including JSON Unicode escapes), or IDs.
+        const input=await readJson(request,action==='keywords'?(keywordAction==='add'?2_621_440:131_072):action==='quote'?262_144:8192);
+        if(!target)return json(await createRankTracker(projectId,user.id,input));
+        if(target==='catalog'&&!action){await limit(`rank-catalog:${user.id}`,30);return json(await getRankCatalog(projectId,user.id,input));}
+        if(target!=='catalog'&&target!=='locations'){
+          if(action==='update'&&!keywordAction)return json(await updateRankTracker(projectId,user.id,target,input));
+          if(action==='archive'&&!keywordAction)return json(await archiveRankTracker(projectId,user.id,target,input));
+          if(action==='quote'&&!keywordAction){await limit(`rank-quote:${user.id}`,10);return json(await quoteRankCheck(projectId,user.id,target,input));}
+          if(action==='keywords'&&keywordAction)return json(await changeRankKeywords(projectId,user.id,target,keywordAction as 'add'|'remove'|'pin',input));
         }
       }
       return json({error:'Method not allowed.'},405);

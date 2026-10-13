@@ -49,7 +49,7 @@ export async function runProviderChecks(options: Options) {
   await http(`${route}/providers`, 400, { ...input, monthlyLimitUsd: 'NaN' });
   const oversized = { ...input, provider: 'dataforseo', credentials: { login: 'test@integration.test', password: '\u0000'.repeat(4096) } };
   await http(`${route}/providers`, 413, oversized);
-  await rejects(saveProvider(wid, owner, oversized), 400, 'Internal callers must not persist an undecryptable oversized credential.');
+  await assert.rejects(saveProvider(wid, owner, oversized), {name:'ZodError'}, 'Internal callers reject control characters before encryption or persistence.');
   const connection = (await http(`${route}/providers`, 201, input)).body.connection;
   assert.equal(connection.checkStatus, 'untested', 'Saving must never call the provider.');
   const initial = (await http(`${route}/providers`, 200)).body;

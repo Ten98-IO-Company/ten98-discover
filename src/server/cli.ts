@@ -9,6 +9,7 @@ import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts'
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
 import {initializeProviderAccountIdentity,assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
 import { setInstanceOperator } from './instance-operators.ts';
+import { quarantineRestoredSpending } from './restore-quarantine.ts';
 
 class CliError extends Error {}
 
@@ -112,13 +113,20 @@ async function worker() {
 
 try {
   const [command, option, ...extra] = process.argv.slice(2);
-  const usage = 'Usage: cli.ts setup | migrate | rekey | worker | diagnose [worker] | operator grant|revoke <existing-account-email>';
+  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | worker | diagnose [worker] | operator grant|revoke <existing-account-email>';
   if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
     throw new CliError(usage);
   }
   switch (command) {
     case 'setup': await setup(); break;
     case 'migrate': await migrate(); break;
+    case 'restore-quarantine': {
+      await assertSchema();
+      const result = await quarantineRestoredSpending();
+      console.log(`Restore spending quarantine applied: ${result.pausedBudgets} budgets paused, ${result.cancelledReservations} reservations cancelled, ${result.disabledSchedules} schedules disabled.`);
+      console.log('Keep workers stopped until restored imports, crawls and provider receipts are reviewed. No provider requests were made.');
+      break;
+    }
     case 'rekey': {
       await assertSchema();
       const providers = await rotateCredentialEncryption();

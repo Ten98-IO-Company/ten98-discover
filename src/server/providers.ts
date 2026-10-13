@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { toUSVString } from 'node:util';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
@@ -20,7 +21,7 @@ export function usd(value: string | bigint | number): string {
 const providerInput = z.enum(['openrouter', 'dataforseo']);
 const credentialsInput = {
   openrouter: z.object({ apiKey: z.string().min(1).max(4096).regex(/^[^\s]+$/) }).strict(),
-  dataforseo: z.object({ login: z.string().trim().email().max(254), password: z.string().min(1).max(4096).regex(/^[^\r\n]+$/) }).strict(),
+  dataforseo: z.object({ login: z.string().trim().email().max(254), password: z.string().min(1).max(4096).refine(value=>toUSVString(value)===value&&!/[\x00-\x1f\x7f]/.test(value)) }).strict(),
 };
 const createInput = z.object({ name: z.string().trim().min(1).max(120), provider: providerInput, credentials: z.unknown(), monthlyLimitUsd: moneyInput }).strict();
 const updateInput = createInput.omit({ provider: true });
