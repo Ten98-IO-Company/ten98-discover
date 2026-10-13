@@ -11,6 +11,7 @@ import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
 import { ApiKeysPanel } from '../components/ApiKeysPanel'
 import { ProviderPanel } from '../components/ProviderPanel'
+import { RetentionPanel } from '../components/RetentionPanel'
 import { DestinationsPanel } from '../components/DestinationsPanel'
 import { OidcPanel } from '../components/OidcPanel'
 import { OidcSignIn } from '../components/OidcSignIn'
@@ -21,11 +22,11 @@ export const Route = createFileRoute('/')({ component: App })
 type Status = { configured: boolean; appUrl: string }
 type Workspace = { id: string; name: string; role: string }
 type Me = { user: { id: string; name: string; email: string }; instanceOperator: boolean; workspaces: Workspace[] }
-type Project = { id: string; name: string; origin: string; publicKey: string; eventCount: number; lastEventAt: string | null }
-type EventsData = { events: { id: string; eventName: string; path: string; receivedAt: string }[]; total: number }
+type Project = { id: string; name: string; origin: string; publicKey: string; eventCount: number; lastEventAt: string | null; retainedFrom: string | null }
+type EventsData = { events: { id: string; eventName: string; path: string; receivedAt: string }[]; total: number; retainedFrom: string | null }
 type Job = { id: string; status: string; createdAt: string; completedAt: string | null; error: string | null }
 type SetupValues = { token: string; name: string; email: string; password: string; workspaceName: string }
-type AppView = 'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports' | 'installation' | 'events'
+type AppView = 'project' | 'team' | 'workspace' | 'security' | 'providers' | 'keys' | 'destinations' | 'identity' | 'collection' | 'domains' | 'reports' | 'installation' | 'events' | 'retention'
 
 function fmt(iso: string): string {
   const d = new Date(iso)
@@ -365,7 +366,7 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = ['project','destinations','collection','domains','reports','installation','events'].includes(view)
-  const pageTitles: Record<AppView, string> = {project: 'Web analytics', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending'}
+  const pageTitles: Record<AppView, string> = {project: 'Web analytics', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention'}
   const projectDescriptions: Partial<Record<AppView, string>> = {project: 'Understand how people find and use your website.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.'}
 
   return (
@@ -414,6 +415,7 @@ function App() {
             {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'team' ? 'proj active' : 'proj'} onClick={() => setView('team')}>Manage team</button>}
             {workspace && ['owner', 'admin'].includes(workspace.role) && <button className={view === 'keys' ? 'proj active' : 'proj'} onClick={() => setView('keys')}>API keys</button>}
             {workspace?.role === 'owner' && <button className={view === 'providers' ? 'proj active' : 'proj'} onClick={() => setView('providers')}>Providers and spending</button>}
+            {workspace && <button className={view === 'retention' ? 'proj active' : 'proj'} onClick={() => setView('retention')}>Data retention</button>}
             <button className={view === 'security' ? 'proj active' : 'proj'} onClick={() => setView('security')}>Account security</button>
             <button className={view === 'identity' ? 'proj active' : 'proj'} onClick={() => setView('identity')}>Identity sign-in</button>
             <button className={view === 'workspace' ? 'proj active' : 'proj'} onClick={() => setView('workspace')}>Create workspace</button>
@@ -445,6 +447,7 @@ function App() {
         </>}
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={resetSession} />}
+        {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={resetSession} />}
@@ -478,8 +481,9 @@ function App() {
                 <div>
                   <h2 id='ev-h'>Recent events</h2>
                   <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
-                  <p className='dim'>All received events, across all dates</p>
-                  <p className='dim'>{lastReceived !== null ? `Last received ${fmt(lastReceived)}` : 'Nothing received yet.'}</p>
+                  <p className='dim'>Events currently retained</p>
+                  {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint'>History before {fmt((events?.retainedFrom ?? project.retainedFrom)!)} is unavailable after retention. This is not a lifetime total.</p>}
+                  <p className='dim'>{lastReceived !== null ? `Last retained event received ${fmt(lastReceived)}` : 'No retained events available.'}</p>
                 </div>
                 <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
               </div>
@@ -487,8 +491,8 @@ function App() {
               {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
-                  <p><strong>No events recorded yet.</strong></p>
-                  <p>Install your tracker on {project.origin}, allow analytics in Tracking preferences, then refresh this list.</p><button className='btn' onClick={() => setView('installation')}>Install tracker</button>
+                  <p><strong>No retained events available.</strong></p>
+                  <p>Install your tracker on {project.origin}, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><button className='btn' onClick={() => setView('installation')}>Install tracker</button>
                 </div>
               )}
               {events !== null && events.events.length > 0 && (

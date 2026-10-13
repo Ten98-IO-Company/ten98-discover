@@ -8,12 +8,13 @@ export type AnalyticsPanelProps = {
   onUnauthorized: () => void;
 };
 
-type Daily = { date: string; pageViews: number; customEvents: number };
+type Daily = { date: string; pageViews: number | null; customEvents: number | null; coverage: 'complete' | 'partial' | 'unavailable' };
 type Analytics = {
   range: { from: string; to: string; timeZone: 'UTC' };
-  totals: { pageViews: number; customEvents: number };
+  totals: { pageViews: number | null; customEvents: number | null };
+  coverage: { status: 'complete' | 'partial' | 'unavailable'; retainedFrom: string | null };
   measurement: {
-    identifiedPageViews: number; unidentifiedPageViews: number;
+    identifiedPageViews: number | null; unidentifiedPageViews: number | null;
     visitors: number | null; visits: number | null;
     bounceRate: number | null; averageVisitSeconds: number | null;
   };
@@ -74,11 +75,11 @@ function fmtUtc(iso: string): string {
   return `${new Date(iso).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
-const fmtNum = (n: number) => n.toLocaleString('en-US');
+const fmtNum = (n: number | null) => n === null ? 'Unavailable' : n.toLocaleString('en-US');
 
 function DailyChart({ daily }: { daily: Daily[] }) {
   if (daily.length === 0) return <p className="dim">No daily breakdown available for this range.</p>;
-  const max = Math.max(1, ...daily.flatMap((d) => [d.pageViews, d.customEvents]));
+  const max = Math.max(1, ...daily.flatMap((d) => [d.pageViews ?? 0, d.customEvents ?? 0]));
   const slot = 12;
   const height = 160;
   const base = 170;
@@ -95,16 +96,17 @@ function DailyChart({ daily }: { daily: Daily[] }) {
         aria-label={`Bar chart of daily page views and custom events in UTC, from ${first} to ${last}. Full numbers in the daily data table below.`}
       >
         {daily.map((d, i) => {
-          const pvH = (d.pageViews / max) * height;
-          const ceH = (d.customEvents / max) * height;
+          if (d.coverage === 'unavailable') return <rect key={d.date} x={i * slot + 1} y={10} width={10} height={height} fill="currentColor" opacity={0.12}><title>{d.date}: unavailable after retention</title></rect>;
+          const pvH = ((d.pageViews ?? 0) / max) * height;
+          const ceH = ((d.customEvents ?? 0) / max) * height;
           const x = i * slot;
           return (
             <g key={d.date}>
               <rect className="analytics-bar-pv" x={x + 1} y={base - pvH} width={4.5} height={pvH}>
-                <title>{`${d.date}: ${d.pageViews} page views`}</title>
+                <title>{`${d.date}: ${d.pageViews} page views${d.coverage === 'partial' ? ' (partial day)' : ''}`}</title>
               </rect>
               <rect className="analytics-bar-ce" x={x + 6.5} y={base - ceH} width={4.5} height={ceH}>
-                <title>{`${d.date}: ${d.customEvents} custom events`}</title>
+                <title>{`${d.date}: ${d.customEvents} custom events${d.coverage === 'partial' ? ' (partial day)' : ''}`}</title>
               </rect>
             </g>
           );
@@ -123,6 +125,7 @@ function DailyChart({ daily }: { daily: Daily[] }) {
           <span className="analytics-swatch analytics-swatch-ce" aria-hidden="true" /> Custom events
         </span>
       </p>
+      {daily.some(day => day.coverage !== 'complete') && <p className="hint">Shaded days are unavailable after retention. Partial days include only the retained portion; see the daily table.</p>}
     </>
   );
 }
@@ -188,7 +191,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
   const busy = view.loading;
   const data = view.data;
   const today = todayUtc();
-  const hasData = data !== null && data.totals.pageViews + data.totals.customEvents > 0;
+  const hasData = data !== null && (data.totals.pageViews ?? 0) + (data.totals.customEvents ?? 0) > 0;
 
   return (
     <div className="analytics" aria-busy={busy}>
@@ -274,14 +277,18 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
                 {data.range.from} to {data.range.to} (UTC)
               </span>
             </div>
+            {data.coverage.status !== 'complete' && <p className="alert" role="status">
+              {data.coverage.status === 'unavailable' ? 'This date range is unavailable after retention.' : 'This date range is partial after retention. Counts and estimates cover only retained observations.'}
+              {data.coverage.retainedFrom && ` History is retained from ${fmtUtc(data.coverage.retainedFrom)}. Extending retention cannot restore deleted data.`}
+            </p>}
             <div className="analytics-stats">
               <div className="analytics-stat">
                 <span className="analytics-stat-label">Page views</span>
-                <p className="big-num">{fmtNum(data.totals.pageViews)}</p>
+                <p className={data.totals.pageViews === null ? 'analytics-unavailable' : 'big-num'}>{fmtNum(data.totals.pageViews)}</p>
               </div>
               <div className="analytics-stat">
                 <span className="analytics-stat-label">Custom events</span>
-                <p className="big-num">{fmtNum(data.totals.customEvents)}</p>
+                <p className={data.totals.customEvents === null ? 'analytics-unavailable' : 'big-num'}>{fmtNum(data.totals.customEvents)}</p>
               </div>
               <div className="analytics-stat">
                 <span className="analytics-stat-label">Estimated visitors</span>
@@ -300,7 +307,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
                 <p className={data.measurement.averageVisitSeconds === null ? 'analytics-unavailable' : 'big-num'}>{data.measurement.averageVisitSeconds === null ? 'Unavailable' : `${data.measurement.averageVisitSeconds.toFixed(1)} s`}</p>
               </div>
             </div>
-            <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} page views. Page views without a visitor estimate remain in traffic totals.</p>
+            {data.coverage.status !== 'unavailable' && <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views. Page views without a visitor estimate remain in traffic totals.</p>}
             <details className="analytics-details">
               <summary>How these estimates work</summary>
               <p>Visitors use a monthly, project-specific estimate. They are not a count of unique people. Network measurement must be configured by the installation operator; otherwise visitor and visit estimates are unavailable.</p>
@@ -309,13 +316,13 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
             <p className="footnote dim">
               {data.lastReceivedAt
                 ? `Last event received ${fmtUtc(data.lastReceivedAt)}.`
-                : 'No events in this date range.'}
+                : data.coverage.status === 'complete' ? 'No events in this date range.' : 'No events are available in the retained portion of this range.'}
             </p>
           </section>
 
           <section className="card analytics-activity">
             <h2>Daily activity (UTC)</h2>
-            {!hasData ? (
+            {!hasData && data.coverage.status === 'complete' ? (
               <div className="empty analytics-empty-chart">
                 <p>
                   <strong>No events in this range.</strong>
@@ -343,7 +350,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
                       <tbody>
                         {data.daily.map((d) => (
                           <tr key={d.date}>
-                            <td className="mono">{d.date}</td>
+                            <td className="mono">{d.date}{d.coverage === 'partial' && <span className="dim"> (partial)</span>}</td>
                             <td className="analytics-num">{fmtNum(d.pageViews)}</td>
                             <td className="analytics-num">{fmtNum(d.customEvents)}</td>
                           </tr>
@@ -360,7 +367,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
             <h2>Top pages</h2>
             <p className="hint">Up to 20 paths in this date range.</p>
             {data.pages.length === 0 ? (
-              <p className="dim">No page views in this range.</p>
+              <p className="dim">{data.coverage.status === 'complete' ? 'No page views in this range.' : 'No page views are available in the retained portion.'}</p>
             ) : (
               <div className="table-wrap">
                 <table>
@@ -389,7 +396,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
             <h2>Top custom events</h2>
             <p className="hint">Up to 20 event names in this date range.</p>
             {data.events.length === 0 ? (
-              <p className="dim">No custom events in this range.</p>
+              <p className="dim">{data.coverage.status === 'complete' ? 'No custom events in this range.' : 'No custom events are available in the retained portion.'}</p>
             ) : (
               <div className="table-wrap">
                 <table>

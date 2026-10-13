@@ -1,0 +1,166 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { PoolClient } from 'pg';
+import { z } from 'zod';
+import { FoundationError } from './auth.ts';
+import { getConfig } from './config.ts';
+import { getDatabase } from './db.ts';
+
+const days = z.number().int().min(1).max(3650);
+export const retentionSettingsInput = z.object({ rawAnalyticsDays: days, replayDays: days, rawProviderEvidenceDays: days, derivedHistoryDays: days }).strict();
+export type RetentionSettings = z.infer<typeof retentionSettingsInput>;
+const previewInput = z.object({ revision: z.number().int().positive(), settings: retentionSettingsInput }).strict();
+const tokenInput = previewInput.extend({ version: z.literal(1), workspaceId: z.uuid(), userId: z.string().min(1).max(128), issuedAt: z.number().int().nonnegative() }).strict();
+const settingsSql = `json_build_object('rawAnalyticsDays',w.raw_analytics_days,'replayDays',w.replay_days,
+  'rawProviderEvidenceDays',w.raw_provider_evidence_days,'derivedHistoryDays',w.derived_history_days)`;
+export const retentionCategories = Object.freeze({ rawAnalytics: 'active', replay: 'not_implemented', rawProviderEvidence: 'not_implemented', derivedHistory: 'not_implemented' } as const);
+
+function parse<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new FoundationError(400, 'Check the retention fields and try again.');
+  return result.data;
+}
+async function requireOwner(client: PoolClient, workspaceId: string, userId: string) {
+  const { rows } = await client.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, userId]);
+  if (!rows[0]) throw new FoundationError(404, 'Workspace not found or unavailable.');
+  if (rows[0].role !== 'owner') throw new FoundationError(403, 'Only a workspace owner can change retention.');
+}
+function signature(body: string) { return createHmac('sha256', getConfig().authSecret).update(`ten98.retention.preview.v1:${body}`).digest('hex'); }
+function makeToken(payload: z.infer<typeof tokenInput>) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${body}.${signature(body)}`;
+}
+function readToken(value: unknown) {
+  const { previewToken } = parse(z.object({ previewToken: z.string().min(1).max(4096) }).strict(), value);
+  if (!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$(?![\s\S])/.test(previewToken)) throw new FoundationError(400, 'Preview these settings again before saving.');
+  const [body, signed] = previewToken.split('.');
+  if (!timingSafeEqual(Buffer.from(signed, 'hex'), Buffer.from(signature(body), 'hex'))) throw new FoundationError(400, 'Preview these settings again before saving.');
+  try { return parse(tokenInput, JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))); }
+  catch { throw new FoundationError(400, 'Preview these settings again before saving.'); }
+}
+
+export async function getRetention(workspaceId: string, userId: string) {
+  const { rows } = await getDatabase().pool.query(`SELECT w.id AS "workspaceId",m.role,w.retention_revision AS revision,
+    ${settingsSql} AS settings,w.retention_updated_at AS "updatedAt",
+    (SELECT count(*)::integer FROM project p WHERE p.workspace_id=w.id AND p.retention_error IS NOT NULL) AS "failedProjects",
+    (SELECT max(retention_last_completed_at) FROM project p WHERE p.workspace_id=w.id) AS "lastCompletedAt"
+    FROM workspace w JOIN membership m ON m.workspace_id=w.id AND m.user_id=$2 WHERE w.id=$1`, [workspaceId, userId]);
+  if (!rows[0]) throw new FoundationError(404, 'Workspace not found or unavailable.');
+  return { ...rows[0], categories: retentionCategories };
+}
+
+export async function previewRetention(workspaceId: string, userId: string, raw: unknown) {
+  const input = parse(previewInput, raw);
+  const client = await getDatabase().pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout='250ms'");
+    await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE', [workspaceId]);
+    await requireOwner(client, workspaceId, userId);
+    const current = await client.query('SELECT retention_revision AS revision,clock_timestamp() AS now FROM workspace WHERE id=$1', [workspaceId]);
+    if (current.rows[0].revision !== input.revision) throw new FoundationError(409, 'Retention changed. Reload and preview again.');
+    const asOf = current.rows[0].now as Date;
+    const cutoff = new Date(asOf.getTime() - input.settings.rawAnalyticsDays * 86_400_000);
+    let estimate: { status: 'available' | 'unavailable'; rows: number | null; atLeast: boolean; logicalBytes: number | null } = { status: 'unavailable', rows: null, atLeast: false, logicalBytes: null };
+    await client.query('SAVEPOINT estimate');
+    try {
+      await client.query("SET LOCAL statement_timeout='2s'");
+      const sample = await client.query(`SELECT pg_column_size(e)::integer AS bytes FROM project p JOIN event e ON e.project_id=p.id
+        WHERE p.workspace_id=$1 AND e.received_at<$2 ORDER BY p.id,e.received_at,e.id LIMIT 10001`, [workspaceId, cutoff]);
+      estimate = { status: 'available', rows: Math.min(sample.rows.length, 10000), atLeast: sample.rows.length > 10000,
+        logicalBytes: sample.rows.slice(0, 10000).reduce((sum, row) => sum + row.bytes, 0) };
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT estimate');
+      if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
+    }
+    await client.query('COMMIT');
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, categories: retentionCategories,
+      previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
+  } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+  finally { client.release(); }
+}
+
+export async function saveRetention(workspaceId: string, userId: string, raw: unknown) {
+  const preview = readToken(raw);
+  const client = await getDatabase().pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [workspaceId]);
+    await requireOwner(client, workspaceId, userId);
+    if (preview.workspaceId !== workspaceId || preview.userId !== userId) throw new FoundationError(400, 'Preview these settings again before saving.');
+    const { rows } = await client.query('SELECT retention_revision AS revision,clock_timestamp() AS now FROM workspace WHERE id=$1', [workspaceId]);
+    const age = (rows[0].now as Date).getTime() - preview.issuedAt;
+    if (rows[0].revision !== preview.revision || age < 0 || age > 300_000) throw new FoundationError(409, 'Retention changed or the preview expired. Reload and preview again.');
+    const s = preview.settings;
+    await client.query(`UPDATE workspace SET raw_analytics_days=$2,replay_days=$3,raw_provider_evidence_days=$4,derived_history_days=$5,
+      retention_revision=retention_revision+1,retention_updated_at=clock_timestamp() WHERE id=$1`, [workspaceId, s.rawAnalyticsDays, s.replayDays, s.rawProviderEvidenceDays, s.derivedHistoryDays]);
+    await client.query('UPDATE project SET retention_next_run_at=clock_timestamp() WHERE workspace_id=$1', [workspaceId]);
+    await client.query('COMMIT');
+    return await getRetention(workspaceId, userId);
+  } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+  finally { client.release(); }
+}
+
+export function retentionCoverage(start: string, end: string, retainedFrom: string | Date | null) {
+  const boundary = retainedFrom === null ? null : new Date(retainedFrom).toISOString();
+  return { status: boundary === null || Date.parse(start) >= Date.parse(boundary) ? 'complete' as const :
+    Date.parse(end) <= Date.parse(boundary) ? 'unavailable' as const : 'partial' as const, retainedFrom: boundary };
+}
+
+// ponytail: one short workspace/project transaction per tick suits the single-host worker.
+// Add measured concurrency/partitioning only when this bounded pass cannot keep up.
+export async function runRetentionBatch(projectId?: string) {
+  const client = await getDatabase().pool.connect();
+  let selected: string | undefined;
+  try {
+    await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout='250ms'");
+    await client.query("SET LOCAL statement_timeout='2s'");
+    const candidate = await client.query(`SELECT p.id,p.workspace_id FROM project p JOIN workspace w ON w.id=p.workspace_id
+      WHERE ($1::text IS NULL AND p.retention_next_run_at<=clock_timestamp()) OR p.id=$1
+      ORDER BY p.retention_next_run_at,p.id LIMIT 1 FOR UPDATE OF w SKIP LOCKED`, [projectId ?? null]);
+    if (!candidate.rows[0]) { await client.query('COMMIT'); return null; }
+    selected = candidate.rows[0].id;
+    await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE', [selected]);
+    // Fresh statement after both gates: collection/settings may have committed while we waited.
+    const { rows } = await client.query(`SELECT p.retention_cutoff,p.retention_policy_revision,w.retention_revision,
+      clock_timestamp()-w.raw_analytics_days*interval '24 hours' AS cutoff
+      FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.id=$1`, [selected]);
+    const state = rows[0];
+    const cutoff = state.retention_policy_revision === state.retention_revision && state.retention_cutoff ? state.retention_cutoff : state.cutoff;
+    const deleted = await client.query(`WITH expired AS (
+      SELECT id FROM event WHERE project_id=$1 AND received_at<$2 ORDER BY received_at,id LIMIT 1000 FOR UPDATE
+    ) DELETE FROM event e USING expired WHERE e.project_id=$1 AND e.id=expired.id RETURNING e.visitor_id`, [selected, cutoff]);
+    const affected = [...new Set(deleted.rows.map(row => row.visitor_id).filter(Boolean))];
+    if (affected.length) {
+      await client.query(`UPDATE analytics_visitor v SET (first_seen_at,last_seen_at)=(
+        SELECT min(received_at),max(received_at) FROM event WHERE project_id=v.project_id AND visitor_id=v.id)
+        WHERE v.project_id=$1 AND v.id=ANY($2::text[]) AND EXISTS(SELECT 1 FROM event WHERE project_id=v.project_id AND visitor_id=v.id)`, [selected, affected]);
+    }
+    const removedVisitors = await client.query(`WITH expired AS (
+      SELECT v.id FROM analytics_visitor v WHERE v.project_id=$1 AND v.last_seen_at<$2
+        AND NOT EXISTS(SELECT 1 FROM event e WHERE e.project_id=v.project_id AND e.visitor_id=v.id)
+      ORDER BY v.last_seen_at,v.id LIMIT 1000
+    ) DELETE FROM analytics_visitor v USING expired WHERE v.project_id=$1 AND v.id=expired.id`, [selected, cutoff]);
+    const pending = await client.query(`SELECT EXISTS(SELECT 1 FROM event WHERE project_id=$1 AND received_at<$2)
+      OR EXISTS(SELECT 1 FROM analytics_visitor v WHERE v.project_id=$1 AND v.last_seen_at<$2
+        AND NOT EXISTS(SELECT 1 FROM event e WHERE e.project_id=v.project_id AND e.visitor_id=v.id)) AS pending`, [selected, cutoff]);
+    const complete = !pending.rows[0].pending;
+    await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
+      retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
+      retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
+      retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
+    await client.query('COMMIT');
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, complete };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (selected) {
+      try {
+        await client.query('BEGIN');
+        await client.query("SET LOCAL lock_timeout='250ms'");
+        await client.query("UPDATE project SET retention_error='cleanup_failed',retention_next_run_at=clock_timestamp()+interval '1 minute' WHERE id=$1", [selected]);
+        await client.query('COMMIT');
+      } catch { await client.query('ROLLBACK').catch(() => {}); }
+    }
+    throw error;
+  } finally { client.release(); }
+}

@@ -10,6 +10,7 @@ import { eventInput, InputError, projectInput, readJson } from './validation.ts'
 import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
 import { projectAnalytics } from './analytics.ts';
+import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey } from './api-keys.ts';
@@ -216,6 +217,16 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({ error: 'Method not allowed.' }, 405);
     }
+    const retentionRoute = path.match(new RegExp(`^/api/workspaces/(${id})/retention(?:/(preview|save))?$`, 'i'));
+    if (retentionRoute) {
+      await limit(`retention:${user.id}`, 20);
+      if (request.method === 'GET' && !retentionRoute[2]) return json(await getRetention(retentionRoute[1], user.id));
+      if (request.method === 'POST' && retentionRoute[2]) {
+        const input = await readJson(request);
+        return json(await (retentionRoute[2] === 'preview' ? previewRetention : saveRetention)(retentionRoute[1], user.id, input));
+      }
+      return json({ error: 'Method not allowed.' }, 405);
+    }
     let management = path.match(new RegExp(`^/api/workspaces/(${id})/(api-keys|providers|budget)$`, 'i'));
     if (management) {
       const workspaceId = management[1];
@@ -275,7 +286,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if (match) {
       if (request.method === 'GET') {
         await workspaceAccess(match[1], user.id);
-        const { rows } = await getDatabase().pool.query(`SELECT p.id,p.name,p.origin,p.public_key AS "publicKey",(SELECT count(*) FROM event e WHERE e.project_id=p.id) AS "eventCount",(SELECT max(received_at) FROM event e WHERE e.project_id=p.id) AS "lastEventAt" FROM project p WHERE p.workspace_id=$1 ORDER BY p.created_at DESC`, [match[1]]);
+        const { rows } = await getDatabase().pool.query(`SELECT p.id,p.name,p.origin,p.public_key AS "publicKey",p.analytics_retained_from AS "retainedFrom",(SELECT count(*) FROM event e WHERE e.project_id=p.id AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)) AS "eventCount",(SELECT max(received_at) FROM event e WHERE e.project_id=p.id AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)) AS "lastEventAt" FROM project p WHERE p.workspace_id=$1 ORDER BY p.created_at DESC`, [match[1]]);
         return json({ projects: rows.map(row => ({ ...row, eventCount: Number(row.eventCount) })) });
       }
       if (request.method === 'POST') {
@@ -313,11 +324,13 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if (request.method === 'GET' && match[2] === 'analytics') return json(await projectAnalytics(match[1], user.id, url.searchParams));
       if (request.method === 'GET' && match[2] === 'events') {
-        const [events, total] = await Promise.all([
-          getDatabase().pool.query('SELECT id,event_name AS "eventName",path,received_at AS "receivedAt" FROM event WHERE project_id=$1 ORDER BY received_at DESC,id DESC LIMIT 50', [match[1]]),
-          getDatabase().pool.query('SELECT count(*) AS total FROM event WHERE project_id=$1', [match[1]]),
-        ]);
-        return json({ events: events.rows, total: Number(total.rows[0].total) });
+        const { rows } = await getDatabase().pool.query(`WITH retained AS MATERIALIZED (
+          SELECT e.* FROM event e JOIN project p ON p.id=e.project_id WHERE p.id=$1
+            AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
+        ), recent AS (SELECT id,event_name AS "eventName",path,received_at AS "receivedAt" FROM retained ORDER BY received_at DESC,id DESC LIMIT 50)
+        SELECT (SELECT analytics_retained_from FROM project WHERE id=$1) AS "retainedFrom",(SELECT count(*) FROM retained) AS total,
+          COALESCE((SELECT json_agg(recent ORDER BY "receivedAt" DESC,id DESC) FROM recent),'[]'::json) AS events`, [match[1]]);
+        return json({ ...rows[0], total: Number(rows[0].total) });
       }
       if (request.method === 'GET' && match[2] === 'jobs') {
         await reconcileProbes(match[1]);

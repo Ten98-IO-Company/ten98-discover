@@ -4,12 +4,14 @@ import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
 import { registerResourceCleanup } from './resource-cleanup.ts';
+import { runRetentionBatch } from './retention.ts';
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
 let workerPromise: Promise<void> | undefined;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 let heartbeatTask: Promise<unknown> | undefined;
+let retentionTask: Promise<unknown> | undefined;
 let workerStarted = false;
 
 export function getBoss(): Promise<PgBoss> {
@@ -131,6 +133,9 @@ export function startWorker(): Promise<void> {
         if (!heartbeatTask) heartbeatTask = heartbeat()
           .catch(() => console.error('Worker heartbeat failed; check database availability.'))
           .finally(() => { heartbeatTask = undefined; });
+        if (!retentionTask) retentionTask = runRetentionBatch()
+          .catch(() => console.error('Retention cleanup failed; inspect retention status and database availability.'))
+          .finally(() => { retentionTask = undefined; });
       }, 10_000);
     } catch (error) {
       await stopJobs();
@@ -144,6 +149,7 @@ export async function stopJobs() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = undefined;
   await heartbeatTask;
+  await retentionTask;
   const boss = await bossPromise?.catch(() => undefined);
   try {
     await boss?.stop({ graceful: true, timeout: 30_000 });

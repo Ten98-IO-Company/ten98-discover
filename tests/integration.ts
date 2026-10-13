@@ -15,6 +15,8 @@ import { runOidcChecks } from './oidc-integration.ts';
 import { runDestinationChecks } from './destinations-integration.ts';
 import { runNativeAnalyticsChecks } from './native-analytics-integration.ts';
 import { runReportsChecks } from './reports-integration.ts';
+import { runRetentionChecks } from './retention-integration.ts';
+import { runRetentionCoverageChecks } from './retention-coverage-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -56,6 +58,22 @@ async function expectStatus(path: string, status: number, options?: Parameters<t
   const result = await request(path, options);
   assert.equal(result.response.status, status, `${stage}: ${options?.method ?? 'GET'} ${path}`);
   return result;
+}
+
+async function retainHistoricalAnalytics(workspaceId: string, cookie: string) {
+  // Fixed-date analytics fixtures need an explicit owner policy before any project
+  // is created, so the real cleanup worker cannot race their historical events.
+  const path = `/api/workspaces/${workspaceId}/retention`;
+  const current = await expectStatus(path, 200, { cookie });
+  const settings = { ...current.body.settings, rawAnalyticsDays: 3650 };
+  const preview = await expectStatus(`${path}/preview`, 200, {
+    method: 'POST', cookie, body: { revision: current.body.revision, settings },
+  });
+  const saved = await expectStatus(`${path}/save`, 200, {
+    method: 'POST', cookie, body: { previewToken: preview.body.previewToken },
+  });
+  assert.deepEqual(saved.body.settings, settings, 'The owner must save the historical fixture policy through the real API.');
+  assert.equal(saved.body.revision, current.body.revision + 1);
 }
 
 async function createIdentity(workspaceId: string, role: 'owner' | 'viewer') {
@@ -155,6 +173,7 @@ try {
   assert.equal(owner.body.workspaces.length, 1);
   assert.equal(owner.body.workspaces[0].role, 'owner');
   const workspaceA = owner.body.workspaces[0].id as string;
+  await retainHistoricalAnalytics(workspaceA, ownerCookie);
   await expectStatus('/api/setup', 409, { method: 'POST', body: claim });
   await expectStatus('/api/auth/sign-up/email', 404, { method: 'POST', body: { name: 'Unauthorized', email: 'unauthorized@integration.test', password } });
   await expectStatus('/api/auth/sign-in/email', 401, { method: 'POST', body: { email: credential.rows[0].email, password: `${password}wrong` } });
@@ -164,6 +183,7 @@ try {
   const workspaceB = randomUUID();
   await pool.query('INSERT INTO workspace(id,name) VALUES($1,$2)', [workspaceB, 'Independent workspace']);
   const other = await createIdentity(workspaceB, 'owner');
+  await retainHistoricalAnalytics(workspaceB, other.cookie);
   const viewer = await createIdentity(workspaceA, 'viewer');
   const otherMe = await expectStatus('/api/me', 200, { cookie: other.cookie });
   assert.deepEqual(otherMe.body.workspaces.map((item: { id: string }) => item.id), [workspaceB]);
@@ -323,6 +343,10 @@ try {
   await runNativeAnalyticsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'reports and revocable snapshot shares';
   await runReportsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  stage = 'retention policy, cleanup and authorization';
+  await runRetentionChecks({ ownerId: owner.body.user.id });
+  stage = 'retention coverage and historical availability';
+  await runRetentionCoverageChecks();
   stage = 'scoped API keys';
   await runApiKeyChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'account security lifecycle';

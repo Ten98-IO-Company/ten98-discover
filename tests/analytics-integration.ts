@@ -34,16 +34,18 @@ export async function runAnalyticsChecks(options: { baseUrl: string; appUrl: str
   assert.equal(report.status, 200);
   assert.deepEqual(report.data.range, { from: '2024-02-28', to: '2024-03-01', timeZone: 'UTC' });
   assert.deepEqual(report.data.totals, { pageViews: 3, customEvents: 3 });
+  assert.equal(report.data.coverage.status, 'complete');
   assert.deepEqual(report.data.daily, [
-    { date: '2024-02-28', pageViews: 1, customEvents: 1 },
-    { date: '2024-02-29', pageViews: 0, customEvents: 0 },
-    { date: '2024-03-01', pageViews: 2, customEvents: 2 },
+    { date: '2024-02-28', pageViews: 1, customEvents: 1, coverage: 'complete' },
+    { date: '2024-02-29', pageViews: 0, customEvents: 0, coverage: 'complete' },
+    { date: '2024-03-01', pageViews: 2, customEvents: 2, coverage: 'complete' },
   ]);
   assert.deepEqual(report.data.pages, [{ path: '/alpha', pageViews: 2 }, { path: '/beta', pageViews: 1 }]);
   assert.deepEqual(report.data.events, [{ name: 'signup', count: 2 }, { name: 'purchase', count: 1 }]);
   assert.equal(new Date(report.data.lastReceivedAt).toISOString(), '2024-03-01T23:59:59.999Z');
   const empty = await request(`/api/projects/${project.id}/analytics?from=2024-02-29&to=2024-02-29`);
   assert.equal(empty.status, 200);
+  assert.equal(empty.data.coverage.status, 'complete');
   assert.deepEqual(empty.data.totals, { pageViews: 0, customEvents: 0 });
   assert.deepEqual(empty.data.pages, []);
   assert.equal(empty.data.lastReceivedAt, null);

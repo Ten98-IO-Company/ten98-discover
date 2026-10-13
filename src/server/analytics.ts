@@ -1,5 +1,7 @@
 import { getDatabase } from './db.ts';
 import { InputError } from './validation.ts';
+import { FoundationError } from './auth.ts';
+import { retentionCoverage } from './retention.ts';
 
 const dayMs = 86_400_000;
 function dateValue(value: string): Date {
@@ -31,11 +33,14 @@ export async function projectAnalytics(projectId: string, userId: string, params
   // One statement gives totals, buckets and rankings the same database snapshot.
   // ponytail: aggregate the selected range directly; add rollups after measured volume requires them.
   const { rows } = await getDatabase().pool.query(`
-    WITH observations AS MATERIALIZED (
+    WITH target AS MATERIALIZED (
+      SELECT p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
+    ), observations AS MATERIALIZED (
       SELECT e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions
       FROM event e JOIN project p ON p.id=e.project_id
       JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
       WHERE e.project_id=$1 AND e.received_at >= $3::timestamptz AND e.received_at < $4::timestamptz
+        AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
     ), visits AS (
       SELECT visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
         count(*) FILTER (WHERE event_name<>'page_view') AS custom,
@@ -56,7 +61,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
       SELECT event_name,count(*) AS total FROM observations WHERE event_name<>'page_view'
       GROUP BY event_name ORDER BY total DESC,event_name ASC LIMIT 20
     )
-    SELECT json_build_object(
+    SELECT (SELECT analytics_retained_from FROM target) AS retained_from,EXISTS(SELECT 1 FROM target) AS allowed,json_build_object(
       'totals',json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
         'customEvents',count(*) FILTER (WHERE event_name<>'page_view')),
       'measurement',json_build_object('version','umami-3.4-hour-cache-v1',
@@ -73,5 +78,18 @@ export async function projectAnalytics(projectId: string, userId: string, params
       'events',COALESCE((SELECT json_agg(json_build_object('name',event_name,'count',total) ORDER BY total DESC,event_name ASC) FROM names),'[]'::json),
       'lastReceivedAt',max(received_at)
     ) AS report FROM observations`, [projectId, userId, range.start, range.end, range.from, range.to]);
-  return { range: { from: range.from, to: range.to, timeZone: range.timeZone }, ...rows[0].report };
+  if (!rows[0].allowed) throw new FoundationError(404, 'Project not found or unavailable.');
+  const coverage = retentionCoverage(range.start, range.end, rows[0].retained_from);
+  const report = rows[0].report;
+  if (coverage.status === 'unavailable') {
+    report.totals = { pageViews: null, customEvents: null };
+    report.measurement.identifiedPageViews = null;
+    report.measurement.unidentifiedPageViews = null;
+  }
+  report.daily = report.daily.map((day: { date: string; pageViews: number; customEvents: number }) => {
+    const start = `${day.date}T00:00:00.000Z`;
+    const status = retentionCoverage(start, new Date(Date.parse(start) + dayMs).toISOString(), rows[0].retained_from).status;
+    return { ...day, ...(status === 'unavailable' ? { pageViews: null, customEvents: null } : {}), coverage: status };
+  });
+  return { range: { from: range.from, to: range.to, timeZone: range.timeZone }, ...report, coverage };
 }
