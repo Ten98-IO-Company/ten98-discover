@@ -32,6 +32,10 @@ All 56 focused Meta browser groups pass: imports/navigation eight presentation a
 
 The Meta build also passes all 20 production-navigation groups against a separately owned synthetic database, including retained imports, coverage, inventory, CSV and return paths. Desktop/mobile screenshots were inspected. One new navigation assertion initially ran before its receipt finished loading; the harness now waits for the corresponding button before asserting its count and order, preserving all prior groups. Source and emitted bundle hashes stayed fixed during this test-only adjustment. The temporary server was stopped and the fixture database had no remaining clients. No live-preview update or provider request occurred.
 
+The Meta connection increment presents saved sources and their actions before Add a connection, keeps owner/operator setup guidance visible, and places reviewed account selection beside Confirm before the manual-ID fallback. Meta app setup presents saved registration status and its independent Disable action before callbacks and a native App settings disclosure. Existing fields stay mounted; opening a disclosure neither submits nor requests data. Unknown-result recovery, local versus remote disconnection, instance-operator authority, callback addresses, declared-mode qualifications and one-time secret clearing remain unchanged.
+
+The connection increment passes eight view and fourteen controller groups; app setup passes nine and eight (39 total). Every original assertion remains; added checks cover ordering, native disclosure state, retained invalid drafts and synthetic secrets, no disclosure requests, role loss, interruption/retry semantics, exact account review, keyless disable, 320/360/768/1440px LTR/RTL reflow, long names/URLs, keyboard focus, CSS layout zoom and forced colors. Initial checks found 40px desktop inputs/selects. Each draft used one narrow Kimi repair adding only a 44px minimum to the affected controls; final checks retain those originally failing assertions. Screenshots were inspected and all fixture servers closed. TypeScript and the combined UI production build pass. No controllers, shared styles, APIs or dependencies changed, and no live account or provider was used.
+
 ## Kimi execution record
 
 Native CLI 2.1.1, `kimi-code/k3-256k`, thinking enabled and maximum-effort override; Skill-only profile with no shell/filesystem/network/delegation tools. GPT supplied explicit public contracts, reviewed exact output paths, applied drafts and tested independently. This profile is not an operating-system sandbox.
@@ -54,6 +58,8 @@ Native CLI 2.1.1, `kimi-code/k3-256k`, thinking enabled and maximum-effort overr
 | Meta campaign inventory | Ponytail and UX Copy Refiner | about 284 s + 17 s repair | One scoped return replacement and one bounded mode-label repair; 20 focused groups pass |
 | Meta saved imports | Ponytail and UX Copy Refiner | about 89 s + 31 s repair | Three scoped spans and one bounded empty-state repair; 20 import/navigation groups pass |
 | Meta report navigation | Ponytail | about 121 s | Existing guarded buttons moved above imports; no repair |
+| Meta connections | Ponytail and UX Copy Refiner | about 387 s + 18 s repair | One scoped return replacement; two input-height additions; 22 focused groups pass |
+| Meta app setup | Ponytail and UX Copy Refiner | about 386 s + 23 s repair | One scoped return replacement; six control-style corrections; 17 focused groups pass |
 
 Intervals come from private capture-file timestamps and are approximate, not model token usage. The token batch remained below its combined 20-minute ceiling; the stylesheet batch used one repair and also remained below that ceiling. An oversized earlier stylesheet prompt failed local preflight before invoking Kimi. The prompt-size guard was preserved.
 
