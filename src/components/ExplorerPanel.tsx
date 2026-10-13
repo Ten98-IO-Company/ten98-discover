@@ -24,6 +24,7 @@ const TIMEZONES=['UTC','America/New_York','America/Chicago','America/Los_Angeles
 const utcDate=(d:Date)=>d.toISOString().slice(0,10);
 const labelOf=(list:readonly (readonly [string,string])[],v:string)=>list.find(([k])=>k===v)?.[1]??v;
 const num=(v:number|null)=>v==null?'Unavailable':String(v);
+const decimal=(v:string|null)=>v===null?'Unavailable':v.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
 
 interface FilterRow{on:boolean;value:string}
 interface Draft{
@@ -138,6 +139,8 @@ function ExplorerInner({projectId,onUnauthorized}:Props){
   const keyList=phase==='ok'&&result?result.properties.keys:[];
   const keysTruncated=phase==='ok'&&result?result.properties.truncated:false;
   const t=result?.totals;
+  const currentParams=buildParams(draft);
+  const unapplied='error'in currentParams||currentParams.qs!==applied;
 
   return(
     <section className="explorer stack" aria-labelledby={`${uid}-h`}>
@@ -220,6 +223,7 @@ function ExplorerInner({projectId,onUnauthorized}:Props){
           <button className="btn" type="button" disabled={phase==='loading'} onClick={refresh}>Refresh</button>
           {phase==='ok'&&result&&<button className="btn" type="button" onClick={download}>Download CSV</button>}
         </div>
+        {unapplied&&<p className="hint" role="status">You have unapplied changes. Apply filters to update the results and CSV.</p>}
         {formError&&<p className="alert" role="alert">{formError}</p>}
         {phase==='ok'&&result&&<p className="hint dim">CSV downloads the current bounded table, daily data and scope — it is not a complete data export.</p>}
       </form>
@@ -331,10 +335,10 @@ function ExplorerInner({projectId,onUnauthorized}:Props){
               <table>
                 <thead><tr><th>Sum</th><th>Average</th><th>Min</th><th>Max</th></tr></thead>
                 <tbody><tr>
-                  <td>{result.numeric.sum??'Unavailable'}</td>
-                  <td>{result.numeric.average??'Unavailable'}</td>
-                  <td>{result.numeric.min??'Unavailable'}</td>
-                  <td>{result.numeric.max??'Unavailable'}</td>
+                  <td>{decimal(result.numeric.sum)}</td>
+                  <td>{decimal(result.numeric.average)}</td>
+                  <td>{decimal(result.numeric.min)}</td>
+                  <td>{decimal(result.numeric.max)}</td>
                 </tr></tbody>
               </table>
             </div>

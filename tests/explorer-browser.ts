@@ -37,9 +37,13 @@ try{
   await page.getByLabel('Property key',{exact:true}).fill(' spaced ');
   await page.getByRole('button',{name:'Apply filters',exact:true}).click();await page.getByRole('button',{name:'Download CSV'}).waitFor();
   assert.equal(await page.locator('.metric-value').first().innerText(),'4');
+  const unapplied=page.getByText('You have unapplied changes.',{exact:false});
+  assert.equal(await unapplied.count(),0);
+  assert.deepEqual(await page.getByRole('region',{name:'Numeric property data, scroll horizontally for all columns'}).getByRole('cell').allTextContents(),['42','42','42','42']);
   assert.equal(await page.getByRole('cell',{name:'Number',exact:true}).count(),1);assert.equal(await page.getByRole('cell',{name:'String',exact:true}).count(),2);
   const result=await (await ctx.request.get(`${config.appUrl}/api/projects/${projectId}/explore?`+new URLSearchParams({from:'2026-03-08',to:'2026-03-08',timeZone:'America/New_York',kind:'all',groupBy:'property',groupProperty:' spaced '}))).json();
   await page.getByLabel('Time zone',{exact:true}).fill('Asia/Dubai');
+  await unapplied.waitFor();
   const downloadEvent=page.waitForEvent('download');await page.getByRole('button',{name:'Download CSV'}).click();const download=await downloadEvent;
   assert.equal(await readFile(await download.path(),'utf8'),result.csv,'Draft timezone changes must not alter the current exported snapshot.');
   assert.ok(result.csv.includes("'=SUM"));
@@ -51,6 +55,7 @@ try{
   await page.getByLabel('Enable property filter',{exact:true}).check();
   await page.getByLabel('Property key',{exact:true}).last().fill(' spaced ');await page.getByLabel('Type',{exact:true}).selectOption('number');await page.getByLabel('Value (JSON literal)',{exact:true}).fill('42');
   await page.getByRole('button',{name:'Apply filters',exact:true}).click();await page.getByRole('button',{name:'Download CSV'}).waitFor();assert.equal(await page.locator('.metric-value').first().innerText(),'1');
+  assert.equal(await unapplied.count(),0);
   let queries=0;page.on('request',(r:any)=>{if(r.url().includes('/explore?'))queries++;});
   await page.getByRole('button',{name:'Apply filters',exact:true}).click();await page.getByRole('button',{name:'Download CSV'}).waitFor();assert.equal(queries,1,'Applying unchanged filters must refresh once.');
   const explorePattern=`**/api/projects/${projectId}/explore?*`;
