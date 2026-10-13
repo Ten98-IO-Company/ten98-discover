@@ -30,7 +30,7 @@ test('page guards distinguish account access, membership and administrative priv
   assert.equal(allowedView('meta-app', 'owner', false), false)
   assert.equal(allowedView('meta-app', undefined, true), true)
   assert.equal(allowedView('events', undefined, false), false)
-  for (const view of ['keywords', 'ranks', 'audits', 'conversions', 'meta', 'meta-reports'] as const) {
+  for (const view of ['keywords', 'ranks', 'audits', 'conversions', 'meta', 'meta-reports', 'ai-insights'] as const) {
     assert.deepEqual(parseNavigation({workspace, project, view}), {workspace, project, view})
     assert.equal(projectView(view), true)
     assert.equal(allowedView(view, 'viewer', false), true)

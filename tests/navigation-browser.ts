@@ -6,6 +6,8 @@ import { hashPassword } from 'better-auth/crypto'
 import { getConfig } from '../src/server/config.ts'
 import { assertSchema, closeDatabase, getDatabase } from '../src/server/db.ts'
 import { createWorkspace } from '../src/server/teams.ts'
+import { createPrompts } from '../src/server/prompts.ts'
+import { updateProjectContext } from '../src/server/project-context.ts'
 
 // Optional real production-client/API check, using only an isolated local database.
 assert.equal(process.env.TEN98_INTEGRATION_TEST, '1')
@@ -29,21 +31,22 @@ try {
   const b = (await createWorkspace(other.id, { name: 'Navigation Beta' })).workspace
   const foreign = (await createWorkspace(other.id, { name: 'Unavailable workspace' })).workspace
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'viewer')", [b.id, owner.id])
-  async function project(workspace: string, name: string) {
+  async function project(workspace: string, name: string, origin?: string) {
     const id = randomUUID()
-    await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [id, workspace, name, `https://${id}.integration.test`, randomUUID()])
+    await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [id, workspace, name, origin??`https://${id}.integration.test`, randomUUID()])
     return id
   }
-  const a1 = await project(a.id, 'Alpha one'), a2 = await project(a.id, 'Alpha two'), b1 = await project(b.id, 'Beta one'), foreignProject = await project(foreign.id, 'Unavailable project')
+  const a1 = await project(a.id, 'Alpha one'), a2 = await project(a.id, 'Alpha two'), b1 = await project(b.id, 'Beta one', 'https://navigation-insights.example.com'), foreignProject = await project(foreign.id, 'Unavailable project')
   await pool.query("UPDATE installation SET claimed=true WHERE id='instance'")
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true })
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
   let external = 0, errors = 0
-  const requests: string[] = [], metaReportWrites: string[] = []
+  const requests: string[] = [], metaReportWrites: string[] = [], aiWrites: string[] = []
   await context.route('**/*', (route: any) => {
     const url = new URL(route.request().url())
     if (url.origin !== config.appUrl) { external++; return route.abort() }
     requests.push(url.pathname)
+    if (route.request().method() !== 'GET' && /\/prompt-(?:executions|insights)(?:\/|$)/.test(url.pathname)) aiWrites.push(url.pathname)
     if (route.request().method()==='POST' && /\/meta\/(?:connections\/[^/]+\/(?:imports|campaign-inventories)|(?:imports|campaign-inventories)\/[^/]+\/cancel)$/.test(url.pathname)) metaReportWrites.push(url.pathname)
     return route.continue()
   })
@@ -267,6 +270,83 @@ try {
   await page.getByRole('button',{name:'Back to reports',exact:true}).click();await heading('Meta reports');await page.waitForFunction((id:string)=>(document.querySelector('select[id$="import"]')as HTMLSelectElement|null)?.value===id,metaEmpty)
   assert.deepEqual(metaReportWrites,[]);assert.equal((await pool.query('SELECT count(*) FROM meta_campaign_inventory WHERE connection_id=$1',[metaSource])).rows[0].count,'3')
   console.log('PASS navigation: disconnected-source campaign snapshots, exact CSV, explicit partial history, empty/expired latest without fallback, mobile rendering and fresh report handoff; no Meta writes.')
+
+  for (const [workspace, project] of [[a.id,a2],[b.id,b1]]) {
+    await page.goto(href(workspace,project,'ai-insights'));await heading('AI insights');await selected(workspace,project,'ai-insights')
+    await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
+    await page.reload();await heading('AI insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
+    await page.getByRole('button',{name:'Back to prompts',exact:true}).click();await heading('Prompt library');await selected(workspace,project,'prompts')
+    await page.goBack();await heading('AI insights');await selected(workspace,project,'ai-insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
+    await link('Context');await heading('Project context');await link('AI insights');await heading('AI insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
+  }
+  assert.deepEqual(aiWrites,[])
+  console.log('PASS navigation: owner/viewer AI insights deep links, reload, native Back and sidebar preserve project scope without quotes or provider writes.')
+
+  // One retained synthetic answer, including its complete immutable input and
+  // settled receipt. No provider credentials, quote API, queue or worker is used.
+  const insightConnection=randomUUID(),insightQuote=randomUUID(),insightComparison=randomUUID(),insightRun=randomUUID()
+  const insightPrompt=(await createPrompts(b1,other.id,{requestId:randomUUID(),prompts:[{text:'Which brand is mentioned?',enabled:false}]})).items[0]
+  const insightOrigin=(await pool.query('SELECT origin FROM project WHERE id=$1',[b1])).rows[0].origin
+  const insightAnswer='Beta one is the brand in this retained synthetic answer.'
+  const insightInput={connectionId:insightConnection,promptId:insightPrompt.id,versionId:insightPrompt.currentVersionId,systemText:'Copied navigation fixture system input',models:['openai/gpt-4o-mini'],maxCompletionTokens:128,fundedCredits:true}
+  const insightRoute={model:'openai/gpt-4o-mini',tag:'openai',providerName:'OpenAI',promptCapacity:128000,completionCapacity:16384,promptPrice:'0.00000015',completionPrice:'0.0000006',requestPrice:'0',estimateMicros:'1000'}
+  const insightCompleted=new Date(Date.now()-2*86400000).toISOString()
+  await pool.query("INSERT INTO provider_connection(id,workspace_id,provider,name) VALUES($1,$2,'openrouter','No credentials: navigation fixture')",[insightConnection,b.id])
+  await pool.query(`INSERT INTO prompt_execution_quote(id,workspace_id,project_id,user_id,prompt_id,version_id,connection_id,connection_revision,request_actor,key_fingerprint,input,messages,routes,input_hash,expires_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,1,repeat('a',64),repeat('b',64),$8,$9,$10,repeat('c',64),clock_timestamp()+interval '5 minutes')`,
+    [insightQuote,b.id,b1,other.id,insightPrompt.id,insightPrompt.currentVersionId,insightConnection,JSON.stringify(insightInput),JSON.stringify([{role:'system',content:insightInput.systemText},{role:'user',content:'Which brand is mentioned?'}]),JSON.stringify([insightRoute])])
+  await pool.query('INSERT INTO prompt_comparison(id,quote_id,workspace_id,project_id,user_id,request_key) VALUES($1,$2,$3,$4,$5,$6)',[insightComparison,insightQuote,b.id,b1,other.id,randomUUID()])
+  await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,actual_micros,status,budget_month)
+    VALUES($1,$2,$3,1,$4,$5,'synthetic.navigation.insight',repeat('d',64),1000,12,'settled',current_date)`,[insightRun,b.id,insightConnection,other.id,randomUUID()])
+  await pool.query(`INSERT INTO prompt_execution(id,comparison_id,workspace_id,project_id,position,route,status,result,completed_at)
+    VALUES($1,$2,$3,$4,0,$5,'completed',$6,$7)`,[insightRun,insightComparison,b.id,b1,JSON.stringify(insightRoute),JSON.stringify({text:insightAnswer,resolvedModel:'openai/gpt-4o-mini',provider:'OpenAI',finishReason:'stop',citations:[{url:insightOrigin+'/reference',title:'Synthetic provider annotation'}],promptTokens:12,completionTokens:20,receivedAt:insightCompleted}),insightCompleted])
+  const financialBefore=(await pool.query('SELECT * FROM provider_request WHERE id=$1',[insightRun])).rows[0]
+  for(const email of [other.email,owner.email]) {
+    assert.equal((await context.request.post(`${config.appUrl}/api/auth/sign-out`,{headers:{origin:config.appUrl},data:{}})).status(),200)
+    await auth(email);await page.goto(href(b.id,b1,'ai-insights'));await heading('AI insights')
+    const metrics=page.getByRole('region',{name:'Entity metrics',exact:true})
+    await metrics.getByText('Beta one',{exact:true}).waitFor();assert.equal(await metrics.getByText('1 / 1 (100%)',{exact:true}).count(),3)
+    if(email===owner.email) {
+      for(const width of [1440,360]) {
+        await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
+        await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`private/navigation-browser/ai-insights-${width}.png`,fullPage:true})
+      }
+      await page.setViewportSize({width:1280,height:900})
+    }
+    const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Export report CSV',exact:true}).click()])
+    assert.equal(download.suggestedFilename(),'prompt-insights.csv');const csv=await readFile(await download.path(),'utf8')
+    assert.ok(csv.includes(insightRun)&&csv.includes(insightComparison));assert.ok(!csv.includes(insightAnswer)&&!csv.includes(insightInput.systemText))
+    assert.equal(csv.split('\r\n').filter(line=>line.startsWith('"execution",')).length,1)
+    const readsBefore=requests.length
+    await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click()
+    await page.getByRole('region',{name:'Answer from GPT-4o-mini',exact:true}).getByText(insightAnswer,{exact:true}).waitFor()
+    assert.ok(requests.slice(readsBefore).includes(`/api/projects/${b1}/prompt-executions`))
+    assert.ok(requests.slice(readsBefore).includes(`/api/projects/${b1}/prompt-executions/comparisons/${insightComparison}`))
+    assert.equal(new URL(page.url()).searchParams.get('view'),'ai-insights');assert.equal(page.url().includes(insightComparison),false)
+    await page.getByText('Copied prompt and system input',{exact:true}).click();await page.getByText(insightInput.systemText,{exact:true}).waitFor()
+    await page.getByRole('button',{name:'Back to AI insights',exact:true}).click();await metrics.getByText('1 / 1 (100%)',{exact:true}).first().waitFor()
+  }
+  // Back must recompute current context, rather than restore cached denominators.
+  await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click();await page.getByText(insightAnswer,{exact:true}).waitFor()
+  await updateProjectContext(b1,other.id,{requestId:randomUUID(),revision:1,updates:[{kind:'profile',name:'Renamed insight brand',aliases:[]}]})
+  await page.getByRole('button',{name:'Back to AI insights',exact:true}).click()
+  const freshMetrics=page.getByRole('region',{name:'Entity metrics',exact:true})
+  await freshMetrics.getByText('Renamed insight brand',{exact:true}).waitFor();assert.equal(await freshMetrics.getByText('0 / 1 (0%)',{exact:true}).count(),1)
+  await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click();await page.getByText(insightAnswer,{exact:true}).waitFor()
+  await pool.query('UPDATE workspace SET raw_provider_evidence_days=1 WHERE id=$1',[b.id])
+  await page.getByRole('button',{name:'Refresh status',exact:true}).click()
+  await page.getByText('Answer and citations expired under workspace retention.',{exact:true}).waitFor()
+  await page.getByText('Copied execution input expired under workspace retention. The authored version preview above is preserved separately.',{exact:true}).waitFor()
+  assert.equal(await page.getByText(insightAnswer,{exact:true}).count(),0);assert.equal(await page.getByText(insightInput.systemText,{exact:true}).count(),0)
+  // Physical payloads still exist: this verifies fresh read policy, not cleanup.
+  assert.equal((await pool.query('SELECT result IS NOT NULL AS retained,result_purged_at FROM prompt_execution WHERE id=$1',[insightRun])).rows[0].retained,true)
+  await page.getByRole('button',{name:'Back to AI insights',exact:true}).click();await page.getByText('No eligible retained answers in this range.',{exact:true}).waitFor()
+  assert.equal(await freshMetrics.getByText('Unavailable',{exact:true}).count(),3)
+  await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click();await page.getByText('Answer and citations expired under workspace retention.',{exact:true}).waitFor()
+  assert.deepEqual((await pool.query('SELECT * FROM provider_request WHERE id=$1',[insightRun])).rows[0],financialBefore)
+  assert.equal((await pool.query('SELECT count(*) FROM prompt_comparison WHERE project_id=$1',[b1])).rows[0].count,'1')
+  assert.deepEqual(aiWrites,[`/api/projects/${b1}/prompt-insights/export`,`/api/projects/${b1}/prompt-insights/export`])
+  console.log('PASS navigation: real owner/viewer insight denominators and CSV, exact saved receipt, fresh-context Back and immediate policy-expiry masking; no provider writes or financial changes.')
 
   await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
   const oldSession = await hold(`**/api/workspaces/${a.id}/projects`, 401)

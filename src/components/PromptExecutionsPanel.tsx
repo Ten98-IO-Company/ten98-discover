@@ -18,15 +18,15 @@ type Comparison=Omit<Summary,'runs'>&{runs:Run[];input:Input|null;messages:Messa
 type Metadata={role:Role;models:Model[];vaultConfigured:boolean;spendingPaused:boolean;connections:{id:string;name:string;checkStatus:'untested'|'ok'|'error'}[];comparisons:Summary[];cache:{available:false};scheduling:{available:false}};
 type DetailResponse={role:Role;comparison:Comparison};
 type ReconcileResponse=DetailResponse&{reconciliation:{status:'matched'|'inconclusive';message:string}};
-export type ExecutionEntry={kind:'configure';promptId:string;versionId:string;authoredText:string}|{kind:'history'};
-type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void};
+export type ExecutionEntry={kind:'configure';promptId:string;versionId:string;authoredText:string}|{kind:'history'}|{kind:'receipt';comparisonId:string;promptId:string};
+type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void;backLabel?:string};
 type Screen='setup'|'quote'|'unknown'|'history'|'detail';
 type Attempt=Readonly<{quoteId:string;requestKey:string}>;
 type Operation={generation:number;controller:AbortController;write:boolean};
 const roles:Role[]=['owner','admin','editor','viewer'];
 const statuses:Status[]=['queued','running','completed','failed','uncertain','cancelled','reconciled'];
 const charges:Charge[]=['reserved','dispatched','uncertain','settled','cancelled'];
-const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const when=(v:string|null)=>v?new Date(v).toLocaleString():'Unavailable';
 const money=(v:string|null)=>v===null?'Unknown':`USD ${v}`;
 const active=(c:Summary)=>c.runs.some(r=>r.status==='queued'||r.status==='running');
@@ -60,17 +60,18 @@ function validSummary(value:unknown):value is Summary{
 function checkedComparison(value:unknown):DetailResponse{
   const data=value as DetailResponse;checkedRole(data?.role);const c=data?.comparison;
   if(!validSummary(c)||typeof c.inputExpired!=='boolean'||!(c.input===null||validInput(c.input))||!(c.messages===null||validMessages(c.messages))||c.cache?.reused!==false||c.cache?.available!==false||c.runs.some(r=>!(r.result===null||validAnswer(r.result))||!nullableString(r.reportedCost)||!nullableString(r.upstreamReportedCost)||!nullableString(r.generationId)||!(r.isByok===null||typeof r.isByok==='boolean')))throw new Error('The response was incomplete. Reload the saved run.');
+  if(c.input&&(c.input.promptId!==c.prompt.id||c.input.versionId!==c.prompt.versionId)||new Set(c.runs.map(r=>r.id)).size!==c.runs.length)throw new Error('The saved run identity could not be verified.');
   return data;
 }
 function Messages({messages}:{messages:Message[]}){return <>{!messages.some(m=>m.role==='system')&&<p>No system message</p>}{messages.map((m,i)=><div key={i}><strong>{m.role==='system'?'System':'User'}</strong><p style={textStyle}>{m.content}</p></div>)}</>;}
 
 export function PromptExecutionsPanel(props:Props){
-  const key=props.entry.kind==='configure'?`${props.entry.promptId}:${props.entry.versionId}`:'history';
-  return <Panel key={`${props.userId}:${props.projectId}:${key}`} {...props}/>;
+  const key=props.entry.kind==='configure'?`${props.entry.promptId}:${props.entry.versionId}`:props.entry.kind==='receipt'?`${props.entry.promptId}:${props.entry.comparisonId}`:'history';
+  return <Panel key={`${props.userId}:${props.workspaceId}:${props.projectId}:${props.entry.kind}:${key}`} {...props}/>;
 }
-function Panel({workspaceId,projectId,entry,onBack,onUnauthorized}:Props){
+function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Back to library'}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/prompt-executions',uid=useId();
-  const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':'history');
+  const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   const [metadata,setMetadata]=useState<Metadata|null>(null),[role,setRole]=useState<Role|null>(null);
   const [comparison,setComparison]=useState<Comparison|null>(null),[quote,setQuote]=useState<Quote|null>(null);
   const [attempt,setAttempt]=useState<Attempt|null>(null),[connectionId,setConnectionId]=useState('');
@@ -80,6 +81,8 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized}:Props){
   const [polling,setPolling]=useState(false),[clock,setClock]=useState(Date.now());
   const mounted=useRef(false),generation=useRef(0),operation=useRef<Operation|null>(null);
   const selection=useRef<string|null>(null),attemptRef=useRef<Attempt|null>(null),pollingUntil=useRef(0);
+  const restoreReceipt=useRef(entry.kind==='receipt');
+  const expiredInputs=useRef(new Set<string>()),expiredResults=useRef(new Set<string>());
   const initialized=useRef(false),notified=useRef(false),unauthorizedRef=useRef(onUnauthorized),backRef=useRef(onBack);
   unauthorizedRef.current=onUnauthorized;backRef.current=onBack;
   const heading=useRef<HTMLHeadingElement|null>(null),focusNext=useRef(true);
@@ -99,7 +102,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized}:Props){
   function applyRole(value:Role){setRole(value);setAccessLost(false);if(value==='viewer'){clearDraft();if(['setup','quote','unknown'].includes(screen))move('history');}}
   function purge(message:string){
     clearDraft();setMetadata(null);setComparison(null);setRole(null);selection.current=null;setPolling(false);
-    setNotice(null);setError(message);setAccessLost(true);initialized.current=false;move(entry.kind==='configure'?'setup':'history');
+    setNotice(null);setError(message);setAccessLost(true);initialized.current=false;restoreReceipt.current=entry.kind==='receipt';move(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   }
   function failure(e:unknown,op:Operation):boolean{
     if(!current(op)||(e instanceof Error&&e.name==='AbortError'))return true;
@@ -108,10 +111,12 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized}:Props){
       if(e.status===401&&!notified.current){notified.current=true;unauthorizedRef.current();}return true;
     }return false;
   }
+  function rememberExpiredResults(c:Summary){for(const run of c.runs)if(run.resultExpired)expiredResults.current.add(run.id);}
   async function readMetadata(op:Operation){
     const data=await api<Metadata>(B,{signal:op.controller.signal});if(!current(op))return null;
-    checkedRole(data?.role);if(!Array.isArray(data.models)||!data.models.every(model)||!Array.isArray(data.connections)||data.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(data.comparisons)||!data.comparisons.every(validSummary)||typeof data.vaultConfigured!=='boolean'||typeof data.spendingPaused!=='boolean')throw new Error('Readiness could not be read. Reload access.');
-    setMetadata(data);applyRole(data.role);
+    try{checkedRole(data?.role);if(!Array.isArray(data.models)||!data.models.every(model)||!Array.isArray(data.connections)||data.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(data.comparisons)||!data.comparisons.every(validSummary)||typeof data.vaultConfigured!=='boolean'||typeof data.spendingPaused!=='boolean')throw new Error();}
+    catch{purge('Readiness could not be verified. Reload access to continue.');return null;}
+    data.comparisons.forEach(rememberExpiredResults);setMetadata(data);applyRole(data.role);
     if(!initialized.current&&data.role!=='viewer'){
       initialized.current=true;setConnectionId(data.connections.length===1&&data.connections[0].checkStatus==='ok'?data.connections[0].id:'');
       setModels(data.models.includes('openai/gpt-4o-mini')?['openai/gpt-4o-mini']:data.models.slice(0,1));
@@ -119,27 +124,39 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized}:Props){
   }
   async function refreshMetadata(){
     const op=begin();if(!op)return;setError(null);
-    try{await readMetadata(op);}catch(e){if(current(op)&&!failure(e,op))setError(errMsg(e));}finally{finish(op);}
+    try{
+      if(entry.kind==='receipt'&&(!uuid(entry.comparisonId)||!uuid(entry.promptId))){purge('The saved run reference is invalid.');return;}
+      const data=await readMetadata(op);if(!data||!current(op))return;
+      if(entry.kind==='receipt'&&restoreReceipt.current){selection.current=entry.comparisonId;move('detail');if(await readComparison(op,entry.comparisonId))restoreReceipt.current=false;}
+    }catch(e){if(current(op)&&!failure(e,op))setError(errMsg(e));}finally{finish(op);}
   }
   useEffect(()=>{mounted.current=true;void refreshMetadata();return ()=>{mounted.current=false;generation.current++;operation.current?.controller.abort();operation.current=null;};},[B]);
   useEffect(()=>{if(focusNext.current){heading.current?.focus();focusNext.current=false;}},[screen,quote?.id,comparison?.id,accessLost]);
   useEffect(()=>{if(!quote)return;const timer=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(timer);},[quote?.id]);
   function mayLeave(){return !attemptRef.current||window.confirm('This start may already have been accepted. Leaving discards local retry controls and does not stop server work. Leave this run?');}
   function back(){if(operation.current?.write||!mayLeave())return;invalidate();setPending(null);backRef.current();}
-  function history(){if(operation.current?.write||!mayLeave())return;invalidate();setPending(null);setQuote(null);setComparison(null);selection.current=null;setError(null);setNotice(null);move('history');void refreshMetadata();}
+  function history(){if(operation.current?.write||!mayLeave())return;invalidate();restoreReceipt.current=false;setPending(null);setQuote(null);setComparison(null);selection.current=null;setError(null);setNotice(null);move('history');void refreshMetadata();}
   function setup(){if(operation.current?.write||entry.kind!=='configure'||!mayLeave())return;invalidate();setPending(null);setQuote(null);setError(null);setNotice(null);move('setup');}
   function edit(change:()=>void){if(operation.current?.write||attemptRef.current)return;if(operation.current)invalidate();setQuote(null);setError(null);setNotice(null);change();}
   function showComparison(data:DetailResponse,explicit=true){
+    if(data.comparison.inputExpired)expiredInputs.current.add(data.comparison.id);
+    rememberExpiredResults(data.comparison);
+    data={...data,comparison:{...data.comparison,...(expiredInputs.current.has(data.comparison.id)?{inputExpired:true,input:null,messages:null}:{}),runs:data.comparison.runs.map(run=>expiredResults.current.has(run.id)?{...run,resultExpired:true,result:null}:run)}};
     applyRole(data.role);setComparison(data.comparison);selection.current=data.comparison.id;
     setMetadata(old=>old?{...old,comparisons:[data.comparison,...old.comparisons.filter(c=>c.id!==data.comparison.id)].sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)||b.id.localeCompare(a.id)).slice(0,20)}:old);
     if(explicit){pollingUntil.current=Date.now()+300_000;setPolling(active(data.comparison)&&!document.hidden);move('detail');}else if(!active(data.comparison))setPolling(false);
+  }
+  async function readComparison(op:Operation,id:string,automatic=false){
+    const raw=await api<unknown>(B+'/comparisons/'+encodeURIComponent(id),{signal:op.controller.signal});if(!current(op)||selection.current!==id)return false;
+    let data:DetailResponse;try{data=checkedComparison(raw);if(data.comparison.id!==id||entry.kind==='receipt'&&id===entry.comparisonId&&data.comparison.prompt.id!==entry.promptId)throw new Error();}
+    catch{purge('The saved run response could not be verified. Reload access to continue.');return false;}
+    showComparison(data,!automatic);return true;
   }
   async function openComparison(id:string,automatic=false){
     if(automatic&&operation.current)return;const op=begin(false,!automatic);if(!op)return;
     if(!automatic){selection.current=id;setError(null);setNotice(null);if(comparison?.id!==id)setComparison(null);move('detail');}
     try{
-      const raw=await api<unknown>(B+'/comparisons/'+encodeURIComponent(id),{signal:op.controller.signal});if(!current(op)||selection.current!==id)return;
-      const data=checkedComparison(raw);if(data.comparison.id!==id)throw new Error('The requested run could not be read.');showComparison(data,!automatic);
+      await readComparison(op,id,automatic);
     }catch(e){if(!current(op)||failure(e,op))return;setError(automatic?'Status could not be refreshed. Refresh status to try again.':errMsg(e));setPolling(false);}finally{finish(op);}
   }
   const activeStatuses=comparison?.runs.map(r=>r.status).join('|');
@@ -213,7 +230,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized}:Props){
   const providerHelp=role==='owner'?<Link to='/' search={{workspace:workspaceId,project:projectId,view:'providers'}} className='btn ghost' aria-disabled={writing||undefined} onClick={event=>{if(operation.current?.write)event.preventDefault();}}>Providers and spending</Link>:<p className="hint">Ask a workspace owner to configure this connection or spending limits.</p>;
   const title=accessLost?'Access unavailable':screen==='history'?'Recent runs':screen==='detail'?'Prompt run':screen==='setup'?'Review a prompt run':screen==='unknown'?'Start acknowledgement unknown':'Review before spending';
   return <section className="research-panel stack" aria-label="Prompt execution" style={{minWidth:0}}>
-    <div className="row between"><button type="button" className="btn ghost" onClick={back} disabled={writing}>Back to library</button>{screen!=='history'&&!accessLost&&<button type="button" className="btn ghost" onClick={history} disabled={writing}>Recent runs</button>}</div>
+    <div className="row between"><button type="button" className="btn ghost" onClick={back} disabled={writing}>{backLabel}</button>{screen!=='history'&&!accessLost&&<button type="button" className="btn ghost" onClick={history} disabled={writing}>Recent runs</button>}</div>
     <h2 tabIndex={-1} ref={heading}>{title}</h2>
     {error&&<div className="alert" role="alert" id={uid+'-error'}>{error}</div>}{notice&&<p role="status">{notice}</p>}
     {busy&&<p role="status" className="hint">{operation.current?.write?'Waiting for the requested action…':'Loading saved state…'}</p>}

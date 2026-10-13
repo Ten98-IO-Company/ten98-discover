@@ -1,8 +1,9 @@
 # Retained-answer AI insights interface
 
 This is the approved interface contract for the local retained-answer increment
-described in [AI insights](ai-insights.md). The view/controller acceptance is
-pending. It does not complete historical comparisons or the full P15–P17 scope.
+described in [AI insights](ai-insights.md). Contained view/controller browser
+acceptance and production navigation have passed locally. This increment does not
+complete historical comparisons or the full P15–P17 scope.
 
 All current project members can read and export. Opening this screen never
 requests an answer, starts a job or checks provider credentials. The controller
@@ -183,4 +184,26 @@ GPT checks actual DTO/API/controller behavior, abort generations, scopes,
 expiry/revision changes, numerator/drilldown reconciliation, invalid-success
 handling, CSV headers/limits/cancellation, viewer reads, and 1440/360px keyboard
 and focus behavior. A pure presentation fixture cannot prove backend authority
-or provider integration. No acceptance is claimed before those checks run.
+or provider integration.
+
+The seven controller Edge groups in `tests/ai-insights-browser.mjs` pass against
+the real controller and view with synthetic local responses. They cover exact
+population/drilldown counts, staged labels, named prompt pagination, zero versus
+unavailable, malformed nested responses, revision/expiry/access purges,
+A→B→A stale-response isolation, receipt callbacks, CSV validation/cancellation,
+and 1440/360px keyboard scrolling with a reachable comparison action. Eight
+independent pure-view groups also pass. TypeScript and the documentation plan
+check pass. These checks use no database, provider or production account.
+
+Run the controller check with `TEN98_AI_INSIGHTS_BROWSER=1`, an externally
+installed `PLAYWRIGHT_MODULE` absolute module path, optional
+`PLAYWRIGHT_CHANNEL=msedge`, and `node tests/ai-insights-browser.mjs`. It creates
+an ephemeral loopback Vite fixture and blocks unexpected/outbound traffic.
+Screenshots and failure diagnostics are written only to ignored local evidence.
+
+Seventeen production navigation groups pass against a separate PostgreSQL
+database with synthetic retained evidence and no worker or provider traffic.
+They include owner/viewer report reads and CSV, exact comparison handoff,
+fresh current-context reads after Back, and immediate policy-expiry masking.
+The final desktop/mobile screens have no document overflow; evidence tables
+scroll independently. These checks do not establish live-provider acceptance.

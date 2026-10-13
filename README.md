@@ -8,6 +8,8 @@ Rank tracking adds tracker/keyword management, quoted manual checks, retained pe
 
 Native Meta connections now support manual daily reports, latest complete daily coverage, retained campaign inventories and CSV exports. Inventory includes campaigns without reported activity and preserves separate configured/effective statuses. Local synthetic acceptance and remaining provider gates are recorded in [Meta reports](docs/meta-reports.md) and [campaign inventory](docs/meta-campaigns.md).
 
+AI insights analyzes retained prompt answers using the current brand and competitor context. It separates visibility, share of voice and provider citation hits, with eligibility coverage, actual daily observations, filters, execution drilldown and CSV exports. Historical comparison methods and additional provider coverage remain required; see [AI insights](docs/ai-insights.md).
+
 Docker runs the web app, worker and PostgreSQL with explicit upgrade migrations. Other platform imports, replay/heatmaps, broader rank reporting, backlinks, and broader SEO/AI visibility remain unfinished. No release image is published. See the [development quickstart and limitations](docs/foundation.md).
 
 The [current implementation and release gaps](docs/release-status.md) separates usable workflows, partial requirements and pending work across all 81 requirements, with their validation limits.
@@ -36,6 +38,7 @@ The first usable release must reach the complete technical capability baseline o
 18. [Rank tracking, recurring checks and acceptance evidence](docs/rank-tracking.md)
 19. [Native Meta advertising report contract and provider gates](docs/meta-reports.md)
 20. [Retained Meta campaign inventory and acceptance](docs/meta-campaigns.md)
+21. [Retained-answer AI insights and measurement limits](docs/ai-insights.md)
 
 ## Product direction
 

@@ -37,7 +37,7 @@ function parseQuery(params:URLSearchParams){
   drilldown:{entityId,outcome:outcome as Drilldown['outcome']},cursor:params.get('cursor')};
 }
 const stamp=(column:string)=>`to_char(${column} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
-const expired=`(e.result_purged_at IS NOT NULL OR (e.result IS NOT NULL AND e.completed_at IS NOT NULL AND e.completed_at<transaction_timestamp()-make_interval(days=>w.raw_provider_evidence_days)))`;
+const expired=`(e.result_purged_at IS NOT NULL OR (e.result IS NOT NULL AND e.completed_at IS NOT NULL AND e.completed_at<transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours'))`;
 const fromSql=`FROM prompt_comparison c JOIN prompt_execution e ON e.comparison_id=c.id AND e.project_id=c.project_id
  JOIN prompt_execution_quote q ON q.id=c.quote_id AND q.project_id=c.project_id
  JOIN project_prompt p ON p.id=q.prompt_id AND p.project_id=c.project_id

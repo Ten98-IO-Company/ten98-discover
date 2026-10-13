@@ -37,20 +37,33 @@ async function promptVersion(client:PoolClient,projectId:string,promptId:string,
 }
 function summary(row:any,details=false){return {id:row.id,model:row.route.model,provider:row.route.providerName,status:row.status,chargeStatus:row.charge_status,
   estimateUsd:usd(row.estimate_micros),actualUsd:row.actual_micros===null?null:usd(row.actual_micros),dispatchedAt:row.dispatched_at,completedAt:row.completed_at,
-  diagnostic:row.diagnostic,resultExpired:row.result_purged_at!==null,...(details?{result:row.result,reportedCost:row.evidence?.reportedCost??null,
+  diagnostic:row.diagnostic,resultExpired:row.read_expired,...(details?{result:row.read_expired?null:row.result,reportedCost:row.evidence?.reportedCost??null,
     isByok:row.evidence?.isByok??null,upstreamReportedCost:row.evidence?.upstreamReportedCost??null,generationId:row.generation_id}:{} )};}
 async function comparisonDto(client:PoolClient,projectId:string,id:string,userId:string,role:string,details=false){
-  const c=(await client.query(`SELECT c.*,q.prompt_id,q.version_id,v.text FROM prompt_comparison c
+  // Reads enforce the same strict raw cutoff as cleanup, including pending-input
+  // protection. Cleanup lag must not expose expired payloads through a receipt.
+  const c=(await client.query(`SELECT c.*,q.prompt_id,q.version_id,v.text,
+    (q.input_purged_at IS NOT NULL OR (
+      EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id)
+      AND NOT EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id
+        AND (r.status IN('queued','running') OR r.completed_at IS NULL
+          OR r.completed_at>=transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours')))) AS input_expired
+    FROM prompt_comparison c
     JOIN prompt_execution_quote q ON q.id=c.quote_id
+    JOIN workspace w ON w.id=c.workspace_id
     JOIN prompt_text_version v ON v.id=q.version_id AND v.project_id=q.project_id AND v.prompt_id=q.prompt_id
     WHERE c.id=$1 AND c.project_id=$2`,[id,projectId])).rows[0];
   if(!c)throw new FoundationError(404,'Comparison not found or unavailable.');
-  const rows=(await client.query(runSelect+' WHERE r.comparison_id=$1 AND r.project_id=$2 ORDER BY r.position',[id,projectId])).rows;
+  const rows=(await client.query(`SELECT saved.*,
+    (saved.result_purged_at IS NOT NULL OR (saved.result IS NOT NULL AND saved.completed_at IS NOT NULL
+      AND saved.completed_at<transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours')) AS read_expired
+    FROM (${runSelect} WHERE r.comparison_id=$1 AND r.project_id=$2) saved
+    JOIN workspace w ON w.id=saved.workspace_id ORDER BY saved.position`,[id,projectId])).rows;
   return {id:c.id,quoteId:c.quote_id,createdAt:c.created_at,cancelRequested:c.cancel_requested,
     prompt:{id:c.prompt_id,versionId:c.version_id,textPreview:Array.from(c.text as string).slice(0,160).join('')},
     canCancel:writers.includes(role)&&(role==='owner'||c.user_id===userId)&&rows.some(r=>r.status==='queued'&&r.charge_status==='reserved'),
     runs:rows.map(r=>summary(r,details)),
-    ...(details?{input:rows[0]?.input,messages:rows[0]?.messages,inputExpired:rows[0]?.input_purged_at!==null,cache:{reused:false,available:false}}:{})};
+    ...(details?{input:c.input_expired?null:rows[0]?.input,messages:c.input_expired?null:rows[0]?.messages,inputExpired:c.input_expired,cache:{reused:false,available:false}}:{})};
 }
 export async function getPromptExecutions(projectId:string,userId:string){return scoped(projectId,userId,readers,async(client,wid,role)=>{
   const connections=await client.query("SELECT id,name,check_status AS \"checkStatus\" FROM provider_connection WHERE workspace_id=$1 AND provider='openrouter' AND revoked_at IS NULL ORDER BY created_at,id",[wid]);

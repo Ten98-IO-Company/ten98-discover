@@ -158,16 +158,45 @@ export async function runPromptExecutionChecks(){
   const evidenceBeforeRecovery=(await pool.query('SELECT completed_at::text AS completed,result FROM prompt_execution WHERE id=$1',[retainedChild.id])).rows[0];
   const insightParams=new URLSearchParams({from:agedDay,to:agedDay}),insightsBefore=await getPromptInsights(retainedAnswer.project,viewer,insightParams);
   assert.equal(insightsBefore.coverage.expired,1);assert.equal(insightsBefore.coverage.eligible,0);
+  const beforeCleanup=await detail(retainedAnswer,retainedRun.id);
+  assert.equal(beforeCleanup.runs[0].resultExpired,true,'Receipt reads must mask policy-expired answers before cleanup.');
+  assert.equal(beforeCleanup.runs[0].result,null);assert.equal(beforeCleanup.inputExpired,true);assert.equal(beforeCleanup.input,null);assert.equal(beforeCleanup.messages,null);
+  assert.equal((await getPromptExecutions(retainedAnswer.project,viewer)).comparisons.find(c=>c.id===retainedRun.id)!.runs[0].resultExpired,true);
+  const sibling=(await pool.query('SELECT id,status,completed_at::text AS completed FROM prompt_execution WHERE comparison_id=$1 AND id<>$2',[retainedRun.id,retainedChild.id])).rows[0];
+  await pool.query("UPDATE prompt_execution SET status='queued',completed_at=NULL WHERE id=$1",[sibling.id]);
+  try{const pendingInput=await detail(retainedAnswer,retainedRun.id);assert.equal(pendingInput.inputExpired,false);assert.notEqual(pendingInput.messages,null);assert.equal(pendingInput.runs[0].result,null);}
+  finally{await pool.query('UPDATE prompt_execution SET status=$2,completed_at=$3 WHERE id=$1',[sibling.id,sibling.status,sibling.completed]);}
   const retainedPolicy=await getRetention(retainedAnswer.workspace,owner),previewBeforeRecovery=await previewRetention(retainedAnswer.workspace,owner,{revision:retainedPolicy.revision,settings:retainedPolicy.settings});assert.equal(previewBeforeRecovery.promptEstimate.results,1);
   const paidBeforeRecovery=paid;receiptChange={total_cost:0.000012345};const recoveredAnswer=await reconcilePromptExecution(retainedAnswer.project,owner,retainedChild.id,{},send);receiptChange={};
   assert.equal(recoveredAnswer.reconciliation.status,'matched');assert.equal((await ledger(retainedChild.id)).status,'settled');assert.equal((await ledger(retainedChild.id)).actual_micros,'13');assert.equal(paid,paidBeforeRecovery);
+  assert.equal(recoveredAnswer.comparison.runs[0].resultExpired,true);assert.equal(recoveredAnswer.comparison.runs[0].result,null);assert.equal(recoveredAnswer.comparison.messages,null);
   assert.deepEqual((await pool.query('SELECT completed_at::text AS completed,result FROM prompt_execution WHERE id=$1',[retainedChild.id])).rows[0],evidenceBeforeRecovery,'Charge-only reconciliation must preserve the exact original completion timestamp and answer.');
   const insightsAfter=await getPromptInsights(retainedAnswer.project,viewer,insightParams);assert.equal(insightsAfter.coverage.expired,1);assert.equal(insightsAfter.coverage.eligible,0);assert.equal(insightsAfter.metrics[0].eligibleAnswers,null);
   assert.equal((await previewRetention(retainedAnswer.workspace,owner,{revision:retainedPolicy.revision,settings:retainedPolicy.settings})).promptEstimate.results,1);
   const erasedAnswer=await runRetentionBatch(retainedAnswer.project);assert.equal(erasedAnswer?.expiredPromptResults,1);assert.equal(erasedAnswer?.expiredPromptInputs,1);
   assert.equal((await detail(retainedAnswer,retainedRun.id)).runs[0].result,null);assert.equal((await detail(retainedAnswer,retainedRun.id)).runs[0].resultExpired,true);assert.equal((await getPromptExecutions(retainedAnswer.project,owner)).spendingPaused,true);
   assert.equal((await getPromptInsights(retainedAnswer.project,viewer,insightParams)).coverage.expired,1);assert.equal(paid,paidBeforeRecovery);
+  await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[retainedAnswer.workspace]);
+  const erasedReceipt=await detail(retainedAnswer,retainedRun.id);assert.equal(erasedReceipt.runs[0].resultExpired,true);assert.equal(erasedReceipt.runs[0].result,null);assert.equal(erasedReceipt.inputExpired,true);assert.equal(erasedReceipt.messages,null);
   console.log('PASS charge-only reconciliation preserves the original raw-retention clock, expired insight eligibility and cleanup while settling its exact ledger');
+
+  // Read cutoff comparisons must keep PostgreSQL microseconds and elapsed days,
+  // even when the database/session timezone crosses daylight-saving changes.
+  mode='ok';const dst=await fixture(),dstRun=await start(dst);await executePromptComparison(dstRun.id,send);
+  const dstConnect=pool.connect.bind(pool);let offset=0;
+  pool.connect=(async(...args:any[])=>{if(args.length)return (dstConnect as any)(...args);const client=await dstConnect(),query=client.query.bind(client),release=client.release.bind(client);
+    client.query=(async(...values:any[])=>{const result=await (query as any)(...values);if(String(values[0])==='BEGIN'){
+      await query("SET LOCAL TimeZone='America/New_York'");
+      const sample=(await query(`SELECT d FROM generate_series(1,366) d WHERE transaction_timestamp()-make_interval(days=>d)
+        <>transaction_timestamp()-d*interval '24 hours' ORDER BY d LIMIT 1`)).rows[0];assert.ok(sample);
+      await query('UPDATE workspace SET raw_provider_evidence_days=$2 WHERE id=$1',[dst.workspace,sample.d]);
+      await query("UPDATE prompt_execution SET completed_at=transaction_timestamp()-$2*interval '24 hours'+$3*interval '1 microsecond' WHERE comparison_id=$1",[dstRun.id,sample.d,offset]);
+    }return result;}) as typeof client.query;
+    client.release=((...args:any[])=>{client.query=query;return (release as any)(...args);}) as typeof client.release;return client;
+  }) as typeof pool.connect;
+  try{const exact=await detail(dst,dstRun.id);assert.ok(exact.runs.every(r=>!r.resultExpired&&r.result!==null));assert.equal(exact.inputExpired,false);
+    offset=-1;const earlier=await detail(dst,dstRun.id);assert.ok(earlier.runs.every(r=>r.resultExpired&&r.result===null));assert.equal(earlier.inputExpired,true);assert.equal(earlier.messages,null);
+  }finally{pool.connect=dstConnect;}
 
   mode='ok';const crashed=await fixture(),cr=await start(crashed);await pool.query("UPDATE provider_request SET status='dispatched' WHERE id=$1",[cr.runs[0].id]);await pool.query("UPDATE prompt_execution SET status='running',dispatched_at=clock_timestamp()-interval '2 minutes' WHERE id=$1",[cr.runs[0].id]);before=paid;await reconcilePromptExecutionJobs();const stopped=await detail(crashed,cr.id);assert.equal(stopped.runs[0].status,'uncertain');assert.equal(stopped.runs[1].status,'cancelled');assert.equal(paid,before);
   const evidence=(await pool.query('SELECT row_to_json(p) AS ledger,r.evidence FROM provider_request p JOIN prompt_execution r ON r.id=p.id WHERE p.id=$1',[done.runs[0].id])).rows[0];await pool.query("UPDATE prompt_execution SET completed_at=clock_timestamp()-interval '91 days' WHERE comparison_id=$1",[done.id]);const policy=await getRetention(f.workspace,owner);const preview=await previewRetention(f.workspace,owner,{revision:policy.revision,settings:policy.settings});assert.equal(preview.promptEstimate.results,2);

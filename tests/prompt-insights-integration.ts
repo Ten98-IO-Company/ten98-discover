@@ -85,6 +85,29 @@ export async function runPromptInsightsChecks(){
   await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[retention.workspace]);rr=await get(retention);assert.equal(rr.coverage.expired,1);assert.equal(rr.coverage.eligible,1);
   const revived=await get(retention);await pool.query("UPDATE prompt_execution SET result=jsonb_set(result,'{text}','\"Beta\"') WHERE id=$1",[oldRows[0].id]);await assert.rejects(exported(retention,revived),fail(409));
   await assert.rejects(exported(retention,await get(retention),viewer,AbortSignal.abort()),fail(499));
+  // A database/session timezone may differ from the report timezone. Find a
+  // real DST crossing relative to now, so this proves elapsed-day policy all year.
+  const dst=await fixture(),probe=await pool.connect();let boundary:{days:number;completed:Date;expired:boolean};
+  try{await probe.query('BEGIN');await probe.query("SET LOCAL TimeZone='America/New_York'");
+   const sample=(await probe.query(`WITH cutoffs AS (
+    SELECT d,transaction_timestamp()-make_interval(days=>d) AS civil,
+      transaction_timestamp()-d*interval '24 hours' AS elapsed FROM generate_series(1,366) d
+   ) SELECT d AS days,elapsed+(civil-elapsed)/2 AS completed,civil<elapsed AS expired
+     FROM cutoffs WHERE civil<>elapsed ORDER BY d LIMIT 1`)).rows[0];
+   assert.ok(sample,'The explicit DST session must produce a civil/elapsed-day difference.');boundary=sample;
+  }finally{await probe.query('ROLLBACK');probe.release();}
+  await pool.query('UPDATE workspace SET raw_provider_evidence_days=$2 WHERE id=$1',[dst.workspace,boundary!.days]);
+  await seed(dst,[{result:result('Acme'),completed:boundary!.completed.toISOString()}]);
+  const beforeDstConnect=pool.connect.bind(pool);let dstReads=0;
+  pool.connect=(async(...args:any[])=>{if(args.length)return (beforeDstConnect as any)(...args);const client=await beforeDstConnect(),query=client.query.bind(client),release=client.release.bind(client);
+   client.query=(async(...queryArgs:any[])=>{const response=await (query as any)(...queryArgs);
+    if(String(queryArgs[0]).startsWith('BEGIN')){await query("SET LOCAL TimeZone='America/New_York'");dstReads++;}return response;
+   }) as typeof client.query;
+   client.release=((...releaseArgs:any[])=>{client.query=query;return (release as any)(...releaseArgs);}) as typeof client.release;return client;
+  }) as typeof pool.connect;
+  try{const report=await get(dst);assert.equal(dstReads,1);assert.equal(report.coverage.expired,Number(boundary!.expired),'Raw retention must use elapsed 24-hour days, not civil days in the database session timezone.');
+   assert.equal(report.coverage.eligible,Number(!boundary!.expired));assert.equal(report.executions[0].eligibility,boundary!.expired?'expired':'eligible');
+  }finally{pool.connect=beforeDstConnect;}
   console.log('PASS fresh raw retention, permanent tombstones, changed payload revisions and cancelled exports');
 
   const zones=await fixture();await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[zones.workspace]);await seed(zones,[

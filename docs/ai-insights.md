@@ -1,7 +1,7 @@
 # AI insights from retained answers
 
-Read-only service and matcher implemented and tested locally2026-10-13; the
-interface is in progress. This P15/P16/P17 increment does not complete all AI
+Read-only service, matcher and interface implemented and tested locally 2026-10-13,
+including production application navigation. This P15/P16/P17 increment does not complete all AI
 visibility requirements. It reads existing evidence without requesting a
 provider, job or credit check.
 
@@ -179,7 +179,19 @@ boundaries, capacity and CSV exports. All pass with zero outbound provider calls
 Charge reconciliation preserves the original answer completion timestamp, so
 settling an old charge cannot restart its raw-evidence retention period; the
 nine-group execution suite verifies this regression and existing paid-work gates.
+The shared receipt read path also masks expired answers and copied input before
+cleanup runs. Pending children protect required input; permanent purge markers
+remain unavailable when retention is extended. Both insights and receipt reads
+use elapsed24-hour policy days independent of the database session timezone;
+explicit DST and exact microsecond-boundary checks cover this distinction.
 
-Current-context insights still require interface and production browser
-acceptance. Historical identity capture/comparison methods, further provider
+Eight pure-view, seven protected-controller and eight receipt-navigation browser
+groups pass with synthetic local data, desktop/mobile rendering, keyboard
+scrolling, exact drilldown and CSV/cancellation/access checks. See the
+[interface contract and acceptance](ai-insights-ui.md). Seventeen production
+navigation groups pass, including owner/viewer insights, whole-report CSV,
+exact receipt handoff, refreshed Back navigation and immediate retention masking.
+The receipt controller also remembers expiry learned from a run summary before
+loading its detail, so a later stale response cannot redisplay a known-expired answer.
+Historical identity capture/comparison methods, further provider
 adapters, generated reports and full filter/export parity remain outstanding.
