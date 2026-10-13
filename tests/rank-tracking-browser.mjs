@@ -72,9 +72,22 @@ try{
  });
  const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
  const openMain=async()=>{await page.getByRole('button',{name:/Synthetic main tracker/}).click();await page.getByText('literal C++ %20',{exact:true}).waitFor();};
+ const settings=()=>page.locator('main summary').filter({hasText:/^Tracker settings$/}),openSettings=async()=>{if(!await settings().evaluate(node=>node.parentElement.open))await settings().click();};
+ const findings=[],check=async(name,run)=>{try{await run();}catch(error){findings.push(name+': '+error.message);console.error('FAIL '+name+': '+error.message);}};
+ const before=async(first,second)=>assert.equal(await first.evaluate((node,other)=>Boolean(node.compareDocumentPosition(other)&Node.DOCUMENT_POSITION_FOLLOWING),await second.elementHandle()),true,'Context and actions precede keyword results');
+ const targets=async()=>{const short=[];for(const control of await page.locator('.rank-tracking button,.rank-tracking input:not([type=checkbox]),.rank-tracking select,.rank-tracking textarea,.rank-tracking summary').all()){if(!await control.isVisible())continue;const box=await control.boundingBox();if(!box||box.height<44)short.push({control:await control.getAttribute('id')||await control.innerText(),height:box?.height??null});}assert.deepEqual(short,[],'44px targets at every viewport');};
  await page.goto(origin);await page.getByRole('button',{name:'New tracker',exact:true}).waitFor();await openMain();
  assert.equal(calls.some(c=>c.path.endsWith('/catalog')||c.path.endsWith('/locations')),false,'Reading saved setup makes no catalog call');
  console.log('PASS authored details load without provider catalog calls.');
+ await check('detail hierarchy',async()=>{
+  const heading=page.getByRole('heading',{name:'Synthetic main tracker',exact:true}),header=heading.locator('xpath=ancestor::*[.//button[normalize-space()="Back to trackers"] and .//button[normalize-space()="Refresh tracker"]][1]'),table=page.getByRole('region',{name:'Keywords',exact:true});
+  for(const name of ['Back to trackers','Refresh tracker'])assert.equal(await header.getByRole('button',{name,exact:true}).count(),1);assert.equal(await header.getByRole('region').count(),0);assert.equal(await settings().evaluate(node=>node.parentElement.open),false);assert.equal(await page.getByRole('button',{name:'Edit settings',exact:true,includeHidden:true}).count(),1);
+  for(const text of ['example.com (including subdomains) · United States, US · English','Devices: Mobile · Requested results: 10 · Maximum billable pages: 1']){const item=page.getByText(text,{exact:true});assert.equal(await item.isVisible(),true);assert.equal(await item.evaluate(node=>node.closest('details')===null),true);}
+  for(const name of ['Latest observations','Reporting','Check history','Schedule','Prepare a rank check','Pin selected','Unpin selected','Remove selected','Check selected keywords']){const action=page.getByRole('button',{name,exact:true});assert.equal(await action.evaluate(node=>node.closest('details')===null),true);await before(action,table);}
+  assert.equal(await table.evaluate(node=>node.closest('details')===null),true);const keywordHeader=page.getByRole('heading',{name:'Keywords',exact:true}).locator('xpath=ancestor::*[.//button[normalize-space()="Add keywords"] and .//*[normalize-space()="2 of 1,000 keywords"]][1]');assert.equal(await keywordHeader.getByRole('button',{name:'Add keywords',exact:true}).count(),1);assert.equal(await keywordHeader.getByText('2 of 1,000 keywords',{exact:true}).count(),1);assert.equal(await keywordHeader.getByRole('region').count(),0);
+  for(const name of ['Pin selected','Unpin selected','Remove selected','Check selected keywords'])assert.equal(await page.getByRole('button',{name,exact:true}).isDisabled(),true);
+  const count=calls.length;await settings().focus();await page.keyboard.press('Enter');await page.keyboard.press('Space');await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));assert.equal(calls.length,count);assert.equal(mutations.length,0);assert.equal(await settings().evaluate(node=>node.parentElement.open),false);
+ });
  await page.getByRole('button',{name:'Back to trackers',exact:true}).click();
  await page.getByRole('button',{name:'New tracker',exact:true}).click();
  await page.getByLabel(/connection/i).selectOption(cid);
@@ -118,8 +131,11 @@ try{
  assert.equal(receipts.size,1);
  console.log('PASS committed lost acknowledgement retains one request and blocks RouterProvider navigation until exact replay.');
 
- await page.getByRole('button',{name:'Edit settings',exact:true}).click();
+ await openSettings();await page.getByRole('button',{name:'Edit settings',exact:true}).click();
+ await check('edit opens and focuses its heading',async()=>{await page.waitForFunction(()=>document.activeElement?.id.endsWith('edit-heading'));assert.equal(await settings().evaluate(node=>node.parentElement.open),true);});
  await page.getByLabel(/^(Tracker name|Name)$/).fill('Edited after malformed acknowledgement');
+ await check('native edit draft retention',async()=>{assert.equal(await settings().evaluate(node=>node.parentElement.open),true);for(const name of ['Devices','Requested results','Maximum billable pages'])assert.equal(await page.getByLabel(name,{exact:true}).isVisible(),true);const count=calls.length;await settings().click();assert.equal(await page.getByLabel('Tracker name',{exact:true}).inputValue(),'Edited after malformed acknowledgement');assert.equal(await page.getByLabel('Tracker name',{exact:true}).isVisible(),false);await openSettings();assert.equal(await page.getByLabel('Tracker name',{exact:true}).inputValue(),'Edited after malformed acknowledgement');assert.equal(calls.length,count);});
+ await mkdir(resolve('private/rank-panel-evidence'),{recursive:true});await page.screenshot({path:resolve('private/rank-panel-evidence/r01-edit-draft.png'),fullPage:true});
  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('link',{name:'Fixture elsewhere',exact:true}).click();
  assert.equal(new URL(page.url()).pathname,'/');
  nextWrite='malformed';await page.getByRole('button',{name:'Save changes',exact:true}).click();
@@ -142,7 +158,7 @@ try{
  console.log('PASS held detail read can be interrupted and late response cannot restore old detail.');
 
  await openMain();
- await page.getByRole('button',{name:'Edit settings',exact:true}).click();
+ await openSettings();await page.getByRole('button',{name:'Edit settings',exact:true}).click();
  await page.getByLabel('Tracker name',{exact:true}).fill('Conflicting edit');
  nextWrite=409;await page.getByRole('button',{name:'Save changes',exact:true}).click();
  await page.getByRole('button',{name:'Reload tracker',exact:true}).waitFor();
@@ -165,7 +181,7 @@ try{
  await page.getByRole('button',{name:'Reload access',exact:true}).click();await openMain();
  console.log('PASS current403 purges protected state and supersedes held older reads; access reload recovers.');
 
- await page.getByRole('button',{name:'Edit settings',exact:true}).click();
+ await openSettings();await page.getByRole('button',{name:'Edit settings',exact:true}).click();
  await page.getByLabel('Tracker name',{exact:true}).fill('Synthetic main tracker held write');
  nextWrite='hold';await page.getByRole('button',{name:'Save changes',exact:true}).click();
  await page.waitForTimeout(50);assert.ok(held);
@@ -175,22 +191,25 @@ try{
  await page.getByRole('heading',{name:'Synthetic main tracker held write',exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>document.activeElement?.id.endsWith('detail-heading')),true);
  await page.getByLabel('Select literal C++ %20',{exact:true}).check();
+ await check('native settings retain keyword selection',async()=>{const count=calls.length;await openSettings();await settings().click();assert.equal(await page.getByLabel('Select literal C++ %20',{exact:true}).isChecked(),true);assert.equal(await page.getByText('1 selected',{exact:true}).isVisible(),true);assert.equal(calls.length,count);await before(page.getByRole('button',{name:'Pin selected',exact:true}),page.getByRole('region',{name:'Keywords',exact:true}));});
  await page.getByRole('button',{name:'Pin selected',exact:true}).click();
  await page.getByText('Pinned',{exact:true}).waitFor();
- page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Archive tracker',exact:true}).click();
+ await openSettings();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Archive tracker',exact:true}).click();
  await page.getByRole('button',{name:'Reactivate tracker',exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Add keywords',exact:true}).count(),0);
- await page.getByRole('button',{name:'Edit settings',exact:true}).click();
+ await page.screenshot({path:resolve('private/rank-panel-evidence/r01-archived-settings.png'),fullPage:true});
+ await openSettings();await page.getByRole('button',{name:'Edit settings',exact:true}).click();
  assert.equal(await page.getByLabel('Devices',{exact:true}).isDisabled(),true);
  assert.equal(await page.getByLabel('Tracker name',{exact:true}).isDisabled(),false);
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
- page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Reactivate tracker',exact:true}).click();
+ await openSettings();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Reactivate tracker',exact:true}).click();
  await page.getByRole('button',{name:'Archive tracker',exact:true}).waitFor();
  console.log('PASS active writes cannot be interrupted; explicit saves restore focus; pin/archive/reactivate preserve authored controls.');
 
  role='viewer';vault=false;await page.reload();await page.getByRole('button',{name:/Synthetic main tracker/}).waitFor();
  assert.equal(await page.getByRole('button',{name:'New tracker',exact:true}).count(),0);
  const viewerCalls=calls.length;await openMain();
+ assert.equal(await settings().count(),0,'Viewers have no empty settings disclosure');
  assert.equal(await page.getByRole('button',{name:'Edit settings',exact:true}).count(),0);
  assert.equal(await page.getByRole('button',{name:/Archive tracker|Add keywords|Pin selected|Remove selected/}).count(),0);
  assert.equal(calls.slice(viewerCalls).some(c=>c.path.endsWith('/catalog')||c.path.endsWith('/locations')),false);
@@ -205,6 +224,7 @@ try{
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  await page.screenshot({path:resolve('private/rank-panel-evidence/rank-create-360.png'),fullPage:true});
  const primary=await page.getByRole('button',{name:'Create tracker',exact:true}).boundingBox();assert.ok(primary.height>=44);
+ for(const width of [320,360,768,1440])await check('creation root '+width,async()=>{await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();});
  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Cancel',exact:true}).focus();await page.keyboard.press('Enter');
  await page.getByRole('button',{name:'New tracker',exact:true}).waitFor();
  nextGet='hold';await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.waitForTimeout(50);assert.ok(held);
@@ -224,4 +244,24 @@ try{
  assert.equal(await page.getByText('literal C++ %20',{exact:true}).count(),0);
  assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
  console.log('PASS401 clears scope, read-only1440/360px layout has no page overflow, and no external/provider traffic.');
+ // Further UI checks use this same contained controller and existing synthetic route handler.
+ const longName='T'.repeat(120),longKeyword='K'.repeat(195)+' C++%';Object.assign(trackers.find(t=>t.id===tid),{name:longName,domain:'a'.repeat(241)+'.example.com',locationName:'L'.repeat(512)});keywords.get(tid)[0].keyword=longKeyword;
+ await page.reload();await page.getByRole('button',{name:longName,exact:true}).waitFor();
+ for(const width of [320,360,768,1440])await check('list root '+width,async()=>{await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();});
+ nextGet='hold';await page.getByRole('button',{name:longName,exact:true}).click();await page.waitForFunction(()=>document.querySelector('.rank-tracking')?.textContent.includes('Loading tracker access'));await page.waitForTimeout(50);assert.ok(held);await check('loading root targets',targets);await fulfill(held.route,held.reply);held=null;await page.getByRole('heading',{name:longName,exact:true}).waitFor();
+ const region=page.getByRole('region',{name:'Keywords',exact:true});for(const direction of ['ltr','rtl'])for(const width of [320,360,768,1440])await check('detail '+direction+' '+width,async()=>{
+  await page.evaluate(value=>{document.documentElement.dir=value;},direction);await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await targets();assert.equal(await page.getByText(longKeyword,{exact:true}).isVisible(),true);assert.equal(await settings().evaluate(node=>node.parentElement.open),false);
+  for(const checkbox of await region.getByRole('checkbox').all()){const label=checkbox.locator('..');assert.equal(await label.evaluate(node=>node.tagName),'LABEL');const box=await label.boundingBox();assert.ok(box&&box.width>=44&&box.height>=44,'Native keyword labels provide44px targets');}
+  if(width<=360){await region.evaluate(node=>{node.scrollLeft=0;});await region.focus();await page.keyboard.press(direction==='rtl'?'ArrowLeft':'ArrowRight');await page.waitForFunction(()=>Math.abs(document.querySelector('[role=region][aria-label=Keywords]').scrollLeft)>0);}
+  await page.screenshot({path:resolve('private/rank-panel-evidence/r01-detail-'+width+'-'+direction+'.png'),fullPage:true});
+ });
+ await page.evaluate(()=>{document.documentElement.dir='ltr';document.documentElement.style.zoom='2';});await page.setViewportSize({width:1440,height:1000});await check('200% CSS layout zoom',async()=>{assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.equal(await region.isVisible(),true);await page.screenshot({path:resolve('private/rank-panel-evidence/r01-layout-zoom.png'),fullPage:true});});await page.evaluate(()=>{document.documentElement.style.zoom='';});
+ await page.emulateMedia({forcedColors:'active',reducedMotion:'reduce'});await settings().focus();await check('forced colors and native focus',async()=>{assert.notEqual(await settings().evaluate(node=>getComputedStyle(node).outlineStyle),'none');assert.equal(await settings().evaluate(node=>getComputedStyle(node).display),'list-item');await page.screenshot({path:resolve('private/rank-panel-evidence/r01-forced-colors.png'),fullPage:true});});await page.emulateMedia({forcedColors:'none'});
+ await page.getByRole('button',{name:'Add keywords',exact:true}).click();await page.getByLabel('Keywords, one per line',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>document.activeElement?.id.endsWith('add-heading')),true);await targets();await page.getByLabel('Keywords, one per line',{exact:true}).fill('  C++ %20\n\nMiXeD\nMiXeD');await page.getByLabel('Preserve keyword case',{exact:true}).check();
+ page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await page.getByLabel('Keywords, one per line',{exact:true}).inputValue(),'  C++ %20\n\nMiXeD\nMiXeD');await page.screenshot({path:resolve('private/rank-panel-evidence/r01-add-draft.png'),fullPage:true});
+ const added=mutations.length;await page.getByRole('button',{name:'Add keywords',exact:true}).click();await page.getByText('C++ %20',{exact:true}).waitFor();assert.equal(mutations.length,added+1);assert.deepEqual(mutations.at(-1).body.keywords,['  C++ %20','MiXeD','MiXeD']);assert.equal(mutations.at(-1).body.matchCase,true);assert.equal(await page.getByText('MiXeD',{exact:true}).count(),1);assert.equal(await region.locator('tbody tr').count(),4);
+ await page.getByLabel('Select all keywords',{exact:true}).check();assert.equal(await page.getByText('4 selected',{exact:true}).isVisible(),true);await page.getByRole('button',{name:'Unpin selected',exact:true}).click();await page.getByText('0 selected',{exact:true}).waitFor();assert.equal(mutations.at(-1).body.pinned,false);assert.equal(mutations.at(-1).body.keywordIds.length,4);
+ await page.getByLabel('Select all keywords',{exact:true}).check();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Remove selected',exact:true}).click();await page.getByText('No keywords yet',{exact:true}).waitFor();assert.equal(await region.count(),0);assert.equal(await page.getByRole('button',{name:'Prepare a rank check',exact:true}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Check selected keywords',exact:true}).isDisabled(),true);
+ nextGet=403;await page.getByRole('button',{name:'Refresh tracker',exact:true}).click();await page.getByRole('button',{name:'Reload access',exact:true}).waitFor();for(const width of [320,360,768,1440])await check('denied root '+width,async()=>{await page.setViewportSize({width,height:1000});await targets();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);});
+ assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);assert.deepEqual(findings,[],'Every R01 hierarchy, draft and target requirement must pass');console.log('PASS native settings/order/draft retention, all-mode44px targets, long-text LTR/RTL/zoom/forced colors and explicit case-preserving add/unpin/remove without paid work.');
 }finally{await browser?.close();await server.close();}
