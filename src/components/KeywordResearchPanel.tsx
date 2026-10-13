@@ -452,7 +452,7 @@ function Panel({workspaceId,projectId,onUnauthorized}:{workspaceId:string;projec
     <div className="card stack" aria-label="Run history">
       <h3>Recent runs</h3>
       {st.runs.length===0?
-        <p className="dim">No runs yet. {canResearch?'Prepare a quote above to start your first research run.':'Nothing has been run on this project yet.'}</p>
+        <p className="dim">No research runs have been saved for this project.</p>
       :
         <div className="table-wrap" role="region" aria-label="Recent keyword runs" tabIndex={0}><table style={{minWidth:760}}>
           <thead><tr><th>Created</th><th>Mode</th><th>Keywords</th><th>Status</th><th>Charge</th><th>Open</th></tr></thead>
