@@ -4,6 +4,7 @@ import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
 import {usd} from './providers.ts';
 import {decimal,decimalSumMicros,decimalText,ExactCost,parseOpenRouterJson,executionBody,type PromptModel,type RouteSnapshot,type RenderedInput} from './openrouter-input.ts';
+import {suggestionSchema,suggestionOutputTokens} from './ai-suggestion-input.ts';
 
 export const openRouterBase='https://openrouter.ai/api/v1';
 const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -45,15 +46,21 @@ export function parseRoute(model:PromptModel,body:unknown,maxCompletionTokens:nu
   if(estimate<1n||estimate>1_000_000_000_000n)invalid();
   return {model,tag:'openai',providerName:'OpenAI',promptCapacity:input,completionCapacity:e.max_completion_tokens,promptPrice,completionPrice,requestPrice,estimateMicros:estimate.toString()};
 }
-export async function readOpenRouterRoutes(credentials:unknown,models:PromptModel[],maxCompletionTokens:number,send:typeof fetch=fetch){
+async function readRoutes(credentials:unknown,models:PromptModel[],maxCompletionTokens:number,send:typeof fetch,structured=false){
   try{
     const key=await read('/key',credentials,send);
     if(!object(key?.data)||key.data.is_free_tier!==false||key.data.is_management_key!==false||key.data.is_provisioning_key===true)invalid();
     const routes:RouteSnapshot[]=[];
-    for(const model of models)routes.push(parseRoute(model,await read(`/models/${model}/endpoints`,credentials,send),maxCompletionTokens));
+    for(const model of models){
+      const body=await read(`/models/${model}/endpoints`,credentials,send),route=parseRoute(model,body,maxCompletionTokens);
+      if(structured){const endpoint=body.data.endpoints.find((e:any)=>e.tag===route.tag);if(!['structured_outputs','response_format'].every(p=>endpoint.supported_parameters.includes(p)))invalid();}
+      routes.push(route);
+    }
     return routes;
   }catch{throw new FoundationError(502,'Could not verify the ordinary funded OpenRouter key and supported endpoint prices. No model request was sent.');}
 }
+export async function readOpenRouterRoutes(credentials:unknown,models:PromptModel[],maxCompletionTokens:number,send:typeof fetch=fetch){return readRoutes(credentials,models,maxCompletionTokens,send);}
+export async function readSuggestionRoute(credentials:unknown,model:PromptModel,send:typeof fetch=fetch){return (await readRoutes(credentials,[model],suggestionOutputTokens,send,true))[0];}
 export type ExecutionResult={text:string;resolvedModel:string;provider:string;finishReason:string;citations:{url:string;title:string|null}[];promptTokens:number|null;completionTokens:number|null;receivedAt:string};
 export type ExecutionOutcome={cost:string|null;reference:string|null;result:ExecutionResult|null;diagnostic:string|null;pause:boolean;evidence:Record<string,unknown>};
 export function unknownExecution(reference:string|null=null,diagnostic='The provider charge is unresolved. Reconcile this request before spending again.'):ExecutionOutcome{
@@ -92,15 +99,18 @@ export function parseExecutionOutcome(body:unknown,httpStatus:number,headerId:st
     outcome.result={text:message.content,resolvedModel:body.model,provider:body.provider,finishReason:choice.finish_reason,citations:citations(message.annotations),promptTokens:tokenCount(usage.prompt_tokens),completionTokens:tokenCount(usage.completion_tokens),receivedAt:new Date().toISOString()};return outcome;
   }catch{if(outcome.cost!==null)outcome.diagnostic??='The charge was recorded, but the answer metadata was unsupported.';return outcome;}
 }
-export async function requestPromptExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch=fetch){
+async function requestExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch,structured=false){
   let reference:string|null=null;
   try{
-    const response=await send(openRouterBase+'/chat/completions',{method:'POST',headers:{...headers(credentials),'content-type':'application/json','x-openrouter-metadata':'enabled'},body:JSON.stringify(executionBody(messages,route,maxTokens,runId,actor)),redirect:'error',credentials:'omit',signal:AbortSignal.timeout(60_000)});
+    const body={...executionBody(messages,route,maxTokens,runId,actor),...(structured?{response_format:{type:'json_schema',json_schema:{name:'suggestion_proposal_v1',strict:true,schema:suggestionSchema}}}:{})};
+    const response=await send(openRouterBase+'/chat/completions',{method:'POST',headers:{...headers(credentials),'content-type':'application/json','x-openrouter-metadata':'enabled'},body:JSON.stringify(body),redirect:'error',credentials:'omit',signal:AbortSignal.timeout(60_000)});
     const header=response.headers.get('x-generation-id');if(header!==null&&!generationId(header)){await response.body?.cancel();return unknownExecution();}
     if(header!==null){reference=header;try{await capture(header);}catch{await response.body?.cancel();throw new Error('Generation receipt was not persisted.');}}
     return parseExecutionOutcome(await responseJson(response),response.status,reference,route,dispatchedAt);
   }catch{return unknownExecution(reference);}
 }
+export async function requestPromptExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch=fetch){return requestExecution(credentials,messages,route,maxTokens,runId,actor,dispatchedAt,capture,send);}
+export async function requestSuggestionExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch=fetch){return requestExecution(credentials,messages,route,suggestionOutputTokens,runId,actor,dispatchedAt,capture,send,true);}
 export async function reconcileOpenRouter(credentials:unknown,id:string,route:RouteSnapshot,dispatchedAt:Date,runId:string,actor:string,send:typeof fetch=fetch):Promise<ExecutionOutcome>{
   if(!generationId(id))throw new FoundationError(409,'No provider generation receipt is available. The charge cannot be inferred.');
   try{

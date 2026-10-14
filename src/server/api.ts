@@ -46,6 +46,8 @@ import { getDestinations, getPublicDestinations, previewDestinations, publishDes
 import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
 
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
+import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
+import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -306,6 +308,24 @@ export async function handleApi(request: Request): Promise<Response> {
         await limit(`prompt-insights-export:${user.id}`,5);
         const result=await exportPromptInsights(projectId,user.id,await readJson(request,4096),request.signal);
         return new Response(result.body,{headers:{'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount),'cache-control':'no-store','x-content-type-options':'nosniff'}});
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const suggestionRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-suggestions(?:/(quote|runs)(?:/(${id})(?:/(cancel|reconcile|accept))?)?)?$`,'i'));
+    if(suggestionRoute){
+      const [,projectId,action,runId,operation]=suggestionRoute;
+      await projectAccess(projectId,user.id,request.method!=='GET');await limit(`ai-suggestions:${user.id}`,60);
+      if(request.method==='GET'&&!runId&&(!action||action==='runs'))return json(await getAiSuggestions(projectId,user.id,url.searchParams));
+      if(url.search)throw new FoundationError(400,'This suggestion operation does not accept query parameters.');
+      if(request.method==='GET'&&action==='runs'&&runId&&!operation)return json(await getAiSuggestion(projectId,user.id,runId));
+      if(request.method==='POST'){
+        await limit(`ai-suggestions-write:${user.id}`,10);
+        const input=await readJson(request,action==='quote'?262144:operation==='accept'?131072:2048);
+        if(action==='quote'&&!runId)return json(await quoteAiSuggestions(projectId,user.id,input));
+        if(action==='runs'&&!runId)return json(await startAiSuggestions(projectId,user.id,input),202);
+        if(action==='runs'&&runId&&operation==='cancel')return json(await cancelAiSuggestion(projectId,user.id,runId,input));
+        if(action==='runs'&&runId&&operation==='accept')return json(await acceptAiSuggestions(projectId,user.id,runId,input));
+        if(action==='runs'&&runId&&operation==='reconcile'){await limit(`ai-suggestions-reconcile:${projectId}`,3);return json(await reconcileAiSuggestion(projectId,user.id,runId,input));}
       }
       return json({error:'Method not allowed.'},405);
     }

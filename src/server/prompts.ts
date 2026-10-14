@@ -23,6 +23,14 @@ async function assertUniqueText(client:PoolClient,projectId:string,value:string,
   const found=await client.query(`SELECT p.id FROM ${joined} WHERE p.project_id=$1 AND v.text=$2 AND p.archived_at IS NULL AND ($3::uuid IS NULL OR p.id<>$3) LIMIT 1`,[projectId,value,exceptId]);
   if(found.rowCount) throw new FoundationError(409,'An active prompt already has this exact text. Edit the existing prompt or change the text.');
 }
+// Internal transaction seam: caller owns the project mutation gate and validates input.
+export async function insertPromptInTransaction(client:PoolClient,projectId:string,userId:string,entry:{text:string;topic?:string;tags?:string[];enabled?:boolean}){
+  await assertUniqueText(client,projectId,entry.text);
+  const id=randomUUID(),versionId=randomUUID();
+  await client.query('INSERT INTO project_prompt(id,project_id,current_version_id,topic,enabled,user_tags) VALUES($1,$2,$3,$4,$5,$6)',[id,projectId,versionId,entry.topic??'General',entry.enabled??false,JSON.stringify(entry.tags??[])]);
+  await client.query('INSERT INTO prompt_text_version(id,project_id,prompt_id,number,text,lower_text,created_by) VALUES($1,$2,$3,1,$4,$5,$6)',[versionId,projectId,id,entry.text,entry.text.toLowerCase(),userId]);
+  return {id,versionId};
+}
 function filters(params:URLSearchParams) {
   const allowed=['status','q','tag','classification','cursor'];
   for(const key of params.keys()) if(!allowed.includes(key)||params.getAll(key).length!==1) throw new FoundationError(400,'Use each supported prompt filter once.');
@@ -62,10 +70,7 @@ export async function createPrompts(projectId:unknown,userId:unknown,raw:unknown
     }
     const ids:string[]=[];
     for(const entry of input.prompts) {
-      await assertUniqueText(client,project.id,entry.text);
-      const id=randomUUID(),versionId=randomUUID();
-      await client.query(`INSERT INTO project_prompt(id,project_id,current_version_id,topic,enabled,user_tags) VALUES($1,$2,$3,$4,$5,$6)`,[id,project.id,versionId,entry.topic??'General',entry.enabled??false,JSON.stringify(entry.tags??[])]);
-      await client.query('INSERT INTO prompt_text_version(id,project_id,prompt_id,number,text,lower_text,created_by) VALUES($1,$2,$3,1,$4,$5,$6)',[versionId,project.id,id,entry.text,entry.text.toLowerCase(),uid]);ids.push(id);
+      ids.push((await insertPromptInTransaction(client,project.id,uid,entry)).id);
     }
     await receipt.save({ids});
     const items=[];for(const id of ids) items.push(dto(await promptRow(client,project.id,id),project,profile));

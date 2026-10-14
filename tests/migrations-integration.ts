@@ -68,8 +68,9 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031']);
   assert.equal(sources.find(m=>m.version==='0029')!.checksum,'8c7559f0e64f899bae4dc36aa9afa521b69624dba7849f28dfc3c1cb730097de','Append0030 without rewriting the published0029 migration.');
+  assert.equal(sources.find(m=>m.version==='0030')!.checksum,'87b06aefbfe1b2228bda7fe91a28563265e908b92f07574ad3cb7e5380bbb28e','Append0031 without rewriting the published0030 migration.');
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -266,10 +267,11 @@ try {
   const contextRecords=async()=>(await pool.query('SELECT row_to_json(c) AS data FROM project_context c ORDER BY project_id')).rows.map(r=>r.data);
   const contextBefore=await contextRecords(),history29=await history();
   assert.equal(history29.at(-1)?.version,'0029');assert.equal(Object.hasOwn(contextBefore[0],'brand_citation_domains'),false);
-  stage = 'upgrade original,0022 features,0023 rank,0026–29 Meta and authored context through0030';
+  stage = 'upgrade original,0022 features,0023 rank,0026–29 Meta and authored context through0031';
   runMigrate(0);
   await assertSchema();
   assert.deepEqual((await history()).slice(0,29),history29,'Citation migration preserves every prior applied checksum.');
+  for(const table of ['ai_suggestion_quote','ai_suggestion_run'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,0,'Upgrade creates no suggestion generation or paid work.');
   const contextAfter=await contextRecords();
   assert.deepEqual(contextAfter.map(({brand_citation_domains,citation_category_overrides,...prior})=>prior),contextBefore,'Citation defaults preserve the exact old revision, brand name and ordered aliases.');
   for(const row of contextAfter){assert.deepEqual(row.brand_citation_domains,[]);assert.deepEqual(row.citation_category_overrides,[]);}
@@ -339,8 +341,8 @@ try {
   assert.deepEqual(await contextRecords(),contextAfter,'No-op migration preserves all authored context and citation defaults exactly.');
   assert.equal((await pool.query("SELECT 1 FROM meta_import WHERE status IN ('queued','submitting','waiting','reading')")).rowCount,1,'Only the prior captured import remains active; migration creates no work.');
   assert.equal((await pool.query("SELECT 1 FROM meta_campaign_inventory WHERE status IN ('queued','reading')")).rowCount,1,'Only the prior captured inventory remains active; migration creates no work.');
-  console.log('PASS prior0022 feature evidence,0023 rank and0026–28 Meta receipts/pages survive0030; profile and active evidenced cooldown backfills preserve all prior fields and are idempotent; no implicit paid work');
-  console.log('PASS actual0029 authored context survives0030 unchanged with empty citation defaults, preserved checksums and idempotent repeat migration');
+  console.log('PASS prior0022 feature evidence,0023 rank and0026–28 Meta receipts/pages survive0031; profile and active evidenced cooldown backfills preserve all prior fields and are idempotent; no implicit paid work');
+  console.log('PASS actual0029 authored context survives0031 unchanged with empty citation defaults, empty suggestion tables, preserved checksums and idempotent repeat migration');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {
