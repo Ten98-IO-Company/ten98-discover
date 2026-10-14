@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs} from '../src/server/jobs.ts';
-import {saveBudget,saveProvider,revokeProvider} from '../src/server/providers.ts';
+import {saveBudget,saveProvider,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
 import {reserveSpend} from '../src/server/spending.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {getRankTracker,updateRankTracker,archiveRankTracker,changeRankKeywords} from '../src/server/rank-tracking.ts';
@@ -89,7 +89,7 @@ export async function runRankExecutionChecks(){
     console.log('PASS current paid settings, captured keyword membership, archive and connection revisions fence stale starts');
 
     const queued=await fixture(101),queuedQuote=await quote(queued,{method:'queued'});assert.equal(queuedQuote.run.taskCount,101);assert.equal(queuedQuote.run.dispatchCount,2);assert.equal(queuedQuote.run.estimateUsd,'0.101000');
-    await saveBudget(queued.workspace,owner,{monthlyLimitUsd:'0.100000',paused:false});await assert.rejects(start(queued,queuedQuote.run.id),failed(409));assert.deepEqual(await counts(queued),{ledger:0,dispatch:0,tasks:0});
+    await saveProviderLimit(queued.workspace,owner,queued.connection,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.100000'});await assert.rejects(start(queued,queuedQuote.run.id),failed(409));assert.deepEqual(await counts(queued),{ledger:0,dispatch:0,tasks:0});
     const rolled=await fixture(),rollbackQuote=await quote(rolled),boss=await getBoss(),originalSend=boss.send.bind(boss),inserted:string[]=[];
     boss.send=(async(...args:any[])=>{const job=await(originalSend as any)(...args);assert.equal(typeof job,'string');inserted.push(job);if(inserted.length===2)throw new Error('Synthetic failure after second real queue insertion.');return job;})as typeof boss.send;
     const rollbackKey=randomUUID();try{await assert.rejects(start(rolled,rollbackQuote.run.id,rollbackKey));}finally{boss.send=originalSend;}
