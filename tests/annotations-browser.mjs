@@ -29,6 +29,7 @@ try{
   if(url.origin!==origin){foreign.push(url.href);return route.abort();}if(!path.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();
   if(path.endsWith('/analytics')||path.endsWith('/explore')){assert.equal(request.method(),'GET');queries.push(path+url.search);return reply(route,report(url.searchParams,path.endsWith('/analytics')));}
   if(path.endsWith('/segments'))return reply(route,{role,items:[],nextCursor:null});
+  if(path.endsWith('/cohorts')){assert.equal(request.method(),'GET');return reply(route,{role,items:[],nextCursor:null});}
   if(!path.includes('/annotations')){foreign.push(path);return route.abort();}
   const other=path.startsWith('/api/projects/'+otherProject+'/'),suffix=path.split('/annotations')[1],id=suffix.split('/')[1]||null,p=url.searchParams;
   if(request.method()==='GET'){

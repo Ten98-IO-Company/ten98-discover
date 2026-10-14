@@ -26,6 +26,7 @@ try{
   const request=route.request(),url=new URL(request.url());if(url.origin!==origin){foreign.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();
   if(url.pathname.endsWith('/explore')){assert.equal(request.method(),'GET');queries.push(url.search.slice(1));const body=result(url.searchParams);if(holdExplore){holdExplore=false;heldExplore={route,body};return;}return reply(route,body);}
   if(url.pathname.includes('/annotations')){assert.equal(request.method(),'GET');return reply(route,url.pathname.endsWith('/timeline')?{role,range:Object.fromEntries(url.searchParams),days:[],totalCount:0}:{role,items:[],nextCursor:null});}
+  if(url.pathname.endsWith('/cohorts')){assert.equal(request.method(),'GET');return reply(route,{role,items:[],nextCursor:null});}
   if(!url.pathname.includes('/segments')){foreign.push(url.pathname);return route.abort();}
   const other=url.pathname.startsWith('/api/projects/'+otherProject+'/'),id=url.pathname.slice(url.pathname.indexOf('/segments')+10).split('/')[0]||null;
   if(request.method()==='GET'){
