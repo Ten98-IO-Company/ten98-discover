@@ -45,6 +45,8 @@ Generated answers/citations and copied execution input are **raw provider eviden
 
 ## Validation and remaining gate
 
+AI suggestion comparisons use NFKC Unicode normalization, whitespace collapse and lowercase only for duplicate/exclusion checks. Fresh draft acceptance checks all edited selections against the current bounded topic library and the quote's captured exclusions before inserting any prompt; authored text and project-wide exact-text uniqueness remain unchanged. Completed acceptance receipts replay under fresh project authorization without rerunning those checks against a changed library or a newer comparison policy.
+
 Run `node --test tests/prompt-execution.test.ts` for exact arithmetic, public-catalog shape, finality, safe output, fixed transport and receipt matching. On an isolated migrated local database with synthetic credentials, run `TEN98_INTEGRATION_TEST=1 node --env-file=.env tests/prompt-execution-integration.ts`. Its default network path is blocked until workers stop, including failure cleanup. It checks atomic reservations and queue rollback, live revocation, idempotency, immutable versions, crash/reconciliation, retention and real pg-boss execution using a fake transport.
 
 The separate suggestion suite, `TEN98_INTEGRATION_TEST=1 TEN98_AI_SUGGESTIONS_TEST=1 node --env-file=.env tests/ai-suggestions-integration.ts`, requires its own fresh isolated database. It covers queued quote expiry without provider requests, expiry during endpoint preflight, expiry while the final authorization query is held before execution, successful settlement after expiry during a paid request, and expired uncertain receipts with recovery/replay that sends no new paid request. These are synthetic acceptance checks, not live-provider evidence.
