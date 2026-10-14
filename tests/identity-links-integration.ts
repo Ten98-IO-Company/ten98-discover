@@ -28,6 +28,8 @@ export async function runIdentityLinkChecks(){
     await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspace,owner]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Identity fixture',$3,$4,'infinity')",[project,workspace,origin,siteKey]);
     const state=async()=>(await pool.query('SELECT * FROM project WHERE id=$1',[project])).rows[0];
+    const evidenceStart=async(pid=project)=>(await pool.query(`SELECT to_char(identity_event_evidence_started_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start FROM project WHERE id=$1`,[pid])).rows[0].start;
+    const eventEvidence=async(pid=project)=>(await pool.query(`SELECT id,visitor_id,identity_link_evidence_version,to_char(received_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted FROM event WHERE project_id=$1 ORDER BY received_at,id`,[pid])).rows;
     const request=(headers:Record<string,string>={})=>new Request(origin,{headers:{origin,'user-agent':ua,...headers}});
     const consent=async()=>({analytics:true as const,epoch:trackingConsentEpoch((await state()).analytics_epoch,null)});
     const links=async()=>(await pool.query(`SELECT visitor_key,identity_version,key_generation,identity_token,
@@ -50,12 +52,16 @@ export async function runIdentityLinkChecks(){
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}}
     const instant=new Date().toISOString().slice(0,19),early=instant+'.123100Z',accepted=instant+'.123900Z';
     const oldId=randomUUID();await at(early,()=>event(oldId));assert.deepEqual(await links(),[]);assert.equal((await state()).identity_links_started_at,null);
+    assert.equal(await evidenceStart(),null);assert.equal((await eventEvidence())[0].identity_link_evidence_version,null);
     const before=await state();await saveAnalyticsSettings(project,owner,{revision:before.analytics_revision,settings:{...before.analytics_settings,linkIdentities:true}});
     const enabled=await state();assert.ok(enabled.identity_links_started_at);assert.notEqual(enabled.analytics_epoch,before.analytics_epoch);
+    assert.equal(await evidenceStart(),null,'Enabling settings cannot infer event evidence.');
     const firstId=randomUUID();await at(accepted,()=>event(firstId));let rows=await links();assert.equal(rows.length,1);assert.equal(rows[0].first,accepted);assert.equal(rows[0].last,accepted);
+    assert.equal(await evidenceStart(),accepted);assert.deepEqual((await eventEvidence()).map(row=>[row.id,row.identity_link_evidence_version,row.accepted]),[[oldId,null,early],[firstId,1,accepted]]);
     const included=(await pool.query('SELECT e.id FROM event e JOIN analytics_identity_link l ON l.project_id=e.project_id AND l.visitor_key=e.visitor_id WHERE e.project_id=$1 AND e.received_at>=l.first_accepted_at ORDER BY e.id',[project])).rows.map(row=>row.id);
     assert.deepEqual(included,[firstId],'Same-millisecond earlier event stays excluded; first accepted event equality is included.');
     await event(firstId);assert.deepEqual(await links(),rows,'Duplicate event must not refresh the link.');
+    assert.equal(await evidenceStart(),accepted);
     const raw=parseIdentifyInput({type:'identify',siteKey,requestId:randomUUID(),sentAt:new Date().toISOString(),url:origin+'/account',properties:{plan:'pro'},dimensions:{distinctId:'account-A'},consent:await consent()});
     assert.equal((await identify(raw)).accepted,true);rows=await links();assert.equal(rows[0].first,accepted);await identify(raw);assert.deepEqual(await links(),rows);
     const count=rows.length;await event(randomUUID(),null);await event(randomUUID(),'denied',{dnt:'1'});assert.equal((await links()).length,count);
@@ -63,11 +69,13 @@ export async function runIdentityLinkChecks(){
     const disabled=await state();await saveAnalyticsSettings(project,owner,{revision:disabled.analytics_revision,settings:{...disabled.analytics_settings,linkIdentities:false}});
     await event(randomUUID(),'disabled');assert.deepEqual(await links(),rows);assert.equal((await state()).identity_links_started_at.toISOString(),enabled.identity_links_started_at.toISOString());
     const on=await state();await saveAnalyticsSettings(project,owner,{revision:on.analytics_revision,settings:{...on.analytics_settings,linkIdentities:true}});
+    assert.equal(await evidenceStart(),accepted,'Identify, anonymous, denied and off/on operations preserve the original microsecond start.');
     console.log('PASS opt-in/consent epoch, exact prospective fence, event/identify duplicate no-op, anonymous/denied paths and disable preservation');
 
     const a=rows[0].visitor_key,conflict=await state();const originalToken=rows[0].identity_token;
     await pool.query("UPDATE analytics_identity_link SET identity_token=repeat('0',64) WHERE project_id=$1 AND visitor_key=$2",[project,a]);
     const conflictEvent=randomUUID();await assert.rejects(event(conflictEvent),fail(409));assert.equal((await pool.query('SELECT 1 FROM event WHERE project_id=$1 AND id=$2',[project,conflictEvent])).rowCount,0);
+    assert.equal(await evidenceStart(),accepted,'Assignment failure cannot change an established event-evidence start.');
     const conflictIdentify=parseIdentifyInput({...raw,requestId:randomUUID(),properties:{mustRollback:true},consent:await consent()});await assert.rejects(identify(conflictIdentify),fail(409));
     assert.equal((await pool.query('SELECT 1 FROM analytics_identify_receipt WHERE project_id=$1 AND request_id=$2',[project,conflictIdentify.requestId])).rowCount,0);
     assert.equal((await pool.query("SELECT 1 FROM analytics_session_property WHERE project_id=$1 AND property_key='mustRollback'",[project])).rowCount,0);
@@ -82,6 +90,7 @@ export async function runIdentityLinkChecks(){
     assert.ok((await state()).identity_links_retained_from>=shrunk.identity_links_retained_from);
     const expired=await gated(client=>expireIdentityLinks(client,project,new Date(Date.now()-90*86400000),new Date()));assert.equal(expired.expiredIdentityLinks,1);assert.equal(expired.pending,false);
     assert.deepEqual(await links(),[]);assert.equal(external,0);assert.equal(conflict.identity_links_started_at.toISOString(),enabled.identity_links_started_at.toISOString());
+    assert.equal(await evidenceStart(),accepted,'Retention shrink, extension, renewal and cleanup must preserve the capability milestone.');
     console.log('PASS atomic immutable-assignment conflict, lossless expired renewal, independent loss/preview, shrink-expand no resurrection and bounded expiry');
 
     async function fixture(){
@@ -121,6 +130,7 @@ export async function runIdentityLinkChecks(){
         assert.equal(result.accepted,false);assert.equal('reason'in result?result.reason:null,change==='epoch'?'consent_required':'collection_disabled');
         assert.equal(await f.count('event'),0);assert.equal(await f.count('analytics_identity_link'),0);
       }finally{await block.client.query('ROLLBACK').catch(()=>{});block.client.release();await pending?.catch(()=>{});}
+      assert.equal(await evidenceStart(f.pid),null,'A denied collector behind the publication gate cannot latch event evidence.');
     }
     const concurrent=await fixture(),block=await lockProject(concurrent),sameEvent=concurrent.observation(),sameIdentify=concurrent.raw();
     let writes:Promise<unknown[]>|undefined;
@@ -147,6 +157,7 @@ export async function runIdentityLinkChecks(){
     assert.equal(await noIdentity.count('analytics_identity_link'),0);assert.equal(await noIdentity.count('analytics_identify_receipt'),0);
     const unidentified=(await pool.query('SELECT source,visitor_id,dimensions FROM event WHERE project_id=$1',[noIdentity.pid])).rows;
     assert.equal(unidentified.length,3);assert.ok(unidentified.find(row=>row.source==='api'&&row.visitor_id===null));assert.equal(unidentified.filter(row=>row.visitor_id===null).length,2);assert.ok(unidentified.every(row=>!Object.hasOwn(row.dimensions,'distinctId')));
+    assert.ok((await eventEvidence(noIdentity.pid)).every(row=>row.identity_link_evidence_version===null));assert.equal(await evidenceStart(noIdentity.pid),null);
     const otherProject=await fixture();await at(nextMonth,()=>otherProject.send());
     const other=(await pool.query('SELECT identity_token,key_generation FROM analytics_identity_link WHERE project_id=$1',[otherProject.pid])).rows[0];
     assert.notEqual(other.identity_token,monthRows[0].identity_token);assert.notEqual(other.key_generation,monthRows[0].key_generation);
@@ -154,9 +165,36 @@ export async function runIdentityLinkChecks(){
     const oldReference=explicitIdentityReference(generation.pid,'same-account','synthetic-previous-generation-secret');
     await pool.query('INSERT INTO analytics_identity_link(project_id,visitor_key,identity_version,key_generation,identity_token,first_accepted_at,last_accepted_at) VALUES($1,$2,1,$3,$4,clock_timestamp(),clock_timestamp())',[generation.pid,visitor,oldReference.keyGeneration,oldReference.identityToken]);
     await assert.rejects(generation.send(),fail(409));assert.equal(await generation.count('event'),0);
+    assert.equal(await evidenceStart(generation.pid),null,'A first-event assignment conflict rolls back the event and leaves the milestone unset.');
     const preserved=(await pool.query('SELECT identity_token,key_generation FROM analytics_identity_link WHERE project_id=$1',[generation.pid])).rows[0];
     assert.equal(preserved.identity_token,oldReference.identityToken);assert.equal(preserved.key_generation,oldReference.keyGeneration);
     console.log('PASS long-lived identified context across months, missing ID/IP and API exclusions, project/generation assignment boundaries');
+
+    const offOn=await fixture(),aId=randomUUID(),bId=randomUUID(),cId=randomUUID();
+    const aAt=instant+'.125100Z',bAt=instant+'.125200Z',cAt=instant+'.125300Z';
+    const currentConsent=async()=>(await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[offOn.pid])).rows[0].analytics_epoch;
+    async function toggle(enabled:boolean){const p=(await pool.query('SELECT analytics_revision,analytics_settings FROM project WHERE id=$1',[offOn.pid])).rows[0];await saveAnalyticsSettings(offOn.pid,owner,{revision:p.analytics_revision,settings:{...p.analytics_settings,linkIdentities:enabled}});}
+    const sendCurrent=async(id:ReturnType<typeof randomUUID>)=>offOn.send(offOn.observation(id,{consent:{analytics:true,epoch:trackingConsentEpoch(await currentConsent(),null)}}));
+    await at(aAt,()=>sendCurrent(aId));await toggle(false);
+    await collectIdentify(offOn.req(),parseIdentifyInput({...offOn.raw(),requestId:randomUUID(),consent:{analytics:true,epoch:trackingConsentEpoch(await currentConsent(),null)}}),ip);
+    await at(bAt,()=>sendCurrent(bId));await toggle(true);await at(cAt,()=>sendCurrent(cId));
+    const offOnRows=await eventEvidence(offOn.pid);assert.equal(new Set(offOnRows.map(row=>row.visitor_id)).size,1,'Settings epochs do not change the identified key in the same month.');
+    assert.deepEqual(offOnRows.map(row=>[row.id,row.identity_link_evidence_version]),[[aId,1],[bId,null],[cId,1]]);assert.equal(await evidenceStart(offOn.pid),aAt);
+    const linkBefore=(await pool.query('SELECT to_jsonb(l) AS row FROM analytics_identity_link l WHERE project_id=$1',[offOn.pid])).rows;
+    const bReplay=await at(instant+'.125900Z',()=>sendCurrent(bId));assert.equal('duplicate' in bReplay?bReplay.duplicate:null,true);
+    assert.deepEqual(await eventEvidence(offOn.pid),offOnRows,'An off-period replay cannot upgrade NULL evidence.');
+    assert.deepEqual((await pool.query('SELECT to_jsonb(l) AS row FROM analytics_identity_link l WHERE project_id=$1',[offOn.pid])).rows,linkBefore);assert.equal(await evidenceStart(offOn.pid),aAt);
+    const identifyOnly=await fixture();await collectIdentify(identifyOnly.req(),identifyOnly.raw(),ip);assert.equal(await evidenceStart(identifyOnly.pid),null);assert.equal(await identifyOnly.count('event'),0);assert.equal(await identifyOnly.count('analytics_identity_link'),1);
+    const legacyId=randomUUID();await pool.query("INSERT INTO event(id,project_id,event_name,path) VALUES($1,$2,'legacy','/')",[legacyId,identifyOnly.pid]);
+    assert.equal((await eventEvidence(identifyOnly.pid))[0].identity_link_evidence_version,null);await identifyOnly.send(identifyOnly.observation(legacyId));assert.equal(await evidenceStart(identifyOnly.pid),null,'A legacy duplicate cannot start event evidence.');
+    const deniedOnly=await fixture();assert.equal((await collectNative(new Request(deniedOnly.url,{headers:{origin:deniedOnly.url,'user-agent':ua,dnt:'1'}}),deniedOnly.key,deniedOnly.observation(),ip)).accepted,false);
+    assert.equal(await evidenceStart(deniedOnly.pid),null);
+    const oldSecret=process.env.AUTH_SECRET;try{process.env.AUTH_SECRET='synthetic-next-generation-secret'.repeat(3);await offOn.send(offOn.observation(randomUUID(),{consent:{analytics:true,epoch:trackingConsentEpoch(await currentConsent(),null)}}));}finally{process.env.AUTH_SECRET=oldSecret;}
+    assert.equal(await evidenceStart(offOn.pid),aAt,'Secret rotation cannot reset the first event-evidence timestamp.');
+    for(const [version,source,visitor,visit] of [[0,'browser',null,null],[2,'browser',null,null],[1,'browser',null,null],[1,'api',offOnRows[0].visitor_id,'a'.repeat(64)]] as const)
+      await assert.rejects(pool.query('INSERT INTO event(id,project_id,event_name,path,source,visitor_id,visit_id,identity_link_evidence_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[randomUUID(),offOn.pid,'invalid','/',source,visitor,visit,version]),{code:'23514'});
+    for(const table of ['event','analytics_identity_link','analytics_identify_receipt','analytics_session_property']){const stored=(await pool.query(`SELECT to_jsonb(t) AS row FROM ${table} t`)).rows;for(const rawId of ['account-A','same-account','disabled'])assert.equal(JSON.stringify(stored).includes(rawId),false,'Explicit IDs must not enter persistent evidence.');}
+    console.log('PASS per-event prospective proof, same-key off/on and NULL replay, identify-only/legacy exclusions, constraints and rotation-stable microsecond milestone');
 
     const batch=await fixture(),ref=explicitIdentityReference(batch.pid,'expired-fixture');
     await pool.query("INSERT INTO analytics_identity_link(project_id,visitor_key,identity_version,key_generation,identity_token,first_accepted_at,last_accepted_at) SELECT $1,repeat(md5($1||n::text),2),1,$2,$3,statement_timestamp()-interval '100 days',statement_timestamp()-interval '100 days' FROM generate_series(1,1001)n",[batch.pid,ref.keyGeneration,ref.identityToken]);

@@ -30,12 +30,15 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   assert.deepEqual(duplicate.data,{accepted:true,duplicate:true});
   const stored=(await pool.query('SELECT row_to_json(e) AS value FROM event e WHERE project_id=$1 AND id=$2',[projectId,acceptedEvent.eventId])).rows[0].value;
   assert.equal(stored.path,'/hello'); assert.equal(stored.source,'browser');
+  assert.equal(stored.identity_link_evidence_version,null,'Linking-off collection must not claim explicit event evidence.');
+  assert.equal((await pool.query('SELECT identity_event_evidence_started_at FROM project WHERE id=$1',[projectId])).rows[0].identity_event_evidence_started_at,null);
   assert.deepEqual(stored.dimensions,{language:'en-US',origin});
   assert.deepEqual(stored.properties,{'plan':{type:'string',value:'starter'},'nested.count':{type:'number',value:2},when:{type:'date',value:'2024-02-29T08:00:00.000Z'}});
   for(const text of ['private-query','private-fragment','private-referrer','private-campaign','private-distinct','192.0.2.99','Ten98 acceptance browser'])assert.equal(JSON.stringify(stored).includes(text),false);
   for(const headers of [{'dnt':'1'},{'sec-gpc':'1'},{'user-agent':'Example crawler'}] as Record<string,string>[])assert.equal((await call('/api/collect',{...event(),consent:consent()},true,headers)).data.accepted,false);
   for(const properties of [{bad:'\u0000'},JSON.parse('{"__proto__":{"polluted":true}}'),{bad:'x'.repeat(1001)}])assert.equal((await call('/api/collect',{...event(),consent:consent(),properties},true)).status,400);
   for(const invalid of [{properties:null},{dimensions:null},{url:origin+'/'+ 'é'.repeat(400)}])assert.equal((await call('/api/collect',{...event(),consent:consent(),...invalid},true)).status,400);
+  assert.equal((await call('/api/collect',{...event(),consent:consent(),identity_link_evidence_version:1},true)).status,400,'Payloads cannot supply the trusted event marker.');
 
   const settings=config.nativeTracking;
   const saved=await saveAnalyticsSettings(projectId,options.ownerId,{revision:1,settings:{...settings,captureReferrer:true,captureCampaigns:true,captureScreen:true,excludedPaths:['/private','/café']}});
@@ -82,6 +85,7 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   const samples=[['page_view',knownVisitor,visitOne,'10:00:00'],['page_view',knownVisitor,visitOne,'10:00:30'],['page_view',knownVisitor,visitTwo,'11:00:00'],
     ['signup',knownVisitor,visitTwo,'11:00:10'],['page_view',anotherVisitor,visitThree,'12:00:00'],['page_view',null,null,'13:00:00']];
   for(const [name,visitor,visit,time] of samples)await pool.query('INSERT INTO event(id,project_id,event_name,path,visitor_id,visit_id,received_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[randomUUID(),projectId,name,'/metrics',visitor,visit,`2024-02-29T${time}Z`]);
+  assert.ok((await pool.query("SELECT identity_link_evidence_version FROM event WHERE project_id=$1 AND path='/metrics'",[projectId])).rows.every(row=>row.identity_link_evidence_version===null),'Legacy-shaped inserts retain NULL evidence.');
   const report=await call(`/api/projects/${projectId}/analytics?from=2024-02-29&to=2024-02-29`);
   assert.equal(report.status,200); assert.deepEqual(report.data.totals,{pageViews:5,customEvents:1});
   assert.equal(report.data.measurement.visitors,2); assert.equal(report.data.measurement.visits,3);
