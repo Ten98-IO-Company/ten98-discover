@@ -8,6 +8,7 @@ import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {addDomain,issueDomainChallenge,verifyDomain,revokeDomain,updateDomain} from '../src/server/domains.ts';
 import {siteAuditQueue,getSiteAuditSetup,startSiteAudit,getSiteAudit,listSiteAudits,listSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit,withAuditLock,auditAuthorityCurrent} from '../src/server/site-audits.ts';
+import {auditPageSort} from '../src/lib/site-audit-pages.ts';
 
 export async function runSiteAuditChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig();
@@ -118,6 +119,83 @@ export async function runSiteAuditChecks(){
   await deleteSiteAudit(project,owner,first.run.id,{});assert.equal((await deleteSiteAudit(project,owner,first.run.id,{})).deleted,true);await assert.rejects(start(project,owner,intent),{status:410});
   assert.ok(!(await listSiteAudits(project,owner,new URLSearchParams())).runs.some(r=>r.id===first.run.id));
   console.log('PASS scoped cursors and composite foreign keys; raw/derived expiry is unavailable, never empty facts; deletion preserves replay tombstone');
+
+  {
+  const searchable=await start(),searchRun=searchable.run.id;await finish(searchRun);
+  const basePage=(await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams())).pages[0].id;
+  const facts=(n:number)=>({titleLength:7,titleHash:null,descriptionLength:7,descriptionHash:null,headingCounts:[n%4,0,0,0,0,0],headingOrder:[],wordCount:n%5,contentHash:null,imagesTotal:n%6,imagesMissingAlt:n%3,linksTotal:0,internalLinks:0,externalLinks:0,unresolvedLinks:0,structuredDataPresent:false,hreflangCount:0,indexability:'unknown',canonical:'none',invalidCanonicals:0});
+  const records=Array.from({length:125},(_,n)=>({id:randomUUID(),url:`https://audit.example.com/page-${String(n).padStart(3,'0')}`,http_status:n%9===0?null:200+n%3,response_time_ms:n%11===0?null:n%7,facts:n%10===0?null:facts(n),evidence:n===0?{title:'100%_\\ Éléphant 🐎',description:'Private searchable meta'}:n===1?{title:'',description:''}:n===2?null:n===3?{description:'Missing title field'}:n===4?{title:'🐎'.repeat(600),description:'Long title'}:n===5?{title:'🐎'.repeat(512),description:'Exact title bound'}:{title:`Title ${n%4}`,description:`Meta ${n%3}`},recorded:n!==2,truncated:n===6}));
+  for(const record of records)if(record.facts){record.facts.titleLength=record.evidence?.title?.length??0;record.facts.descriptionLength=record.evidence?.description.length??0;}
+  await pool.query(`INSERT INTO site_audit_page(id,run_id,project_id,resource_kind,url,state,observed_at,http_status,response_time_ms,analysis_coverage,facts,evidence,evidence_recorded,evidence_truncated)
+   SELECT x.id,$1,$2,'html',x.url,'done',clock_timestamp(),x.http_status,x.response_time_ms,'analyzed',x.facts,x.evidence,x.recorded,x.truncated
+   FROM jsonb_to_recordset($3::jsonb) AS x(id uuid,url text,http_status integer,response_time_ms integer,facts jsonb,evidence jsonb,recorded boolean,truncated boolean)`,[searchRun,project,JSON.stringify(records)]);
+  const firstPages=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams());
+  assert.equal(firstPages.pages.length,50);assert.equal(firstPages.matchingRetainedCount,126);assert.equal(firstPages.countBasis,'retained');assert.match(firstPages.selectionRevision!,/^[a-f0-9]{64}$/);assert.ok(Number.isFinite(Date.parse(firstPages.asOf)));assert.equal(firstPages.pages[0].id,basePage,'The explicit new default is URL ascending, not UUID ascending.');
+  const secondPages=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({cursor:firstPages.nextCursor!}));
+  const thirdPages=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({cursor:secondPages.nextCursor!}));
+  assert.equal(secondPages.pages.length,50);assert.equal(thirdPages.pages.length,26);assert.equal(thirdPages.nextCursor,null);assert.equal(new Set([...firstPages.pages,...secondPages.pages,...thirdPages.pages].map(p=>p.id)).size,126);
+  assert.equal(secondPages.selectionRevision,firstPages.selectionRevision);assert.equal(thirdPages.selectionRevision,firstPages.selectionRevision);
+  const all=[...firstPages.pages,...secondPages.pages,...thirdPages.pages];
+  const scalar=(p:typeof all[number],sort:typeof auditPageSort[number])=>sort==='url'?p.url:sort==='title'?p.titlePreview.text:sort==='httpStatus'?p.httpStatus:sort==='h1'?p.analysis.facts?.headingCounts[0]??null:sort==='wordCount'?p.analysis.facts?.wordCount??null:sort==='images'?p.analysis.facts?.imagesMissingAlt??null:p.responseTimeMs;
+  const compare=(a:string|number|null,b:string|number|null,direction:number)=>a===null?(b===null?0:1):b===null?-1:(typeof a==='string'&&typeof b==='string'?Buffer.compare(Buffer.from(a),Buffer.from(b)):Number(a)-Number(b))*direction;
+  for(const sort of auditPageSort)for(const order of ['asc','desc'] as const){
+   const scope={sort,order,limit:'100'},one=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams(scope)),two=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({...scope,cursor:one.nextCursor!}));
+   // Long titles differ only beyond the preview: use the fixture's readable raw title for this ordering oracle.
+   const title=(p:typeof all[number])=>records.find(r=>r.id===p.id)?.evidence?.title??null;
+   const expected=[...all].sort((a,b)=>compare(sort==='title'?title(a):scalar(a,sort),sort==='title'?title(b):scalar(b,sort),order==='asc'?1:-1)||(sort==='images'?compare(a.analysis.facts?.imagesTotal??null,b.analysis.facts?.imagesTotal??null,order==='asc'?1:-1):0)||(a.id<b.id?-1:a.id>b.id?1:0));
+   assert.deepEqual([...one.pages,...two.pages].map(p=>p.id),expected.map(p=>p.id),`${sort} ${order}: exact numeric/text/tie order with null last and zero retained`);assert.equal(two.nextCursor,null);
+  }
+  for(const search of ['100%_\\','éléphant','🐎','Private searchable meta']){const found=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({search}));assert.ok(found.pages.some(p=>p.id===records[0].id));}
+  assert.equal((await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({search:'100%X\\'}))).matchingRetainedCount,0,'Percent and underscore are literal, not SQL wildcard syntax.');
+  assert.equal((await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({search:'Private searchable meta',searchIn:'url'}))).matchingRetainedCount,0);
+  assert.equal((await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({search:'page-000 100%_\\'}))).pages[0].id,records[0].id,'The joined substring may cross the URL/title boundary.');
+  assert.equal((await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({search:'page-',coverage:'blocked'}))).matchingRetainedCount,0);
+  assert.equal((await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({resourceKind:'robots'}))).matchingRetainedCount,1);
+  const byId=new Map(all.map(p=>[p.id,p]));
+  assert.deepEqual(byId.get(records[1].id)!.titlePreview,{status:'empty',text:''});assert.deepEqual(byId.get(records[2].id)!.titlePreview,{status:'not_recorded',text:null});assert.deepEqual(byId.get(records[3].id)!.titlePreview,{status:'unavailable',text:null});
+  const clipped=byId.get(records[4].id)!.titlePreview;assert.equal(clipped.status,'truncated');assert.equal(Array.from(clipped.text!).length,512);assert.equal(Buffer.byteLength(clipped.text!),2048);
+  assert.equal(byId.get(records[5].id)!.titlePreview.status,'available');assert.equal(byId.get(records[6].id)!.titlePreview.status,'available');assert.equal(byId.get(records[6].id)!.rawEvidenceStatus,'truncated','Other-field evidence truncation does not misclassify the readable title.');assert.equal(byId.get(basePage)!.titlePreview.status,'not_recorded');
+  for(const p of all){assert.equal(p.evidence,null);assert.equal(p.evidenceIncluded,false);assert.equal(p.bodyEvidence.text,null);assert.ok(!JSON.stringify(p).includes('Private searchable meta'));}
+  await assert.rejects(listSiteAuditPages(project,stranger,searchRun,new URLSearchParams()),{status:404});await assert.rejects(listSiteAuditPages(foreignProject,owner,searchRun,new URLSearchParams()),{status:404});
+  const changedScopes:Record<string,string>[]=[{search:'Title'},{searchIn:'url'},{sort:'httpStatus'},{order:'desc'},{coverage:'analyzed'},{resourceKind:'robots'}];
+  for(const change of changedScopes)await assert.rejects(listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({...change,cursor:firstPages.nextCursor!})),{status:400});
+  await assert.rejects(listSiteAuditPages(foreignProject,owner,foreign.run.id,new URLSearchParams({cursor:firstPages.nextCursor!})),{status:400});
+  const cursorValue=JSON.parse(Buffer.from(firstPages.nextCursor!,'base64url').toString('utf8'));
+  for(const change of [{v:1},{afterId:randomUUID()},{extra:true}])await assert.rejects(listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({cursor:Buffer.from(JSON.stringify({...cursorValue,...change})).toString('base64url')})),{status:400});
+  const numericFirst=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({sort:'wordCount',limit:'1'}));await pool.query("UPDATE site_audit_page SET facts=jsonb_set(facts,'{wordCount}','999'::jsonb) WHERE id=$1",[numericFirst.pages[0].id]);
+  await assert.rejects(listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({sort:'wordCount',limit:'1',cursor:numericFirst.nextCursor!})),{status:409});
+  console.log('PASS retained Pages >125 pagination, all seven sorts/directions, null/zero/ties, literal Unicode search, preview states, scope and revision refusal');
+
+  // The physical raw evidence deliberately remains. A dependent read must latch expiry before its recoverable error.
+  const retentionCursor=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({searchIn:'url',limit:'1'}));assert.ok(retentionCursor.nextCursor);
+  await pool.query("WITH age AS (SELECT clock_timestamp()-interval '91 days' AS at) UPDATE site_audit_run SET created_at=age.at,completed_at=age.at,deadline_at=age.at+interval '30 minutes' FROM age WHERE id=$1",[searchRun]);
+  await assert.rejects(listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({searchIn:'url',limit:'1',cursor:retentionCursor.nextCursor!})),{status:409});
+  const latchedRaw=(await pool.query('SELECT raw_expired_at FROM site_audit_run WHERE id=$1',[searchRun])).rows[0].raw_expired_at as Date;assert.ok(latchedRaw);
+  await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[workspace]);
+  await assert.rejects(listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({sort:'title'})),{status:409});
+  assert.equal((await pool.query('SELECT raw_expired_at FROM site_audit_run WHERE id=$1',[searchRun])).rows[0].raw_expired_at.toISOString(),latchedRaw.toISOString(),'A recoverable stale-cursor read commits expiry; later policy extension cannot resurrect it.');
+  await pool.query('UPDATE workspace SET raw_provider_evidence_days=90 WHERE id=$1',[workspace]);
+  assert.equal((await pool.query("SELECT evidence->>'title' AS title FROM site_audit_page WHERE id=$1",[records[0].id])).rows[0].title,'100%_\\ Éléphant 🐎');
+  await assert.rejects(listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({search:'Private searchable meta'})),{status:409});
+  const rawExpired=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({search:'page-',searchIn:'url',sort:'images',limit:'100'}));
+  assert.equal(rawExpired.matchingRetainedCount,125);for(const p of rawExpired.pages){assert.equal(p.titlePreview.text,null);assert.equal(p.titlePreview.status,p.id===records[2].id?'not_recorded':'expired');assert.equal(p.evidence,null);assert.ok(!JSON.stringify(p).includes('Private searchable meta'));}
+  await assert.rejects(listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({cursor:firstPages.nextCursor!})),{status:409});
+  await pool.query("WITH age AS (SELECT clock_timestamp()-interval '366 days' AS at) UPDATE site_audit_run SET created_at=age.at,completed_at=age.at,deadline_at=age.at+interval '30 minutes' FROM age WHERE id=$1",[searchRun]);
+  const pagesExpired=await listSiteAuditPages(project,viewer,searchRun,new URLSearchParams({sort:'title',search:'private'}));assert.equal(pagesExpired.run.dataStatus,'expired');assert.deepEqual(pagesExpired.pages,[]);assert.equal(pagesExpired.nextCursor,null);assert.equal(pagesExpired.selectionRevision,null);assert.equal(pagesExpired.matchingRetainedCount,null);
+  assert.ok((await pool.query('SELECT data_expired_at FROM site_audit_run WHERE id=$1',[searchRun])).rows[0].data_expired_at);assert.ok((await pool.query('SELECT evidence FROM site_audit_page WHERE id=$1',[records[0].id])).rows[0].evidence);
+  console.log('PASS raw-dependent expiry commits its latch, physical evidence stays hidden, numeric/URL selection survives, derived expiry short-circuits');
+
+  const changing=await start(),changingRun=changing.run.id;
+  await pool.query("INSERT INTO site_audit_page(id,run_id,project_id,resource_kind,url) SELECT gen_random_uuid(),$1,$2,'html','https://audit.example.com/active-'||n FROM generate_series(1,125) n",[changingRun,project]);
+  const activePages=await listSiteAuditPages(project,viewer,changingRun,new URLSearchParams());assert.equal(activePages.matchingRetainedCount,null);assert.ok(activePages.nextCursor);
+  await pool.query("INSERT INTO site_audit_page(id,run_id,project_id,resource_kind,url) VALUES($1,$2,$3,'html','https://audit.example.com/new-active')",[randomUUID(),changingRun,project]);
+  await assert.rejects(listSiteAuditPages(project,viewer,changingRun,new URLSearchParams({cursor:activePages.nextCursor!})),{status:409});
+  const beforeFinish=await listSiteAuditPages(project,viewer,changingRun,new URLSearchParams());await finish(changingRun);
+  await assert.rejects(listSiteAuditPages(project,viewer,changingRun,new URLSearchParams({cursor:beforeFinish.nextCursor!})),{status:409});assert.equal((await listSiteAuditPages(project,viewer,changingRun,new URLSearchParams())).matchingRetainedCount,127);
+  const oversized=await start();await finish(oversized.run.id);await pool.query("INSERT INTO site_audit_page(id,run_id,project_id,resource_kind,url) SELECT gen_random_uuid(),$1,$2,'html','https://audit.example.com/over-'||n FROM generate_series(1,10000) n",[oversized.run.id,project]);
+  await assert.rejects(listSiteAuditPages(project,viewer,oversized.run.id,new URLSearchParams()),{status:409});
+  console.log('PASS active membership/status revisions and over-10,000 population refusal without truncated success');
+  }
 
   const login=await handleApi(new Request(`${config.appUrl}/api/auth/sign-in/email`,{method:'POST',headers:{origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify({email,password})}));assert.equal(login.status,200);
   const cookie=login.headers.getSetCookie().map(v=>v.split(';')[0]).join('; '),endpoint=`${config.appUrl}/api/projects/${project}/audits`;
