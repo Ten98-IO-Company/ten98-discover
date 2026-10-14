@@ -3,7 +3,7 @@ import {FoundationError} from './auth.ts';
 import {cleanText,parse,text} from './context-input.ts';
 import {explorerFilters,explorerQuery} from './explorer-input.ts';
 
-const definition=z.object({schemaVersion:z.literal(1),name:text(200,1),query:z.string().max(20000).refine(cleanText)}).strict();
+const definition=z.object({schemaVersion:z.literal(1),name:text(200,1).refine(value=>value.length<=200),query:z.string().max(20000).refine(cleanText)}).strict();
 const predicateKeys=new Set(['kind',...explorerFilters,'propertyKey','propertyType','propertyValue']);
 export type SegmentDefinition={schemaVersion:1;name:string;query:string};
 

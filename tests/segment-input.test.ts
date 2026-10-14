@@ -32,7 +32,7 @@ test('saved filters reject report state, ambiguous predicates, malformed values 
   for(const raw of [null,[],{schemaVersion:2,name:'A',query:''},{schemaVersion:1,name:'A',query:'',unexpected:1},{name:'A',query:''}])assert.throws(()=>parseSegmentDefinition(raw),{status:400});
 });
 test('saved names are bounded Unicode text and queries do not lose supported exact fields',()=>{
-  for(const name of ['', '   ', 'x'.repeat(201),'bad\0name','bad\ud800name'])assert.throws(()=>saved('',name),{status:400});
+  for(const name of ['', '   ', 'x'.repeat(201),'🐎'.repeat(101),'bad\0name','bad\ud800name'])assert.throws(()=>saved('',name),{status:400});
   assert.equal(saved('','🐎'.repeat(100)).name.length,200);
   const fields={origin:'https://example.com',referrer:'www.example.net',language:'en-AE',campaignMedium:'cpc',campaignName:'October',campaignTerm:'new homes',campaignContent:'a_b%'};
   assert.deepEqual(explorerQuery(new URLSearchParams(saved(new URLSearchParams(fields).toString()).query)).filters,fields);
