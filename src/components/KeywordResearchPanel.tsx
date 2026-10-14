@@ -327,20 +327,20 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   const selMarket=selected?markets.find(m=>m.locationCode===selected.request.locationCode&&m.languageCode===selected.request.languageCode):undefined;
   const startBlockers:string[]=[];
   if(st.spendingPaused)startBlockers.push('spending is paused');
-  if(!st.vaultConfigured)startBlockers.push('the encryption vault is not configured');
+  if(!st.vaultConfigured)startBlockers.push('credential storage needs installation operator setup');
   if(quoteExpired)startBlockers.push('the quote expired — prepare a new one');
 
   return <section className="research-panel keyword-research stack" style={{display:'grid',gap:16,minWidth:0}} aria-busy={busy} aria-label="Keyword research">
-    <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>Providers and spending</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
-    {!isOwner&&<p className="hint">Ask a workspace owner to configure provider connections or spending limits.</p>}
+    <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>AI and search providers</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
+    {!isOwner&&<p className="hint">Ask a workspace owner to manage AI and search providers or spending limits. Your current role can still view saved results.</p>}
     {st.spendingPaused&&<div className="alert" role="alert">Spending is paused for this workspace. Saved history and results below remain available; new paid research is disabled.</div>}
     {msg&&<p role="status">{msg}</p>}
     {(err||loadErr)&&<div className="alert" role="alert">{err||loadErr}</div>}
 
     {canResearch&&(!st.vaultConfigured?
-      <div className="alert" role="alert">No encryption vault is configured. Add a provider connection in the workspace provider settings before running research.</div>
+      <div className="alert" role="alert">Credential storage is not configured. Ask the installation operator to enable it, then ask a workspace owner to add a DataForSEO connection in AI and search providers. Adding a connection cannot fix missing credential storage.</div>
     :st.connections.length===0?
-      <div className="alert" role="alert">No provider connection is saved yet. Add one in the workspace provider settings, then return here.</div>
+      <div className="alert" role="alert">No DataForSEO connection is saved yet. {isOwner ? 'Add one in AI and search providers, then return here.' : 'Ask a workspace owner to add one in AI and search providers, then reload access.'}</div>
     :
       <details className="card" open={formOpen} onToggle={event=>setFormOpen(event.currentTarget.open)}><summary>New keyword research</summary><form className="stack" onSubmit={prepareQuote}><fieldset disabled={writing||lostStart} style={{border:0,padding:0,minWidth:0,display:'grid',gap:14}}><legend>Research inputs</legend>
         <div>

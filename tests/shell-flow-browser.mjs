@@ -366,7 +366,7 @@ try {
   };
   for (role of ['owner','admin','editor','viewer']) {
     await open('events');
-    assert.deepEqual(await workspaceTools.getByRole('link', {includeHidden:true}).allTextContents(), role === 'owner' ? ['Manage team','API keys','Providers and spending','Data retention','Create workspace'] : role === 'admin' ? ['Manage team','API keys','Data retention','Create workspace'] : ['Data retention','Create workspace']);
+    assert.deepEqual(await workspaceTools.getByRole('link', {includeHidden:true}).allTextContents(), role === 'owner' ? ['Manage team','ten98 API access','AI and search providers','Data retention','Create workspace'] : role === 'admin' ? ['Manage team','ten98 API access','Data retention','Create workspace'] : ['Data retention','Create workspace']);
     assert.equal(await side.getByRole('link', {name:'+ New project',exact:true,includeHidden:true}).count(), role === 'viewer' ? 0 : 1);
     assert.deepEqual(await accountMenu.getByRole('navigation', {name:'Account',exact:true,includeHidden:true}).getByRole('link', {includeHidden:true}).allTextContents(), ['Account security','Identity sign-in']);
     assert.equal(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true,includeHidden:true}).count(), 0);
@@ -378,7 +378,15 @@ try {
       return workspace.contains(element.querySelector('#ws')) && workspace.contains(element.querySelector('.workspace-settings')) && !!(workspace.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(sections.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING);
     }), true, 'Workspace controls precede projects; account follows project navigation.');
   }
-  assert.equal(await side.evaluate(element => element.scrollHeight <= element.clientHeight + 1), true, 'Ordinary two-project rail fits the reported 927 × 1270 viewport.');
+  assert.equal(await side.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return getComputedStyle(element).overflowY === 'auto' && bounds.top >= 0 && bounds.bottom <= innerHeight + 1 && document.documentElement.scrollHeight <= innerHeight + 1;
+  }), true, 'Flat navigation scrolls inside one bounded rail without adding page overflow.');
+  for (const target of [side.getByRole('link', {name:'Collection and privacy',exact:true}), accountSummary]) {
+    await target.focus();
+    assert.equal(await target.evaluate(element => {const bounds=element.getBoundingClientRect(); return element===document.activeElement && bounds.top>=0 && bounds.bottom<=innerHeight+1;}), true, 'Late project sections and Account remain reachable by keyboard in the flat rail.');
+  }
+  await side.evaluate(element => element.scrollTo(0, 0));
   await capture('navigation-account-927x1270');
   const toggleUrl = page.url(), requestsBeforeToggles = apiRequests.length;
   for (const disclosure of [workspaceTools, accountMenu]) {
@@ -400,7 +408,7 @@ try {
   operator = true; await open('events'); await accountSummary.click();
   assert.deepEqual(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true}).getByRole('link').allTextContents(), ['Google app setup','Meta app setup']);
   assert.equal(await accountMenu.getByText('Applies across workspaces.', {exact:true}).isVisible(), true);
-  assert.equal(await side.getByRole('link', {name:'Providers and spending',exact:true,includeHidden:true}).count(), 0, 'Operator authority does not upgrade a workspace viewer.');
+  assert.equal(await side.getByRole('link', {name:'AI and search providers',exact:true,includeHidden:true}).count(), 0, 'Operator authority does not upgrade a workspace viewer.');
   projectListCount = 0; operator = false;
   await page.goto(href('events')); await side.getByRole('navigation', {name:'Projects',exact:true}).getByText('None yet.', {exact:true}).waitFor();
   assert.equal(await workspaceTools.locator('summary').isVisible(), true); assert.equal(await accountSummary.isVisible(), true);
@@ -431,7 +439,7 @@ try {
     assert.equal(await side.locator('.proj-list').evaluate(element => getComputedStyle(element).overflowY), 'visible');
     if ([320,927].includes(width)) {
       await page.evaluate(() => { document.documentElement.dir = 'rtl'; }); await fit('RTL account/sidebar ' + width);
-      for (const summary of await side.locator('.section-nav > details > summary').all()) {
+      for (const summary of await side.locator('.section-nav > .side-label').all()) {
         assert.equal(await summary.evaluate(element => {
           const text = [...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE);
           const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, text.textContent.split(' ')[0].length);

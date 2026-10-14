@@ -1,5 +1,16 @@
 @import './design-tokens.css';
 
+/* Restore the preferred light palette without replacing component or dark-theme rules. */
+:root:not([data-theme]), [data-theme='light'] {
+  --color-canvas: #fafafb; --color-surface: #fff; --color-surface-subtle: #f6f6f9;
+  --color-text: #20212b; --color-text-muted: #636574; --color-border: #e5e5ec;
+  --color-accent: #5943ce; --color-accent-hover: #4934b8; --color-accent-active: #4934b8;
+  --color-accent-subtle: #eeebfc; --color-focus: #5943ce; --color-chart-1: #5943ce;
+  --color-success: #187353; --color-success-subtle: #e9f5ef;
+  --color-warning: #85520d; --color-warning-subtle: #fff8e9;
+  --color-danger: #b42318; --color-danger-subtle: #fff1ef;
+}
+
 :root {
   color-scheme: light;
   --canvas: var(--color-canvas); --surface: var(--color-surface); --ink: var(--color-text); --muted: var(--color-text-muted);
@@ -32,6 +43,7 @@ button { touch-action: manipulation; }
 .side .field { margin: 0; }
 .side label, .side-label { color: var(--muted); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0; text-transform: none; }
 .side-label { margin: 0 10px 6px; }
+.section-nav > .side-label { letter-spacing: .7px; text-transform: uppercase; }
 .side select { background: var(--surface); min-height: var(--control-touch); font-weight: 500; }
 .side summary { min-block-size: var(--control-touch); }
 .side .proj { text-align: start; }
@@ -274,11 +286,6 @@ td select { min-width: 7rem; } tbody tr:last-child td { border-bottom: 0; }
 ::placeholder {
   color: var(--color-text-placeholder);
   opacity: 1;
-}
-
-.section-nav > .workspace-tools {
-  padding-top: 4px;
-  border-top: 0;
 }
 
 .workspace-tools summary.proj.active {
