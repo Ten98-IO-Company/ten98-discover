@@ -273,15 +273,24 @@ export async function listSiteAuditIssues(projectId:string,userId:string,runId:s
  const query=parseAuditListQuery(params,'issues'),scope={projectId,runId,list:'issues',code:query.code,severity:query.severity,pageId:query.pageId},before=cursor(query.cursor,scope);
  return withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
   const run=requireRun(saved),base={role:role!,run:auditRunDto(run,role),findingsComplete:run.summary?.findingsComplete??false,countBasis:'retained' as const};
-  if(run.data_expired_at)return {...base,issues:[],nextCursor:null,matchingRetainedCount:null};
+  if(run.data_expired_at)return {...base,issues:[],groups:null,nextCursor:null,matchingRetainedCount:null};
   if(query.pageId)await scopedPage(client,run.id,query.pageId);
   if(before&&!(await client.query('SELECT 1 FROM site_audit_issue WHERE run_id=$1 AND id=$2',[run.id,before])).rowCount)throw new FoundationError(400,'This issue cursor is no longer available.');
-  const filter='run_id=$1 AND ($2::text IS NULL OR code=$2) AND ($3::text IS NULL OR severity=$3) AND ($4::uuid IS NULL OR page_id=$4)';
+  const filter='i.run_id=$1 AND ($2::text IS NULL OR i.code=$2) AND ($3::text IS NULL OR i.severity=$3) AND ($4::uuid IS NULL OR i.page_id=$4)';
   const values=[run.id,query.code,query.severity,query.pageId];
-  const rows=(await client.query(`SELECT id,page_id AS "pageId",target_page_id AS "targetPageId",related_page_ids AS "relatedPageIds",code,severity,rule_version AS "ruleVersion",details
-   FROM site_audit_issue WHERE ${filter} AND ($5::uuid IS NULL OR id>$5) ORDER BY id LIMIT $6`,[...values,before,query.limit+1])).rows;
-  const count=active.includes(run.status)?null:(await client.query(`SELECT count(*)::int AS count FROM site_audit_issue WHERE ${filter}`,values)).rows[0].count as number;
-  return {...base,issues:rows.slice(0,query.limit),nextCursor:rows.length>query.limit?nextCursor(rows[query.limit-1].id,scope):null,matchingRetainedCount:count};
+  const rows=(await client.query(`SELECT i.id,i.page_id AS "pageId",primary_page.url AS "pageUrl",i.target_page_id AS "targetPageId",target_page.url AS "targetPageUrl",
+    i.related_page_ids AS "relatedPageIds",i.code,i.severity,i.rule_version AS "ruleVersion",i.details
+   FROM site_audit_issue i LEFT JOIN site_audit_page primary_page ON primary_page.id=i.page_id AND primary_page.run_id=i.run_id
+    LEFT JOIN site_audit_page target_page ON target_page.id=i.target_page_id AND target_page.run_id=i.run_id
+   WHERE ${filter} AND ($5::uuid IS NULL OR i.id>$5) ORDER BY i.id LIMIT $6`,[...values,before,query.limit+1])).rows;
+  const pending=active.includes(run.status),groupRows=(await client.query<{code:string;severity:'critical'|'warning'|'info';findings:string;urls:string;unassigned:string}>(`
+   SELECT i.code,i.severity,count(*) AS findings,count(DISTINCT primary_page.url) AS urls,count(*) FILTER(WHERE primary_page.id IS NULL) AS unassigned
+   FROM site_audit_issue i LEFT JOIN site_audit_page primary_page ON primary_page.id=i.page_id AND primary_page.run_id=i.run_id
+   WHERE ${filter} GROUP BY i.code,i.severity ORDER BY i.code,i.severity`,values)).rows;
+  const groups=groupRows.map(row=>({code:row.code,severity:row.severity,retainedFindingCount:pending?null:safeCount(row.findings),
+   affectedUrlCount:pending?null:safeCount(row.urls),unassignedFindingCount:pending?null:safeCount(row.unassigned)}));
+  const count=pending?null:safeCount(groups.reduce((total,group)=>total+group.retainedFindingCount!,0));
+  return {...base,issues:rows.slice(0,query.limit),groups,nextCursor:rows.length>query.limit?nextCursor(rows[query.limit-1].id,scope):null,matchingRetainedCount:count};
  });
 }
 export async function listSiteAuditLinks(projectId:string,userId:string,runId:string,pageId:string,params:URLSearchParams){

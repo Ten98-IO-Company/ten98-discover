@@ -110,11 +110,59 @@ export async function runSiteAuditChecks(){
   const detail=await getSiteAuditPage(project,viewer,history.run.id,pageId);assert.equal(detail.page.evidence?.title,'Synthetic title');assert.equal(detail.page.analysis.facts,null);
   assert.equal((await listSiteAuditLinks(project,viewer,history.run.id,pageId,new URLSearchParams())).links[0].targetPageId,pageId);
   assert.equal((await listSiteAuditIssues(project,viewer,history.run.id,new URLSearchParams('code=missing-title'))).matchingRetainedCount,1);
+  const grouped=await start(),groupPage=(await listSiteAuditPages(project,viewer,grouped.run.id,new URLSearchParams())).pages[0],targetOne=randomUUID(),targetTwo=randomUUID();
+  const emptyPending=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams());assert.deepEqual(emptyPending.groups,[]);assert.equal(emptyPending.matchingRetainedCount,null);
+  await pool.query("INSERT INTO site_audit_page(id,run_id,project_id,resource_kind,url) VALUES($1,$3,$4,'html','https://audit.example.com/target-one'),($2,$3,$4,'html','https://audit.example.com/target-two')",[targetOne,targetTwo,grouped.run.id,project]);
+  const recordId=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+  const records:{id:string;page:string|null;target:string|null;code:string;severity:string;related:string[];details:Record<string,number>}[]=Array.from({length:52},(_,n)=>({id:recordId(n+1),page:groupPage.id,target:null,code:'missing-title',severity:'critical',related:[],details:{titleLength:0}}));
+  records.push(
+   {id:recordId(53),page:groupPage.id,target:targetOne,code:'broken-internal-link',severity:'critical',related:[otherPage],details:{httpStatus:404}},
+   {id:recordId(54),page:groupPage.id,target:targetTwo,code:'broken-internal-link',severity:'critical',related:[targetOne],details:{httpStatus:404}},
+   {id:recordId(55),page:null,target:null,code:'broken-internal-link',severity:'critical',related:[],details:{httpStatus:404}},
+   {id:recordId(56),page:groupPage.id,target:targetOne,code:'broken-internal-link',severity:'warning',related:[],details:{httpStatus:404}});
+  for(const record of records)await pool.query(`INSERT INTO site_audit_issue(id,run_id,page_id,target_page_id,issue_key,rule_version,code,severity,related_page_ids,details)
+   VALUES($1,$2,$3,$4,$5,'static-graph-v1',$6,$7,$8,$9)`,[record.id,grouped.run.id,record.page,record.target,createHash('sha256').update(record.id).digest('hex'),record.code,record.severity,JSON.stringify(record.related),record.details]);
+  await assert.rejects(pool.query("INSERT INTO site_audit_issue(id,run_id,page_id,target_page_id,issue_key,rule_version,code,severity,details) VALUES($1,$2,$3,$4,$5,'static-graph-v1','broken-internal-link','critical','{}')",[randomUUID(),grouped.run.id,groupPage.id,otherPage,'c'.repeat(64)]),{code:'23503'});
+  for(const state of ['queued','running','cancelling']){
+   if(state==='running')await withAuditLock({runId:grouped.run.id,internal:true,claim:true},async({client})=>{await client.query("UPDATE site_audit_run SET status='running',phase='robots',started_at=clock_timestamp(),lease_owner=$2,lease_expires_at=clock_timestamp()+interval '45 seconds' WHERE id=$1",[grouped.run.id,randomUUID()]);});
+   if(state==='cancelling')await cancelSiteAudit(project,owner,grouped.run.id,{});
+   const pendingGroups=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams());assert.equal(pendingGroups.run.status,state);assert.equal(pendingGroups.role,'viewer');assert.equal(pendingGroups.matchingRetainedCount,null);
+   assert.equal(pendingGroups.groups?.length,3);assert.ok(pendingGroups.groups?.every(g=>g.retainedFindingCount===null&&g.affectedUrlCount===null&&g.unassignedFindingCount===null));assert.equal(pendingGroups.run.canCancel,false);
+  }
+  await finish(grouped.run.id);
+  const expectedGroups=[
+   {code:'broken-internal-link',severity:'critical',retainedFindingCount:3,affectedUrlCount:1,unassignedFindingCount:1},
+   {code:'broken-internal-link',severity:'warning',retainedFindingCount:1,affectedUrlCount:1,unassignedFindingCount:0},
+   {code:'missing-title',severity:'critical',retainedFindingCount:52,affectedUrlCount:1,unassignedFindingCount:0}];
+  const overview=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams());assert.equal(overview.issues.length,50);assert.ok(overview.issues.every(i=>i.code==='missing-title'));assert.ok(overview.nextCursor);assert.equal(overview.matchingRetainedCount,56);assert.equal(overview.countBasis,'retained');assert.equal(overview.findingsComplete,false);assert.equal(overview.run.summary,null);assert.deepEqual(overview.groups,expectedGroups);
+  const remaining=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams({cursor:overview.nextCursor!}));assert.equal(remaining.issues.length,6);assert.equal(remaining.nextCursor,null);assert.deepEqual(remaining.groups,overview.groups);assert.equal(remaining.matchingRetainedCount,56);assert.equal(new Set([...overview.issues,...remaining.issues].map(i=>i.id)).size,56);
+  assert.deepEqual(remaining.issues.find(i=>i.id===recordId(55)),{id:recordId(55),pageId:null,pageUrl:null,targetPageId:null,targetPageUrl:null,relatedPageIds:[],code:'broken-internal-link',severity:'critical',ruleVersion:'static-graph-v1',details:{httpStatus:404}});
+  for(const [id,target,url] of [[recordId(53),targetOne,'https://audit.example.com/target-one'],[recordId(54),targetTwo,'https://audit.example.com/target-two']]){
+   const issue:typeof remaining.issues[number]=remaining.issues.find(i=>i.id===id)!;assert.equal(issue.pageId,groupPage.id);assert.equal(issue.pageUrl,groupPage.url);assert.equal(issue.targetPageId,target);assert.equal(issue.targetPageUrl,url);assert.deepEqual(issue.details,{httpStatus:404});
+  }
+  assert.deepEqual(remaining.issues.find(i=>i.id===recordId(53))?.relatedPageIds,[otherPage]);assert.ok(!JSON.stringify(remaining).includes(foreign.run.id));
+  const narrowed={code:'broken-internal-link',severity:'critical',pageId:groupPage.id,limit:'1'};
+  const narrowFirst=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams(narrowed));assert.equal(narrowFirst.issues.length,1);assert.equal(narrowFirst.matchingRetainedCount,2);assert.deepEqual(narrowFirst.groups,[{...expectedGroups[0],retainedFindingCount:2,unassignedFindingCount:0}]);assert.ok(narrowFirst.nextCursor);
+  const narrowSecond=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams({...narrowed,cursor:narrowFirst.nextCursor!}));assert.equal(narrowSecond.issues.length,1);assert.notEqual(narrowFirst.issues[0].id,narrowSecond.issues[0].id);assert.equal(narrowSecond.nextCursor,null);assert.deepEqual(narrowSecond.groups,narrowFirst.groups);
+  assert.deepEqual((await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams('code=broken-internal-link'))).groups,expectedGroups.slice(0,2));
+  assert.deepEqual((await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams('severity=critical'))).groups,[expectedGroups[0],expectedGroups[2]]);
+  const pageScoped=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams({pageId:groupPage.id}));assert.equal(pageScoped.matchingRetainedCount,55);assert.deepEqual(pageScoped.groups,[{...expectedGroups[0],retainedFindingCount:2,unassignedFindingCount:0},expectedGroups[1],expectedGroups[2]]);
+  const absent=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams('code=orphan-page'));assert.deepEqual(absent.groups,[]);assert.deepEqual(absent.issues,[]);assert.equal(absent.matchingRetainedCount,0);assert.equal(absent.nextCursor,null);
+  for(const change of [{severity:'warning'},{pageId:targetOne},{code:'missing-title'}])await assert.rejects(listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams({...narrowed,...change,cursor:narrowFirst.nextCursor!})),{status:400});
+  for(const raw of ['code=missing-title&code=broken-page','severity=critical&severity=warning','pageId=bad','search=title','sort=code','code=unknown-rule','cursor=not-a-valid-cursor'])await assert.rejects(listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams(raw)),{status:400});
+  await assert.rejects(listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams({pageId:otherPage})),{status:404});await assert.rejects(listSiteAuditIssues(foreignProject,owner,grouped.run.id,new URLSearchParams()),{status:404});await assert.rejects(listSiteAuditIssues(project,stranger,grouped.run.id,new URLSearchParams()),{status:404});
+  await assert.rejects(listSiteAuditIssues(project,viewer,history.run.id,new URLSearchParams({cursor:overview.nextCursor!})),{status:400});
+  for(const state of ['partial','failed','cancelled']){await pool.query('UPDATE site_audit_run SET status=$2 WHERE id=$1',[grouped.run.id,state]);const terminal=await listSiteAuditIssues(project,admin,grouped.run.id,new URLSearchParams());assert.equal(terminal.role,'admin');assert.equal(terminal.matchingRetainedCount,56);assert.deepEqual(terminal.groups,expectedGroups);}
+  await pool.query('UPDATE site_audit_run SET raw_expired_at=clock_timestamp() WHERE id=$1',[grouped.run.id]);
+  const rawGroups=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams(narrowed));assert.equal(rawGroups.run.rawEvidenceStatus,'expired');assert.deepEqual(rawGroups.groups,narrowFirst.groups);assert.deepEqual(rawGroups.issues,narrowFirst.issues);
+  await pool.query('UPDATE site_audit_run SET data_expired_at=clock_timestamp() WHERE id=$1',[grouped.run.id]);
+  const expiredGroups=await listSiteAuditIssues(project,viewer,grouped.run.id,new URLSearchParams({...narrowed,cursor:narrowFirst.nextCursor!}));assert.equal(expiredGroups.run.dataStatus,'expired');assert.equal(expiredGroups.groups,null);assert.deepEqual(expiredGroups.issues,[]);assert.equal(expiredGroups.nextCursor,null);assert.equal(expiredGroups.matchingRetainedCount,null);
+  console.log('PASS complete retained issue groups beyond the first page, distinct primary URLs, target joins, pending/terminal counts, strict scoped paging and expiry');
   await assert.rejects(getSiteAuditPage(project,owner,history.run.id,otherPage),{status:404});
   await pool.query('UPDATE site_audit_run SET raw_expired_at=clock_timestamp() WHERE id=$1',[history.run.id]);assert.equal((await getSiteAuditPage(project,owner,history.run.id,pageId)).page.evidence,null);
   await pool.query('UPDATE site_audit_run SET data_expired_at=clock_timestamp() WHERE id=$1',[history.run.id]);
   const expired=await listSiteAuditPages(project,owner,history.run.id,new URLSearchParams());assert.equal(expired.run.dataStatus,'expired');assert.deepEqual(expired.pages,[]);
-  const expiredIssues=await listSiteAuditIssues(project,owner,history.run.id,new URLSearchParams());assert.equal(expiredIssues.matchingRetainedCount,null);assert.deepEqual(expiredIssues.issues,[]);
+  const expiredIssues=await listSiteAuditIssues(project,owner,history.run.id,new URLSearchParams());assert.equal(expiredIssues.matchingRetainedCount,null);assert.deepEqual(expiredIssues.issues,[]);assert.equal(expiredIssues.groups,null);assert.equal(expiredIssues.nextCursor,null);
   await assert.rejects(getSiteAuditPage(project,owner,history.run.id,pageId),{status:410});
   await deleteSiteAudit(project,owner,first.run.id,{});assert.equal((await deleteSiteAudit(project,owner,first.run.id,{})).deleted,true);await assert.rejects(start(project,owner,intent),{status:410});
   assert.ok(!(await listSiteAudits(project,owner,new URLSearchParams())).runs.some(r=>r.id===first.run.id));
@@ -211,7 +259,7 @@ export async function runSiteAuditChecks(){
   let unblock!:()=>void;const held=new Promise<void>(resolve=>{unblock=resolve;});let reading!:()=>void;const entered=new Promise<void>(resolve=>{reading=resolve;});
   const request=new Request(endpoint,{method:'POST',headers:{cookie,origin:config.appUrl,'content-type':'application/json'},body:new ReadableStream({async start(controller){reading();await held;controller.enqueue(new TextEncoder().encode(JSON.stringify(input())));controller.close();}}),duplex:'half'} as RequestInit);
   const delayed=handleApi(request);await entered;await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[workspace,owner]);unblock();assert.equal((await delayed).status,403);
-  assert.equal((await getSiteAuditSetup(project,owner)).canStart,false);await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspace,owner]);assert.equal((await handleApi(new Request(endpoint,{headers:{cookie}}))).status,404);
+  assert.equal((await getSiteAuditSetup(project,owner)).canStart,false);assert.equal((await listSiteAuditIssues(project,owner,history.run.id,new URLSearchParams())).role,'viewer');await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspace,owner]);assert.equal((await handleApi(new Request(endpoint,{headers:{cookie}}))).status,404);await assert.rejects(listSiteAuditIssues(project,owner,history.run.id,new URLSearchParams()),{status:404});
   console.log('PASS actual cookie/Origin/bearer/API routes and delayed-body live-role revocation; no website requests');
  }finally{
   try{await pool.query("UPDATE site_audit_run SET status='cancelled',phase=NULL,completed_at=GREATEST(created_at,clock_timestamp()),lease_owner=NULL,lease_expires_at=NULL WHERE workspace_id=ANY($1::text[]) AND status IN('queued','running','cancelling')",[[workspace,foreignWorkspace]]);}
