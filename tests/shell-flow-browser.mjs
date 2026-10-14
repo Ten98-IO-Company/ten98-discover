@@ -45,11 +45,14 @@ const jobRows = [
 const href = view => origin + '/?' + new URLSearchParams({workspace, project, view});
 let browser, page, stage = 'startup';
 let role = 'viewer', longNames = false;
+let operator = false, noWorkspaces = false, longIdentity = false, projectListCount = null;
+let signOutReply = {status:503, body:{error:'Synthetic sign-out unavailable.'}}, holdSignOut = false, heldSignOut, signOutHeldResolve;
+const apiRequests = [];
 let eventReply = {body:empty}, jobReply = {body:{jobs:jobRows}};
 let holdEvents = false, holdJobs = false, holdCheck = false;
 let heldEvents, heldJobs, heldCheck;
 let eventHeldResolve, jobHeldResolve, checkHeldResolve;
-const calls = {events:0, jobs:0, check:0}, unexpected = [], errors = [], responsiveFindings = [];
+const calls = {events:0, jobs:0, check:0, signOut:0}, unexpected = [], errors = [], responsiveFindings = [];
 const json = (route, reply) => route.fulfill({status:reply.status ?? 200, contentType:'application/json', body:JSON.stringify(reply.body)});
 
 try {
@@ -70,8 +73,9 @@ try {
       if (method === 'GET') return route.continue();
       unexpected.push('non-GET asset blocked'); return route.abort();
     }
-    // These three reads retain the existing authenticated synthetic scope. Only
-    // display values/role are overlaid; this check does not prove server RBAC.
+    apiRequests.push(method + ' ' + path);
+    // These reads retain the real synthetic account/project IDs. Identity, list
+    // length, membership and authority overlays are presentation cases, not RBAC proof.
     if (method === 'GET' && ['/api/status', '/api/me', `/api/workspaces/${workspace}/projects`].includes(path)) {
       const response = await route.fetch({maxRedirects:0});
       assert.equal(response.status(), 200, 'Synthetic navigation authentication must still be valid.');
@@ -82,11 +86,16 @@ try {
         assert.ok(selected, 'Synthetic account retains selected workspace access.');
         selected.role = role;
         selected.name = longNames ? 'Workspace-' + 'long-name-'.repeat(12) : 'Shell fixture workspace';
+        body.instanceOperator = operator;
+        body.user.name = longIdentity ? 'Account name ' + 'readable long name '.repeat(12) : 'Shell Fixture User';
+        body.user.email = longIdentity ? 'a'.repeat(139) + '@fixture.example.test' : 'shell-user@fixture.example.test';
+        if (noWorkspaces) body.workspaces = [];
       }
       if (path.endsWith('/projects')) {
         const selected = body.projects.find(item => item.id === project);
         assert.ok(selected, 'Synthetic project remains available.');
         Object.assign(selected, {name:longNames ? 'Project-' + 'long-name-'.repeat(12) : 'Shell fixture project', origin:website, publicKey, eventCount:41, lastEventAt:null, retainedFrom:null});
+        if (projectListCount !== null) body.projects = Array.from({length:projectListCount}, (_, index) => index === 0 ? selected : {...selected, id:'00000000-0000-4000-8000-' + String(index).padStart(12, '0'), name:'Fixture project ' + (index + 1)});
       }
       return json(route, {body});
     }
@@ -108,7 +117,16 @@ try {
       if (holdCheck) { assert.equal(heldCheck, undefined); heldCheck = {route, reply:{body:{}}}; checkHeldResolve(); return; }
       return json(route, {body:{}});
     }
-    unexpected.push(method + ' unexpected API blocked');
+    if (path === '/api/auth/sign-out' && method === 'POST') {
+      calls.signOut++; assert.deepEqual(request.postDataJSON(), {});
+      if (holdSignOut) { assert.equal(heldSignOut, undefined); heldSignOut = {route, reply:structuredClone(signOutReply)}; signOutHeldResolve(); return; }
+      return json(route, signOutReply); // Never send this synthetic sign-out to the server.
+    }
+    if (path === '/api/auth/oidc/providers' && method === 'GET') {
+      assert.equal(calls.signOut, 2, 'Public sign-in providers are read after the successful synthetic sign-out.');
+      return json(route, {body:{providers:[]}});
+    }
+    unexpected.push(method + ' unexpected API blocked: ' + path.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '<fixture-id>'));
     return route.abort();
   });
   page = await context.newPage(); page.setDefaultTimeout(12000);
@@ -333,12 +351,143 @@ try {
   assert.deepEqual(unexpected, []); assert.deepEqual(errors, []);
   assert.deepEqual(responsiveFindings, [], 'Responsive findings: ' + responsiveFindings.join(' '));
   console.log('PASS shell: 320/360/768/1440 reflow, keyboard scroll, long-name/RTL, 200% CSS layout zoom and forced-colors checks.');
+
+  stage = 'workspace and account scope, native keyboard and role presentations';
+  await page.emulateMedia({forcedColors:'none', reducedMotion:'no-preference'});
+  await page.setViewportSize({width:927,height:1270});
+  projectListCount = 2;
+  const side = page.getByRole('complementary', {name:'Application navigation', exact:true});
+  const workspaceTools = side.locator('details.workspace-settings');
+  const accountMenu = side.locator('details.account-menu');
+  const accountSummary = accountMenu.locator(':scope > summary');
+  const showMenu = async () => {
+    const toggle = page.getByRole('button', {name:'Menu', exact:true});
+    if (await toggle.isVisible()) await toggle.click();
+  };
+  for (role of ['owner','admin','editor','viewer']) {
+    await open('events');
+    assert.deepEqual(await workspaceTools.getByRole('link', {includeHidden:true}).allTextContents(), role === 'owner' ? ['Manage team','API keys','Providers and spending','Data retention','Create workspace'] : role === 'admin' ? ['Manage team','API keys','Data retention','Create workspace'] : ['Data retention','Create workspace']);
+    assert.equal(await side.getByRole('link', {name:'+ New project',exact:true,includeHidden:true}).count(), role === 'viewer' ? 0 : 1);
+    assert.deepEqual(await accountMenu.getByRole('navigation', {name:'Account',exact:true,includeHidden:true}).getByRole('link', {includeHidden:true}).allTextContents(), ['Account security','Identity sign-in']);
+    assert.equal(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true,includeHidden:true}).count(), 0);
+    assert.equal(await side.locator('.account-summary-text').count(), 1);
+    assert.equal(await side.getByRole('button', {name:'Sign out',exact:true,includeHidden:true}).count(), 1);
+    assert.equal(await side.locator('#ws').count(), 1);
+    assert.equal(await side.evaluate(element => {
+      const workspace = element.querySelector('.workspace-controls'), projects = element.querySelector('nav[aria-label="Projects"]'), sections = element.querySelector('nav[aria-label="Project sections"]'), account = element.querySelector('.account-menu');
+      return workspace.contains(element.querySelector('#ws')) && workspace.contains(element.querySelector('.workspace-settings')) && !!(workspace.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(sections.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }), true, 'Workspace controls precede projects; account follows project navigation.');
+  }
+  assert.equal(await side.evaluate(element => element.scrollHeight <= element.clientHeight + 1), true, 'Ordinary two-project rail fits the reported 927 × 1270 viewport.');
+  await capture('navigation-account-927x1270');
+  const toggleUrl = page.url(), requestsBeforeToggles = apiRequests.length;
+  for (const disclosure of [workspaceTools, accountMenu]) {
+    const summary = disclosure.locator(':scope > summary');
+    assert.equal(await disclosure.getAttribute('open'), null);
+    assert.equal(await summary.evaluate(element => getComputedStyle(element).display), 'list-item');
+    await summary.focus(); await page.keyboard.press('Enter');
+    assert.notEqual(await disclosure.getAttribute('open'), null);
+    await page.keyboard.press('Tab');
+    assert.equal(await disclosure.getByRole('link').first().evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await summary.evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Space'); assert.equal(await disclosure.getAttribute('open'), null);
+    assert.equal(await disclosure.getByRole('link', {includeHidden:true}).first().isVisible(), false);
+    await page.keyboard.press('Tab');
+    assert.equal(await disclosure.evaluate(element => element.contains(document.activeElement)), false, 'Closed disclosure descendants are outside the tab order.');
+  }
+  assert.equal(page.url(), toggleUrl); assert.equal(apiRequests.length, requestsBeforeToggles, 'Native disclosure toggles do not issue requests.');
+  operator = true; await open('events'); await accountSummary.click();
+  assert.deepEqual(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true}).getByRole('link').allTextContents(), ['Google app setup','Meta app setup']);
+  assert.equal(await accountMenu.getByText('Applies across workspaces.', {exact:true}).isVisible(), true);
+  assert.equal(await side.getByRole('link', {name:'Providers and spending',exact:true,includeHidden:true}).count(), 0, 'Operator authority does not upgrade a workspace viewer.');
+  projectListCount = 0; operator = false;
+  await page.goto(href('events')); await side.getByRole('navigation', {name:'Projects',exact:true}).getByText('None yet.', {exact:true}).waitFor();
+  assert.equal(await workspaceTools.locator('summary').isVisible(), true); assert.equal(await accountSummary.isVisible(), true);
+  noWorkspaces = true;
+  await page.goto(origin + '/?view=workspace'); await side.getByText('No workspaces yet.', {exact:true}).waitFor();
+  assert.equal(await side.locator('#ws').count(), 0);
+  assert.notEqual(await workspaceTools.getAttribute('open'), null);
+  assert.deepEqual(await workspaceTools.getByRole('link').allTextContents(), ['Create workspace']);
+  await accountSummary.click();
+  assert.equal(await accountMenu.getByRole('link', {name:'Account security',exact:true}).isVisible(), true);
+  assert.equal(await accountMenu.getByRole('button', {name:'Sign out',exact:true}).isEnabled(), true);
+  noWorkspaces = false; projectListCount = 2;
+  console.log('PASS shell: unified account identity, adjacent workspace controls, owner/admin/editor/viewer/operator and empty scope, native keyboard and request-free disclosures.');
+
+  stage = 'sidebar all-width touch targets, scroll access, long identity and RTL';
+  longNames = true; longIdentity = true;
+  for (const width of [320,360,768,927,1440]) {
+    await page.setViewportSize({width,height:width === 927 ? 1270 : 900}); await open('events'); await showMenu();
+    for (const disclosure of await side.locator('details').all()) if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click();
+    await fit('Expanded account/sidebar ' + width);
+    for (const target of await side.locator('button, select, summary, a').all()) {
+      if (!await target.isVisible()) continue;
+      const box = await target.boundingBox();
+      assert.ok(box && box.height >= 44 && box.width >= 44, 'Every visible sidebar action is at least 44 × 44px at ' + width + 'px.');
+    }
+    assert.equal((await side.locator('.account-email').innerText()).length, 160);
+    assert.equal(await side.locator('.account-summary-text').evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, 'Long identity fits its wrapping text region.');
+    assert.equal(await side.locator('.proj-list').evaluate(element => getComputedStyle(element).overflowY), 'visible');
+    if ([320,927].includes(width)) {
+      await page.evaluate(() => { document.documentElement.dir = 'rtl'; }); await fit('RTL account/sidebar ' + width);
+      for (const summary of await side.locator('.section-nav > details > summary').all()) {
+        assert.equal(await summary.evaluate(element => {
+          const text = [...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE);
+          const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, text.textContent.split(' ')[0].length);
+          return [...range.getClientRects()].filter(box => box.width > 0).length;
+        }), 1, 'Short navigation words must not fragment into narrow columns.');
+      }
+    }
+    await accountSummary.focus(); await capture('navigation-account-expanded-' + width);
+  }
+  longNames = false; longIdentity = false; operator = true; role = 'owner'; projectListCount = 20;
+  await page.setViewportSize({width:768,height:600}); await open('events');
+  for (const disclosure of await side.locator('details').all()) if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click();
+  const footerSignOut = accountMenu.getByRole('button', {name:'Sign out',exact:true});
+  await footerSignOut.focus();
+  assert.equal(await side.evaluate(element => element.scrollTop > 0 && element.scrollHeight > element.clientHeight), true);
+  assert.equal(await footerSignOut.evaluate(element => { const box = element.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1; }), true, 'Final account action remains reachable in an overflowing short rail.');
+  assert.equal(await side.locator('.proj-list').evaluate(element => getComputedStyle(element).maxHeight), 'none');
+  await fit('Short overflowing rail'); await capture('navigation-account-short-overflow');
+  projectListCount = 2; operator = false; role = 'viewer';
+  await page.setViewportSize({width:1440,height:900}); await open('events'); await accountSummary.click();
+  await page.evaluate(() => { document.documentElement.style.zoom = '2'; }); await fit('Account 200% CSS layout zoom');
+  assert.equal(await footerSignOut.isVisible(), true); await capture('navigation-account-layout-zoom-200');
+  await page.evaluate(() => { document.documentElement.style.zoom = ''; });
+  await page.emulateMedia({forcedColors:'active', reducedMotion:'reduce'}); await accountSummary.focus();
+  await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
+  assert.notEqual(await accountSummary.evaluate(element => getComputedStyle(element).outlineStyle), 'none');
+  assert.equal(await accountSummary.evaluate(element => getComputedStyle(element).display), 'list-item');
+  assert.notEqual(await accountMenu.evaluate(element => getComputedStyle(element).borderInlineStartStyle), 'none');
+  await capture('navigation-account-forced-colors');
+  console.log('PASS shell: sidebar 320/360/768/927/1440 targets, reported viewport fit, long identity/RTL, single rail scroll access, layout zoom and forced colors.');
+
+  stage = 'contained sign-out pending, failure recovery and success';
+  await page.emulateMedia({forcedColors:'none', reducedMotion:'no-preference'});
+  holdSignOut = true;
+  const signOutHeld = new Promise(resolve => { signOutHeldResolve = resolve; });
+  await footerSignOut.click(); await signOutHeld;
+  const busySignOut = accountMenu.getByRole('button', {name:'Signing out…',exact:true});
+  assert.equal(await busySignOut.isDisabled(), true); assert.equal(calls.signOut, 1);
+  await page.keyboard.press('Enter'); assert.equal(calls.signOut, 1, 'Native disabled sign-out cannot submit a second request.');
+  await release(heldSignOut); heldSignOut = undefined; holdSignOut = false;
+  await main.getByRole('alert').filter({hasText:'Synthetic sign-out unavailable.'}).waitFor();
+  await page.waitForFunction(() => !document.querySelector('.account-signout button')?.disabled);
+  assert.equal(await footerSignOut.isEnabled(), true); assert.equal(await side.locator('.account-email').innerText(), 'shell-user@fixture.example.test');
+  signOutReply = {body:{}};
+  await footerSignOut.click(); await page.getByRole('button', {name:'Sign in',exact:true}).waitFor();
+  assert.equal(calls.signOut, 2); assert.equal(await side.count(), 0, 'Successful sign-out clears the authenticated shell.');
+  assert.deepEqual(unexpected, []); assert.deepEqual(errors, []);
+  assert.deepEqual(responsiveFindings, [], 'Responsive findings: ' + responsiveFindings.join(' '));
+  console.log('PASS shell: synthetic sign-out remains single/disabled while pending, preserves account and alert on failure, and clears shell on success without a server mutation.');
 } catch (error) {
   const location = /shell-flow-browser\.mjs:\d+:\d+/.exec(error?.stack ?? '')?.[0] ?? '';
   console.error(`FAIL shell flow at ${stage}: ${error instanceof Error ? error.name : 'Error'} ${location}. Private authentication and payloads are not printed.`);
+  if (unexpected.length || errors.length) console.error(JSON.stringify({unexpected, errors}));
   if (error instanceof assert.AssertionError && !error.generatedMessage) console.error(error.message);
   process.exitCode = 1;
 } finally {
-  for (const held of [heldEvents, heldJobs, heldCheck]) if (held) await held.route.abort().catch(() => {});
+  for (const held of [heldEvents, heldJobs, heldCheck, heldSignOut]) if (held) await held.route.abort().catch(() => {});
   await browser?.close();
 }
