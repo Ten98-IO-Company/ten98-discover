@@ -1,17 +1,8 @@
 # Saved keywords
 
-Status: implemented development increment covering saved lists, tags, filters, exports and explicitly quoted metric refreshes. The source contract and acceptance evidence below describe this increment; they do not establish the complete 81-requirement V1 release or live-provider acceptance. GPT owns schema, authorization, provenance, spending, retention, product design and independent validation. Kimi drafted the bounded parser and controlled filter fields.
+> Code and safety contracts retained from [docs/saved-keywords.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/saved-keywords.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/saved-keywords-implementation-history-bdynZvHWta). Qualifications are preserved; this adds no acceptance claim.
 
-## Source and existing seams
-
-Pinned OpenSEO: `89e5a00717cdf049b7c2b4e29646edb3a7d4995b`.
-
-- `src/db/pg/app.schema.ts:99`: saved identity is unique(project, keyword, location, language); authored saved rows are separate from metric cache. Tags and assignments are project-local.
-- `src/server/features/keywords/services/research/saved-keywords.ts:34`: normalize/deduplicate, optional observed metrics, append/replace tags; list/filter/export/tag/remove. An assigned tag cannot be deleted until detached.
-- `src/server/features/keywords/repositories/KeywordResearchRepository.ts:147`: case-insensitive literal search; all include terms, no exclude terms; inclusive volume/CPC/difficulty bounds; any selected tag; stable sort must be added in ten98.
-- `src/server/features/keywords/services/research/refresh-metrics.ts:15`: group refresh by exact location/language; omitted provider rows do not overwrite previous metrics.
-- `src/shared/saved-keyword-tags.ts` and `src/shared/tag-colors.ts`: display spelling is distinct from normalized tag identity; eight fixed color names.
-- `src/client/features/saved-keywords/useSavedKeywordsExport.ts`: selection and filtered CSV/Sheets export. Preserve CSV and a safe tabular clipboard/Sheets-compatible export in P48; native Google Sheets account integration is not implied.
+## Existing seams and normalization
 
 Reuse current `keyword-research-input.ts` types/normalization semantics, `KeywordRow`/`KeywordResult`, `dataforseo-keywords.ts`, explicit quote/start/cancel/reconcile flow, `reserveSpendInTransaction`, `dispatchSpend`, `settleSpend`, `withContentProject`, `contentReceipt`, cursor conventions, `csvCell`, and keyword retention transaction. No new provider, dependency, scheduler, client-side metric authority or duplicate queue framework.
 
@@ -80,8 +71,6 @@ New pure input module, new saved-keyword server module, additive migration, smal
 
 GPT independent fixtures: same text across markets/projects; normalized duplicate saves; forged metrics/foreign run/expired source; tag name collision, in-use deletion and literal `%_` filters; exact CPC/null/zero; all export formats and formula injection; concurrent same-key/revision saves; all-child queue/budget rollback; mixed-market chunks100/101; dropped start response/retry after expiry; stale account/member revocation; deletion and delete-recreate before/after dispatch; out-of-order results; omitted rows; retention/save/refresh races; no provider calls from read/save/export. Browser: real selection, dirty state, held reads interrupted by writes, stale A->B->A completion, live demotion, explicit cost confirmation, keyboard and360px table/filters.
 
-Kimi drafted the pure strict input parser and, in a separate bounded task, the controlled filter fields after the [reviewed contract was published](https://github.com/Ten98-IO-Company/ten98-monitor/issues/39). GPT reviewed and corrected both drafts and implemented the shared application boundaries. The [Kimi ledger](kimi-workflow.md#saved-keyword-swarm--2026-10-13) records observed model, skills, duration and limitations. No paid/live acceptance is claimed from synthetic fixtures; designated-budget real provider acceptance remains a release gate.
-
 ## Provider account identity and upgrades
 
 Migration `0021` adds authored lists, tags, revisions and refresh plans. Migration `0022` stabilizes DataForSEO account identity across login-secret rotation. Earlier migration files and fingerprints remain unchanged. During the upgrade transaction, the existing login secret is captured in an encrypted instance record for legacy version-1 fingerprints, alongside a random independent key for new version-2 fingerprints. Jobs and reconciliation select the version saved with their original quote. The account login itself is not stored in the fingerprint.
@@ -91,12 +80,3 @@ Stop web and worker writers and back up the database, artifacts and matching con
 Fresh installations without provider credentials can migrate without a vault keyring. They initialize the encrypted identity keys once, under a database row lock, when a correctly configured provider is first used. Missing identity state after quotes exist fails closed. Readiness, worker startup and `diagnose` check stored identity-key readability. `rekey` re-encrypts these same keys with the active vault key; it does not change account identity. Retain old encryption keys for backups that still need them.
 
 Runnable checks are `tests/saved-keywords.test.ts`, `tests/saved-keywords-integration.ts`, `tests/provider-account-identity-integration.ts` and the [production browser harness](../tests/saved-keywords-ui/README.md). Integration tests require their explicitly guarded synthetic local databases; the identity legacy/deferred cases each require a separate empty database. They do not call real providers.
-
-## Observed validation — 2026-10-13
-
-- Full unit suite: 278 passed, two existing platform skips, zero failures. TypeScript analysis and production build passed.
-- Saved-keyword PostgreSQL/API acceptance: 13 groups passed, including provenance, exact numeric filters, more than 250 tags, the 10,000-row export boundary, atomic multi-child queue failure, lost acknowledgements, deletion/recreation, out-of-order completion and retention races. Existing keyword worker and Google/keyword retention regressions also passed after `0022`.
-- Independent identity acceptance passed on separate fresh legacy/deferred databases: actual legacy capture and rollback, concurrent initialization, login-secret rotation, wrong-account rejection, uncertain-charge recovery, missing-key failures, encryption rekey and no-network failures before vault setup.
-- Upgrade acceptance preserved existing credentials, membership, analytics, provider charges, research, saved goals/funnels and authored keywords/tags. Repeat migration and rollback/history checks passed.
-- Six production Edge browser groups passed after `0022`, covering selection/save, tags, literal/metric filters, CSV/TSV, immutable retry and duplicate-click guards, stale responses, live role removal and tab reauthorization. Desktop and 360px screenshots were inspected. No browser errors or outbound provider requests occurred. A subsequent error-message-only change preserved the recovery-key 503 response and passed its targeted no-network regression and a fresh production build.
-- The local preview was backed up and upgraded through `0022`; all prior public-table counts, owner identity and projects were preserved. This is a local development preview, not a published release image.

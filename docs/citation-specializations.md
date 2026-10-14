@@ -1,14 +1,12 @@
 # Specialized citation reports
 
-Accepted implementation contract for issue49, 2026-10-13, with local acceptance recorded below on 2026-10-14. Reuses the accepted citation analysis increment. The frozen source baseline is Elmo3c673d0253d01ae030fa41519f62ad7e54f2281b. This development increment is not deployed and does not complete full P19 provider/capture or V1 release acceptance.
+> Code and safety contracts retained from [docs/citation-specializations.md at f3e3099](https://github.com/Ten98-IO-Company/ten98-monitor/blob/f3e3099bccc346a2d703a9677a4b7346a0bd7c8b/docs/citation-specializations.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/specialized-citation-reports-implementation-history-NgOn7zxhV8). Qualifications are preserved; this adds no acceptance claim.
 
 ## Tight increment
 
 One read-only specialized citation service supplies Reddit communities/pages, retained Google Shopping/search-link groups, and citation-domain gap candidates from the existing retained answer population. It includes exact annotation/answer provenance and a selection-bound CSV. No new table, provider call, scraping, wrapper resolution, model generation, scheduling, financial mutation or product catalog.
 
 The increment implements specialized **analysis of captured annotations**, not Google AI Mode collection or proof of rendered product-card exposure. Full P19 provider/capture and independent UI/live acceptance gates remain explicit below.
-
-Implementation allowlist: new `src/server/prompt-citation-specializations.ts`, narrow shared-selector extraction in `src/server/prompt-citations.ts`, read-only route additions in `src/server/api.ts`, and new `tests/prompt-citation-specializations-integration.ts`. A small pure helper may stay inside the new service unless independently testing it requires an exported function; no generic reporting framework, classifier fork or new dependency. Kimi presentation leaves are separate tasks after a reviewed contract.
 
 ## Reuse and authority
 
@@ -219,25 +217,6 @@ This reproduces the source's prompt-level “ever brand in selected period” pr
 6. Groups→prompts/pages→exact annotations→existing saved answer receipt, fresh Back/current role/read expiry; IDs scoped by project and selected report; foreign/forged cursor and changed source/context/retention reject; zero outbound hooks.
 7. Formula-safe CSV, rectangular rows, null vs zero/empty/unavailable, exact revision/count, proof vs matching basis, 16 MiB fail-whole and abort; 1440/360 keyboard/table/focus, provider module unavailable copy, all-member read/export and proper context-write handoff.
 
-## Local implementation and acceptance — 2026-10-14
+## Source method guardrails
 
-The service, strict browser DTO validator, protected controller and Kimi presentation implement Reddit communities/pages, retained Shopping labels, retained search-query links and current-context citation-domain gap evidence. All seven navigation modes share the existing retained-answer selection and exact annotation provenance. Source filters never change base coverage or manufacture a gap; an unavailable brand domain yields unavailable gap counts. No migration or external request is added.
-
-- Five specialized-label unit groups and nine specialized DTO groups pass; all six existing citation DTO groups also pass. The full repository suite passes 425 tests with two existing Windows skips and no failures.
-- Eight real PostgreSQL/API integration groups pass, plus a ninth agreement group validating 62 actual service DTOs through the browser validator across modes, periods, filters, unavailable evidence, pagination and viewer HTTP responses. The 100,000-annotation capacity fixture completed report/export checks in about 7.8 seconds on the owned local synthetic database; this is not production capacity certification.
-- All eight prior citation, seven insight and eight historical-comparison integration groups pass after shared selector extraction. No prior classification/count/CSV method changed.
-- Ten pure-presentation and ten real-controller browser groups pass in installed Edge. They cover all member roles, current/stale denials, scope changes, whole-manifest expiry through saved comparisons and the parent, explicit source filters, keyboard/table navigation and 320/360/1440px presentation. Hostile labels stay text; untrackable URLs stay plain text.
-- CSV checks cover exact headers/row counts, quoted commas/newlines/quotes, invalid UTF-8, actual decoded byte bounds, identity content-length mismatch, real loopback gzip decoding/expanded payload rejection, conflict recovery and cancellation without late downloads.
-- TypeScript, production build, plan and diff checks pass. Server-only SQL/configuration markers and sampled curated domains remain absent from public browser bundles. Build warnings match the accepted baseline; the combined route chunk remains above the existing size warning and needs later loading/performance work.
-
-GPT designed/reviewed the boundaries and ran independent checks. Kimi CLI2.1.1, K3-256k with maximum thinking and only Ponytail/UX Copy Refiner skills, drafted the pure view in about578 seconds under a720-second cap. One bounded17-second repair supplied a missing native Pages disabled predicate and made export progress take precedence over read progress. The runner exposed no shell/filesystem/network/subagent tools; this is not an OS-sandbox claim. Captured durations are approximate, not token usage or savings. No test assertion was weakened to accept a product defect: hidden unavailable actions are accepted as inactive, and geometry checks open native disclosures before measuring their controls.
-
-All 19 production navigation groups pass against a freshly built application and an owned schema0030 synthetic database: the original18 groups remain, plus mobile/viewer specialized-report entry, actual retained groups/pages/annotations, exact saved comparison and fresh Back navigation to unchanged applied Insights. No preserved-preview data, provider credentials or paid request was used. Operational fixture records and screenshots remain private; runnable checks are committed under tests/.
-
-## Exact remaining full-parity gates
-
-- Operational release and real-provider acceptance remain required beyond the accepted local service/controller/presentation/production-navigation workflows; this increment alone does not close P19.
-- Real Google consumer-surface/provider adapters and immutable capture capability (source sources/citationPills vs relatedLinks/retrieved links) remain unimplemented for current prompt execution. Validate supported synthetic payloads first and later deliberately authorized real-provider behavior. Do not convert this gate into a paid call in this read-only increment.
-- Broader provider/model/access-mode/market parity remains in P11–P14. URL q groups do not complete P20 reported query fan-out. Citation gap observations do not complete P22 opportunity generation/history, fetched-content analysis or sentiment. Source carried trends remain P16/P18 work as already recorded.
 - Source-substring product attribution and corrected native community parsing must be labelled/versioned and covered by fixtures; no hidden change to the frozen P18 Google/source totals, publisher categories, ownership or raw evidence retention.
-- No additional Google module code was copied; existing attributed taxonomy helpers are reused. Full operational/privacy/retention and real-provider acceptance remain required. The release register records P19 as partial, not complete.

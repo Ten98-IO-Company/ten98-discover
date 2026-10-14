@@ -1,9 +1,6 @@
 # AI insights from retained answers
 
-Read-only service, matcher and interface implemented and tested locally 2026-10-13,
-including production application navigation. This P15/P16/P17 increment does not complete all AI
-visibility requirements. It reads existing evidence without requesting a
-provider, job or credit check.
+> Code and safety contracts retained from [docs/ai-insights.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/ai-insights.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/ai-insights-from-retained-answers-implementation-history-4flwkY6q5i). Qualifications are preserved; this adds no acceptance claim.
 
 ## Evidence and measurement
 
@@ -82,8 +79,6 @@ never silently sample or truncate. The conservative report CPU cap is100million
 text-unit/term operations; the actual matcher benchmark at that cap took97ms
 for Unicode and7ms for substring on the local acceptance host, not a deployment
 performance guarantee. The pure matcher has a20million per-answer work bound.
-Historical identity capture, remaining provider adapters, complete filter/export
-parity and historical comparison variants remain later required increments.
 
 ## Pure Kimi matcher contract
 
@@ -175,13 +170,8 @@ IDN/www, null denominators, changed context, actual drilldown reconciliation and
 zero unexpected provider traffic. This matcher is not accepted merely because
 Kimi generated a file.
 
-## Local acceptance and remaining work
+## Retention and receipt invariants
 
-Eight independent pure matcher groups cover semantics, malformed inputs and a
-bounded250000-character failed-email regression. Seven PostgreSQL/API groups
-cover exact denominators and all eligibility categories, context/tag/payload
-revision changes, member isolation, retention/tombstones, pagination, timezone
-boundaries, capacity and CSV exports. All pass with zero outbound provider calls.
 Charge reconciliation preserves the original answer completion timestamp, so
 settling an old charge cannot restart its raw-evidence retention period; the
 nine-group execution suite verifies this regression and existing paid-work gates.
@@ -191,13 +181,5 @@ remain unavailable when retention is extended. Both insights and receipt reads
 use elapsed24-hour policy days independent of the database session timezone;
 explicit DST and exact microsecond-boundary checks cover this distinction.
 
-Eight pure-view, seven protected-controller and eight receipt-navigation browser
-groups pass with synthetic local data, desktop/mobile rendering, keyboard
-scrolling, exact drilldown and CSV/cancellation/access checks. See the
-[interface contract and acceptance](ai-insights-ui.md). Seventeen production
-navigation groups pass, including owner/viewer insights, whole-report CSV,
-exact receipt handoff, refreshed Back navigation and immediate retention masking.
 The receipt controller also remembers expiry learned from a run summary before
 loading its detail, so a later stale response cannot redisplay a known-expired answer.
-Historical identity capture/comparison methods, further provider
-adapters, generated reports and full filter/export parity remain outstanding.

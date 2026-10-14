@@ -1,6 +1,6 @@
 # Citation analysis contract
 
-Status: local acceptance completed for issue 48, 2026-10-13. Backend, context migration, presentation, controller and production-navigation checks pass with synthetic data. The two presentation capability-handler defects were corrected and independently rechecked; draft PR51 and its CI pass. This increment is not deployed and does not claim live-provider acceptance or full V1 parity.
+> Code and safety contracts retained from [docs/citation-analysis.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/citation-analysis.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/citation-analysis-contract-implementation-history-VWdxJbWSyj). Qualifications are preserved; this adds no acceptance claim.
 
 ## Measurement and source boundary
 
@@ -186,24 +186,7 @@ POST `/api/projects/:projectId/prompt-insights/citations/export` accepts ONLY Ci
 
 Export record contract: one metadata row, two period rows, one daily row for every day, and one evidence row per matching eligible retained annotation from BOTH periods (no separate aggregate row duplication). Summary/daily rows include their full base answer coverage/denominator and fixed filtered axes as JSON cells. Evidence rows contain all provenance/classification plus current profile/method identifiers. Expected data row count is `3 + daily.length + current.annotations + previous.annotations`; CSV header excluded. Thus a 100k-annotation report can read paginated but its full evidence CSV can correctly exceed16MiB and fail with a narrower-range instruction. Full distinct URL/domain/category summaries are reproducible from exact evidence rows; metadata labels export as full applied report. No answer text/system input/credentials/financial evidence exported.
 
-## Implementation ownership
-
-GPT scoped service/integration: NEW src/server/prompt-citations.ts; narrow src/server/prompt-insights.ts optional validated evidence selector seam; src/server/api.ts route hooks; tests/prompt-citations-integration.ts. Keep ordinary/comparison DTO semantics unchanged except consistent additional current brand citation domains.
-
-Context/schema ownership separately coordinated: src/server/context-input.ts, src/server/project-context.ts, migration0030_citation_context.sql, src/server/db.ts explicit manifest, focused context/migration tests. CitationAnalysisPanel owns the inline tracking/classification flow through the existing context API.
-
-Attributed rules/data were reused from the pinned MIT source, with reviewed native classification boundaries, a pinned Google domains module and THIRD_PARTY_NOTICES.md. Independent golden tests are GPT-owned. Kimi K3 drafted CitationAnalysisView.tsx with maximum thinking and the approved Ponytail/UX Copy Refiner skills; GPT owns its controller, trust-boundary validation and independent acceptance. No new dependency or connector framework was added.
-
-## Local acceptance checkpoint, 2026-10-13
-
-- TypeScript and production build pass. The editorial/classification domain lists remain outside the browser bundle.
-- Unit suite: 413 checks, 411 passed and two existing platform-specific skips. Six classification and six client-report boundary groups are included.
-- Fresh isolated PostgreSQL: eight citation service/API groups (every successful report also passes the separately authored client validator), six context groups, the original context suite, seven ordinary-insight and eight comparison groups pass. The migration runner preserves the 29 published migrations and prior context fields while adding0030 with empty defaults; repeated upgrade is idempotent.
-- Nine contained controller-browser groups pass: access/scope isolation, applied filters, exact request retry after408/429/5xx/malformed acknowledgements, context conflicts, full-selection expiry propagation, bounded CSV cancellation and desktop/mobile interaction.
-- Eighteen production-navigation groups pass against a separate local database. Added owner/viewer checks exercise all six citation views, filtered-empty denominators, exact CSV, inline context handoff, retained receipt/Back and preserved Insights filters. The suite respects the real shared request-rate limit rather than disabling it. No provider calls or financial changes occur.
-- All ten presentation groups pass after GPT's narrow security review added callback capability guards to Kimi's draft. Disabled or missing task actions block secondary fields and Save; choosing an enabled alternative preserves the draft; viewer and busy states reject forbidden synthetic callbacks. The nine controller groups and production build pass again after these changes. No preview upgrade or release is claimed.
-
-Actual daily observations do not implement source-compatible carried trends. Historical identity capture, broader provider/capture coverage and specialized P19 reports remain separate open requirements.
+## Regression and compatibility requirements
 
 Acceptance: duplicates/unions/zero vs unavailable; exact both-period cap; title variants/representative stability; fragments/query/utm/www/trailing-slash modes; literal query max200 and AND source filters consistently changing charts/groups/changes/export but not answer coverage/denominator/manifest; edited-unapplied drafts never exported; inherited ownership ambiguity and exact override/reset; all Google surface counts and spoofed hosts; closed/90%/2-occurrence/50% boundaries; DST/skipped dates; full selected manifest across page/navigation; expired result never loaded or revived; context CAS, bulk field preservation and conflicting replay; foreign/viewer write denial; formula-safe rectangular export/count/cap/abort; no network hooks; old7 insight and8 comparison regressions remain green. Preserve source LVCF trend and specialized P19 gaps explicitly until separately implemented; no full-parity completion claim from this contract alone.
 

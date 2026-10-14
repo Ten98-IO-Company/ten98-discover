@@ -1,6 +1,6 @@
 # ten98-monitor contributor rules
 
-Read README.md, docs/brief.md, docs/foundation.md and the relevant parity rows before editing. This is a development foundation, not a V1 release. Do not present planned capabilities as implemented or deployed software.
+Read [README](README.md), the [accepted brief](https://wiki.ten98.io/s/ten98-docs/p/brief-d35ZixmM5Q), [foundation contracts](docs/foundation.md) and the relevant [requirement rows](https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5) before editing. This is a development foundation, not a V1 release. Do not present planned capabilities as implemented or deployed software.
 
 ## Ownership
 

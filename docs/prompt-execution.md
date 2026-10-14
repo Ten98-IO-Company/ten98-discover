@@ -2,7 +2,7 @@
 
 This internal increment implements explicit paid requests for one or both of `openai/gpt-4o-mini` and `openai/gpt-4o` through the standard OpenAI route on OpenRouter. It does not complete V1 AI monitoring. The manual execution UI is implemented; scheduling, the seven-day result cache, other provider/model routes, visibility analysis and live paid acceptance remain pending. Saving or enabling a library prompt does not start a request.
 
-The approved [execution UI contract](prompt-execution-ui.md) describes the implemented manual flow, current DTOs, immutable authored previews and current-role cancellation metadata. Its metadata preparation and existing prompt-library mobile checks are tested, and the execution UI has synthetic production-browser evidence in [research UI](research-ui.md); live provider acceptance and full V1 coverage remain open.
+The approved [execution UI contract](https://wiki.ten98.io/s/ten98-docs/p/prompt-execution-ui-VotwUEEttQ) describes the implemented manual flow, current DTOs, immutable authored previews and current-role cancellation metadata. Its metadata preparation and existing prompt-library mobile checks are tested, and the execution UI has synthetic production-browser evidence in [research UI](https://wiki.ten98.io/s/ten98-docs/p/research-ui-QI3jrak1kA); live provider acceptance and full V1 coverage remain open.
 
 ## Authorization and API
 
@@ -54,6 +54,6 @@ No live paid request or authenticated provider account test is part of this incr
 
 Observed local checks: six new pure groups and 153 total unit passes (two pre-existing skips); TypeScript, build and plan checks; `0016` to `0017` upgrade/rollback/history checks; existing keyword and new seven-group prompt PostgreSQL/worker suites; shared Google/keyword retention regression; real Edge retention flow at desktop and 360px. Independent GPT review reran all six pure groups and found no remaining blocker in the bounded reviewed surface. No live paid acceptance was performed.
 
-Retention evidence: [desktop](screenshots/prompt-retention-desktop.png) and [mobile](screenshots/prompt-retention-mobile.png). These show synthetic local data and the existing shell; the execution UI is still pending.
+Historical screenshots and their original checkpoint captions are in the [delivery archive](https://wiki.ten98.io/s/ten98-docs/p/historical-screenshots-project-context-and-prompt-retention-VrWna880ye).
 
 The combined navigation/serving-domain tree also passed an independent production build, TypeScript, plan checks, 159 unit checks (two existing platform skips), migration upgrade/history/rollback, keyword and prompt PostgreSQL/worker suites, shared retention regression and the full application integration suite. Edge retention checks passed at desktop and mobile sizes with external requests blocked. An added regression expires an uncertain comparison's copied input, then recovers its charge from the preserved receipt without restoring payload or sending another paid request.

@@ -1,5 +1,7 @@
 # Google report imports
 
+> Code and safety contracts retained from [docs/google-reports.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/google-reports.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/google-report-imports-implementation-history-meN6TCsw4E). Qualifications are preserved; this adds no acceptance claim.
+
 This increment imports read-only Search Console and GA4 reports. It does not install browser tags, create a Google dashboard login, merge identities, or combine imported metrics with native analytics. Other platforms’ reporting imports remain required and unfinished.
 
 ## Operator setup
@@ -53,5 +55,3 @@ node --env-file=.env tests/google-browser.ts
 The optional browser runner requires `PLAYWRIGHT_MODULE`, defaults to the `msedge` channel, and uses `APP_URL`’s local port plus the next port for production SSR assets (`GOOGLE_BROWSER_SSR_PORT` overrides the latter). It runs the production client, actual API handlers, PostgreSQL and a queue worker through a test-only loopback front server. Google authorization and provider HTTP are synthetic; external browser requests are blocked. It checks callback workspace selection, newer navigation, import publication, expiry, disconnect and 360px overflow. Artifacts are private under `private/google-browser`.
 
 These tests do not establish live Google consent/verification, account-specific permissions, quotas or production capacity. Those require a separately authorized real-account acceptance exercise. Full V1 and the other platform imports remain unfinished.
-
-Implementation is original. Architecture was informed by the pinned OpenSEO0.1.12 source at `89e5a00717cdf049b7c2b4e29646edb3a7d4995b` (Google OAuth, GA4 definitions/normalization and GSC service), plus the primary Google contracts above; no OpenSEO source file was copied.

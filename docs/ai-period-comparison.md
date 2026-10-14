@@ -1,9 +1,6 @@
 # Adjacent-period AI comparisons
 
-Implemented and tested locally on 2026-10-13 as an extension to [retained-answer
-insights](ai-insights.md), tracked in
-[issue 46](https://github.com/Ten98-IO-Company/ten98-monitor/issues/46).
-It adds no schema, provider request or schedule. This does not complete P16/P17.
+> Code and safety contracts retained from [docs/ai-period-comparison.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/ai-period-comparison.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/adjacent-period-ai-comparisons-implementation-history-h52MKUSRB7). Qualifications are preserved; this adds no acceptance claim.
 
 ## Measurement
 
@@ -98,7 +95,7 @@ full applied filters and expected selection revision. CSV contains coverage,
 entity means, both sides of every cell and all selected executions, regardless
 of the displayed page. Preserve formula protection, explicit headers and the
 16 MiB bound. It contains derived matches and authored prompt previews, not raw
-answer or copied system-message text. See the [interface contract](ai-comparison-ui.md).
+answer or copied system-message text. See the [interface contract](https://wiki.ten98.io/s/ten98-docs/p/ai-comparison-ui-x9UgimLdMt).
 
 ## Source correspondence and remaining requirements
 
@@ -114,32 +111,3 @@ in-window observation. Its carried trends/current standings and actual pooled
 totals are different views. Those source methods remain required, with explicit
 provenance and retention barriers preventing an expired newer observation from
 silently reviving an older one. This increment does not claim those capabilities.
-
-## Local acceptance
-
-The full unit suite passed 398 checks with two existing platform-specific skips.
-Four new arithmetic groups independently verify exact rational means/differences,
-unequal cell populations, scaling/order invariance and invalid-input limits.
-Eight comparison PostgreSQL/API groups passed on a fresh isolated schema-29
-database, covering every availability state, copied identity/cohort changes,
-membership, pagination and full CSV, elapsed retention, DST/skipped dates,
-snapshot consistency, capacity rejection and HTTP authorization boundaries.
-The seven existing insight integration groups also passed with the full-population
-state manifest. CI runs both database suites independently.
-
-Browser acceptance passed eight pure-view groups, eight protected comparison
-groups, nine insights/controller groups and eight existing receipt groups.
-These cover role/dirty/busy controls, hostile text, stale and cancelled requests,
-malformed responses, exact export bounds, both-direction expiry, off-page evidence,
-and receipt Back with preserved entity/cohort/filter scope. The Kimi K3 presentation
-draft received GPT review and corrections for unapplied-cohort locking and readable
-table columns; it performs no data access or metric calculation.
-
-Eighteen production application navigation groups passed against a separate local
-database and production server. Owner and viewer both read/exported the two-period
-fixture, opened the exact current/previous receipts, and returned with preserved
-filters and fresh reads. The original retention and financial-state assertions
-remain. Desktop and 360px screenshots were inspected, with horizontal table
-scrolling contained inside the page. TypeScript, production build and the plan
-checker passed. No real provider calls, worker jobs, live-preview fixtures or
-production-capacity claims are part of this evidence.

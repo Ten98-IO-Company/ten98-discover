@@ -1,8 +1,6 @@
 # Native keyword research: implementation and evidence
 
-Issue: [#20](https://github.com/Ten98-IO-Company/ten98-monitor/issues/20). Source review and synthetic acceptance: 2026-10-13.
-
-The server, worker and [Research → Keywords interface](research-ui.md) implement DataForSEO keyword overview and bounded keyword ideas. Production browser acceptance uses synthetic provider responses and real local receipts; this is not a released V1 or completed P47/P48 parity. The public UI contract is [recorded on the issue](https://github.com/Ten98-IO-Company/ten98-monitor/issues/20#issuecomment-6135229497). No live provider account, paid request, customer keyword, or real result was used in acceptance.
+> Code and safety contracts retained from [docs/keyword-research.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/keyword-research.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/native-keyword-research-implementation-and-evidence-implementation-xyCfLuN4yp). Qualifications are preserved; this adds no acceptance claim.
 
 ## Scope and measurement
 
@@ -41,11 +39,3 @@ All management routes are cookie-only under `/api/projects/:projectId/keyword-re
 Migration 0016 follows Google's 0015 and reuses its project/workspace uniqueness. Earlier migrations and checksums are unchanged. The shared API and worker register both Google imports and keyword research. The optional `dispatchSpend` preparation callback preserves prior callers.
 
 Normalized result payloads follow workspace `derivedHistoryDays`; quotes used by runs, charge evidence and financial ledger records remain. The shared project retention transaction serializes with policy changes and provider result publication, handles bounded batches, and never removes authored context/prompts. The active derived-history preview reports Google imports and keyword results separately. Incomplete batches reschedule; any failure rolls back native, Google and keyword cleanup together.
-
-## Validation
-
-Six focused unit tests pass. Eight isolated PostgreSQL/API/worker acceptance groups cover input/money parsing, quote and actor binding, concurrent idempotency, one paid dispatch, enqueue rollback, concurrent budget reservations, permission/credential revocation, interrupted and above-estimate charges, terminal-status verification, exact reconciliation, result retention, and cookie/origin/API-key boundaries. Every provider response is synthetic and unexpected fetch calls throw.
-
-Backend acceptance at migration 0016: lock-controlled tests demonstrate that a retention extension protects newly retained results and that a stale crash sweep cannot replace a real settled result or uncertain charge evidence. An actual pg-boss worker dispatched one synthetic request with retries disabled. All 147 then-current unit tests passed, with two platform-specific skips. Typecheck and the production build passed; existing Nitro beta warnings remain. Fresh CLI installation through 0016, original-install rollback/history checks, and a seeded 0015→0016 upgrade passed. A separate reviewer reproduced upgrade preservation and forced a shared cleanup rollback after Google deletion; all observations and financial evidence survived, then the retry removed only the intended payloads. The production HTTP suite, Google offline-provider suite and desktop/360px Google/retention browser checks passed.
-
-The subsequent [public browser harness](../tests/research-ui/README.md) passed keyword overview, ideas limits 25/50/100, exact costs, unavailable versus zero, retained history, keyboard-scrollable tables, desktop/360px layout, current role changes and stale project responses. Lost, 503, malformed and malformed nested acknowledgements preserve the original quote/key through expiry; double clicks, cancellation during a held poll, owner reconciliation and current 403/404 recovery use real routes and database receipts. GPT inspected the rendered result screens. Live-account compatibility remains unverified.
