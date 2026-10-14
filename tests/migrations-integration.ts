@@ -71,10 +71,11 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033']);
   assert.equal(sources.find(m=>m.version==='0029')!.checksum,'8c7559f0e64f899bae4dc36aa9afa521b69624dba7849f28dfc3c1cb730097de','Append0030 without rewriting the published0029 migration.');
   assert.equal(sources.find(m=>m.version==='0030')!.checksum,'87b06aefbfe1b2228bda7fe91a28563265e908b92f07574ad3cb7e5380bbb28e','Append0031 without rewriting the published0030 migration.');
   assert.equal(sources.find(m=>m.version==='0031')!.checksum,'0a5d1fc0ee88c4aad84dbb41b32eb2d80bf0b5d816a907dfabb5a0228925ee65','Append0032 without rewriting published0031.');
+  assert.equal(sources.find(m=>m.version==='0032')!.checksum,'d929c3457abd3b89dd0b1b428eb259243445db1f915b13672fc12bc16966405e','Append0033 without rewriting published0032.');
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -275,14 +276,19 @@ try {
   const audit31=(await pool.query('SELECT to_jsonb(p) AS data FROM site_audit_page p ORDER BY id')).rows.map(r=>r.data),history31=await history();
   assert.equal(history31.at(-1)?.version,'0031');assert.equal(Object.hasOwn(audit31[0],'body_text'),false);
   stage = 'upgrade original,0022 features,0023 rank,0026–29 Meta and authored context through0032';
-  runMigrate(0);
-  await assertSchema();
+  const bodyMigration=sources.find(m=>m.version==='0032')!,bodyClient=await pool.connect();
+  try{await bodyClient.query('BEGIN');await bodyClient.query(bodyMigration.sql);await bodyClient.query('INSERT INTO schema_version VALUES($1,$2)',[bodyMigration.version,bodyMigration.checksum]);await bodyClient.query('COMMIT');}catch(error){await bodyClient.query('ROLLBACK');throw error;}finally{bodyClient.release();}
   assert.deepEqual((await history()).slice(0,29),history29,'Citation migration preserves every prior applied checksum.');
   for(const table of ['ai_suggestion_quote','ai_suggestion_run'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,0,'Upgrade creates no suggestion generation or paid work.');
   const audit32=(await pool.query('SELECT to_jsonb(p) AS data FROM site_audit_page p ORDER BY id')).rows.map(r=>r.data);
   assert.deepEqual((await history()).slice(0,31),history31);
   assert.deepEqual(audit32.map(({body_capture_state,body_extraction_version,body_text,...old})=>old),audit31,'Body migration preserves exact prior audit fields.');
   for(const row of audit32){assert.equal(row.body_capture_state,'not_recorded');assert.equal(row.body_extraction_version,null);assert.equal(row.body_text,null);}
+  await pool.query("UPDATE site_audit_page SET body_capture_state='available',body_extraction_version='static-dom-body-v1',body_text='Preserved schema32 body 🐎'");
+  const retained32=(await pool.query('SELECT to_jsonb(p) AS data FROM site_audit_page p ORDER BY id')).rows.map(r=>r.data),history32=await history();assert.equal(history32.at(-1)?.version,'0032');
+  stage='upgrade actual schema32 retained body and prior receipts to0033';runMigrate(0);await assertSchema();
+  assert.deepEqual((await history()).slice(0,32),history32);assert.deepEqual((await pool.query('SELECT to_jsonb(p) AS data FROM site_audit_page p ORDER BY id')).rows.map(r=>r.data),retained32,'Saved filters preserve every actual schema32 page field and body byte.');
+  assert.equal((await pool.query('SELECT 1 FROM analytics_segment')).rowCount,0,'Migration must not invent authored filters.');
   const contextAfter=await contextRecords();
   assert.deepEqual(contextAfter.map(({brand_citation_domains,citation_category_overrides,...prior})=>prior),contextBefore,'Citation defaults preserve the exact old revision, brand name and ordered aliases.');
   for(const row of contextAfter){assert.deepEqual(row.brand_citation_domains,[]);assert.deepEqual(row.citation_category_overrides,[]);}
@@ -349,12 +355,12 @@ try {
   assert.deepEqual((await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data,quoteAfter);
   assert.deepEqual(await metaRecords(),metaAfter,'No-op migration preserves exact Meta fingerprints and immutable receipts/pages.');
   assert.deepEqual(await inventoryRecords(),inventoryAfter,'No-op migration preserves independent cooldowns and every campaign field.');
-  assert.deepEqual((await pool.query('SELECT to_jsonb(p) AS data FROM site_audit_page p ORDER BY id')).rows.map(r=>r.data),audit32,'No-op migration preserves body defaults and prior evidence.');
+  assert.deepEqual((await pool.query('SELECT to_jsonb(p) AS data FROM site_audit_page p ORDER BY id')).rows.map(r=>r.data),retained32,'No-op migration preserves exact retained body and prior evidence.');
   assert.deepEqual(await contextRecords(),contextAfter,'No-op migration preserves all authored context and citation defaults exactly.');
   assert.equal((await pool.query("SELECT 1 FROM meta_import WHERE status IN ('queued','submitting','waiting','reading')")).rowCount,1,'Only the prior captured import remains active; migration creates no work.');
   assert.equal((await pool.query("SELECT 1 FROM meta_campaign_inventory WHERE status IN ('queued','reading')")).rowCount,1,'Only the prior captured inventory remains active; migration creates no work.');
-  console.log('PASS prior0022 feature evidence,0023 rank and0026–28 Meta receipts/pages survive0032; profile and active evidenced cooldown backfills preserve all prior fields and are idempotent; no implicit paid work');
-  console.log('PASS actual0029 authored context survives0032 unchanged with empty citation defaults, empty suggestion tables, preserved checksums and idempotent repeat migration');
+  console.log('PASS prior0022 feature evidence,0023 rank and0026–28 Meta receipts/pages survive0033; profile and active evidenced cooldown backfills preserve all prior fields and are idempotent; no implicit paid work');
+  console.log('PASS actual0029 authored context survives0033 unchanged with empty citation defaults, empty suggestion tables, preserved checksums and idempotent repeat migration');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {

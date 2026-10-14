@@ -12,6 +12,7 @@ import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import { exploreAnalytics } from './explorer.ts';
+import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
 import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
@@ -214,6 +215,23 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`reports:${user.id}:${request.method === 'GET' ? 'read' : 'write'}`, request.method === 'GET' ? 120 : 30);
       const response = await handleReports(request, user.id);
       if (response) return response;
+    }
+    const segmentRoute=path.match(new RegExp('^/api/projects/('+id+')/segments(?:/('+id+')(?:/(update|delete))?)?$','i'));
+    if(segmentRoute){
+      const [,projectId,segmentId,action]=segmentRoute;
+      await limit('segments:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?60:30);
+      if(request.method==='GET'){
+        if(!segmentId)return json(await listSegments(projectId,user.id,url.searchParams));
+        if(!action){if(url.search)throw new FoundationError(400,'Saved filter details do not accept query parameters.');return json(await getSegment(projectId,user.id,segmentId));}
+      }
+      if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'Saved filter changes do not accept query parameters.');
+        const input=await readJson(request,32768);
+        if(!segmentId)return json(await saveSegment(projectId,user.id,input));
+        if(action==='update')return json(await saveSegment(projectId,user.id,input,segmentId));
+        if(action==='delete')return json(await deleteSegment(projectId,user.id,segmentId,input));
+      }
+      return json({error:'Method not allowed.'},405);
     }
     const analysisRoute=path.match(new RegExp(`^/api/projects/(${id})/(funnels|goals)(?:/(${id})(?:/(update|delete|result|witnesses))?)?$`,'i'));
     if(analysisRoute){

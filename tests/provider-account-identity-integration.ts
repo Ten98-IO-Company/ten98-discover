@@ -83,7 +83,7 @@ async function rejectMissingCapsule(){
 
 try{
   assert.equal((await pool.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN('r','p','v','m','S','f') LIMIT 1")).rowCount,0,'Use an initially empty owned database.');
-  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0032');
+  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0033');
   if(scenario==='deferred'||scenario==='rank'){
     stage='fresh install without credential vault';noVault();cli('migrate',0);await assertSchema();await assertProviderAccountIdentityReadable();assert.equal(await capsule(),null);
     await assert.rejects(getProviderAccountIdentityKey(2),failed(503));assert.equal(await capsule(),null);assert.equal(accountCalls,0);
