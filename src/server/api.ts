@@ -50,7 +50,7 @@ import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain
 import { getDomainRedirectChecks, startDomainRedirectCheck } from './domain-redirects.ts';
 import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
 
-import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
+import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,exportSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
 
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
 import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
@@ -296,6 +296,14 @@ export async function handleApi(request: Request): Promise<Response> {
         if(action==='delete')return json(await deleteAnalysis(projectId,user.id,kind,analysisId,input));
       }
       return json({error:'Method not allowed.'},405);
+    }
+    const auditExportRoute=path.match(new RegExp(`^/api/projects/(${id})/audits/(${id})/pages/export$`,'i'));
+    if(auditExportRoute){
+      if(request.method!=='POST')return json({error:'Method not allowed.'},405);
+      if(url.search)throw new FoundationError(400,'Audit page exports do not accept query parameters.');
+      await limit(`audit-pages-export:${user.id}`,6);
+      try{return await exportSiteAuditPages(auditExportRoute[1],user.id,auditExportRoute[2],await readJson(request,4096),request.signal);}
+      catch(error){if(error instanceof FoundationError&&error.status===503)return json({error:error.message},503,{'retry-after':'5'});throw error;}
     }
     const auditRoute=path.match(new RegExp(`^/api/projects/(${id})/audits(?:/(setup|${id})(?:/(pages|issues|cancel|delete)(?:/(${id})(?:/(links))?)?)?)?$`,'i'));
     if(auditRoute){

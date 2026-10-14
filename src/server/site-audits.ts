@@ -10,6 +10,7 @@ import {markSiteAuditReadExpiry} from './site-audit-retention.ts';
 import type {CrawlFacts,CrawlCoverage,CrawlPageInput} from './crawl-analysis.ts';
 import {canonicalHash} from './context-input.ts';
 import {normalizeAuditPageFields} from '../lib/site-audit-pages.ts';
+import {csvCell} from './explorer-input.ts';
 
 export const siteAuditQueue='site-audit';
 export const siteAuditLimits=Object.freeze({defaultPages:50,maxPages:1000,maxMinutes:30,requestsPerSecond:1,bodyCapacityBytes:524288000,frontier:10000,edges:100000,sitemapDocuments:20,sitemapDepth:3});
@@ -52,6 +53,7 @@ export async function withAuditLock<T>(target:ActorTarget|InternalTarget,operati
  const client=await getDatabase().pool.connect();
  try{
   await client.query('BEGIN');
+  if(read)await client.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s'");
   // ponytail: one global claim gate matches the initial one-active-run installation limit.
   if(internal&&target.claim)await client.query("SELECT pg_advisory_xact_lock(hashtextextended('ten98.site-audit.claim.v1',0))");
   const projectId=internal?(await client.query('SELECT project_id FROM site_audit_run WHERE id=$1',[runId])).rows[0]?.project_id:parse(z.uuid(),target.projectId);
@@ -69,7 +71,7 @@ export async function withAuditLock<T>(target:ActorTarget|InternalTarget,operati
   if(runId&&!run){if(internal){await client.query('COMMIT');return null;}throw missing();}
   if(actor&&run)Object.assign(run,(await markSiteAuditReadExpiry(client,project.id,[run.id]))[0]);
   const result=await operation({client,project,run,role});await client.query('COMMIT');return result;
- }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
+ }catch(error){await client.query('ROLLBACK').catch(()=>{});if(read&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Audit results are busy. Try again shortly.');throw error;}finally{client.release();}
 }
 
 /** Caller already holds W/P/run. Refusal must permit safe terminalization after revocation. */
@@ -196,7 +198,7 @@ type PageRow={title_preview:string|null;title_length:number|null;body_capture_st
 const pageColumns='p.id,p.url,p.resource_kind,p.state,p.discovered_start,p.discovered_link,p.discovered_sitemap,p.link_depth,p.sitemap_depth,p.observed_at,p.http_status,p.fetch_state,p.analysis_coverage,p.reasons,p.facts,p.response_time_ms,p.evidence_recorded,p.evidence_truncated,p.body_capture_state,p.body_extraction_version';
 const titleColumns=`CASE WHEN $3::boolean OR NOT p.evidence_recorded OR jsonb_typeof(p.evidence->'title') IS DISTINCT FROM 'string' THEN NULL ELSE left(p.evidence->>'title',512) END AS title_preview,
  CASE WHEN $3::boolean OR NOT p.evidence_recorded OR jsonb_typeof(p.evidence->'title') IS DISTINCT FROM 'string' THEN NULL ELSE length(p.evidence->>'title') END AS title_length`;
-function titleDto(row:PageRow,run:AuditRunRow):{status:'available'|'empty'|'truncated'|'expired'|'not_recorded'|'unavailable';text:string|null}{
+function titleDto(row:Pick<PageRow,'evidence_recorded'|'title_preview'|'title_length'>&{facts:{titleLength:number}|null},run:AuditRunRow):{status:'available'|'empty'|'truncated'|'expired'|'not_recorded'|'unavailable';text:string|null}{
  if(!row.evidence_recorded)return {status:'not_recorded',text:null};
  if(run.raw_expired_at)return {status:'expired',text:null};
  if(row.title_preview===null)return {status:'unavailable',text:null};
@@ -227,11 +229,9 @@ function pagesCursor(raw:string|null,scope:string){
  let value:unknown;try{if(!raw||raw.length>512||!/^[A-Za-z0-9_-]+$(?![\s\S])/.test(raw))throw new Error();value=JSON.parse(Buffer.from(raw,'base64url').toString('utf8'));}catch{throw new FoundationError(400,'Reload these audit pages.');}
  const parsed=pagesCursorSchema.safeParse(value);if(!parsed.success||parsed.data.scope!==scope)throw new FoundationError(400,'This cursor belongs to different audit page filters.');return parsed.data;
 }
-export async function listSiteAuditPages(projectId:string,userId:string,runId:string,params:URLSearchParams){
- const query=parseAuditListQuery(params,'pages'),scope=canonicalHash({projectId,runId,list:'pages',coverage:query.coverage,resourceKind:query.resourceKind,search:query.search,searchIn:query.searchIn,sort:query.sort,order:query.order}),before=pagesCursor(query.cursor,scope);
- const result=await withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
-  const run=requireRun(saved),asOf=(await client.query<{at:Date}>('SELECT clock_timestamp() AS at')).rows[0].at.toISOString(),envelope={role:role!,run:auditRunDto(run,role),asOf,countBasis:'retained' as const};
-  if(run.data_expired_at)return {...envelope,pages:[],nextCursor:null,selectionRevision:null,matchingRetainedCount:null};
+type PageSelectionQuery=Pick<ReturnType<typeof parseAuditListQuery>,'coverage'|'resourceKind'|'search'|'searchIn'|'sort'|'order'>;
+function pageSelectionScope(projectId:string,runId:string,query:PageSelectionQuery){return canonicalHash({projectId,runId,list:'pages',...query});}
+async function selectAuditPages(client:PoolClient,run:AuditRunRow,query:PageSelectionQuery,scope:string){
   // Commit the existing expiry latch before reporting that copied text can no longer govern selection.
   if(run.raw_expired_at&&(query.sort==='title'||query.search!==''&&query.searchIn==='url_title_meta'))return {pageReadError:'raw_expired' as const};
   const title=`CASE WHEN p.evidence_recorded AND jsonb_typeof(p.evidence->'title')='string' THEN p.evidence->>'title' ELSE NULL END`;
@@ -244,6 +244,19 @@ export async function listSiteAuditPages(projectId:string,userId:string,runId:st
    AND ($3::text IS NULL OR p.analysis_coverage=$3) AND strpos(lower(${searchTarget}),lower($4::text))>0 ORDER BY ${order} LIMIT 10001`,[run.id,query.resourceKind,query.coverage,query.search])).rows.map(row=>row.id);
   if(ids.length>siteAuditLimits.frontier)return {pageReadError:'population' as const};
   const selectionRevision=canonicalHash({scope,status:run.status,rawExpiredAt:iso(run.raw_expired_at),dataExpiredAt:iso(run.data_expired_at),ids});
+  return {ids,selectionRevision};
+}
+function pageReadFailure(reason:'raw_expired'|'population'|'selection_changed'|'missing_anchor'){
+ const messages={raw_expired:'The title and description evidence expired. Use URL search and another sort.',population:'This audit exceeds the supported page reporting population.',selection_changed:'These page results changed. Reload matching pages.',missing_anchor:'This audit page cursor is no longer available.'};
+ return new FoundationError(reason==='missing_anchor'?400:409,messages[reason]);
+}
+export async function listSiteAuditPages(projectId:string,userId:string,runId:string,params:URLSearchParams){
+ const query=parseAuditListQuery(params,'pages'),fields:PageSelectionQuery={coverage:query.coverage,resourceKind:query.resourceKind,search:query.search,searchIn:query.searchIn,sort:query.sort,order:query.order},scope=pageSelectionScope(projectId,runId,fields),before=pagesCursor(query.cursor,scope);
+ const result=await withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
+  const run=requireRun(saved),asOf=(await client.query<{at:Date}>('SELECT clock_timestamp() AS at')).rows[0].at.toISOString(),envelope={role:role!,run:auditRunDto(run,role),asOf,countBasis:'retained' as const};
+  if(run.data_expired_at)return {...envelope,pages:[],nextCursor:null,selectionRevision:null,matchingRetainedCount:null};
+  const selection=await selectAuditPages(client,run,fields,scope);if(selection.pageReadError)return selection;
+  const {ids,selectionRevision}=selection;
   if(before&&before.revision!==selectionRevision)return {pageReadError:'selection_changed' as const};
   const anchor=before?ids.indexOf(before.afterId):-1;if(before&&anchor<0)return {pageReadError:'missing_anchor' as const};
   const selected=ids.slice(anchor+1,anchor+1+query.limit);
@@ -253,11 +266,81 @@ export async function listSiteAuditPages(projectId:string,userId:string,runId:st
   return {...envelope,pages:rows.map(row=>pageDto(row,run,false)),nextCursor:next,selectionRevision,matchingRetainedCount:active.includes(run.status)?null:safeCount(ids.length)};
  });
  // Logical selection failures also commit newly observed retention tombstones; auth/DB failures still roll back.
- if(result.pageReadError!==undefined){
-  const messages={raw_expired:'The title and description evidence expired. Use URL search and another sort.',population:'This audit exceeds the supported page reporting population.',selection_changed:'These page results changed. Reload matching pages.',missing_anchor:'This audit page cursor is no longer available.'};
-  throw new FoundationError(result.pageReadError==='missing_anchor'?400:409,messages[result.pageReadError]);
- }
+ if(result.pageReadError!==undefined)throw pageReadFailure(result.pageReadError);
  return result;
+}
+const pageExportSchema=z.object({coverage:z.string().nullable(),resourceKind:z.enum(['html','robots','sitemap']),search:z.string(),searchIn:z.string(),sort:z.string(),order:z.string(),expectedSelectionRevision:z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/)}).strict();
+export function parseSiteAuditPagesExport(raw:unknown){
+ const input=parse(pageExportSchema,raw),params=new URLSearchParams();
+ for(const key of ['coverage','resourceKind','search','searchIn','sort','order'] as const)if(input[key]!==null)params.set(key,input[key]);
+ const query=parseAuditListQuery(params,'pages');
+ return {coverage:query.coverage,resourceKind:query.resourceKind,search:query.search,searchIn:query.searchIn,sort:query.sort,order:query.order,expectedSelectionRevision:input.expectedSelectionRevision};
+}
+export const siteAuditPagesExportMaxBytes=64*1024*1024;
+// ponytail: one export body per web process, capped at 64 MiB; use an async artifact job if measured demand needs concurrent large exports.
+let pageExportActive=false;
+type ExportPageRow=Pick<PageRow,'id'|'url'|'resource_kind'|'state'|'discovered_start'|'discovered_link'|'discovered_sitemap'|'link_depth'|'sitemap_depth'|'observed_at'|'http_status'|'fetch_state'|'analysis_coverage'|'response_time_ms'|'evidence_recorded'|'title_preview'|'title_length'>&{fact_title_length:number|null;h1:number|null;word_count:string|null;images_total:string|null;images_missing_alt:string|null};
+const pageExportColumns=['recordType','version','projectId','runId','ruleVersion','asOf','selectionRevision','appliedQuery','matchingRetainedCount','rawEvidenceStatus','dataStatus','auditStatus','coverage','pageId','url','resourceKind','pageState','httpStatus','titlePreview','titlePreviewStatus','h1','wordCount','imagesTotal','imagesMissingAlt','responseTimeMs','discoveredStart','discoveredLink','discoveredSitemap','linkDepth','sitemapDepth','fetchState','analysisCoverage','observedAt'];
+function exportAborted(signal?:AbortSignal){if(signal?.aborted)throw new FoundationError(499,'Audit export cancelled.');}
+/** The database transaction ends before the native response can wait for a reader. */
+function pagesCsvResponse(body:Buffer,rowCount:number,selectionRevision:string,asOf:string,release:()=>void,signal?:AbortSignal){
+ let bytes:Buffer|null=body,offset=0,controller:ReadableStreamDefaultController<Uint8Array>|null=null;
+ body=Buffer.alloc(0);
+ const finish=()=>{bytes=null;controller=null;signal?.removeEventListener('abort',abort);release();};
+ const abort=()=>{const current=controller;finish();current?.error(new FoundationError(499,'Audit export cancelled.'));};
+ try{
+  const length=bytes.length;
+  const stream=new ReadableStream<Uint8Array>({
+   start(value){controller=value;signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();},
+   pull(value){try{if(!bytes)return;const end=Math.min(offset+64*1024,bytes.length);value.enqueue(Buffer.from(bytes.subarray(offset,end)));offset=end;if(end===bytes.length){value.close();finish();}}catch(error){finish();value.error(error);}},
+   cancel(){finish();},
+  },{highWaterMark:0});
+  return new Response(stream,{headers:{'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="audit-pages.csv"','content-length':String(length),'x-export-row-count':String(rowCount),'x-export-revision':selectionRevision,'x-export-as-of':asOf,'cache-control':'no-store, no-transform','x-content-type-options':'nosniff'}});
+ }catch(error){finish();throw error;}
+}
+export async function exportSiteAuditPages(projectId:string,userId:string,runId:string,raw:unknown,signal?:AbortSignal):Promise<Response>{
+ const {expectedSelectionRevision,...query}=parseSiteAuditPagesExport(raw);exportAborted(signal);
+ if(pageExportActive)throw new FoundationError(503,'Another audit export is still downloading. Try again shortly.');
+ pageExportActive=true;let transferred=false,released=false;
+ const release=()=>{if(!released){released=true;pageExportActive=false;}};
+ try{
+  const result=await withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
+   if(!saved||saved.deleted_at)throw missing();const run=saved;
+   if(run.data_expired_at)return {exportError:'derived_expired' as const};
+   if(active.includes(run.status))throw new FoundationError(409,'Finish or cancel this audit before exporting pages.');
+   const scope=pageSelectionScope(projectId,runId,query),selection=await selectAuditPages(client,run,query,scope);
+   if(selection.pageReadError)return selection;
+   if(selection.selectionRevision!==expectedSelectionRevision)return {pageReadError:'selection_changed' as const};
+   const asOf=(await client.query<{at:Date}>('SELECT clock_timestamp() AS at')).rows[0].at.toISOString(),dto=auditRunDto(run,role),wasRawExpired=run.raw_expired_at!==null;
+   const parts:Buffer[]=[];let size=0,count=0;
+   const line=(values:unknown[])=>{exportAborted(signal);const bytes=Buffer.from(values.map(csvCell).join(',')+'\r\n');if(size+bytes.length>siteAuditPagesExportMaxBytes)throw new FoundationError(413,'Audit export exceeds 64 MiB. Narrow the page filters.');size+=bytes.length;parts.push(bytes);};
+   line(pageExportColumns);
+   line(['metadata','audit-pages-v1',projectId,runId,run.rule_version,asOf,selection.selectionRevision,query,selection.ids.length,dto.rawEvidenceStatus,dto.dataStatus,run.status,run.coverage,...Array(20).fill('')]);
+   await client.query(`DECLARE site_audit_pages_export NO SCROLL CURSOR FOR SELECT p.id,p.url,p.resource_kind,p.state,p.discovered_start,p.discovered_link,p.discovered_sitemap,p.link_depth,p.sitemap_depth,p.observed_at,p.http_status,p.fetch_state,p.analysis_coverage,p.response_time_ms,p.evidence_recorded,${titleColumns},
+    (p.facts->>'titleLength')::integer AS fact_title_length,(p.facts->'headingCounts'->>0)::integer AS h1,(p.facts->>'wordCount')::bigint AS word_count,(p.facts->>'imagesTotal')::bigint AS images_total,(p.facts->>'imagesMissingAlt')::bigint AS images_missing_alt
+    FROM unnest($2::uuid[]) WITH ORDINALITY AS selected(id,position) JOIN site_audit_page p ON p.id=selected.id AND p.run_id=$1 ORDER BY selected.position`,[run.id,selection.ids,wasRawExpired]);
+   for(;;){
+    exportAborted(signal);const batch=(await client.query<ExportPageRow>('FETCH FORWARD 100 FROM site_audit_pages_export')).rows;if(!batch.length)break;
+    for(const page of batch){
+     const title=titleDto({...page,facts:page.fact_title_length===null?null:{titleLength:page.fact_title_length}},run);
+     line(['page',...Array(12).fill(''),page.id,page.url,page.resource_kind,page.state,page.http_status,title.text,title.status,page.h1,page.word_count,page.images_total,page.images_missing_alt,page.response_time_ms,page.discovered_start,page.discovered_link,page.discovered_sitemap,page.link_depth,page.sitemap_depth,page.fetch_state,page.analysis_coverage,iso(page.observed_at)]);count++;
+    }
+   }
+   await client.query('CLOSE site_audit_pages_export');
+   if(count!==selection.ids.length)throw new FoundationError(409,'These page results changed. Reload matching pages.');
+   // Recheck database time after generation; commit newly reached expiry before refusing release of copied bytes.
+   Object.assign(run,(await markSiteAuditReadExpiry(client,projectId,[run.id]))[0]);
+   if(run.data_expired_at)return {exportError:'derived_expired' as const};
+   if(!wasRawExpired&&run.raw_expired_at)return {pageReadError:'selection_changed' as const};
+   const current=await selectAuditPages(client,run,query,scope);if(current.pageReadError)return current;
+   if(current.selectionRevision!==selection.selectionRevision)return {pageReadError:'selection_changed' as const};
+   exportAborted(signal);const body=Buffer.concat(parts,size);parts.length=0;
+   return {body,rowCount:count,selectionRevision:selection.selectionRevision,asOf};
+  });
+  if(result.pageReadError)throw pageReadFailure(result.pageReadError);
+  if(result.exportError)throw new FoundationError(410,'Audit page data expired under this workspace’s retention policy.');
+  exportAborted(signal);const response=pagesCsvResponse(result.body,result.rowCount,result.selectionRevision,result.asOf,release,signal);transferred=true;return response;
+ }finally{if(!transferred)release();}
 }
 export async function getSiteAuditPage(projectId:string,userId:string,runId:string,pageId:string){
  parse(z.uuid(),pageId);const result=await withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
