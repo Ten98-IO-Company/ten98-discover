@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView } from '../src/lib/navigation.ts'
+import { auditCoverages, auditIssueCodes, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView } from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
@@ -94,4 +94,30 @@ test('a skipped local calendar day remains a valid explicit session range', () =
   assert.equal(parsed.from,'2011-12-30');assert.equal(parsed.to,'2011-12-30');assert.equal(parsed.timeZone,'Pacific/Apia');
   assert.equal(parsed.visitorKey,scope.visitorKey);
   assert.equal(canonicalNavigation('?'+new URLSearchParams(scope),parsed),true);
+});
+
+test('audit links retain only bounded applied scope and omit default values', () => {
+  const base={workspace,project,view:'audits',auditRun:project} as const;
+  const parsed=parseNavigation({...base,auditPage:workspace.toUpperCase(),auditTab:'pages',auditSeverity:'warning',auditCode:'missing-title',auditAffectedPage:workspace,auditCoverage:'analyzed',auditResource:'sitemap',auditDirection:'in'});
+  assert.deepEqual(parsed,{...base,auditPage:workspace,auditAffectedPage:workspace,auditTab:'pages',auditSeverity:'warning',auditCode:'missing-title',auditCoverage:'analyzed',auditResource:'sitemap',auditDirection:'in'});
+  assert.deepEqual(parseNavigation(parsed),parsed);
+  assert.equal(canonicalNavigation('?'+new URLSearchParams(parsed as Record<string,string>),parsed),true);
+  assert.notEqual(navigationKey(parsed),navigationKey({...parsed,auditPage:project}));
+  assert.notEqual(navigationKey(parsed),navigationKey({...parsed,auditSeverity:'critical'}));
+  assert.deepEqual(parseNavigation({...base,auditTab:'issues',auditResource:'html'}),base);
+  assert.deepEqual(parseNavigation({...base,auditPage:workspace,auditDirection:'out'}),{...base,auditPage:workspace});
+  for(const auditCode of auditIssueCodes)assert.equal(parseNavigation({...base,auditCode}).auditCode,auditCode);
+  for(const auditCoverage of auditCoverages)assert.equal(parseNavigation({...base,auditCoverage}).auditCoverage,auditCoverage);
+  assert.deepEqual(parseNavigation({...base,view:'events',auditPage:workspace}),{workspace,project,view:'events'});
+});
+
+test('audit links reject malformed, repeated, unknown and unscoped intent without retaining its values', () => {
+  const base={workspace,project,view:'audits',auditRun:project} as const,invalid={workspace,project,view:'audits',auditInvalid:'1'};
+  for(const patch of [{auditRun:[project,project]},{auditPage:{id:workspace}},{auditRun:project+'\n'},{auditSeverity:['warning']},{auditSeverity:'high'},{auditCode:'future-rule'},{auditCoverage:'all'},{auditResource:'script'},{auditDirection:'in'},{auditDirection:{value:'out'}},{auditTab:'performance'},{auditInvalid:'0'},{cursor:'private cursor'},{returnTo:'https://private.test'},{startPath:'/private'},{draft:'private draft'}]){
+    const parsed=parseNavigation({...base,...patch});assert.deepEqual(parsed,invalid);assert.equal(JSON.stringify(parsed).includes('private'),false);assert.deepEqual(parseNavigation(parsed),parsed);
+  }
+  for(const patch of [{auditPage:project},{auditTab:'issues'},{auditResource:'html'},{auditSeverity:'warning'},{auditAffectedPage:workspace},{auditCoverage:'analyzed'}])assert.deepEqual(parseNavigation({workspace,project,view:'audits',...patch}),invalid);
+  assert.deepEqual(parseNavigation({project,view:'audits',auditRun:project}),{view:'audits',auditInvalid:'1'});
+  assert.deepEqual(parseNavigation({workspace,project:[project],view:'audits',auditRun:project}),{workspace,view:'audits',auditInvalid:'1'});
+  assert.equal(canonicalNavigation(`?workspace=${workspace}&project=${project}&view=audits&auditRun=${project}&auditRun=${project}`,base),false);
 });
