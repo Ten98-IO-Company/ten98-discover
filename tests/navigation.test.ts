@@ -131,3 +131,49 @@ test('audit links reject malformed, repeated, unknown and unscoped intent withou
   assert.deepEqual(parseNavigation({workspace,project:[project],view:'audits',auditRun:project}),{workspace,view:'audits',auditInvalid:'1'});
   assert.equal(canonicalNavigation(`?workspace=${workspace}&project=${project}&view=audits&auditRun=${project}&auditRun=${project}`,base),false);
 });
+
+test('audit Pages query round-trips applied search and ordering while defaults stay omitted', () => {
+  const base={workspace,project,view:'audits',auditRun:project} as const;
+  const defaults={auditSearch:'  ',auditSearchIn:'url_title_meta',auditSort:'url',auditOrder:'asc'};
+  assert.deepEqual(parseNavigation({...base,...defaults}),base);
+  assert.equal(navigationKey(parseNavigation({...base,...defaults})),navigationKey(base));
+  assert.equal(canonicalNavigation('?'+new URLSearchParams({...base,...defaults}),base),false);
+  const parsed=parseNavigation({...base,auditRun:project.toUpperCase(),auditTab:'pages',auditSearch:'  Price  café 🧪 %_\\  ',auditSearchIn:'url',auditSort:'images',auditOrder:'desc',auditPage:workspace,auditDirection:'in'});
+  assert.deepEqual(parsed,{...base,auditPage:workspace,auditTab:'pages',auditDirection:'in',auditSearch:'Price  café 🧪 %_\\',auditSearchIn:'url',auditSort:'images',auditOrder:'desc'});
+  const url='?'+new URLSearchParams(parsed as Record<string,string>);
+  assert.deepEqual(parseNavigation(Object.fromEntries(new URLSearchParams(url))),parsed);
+  assert.equal(canonicalNavigation(url,parsed),true);
+  for(const [key,value] of [['auditSearch','different'],['auditSearchIn',undefined],['auditSort','title'],['auditOrder',undefined]] as const)assert.notEqual(navigationKey({...parsed,[key]:value}),navigationKey(parsed));
+  for(const auditSort of ['httpStatus','title','h1','wordCount','images','responseTimeMs'])assert.equal(parseNavigation({...base,auditSort}).auditSort,auditSort);
+  const issues=parseNavigation({...parsed,auditTab:'issues',auditSeverity:'warning',auditCode:'missing-title'});
+  assert.equal(issues.auditTab,undefined);assert.equal(issues.auditSearch,parsed.auditSearch);assert.equal(issues.auditSort,parsed.auditSort);
+  assert.equal(issues.auditSeverity,'warning');assert.equal(issues.auditCode,'missing-title');
+  assert.deepEqual(parseNavigation({...issues,auditTab:'pages'}),{...issues,auditTab:'pages'});
+  assert.deepEqual(parseNavigation({...parsed,view:'events'}),{workspace,project,view:'events'});
+});
+
+test('audit Pages search preserves Unicode and literal internal text within scalar and byte bounds', () => {
+  const base={workspace,project,view:'audits',auditRun:project} as const;
+  for(const auditSearch of ['🧪'.repeat(200),'é'.repeat(200),'e\u0301'.repeat(100),'x'.repeat(200),'Mixed  case %_\\'])assert.equal(parseNavigation({...base,auditSearch}).auditSearch,auditSearch);
+  for(const auditSearch of ['🧪'.repeat(201),'e\u0301'.repeat(101),'x'.repeat(201),'\ud800','\udc00','x\ud800y','\udc00\ud800','\0search','\tsearch','search\n','search\r','search\u007f','search\u0085']){
+    const parsed=parseNavigation({...base,auditSearch});assert.deepEqual(parsed,{workspace,project,view:'audits',auditInvalid:'1'});
+    assert.deepEqual(parseNavigation(parsed),parsed);
+  }
+});
+
+test('audit Pages query fails closed for repeated, malformed, unknown and unscoped values', () => {
+  const base={workspace,project,view:'audits',auditRun:project} as const,invalid={workspace,project,view:'audits',auditInvalid:'1'};
+  for(const [key,valid] of [['auditSearch','private query'],['auditSearchIn','url'],['auditSort','title'],['auditOrder','desc']] as const){
+    for(const value of [[valid],[valid,valid],{value:valid},null,true,42])assert.deepEqual(parseNavigation({...base,[key]:value}),invalid);
+    const parsed=parseNavigation({...base,[key]:valid});
+    assert.equal(canonicalNavigation('?'+new URLSearchParams(parsed as Record<string,string>)+'&'+new URLSearchParams({[key]:valid}),parsed),false);
+    assert.deepEqual(parseNavigation({workspace,project,view:'audits',[key]:valid}),invalid);
+    assert.deepEqual(parseNavigation({view:'audits',auditRun:project,[key]:valid}),{view:'audits',auditInvalid:'1'});
+  }
+  for(const patch of [{auditSearchIn:''},{auditSearchIn:'URL'},{auditSearchIn:'title'},{auditSort:''},{auditSort:'url desc'},{auditSort:'constructor'},{auditOrder:''},{auditOrder:'DESC'},{auditOrder:'random'},{search:'private query'},{searchIn:'url'},{sort:'title'},{order:'desc'},{export:'json'},{format:'csv'},{limit:'50'},{cursor:'private cursor'},{auditCursor:'private cursor'},{auditDraft:'private draft'}]){
+    const parsed=parseNavigation({...base,...patch});assert.deepEqual(parsed,invalid);assert.equal(JSON.stringify(parsed).includes('private'),false);
+  }
+  assert.deepEqual(parseNavigation({...base,auditSearch:'safe',auditDirection:'in'}),invalid);
+  assert.deepEqual(parseNavigation({...base,auditSearch:'safe',project:[project]}),{workspace,view:'audits',auditInvalid:'1'});
+  assert.deepEqual(parseNavigation({...base,auditSearch:'safe',workspace:undefined}),{view:'audits',auditInvalid:'1'});
+});

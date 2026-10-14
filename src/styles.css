@@ -133,6 +133,14 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .site-audits .audit-launch-fields > p, .site-audits .audit-launch-fields > label { grid-column: 1 / -1; }
 .site-audits .audit-launch-fields .field { margin: 0; min-width: 0; }
 .site-audits .audit-launch-fields input[type="number"] { max-width: 14rem; }
+.site-audits .audit-search-field { flex: 1 1 240px; min-inline-size: 0; }
+.site-audits .audit-search-field input { inline-size: 100%; min-inline-size: 0; }
+.site-audits form .field { min-inline-size: 0; max-inline-size: 100%; }
+.site-audits .audit-pages-table { min-inline-size: 1000px; }
+.site-audits .audit-pages-table td:first-child, .site-audits .audit-pages-table td:nth-child(3) { min-inline-size: 160px; max-inline-size: 280px; overflow-wrap: anywhere; }
+.site-audits .audit-pages-table .audit-title-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.site-audits .audit-sort { min-block-size: var(--control-touch); padding: var(--space-2); border: 0; background: transparent; color: inherit; font-weight: inherit; cursor: pointer; text-align: start; }
+.site-audits th[aria-sort='ascending'] .audit-sort, .site-audits th[aria-sort='descending'] .audit-sort { color: var(--blue); text-decoration: underline; text-underline-offset: .2em; }
 .site-audits .audit-issue-group { border-block-start: 1px solid var(--line); padding-block: 8px; }
 .site-audits .audit-issue-group > h3 { margin: 8px 0; }
 .site-audits .audit-issue-list, .site-audits .audit-issue-group, .site-audits .audit-finding-list > li { min-inline-size: 0; text-align: start; }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {parseSiteAuditStart,parseAuditListQuery,auditRunDto,type AuditRunRow} from '../src/server/site-audits.ts';
+import {normalizeAuditPageFields,auditPageSearchIn,auditPageSort,auditPageOrder} from '../src/lib/site-audit-pages.ts';
 
 const input={requestId:randomUUID(),domainId:null,startPath:'/',mode:'static'};
 test('manual audit intent is bounded, query-free and normalized without domain authority',()=>{
@@ -31,4 +32,18 @@ test('audit DTO keeps live role and expiry distinct from measurements and privat
 });
 test('unsafe persisted counter cannot silently lose integer precision in a public report',()=>{
  const source=row();source.wire_bytes='9007199254740993';assert.throws(()=>auditRunDto(source,'owner'),/Invalid audit counter/);
+});
+test('shared page fields normalize only the closed search/sort vocabulary',()=>{
+ assert.deepEqual(normalizeAuditPageFields({}),{search:'',searchIn:'url_title_meta',sort:'url',order:'asc'});
+ assert.deepEqual(normalizeAuditPageFields({search:'  %_\\🐎  ',searchIn:'url',sort:'images',order:'desc'}),{search:'%_\\🐎',searchIn:'url',sort:'images',order:'desc'});
+ for(const searchIn of auditPageSearchIn)for(const sort of auditPageSort)for(const order of auditPageOrder)assert.ok(normalizeAuditPageFields({searchIn,sort,order}));
+ for(const raw of [null,undefined,[],0,'',{search:null},{search:1},{searchIn:''},{searchIn:'title'},{sort:'p.id DESC'},{order:'ASC'},{limit:50},{search:'\ud800'},{search:'\udc00'},{search:' before\n'},{search:'\0'},{search:'\u007f'},{search:'\u0085'},{search:'🐎'.repeat(201)},{search:'a'.repeat(201)}])assert.equal(normalizeAuditPageFields(raw),null);
+ assert.equal(normalizeAuditPageFields({search:'🐎'.repeat(200)})?.search.length,400);
+ assert.equal(normalizeAuditPageFields({search:'\u00a0 x \u00a0'})?.search,'x');
+ assert.equal(normalizeAuditPageFields({search:'a  b'})?.search,'a  b');
+});
+test('page API fields use the shared normalization without broadening other list queries',()=>{
+ assert.deepEqual(Object.fromEntries(Object.entries(parseAuditListQuery(new URLSearchParams('search=%20pricing%20&searchIn=url&sort=wordCount&order=desc'),'pages')).filter(([key])=>['search','searchIn','sort','order'].includes(key))),{search:'pricing',searchIn:'url',sort:'wordCount',order:'desc'});
+ for(const raw of ['search=x&search=y','searchIn=url&searchIn=url','sort=title&sort=url','order=asc&order=desc','searchIn=','sort=','order=','search=x%0a','search='+encodeURIComponent('🐎'.repeat(201))])assert.throws(()=>parseAuditListQuery(new URLSearchParams(raw),'pages'),{status:400});
+ for(const kind of ['runs','issues','links'] as const)for(const key of ['search','searchIn','sort','order'])assert.throws(()=>parseAuditListQuery(new URLSearchParams({[key]:key==='search'?'x':key==='searchIn'?'url':key==='sort'?'url':'asc'}),kind),{status:400});
 });
