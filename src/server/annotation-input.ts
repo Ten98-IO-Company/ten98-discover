@@ -7,6 +7,7 @@ export type AnnotationDefinition={date:string;allDay:boolean;note:string};
 export type AnnotationDayDefinition={day:string;timeZone:string;allDay:true;note:string};
 const bad=()=>new FoundationError(400,'Check the annotation date, timezone and note.');
 const timestamp=z.iso.datetime({offset:true}).regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/);
+export {timestamp as boundedTimestampInput};
 const note=text(500,1).refine(value=>value.length<=500);
 const definition=z.union([
   z.object({date:timestamp,allDay:z.boolean(),note}).strict(),

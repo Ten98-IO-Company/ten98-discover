@@ -81,6 +81,23 @@ export async function saveAnalyticsSettings(projectId: string, userId: string, r
 }
 
 export type Observation = { eventId: string; name: string; url: string; properties?: unknown; dimensions?: unknown; context?: string; consent?: { analytics: true; epoch: string } };
+// Caller holds the project publication gate. Read policy in a fresh statement
+// after waiting so collection and identify share the same current-consent rules.
+export async function nativeCollectionPolicy(client:PoolClient,request:Request,siteKey:string,input:Pick<Observation,'url'|'consent'>){
+  const result=await client.query<Project>(`SELECT p.*,r.consent_epoch AS destination_epoch FROM project p
+    LEFT JOIN tracking_state s ON s.project_id=p.id AND s.environment='live'
+    LEFT JOIN tracking_revision r ON r.id=s.active_revision AND r.project_id=p.id AND r.environment=s.environment
+    WHERE p.public_key=$1`,[siteKey]);
+  const project=result.rows[0],origin=request.headers.get('origin');
+  if(!project||origin!==new URL(input.url).origin||!await collectionOriginAllowed(client,origin,project))throw new FoundationError(403,'Event does not match an allowed website origin.');
+  const settings=publicAnalyticsSettings(project.analytics_settings),path=eventPath(input.url),userAgent=request.headers.get('user-agent')??'';
+  // ponytail: conservative named-bot heuristic; use a reviewed maintained detector
+  // when broader bot classification has measured fixtures and license approval.
+  const excluded=!settings.enabled||analyticsPathExcluded(path,settings.excludedPaths)||request.headers.get('dnt')==='1'||request.headers.get('sec-gpc')==='1'||
+    (settings.excludeBots&&/bot\b|crawler|spider|headless|slurp/i.test(userAgent));
+  const reason=excluded?'collection_disabled' as const:input.consent?.analytics!==true||input.consent.epoch!==trackingConsentEpoch(project.analytics_epoch,project.destination_epoch)?'consent_required' as const:null;
+  return {project,userAgent,reason};
+}
 async function writeObservation(client: PoolClient, project: Project, input: Observation, source: 'browser' | 'api', identity: ReturnType<typeof analyticsIdentity>, now: Date) {
   const settings = publicAnalyticsSettings(project.analytics_settings), properties = normalizeProperties(input.properties === undefined ? {} : input.properties), dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
   // Distinct identifiers participate only in keyed identity derivation, never raw storage.
@@ -104,23 +121,8 @@ export async function collectNative(request: Request, siteKey: string, input: Ob
     // Obtain the publication gate first. Read the epoch in a fresh statement after
     // any publisher finishes; a joined SELECT's old snapshot can otherwise survive a lock wait.
     await client.query('SELECT id FROM project WHERE public_key=$1 FOR SHARE', [siteKey]);
-    const result = await client.query<Project>(`SELECT p.*,r.consent_epoch AS destination_epoch FROM project p
-      LEFT JOIN tracking_state s ON s.project_id=p.id AND s.environment='live'
-      LEFT JOIN tracking_revision r ON r.id=s.active_revision AND r.project_id=p.id AND r.environment=s.environment
-      WHERE p.public_key=$1`, [siteKey]);
-    const project = result.rows[0];
-    const origin = request.headers.get('origin');
-    if (!project || origin !== new URL(input.url).origin || !await collectionOriginAllowed(client, origin, project)) throw new FoundationError(403, 'Event does not match an allowed website origin.');
-    const settings = publicAnalyticsSettings(project.analytics_settings), path = eventPath(input.url);
-    const ua = request.headers.get('user-agent') ?? '';
-    // ponytail: conservative named-bot heuristic; use a reviewed maintained detector
-    // when broader bot classification has measured fixtures and license approval.
-    const excluded = !settings.enabled || analyticsPathExcluded(path, settings.excludedPaths) ||
-      request.headers.get('dnt') === '1' || request.headers.get('sec-gpc') === '1' ||
-      (settings.excludeBots && /bot\b|crawler|spider|headless|slurp/i.test(ua));
-    if (excluded || input.consent?.analytics !== true || input.consent.epoch !== trackingConsentEpoch(project.analytics_epoch, project.destination_epoch)) {
-      await client.query('COMMIT'); return { accepted: false, reason: excluded ? 'collection_disabled' : 'consent_required' };
-    }
+    const {project,userAgent:ua,reason}=await nativeCollectionPolicy(client,request,siteKey,input);
+    if(reason){await client.query('COMMIT');return {accepted:false,reason};}
     const dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
     const now = new Date();
     const identity = analyticsIdentity({ projectId: project.id, ip: resolveAnalyticsNetwork(request, peerAddress), userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now });

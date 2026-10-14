@@ -32,12 +32,40 @@
     }
   }
 
+  function nativeReady(state) {
+    var h = hub(), settings = state.config && state.config.nativeTracking;
+    return !!(h && h.nativeAllowed && h.nativeAllowed(state) && settings && settings.enabled && state.environment === 'live' &&
+      !settings.excludedPaths.some(function (path) { return decodeURIComponent(location.pathname).startsWith(decodeURIComponent(path)); }));
+  }
+  function nativeCurrent(state, epoch, generation, controller) {
+    return !controller.signal.aborted && state.nativeGeneration === generation && state.config && state.config.consentEpoch === epoch && nativeReady(state);
+  }
+  async function readNativeResponse(response, signal) {
+    var reader = response.body.getReader(), bytes = 0, text = '';
+    function cancel() { reader.cancel().catch(function () {}); }
+    signal.addEventListener('abort', cancel, {once: true});
+    try {
+      var decoder = new TextDecoder('utf-8', {fatal: true});
+      while (true) {
+        if (signal.aborted) throw new Error('Native request cancelled.');
+        var part = await reader.read();
+        if (signal.aborted) throw new Error('Native request cancelled.');
+        if (part.done) return text + decoder.decode();
+        bytes += part.value.byteLength;
+        if (bytes > 2048) throw new Error('Native response too large.');
+        text += decoder.decode(part.value, {stream: true});
+      }
+    } catch (error) { cancel(); throw error; }
+    finally { signal.removeEventListener('abort', cancel); reader.releaseLock(); }
+  }
+
   // Called only by the consent coordinator. No activity is queued before consent.
   function nativeEvent(state, event) {
     try {
       var config = state.config, settings = config.nativeTracking;
-      if (state.environment === 'test' || !settings.enabled || state.nativeRequests.size >= 20 || (settings.excludedPaths.length && settings.excludedPaths.some(function (path) { return decodeURIComponent(location.pathname).startsWith(decodeURIComponent(path)); }))) return;
-      var dimensions = {}, epoch = config.consentEpoch;
+      if (!nativeReady(state) || state.nativeRequests.size >= 20 || typeof TextDecoder !== 'function' || typeof ReadableStream !== 'function') return;
+      var dimensions = {}, epoch = config.consentEpoch, generation = state.nativeGeneration;
+      if (state.nativeIdentifier !== undefined) dimensions.distinctId = state.nativeIdentifier;
       if (navigator.language) dimensions.language = navigator.language;
       if (settings.captureReferrer && document.referrer) dimensions.referrer = new URL(document.referrer).origin;
       if (settings.captureScreen && window.screen) dimensions.screen = {width: screen.width, height: screen.height};
@@ -51,21 +79,127 @@
       if (new TextEncoder().encode(body).length > 16384) return;
       var controller = new AbortController(); state.nativeRequests.add(controller);
       var timer = setTimeout(function () { controller.abort(); }, 5000);
-      Promise.resolve().then(function () { return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
+      Promise.resolve().then(function () { if (!nativeCurrent(state, epoch, generation, controller)) return; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
         cache: 'no-store', redirect: 'error', signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body}); })
         .then(async function (response) {
+          if (!response) return;
+          var text = await readNativeResponse(response, controller.signal);
           if (!response.ok) { warn('ten98-monitor: event was not accepted. Check installation diagnostics.'); return; }
-          var text = await response.text(); if (text.length > 2048) return;
           var result = JSON.parse(text);
-          if (!controller.signal.aborted && state.consent.analytics && !state.reload && state.config.consentEpoch === epoch && Date.now() < state.expires && Date.now() < state.consentExpires && result.accepted && typeof result.context === 'string' && result.context.length <= 1024) state.nativeContext = result.context;
+          if (nativeCurrent(state, epoch, generation, controller) && result.accepted && typeof result.context === 'string' && result.context.length <= 1024) state.nativeContext = result.context;
         }).catch(function () { if (!controller.signal.aborted) warn('ten98-monitor: collector unavailable or blocked.'); })
         .finally(function () { clearTimeout(timer); state.nativeRequests.delete(controller); });
     } catch (ignore) {} // Invalid application properties must never break the host page.
   }
 
   function nativeStop(state) {
-    state.nativeContext = null;
+    state.nativeContext = null; state.nativeIdentifier = undefined; state.nativeGeneration = (state.nativeGeneration || 0) + 1;
     state.nativeRequests.forEach(function (request) { request.abort(); }); state.nativeRequests.clear();
+  }
+
+  function clean(value) { return !/\u0000|[\uD800-\uDFFF]/u.test(value); }
+  function identifySnapshot(identifier, raw) {
+    var leaves = 0, stack = new Set();
+    function bad() { throw new Error('Invalid identify input.'); }
+    function validId(value) { if (typeof value !== 'string' || !value.length || value.length > 256 || !clean(value) || /[\x00-\x1f\x7f]/.test(value)) bad(); return value; }
+    function scalar(value) {
+      if (value === null || typeof value === 'boolean') return value;
+      if (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e15) return value;
+      if (typeof value === 'string' && value.length <= 1000 && clean(value)) return value;
+      return bad();
+    }
+    function object(value) { return value !== null && typeof value === 'object' && [Object.prototype, null].includes(Object.getPrototypeOf(value)); }
+    function copy(value, path, depth) {
+      if (!object(value) || stack.has(value)) bad();
+      stack.add(value); var out = Object.create(null);
+      Reflect.ownKeys(value).forEach(function (key) {
+        var descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (typeof key !== 'string' || !descriptor.enumerable || !('value' in descriptor)) bad();
+        var item = descriptor.value;
+        if (depth === 1 && key === 'id') { var shortcut = validId(item); if (identifier !== undefined && identifier !== shortcut) bad(); identifier = shortcut; return; }
+        if (!key.length || key.length > 80 || ['__proto__', 'prototype', 'constructor'].includes(key) || !clean(key)) bad();
+        var next = (path ? path + '.' : '') + key.replace(/\\/g, '\\\\').replace(/\./g, '\\.');
+        if (next.length > 320) bad();
+        if (object(item)) { if (depth >= 4) bad(); out[key] = copy(item, next, depth + 1); }
+        else {
+          if (++leaves > 50) bad();
+          if (Array.isArray(item)) {
+            if (Object.getPrototypeOf(item) !== Array.prototype || item.length > 50) bad();
+            Reflect.ownKeys(item).forEach(function (index) {
+              if (index === 'length') return;
+              var d = Object.getOwnPropertyDescriptor(item, index);
+              if (typeof index !== 'string' || !/^(0|[1-9]\d*)$/.test(index) || Number(index) >= item.length || !d.enumerable || !('value' in d)) bad();
+            });
+            var array = [];
+            for (var i = 0; i < item.length; i++) { var d = Object.getOwnPropertyDescriptor(item, String(i)); if (!d || !('value' in d)) bad(); array.push(scalar(d.value)); }
+            if (new TextEncoder().encode(JSON.stringify(array)).length > 4096) bad(); out[key] = array;
+          } else out[key] = scalar(item);
+        }
+      });
+      stack.delete(value); return out;
+    }
+    if (identifier !== undefined) validId(identifier);
+    var properties = copy(raw, '', 1);
+    if (new TextEncoder().encode(JSON.stringify(properties)).length > 6144) bad();
+    return {identifier: identifier, properties: properties};
+  }
+
+  async function nativeIdentify(state, identifier, properties) {
+    var requestId, sentAt, controller, timer, sent = false;
+    function outcome(status, reason) { return Object.assign({status: status}, requestId ? {requestId: requestId, sentAt: sentAt} : {}, reason ? {reason: reason} : {}); }
+    try {
+      if (!nativeReady(state)) return outcome('not_sent', 'collection_unavailable');
+      if (state.nativeRequests.size >= 20) return outcome('not_sent', 'busy');
+      if (typeof TextEncoder !== 'function' || typeof TextDecoder !== 'function' || typeof ReadableStream !== 'function' || typeof AbortController !== 'function' || typeof fetch !== 'function' || typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') return outcome('not_sent', 'browser_unavailable');
+      var snapshot;
+      try { snapshot = identifySnapshot(identifier, properties); } catch (_) { return outcome('invalid', 'invalid_input'); }
+      var changed = snapshot.identifier !== undefined && snapshot.identifier !== state.nativeIdentifier;
+      var nextId = snapshot.identifier === undefined ? state.nativeIdentifier : snapshot.identifier, epoch = state.config.consentEpoch;
+      requestId = uuid(); sentAt = new Date().toISOString(); controller = new AbortController();
+      var body = JSON.stringify({type: 'identify', siteKey: state.siteKey, requestId: requestId, sentAt: sentAt, url: currentUrl(), properties: snapshot.properties,
+        dimensions: nextId === undefined ? undefined : {distinctId: nextId}, context: changed ? undefined : state.nativeContext || undefined, consent: {analytics: true, epoch: epoch}});
+      if (new TextEncoder().encode(body).length > 16384) return outcome('invalid', 'invalid_input');
+      if (!nativeReady(state)) return outcome('not_sent', 'collection_unavailable');
+      if (changed) { nativeStop(state); state.nativeIdentifier = nextId; }
+      var generation = state.nativeGeneration;
+      state.nativeRequests.add(controller);
+      var aborted = new Promise(function (resolve) { controller.signal.addEventListener('abort', function () { resolve(outcome(sent ? 'unknown' : 'not_sent', sent ? undefined : 'cancelled')); }, {once: true}); });
+      timer = setTimeout(function () { controller.abort(); }, 5000);
+      var work = Promise.resolve().then(async function () {
+        if (!nativeCurrent(state, epoch, generation, controller)) return outcome('not_sent', 'cancelled');
+        sent = true;
+        var response = await fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors', cache: 'no-store', redirect: 'error', signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body});
+        var text = await readNativeResponse(response, controller.signal);
+        if (!nativeCurrent(state, epoch, generation, controller)) return outcome('unknown');
+        var result = JSON.parse(text);
+        if (!result || typeof result !== 'object' || Array.isArray(result)) return outcome('unknown');
+        if ([400, 409].includes(response.status) && typeof result.error === 'string' && Object.keys(result).every(function (key) { return ['error', 'reason'].includes(key); })) {
+          if (response.status === 400 && result.reason === 'request_expired') return outcome('expired', 'request_expired');
+          return outcome('invalid', response.status === 409 ? 'request_conflict' : 'invalid_input');
+        }
+        if (response.status !== 202) return outcome('unknown');
+        if (result.accepted === false && Object.keys(result).length === 2 && ['collection_disabled', 'consent_required', 'identity_unavailable'].includes(result.reason)) return outcome(result.reason === 'identity_unavailable' ? 'identity_unavailable' : 'rejected', result.reason);
+        if (result.accepted !== true || typeof result.duplicate !== 'boolean' || Object.keys(result).some(function (key) { return !['accepted', 'duplicate', 'context'].includes(key); }) ||
+          Object.prototype.hasOwnProperty.call(result, 'context') && (result.duplicate || typeof result.context !== 'string' || !result.context.length || result.context.length > 1024 || !clean(result.context))) return outcome('unknown');
+        if (result.context !== undefined) state.nativeContext = result.context;
+        return Object.assign(outcome('accepted'), {duplicate: result.duplicate});
+      }).catch(function () { return outcome('unknown'); });
+      return await Promise.race([work, aborted]);
+    } catch (_) { return outcome(sent ? 'unknown' : 'not_sent', sent ? undefined : 'collection_unavailable'); }
+    finally { if (timer) clearTimeout(timer); if (controller) state.nativeRequests.delete(controller); }
+  }
+
+  function identify(first, second, third) {
+    try {
+      var explicit = typeof first === 'string', h = hub();
+      if (arguments.length !== (explicit ? 3 : 2)) return Promise.resolve({status: 'invalid', reason: 'invalid_input'});
+      if (!h || !h.destinationIdentify) return Promise.resolve({status: 'not_sent', reason: 'configuration_unavailable'});
+      return h.destinationIdentify(explicit ? first : undefined, explicit ? second : first, explicit ? third : second);
+    } catch (_) { return Promise.resolve({status: 'invalid', reason: 'invalid_input'}); }
+  }
+  function resetIdentity(options) {
+    try { var h = hub(); if (h && h.destinationResetIdentity) return h.destinationResetIdentity(options); } catch (_) {}
+    return {ok: false, reason: 'Choose one configured site and environment.'};
   }
 
   function warn(message) {
@@ -127,7 +261,7 @@
   }
 
   function install() {
-    var h = { sites: [], lastUrl: currentUrl(), restored: false, nativeEvent: nativeEvent, nativeStop: nativeStop, api: { track: track } };
+    var h = { sites: [], lastUrl: currentUrl(), restored: false, nativeEvent: nativeEvent, nativeStop: nativeStop, nativeIdentify: nativeIdentify, api: { track: track, identify: identify, resetIdentity: resetIdentity } };
     window.__ten98FoundationHub = h;
     patchHistory('pushState');
     patchHistory('replaceState');

@@ -51,8 +51,12 @@ try {
   }
   async function settings(name:string) {
     await navigation();
-    const target=page.getByRole('navigation',{name:'Workspace settings',exact:true}).getByRole('link',{name,exact:true});
-    if(!await target.isVisible())await page.getByText('Workspace settings',{exact:true}).click();
+    const account=name==='Account security';
+    const target=page.getByRole('navigation',{name:account?'Account':'Workspace settings',exact:true}).getByRole('link',{name,exact:true});
+    if(!await target.isVisible()){
+      if(account)await page.locator('details.account-menu > summary').click();
+      else await page.getByText('Workspace settings',{exact:true}).click();
+    }
     await target.click();
   }
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
@@ -65,7 +69,8 @@ try {
   const artifacts=process.env.BROWSER_ARTIFACT_DIR;
   if(artifacts){await mkdir(artifacts,{recursive:true});await page.screenshot({path:join(artifacts,'retention-coverage-mobile.png'),fullPage:true});}
   await section('Recent events');
-  await page.getByText('Events currently retained',{exact:true}).waitFor();
+  await page.getByRole('heading',{name:'Retained events',exact:true}).waitFor();
+  await page.getByText('This is not a lifetime total.',{exact:false}).waitFor();
   assert.equal(await page.getByText('All received events, across all dates',{exact:true}).count(),0);
   await settings('Data retention');
   const raw=()=>page.getByLabel('Raw analytics (days)',{exact:true});
