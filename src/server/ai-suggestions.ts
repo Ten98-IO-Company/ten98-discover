@@ -16,7 +16,7 @@ import {suggestionQuoteInput,suggestionStartInput,suggestionActionInput,suggesti
 
 export const suggestionQueue='ai-suggestion';
 export const suggestionSelect=`SELECT r.*,q.connection_id,q.connection_revision,q.key_fingerprint,q.request_actor,q.input,q.snapshot,q.messages,q.route,q.input_hash,q.snapshot_hash,q.input_purged_at,
- q.created_at AS captured_at,p.status AS charge_status,p.estimate_micros,p.actual_micros,
+ q.created_at AS captured_at,q.expires_at<=clock_timestamp() AS quote_expired,p.status AS charge_status,p.estimate_micros,p.actual_micros,
  (q.input_purged_at IS NOT NULL OR q.created_at<transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours') AS input_expired,
  (r.result_purged_at IS NOT NULL OR q.input_purged_at IS NOT NULL OR q.created_at<transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours'
   OR r.completed_at<transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours') AS result_expired

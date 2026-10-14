@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {randomUUID,randomBytes} from 'node:crypto';
+import type {PoolClient} from 'pg';
 import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
@@ -52,6 +53,7 @@ export async function runSuggestionChecks(){
  const quote=async(f:Fixture)=>(await quoteAiSuggestions(f.project,owner,f.input,send)).quote;
  const start=async(f:Fixture)=>(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),quoteId:(await quote(f)).id})).run;
  const detail=async(f:Fixture,id:string)=>(await getAiSuggestion(f.project,owner,id)).run;
+ const expireQuote=async(id:string)=>pool.query("UPDATE ai_suggestion_quote SET created_at=clock_timestamp()-interval '6 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[id]);
  const acceptance=(run:Awaited<ReturnType<typeof detail>>)=>({requestId:randomUUID(),expectedProposalRevision:run.proposalRevision,expectedContextRevision:run.acceptance!.contextRevision,expectedTopicLibraryHash:run.acceptance!.topicLibraryHash,selections:run.proposal!.prompts.map(p=>({candidateId:p.id,text:p.text,tags:p.tags}))});
  try{
   const f=await fixture();for(const user of [editor,viewer,foreign])await assert.rejects(quoteAiSuggestions(f.project,user,f.input,send));assert.equal(free,0);
@@ -92,9 +94,44 @@ export async function runSuggestionChecks(){
   await executeAiSuggestion(chargedRun.id,send);afterPaid=null;const charge=(await pool.query('SELECT status,actual_micros FROM provider_request WHERE id=$1',[chargedRun.id])).rows[0];assert.deepEqual(charge,{status:'settled',actual_micros:'13'});
   console.log('PASS preflight and locked dispatch rechecks, held-read demotion, and financial settlement after role revocation');
 
+  for(const phase of ['queued','preflight','final update'] as const){
+   const f=await fixture(),run=await start(f);const paidBefore:number=paid,freeBefore:number=free;
+   if(phase==='queued'){await expireQuote(run.quoteId);await executeAiSuggestion(run.id,send);}
+   if(phase==='preflight')await executeAiSuggestion(run.id,async(...args)=>{if(String(args[0]).endsWith('/endpoints'))await expireQuote(run.quoteId);return send(...args);});
+   if(phase==='final update'){
+    let ready!:()=>void,release!:()=>void;const atUpdate=new Promise<void>(r=>ready=r),gate=new Promise<void>(r=>release=r);
+    const queries=new Map<PoolClient,PoolClient['query']>();
+    const acquire=(client:PoolClient)=>{
+     if(queries.has(client))return;const query=client.query;queries.set(client,query);
+     client.query=function(this:PoolClient,...args:any[]){
+      if(typeof args[0]==='string'&&args[0].startsWith("UPDATE ai_suggestion_run SET status='running'")&&args[1]?.[0]===run.id&&!args.some(arg=>typeof arg==='function')){
+       ready();return gate.then(()=>Reflect.apply(query,this,args));
+      }
+      return Reflect.apply(query,this,args);
+     } as typeof client.query;
+    };
+    pool.on('acquire',acquire);const waiting=executeAiSuggestion(run.id,send);
+    try{
+     await Promise.race([atUpdate,new Promise<never>((_,reject)=>{setTimeout(()=>reject(new Error('Final dispatch update was not reached.')),5000).unref();})]);
+     assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[run.id])).rows[0].status,'reserved');
+     await expireQuote(run.quoteId);release();await waiting;
+    }finally{release();try{await waiting;}finally{pool.off('acquire',acquire);for(const [client,query] of queries)client.query=query;}}
+   }
+   assert.equal(paid,paidBefore,phase);assert.equal(free,freeBefore+(phase==='queued'?0:2),phase);
+   const cancelled=(await pool.query(`SELECT r.status,p.status AS charge_status,r.dispatched_at,r.generation_id,p.actual_micros,p.provider_reference
+    FROM ai_suggestion_run r JOIN provider_request p ON p.id=r.id WHERE r.id=$1`,[run.id])).rows[0];
+   assert.deepEqual(cancelled,{status:'cancelled',charge_status:'cancelled',dispatched_at:null,generation_id:null,actual_micros:null,provider_reference:null},phase);
+   assert.match((await detail(f,run.id)).diagnostic!,/quote expiry/);
+  }
+  const sentExpiry=await fixture(),sentExpiryRun=await start(sentExpiry),beforeSentExpiry=paid;
+  afterPaid=async()=>{await expireQuote(sentExpiryRun.quoteId);};
+  try{await executeAiSuggestion(sentExpiryRun.id,send);}finally{afterPaid=null;}
+  const sentExpired=await detail(sentExpiry,sentExpiryRun.id);assert.equal(paid,beforeSentExpiry+1);assert.equal(sentExpired.status,'completed');assert.equal(sentExpired.chargeStatus,'settled');assert.equal(sentExpired.actualUsd,'0.000013');assert.equal(sentExpired.proposal!.prompts.length,2);assert.equal(sentExpired.inputExpired,false);assert.equal(sentExpired.resultExpired,false);
+  console.log('PASS expired queued/preflight/final authorization cancels without dispatch, and expiry after POST preserves known charge and proposal');
+
   for(const variant of ['invalid','empty'] as const){const f=await fixture(),run=await start(f);mode=variant;await executeAiSuggestion(run.id,send);mode='ok';const row=await detail(f,run.id);assert.equal(row.chargeStatus,'settled');assert.equal(row.actualUsd,'0.000013');assert.equal(row.status,variant==='invalid'?'failed':'completed');if(variant==='empty')assert.deepEqual(row.proposal!.prompts,[]);else assert.equal(row.proposal,null);assert.equal((await listPrompts(f.project,owner,new URLSearchParams())).items.length,0);}
-  const lost=await fixture(),lostRun=await start(lost);mode='lost';const paidBefore=paid;await executeAiSuggestion(lostRun.id,send);mode='ok';await executeAiSuggestion(lostRun.id,send);assert.equal(paid,paidBefore+1);assert.equal((await detail(lost,lostRun.id)).chargeStatus,'uncertain');
-  const recovery={requestId:randomUUID()},recovered=await reconcileAiSuggestion(lost.project,owner,lostRun.id,recovery,send);assert.equal(recovered.run.chargeStatus,'settled');assert.equal(recovered.run.proposal,null);const freeBefore=free;await reconcileAiSuggestion(lost.project,owner,lostRun.id,recovery,send);assert.equal(free,freeBefore);assert.equal(paid,paidBefore+1);
+  const lost=await fixture(),lostRun=await start(lost);mode='lost';const paidBefore=paid;await executeAiSuggestion(lostRun.id,send);mode='ok';await expireQuote(lostRun.quoteId);const lostFree=free;await executeAiSuggestion(lostRun.id,send);assert.equal(free,lostFree);assert.equal(paid,paidBefore+1);assert.equal((await detail(lost,lostRun.id)).chargeStatus,'uncertain');
+  const recovery={requestId:randomUUID()},recovered=await reconcileAiSuggestion(lost.project,owner,lostRun.id,recovery,send);assert.equal(recovered.run.chargeStatus,'settled');assert.equal(recovered.run.actualUsd,'0.000013');assert.equal(recovered.run.proposal,null);const freeBefore=free;await reconcileAiSuggestion(lost.project,owner,lostRun.id,recovery,send);await executeAiSuggestion(lostRun.id,send);assert.equal(free,freeBefore);assert.equal(paid,paidBefore+1);
   const crashed=await fixture(),crashRun=await start(crashed);await pool.query("UPDATE ai_suggestion_run SET status='running',lease_owner=$2,lease_expires_at=clock_timestamp()-interval '1 second',dispatched_at=clock_timestamp()-interval '3 minutes' WHERE id=$1",[crashRun.id,randomUUID()]);await pool.query("UPDATE provider_request SET status='dispatched' WHERE id=$1",[crashRun.id]);
   await reconcileAiSuggestionJobs();await executeAiSuggestion(crashRun.id,send);assert.equal((await detail(crashed,crashRun.id)).chargeStatus,'uncertain');assert.equal(paid,paidBefore+1);
   console.log('PASS known charge with invalid/empty proposal, durable lost-response recovery, and crash never re-POSTs');
