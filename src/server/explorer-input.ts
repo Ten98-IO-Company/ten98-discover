@@ -4,8 +4,9 @@ import { normalizeProperties } from './analytics-input.ts';
 import { analyticsRange } from './analytics.ts';
 import { InputError } from './validation.ts';
 import {parseAdvancedPredicates,predicateFields,type AdvancedPredicates} from './advanced-predicate-input.ts';
+import {environmentFields,isEnvironmentFilter} from '../lib/analytics-environment.ts';
 
-export const explorerGroups = ['event','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','screenWidth','screenHeight','property'] as const;
+export const explorerGroups = ['event','path','origin','referrer','language','browser','os','device','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','screenWidth','screenHeight','property'] as const;
 export const explorerFilters = predicateFields;
 const parameterNames = new Set(['from','to','timeZone','kind','groupBy','groupProperty','propertyKey','propertyType','propertyValue','cohortId','cohortRevision','predicates',...explorerFilters]);
 function bad(message = 'Check the exploration filters and try again.'): never { throw new InputError(400, message); }
@@ -35,6 +36,7 @@ export function explorerQuery(params: URLSearchParams, now = new Date()) {
   const groupProperty = groupBy === 'property' ? text(params.get('groupProperty')!,320) : null;
   const filters: Record<string,string> = {};
   for (const key of explorerFilters) if (params.has(key)) filters[key] = text(params.get(key)!,['path','origin'].includes(key) ? 2048 : 320,true);
+  for(const field of environmentFields)if(params.has(field)&&!isEnvironmentFilter(field,filters[field]))bad('Choose a supported browser, OS or device filter.');
   if (filters.origin !== undefined) {
     try { const url = new URL(filters.origin); if (!['https:','http:'].includes(url.protocol) || url.origin !== filters.origin) bad('Enter an exact origin, such as https://www.example.com, without a path.'); }
     catch { bad('Enter an exact origin, such as https://www.example.com, without a path.'); }
