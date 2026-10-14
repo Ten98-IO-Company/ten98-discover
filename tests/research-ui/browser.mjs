@@ -26,7 +26,10 @@ export async function sidebar(page){const button=page.getByRole('button',{name:/
 export async function projectSection(page,project,section){
   await sidebar(page);await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:project.name,exact:true}).click();
   await page.waitForFunction(id=>new URLSearchParams(location.search).get('project')===id,project.id);
-  await sidebar(page);await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:section,exact:true}).click();
+  await sidebar(page);const target=page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:section,exact:true,includeHidden:true});
+  await target.waitFor({state:'attached'});
+  for(const disclosure of await target.locator('xpath=ancestor::details').all())if(await disclosure.getAttribute('open')===null)await disclosure.locator(':scope > summary').click();
+  await target.click();
 }
 export async function captureFailure(page,error,stage){
   const secrets=[process.env.AUTH_SECRET,process.env.BOOTSTRAP_TOKEN,process.env.DATABASE_URL,process.env.CREDENTIAL_KEYS];

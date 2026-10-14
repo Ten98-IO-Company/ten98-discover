@@ -168,6 +168,7 @@ try {
     assert.deepEqual(await instance.getByRole('link', { includeHidden: true }).allTextContents(), ['Google app setup', 'Meta app setup'])
     assert.equal(await page.getByRole('link', { name: 'Providers and spending', exact: true, includeHidden: true }).count(), 0, 'Instance authority does not upgrade a workspace viewer.')
     await link('Meta app setup'); await heading('Meta app setup'); await selected(b.id, b1, 'meta-app')
+    assert.notEqual(await page.locator('details.account-menu').getAttribute('open'), null, 'Current operator destination opens the account footer.')
     assert.deepEqual(await instance.locator('a[aria-current="page"]').allTextContents(), ['Meta app setup'])
   } finally { await pool.query('DELETE FROM instance_operator WHERE user_id=$1', [owner.id]) }
   await page.reload(); await heading('Web analytics'); await selected(b.id, b1, 'project')
@@ -209,11 +210,14 @@ try {
   console.log('PASS navigation: failed project discovery preserves its retry state without inventing an empty workspace.')
 
   await page.goto(href(a.id, a1, 'events')); await heading('Recent events')
+  const identityBeforeWorkspaceSwitch = await page.locator('.account-summary-text').textContent()
   const slowWorkspace = await hold(`**/api/workspaces/${b.id}/projects`)
   await page.getByLabel('Workspace', { exact: true }).selectOption(b.id); await slowWorkspace.began
+  assert.equal(await page.locator('.account-summary-text').textContent(), identityBeforeWorkspaceSwitch, 'Workspace changes must not change account identity.')
   await link('Account security'); await heading('Account security')
   slowWorkspace.release(); await slowWorkspace.remove(); await delay(150)
   await heading('Account security'); assert.equal(new URL(page.url()).searchParams.get('view'), 'security')
+  assert.notEqual(await page.locator('details.account-menu').getAttribute('open'), null, 'Current account destination stays exposed.')
   await page.goBack(); await heading('Web analytics'); await selected(b.id, b1, 'project')
   console.log('PASS navigation: a delayed workspace load cannot replace newer Account navigation.')
 
@@ -543,6 +547,7 @@ try {
   await page.getByLabel('Project name', { exact: true }).fill('Old session response')
   await page.getByLabel('Website origin', { exact: true }).fill('https://old-session.navigation.test')
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await oldSession.began
+  await navigationLink('Account security') // Open account actions without leaving the pending project request.
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
   await page.getByLabel('Email', { exact: true }).fill(other.email); await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await heading('Web analytics')

@@ -491,11 +491,25 @@ function App() {
           <button type='button' className='btn mobile-nav-toggle' aria-expanded={menuOpen} aria-controls='app-navigation' onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? 'Close menu' : 'Menu'}</button>
         </div>
         <div id='app-navigation' className={`side-body${menuOpen ? ' is-open' : ''}`}>
-        <div className='field'>
-          <label htmlFor='ws'>Workspace</label>
-          <select id='ws' value={workspaceId} onChange={(e) => changeWorkspace(e.target.value)}>
-            {(me?.workspaces ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-          </select>
+        <div className='workspace-controls'>
+          {(me?.workspaces.length ?? 0) > 0 ? (
+            <div className='field'>
+              <label htmlFor='ws'>Workspace</label>
+              <select id='ws' value={workspaceId} onChange={(e) => changeWorkspace(e.target.value)}>
+                {(me?.workspaces ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </div>
+          ) : <p className='dim'>No workspaces yet.</p>}
+        <details className='workspace-tools workspace-settings' open={view === 'team' || view === 'keys' || view === 'providers' || view === 'retention' || view === 'workspace'}>
+          <summary className={view === 'team' || view === 'keys' || view === 'providers' || view === 'retention' || view === 'workspace' ? 'proj active' : 'proj'}>Workspace settings</summary>
+          <nav aria-label='Workspace settings'>
+            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'team' ? 'proj active' : 'proj'} aria-current={view === 'team' ? 'page' : undefined} to='/' search={target('team')}>Manage team</Link>}
+            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'keys' ? 'proj active' : 'proj'} aria-current={view === 'keys' ? 'page' : undefined} to='/' search={target('keys')}>API keys</Link>}
+            {workspace?.role === 'owner' && <Link className={view === 'providers' ? 'proj active' : 'proj'} aria-current={view === 'providers' ? 'page' : undefined} to='/' search={target('providers')}>Providers and spending</Link>}
+            {workspace && <Link className={view === 'retention' ? 'proj active' : 'proj'} aria-current={view === 'retention' ? 'page' : undefined} to='/' search={target('retention')}>Data retention</Link>}
+            <Link className={view === 'workspace' ? 'proj active' : 'proj'} aria-current={view === 'workspace' ? 'page' : undefined} to='/' search={target('workspace')}>Create workspace</Link>
+          </nav>
+        </details>
         </div>
         <nav aria-label='Projects'>
           <p className='side-label'>Projects</p>
@@ -550,33 +564,29 @@ function App() {
           </details>
           <Link className={view === 'context' ? 'proj active' : 'proj'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}>Project context</Link>
         </nav>}
-        <details className='workspace-tools' open={view === 'team' || view === 'keys' || view === 'providers' || view === 'retention' || view === 'workspace'}>
-          <summary className={view === 'team' || view === 'keys' || view === 'providers' || view === 'retention' || view === 'workspace' ? 'proj active' : 'proj'}>Workspace settings</summary>
-          <nav aria-label='Workspace settings'>
-            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'team' ? 'proj active' : 'proj'} aria-current={view === 'team' ? 'page' : undefined} to='/' search={target('team')}>Manage team</Link>}
-            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'keys' ? 'proj active' : 'proj'} aria-current={view === 'keys' ? 'page' : undefined} to='/' search={target('keys')}>API keys</Link>}
-            {workspace?.role === 'owner' && <Link className={view === 'providers' ? 'proj active' : 'proj'} aria-current={view === 'providers' ? 'page' : undefined} to='/' search={target('providers')}>Providers and spending</Link>}
-            {workspace && <Link className={view === 'retention' ? 'proj active' : 'proj'} aria-current={view === 'retention' ? 'page' : undefined} to='/' search={target('retention')}>Data retention</Link>}
-            <Link className={view === 'workspace' ? 'proj active' : 'proj'} aria-current={view === 'workspace' ? 'page' : undefined} to='/' search={target('workspace')}>Create workspace</Link>
-          </nav>
-        </details>
-        <details className='workspace-tools' open={view === 'security' || view === 'identity'}>
-          <summary className={view === 'security' || view === 'identity' ? 'proj active' : 'proj'}>Account</summary>
+        <details className='side-foot account-menu' open={view === 'security' || view === 'identity' || view === 'google-app' || view === 'meta-app'}>
+          <summary className='account-summary' aria-label={`Account: ${me?.user.name || 'Account'}, ${me?.user.email ?? ''}`}>
+            <span className='account-summary-text'>
+              <span className='account-name'>{me?.user.name || 'Account'}</span>
+              <span className='account-email'>{me?.user.email}</span>
+            </span>
+          </summary>
+          <div className='account-menu-body'>
           <nav aria-label='Account'>
             <Link className={view === 'security' ? 'proj active' : 'proj'} aria-current={view === 'security' ? 'page' : undefined} to='/' search={target('security')}>Account security</Link>
             <Link className={view === 'identity' ? 'proj active' : 'proj'} aria-current={view === 'identity' ? 'page' : undefined} to='/' search={target('identity')}>Identity sign-in</Link>
           </nav>
-        </details>
-        {me?.instanceOperator && <details className='workspace-tools' open={view === 'google-app' || view === 'meta-app'}>
-          <summary className={view === 'google-app' || view === 'meta-app' ? 'proj active' : 'proj'}>Instance settings</summary>
-          <nav aria-label='Instance settings'>
+            {me?.instanceOperator && <nav className='instance-settings' aria-label='Instance settings'>
+              <p className='side-label'>Instance settings</p>
+              <p className='hint'>Applies across workspaces.</p>
             {me?.instanceOperator && <Link className={view === 'google-app' ? 'proj active' : 'proj'} aria-current={view === 'google-app' ? 'page' : undefined} to='/' search={target('google-app')}>Google app setup</Link>}
             {me?.instanceOperator && <Link className={view === 'meta-app' ? 'proj active' : 'proj'} aria-current={view === 'meta-app' ? 'page' : undefined} to='/' search={target('meta-app')}>Meta app setup</Link>}
-          </nav>
-        </details>}        <div className='side-foot'>
-          <p className='dim'>{me?.user.email}</p>
-          <button className='btn' disabled={signOutBusy} onClick={() => void signOut()}>{signOutBusy ? 'Signing out…' : 'Sign out'}</button>
-        </div>
+            </nav>}
+            <div className='account-signout'>
+              <button type='button' className='btn' disabled={signOutBusy} onClick={() => void signOut()}>{signOutBusy ? 'Signing out…' : 'Sign out'}</button>
+            </div>
+          </div>
+        </details>
         </div>
       </aside>
       <main className='main' id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
