@@ -1,16 +1,18 @@
 # ten98-monitor — foundation quickstart & limitations
 
+> Code and safety contracts retained from [docs/foundation.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/foundation.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/ten98-monitor-foundation-quickstart-and-limitations-implementation-h-f1qEnZxqJA). Qualifications are preserved; this adds no acceptance claim.
+
 > **Status:** internal foundation branch. This is **not** a public V1 or release. Full 81-feature parity remains required. MIT-licensed / free.
 
-Related: [README](../README.md) · [Feature parity](parity.md) · [Kimi workflow](kimi-workflow.md)
+Related: [README](../README.md) · [Feature parity](https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5) · [Kimi workflow](kimi-workflow.md)
 
-The [interface refresh](interface.md) groups measurement, research and connection pages under the selected project, with workspace tools in a separate menu. **Context** and **Prompts** store project knowledge and immutable prompt text history; neither starts provider work. On narrow screens, choose **Menu** to navigate. **Install tracker** contains the snippet and collapsed worker diagnostics; **Recent events** contains received observations. Workspace, project and section links survive reload and browser history; they require authentication and current workspace access. With no requested project, the overview opens the first available project without overriding newer navigation or identity verification.
+## Navigation and access
 
-The refreshed production UI passed independent Edge checks at desktop and 360px widths: consent/privacy flows, known/unavailable metrics, report editing/sharing, stale responses, permissions, keyboard menu operation, focus transfer and delayed initial-project loading. No fake measurements were added. Existing database accounts and projects are preserved.
+Workspace, project and section links survive reload and browser history; they require authentication and current workspace access. With no requested project, the overview opens the first available project without overriding newer navigation or identity verification.
 
-[Research and audit screens](research-ui.md) add **Keywords**, saved prompt execution and **Site audits**. Each starts work only after an explicit action; paid research requires a reviewed quote. Setup collapses around retained results, and audit findings lead to focused page/link evidence. Production-browser checks passed against isolated synthetic providers and crawl transport with real local routes, receipts and worker handlers. This adds manual workflows, not complete keyword, AI visibility or rendered-audit parity.
+## Browser verification and navigation
 
-The navigation increment passed TypeScript, production build, 144 unit checks (two platform-specific skips) and 12 focused production Edge groups against a separate local database. Checks cover reload/history/new tabs, malformed and foreign targets, removal of unknown query keys, failed-list retry, delayed workspace and creation responses, returning to an earlier URL, session changes, callback priority, factor cancellation and capability removal. The existing Google, native analytics, retention, Explorer, context/prompt and isolated report-sharing browser runners also passed sequentially with real local API/database behavior. Google endpoints and authorization were synthetic fixtures; no live provider calls or public deployment are claimed. Optional runners use the externally supplied `PLAYWRIGHT_MODULE`; URL navigation stores no filter state or form drafts and does not replace the separate public report-share feature.
+Optional runners use the externally supplied `PLAYWRIGHT_MODULE`; URL navigation stores no filter state or form drafts and does not replace the separate public report-share feature.
 
 ## Requirements
 
@@ -70,41 +72,7 @@ TEN98_INTEGRATION_TEST=1 node --env-file=.env tests/integration.ts
 - Requires a freshly migrated, unclaimed **local** DB plus running web and worker.
 - Refuses non-local DBs and existing users; retains fixtures. **Do not run it against saved user data.**
 
-Observed integration coverage (independent GPT run): schema mismatch restore, owner concurrency/rollback, roles/tenant boundary, CORS/URL privacy/idempotence, worker completion/queue rollback/revoked permissions, failed job reconciliation, logout; plus invitation signup/session cookies, existing-account protection, token replacement/revocation/expiry, concurrent acceptance, concurrent last-owner changes, delayed-body permission revocation, and date-filtered analytics fixtures.
-
-Verified locally on 2026-10-12:
-
-| Check | Observed result |
-|---|---|
-| Node 24 build, TypeScript, unit tests | Passed; 15 input-validation and actual tracker checks |
-| Real PostgreSQL web/worker integration | Passed the authorization, transaction, privacy and lifecycle cases above |
-| Docker Desktop / Linux amd64 | Image built; PostgreSQL, web and worker healthy; artifact storage writable; initial and repeat migration passed |
-| Browser / installed Microsoft Edge | Owner setup, form labels/keyboard access, login/logout, project creation, snippet, real tracker requests and persisted counts passed |
-| Tracker browser privacy | Two embeds produced one event per page load; requests omitted credentials, cookies, query strings and fragments |
-| Worker and responsive UI | Queued check completed; desktop 1360 px and mobile 360 px layouts passed without page overflow |
-| Planning and dependencies | All 81 V1 rows retained; production and full dependency audits reported no known advisories at check time |
-| Kimi runner | Offline process/timeout checks and a real bounded Skill-only K3 smoke task passed |
-
-The independent browser check used synthetic accounts and a local fixture website; it does not verify provider integrations. Base images are pinned to the tested digests. ARM, public HTTPS, backup restoration and production load testing remain outstanding. Hosted CI results are linked from the pull request rather than inferred from local runs.
-
-Screenshots from the completed browser check: [desktop](screenshots/foundation-desktop.png) · [mobile](screenshots/foundation-mobile.png).
-
-Workspace and analytics increment verified locally on 2026-10-13 (Asia/Dubai):
-
-| Check | Observed result |
-|---|---|
-| Build, TypeScript and unit tests | Passed; 32 tests across validation, date semantics and actual tracker code |
-| Real PostgreSQL web/worker integration | Passed the foundation cases and new team/invitation/analytics cases above |
-| Original-install upgrade | Original `0001` SQL unchanged; existing account credentials, membership, project, event and job data preserved through `0002`/`0003`; repeat migration passed |
-| Migration failure and history | Injected failure rolled back both pending migrations; changed, future and incomplete history rejected |
-| Docker Desktop / Linux amd64 | Final image built; fresh migrations applied; PostgreSQL, web and worker healthy |
-| Real browser tracking and reports | Two embeds, SPA navigation and manual custom event produced three stored events; credentials, cookies, referrer, query and fragment absent from collector requests; date filters and zero-data view passed |
-| Browser team flows | Create/rename workspaces, new/existing-account invitations, expired-session sign-in recovery, roles, last-owner protection, revocation, removal and login persistence passed; desktop 1360 px and mobile 360 px checked, including readable role controls in the horizontally scrollable member table |
-| Scope and dependencies | All 81 V1 rows retained; no new application dependencies |
-
 Upgrade checks are runnable with `TEN98_INTEGRATION_TEST=1 node --env-file=.env tests/migrations-integration.ts` against a **separate empty local test database**, without the web/worker running. The check refuses a populated database, retains its fixtures, and does not restore or erase an operator's data. CI creates that database separately from the normal integration database.
-
-Current screenshots: [analytics desktop](screenshots/analytics-desktop.png) · [analytics mobile](screenshots/analytics-mobile.png) · [team desktop](screenshots/team-desktop.png) · [team mobile](screenshots/team-mobile.png).
 
 ## Diagnostics
 
@@ -130,38 +98,34 @@ docker compose exec worker node src/server/cli.ts diagnose worker
 - Consent-gated page-load and SPA pathname tracking, plus `window.ten98.track('signup')` after the script loads with bounded typed properties. Event names are 1–64 characters, start with a letter and use letters, digits, underscores, periods, colons or hyphens. Keep personal information out of event names. Optional referrer hostname, language, screen and UTM metadata is configurable. Query strings and fragments are stripped; raw IP and user-agent data is not stored.
 - Analytics for inclusive UTC date ranges up to 366 days: page views, custom-event counts, daily chart/table and the top 20 pages/event names, plus visitor, visit, bounce and duration estimates where native identity coverage is available. Unknown estimates are reported as unavailable, not zero. Counts are stored observations.
 - CORS origin matching (public signals remain spoofable) and duplicate-event UUID dedup.
-- Jobs: internal free worker probe; durable Postgres queue with idempotency, transaction rollback, revoked-permission handling and failed-terminal reconcile, now also executing Google imports, manual keyword and prompt requests, redirect checks and static audits. Paid requests require an explicit quote and start; dispatched paid calls have no automatic resend. Worker startup can resume previously authorized queued work; it does not resend a dispatched paid call. No provider scheduler is enabled.
+- Jobs: internal free worker probe; durable Postgres queue with idempotency, transaction rollback, revoked-permission handling and failed-terminal reconcile, now also executing Google imports, manual keyword and prompt requests, redirect checks and static audits. Paid requests require an explicit quote and start; dispatched paid calls have no automatic resend. Worker startup can resume previously authorized queued work; it does not resend a dispatched paid call.
+
 - Migrations: transaction + advisory lock + ordered, normalized checksums. Existing `0001` installations upgrade through the included ordered migrations; unknown, altered or incomplete history is rejected.
+
+## Invitation and analytics safeguards
+
+No email is sent automatically. The link can create a new local account, so treat it like a temporary credential; mailbox verification is not claimed.
+
+The fragment token is removed from the address bar and kept only in memory; re-open the original link if the page is refreshed before joining.
+
+The chart and tables use server receipt dates in UTC. Query/hash-only navigation does not create a new page view.
 
 ## Use the team and analytics flows
 
-1. Choose **Create workspace** to separate a team's projects and membership. The workspace selector switches between your memberships.
-2. Choose **Manage team**, enter an email and role, then copy the invitation link and share it privately. No email is sent automatically. The link can create a new local account, so treat it like a temporary credential; mailbox verification is not claimed.
-3. A recipient opens the link, creates a local account or signs in with their existing invited email, then joins. The fragment token is removed from the address bar and kept only in memory; re-open the original link if the page is refreshed before joining.
-4. Select a project to view **Analytics**. Choose a preset or custom dates, then **Apply** to refresh. The chart and tables use server receipt dates in UTC. Query/hash-only navigation does not create a new page view.
-
-For an existing development install, back up its database and stop web/worker before upgrading. Build the new image, run `docker compose run --rm migrate`, then start web/worker again. Repeat migrations are safe. The old application image cannot serve the upgraded schema; rolling back requires the matching pre-upgrade database backup. General backup/restore automation remains unimplemented.
+For an existing development install, back up its database and stop web/worker before upgrading. Build the new image, run `docker compose run --rm migrate`, then start web/worker again. Repeat migrations are safe. The old application image cannot serve the upgraded schema; rolling back requires the matching pre-upgrade database backup.
 
 ## Current limitations
 
 - Not a public V1/release. No published Docker image — build locally.
 - The optional Caddy recipe has local proxy/configuration checks; public certificate issuance is not yet verified. A host-local tracker snippet only works for another local origin; remote visitors cannot reach a localhost collector until a proper HTTPS deployment exists.
-- Native Search Console and GA4 report imports are available with bounded snapshots and synthetic acceptance; see [Google reporting setup](google-reports.md). Keyword research, saved keywords, static audits and manual prompt comparisons are implemented; broader SEO and AI visibility and other platform imports remain unfinished. The browser loader implements ten tag adapters with synthetic checks; real vendor-account validation remains a release gate.
+
 - Identity coverage and visit semantics remain limited as documented below; bot filtering and advanced reports / full analytics parity remain unfinished. Workspace retention is implemented for native analytics, Google import snapshots, normalized keyword results, generated prompt answers and copied execution input. Replay storage remains unimplemented.
 - No email password recovery, workspace-wide identity/2FA enforcement, automatic invitation email delivery or project/workspace deletion yet. Local authenticator/recovery-code and generic OIDC flows are implemented; invitations currently support manually shared links.
 - SPA tracking observes pathname changes; hash-based routes, automatic HTML event attributes and identity-link workflows are not implemented yet. Native bounded typed event properties, optional referrer metadata and estimated visitor/visit identity are implemented. The tag loader accepts only its bounded canonical properties, distinct from native typed properties. The custom-event API does not buffer calls made before the script loads.
-- No SaaS billing.
+
 - Secrets in compose env are plaintext, not encrypted. The backend supports `_FILE` for `AUTH_SECRET` / `BOOTSTRAP_TOKEN` / `DATABASE_URL` (exclusive with direct values), but the current recipe uses `.env`. No production secrets manager is claimed.
 - Worker status refresh is manual; no global auto-poll.
 - Nitro 3.0.260903-beta is a prerelease; the production gate is pending. Optional Cloudflare features are not built.
-
-## Work process
-
-- Kimi 2.1.1 acts as skill-only drafter on prompt-supplied public files; GPT owns architecture, security, design, and tests.
-- Maximum K3 effort was requested with a fixed model alias; K3 HighSpeed is not available, and older K2.7 HighSpeed was not used.
-- Swarm uses independent file ownership: the first batch covered UI/packaging/validation, and the next covered team UI, analytics UI and tracker behavior. Review repairs are mandatory; actual durations and skills are recorded in the [Kimi ledger](kimi-workflow.md).
-- The existing native CLI uses individual OAuth and is not embedded in the app.
-- No quota/savings counts verified.
 
 ## Account, API-key and provider controls
 
@@ -243,54 +207,6 @@ Choose **Domains** as an owner or administrator to record the canonical hostname
 
 Verified redirect aliases also offer [manual HTTP redirect checks](domain-redirects.md), with pinned public-address transport, current-authority/configuration rechecks, immutable receipts and raw-evidence expiry. Migration `0018` is additive after `0017`. Synthetic database, upgrade and production browser checks cover lost acknowledgements, stale configuration, role changes and sanitized evidence. This observes HTTP redirects only; schedules, redirect counts/log imports, JavaScript/meta behavior and backlink consolidation remain unfinished.
 
-Native/report/domain increment checked locally on 2026-10-13: production build, TypeScript, 127 unit/browser-VM checks (two additional platform-specific skips) and the full PostgreSQL production web/worker integration passed. New cases cover typed properties, actual Node transport, consent-policy publication while collection waits, duplicates, identity coverage, report/share authorization and immutable sanitized snapshots. Separate fresh-database checks passed DNS challenge expiry/reissue/revocation/role races with mocked DNS. Original-install upgrades through `0012`, failed-upgrade rollback and repeat migration passed. These checks make no real vendor, DNS ownership or paid-provider claim.
+## Graceful shutdown
 
-Production Edge acceptance passed native consent before/after grant, withdrawal, stale policy dialogs, privacy-setting conflicts/role loss and known/unavailable metric cards. The integrated report UI passed edit/reload, revision conflict preservation, templates, immutable snapshots, one-time link clearing, duplicate submission, denied/deferred clipboard, deletion, project changes, role loss and expired login. Desktop and 360px layouts fit without horizontal document overflow. Domain UI checks exercised create/proof/reissue/revoke and stale responses against synthetic data; no real domain ownership was asserted. Optional browser runners use an operator-installed Playwright via `PLAYWRIGHT_MODULE`, keeping it out of the application's production dependencies.
-
-The same increment passed a fresh Linux amd64 Docker build/install through `0012`, nonroot web/worker health, consent collection, report sharing, domain records and restart persistence. Default network measurement stayed off despite forged forwarding headers. A real web shutdown failure was fixed: a Nitro close hook now awaits the actual queue resources and then database pools, including across the separate SSR/runtime bundles. With a web-created queue open, web and worker exited cleanly and restarted with sessions, reports, revocations and events intact. No shutdown timeout was increased and no forced process exit was added. A separate-module regression verifies ordering and safe error reporting. Public HTTPS, ARM and real proxy identity remain separate acceptance gates.
-
-Security/tracking increment checked locally on 2026-10-13: production build, TypeScript, the full fresh PostgreSQL web/worker integration suite, and original-schema upgrades through `0009` passed. The integration suite covers OIDC signed claims and fresh verification, two-factor recovery, account log redaction, API-key live revocation, encrypted credential rotation, concurrent spending caps, and destination HTTP/CORS/role/revision isolation. Tests used synthetic data and no external IdP or paid provider traffic.
-
-Edge production-build checks passed OIDC-only invited signup, fresh provider verification, authenticator enrollment, replacement recovery codes, optional local password, local/recovery login and callback-error recovery. Destination checks passed save/preview/publish/rollback, actual tracker/loader/preferences integration, stored-consent restoration and withdrawal reload. Desktop 1360 px and mobile 360 px were checked without document overflow. Vendor scripts were intercepted with local stubs: no real vendor-account delivery claim.
-
-The integrated Linux amd64 Docker image built and its fresh `0001`–`0009` migrations, web/worker readiness, keyring diagnostics, owner claim, operator role, event collection, analytics and queued worker operation passed on an isolated local installation. Docker helper checks ran with networking disabled; the synthetic shell regression requires an executable container temporary mount. Packaging tests do not establish public HTTPS, ARM, performance or full V1 completion. Detailed setup/backup checks are in [docker-setup.md](docker-setup.md).
-
-
-## Project knowledge and prompt library
-
-**Research > Context** stores brand aliases, business guidance, competitors, key pages and authored research notes. **Research > Prompts** supports single/bulk entry, user tags, automatic/manual branded classification, filters, archive/restore and immutable numbered text history. Editors can write and viewers can read. Saving an enabled preference does not activate provider execution, scheduling or spending. Research and prompt history survive analytics retention. See the [contract, source provenance and verification](project-context.md).
-
-The integrated checkpoint passed TypeScript, production build, 135 unit checks (two platform-specific skips), isolated project-content database/API checks, and original-install upgrades through 0014 with rollback/history checks. Real production Edge checks exercised both panels and actual navigation at desktop and 360px, with conflict preservation, lost-response retry, permission purge and project/account isolation. These synthetic local checks do not establish upstream runtime parity, provider behavior, capacity, public HTTPS or a V1 release. The existing retention worker and shutdown cleanup remain unchanged.
-
-## Docker recovery acceptance through 0014
-
-On 2026-10-13, committed source `903e6fa78295545ae54262110c884527895854d7` passed an isolated Docker Desktop Linux amd64 backup and restore drill (Engine 29.8.1, Compose 5.5.1). The image was built from a Git archive, excluding private inputs. Fresh and repeated migrations, nonroot web/worker health and existing-configuration overwrite refusal passed.
-
-With both source writers stopped, a PostgreSQL custom-format dump, artifact archive and matching deployment configuration/keyring were backed up outside the source tree. Restoration used separately verified empty volumes and the identical image. The restored installation preserved all 14 migration checksums, an existing session and fresh login, workspace retention and collection settings, a consented event and its Explorer result, project context, two prompt versions, a shared report, an artifact and an encrypted synthetic provider credential. A queued probe survived the backup and completed after the restored worker started. Graceful web/worker shutdown returned exit code 0 without an OOM; restart and heartbeat checks passed.
-
-The check made no provider calls and left spending paused. Only the two isolated acceptance projects were stopped afterward; the development preview and previous Docker resources were preserved. This local drill does not establish public TLS, ARM, off-host recovery, production capacity or full POSIX helper orchestration. No application fix was required.
-
-
-## Keyword backend and shared retention checkpoint
-
-The [DataForSEO keyword backend](keyword-research.md) now provides explicit price quotes, atomic budget/queue reservations, single-dispatch overview/ideas jobs, and conservative charge reconciliation. The research interface is now implemented and synthetically validated; see [research UI](research-ui.md). Complete keyword and full SEO parity and live acceptance remain open.
-
-Migration 0016 follows Google 0015 without changing older files. Fresh installation, original-schema migration rollback and a seeded 0015 upgrade pass. The integrated code passes 147 unit tests (two platform-specific skips), typecheck/build, the full production HTTP integration suite, offline Google and keyword worker suites, and desktop/360px Google and shared-retention browser checks. Independent review also reproduced preservation of encrypted credentials and settled/uncertain ledger entries across upgrade, and proved that a failure after Google deletion rolls back native, Google and keyword cleanup together. No live Google/DataForSEO account or paid request was used.
-
-## Explicit prompt execution backend
-
-[Prompt execution](prompt-execution.md) adds browser-authenticated quote/start/read/cancel/reconcile APIs for selected standard GPT-4o-mini/GPT-4o routes through OpenRouter. It reuses immutable prompt versions, encrypted credentials and the spending ledger. Both comparison children reserve atomically; no paid retries or hidden context injection occur. Generated answers and copied execution input use raw provider evidence retention (90 days by default), while authored prompts and charge receipts remain. Migration `0017` is additive. The manual execution UI is now implemented with synthetic acceptance; see [prompt execution UI](prompt-execution-ui.md). The scheduler, cache, further model/provider routes and explicitly budgeted live paid acceptance are still pending; this does not complete AI visibility parity.
-
-The prompt backend was verified locally with Node 24: 153 unit checks passed (2 existing skips), TypeScript/build/plan checks passed, the additive `0016` to `0017` upgrade preserved existing records and immutable prompt versions, and both the existing keyword suite and seven prompt execution integration groups passed with synthetic transports. Shared Google/keyword retention regressions passed. Real Edge retention checks at 360px and 1360px covered the separate raw-evidence cutoff/counts, explicit preview/save, stale response recovery and permission loss, with external traffic blocked. These observations do not validate live provider behavior.
-
-## Saved conversion checkpoint
-
-[Conversions](conversions.md) adds **Measure → Conversions → Funnels / Goals** with saved definitions, ordered visitor counts, drop-offs, goal rates and actual matching activity. Definitions are independent of date/filter scope and survive event expiry. Editors manage them; viewers inspect. Unknown visitor identity and expired evidence remain explicitly unavailable, and incomplete retention suppresses rates. The interface keeps the established compact sidebar, uses criteria rows on desktop and stacked controls on mobile, and preserves immutable retries and unsaved drafts.
-
-Migration `0020` is additive. The final query passed nine database/API groups, existing Explorer regressions, original-install upgrade preservation, production Edge flows and independent source/security review. TypeScript, production build and 266 unit checks passed with two existing skips. On a dedicated 1 GiB PostgreSQL container, the independent public 100,000-event regression measured eight-step evaluation at 3.165 seconds and two pages of real witness chains at 0.925 and 1.011 seconds. Host conditions affect these timings; they are not a capacity guarantee. Exact method, evidence and test commands are in the conversion document. This completes the tested local conversion increment, not the 81-feature V1 release.
-
-## Saved keyword lists
-
-**Keyword research → Saved keywords** supports manual or research-result saves, project tags, exact market/metric filters, selected or filtered CSV/TSV exports, and explicit multi-market metric refreshes. The quote shows exact targets and estimated maximum charges; only Start authorizes dispatch. Failed or incomplete refreshes preserve older observations, while retention expires provider metrics without deleting authored lists and tags.
-
-Migrations `0021`/`0022`, 13 PostgreSQL/API acceptance groups, six production Edge groups, existing research/retention regressions and independent provider-key rotation checks passed locally. The full unit suite passed 278 checks with two existing skips. See [saved keyword behavior and evidence](saved-keywords.md) for source references, operation limits and upgrade requirements. No live DataForSEO request or full V1 release is claimed.
+A real web shutdown failure was fixed: a Nitro close hook now awaits the actual queue resources and then database pools, including across the separate SSR/runtime bundles.

@@ -1,8 +1,6 @@
 # Retained Meta campaign inventory
 
-Implemented and checked locally2026-10-13. This adds the campaign-inventory
-workflow within the accepted native Meta reporting scope; live-provider acceptance remains.
-Existing advertising-account selection and daily Insights reports are separate.
+> Code and safety contracts retained from [docs/meta-campaigns.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/meta-campaigns.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/retained-meta-campaign-inventory-implementation-history-4sSuM7uET7). Qualifications are preserved; this adds no acceptance claim.
 
 ## Provider evidence
 
@@ -113,16 +111,7 @@ TypeScript String.isWellFormed library declaration.
 GPT owns independent tests and downstream transport/storage/UI integration.
 Do not generate a test file or call this parser directly from a live provider.
 
-### Parser acceptance
-
-The pure parser was drafted by Kimi K3 with maximum-effort thinking under the
-bounded public-input profile. GPT review and eight independent Node test groups
-pass: strict IDs/account scope,100-record limit/duplicates/sparse arrays,
-Unicode/control/status boundaries, null versus empty, own-property evidence,
-exact output projection and input immutability. Parser acceptance is separate
-from the workflow checks below.
-
-## Workflow acceptance
+## Shared cooldown and publication invariants
 
 Schema0028 adds inventory receipts/pages. Schema0029 records independent app and
 account cooldown timestamps on both inventory and daily-report receipts, including
@@ -132,34 +121,3 @@ operation, including unknown-expiry inspection. Account hints match captured
 account identity across connections; app hints span the registration. Already
 dispatched requests cannot be retracted. Invalid/auth-failure evidence takes
 precedence over a later deadline, so it cannot become readable partial coverage.
-
-The local acceptance checkpoint passed:
-
-- Six real PostgreSQL/service/API groups: roles/tenant scope, transactional
-  request/job receipts, complete/partial/empty history, revision-bound CSV,
-  retention previews/cleanup and keyless cancellation/replay.
-- Eight inventory worker groups and twelve daily-report worker regressions,
-  including actual pg-boss dispatch and graceful in-process stop/start recovery.
-  These do not establish OS-process-kill acceptance at every checkpoint.
-- Eight independently authored boundary groups: late malformed/foreign/duplicate/
-  repeated-cursor and authorization responses; terminal and between-request
-  cooldowns; inspection hints; known-unsent POST deferral without duplicate submit.
-- Five independent signed-deletion groups: immediate masking, rollback,
-  cross-dataset bounded/keyless erasure, capped revisions/generations, residual
-  hint cleanup, old-payload replay, later grants and replacement-app isolation.
-- Eleven controller and eight pure-display browser groups, plus all eleven
-  existing report-controller and eight latest-coverage groups. The Kimi-built
-  display preserves role/availability gates, exact identities, explicit unknown
-  mutation retry, cancellable exports and readable1440/360 layouts.
-- Production build/typecheck,386 Node tests with two existing skips, original
-  record upgrade through0029 and repeat idempotence,15 production navigation
-  groups, and shared retention browser acceptance. The new production journey
-  reads a disconnected source as a viewer, downloads exact CSV, switches partial
-  history, observes whole empty/expired latest snapshots without fallback, and
-  returns through fresh source/report authorization. No automatic refresh occurs.
-
-Every provider response in these tests was contained synthetic evidence. No live
-Meta account, Ads Manager reconciliation, provider app approval, schedule or full
-V1 completion is claimed. The parser and display used bounded maximum-effort Kimi
-K3 drafts with reviewed public contracts/skills; GPT reviewed design/security and
-ran independent acceptance. No customer data or provider credentials entered them.

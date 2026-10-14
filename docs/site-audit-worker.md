@@ -1,6 +1,6 @@
 # Durable static audit worker
 
-The [manual audit API](site-audits.md) now connects the reviewed download, robots, sitemap, HTML and graph components through PostgreSQL and the existing pg-boss worker. This implements manual public, query-free static audits. The Site Audit screen is implemented with synthetic browser acceptance; see [research UI](research-ui.md). Scheduled runs, rendered/protected audits and Lighthouse remain unfinished V1 requirements.
+The [manual audit API](site-audits.md) now connects the reviewed download, robots, sitemap, HTML and graph components through PostgreSQL and the existing pg-boss worker. This implements manual public, query-free static audits. The Site Audit screen is implemented with synthetic browser acceptance; see [research UI](https://wiki.ten98.io/s/ten98-docs/p/research-ui-QI3jrak1kA). Scheduled runs, rendered/protected audits and Lighthouse remain unfinished V1 requirements.
 
 ## Execution and recovery
 
@@ -40,4 +40,4 @@ Every pass uses freshly read cutoffs. Extending retention stops further not-yet-
 
 The updated Linux Docker image built successfully and passed the checked-in `tests/crawl-container.mjs` stdin fixture as its unprivileged user, with no network or mounted data, a read-only filesystem, one CPU, 256 MiB memory and 64 PIDs. That verifies native worker imports, packaged migration, isolated parser behavior and cancellation. It does not certify a database-backed Docker worker deployment, live crawling or sustained load.
 
-During development the shared local test PostgreSQL container exhausted its 512 MiB ceiling and recovered automatically. The limit was raised in place to 1 GiB before retrying; successful subsequent database checks do not certify 512 MiB deployment capacity. Production capacity, live public crawling, real provider calls and all remaining V1 modes require their own evidence; later synthetic browser checks in [research UI](research-ui.md) supersede this checkpoint for user-facing acceptance. No live crawl or paid request is claimed here.
+During development the shared local test PostgreSQL container exhausted its 512 MiB ceiling and recovered automatically. The limit was raised in place to 1 GiB before retrying; successful subsequent database checks do not certify 512 MiB deployment capacity. Production capacity, live public crawling, real provider calls and all remaining V1 modes require their own evidence; later synthetic browser checks in [research UI](https://wiki.ten98.io/s/ten98-docs/p/research-ui-QI3jrak1kA) supersede this checkpoint for user-facing acceptance. No live crawl or paid request is claimed here.

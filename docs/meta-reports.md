@@ -1,6 +1,6 @@
 # Native Meta advertising report imports
 
-**Implementation contract, reviewed 2026-10-13.** Authorization, account selection, local deletion, manual daily report imports and latest complete coverage/CSV are implemented with synthetic API/worker/browser acceptance. Schema26 adds grant-bound report storage and extends keyless deletion to its payloads; schema27 preserves profile identity after source erasure. Campaign inventory, schedules and live-provider validation remain required. This is the next native reporting connector after Google. It covers the Meta/Facebook entry in P76 and contributes to P71, P77 and P81. All81 requirements remain required; this document does not complete those rows or the other platforms.
+> Code and safety contracts retained from [docs/meta-reports.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/meta-reports.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/native-meta-advertising-report-imports-implementation-history-ruGx0zKhva). Qualifications are preserved; this adds no acceptance claim.
 
 The accepted [tracking contract](tracking.md#automatic-consolidation-without-misleading-totals) requires accessible advertising accounts/campaigns, daily spend, impressions, clicks and available conversion/value fields. Meta Marketing API advertising reports include supported Instagram placements within those advertising accounts. Facebook Page Insights, organic Instagram insights, publishing, inboxes, audiences, campaign editing and Conversions API uploads are not this accepted reporting family. A Meta Pixel ID neither authorizes reports nor identifies an ad account. Report authorization never installs or enables a browser pixel, changes consent, or signs someone into ten98-monitor.
 
@@ -95,8 +95,6 @@ Poll a known ID at a bounded cadence, persisting attempt count, next allowed tim
 
 HTTP status and Graph's structured error must both be checked. Credential/permission failure marks the connection reconnect/access-lost and denies pending work; throttling pauses until the persisted retry time. Parse only the appendix's reviewed numeric usage/error fields, bounded Retry-After and provider retry hints; unknown error codes are unavailable, not permission grants or zero rows. Coordinate app/account throttling without leaking cross-workspace account existence. Do not hardcode an unverified calls-per-hour allowance or infer permissions from an API access-tier label. Reads require no advertising-spend reservation, but still consume quotas and local resources.
 
-Scheduled imports remain part of P76/P81. After a successful manual import, an owner may enable daily refresh at a displayed IANA wall time, with next occurrence and last successful coverage visible. Default re-fetch is the preceding28 closed account-local days, bounded to the supported attribution/history contract; this is a proposed correction lookback, not a promise of final conversions after28 days. Disable by default, retain the approving actor and immutable definition, recheck current permission, deduplicate each occurrence, skip missed intervals without an unbounded catch-up burst, and pause on changed app/account/definition or lost access. Longer manual historical backfills remain available. Native PostgreSQL calendar logic and the existing non-overlapping worker pattern suffice; no new scheduler service.
-
 The current service publishes a validated immutable receipt atomically after pagination, with separate history and row pagination. **Latest-overlap selection remains pending.** That required view will select complete snapshots for the same logical daily keys; a partial/failed refresh must not erase a prior complete snapshot or turn omitted rows into zero. Reconcile a completed empty query as an explicit successful-empty range, with its coverage receipt, rather than synthesizing rows. Keep old immutable receipts for audit and expose snapshot IDs in drilldown. Selection between overlapping snapshots must use request creation order, not response completion order, so an older slow request cannot overwrite a newer result.
 
 ## Storage and returned interface
@@ -146,8 +144,6 @@ Only extract a shared OAuth cookie/cursor helper from Google if both actual impl
 
 Normalized aggregate rows use workspace derived-history retention (365-day default). Raw provider JSON is not persisted; any deliberately added raw evidence later uses the90-day provider-evidence policy. Preserve connection/account configuration and minimal idempotency/source/outcome/count receipts. Mark a terminal import expired before bounded page deletion; API responses mask residual pages immediately. Once marked, finish physical cleanup despite policy extension. Retrying an expired request returns the expired receipt; an old worker/restart cannot restore payloads. A separately requested fresh report is new evidence, not resurrection of that receipt. Provider-mandated deletion/revocation obligations remain a distinct verified release requirement, including operator backups.
 
-The required end-to-end flow is **Meta ads → Connect → Choose account → Meta reports → Import report → Review data → Optionally schedule**. The schedule and latest-success/overlap workflows remain pending. Explain missing operator configuration without exposing secret fields. Account cards show name and stable ID, currency/timezone and access result; an empty list offers reconnect/check assigned assets, not “no ad accounts exist.” The manual report view selects one retained receipt, preserving partial/expired/empty labels and attribution. Cancel/back preserves already authorized durable work; ambiguous acknowledgement offers only same-request retry. A 360px table scrolls horizontally with readable columns, keyboard focus and reachable actions.
-
 Required acceptance before claiming this adapter works:
 
 - Synthetic OAuth/session/browser/replay/cross-tenant tests, missing permission, unexpected app/subject, app revision change, secret-free errors/config/exports, local disconnect with broken vault, and signed callback forgery/replay.
@@ -169,8 +165,6 @@ This appendix separates the reviewed request vocabulary from behavior that still
 **Action values retain their shape.** The tagged [AdsActionStats schema](https://github.com/facebook/facebook-python-business-sdk/blob/26.0.2/facebook_business/adobjects/adsactionstats.py) represents totals and attribution-window values as strings. Preserve reviewed window keys and exact decimals; do not flatten `actions` and `action_values` into a fabricated universal conversion total. The generated [Insights vocabulary](https://github.com/facebook/facebook-python-business-sdk/blob/26.0.2/facebook_business/adobjects/adsinsights.py) includes many historical and specialized window values. Enum presence alone does not establish current account eligibility or justify enabling every value.
 
 **Deletion needs retained author provenance.** As an application design requirement, store the immutable Meta app identity and verified app-scoped user subject on connections and the provenance of imports collected through that grant. A later reconnect, app configuration revision or local disconnect must not destroy the mapping needed to process a legitimate signed request. Do not treat the shared advertising account ID as the requesting person: independently authorized sources can use the same account. Subject-scoped deletion must fence matching flows, connections and jobs first, then purge covered retained payloads in bounded transactions. It must work without a local login, current workspace-owner role, or a decryptable user token once the provider signature is verified. The durable deletion receipt/status record supports idempotency and truthful acknowledgement. The callback mechanism is verified below; operator backup obligations and actual completion remain release checks. No deletion completion should be claimed while required cleanup remains pending.
-
-The remaining provider gates are precise: separate deauthorization notification verification; account-specific effective attribution and returned metadata; controlled permission/token-revocation and report acceptance; deletion completion including operator backups. The resolved history, asynchronous and rate vocabularies below do not establish unlimited availability. App limits of31days,25,000rows and30minutes are capacity choices. The smallest implementation remains one native user-token connection, direct account selection, account/day and campaign/day imports, then optional daily refresh after the first successful manual import. Reuse the existing vault, session-bound consent, durable receipt and retention patterns; keep a Meta-specific bounded transport and state machine rather than importing Google's token or network-under-lock behavior.
 
 Primary documentation reviewed on2026-10-13 confirms an App Dashboard
 deauthorization callback when a person removes an app, but the current
@@ -201,25 +195,22 @@ The [Insights best-practices guide](https://developers.facebook.com/documentatio
 
 That guide documents async states `Job Not Started`, `Job Started`, `Job Running`, `Job Completed`, `Job Failed` and `Job Skipped`; only Completed plus100-percent progress permits result reading. Reports may take an hour and saved report IDs expire after30 days. The application's30-minute deadline is stricter capacity, not a provider guarantee. It describes `x-fb-ads-insights-throttle` fields `app_id_util_pct`, `acc_id_util_pct`, `ads_api_access_tier`, and `x-ad-account-usage`; persist bounded backoff near saturation. Reviewed errors include4 for load,4/1504022 globally, and100/1487534 for oversized data. Do not confuse API access-tier labels Limited/Full with OAuth permission Advanced Access or infer a fixed hourly quota. All rate values are internal scheduling hints, not cross-workspace disclosures.
 
-### First auth implementation boundary
-
-The first security increment creates only app-registration, OAuth-flow, connection and deletion-receipt storage. `meta-auth.ts` owns operator configuration, current-role consent/account selection, credential lifecycle and readiness/rewrap; `meta-http.ts` owns fixed request builders, bounded transport and lossless response decoding; `meta-callbacks.ts` owns signed provider notifications and deletion fencing; `meta-api.ts` owns the narrow routes. Import/page storage and the report worker follow separately. Existing vault, instance-operator, session, `readJson` and workspace/project transaction helpers can be reused. Do not share Google's provider-specific token exchange or hold its workspace transaction across Meta network calls. Add explicit readiness/rekey and restore-quarantine integration before enabling connections; migration numbering and exact exports are assigned during implementation ownership review.
+## Lossless provider identifiers
 
 The primary asynchronous example returns `report_run_id` as a JSON number. Native `JSON.parse` without a reviver can round large integer IDs before validation. Use Node24's reviver source text for reviewed ID fields, accepting only bounded decimal integer lexemes and returning exact strings; ordinary documented safe integer IDs must also work. Do not reconstruct an unsafe ID from the rounded JavaScript number, accept exponent/fraction ID syntax, or add a dependency for this native capability. Auth and reporting parsers remain separate strict schemas even when they share that small transport decoder. Synthetic checks must cover an ID beyond JavaScript's safe-integer range, ordinary numeric report IDs, malformed/fractional IDs, permission/expiry mismatch and sanitized failures.
 
 ### Transport and signed-request primitives accepted locally
 
-The first code checkpoint implements only `meta-http.ts` and `meta-signed-request.ts`, with 17 synthetic test groups. Fixed Graph v26.0 auth/account operations enforce bounded streaming, strict UTF-8, lossless decimal IDs, cancellation, sanitized failures and no redirects. Current primary [token-error guidance](https://developers.facebook.com/docs/facebook-login/access-tokens/debugging-and-error-handling) documents code 190 for expired, invalidated and deauthorized tokens; these errors request reconnect without automatic retry. Other unmapped provider errors remain explicit failures.
+Fixed Graph v26.0 auth/account operations enforce bounded streaming, strict UTF-8, lossless decimal IDs, cancellation, sanitized failures and no redirects. Current primary [token-error guidance](https://developers.facebook.com/docs/facebook-login/access-tokens/debugging-and-error-handling) documents code 190 for expired, invalidated and deauthorized tokens; these errors request reconnect without automatic retry. Other unmapped provider errors remain explicit failures.
 
-The signed deletion verifier validates canonical encoding and current-secret HMAC before reading the subject. Exact IDs and timestamps cannot be rounded by JSON parsing, duplicate root fields are rejected, and the receipt digest identifies the original encoded payload rather than its signature. Legitimate redelivery signed after secret rotation therefore has the same identity. Optional timestamps are metadata; this primitive does not invent a delivery-age rule or delete any records. This paragraph records the first primitives checkpoint; the later [auth implementation and browser acceptance](meta-auth.md) supersede its scope. Neither synthetic checkpoint establishes a connected live Meta account.
+The signed deletion verifier validates canonical encoding and current-secret HMAC before reading the subject. Exact IDs and timestamps cannot be rounded by JSON parsing, duplicate root fields are rejected, and the receipt digest identifies the original encoded payload rather than its signature. Legitimate redelivery signed after secret rotation therefore has the same identity. Optional timestamps are metadata; this primitive does not invent a delivery-age rule or delete any records.
 
-### Schema 26 authorization and deletion acceptance
+## Report authorization and deletion
 
 The later [auth implementation](meta-auth.md) supplies the ready-source gate used
 by report work. It rechecks current owner, immutable account, app/connection
 revision, grant and deletion state before local publication; unknown data-access
-expiry is inspected freshly, without SQL locks across network. Seven independent
-PostgreSQL gate groups passed with synthetic responses.
+expiry is inspected freshly, without SQL locks across network.
 
 `0026_meta_imports.sql` adds only `meta_import` and `meta_import_page`. Scoped
 foreign keys bind each retained import to its original grant/connection/project/
@@ -232,20 +223,9 @@ No new scheduling authority is introduced by this migration.
 The deletion worker includes these tables in its covered-data completion test,
 fences late publication and removes at most five pages from one import per batch.
 It requires no vault access after signed admission and preserves minimal outcome
-receipts, later reconsent and replacement-app sources. Eight existing callback
-groups and six new report-deletion groups passed on separate fresh PostgreSQL 18
-databases through migration 26. The checks include rollback after payload writes,
-residual pages under an earlier expiry marker, old grants already invalidated and
-cross-app provenance. They establish local synthetic behavior, not report-worker,
-scheduled-refresh, live-account or backup-deletion acceptance.
+receipts, later reconsent and replacement-app sources.
 
-The separate original-record upgrade suite passes through migration 26, including
-prior feature and identity-capsule preservation, migration rollback and repeat-run
-idempotence. CI assigns report authorization, report deletion, import service and
-import worker suites separate fresh databases; hosted execution is a separate
-result from these local checks.
-
-### Manual report acceptance, 2026-10-13
+## Manual report controller contract
 
 Owners can explicitly request **Account by day** or **Campaign by day**, inspect
 the durable receipt, cancel local work and read retained report history. Members
@@ -256,37 +236,3 @@ expired and deleted data. Known active imports explain why a second request is
 disabled. A lost or malformed acknowledgement retains the exact original request;
 a deletion-masked replay still proves that request's identity without exposing
 its former source.
-
-The following local checks passed with contained synthetic provider responses:
-
-- Ten pure normalizer groups cover dates, exact IDs/decimals, nested actions,
-  duplicate/foreign rows, strict grain shape and input immutability. The complete
-  Node test run recorded377 passes and two existing skips.
-- Ten PostgreSQL service/API groups cover owner/member scope, atomic queue and
-  receipt rollback, identical replay, concurrent admission, account-local dates,
-  staged and terminal rows, history cursors, expiry, signed deletion and the
-  current session/Origin/method boundary. Retention preview checks include
-  workspace isolation, irreversible markers,10000-candidate caps and a real lock
-  timeout that returns unavailable rather than zero.
-- Twelve PostgreSQL worker groups cover submission ambiguity, leases, late
-  responses, revoked authority, invalid pages, quotas, retry limits and cleanup.
-  Two use actual `startWorker`/pg-boss dispatch and graceful **in-process**
-  stop/start recovery from a saved report ID and cursor without a second POST.
-  They do not establish OS-process kill/restart acceptance at every checkpoint.
-- Eleven controller browser groups and seven independent Kimi-view groups cover
-  immutable retry identity, live-role purge, stale scope responses, immediate
-  hiding of deleted source metadata, off-page selection and nested DTO validation.
-  Desktop1440/mobile360 visual checks verify readable horizontal table scrolling,
- 44px controls and keyboard/disclosure access.
-- Production build/typecheck, all13 application navigation groups and the actual
-  retention browser suite pass against an isolated local database. The new view
-  works through real application routes for owner/viewer empty states without
-  starting an import. The shared cleanup confirmation names Meta rows and shows
-  unavailable estimates explicitly. Plan and diff checks pass.
-
-The normalizer and pure report view were drafted by the existing verified Kimi
-K3 CLI with thinking/maximum effort, public contracts and reviewed skills under
-the bounded draft profile. GPT reviewed and repaired confirmed compatibility,
-design and security issues, and ran independent acceptance. No customer data or
-provider credentials were supplied to the draft. No live provider calls, real
-Ads Manager reconciliation or provider-approval claims follow from these checks.

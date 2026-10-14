@@ -1,6 +1,6 @@
 # Native analytics measurement contract
 
-This is the measurement contract for native collection and its remaining analytics extensions, not evidence of full V1 completion. P28–P40 remain subject to the [parity acceptance gates](parity.md). The [foundation runbook](foundation.md#native-collection-and-measurement) identifies implemented behavior and checks. This contract keeps native observations, estimated visitor identity and imported provider measurements distinct.
+This is the measurement contract for native collection and its remaining analytics extensions, not evidence of full V1 completion. P28–P40 remain subject to the [parity acceptance gates](https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5). The [foundation runbook](foundation.md#native-collection-and-measurement) identifies implemented behavior and checks. This contract keeps native observations, estimated visitor identity and imported provider measurements distinct.
 
 ## Identity and visits
 

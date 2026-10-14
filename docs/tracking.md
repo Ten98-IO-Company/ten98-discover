@@ -1,27 +1,12 @@
 # Unified tracking and destinations
 
-Status: **plan and backlog only**, added by owner request on 2026-10-12. No tracker, adapter, account connection or delivery is implemented. This adds P70–P81 to the original 69 requirements; it does not replace the Elmo/Umami/OpenSEO baseline. All named platforms below are V1 scope. Provider access is a setup prerequisite, not permission to silently remove a required adapter.
+> Code and safety contracts retained from [docs/tracking.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/tracking.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/unified-tracking-and-destinations-implementation-history-SFLN9C8i29). Qualifications are preserved; this adds no acceptance claim.
 
-## Prompt critique and improved brief
-
-Ponytail and UX Flow Wireframer turn the idea into observable outcomes; the Cloudflare skill helps distinguish its products. No dedicated prompt-improvement skill was available. GPT owns these decisions; Kimi supplied bounded editorial UI-state suggestions, reviewed by GPT.
-
-| Original ambiguity | Refined requirement |
-|---|---|
-| “Combine trackers” | One header loader injects official vendor scripts; browser events travel directly to those providers. Account report imports are separate |
-| “One tracker” | One installed ten98 integration and event contract; some destinations still require their own browser scripts |
-| “Automatically consolidate” | Normalize compatible fields and join explicit campaign mappings; preserve source attribution, sampling and missing data |
-| “Facebook, Google, Cloudflare” | Meta Pixel/Insights; GA4 tagging/reporting; Google Ads tagging/reporting; Cloudflare official beacon and separate RUM/edge reports |
-| “Other platforms” | Owner confirmed TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X for V1 |
-| “No developer management” | Connect or change supported destinations in the UI after initial installation; business events still require deliberate application instrumentation |
-| “Implement” in a planning repository | Owner selected extending the full plan and backlog, without starting application code |
-| Redirect aliases versus instrumented pages | Group domains explicitly; measure real redirects at their server/edge and final page visits in the browser, with separate totals |
-
-**Improved executable prompt:** Extend ten98-monitor with an MIT, Docker-deployable Tracking & destinations module. Developers install one header snippet that automatically loads the selected providers' official browser tags and translates an explicitly instrumented event into their supported SDK calls. The browser communicates directly with vendors; ten98 is the configuration and reporting application, not a mandatory conversion-event proxy. Reuse native analytics, credentials, jobs and Google report services. Authorized users choose accounts/properties, map events, apply consent, preview the resulting tag configuration, publish versions and inspect failures. Import reports from all supported platforms using separately authorized read-only connections. Consolidate compatible dimensions while retaining provider definitions, coverage and attribution. Support canonical domains, aliases and redirect-only domains, including alias-level SEO/backlink queries and redirect observations from configured server/edge sources. Document UI flows, data contracts, provider evidence, acceptance tests and rollout work packages. Preserve all existing V1 functions and the free full-feature model. Do not equate one installed snippet with one network request, SDK invocation with provider receipt, redirect hits with human visits, or summed platform conversions with unique outcomes.
+> **Conditional guardrails:** These proposal-derived excerpts preserve implementation, security and measurement constraints. They are not a catalogue of shipped APIs, adapters or services. Establish current support from the implementation and current operational runbooks.
 
 ## Product boundary and reuse
 
-Owner decision after provider evaluation: use **native integrations**, not Zernio. The [setup and connection specification](onboarding.md#flow-b-native-accounts-and-imports) adds operator app registration, permission-aware account/property discovery, import preview, resumable authorization and actionable provider-approval states. This refines P71/P76/P78/P81 without changing the platform list. A reporting-only connector can require a broad upstream OAuth scope; disclose that and enforce allowed operations server-side.
+Owner decision after provider evaluation: use **native integrations**, not Zernio. The [setup and connection specification](https://wiki.ten98.io/s/ten98-docs/p/setup-critique-and-native-integration-flows-polbVhMXd2#nmivrtvkvxty) adds operator app registration, permission-aware account/property discovery, import preview, resumable authorization and actionable provider-approval states. This refines P71/P76/P78/P81 without changing the platform list. A reporting-only connector can require a broad upstream OAuth scope; disclose that and enforce allowed operations server-side.
 
 The user outcome is: **install once, configure supported pixels centrally, and inspect your events alongside provider reports**. A site can use native analytics only, connect report imports only, or enable selected browser tags. Connecting a reporting account never activates a pixel. Adding a pixel never proves reporting access. There is no requirement to route third-party pixel requests through the ten98 server.
 
@@ -151,83 +136,6 @@ For SEO, query canonical and alias targets separately, preserve the original bac
 
 Connect separately verified GSC properties for different registered domains to one project; a `crystal.re` Domain property does not cover the other three. Preserve property scope and Google's canonical performance attribution. Avoid double-counting overlapping Domain/URL-prefix properties; sparse alias search data is not proof the redirect receives no requests. GA4/advertising reports retain account/property/hostname grain; where a report lacks domain granularity, show account-level scope rather than allocating it to aliases without evidence.
 
-Domains flow: **Domains → Add domain → Select role and expected target → Verify/check → Domain detail**. Failure returns to editable configuration with evidence; saving a draft is allowed. A rendering alias may install the shared loader; a redirect alias instead receives log/redirect-source instructions. Domain detail links to native visits, redirect requests, backlinks and connected search properties as distinct measures.
-
-```text
-Project / Domains
-+--------------------------------------------------------------------------------+
-| Canonical: crystal.re                 [Add domain]                              |
-| Domain            Role            Verification    Requests / Visits / Backlinks |
-| crystal-group.ae  Redirect alias  Not checked     Not connected / N/A / No run  |
-| crystalgroup.ae   Redirect alias  Not checked     Not connected / N/A / No run  |
-| cre.sh            Redirect alias  Not checked     Not connected / N/A / No run  |
-| Select domain: expected target / observed chain / query handling / data sources  |
-+--------------------------------------------------------------------------------+
-```
-
-## UI flow and wireframes
-
-User: developer installs once; workspace admin configures connections; analyst investigates results. Success: one consented canonical test event invokes its intended browser tags, the configuration is published, and reports show correct source/coverage. A dry run or SDK invocation alone does not prove provider receipt.
-
-```mermaid
-flowchart TD
-  O[Tracking overview] --> C[Connect destination]
-  C -->|Browser tag enabled| M[Map events]
-  C -->|Reports only| D[Measurement dashboard]
-  M --> T[Test delivery]
-  T -->|Validated configuration| P[Review and publish]
-  P -->|Publish| D[Measurement dashboard]
-  C -->|Auth or access error| C
-  M -->|Unsupported or invalid fields| M
-  T -->|Fix connection| C
-  T -->|Fix mapping| M
-  P -->|Duplicate ownership or cancel| M
-  C -->|Save draft or cancel| O
-  M -->|Save draft or cancel| O
-  T -->|Cancel| O
-  D -->|Inspect delivery or stale report| T
-  D -->|Manage destinations| O
-```
-
-| Step / screen | Intent and primary action | Recovery / success state |
-|---|---|---|
-| 1 Tracking overview | See installation and destinations; **Add destination** | No snippet: open existing install flow. Failed tag: diagnostics. Success lists each capability separately |
-| 2 Connect destination | Independently choose Browser tag (public ID) and/or Import reports (authorize/select account); **Save connection** | A valid tag can publish without reporting approval. Reports-only skips mapping/testing. Failed OAuth affects only imports; preserve draft and masked credentials |
-| 3 Map events | Review presets, consent and field sharing; **Save mapping** | Unsupported route or missing purchase fields blocks save; preserve draft and highlight exact field |
-| 4 Test delivery | Inspect route and redacted payload; **Run dry run** | Dry run makes no vendor calls. Separate explicit provider test action only where supported; otherwise explain controlled validation requirements |
-| 5 Review and publish | Check diff, consent and legacy ownership; **Publish configuration** | Resolve conflicts or return to draft. Success shows active revision, cache propagation and rollback action |
-| 6 Measurement dashboard | Compare evidence and source coverage; **Inspect source** | Empty offers connection/setup. Loading shows last sync. Errors retain stale data with reason, never invented zero |
-
-```text
-Tracking overview                       Connect destination
-+-----------------------------------+  +-----------------------------------+
-| Project: Example Store / Live     |  | Provider [Meta] Account [Choose]  |
-| Snippet: awaiting first event     |  | Browser tag / Import reports       |
-| Meta: tag ready, reports off |  | Credential [masked]              |
-| [Add destination]  Install guide |  | [Save connection]  Save draft    |
-+-----------------------------------+  +-----------------------------------+
-
-Map events                              Test delivery
-+-----------------------------------+  +-----------------------------------+
-| purchase -> Meta Purchase         |  | Dry run: purchase / test context |
-| Official browser pixel enabled           |  | Consent: ads denied              |
-| Share: value, currency, order ID  |  | Result: suppressed; no request   |
-| Consent: marketing required       |  | Payload: redacted / mapping v3   |
-| [Save mapping]  Back              |  | [Run dry run]  Edit mapping      |
-+-----------------------------------+  +-----------------------------------+
-
-Review and publish                      Measurement dashboard
-+-----------------------------------+  +-----------------------------------+
-| Draft v3 -> Live                 |  | Our purchases | Provider reports|
-| Legacy Meta owner: unresolved    |  | Independent totals; never added |
-| Changes: fields, purpose, routes |  | Source / window / last sync     |
-| [Publish configuration: blocked] |  | SDK invocation != attributed |
-| Resolve ownership / Return draft|  | [Inspect source]                |
-+-----------------------------------+  +-----------------------------------+
-```
-
-Reuse the visual/accessibility rules in [UI flows](ui-flows.md). Keyboard-operable mapping controls, labeled status text, error focus and a table alternative are required. Keep one primary action per screen. Do not display implementation terms such as queue leases in normal setup; diagnostics may expose them to operators.
-
 ## Migration, operations and acceptance
 
 Discover known existing snippets, GTM/Zaraz ownership, native platform integrations and Cloudflare auto-injection; discovery is advisory, not proof that no hidden tags exist. Require an explicit owner per provider/event/site/environment. Treat GA4 enhanced measurement and SPA auto-pageviews as possible duplicate sources. Choose one pageview owner; don't replay a historic consent-denied pageview after grant. Test navigation, back/forward and repeated initialization.
@@ -266,5 +174,3 @@ Primary sources checked 2026-10-12; no live provider integration was exercised. 
 - Snapchat: [deduplication](https://www.developers.snap.com/marketing-api/Conversions-API/Deduplication), [authentication](https://developers.snap.com/marketing-api/Ads-API/authentication). Purchase/order and general event dedup paths have different windows.
 - X: [web conversions](https://docs.x.com/x-ads-api/measurement/web-conversions), [Ads API access](https://docs.x.com/x-ads-api/getting-started/step-by-step-guide). No numeric dedup window was verified; conversion-only access must not be presented as reporting access.
 - Domains: [HTTP redirects](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Redirections), [Google redirect guidance](https://developers.google.com/search/docs/crawling-indexing/301-redirects), [Cloudflare query preservation](https://developers.cloudflare.com/rules/url-forwarding/single-redirects/settings/), [Google cross-domain linking](https://developers.google.com/tag-platform/devguides/cross-domain), [GSC property boundaries](https://support.google.com/webmasters/answer/34592), [canonical reporting](https://support.google.com/webmasters/answer/17011259), [DataForSEO indirect backlinks](https://docs.dataforseo.com/v3/backlinks-summary-live/). Alias request counts and backlink summaries cannot be blindly added to canonical metrics.
-
-Open implementation decisions: exact event preset inventory and current permissions per endpoint; expected production event volume and retention; controlled provider test accounts; API approvals for the operator's deployment; detailed built-in consent copy/locales and jurisdiction configuration. TRK-01 records these before dependent code. These uncertainties do not reduce the confirmed platform list or authorize a partial V1 release.
