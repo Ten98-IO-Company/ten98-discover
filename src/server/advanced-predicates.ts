@@ -23,9 +23,12 @@ function propertyPredicate(filter:AdvancedPropertyPredicate,bind:Bind,timeZone:s
   const key=bind(filter.key)+'::text',property=`s.properties->${key}`;
   if(filter.operator==='exists')return `(s.properties ? ${key})`;
   if(filter.operator==='missing')return `NOT (s.properties ? ${key})`;
+  return propertyValuePredicate(filter,bind,timeZone,property);
+}
+function propertyValuePredicate(filter:AdvancedPropertyPredicate,bind:Bind,timeZone:string,property:string):string{
   if(!('type' in filter))throw new FoundationError(400,'Unsupported additional property filter.');
   const type=bind(filter.type)+'::text',jsonType=bind(filter.type==='date'?'string':filter.type)+'::text';
-  const guard=`s.properties ? ${key} AND ${property}->>'type'=${type} AND jsonb_typeof(${property}->'value')=${jsonType}`;
+  const guard=`${property}->>'type'=${type} AND jsonb_typeof(${property}->'value')=${jsonType}`;
   const value=`${property}->'value'`,text=`${property}->>'value'`;
   let condition:string;
   if(filter.type==='date'&&(filter.operator==='before'||filter.operator==='after')){
@@ -59,16 +62,28 @@ export function advancedPredicateSql(predicates:AdvancedPredicates|undefined,bin
     return `COALESCE((${textPredicate(column,filter.operator,bind(filter.value)+'::text')}),FALSE)`;
   });
   return [...(ordinary.length?[`(${ordinary.join(predicates.match==='any'?' OR ':' AND ')})`]:[]),
-    ...predicates.properties.map(filter=>propertyPredicate(filter,bind,timeZone))].join(' AND ');
+    ...predicates.properties.map(filter=>propertyPredicate(filter,bind,timeZone))].join(' AND ')||'TRUE';
+}
+export function sessionPredicateSql(filters:AdvancedPropertyPredicate[]|undefined,bind:Bind,timeZone:string):string{
+  if(!filters?.length)return 'TRUE';
+  const conditions=filters.map(filter=>{
+    const key=bind(filter.key)+'::text';
+    const present=`SELECT 1 FROM analytics_session_property sp CROSS JOIN session_context c
+      WHERE sp.project_id=s.project_id AND sp.visitor_key=s.visitor_id AND sp.property_key=${key} AND sp.updated_at>=c.cutoff`;
+    if(filter.operator==='missing')return `((SELECT lost_at IS NULL AND NOT expired_values_present FROM session_context) AND NOT EXISTS(${present}))`;
+    return `EXISTS(${present}${filter.operator==='exists'?'':` AND ${propertyValuePredicate(filter,bind,timeZone,'sp.property')}`})`;
+  });
+  return `(s.visitor_id IS NOT NULL AND ${conditions.join(' AND ')})`;
 }
 export function advancedPredicateMethod(predicates:AdvancedPredicates){
   return {version:'native-flat-predicates-v1' as const,requiredFilters:'all' as const,fieldMatch:predicates.match,propertyMatch:'all' as const,
-    textSearch:'postgresql-lower-literal' as const,regex:'postgresql-case-insensitive' as const,dateComparison:'calendar-day-in-scope-timezone' as const};
+    textSearch:'postgresql-lower-literal' as const,regex:'postgresql-case-insensitive' as const,dateComparison:'calendar-day-in-scope-timezone' as const,
+    ...(predicates.sessionProperties?.length?{sessionPropertyMatch:'all' as const,sessionPropertyValues:'current-retained-at-report-snapshot' as const}:{})};
 }
 // Call only after current authorization and receipt replay decisions, under the
 // caller's transaction/deadline. Empty datasets must still reject invalid syntax.
 export async function validateAdvancedRegex(client:PoolClient,...groups:(AdvancedPredicates|undefined)[]){
-  const patterns=groups.flatMap(group=>group?[...group.fields,...group.properties].flatMap(filter=>
+  const patterns=groups.flatMap(group=>group?[...group.fields,...group.properties,...(group.sessionProperties??[])].flatMap(filter=>
     (filter.operator==='regex'||filter.operator==='not_regex')&&'value' in filter?[filter.value as string]:[]):[]);
   if(!patterns.length)return;
   try{await client.query("SELECT '' ~* pattern FROM unnest($1::text[]) AS patterns(pattern)",[patterns]);}

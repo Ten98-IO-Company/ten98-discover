@@ -62,7 +62,7 @@ test('date equality preserves precision while before and after require bounded r
 
 test('strict flat shape rejects unknown scope, nested logic and invalid operator/type/value combinations',()=>{
   const valid=group([field()]);
-  for(const raw of [null,[],{}, {...valid,version:2},{...valid,match:'or'},{...valid,sessionProperties:[]},{...valid,not:valid},
+  for(const raw of [null,[],{}, {...valid,version:2},{...valid,match:'or'},{...valid,sessionProperty:[]},{...valid,not:valid},
     {...valid,fields:undefined},{...valid,properties:undefined},group(),group([],[property()],'any'),
     group([{...field(),field:'visitorId'}]),group([{...field(),operator:'not_prefix'}]),group([{...field(),type:'string'}]),
     group([{field:'path',operator:'exists',value:undefined}]),group([{field:'path',operator:'eq'}]),group([{all:[field()]}])]){
