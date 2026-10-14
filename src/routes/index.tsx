@@ -648,7 +648,7 @@ function App() {
         {view === 'project' && workspace && project !== null && (
           <>
             {events?.total === 0 && <section className='connection-callout'><div><strong>Ready when your website is.</strong><p>Add the tracking snippet to start collecting consented visits.</p></div><Link className='btn primary' to='/' search={target('installation')}>Connect website</Link></section>}
-            <AnalyticsPanel key={project.id} projectId={project.id} onUnauthorized={unauthorized} />
+            <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onUnauthorized={unauthorized} />
           </>
         )}
         {view === 'events' && workspace && project !== null && (
