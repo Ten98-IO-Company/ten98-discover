@@ -1,0 +1,9 @@
+.ten98-tracking-preferences{position:fixed;inset-block-end:12px;inset-inline-start:12px;z-index:2147483646;display:flex;flex-direction:column;gap:6px;max-inline-size:calc(100vw - 24px);max-block-size:50vh;overflow:auto}
+.ten98-tracking-button,.ten98-tracking-dialog{box-sizing:border-box;background:#fff;color:#17243a;font:14px/1.5 system-ui,sans-serif}
+.ten98-tracking-button{min-block-size:44px;padding:10px 14px;border:1px solid #374151;border-radius:6px;max-inline-size:100%;cursor:pointer}
+.ten98-tracking-dialog{inline-size:32rem;max-inline-size:calc(100vw - 32px);max-block-size:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid #cbd5e1;border-radius:12px;overflow-wrap:anywhere}
+.ten98-tracking-dialog h2{font:600 20px/1.3 system-ui,sans-serif;margin:0 0 12px;color:inherit}
+.ten98-tracking-dialog label{display:flex;align-items:center;gap:8px;min-block-size:44px;margin:0;color:inherit;font:inherit}
+.ten98-tracking-dialog input{inline-size:18px;block-size:18px;margin:0;flex:none}
+.ten98-tracking-dialog button{min-block-size:44px;padding:8px 12px;margin-block-start:8px;margin-inline-end:6px;border:1px solid #64748b;border-radius:6px;background:#fff;color:#17243a;font:inherit;cursor:pointer}
+.ten98-tracking-button:focus-visible,.ten98-tracking-dialog :focus-visible{outline:3px solid #5039ce;outline-offset:3px}

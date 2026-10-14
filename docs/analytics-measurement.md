@@ -4,7 +4,7 @@ This is the measurement contract for native collection and its remaining analyti
 
 ## Identity and visits
 
-An analytics visitor is a project-scoped pseudonymous estimate, never an application login or a unique person. The server derives its key from a trusted client IP, User-Agent, UTC calendar month and optional client distinct ID using a domain-separated keyed hash. Neither the IP, raw User-Agent nor raw distinct ID belongs in the event or visitor record. Hashing does not make these measurements anonymous.
+An analytics visitor is a project-scoped pseudonymous estimate, never an application login or a unique person. The server derives its key from a trusted client IP, User-Agent, UTC calendar month and, for consented collection only, an optional explicit distinct ID using a domain-separated keyed hash. Cookieless basic observations use a separate hash namespace and cannot acquire a later consented profile. Neither the IP, raw User-Agent nor raw distinct ID belongs in the event or visitor record. Hashing does not make these measurements anonymous.
 
 Changing project, network address, browser identifier, distinct ID, month or server signing secret changes the visitor key. Shared network/browser characteristics may combine visitors; changed characteristics may split one visitor. Distinct IDs are untrusted observations: they cannot authorize access or merge application accounts. A later explicit identification does not rewrite earlier anonymous events.
 
@@ -30,7 +30,13 @@ Direct mode behind a shared gateway can collapse visitor estimates, so it must n
 
 ## Collection and privacy
 
-Native analytics has its own consent and exclusion gate, independent of which vendor destinations are enabled. Unknown or denied analytics consent produces no native event transmission; a later grant never replays earlier activity. Withdrawal clears pending collection and browser context. Previously accepted records remain subject to the documented retention/erasure policy; withdrawal alone does not erase stored history or guarantee a different future cookieless visitor key.
+Native analytics has its own collection policy, independent of vendor destinations. New projects default to `collectionMode: cookieless`; missing modes in existing settings remain `consent-first`, and old settings writers preserve the current mode. Basic events can start without a grant under a current cookieless policy. Explicit refusal, Do Not Track, Global Privacy Control, disabled collection, excluded paths and recognized bots still block collection. Consent-first events and every identify call require an explicit current analytics grant. Advertising and other vendor purposes remain separately consent-gated.
+
+Public configuration schema3 exposes the effective mode and existing combined epoch for at most60 seconds. Browser events carry exactly one current-policy envelope: `collection:{mode:'cookieless',epoch}` or `consent:{analytics:true,epoch}`. Basic events cannot contain an explicit distinct ID or an identify variant. The server records `event.collection_basis` as cookieless or consent; pre-upgrade/API observations remain NULL, not inferred history. API-key ingestion excludes both browser envelopes and stays identity-free.
+
+The SDK persists version2, site/origin/environment-scoped preferences only, not identity or collection context. An explicit `ten98.consent` refusal also opts out of basic collection and survives epoch/grant expiry. `ten98.setAnalyticsOptOut(boolean, siteOptions)` changes only basic refusal: clearing it cannot create, renew or revoke an existing enhanced grant. Unreadable/malformed preferences block basic collection. A later grant does not replay earlier activity or recount an already dispatched current-page observation, including an unknown receipt. Basis changes abort pending native work and clear context/identifier. Previously accepted records remain subject to retention; withdrawal does not retract them or guarantee a different future rotating key.
+
+Dashboard collection basis counts describe retained recorded pageviews. Capture coverage is always unknown: rejected/blocked visits are not separately collected to invent a denominator. Retention completeness is different from total traffic coverage. Basic and consented keys can split one visitor estimate; full Umami parity, anonymity and legal consent exemption are not claimed.
 
 The server checks the current combined native/destination consent epoch before accepting browser events. Policy publication and collection must share a project lock, with the effective destination revision read in a fresh statement after acquiring that lock. This prevents a waiting request from accepting an old policy snapshot after publication commits.
 

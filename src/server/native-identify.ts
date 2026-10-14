@@ -22,7 +22,7 @@ export async function collectIdentify(request:Request,input:IdentifyInput,peerAd
     // ponytail: identify serializes writes per project using the existing gate.
     // Split this gate only after measured contention justifies more lock state.
     await client.query('SELECT id FROM project WHERE public_key=$1 FOR UPDATE',[input.siteKey]);
-    const {project,userAgent,reason}=await nativeCollectionPolicy(client,request,input.siteKey,input);
+    const {project,userAgent,reason}=await nativeCollectionPolicy(client,request,input.siteKey,input,'identify');
     if(reason){await client.query('COMMIT');return {accepted:false,reason};}
     const state=(await client.query(project.analytics_settings.linkIdentities===true?
       `SELECT c.instant AS now,w.raw_analytics_days AS days,to_char(c.instant AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at

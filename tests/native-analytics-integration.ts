@@ -10,6 +10,8 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(getConfig().databaseUrl).hostname));
   const {pool}=getDatabase(), projectId=randomUUID(), siteKey=randomUUID(), origin='https://native.integration.test';
   await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)',[projectId,options.workspaceId,'Native analytics acceptance',origin,siteKey]);
+  // Keep the original consent-first acceptance independent of future-project defaults.
+  await pool.query("UPDATE project SET analytics_settings=jsonb_set(analytics_settings,'{collectionMode}','\"consent-first\"') WHERE id=$1",[projectId]);
   async function call(path:string,body?:unknown,publicCall=false,extra:Record<string,string>={}) {
     const response=await fetch(new URL(path,options.baseUrl),{method:body===undefined?'GET':'POST',headers:{origin:publicCall?origin:options.appUrl,
       ...(!publicCall?{cookie:options.ownerCookie}:{}),'user-agent':'Ten98 acceptance browser',...extra,...(body===undefined?{}:{'content-type':'application/json'})},
@@ -30,6 +32,7 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   assert.deepEqual(duplicate.data,{accepted:true,duplicate:true});
   const stored=(await pool.query('SELECT row_to_json(e) AS value FROM event e WHERE project_id=$1 AND id=$2',[projectId,acceptedEvent.eventId])).rows[0].value;
   assert.equal(stored.path,'/hello'); assert.equal(stored.source,'browser');
+  assert.equal(stored.collection_basis,'consent');
   assert.equal(stored.identity_link_evidence_version,null,'Linking-off collection must not claim explicit event evidence.');
   assert.equal((await pool.query('SELECT identity_event_evidence_started_at FROM project WHERE id=$1',[projectId])).rows[0].identity_event_evidence_started_at,null);
   assert.deepEqual(stored.dimensions,{language:'en-US',origin});
@@ -78,6 +81,49 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
     await blocker.query('COMMIT');
     assert.deepEqual(await pending,{accepted:false,reason:'consent_required'});
   }finally{await blocker.query('ROLLBACK').catch(()=>{});blocker.release();await pending?.catch(()=>{});}
+
+  const basicWorkspace=randomUUID(),basicProject=randomUUID(),basicKey=randomUUID();
+  await pool.query('INSERT INTO workspace(id,name) VALUES($1,$2)',[basicWorkspace,'Basic analytics acceptance']);
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[basicWorkspace,options.ownerId]);
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,'Basic analytics acceptance',$3,$4)",[basicProject,basicWorkspace,origin,basicKey]);
+  let basicConfig=await getPublicDestinations(basicKey,'live',origin);
+  assert.equal(basicConfig.schemaVersion,3);assert.equal(basicConfig.nativeTracking.collectionMode,'cookieless');
+  // Explicit fixture opt-in proves basic events stay outside the linking subsystem.
+  await pool.query("UPDATE project SET analytics_settings=jsonb_set(analytics_settings,'{linkIdentities}','true'),identity_links_started_at=clock_timestamp() WHERE id=$1",[basicProject]);
+  basicConfig=await getPublicDestinations(basicKey,'live',origin);
+  const basic=()=>({...event(),siteKey:basicKey,collection:{mode:'cookieless' as const,epoch:basicConfig.consentEpoch}});
+  const basicEvent={...basic(),name:'signup',properties:{plan:'starter',nil:null,flag:false,nested:{count:0}},dimensions:{language:'en-us'}};
+  const basicAccepted=await call('/api/collect',basicEvent,true);assert.equal(basicAccepted.status,202);assert.equal(basicAccepted.data.accepted,true);
+  const basicRow=(await pool.query('SELECT to_jsonb(e) AS value FROM event e WHERE project_id=$1 AND id=$2',[basicProject,basicEvent.eventId])).rows[0].value;
+  assert.equal(basicRow.collection_basis,'cookieless');assert.equal(basicRow.identity_link_evidence_version,null);
+  assert.deepEqual(basicRow.properties,{plan:{type:'string',value:'starter'},nil:{type:'null',value:null},flag:{type:'boolean',value:false},'nested.count':{type:'number',value:0}});
+  assert.deepEqual((await call('/api/collect',{...basicEvent,consent:{analytics:true,epoch:basicConfig.consentEpoch},collection:undefined,dimensions:{distinctId:'cannot-retrofit'}},true)).data,{accepted:true,duplicate:true});
+  assert.deepEqual((await pool.query('SELECT to_jsonb(e) AS value FROM event e WHERE project_id=$1 AND id=$2',[basicProject,basicEvent.eventId])).rows[0].value,basicRow,'Duplicate cannot change basis, identity or event proof.');
+  assert.equal((await pool.query('SELECT 1 FROM analytics_identity_link WHERE project_id=$1',[basicProject])).rowCount,0);
+  assert.equal((await pool.query('SELECT identity_event_evidence_started_at FROM project WHERE id=$1',[basicProject])).rows[0].identity_event_evidence_started_at,null,'Duplicate consented input cannot mint an evidence-start fence.');
+  for(const sentinel of ['private-query','private-fragment','Ten98 acceptance browser','cannot-retrofit'])assert.equal(JSON.stringify(basicRow).includes(sentinel),false);
+  for(const invalid of [{consent:{analytics:true,epoch:basicConfig.consentEpoch}},{dimensions:{distinctId:'private-id'}},{collection:{mode:'consent-first',epoch:basicConfig.consentEpoch}},{collection:{mode:'cookieless',epoch:basicConfig.consentEpoch,extra:true}},{properties:{bad:'x'.repeat(1001)}},{properties:Object.fromEntries(Array.from({length:51},(_,i)=>['key'+i,i]))}])assert.equal((await call('/api/collect',{...basic(),...invalid},true)).status,400);
+  for(const authorization of [{collection:undefined},{collection:{mode:'cookieless',epoch:randomUUID()}}])assert.deepEqual((await call('/api/collect',{...basic(),...authorization},true)).data,{accepted:false,reason:'consent_required'});
+  for(const headers of [{dnt:'1'},{'sec-gpc':'1'},{'user-agent':'Example crawler'}] as Record<string,string>[])assert.deepEqual((await call('/api/collect',basic(),true,headers)).data,{accepted:false,reason:'collection_disabled'});
+  const {collectionMode:_,...legacySettings}=basicConfig.nativeTracking;
+  const legacySave=await saveAnalyticsSettings(basicProject,options.ownerId,{revision:1,settings:legacySettings});assert.equal(legacySave.settings.collectionMode,'cookieless','An old settings writer cannot silently change saved mode.');
+  basicConfig=await getPublicDestinations(basicKey,'live',origin);
+  for(const nextMode of ['consent-first','cookieless'] as const){
+    const staleBasic=basic(),gate=await pool.connect();let waitingCall:Promise<unknown>|undefined;
+    try{
+      await gate.query('BEGIN');await gate.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[basicProject]);await gate.query('SELECT count(*) FROM pg_stat_activity');
+      waitingCall=collectNative(new Request(origin,{headers:{origin,'user-agent':'Acceptance browser'}}),basicKey,staleBasic,'127.0.0.1');
+      let waiting=false;for(let n=0;n<100;n++){await gate.query('SELECT pg_stat_clear_snapshot()');if((await gate.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pg_backend_pid()=ANY(pg_blocking_pids(pid)) AND query='SELECT id FROM project WHERE public_key=$1 FOR SHARE'")).rowCount){waiting=true;break;}await new Promise(resolve=>setTimeout(resolve,20));}assert.ok(waiting,'Basic collection must wait for the same publication gate.');
+      await gate.query("UPDATE project SET analytics_settings=jsonb_set(analytics_settings,'{collectionMode}',$2::jsonb),analytics_epoch=$3,analytics_revision=analytics_revision+1 WHERE id=$1",[basicProject,JSON.stringify(nextMode),randomUUID()]);await gate.query('COMMIT');
+      assert.deepEqual(await waitingCall,{accepted:false,reason:'consent_required'},'Neither direction may accept an envelope from the old publication.');
+    }finally{await gate.query('ROLLBACK').catch(()=>{});gate.release();await waitingCall?.catch(()=>{});}
+    basicConfig=await getPublicDestinations(basicKey,'live',origin);
+    assert.equal((await call('/api/collect',basic(),true)).data.accepted,nextMode==='cookieless');
+  }
+  await saveAnalyticsSettings(basicProject,options.ownerId,{revision:(await pool.query('SELECT analytics_revision FROM project WHERE id=$1',[basicProject])).rows[0].analytics_revision,settings:{...basicConfig.nativeTracking,excludedPaths:['/hello']}});
+  basicConfig=await getPublicDestinations(basicKey,'live',origin);assert.deepEqual((await call('/api/collect',basic(),true)).data,{accepted:false,reason:'collection_disabled'});
+  for(const table of ['analytics_identify_receipt','analytics_session_property','analytics_identity_link'])assert.equal((await pool.query(`SELECT 1 FROM ${table} WHERE project_id=$1`,[basicProject])).rowCount,0,'Basic events cannot write customer profiles or link evidence.');
+  console.log('PASS basic event properties, strict envelopes, legacy saves, separate proof and both real publication-lock mode transitions');
 
   // Legacy observations retain their counts; only measured pageviews enter visit estimates.
   const knownVisitor='a'.repeat(64), anotherVisitor='b'.repeat(64), visitOne='1'.repeat(64), visitTwo='2'.repeat(64), visitThree='3'.repeat(64);

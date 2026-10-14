@@ -6,7 +6,7 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
 import {parseIdentifyInput} from '../src/server/identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from '../src/server/native-identify.ts';
-import {analyticsIdentity,trackingConsentEpoch} from '../src/server/native-analytics.ts';
+import {analyticsIdentity,collectNative,trackingConsentEpoch} from '../src/server/native-analytics.ts';
 import {getRetention,previewRetention,runRetentionBatch,saveRetention} from '../src/server/retention.ts';
 import {expireSessionProperties} from '../src/server/session-property-retention.ts';
 import {handleApi} from '../src/server/api.ts';
@@ -32,7 +32,7 @@ export async function runNativeIdentifyChecks(){
       const consent={analytics:true as const,epoch:trackingConsentEpoch(p.analytics_epoch,null)};
       const raw=(properties:object={},extra:Record<string,unknown>={})=>({type:'identify',siteKey,requestId:randomUUID(),sentAt:new Date().toISOString(),url:origin+'/account?private-query#private-fragment',properties,consent,...extra});
       const request=(headers:Record<string,string>={})=>new Request(origin,{headers:{origin,'user-agent':ua,...headers}});
-      const send=(input:ReturnType<typeof raw>,headers:Record<string,string>={},peer:string|undefined=ip)=>collectIdentify(request(headers),parseIdentifyInput(input),peer);
+      const send=(input:unknown,headers:Record<string,string>={},peer:string|undefined=ip)=>collectIdentify(request(headers),parseIdentifyInput(input),peer);
       const rows=async()=>(await pool.query('SELECT visitor_key,property_key,property,updated_at FROM analytics_session_property WHERE project_id=$1 ORDER BY visitor_key,property_key',[project])).rows;
       const markers=async()=>(await pool.query('SELECT session_properties_retained_from,session_properties_evidence_lost_at FROM project WHERE id=$1',[project])).rows[0];
       return {workspace,project,siteKey,origin,consent,raw,request,send,rows,markers};
@@ -96,6 +96,20 @@ export async function runNativeIdentifyChecks(){
       await blocker.query('UPDATE project SET analytics_epoch=$2 WHERE id=$1',[gated.project,randomUUID()]);await blocker.query('COMMIT');assert.deepEqual(await held,{accepted:false,reason:'consent_required'});assert.equal((await gated.rows()).length,0);
     }finally{await blocker.query('ROLLBACK');blocker.release();await held?.catch(()=>{});}
     console.log('PASS current origin/policy/consent before age or replay and real publication-lock wait revalidation');
+
+    const basicProfile=await fixture();
+    const basicEvent={eventId:randomUUID(),name:'page_view',url:basicProfile.origin+'/account',collection:{mode:'cookieless' as const,epoch:basicProfile.consent.epoch}};
+    const basicResult=await collectNative(basicProfile.request(),basicProfile.siteKey,basicEvent,ip);assert.ok(basicResult.accepted&&'duplicate' in basicResult&&!basicResult.duplicate&&basicResult.context);
+    const basicRow=(await pool.query('SELECT visitor_id,collection_basis,identity_link_evidence_version FROM event WHERE project_id=$1',[basicProfile.project])).rows[0];assert.equal(basicRow.collection_basis,'cookieless');assert.equal(basicRow.identity_link_evidence_version,null);
+    const {consent:omittedConsent,...unconsented}=basicProfile.raw({forbidden:true});assert.ok(omittedConsent);
+    await assert.rejects(async()=>basicProfile.send({...unconsented,collection:basicEvent.collection}),fail(400));
+    assert.deepEqual(await basicProfile.send({...unconsented,context:basicResult.context}),{accepted:false,reason:'consent_required'});
+    assert.equal((await basicProfile.rows()).length,0);assert.equal((await pool.query('SELECT 1 FROM analytics_identify_receipt WHERE project_id=$1',[basicProfile.project])).rowCount,0);
+    const grant=await basicProfile.send(basicProfile.raw({plan:'consented-only'},{context:basicResult.context}));assert.ok(grant.accepted&&!grant.duplicate);
+    const profile=await basicProfile.rows();assert.equal(profile.length,1);assert.notEqual(profile[0].visitor_key,basicRow.visitor_id,'Basic context cannot select the later consented profile key.');
+    assert.equal((await pool.query('SELECT 1 FROM event e JOIN analytics_session_property s ON s.project_id=e.project_id AND s.visitor_key=e.visitor_id WHERE e.project_id=$1',[basicProfile.project])).rowCount,0,'No retroactive profile attachment to basic activity.');
+    assert.equal((await pool.query('SELECT 1 FROM analytics_identity_link WHERE project_id=$1',[basicProfile.project])).rowCount,0);
+    console.log('PASS basic events cannot identify or claim link proof; later consented profile cannot attach to a basic key');
 
     const retention=await fixture(),rInput=retention.raw({old:1,recent:2});await retention.send(rInput);
     await pool.query("UPDATE analytics_session_property SET updated_at=clock_timestamp()-interval '10 days' WHERE project_id=$1 AND property_key='old'",[retention.project]);

@@ -57,7 +57,7 @@ try{
   const {workspace}=await createWorkspace(userId,{name:'Identify browser workspace'});
   await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,$3,$4,$5,\'infinity\')',[projectId,workspace.id,'Identify browser project',siteOrigin,siteKey]);
   await pool.query("UPDATE installation SET claimed=true WHERE id='instance'");
-  await saveAnalyticsSettings(projectId,userId,{revision:1,settings:{enabled:true,consentMode:'builtin',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:false,excludedPaths:[]}});
+  await saveAnalyticsSettings(projectId,userId,{revision:1,settings:{enabled:true,collectionMode:'consent-first',consentMode:'builtin',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:false,excludedPaths:[]}});
   const current=await getDestinations(projectId,userId,'live');
   const draft=await saveDestinationsDraft(projectId,userId,'live',{expectedVersion:current.draftVersion,configuration:{destinations:[{provider:'meta',assetId:'123',enabled:true,owner:'managed',ownershipConfirmed:true,mappings:[{event:'page_view'}]}]}});
   await publishDestinations(projectId,userId,'live',{expectedVersion:draft.draftVersion});
