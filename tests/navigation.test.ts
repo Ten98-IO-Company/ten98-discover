@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { auditCoverages, auditIssueCodes, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView } from '../src/lib/navigation.ts'
+import { analyticsDay, auditCoverages, auditIssueCodes, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView } from '../src/lib/navigation.ts'
+import {environmentCatalog,environmentFields} from '../src/lib/analytics-environment.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
@@ -130,4 +131,30 @@ test('audit links reject malformed, repeated, unknown and unscoped intent withou
   assert.deepEqual(parseNavigation({project,view:'audits',auditRun:project}),{view:'audits',auditInvalid:'1'});
   assert.deepEqual(parseNavigation({workspace,project:[project],view:'audits',auditRun:project}),{workspace,view:'audits',auditInvalid:'1'});
   assert.equal(canonicalNavigation(`?workspace=${workspace}&project=${project}&view=audits&auditRun=${project}&auditRun=${project}`,base),false);
+});
+
+test('analytics links preserve the applied UTC range and all three closed environment filters', () => {
+  const base={workspace,project,view:'project'} as const;
+  const values={analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29',analyticsBrowser:'chrome',analyticsOs:'Mac OS',analyticsDevice:'desktop'};
+  const parsed=parseNavigation({...base,...values});
+  assert.deepEqual(parsed,{...base,...values});assert.deepEqual(parseNavigation(parsed),parsed);
+  assert.equal(canonicalNavigation('?'+new URLSearchParams(parsed as Record<string,string>),parsed),true);
+  for(const key of Object.keys(values))assert.notEqual(navigationKey(parsed),navigationKey(parseNavigation({...base,...Object.fromEntries(Object.entries(values).filter(([name])=>name!==key))})));
+  for(const field of environmentFields)for(const value of [...environmentCatalog[field],'not-recorded']){
+    const name=field==='browser'?'analyticsBrowser':field==='os'?'analyticsOs':'analyticsDevice';
+    assert.equal(parseNavigation({...base,[name]:value})[name],value);
+  }
+  assert.equal(analyticsDay('2024-02-29'),Date.parse('2024-02-29T00:00:00Z'));
+  assert.equal(analyticsDay('2026-02-29'),null);
+  assert.deepEqual(parseNavigation({...base,view:'explore',...values}),{...base,view:'explore'});
+});
+
+test('analytics links fail closed for ambiguous scope, unsupported families and malformed dates', () => {
+  const base={workspace,project,view:'project'} as const,dates={analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29'},invalid={...base,analyticsInvalid:'1'};
+  for(const patch of [{analyticsBrowser:['chrome','chrome']},{analyticsBrowser:{value:'chrome'}},{analyticsBrowser:'Chrome'},{analyticsOs:'Windows 11'},{analyticsDevice:'phone'},{analyticsDevice:'unknown\n'},{analyticsFrom:['2024-02-28']},{analyticsFrom:'2024-02-30'},{analyticsTo:'2024-02-27'},{analyticsTo:undefined},{analyticsFrom:undefined},{analyticsFrom:'2023-01-01'},{analyticsTo:'9998-12-31'},{analyticsInvalid:'0'},{analyticsCursor:'private cursor'},{draft:'private draft'}]){
+    const parsed=parseNavigation({...base,...dates,...patch});assert.deepEqual(parsed,invalid);assert.deepEqual(parseNavigation(parsed),parsed);assert.equal(JSON.stringify(parsed).includes('private'),false);
+  }
+  for(const patch of [{workspace:undefined},{project:undefined},{workspace:[workspace]},{project:[project]}])assert.equal(parseNavigation({...base,...patch,...dates}).analyticsInvalid,'1');
+  assert.equal(canonicalNavigation('?'+new URLSearchParams({...base,...dates})+'&analyticsFrom=2024-02-28',parseNavigation({...base,...dates})),false);
+  assert.deepEqual(parseNavigation({...base,unrelated:'private value'}),base);
 });

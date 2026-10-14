@@ -55,6 +55,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
           ELSE jsonb_build_object('type',jsonb_typeof(dimension),'value',dimension) END END AS label
       FROM ${population} LEFT JOIN LATERAL (SELECT CASE $11::text
         WHEN 'referrer' THEN dimensions->'referrerHost' WHEN 'language' THEN dimensions->'language'
+        WHEN 'browser' THEN dimensions->'browser' WHEN 'os' THEN dimensions->'os' WHEN 'device' THEN dimensions->'device'
         WHEN 'screenWidth' THEN dimensions->'screenWidth' WHEN 'screenHeight' THEN dimensions->'screenHeight'
         WHEN 'campaignSource' THEN dimensions->'campaign'->'source' WHEN 'campaignMedium' THEN dimensions->'campaign'->'medium'
         WHEN 'campaignName' THEN dimensions->'campaign'->'campaign' WHEN 'campaignTerm' THEN dimensions->'campaign'->'term'

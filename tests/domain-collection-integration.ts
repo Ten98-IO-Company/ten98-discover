@@ -72,7 +72,9 @@ export async function runDomainCollectionChecks() {
   const duplicate = await publicCall('/api/collect', canonical, { ...native, url: `${canonical}/changed` });
   assert.deepEqual(duplicate.data, { accepted: true, duplicate: true });
   const original = (await pool.query('SELECT path,dimensions FROM event WHERE project_id=$1 AND id=$2', [project, native.eventId])).rows[0];
-  assert.deepEqual(original, { path: '/shared-path', dimensions: { origin: serving } });
+  const {browser,os,device,environmentVersion,...publicDimensions}=original.dimensions;
+  assert.deepEqual({browser,os,device,environmentVersion},{browser:'unknown',os:'unknown',device:'unknown',environmentVersion:'server-ua-environment-v1'});
+  assert.deepEqual({...original,dimensions:publicDimensions}, { path: '/shared-path', dimensions: { origin: serving } });
   const privateKey = await createApiKey(workspace, owner, { name: 'Origin fixture', scopes: ['events:write','analytics:read'], expiresInDays: 1 });
   async function apiCall(path: string, body?: unknown) {
     return handleApi(new Request(config.appUrl + path, { method: body === undefined ? 'GET' : 'POST', headers: { authorization: `Bearer ${privateKey.token}`, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));

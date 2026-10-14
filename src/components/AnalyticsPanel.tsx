@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
+import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
+import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
 import { useAnnotations } from './AnnotationsPanel';
 import './analytics.css';
 
@@ -8,6 +10,8 @@ export type AnalyticsPanelProps = {
   projectId: string;
   userId: string;
   onUnauthorized: () => void;
+  search?: NavigationSearch;
+  onNavigate?: (value: AnalyticsNavigation) => void;
 };
 
 type Daily = { date: string; pageViews: number | null; customEvents: number | null; coverage: 'complete' | 'partial' | 'unavailable' };
@@ -25,11 +29,13 @@ type Analytics = {
   pages: { path: string; pageViews: number }[];
   events: { name: string; count: number }[];
   lastReceivedAt: string | null;
+  environment?: AnalyticsEnvironment;
 };
 type Range = { from: string; to: string };
 
 type View = {
   key: string; // projectId this state belongs to; stale data is never rendered
+  queryKey: string;
   range: Range; // applied range (drives fetching)
   draft: Range; // custom date inputs (applied only via Apply)
   draftErr: string | null;
@@ -58,21 +64,14 @@ function shiftDays(date: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Returns ms epoch for a real YYYY-MM-DD date (UTC), or null. */
-function parseDay(date: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  const t = Date.parse(`${date}T00:00:00Z`);
-  return Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== date ? null : t;
-}
-
 function lastDays(n: number): Range {
   const to = todayUtc();
   return { from: shiftDays(to, -(n - 1)), to };
 }
 
-function fresh(projectId: string): View {
-  const range = lastDays(7);
-  return { key: projectId, range, draft: range, draftErr: null, data: null, error: null, loading: true, nonce: 0 };
+function fresh(projectId: string, intent: AnalyticsNavigation): View {
+  const range = intent.analyticsFrom && intent.analyticsTo ? {from:intent.analyticsFrom,to:intent.analyticsTo} : lastDays(7);
+  return { key: projectId, queryKey:JSON.stringify(intent), range, draft: range, draftErr: null, data: null, error: null, loading: !intent.analyticsInvalid, nonce: 0 };
 }
 
 function fmtUtc(iso: string): string {
@@ -80,6 +79,93 @@ function fmtUtc(iso: string): string {
 }
 
 const fmtNum = (n: number | null) => n === null ? 'Unavailable' : n.toLocaleString('en-US');
+
+const environmentLabels = { browser: 'Browser', os: 'OS', device: 'Device' } as const;
+const environmentRows = { browser: 'browsers', os: 'operatingSystems', device: 'devices' } as const;
+const browserLabels: Record<string,string> = {aol:'AOL',edge:'Edge', 'edge-ios':'Edge on iOS', yandexbrowser:'Yandex',kakaotalk:'KakaoTalk',samsung:'Samsung Internet',silk:'Amazon Silk',miui:'MIUI',beaker:'Beaker','edge-chromium':'Edge (Chromium)',chrome:'Chrome','chromium-webview':'Chromium WebView',phantomjs:'PhantomJS',crios:'Chrome on iOS',firefox:'Firefox',fxios:'Firefox on iOS','opera-mini':'Opera Mini',opera:'Opera',pie:'Pocket Internet Explorer',netfront:'NetFront',ie:'Internet Explorer',bb10:'BlackBerry',android:'Android browser',ios:'iOS browser',safari:'Safari',facebook:'Facebook',instagram:'Instagram','ios-webview':'iOS WebView',curl:'curl',searchbot:'Search bot',bot:'Bot'};
+const environmentValue = (field: EnvironmentField, value: string | null) => value === null || value === 'not-recorded' ? 'Not recorded' : value === 'unknown' ? 'Unknown' : field === 'browser' ? browserLabels[value] : field === 'device' ? value === 'smarttv' ? 'Smart TV' : value[0].toUpperCase()+value.slice(1) : value;
+const record = (value: unknown): value is Record<string,unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+const keys = (value: unknown, names: string[]): value is Record<string,unknown> => record(value) && Object.keys(value).length === names.length && names.every(name=>Object.hasOwn(value,name));
+const count = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+const nullableCount = (value: unknown) => value === null || count(value);
+const stamp = (value: unknown): value is string => typeof value === 'string' && value.length<=64 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && parseDay(value.slice(0,10))!==null && Number.isFinite(Date.parse(value));
+const metric = (value: unknown, max = Infinity) => value === null || typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max;
+
+function validEnvironment(value: unknown, filters: EnvironmentFilters, total: number | null, identified: number | null, unavailable: boolean): value is AnalyticsEnvironment {
+  if (!keys(value,['version','filters','browsers','operatingSystems','devices','coverage','method']) || value.version !== environmentVersion || !record(value.filters) || Object.keys(value.filters).length !== Object.keys(filters).length || environmentFields.some(field=>(value.filters as Record<string,unknown>)[field] !== filters[field]) || Object.keys(value.filters).some(field=>!environmentFields.includes(field as EnvironmentField)) || !keys(value.method,['source','device','rawUserAgentStored']) || value.method.source !== 'bounded-request-user-agent' || value.method.device !== 'ua-parser-v1-screen-if-enabled' || value.method.rawUserAgentStored !== false || !keys(value.coverage,['pageViews','recordedPageViews','notRecordedPageViews','firstRecordedAt'])) return false;
+  const coverage=value.coverage;
+  if (coverage.firstRecordedAt !== null && !stamp(coverage.firstRecordedAt) || coverage.pageViews !== total) return false;
+  if(unavailable&&coverage.firstRecordedAt!==null||!unavailable&&(coverage.recordedPageViews===0?coverage.firstRecordedAt!==null:coverage.firstRecordedAt===null))return false;
+  if (unavailable ? [coverage.pageViews,coverage.recordedPageViews,coverage.notRecordedPageViews].some(n=>n!==null) : ![coverage.pageViews,coverage.recordedPageViews,coverage.notRecordedPageViews].every(count) || (coverage.recordedPageViews as number)+(coverage.notRecordedPageViews as number)!==coverage.pageViews) return false;
+  for (const field of environmentFields) {
+    const rows=value[environmentRows[field]], seen=new Set();
+    if (!Array.isArray(rows) || rows.length > environmentCatalog[field].length+1 || unavailable && rows.length) return false;
+    let views=0, measured=0, missing=0;
+    for (const row of rows) {
+      if (!keys(row,['value','pageViews','identifiedPageViews','visitors','visits','bounceRate','averageVisitSeconds']) || row.value !== null && (!isEnvironmentFilter(field,row.value) || row.value === 'not-recorded') || seen.has(row.value) || !count(row.pageViews) || row.pageViews === 0 || !count(row.identifiedPageViews) || row.identifiedPageViews > row.pageViews || !nullableCount(row.visitors) || !nullableCount(row.visits) || !metric(row.bounceRate,100) || !metric(row.averageVisitSeconds)) return false;
+      if (row.identifiedPageViews === 0 ? [row.visitors,row.visits,row.bounceRate,row.averageVisitSeconds].some(n=>n!==null) : row.visitors === null || row.visits === null || row.visitors < 1 || row.visitors > row.identifiedPageViews || row.visits < 1 || row.visits > row.identifiedPageViews || row.bounceRate === null || row.averageVisitSeconds === null) return false;
+      seen.add(row.value); views+=row.pageViews; measured+=row.identifiedPageViews; if (row.value===null) missing+=row.pageViews;
+    }
+    if (!unavailable && (views !== total || measured !== identified || missing !== coverage.notRecordedPageViews)) return false;
+  }
+  return true;
+}
+
+function validReport(value: unknown, range: Range, filters: EnvironmentFilters): value is Analytics {
+  if (!record(value) || !record(value.range) || value.range.from !== range.from || value.range.to !== range.to || value.range.timeZone !== 'UTC' || !record(value.coverage) || !['complete','partial','unavailable'].includes(value.coverage.status as string) || value.coverage.retainedFrom !== null && !stamp(value.coverage.retainedFrom) || !record(value.totals) || ![value.totals.pageViews,value.totals.customEvents].every(nullableCount) || !record(value.measurement) || !['identifiedPageViews','unidentifiedPageViews','visitors','visits'].every(k=>nullableCount((value.measurement as Record<string,unknown>)[k])) || !metric(value.measurement.bounceRate,100) || !metric(value.measurement.averageVisitSeconds) || value.lastReceivedAt !== null && !stamp(value.lastReceivedAt)) return false;
+  if (!Array.isArray(value.daily) || value.daily.length > MAX_DAYS || !value.daily.every(day=>record(day) && typeof day.date==='string' && parseDay(day.date)!==null && day.date>=range.from && day.date<=range.to && ['complete','partial','unavailable'].includes(day.coverage as string) && nullableCount(day.pageViews) && nullableCount(day.customEvents)) || !Array.isArray(value.pages) || value.pages.length>20 || !value.pages.every(row=>record(row) && typeof row.path==='string' && row.path.length<=2048 && count(row.pageViews)) || !Array.isArray(value.events) || value.events.length>20 || !value.events.every(row=>record(row) && typeof row.name==='string' && row.name.length<=320 && count(row.count))) return false;
+  if (value.coverage.status==='unavailable' && ([value.totals.pageViews,value.totals.customEvents,...['identifiedPageViews','unidentifiedPageViews','visitors','visits','bounceRate','averageVisitSeconds'].map(k=>(value.measurement as Record<string,unknown>)[k])].some(n=>n!==null) || value.pages.length || value.events.length || value.daily.some(day=>day.pageViews!==null || day.customEvents!==null))) return false;
+  if(value.collection!==undefined&&(!record(value.collection)||!['consent-first','cookieless'].includes(value.collection.mode as string)||value.collection.captureCoverage!=='unknown'||!record(value.collection.pageViews)||!['cookieless','consent','unknown'].every(k=>nullableCount((value.collection as {pageViews:Record<string,unknown>}).pageViews[k]))))return false;
+  return value.environment === undefined ? !Object.keys(filters).length : validEnvironment(value.environment,filters,value.totals.pageViews as number|null,value.measurement.identifiedPageViews as number|null,value.coverage.status==='unavailable');
+}
+
+// Same spreadsheet escaping as explorer-input.csvCell, without importing its Node-only parser into the browser.
+function csvCell(value: unknown): string {
+  let cell=value===null||value===undefined?'Unavailable':typeof value==='object'?JSON.stringify(value):String(value);
+  if (/^[\s\uFEFF]*[=+@-]/u.test(cell) || /^[\t\r\n]/.test(cell)) cell=`'${cell}`;
+  return `"${cell.replaceAll('"','""')}"`;
+}
+
+function EnvironmentCard({data,busy,field,onFieldChange,onFilter}:{data:Analytics;busy:boolean;field:EnvironmentField;onFieldChange:(field:EnvironmentField)=>void;onFilter:(field:EnvironmentField,value:string|null)=>void}) {
+  const uid=useId(), [open,setOpen]=useState(false), [search,setSearch]=useState(''), [notice,setNotice]=useState('');
+  const dialog=useRef<HTMLDialogElement>(null), blob=useRef<string|null>(null), timer=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const environment=data.environment, rows=environment?.[environmentRows[field]]??[], measured=rows.some(row=>row.visitors!==null), metricLabel=measured?'Estimated visitors':'Recorded pageviews';
+  const visible=rows.filter(row=>environmentValue(field,row.value).toLowerCase().includes(search.trim().toLowerCase()));
+  const max=Math.max(1,...rows.map(row=>measured?row.visitors??0:row.pageViews));
+  const revoke=()=>{if(timer.current!==null)clearTimeout(timer.current);if(blob.current)URL.revokeObjectURL(blob.current);timer.current=null;blob.current=null;};
+  useEffect(()=>()=>revoke(),[]);
+  useEffect(()=>{const node=dialog.current;if(open&&node&&!node.open)node.showModal();if(!open&&node?.open)node.close();},[open]);
+  function select(next:EnvironmentField){onFieldChange(next);setSearch('');setNotice('');}
+  function filter(row:EnvironmentRow){dialog.current?.close();onFilter(field,row.value);}
+  function download(){
+    if(!environment||busy||!visible.length)return;
+    const header=['From (UTC)','To (UTC)','Dimension','Category','Recorded pageviews','Pageviews with visitor estimate','Estimated visitors','Visits','Bounce rate (%)','Average observed visit (seconds)','Retention coverage','Environment pageviews','Environment recorded pageviews','Environment not-recorded pageviews','First environment observation','Applied filters','Parser version','Source','Device method','Raw User-Agent stored'];
+    const lines=[header,...visible.map(row=>[data.range.from,data.range.to,environmentLabels[field],environmentValue(field,row.value),row.pageViews,row.identifiedPageViews,row.visitors,row.visits,row.bounceRate,row.averageVisitSeconds,data.coverage.status,environment.coverage.pageViews,environment.coverage.recordedPageViews,environment.coverage.notRecordedPageViews,environment.coverage.firstRecordedAt,environment.filters,environment.version,environment.method.source,environment.method.device,'false'])];
+    revoke();blob.current=URL.createObjectURL(new Blob([lines.map(line=>line.map(csvCell).join(',')).join('\r\n')+'\r\n'],{type:'text/csv;charset=utf-8'}));const anchor=document.createElement('a');anchor.href=blob.current;anchor.download=`analytics-${field}-${data.range.from}-${data.range.to}.csv`;anchor.click();timer.current=setTimeout(revoke,1000);setNotice(`Downloaded ${visible.length} ${visible.length===1?'category':'categories'} from this displayed snapshot.`);
+  }
+  const tabs=(suffix:string)=><div className="analytics-environment-tabs" role="tablist" aria-label="Environment dimensions">{environmentFields.map(next=><button key={next} id={`${uid}-${suffix}-${next}`} data-field={next} role="tab" type="button" className={'btn'+(next===field?' active':'')} aria-selected={next===field} tabIndex={next===field?0:-1} aria-controls={`${uid}-${suffix}`} disabled={busy} onClick={()=>select(next)} onKeyDown={event=>{const at=environmentFields.indexOf(next),rtl=getComputedStyle(event.currentTarget).direction==='rtl',step=event.key==='ArrowRight'?(rtl?-1:1):event.key==='ArrowLeft'?(rtl?1:-1):0,target=event.key==='Home'?0:event.key==='End'?environmentFields.length-1:step?(at+step+environmentFields.length)%environmentFields.length:null;if(target===null)return;event.preventDefault();const value=environmentFields[target];select(value);event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-field="${value}"]`)?.focus();}}>{environmentLabels[next]}</button>)}</div>;
+  return <section className="card analytics-breakdown analytics-environment" aria-labelledby={`${uid}-heading`}>
+    <h2 id={`${uid}-heading`}>Environment</h2>{environment&&data.coverage.status!=='unavailable'&&tabs('list')}
+    {!environment?<p className="dim">Environment data was not returned. Reload analytics to check this feature.</p>:data.coverage.status==='unavailable'?<p className="dim">Environment history is unavailable after retention. Choose a more recent date range.</p>:<>
+      <p className="hint">{measured?'Top 10 categories by estimated visitors. A visitor estimate can appear in more than one category.':'Visitor estimates are unavailable. Categories show recorded pageviews.'}</p>
+      <div id={`${uid}-list`} className="analytics-environment-list" role="tabpanel" aria-labelledby={`${uid}-list-${field}`}>
+        <div className="analytics-environment-list-heading"><strong>{environmentLabels[field]}</strong><strong>{metricLabel}</strong></div>
+        {rows.length?rows.slice(0,10).map(row=><div className="analytics-environment-item" key={row.value??'not-recorded'}><button type="button" className="analytics-environment-row" disabled={busy} onClick={()=>filter(row)} aria-label={`Filter ${environmentLabels[field]}: ${environmentValue(field,row.value)}`}><span>{environmentValue(field,row.value)}</span><strong>{fmtNum(measured?row.visitors:row.pageViews)}</strong></button><meter aria-hidden="true" min={0} max={max} value={measured?row.visitors??0:row.pageViews}/></div>):<p className="dim">No recorded pageviews match this range and these filters.</p>}
+      </div>
+      <p className="hint">Environment recorded for {fmtNum(environment.coverage.recordedPageViews)} of {fmtNum(environment.coverage.pageViews)} retained pageviews. {fmtNum(environment.coverage.notRecordedPageViews)} not recorded.</p>
+      <button type="button" className="btn ghost analytics-environment-more" disabled={busy||!rows.length} onClick={()=>{setSearch('');setNotice('');setOpen(true);}}>More <span className="sr-only">{environmentLabels[field]} details</span></button>
+      <details className="analytics-details"><summary>How environment is recorded</summary><p>Browser and OS families come from a bounded request User-Agent. Device uses that family and, when screen collection is enabled, the observed screen width. These are estimates; spoofed or reduced browser information can change the result. Raw User-Agent, separate version fields and device models are not stored.</p><p>Unknown means classification was attempted but unrecognized. Not recorded means historical or API observations lack this evidence.{environment.coverage.firstRecordedAt?` First environment observation in this filtered range: ${fmtUtc(environment.coverage.firstRecordedAt)}.`:''} Counts cover stored observations, not all website visits.</p><p>Bars compare category counts with the largest category shown. Bounce and duration in More use only pageviews with a visitor estimate and the existing visit method.</p></details>
+    </>}
+    <dialog ref={dialog} className="analytics-environment-dialog" aria-labelledby={`${uid}-dialog-heading`} onKeyDownCapture={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();event.currentTarget.close();}}} onClose={()=>setOpen(false)}>
+      <div className="row between analytics-environment-dialog-heading"><h2 id={`${uid}-dialog-heading`}>Environment details</h2><button type="button" className="btn" autoFocus onClick={()=>dialog.current?.close()}>Close details</button></div>
+      <p className="hint">{data.range.from} to {data.range.to} (UTC) · {data.coverage.status==='complete'?'Retained date range':`${data.coverage.status} retained date range`}</p>{tabs('details')}
+      <div className="analytics-environment-tools"><div><label htmlFor={`${uid}-search`}>Find a category</label><input id={`${uid}-search`} type="search" maxLength={100} value={search} onChange={e=>{setSearch(e.target.value);setNotice('');}}/></div><button type="button" className="btn" disabled={busy||!visible.length} onClick={download}>Download CSV</button></div>
+      <p className="hint">Showing {visible.length} of {rows.length} stored categories. CSV uses these same rows and this snapshot.</p>
+      <div id={`${uid}-details`} className="table-wrap" tabIndex={0} role="tabpanel" aria-labelledby={`${uid}-details-${field}`}><table><thead><tr><th scope="col">{environmentLabels[field]}</th>{['Estimated visitors','Visits','Recorded pageviews','Pageviews with visitor estimate','Bounce rate','Average observed visit'].map(label=><th scope="col" className="analytics-num" key={label}>{label}</th>)}</tr></thead><tbody>{visible.map(row=><tr key={row.value??'not-recorded'}><th scope="row"><button className="analytics-environment-label" type="button" disabled={busy} onClick={()=>filter(row)} aria-label={`Filter ${environmentLabels[field]}: ${environmentValue(field,row.value)}`}>{environmentValue(field,row.value)}</button></th><td className="analytics-num">{fmtNum(row.visitors)}</td><td className="analytics-num">{fmtNum(row.visits)}</td><td className="analytics-num">{fmtNum(row.pageViews)}</td><td className="analytics-num">{fmtNum(row.identifiedPageViews)}</td><td className="analytics-num">{row.bounceRate===null?'Unavailable':`${row.bounceRate.toFixed(1)}%`}</td><td className="analytics-num">{row.averageVisitSeconds===null?'Unavailable':`${row.averageVisitSeconds.toFixed(1)} s`}</td></tr>)}</tbody></table>{!visible.length&&<p className="dim">No categories match this search. Clear it to see the stored categories.</p>}</div>
+      {notice&&<p className="hint" role="status">{notice}</p>}<p className="hint">Scroll the table horizontally to see all metrics. Unknown means classification was attempted; Not recorded means the observation lacks this evidence.</p><p className="hint">Visitor estimates and visits exclude pageviews without an estimate. Estimates may overlap between categories and are not unique people.</p>
+    </dialog>
+  </section>;
+}
 
 function DailyChart({ daily }: { daily: Daily[] }) {
   if (daily.length === 0) return <p className="dim">No daily breakdown available for this range.</p>;
@@ -137,15 +223,22 @@ function DailyChart({ daily }: { daily: Daily[] }) {
 export function AnalyticsPanel(props: AnalyticsPanelProps) {
   return <AnalyticsInner key={`${props.userId}:${props.projectId}`} {...props} />;
 }
-function AnalyticsInner({ projectId, userId, onUnauthorized }: AnalyticsPanelProps) {
+function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate }: AnalyticsPanelProps) {
   const uid = useId();
-  const [view, setView] = useState<View>(() => fresh(projectId));
-  // Synchronous reset on project switch: never render another project's data.
-  if (view.key !== projectId) setView(fresh(projectId));
+  const [localIntent,setLocalIntent]=useState<AnalyticsNavigation>({});
+  const [environmentField,setEnvironmentField]=useState<EnvironmentField>('browser');
+  const intent=search?analyticsNavigation(search):localIntent, queryKey=JSON.stringify(intent);
+  const filters:EnvironmentFilters={};
+  for(const field of environmentFields){const value=intent[analyticsNavigationNames[field]];if(value!==undefined)filters[field]=value;}
+  const filterKey=JSON.stringify(filters), invalid=Boolean(intent.analyticsInvalid);
+  const [view, setView] = useState<View>(() => fresh(projectId,intent));
+  // A changed URL or project must never display the previous population.
+  if (view.key !== projectId || view.queryKey !== queryKey) setView(fresh(projectId,intent));
 
   const reqRef = useRef(0);
   const projectRef = useRef(projectId);
   projectRef.current = projectId;
+  const queryRef=useRef(queryKey);queryRef.current=queryKey;
   const unauthRef = useRef(onUnauthorized);
   unauthRef.current = onUnauthorized;
 
@@ -154,17 +247,23 @@ function AnalyticsInner({ projectId, userId, onUnauthorized }: AnalyticsPanelPro
   useEffect(() => {
     const id = ++reqRef.current;
     const ctrl = new AbortController();
+    if(invalid)return ()=>ctrl.abort();
+    const params=new URLSearchParams({from,to,...filters});
     api<Analytics>(
-      `/api/projects/${encodeURIComponent(projectId)}/analytics?from=${from}&to=${to}`,
+      `/api/projects/${encodeURIComponent(projectId)}/analytics?${params}`,
       { signal: ctrl.signal },
     ).then(
       (data) => {
-        if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId) return;
+        if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId || queryRef.current!==queryKey) return;
+        if(!validReport(data,{from,to},filters)){
+          setView(v=>v.key===projectId&&v.queryKey===queryKey?{...v,data:null,loading:false,error:'The analytics response did not match the requested range, filters or measurement evidence. Retry to read a fresh snapshot.'}:v);return;
+        }
         setView((v) => (v.key === projectId ? { ...v, data, loading: false, error: null, denied: false } : v));
       },
       (err: unknown) => {
-        if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId) return;
+        if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId || queryRef.current!==queryKey) return;
         if (err instanceof ApiError && err.status === 401) {
+          setView(v=>({...v,data:null,loading:false,denied:true}));
           unauthRef.current();
           return;
         }
@@ -172,12 +271,17 @@ function AnalyticsInner({ projectId, userId, onUnauthorized }: AnalyticsPanelPro
       },
     );
     return () => ctrl.abort();
-  }, [projectId, from, to, nonce]);
+  }, [projectId, from, to, nonce, filterKey, queryKey, invalid]);
 
-  const applyRange = (range: Range) =>
-    setView((v) => ({ ...v, range, draft: range, draftErr: null, data: null, loading: true, error: null, nonce: v.nonce + 1 }));
+  const navigate=(value:AnalyticsNavigation)=>onNavigate?onNavigate(value):setLocalIntent(value);
+  const applyRange = (range: Range) => {
+    const next={...intent,analyticsFrom:range.from,analyticsTo:range.to};
+    if(JSON.stringify(next)===queryKey)setView(v=>({...v,draft:range,draftErr:null,data:null,loading:true,error:null,nonce:v.nonce+1}));
+    else navigate(next);
+  };
+  const applyFilter=(field:EnvironmentField,value:string|null)=>navigate({...intent,analyticsFrom:view.range.from,analyticsTo:view.range.to,[analyticsNavigationNames[field]]:value??'not-recorded'});
 
-  const retry = () => setView((v) => ({ ...v, loading: true, error: null, nonce: v.nonce + 1 }));
+  const retry = () => setView((v) => ({ ...v, data:null, loading: true, error: null, nonce: v.nonce + 1 }));
 
   const applyDraft = (e: FormEvent) => {
     e.preventDefault();
@@ -195,20 +299,21 @@ function AnalyticsInner({ projectId, userId, onUnauthorized }: AnalyticsPanelPro
     applyRange({ from: view.draft.from, to: view.draft.to });
   };
 
-  const busy = view.loading;
-  const data = view.data;
+  const busy = !invalid&&(view.loading||view.queryKey!==queryKey);
+  const data = invalid||view.queryKey!==queryKey?null:view.data;
   const today = todayUtc();
   const hasData = data !== null && (data.totals.pageViews ?? 0) + (data.totals.customEvents ?? 0) > 0;
-  const annotations = useAnnotations({projectId,userId,range:view.denied?null:{from,to,timeZone:'UTC'},onUnauthorized,onAccessLost:()=>{
+  const annotations = useAnnotations({projectId,userId,range:invalid||view.denied?null:{from,to,timeZone:'UTC'},onUnauthorized,onAccessLost:()=>{
     reqRef.current++;
     setView(v=>({...v,data:null,loading:false,denied:true,error:'Project access could not be verified. Retry to check current access.'}));
   }});
 
   return (
     <div className="analytics" aria-busy={busy}>
+      {invalid&&<div className="alert" role="alert"><p>This analytics link has invalid or ambiguous dates or environment filters. Reset the view to choose a valid range.</p><button type="button" className="btn" onClick={()=>navigate({})}>Reset analytics view</button></div>}
       <section className="card analytics-toolbar">
         <form onSubmit={applyDraft}>
-          <fieldset className="analytics-fieldset" disabled={busy}>
+          <fieldset className="analytics-fieldset" disabled={busy||invalid}>
             <legend className="sr-only">Time range (UTC)</legend>
             <div className="analytics-presets">
               {PRESETS.map((p) => {
@@ -261,6 +366,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized }: AnalyticsPanelPro
           )}
         </form>
       </section>
+      {!invalid&&Object.keys(filters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied environment filters"><strong>Applied to all analytics</strong><div className="row">{environmentFields.filter(field=>filters[field]!==undefined).map(field=><button type="button" className="btn" key={field} disabled={busy} aria-label={`Remove ${environmentLabels[field]} filter: ${environmentValue(field,filters[field]!)}`} onClick={()=>{const next={...intent};delete next[analyticsNavigationNames[field]];navigate(next);}}>{environmentLabels[field]}: {environmentValue(field,filters[field]!)} <span aria-hidden="true">×</span></button>)}<button type="button" className="btn ghost" disabled={busy} onClick={()=>navigate({...(intent.analyticsFrom?{analyticsFrom:intent.analyticsFrom,analyticsTo:intent.analyticsTo}:{})})}>Clear environment filters</button></div><p className="hint">Overview, daily activity, top pages, custom events and environment use these same required filters.</p></section>}
 
       {view.error && (
         <div className="alert" role="alert">
@@ -387,7 +493,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized }: AnalyticsPanelPro
               {data.daily.map(d=><div className="annotation-date" key={d.date}><span className="hint">{d.date}</span>{annotations.dayButton(d.date)}</div>)}
             </div>
             </>}
-            {annotations.panel}
+            {!invalid&&annotations.panel}
           </section>
       {data && (
         <>
@@ -448,6 +554,8 @@ function AnalyticsInner({ projectId, userId, onUnauthorized }: AnalyticsPanelPro
               </div>
             )}
           </section>
+
+          <EnvironmentCard data={data} busy={busy} field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/>
         </>
       )}
     </div>

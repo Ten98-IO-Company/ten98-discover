@@ -4,7 +4,7 @@ import {normalizeProperties,type PropertyPrimitive} from './analytics-input.ts';
 import {cleanText} from './context-input.ts';
 import {InputError} from './validation.ts';
 
-export const predicateFields=['eventName','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent'] as const;
+export const predicateFields=['eventName','path','origin','referrer','language','browser','os','device','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent'] as const;
 type Field=typeof predicateFields[number];
 type Presence='exists'|'missing';
 type Equality='eq'|'neq';

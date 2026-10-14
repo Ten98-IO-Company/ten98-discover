@@ -202,6 +202,40 @@
   overflow-wrap: anywhere;
 }
 
+/* --- Environment: the overview and expanded table share one snapshot. --- */
+.analytics-environment, .analytics-environment-filters { min-width: 0; }
+.analytics-environment-filters .row { margin-top: var(--space-3); flex-wrap: wrap; }
+.analytics-environment-filters .btn { min-height: var(--control-touch); white-space: normal; text-align: start; }
+.analytics-environment-tabs { display: flex; flex-wrap: wrap; gap: var(--space-1); border-bottom: 1px solid var(--line); margin-block: var(--space-3); }
+.analytics-environment-tabs .btn { border: 0; border-radius: 0; background: transparent; min-height: var(--control-touch); }
+.analytics-environment-tabs .active { color: var(--blue); background: var(--blue-tint); box-shadow: inset 0 -2px var(--blue); }
+.analytics-environment-list-heading, .analytics-environment-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(6rem,auto); gap: var(--space-3); align-items: center; }
+.analytics-environment-list-heading { padding: var(--space-2); font-size: var(--text-xs); color: var(--muted); }
+.analytics-environment-list-heading > :last-child, .analytics-environment-row > :last-child { text-align: end; font-variant-numeric: tabular-nums; }
+.analytics-environment-item { margin-block: var(--space-1); }
+.analytics-environment-row { width: 100%; min-height: var(--control-touch); padding: var(--space-2); background: transparent; color: var(--color-text); border: 0; border-radius: var(--radius-sm); text-align: start; cursor: pointer; font: inherit; font-size: var(--text-sm); }
+.analytics-environment-row > span { overflow-wrap: anywhere; }
+.analytics-environment-row:hover, .analytics-environment-label:hover { background: var(--blue-tint); color: var(--blue); }
+.analytics-environment-row:disabled, .analytics-environment-label:disabled { cursor: default; color: var(--color-disabled-text); }
+.analytics-environment-item meter { display: block; inline-size: 100%; block-size: 4px; border: 0; border-radius: var(--radius-sm); background: var(--color-surface-subtle); }
+.analytics-environment-item meter::-webkit-meter-bar { background: var(--color-surface-subtle); border: 0; }
+.analytics-environment-item meter::-webkit-meter-optimum-value { background: var(--color-chart-1); }
+.analytics-environment-item meter::-moz-meter-bar { background: var(--color-chart-1); }
+.analytics-environment-more { min-height: var(--control-touch); width: 100%; }
+.analytics-environment-dialog { color: var(--color-text); background: var(--color-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-dialog); inline-size: min(72rem,calc(100vw - 2rem)); max-inline-size: calc(100vw - 2rem); max-block-size: calc(100dvh - 2rem); padding: var(--space-6); overflow: auto; }
+.analytics-environment-dialog::backdrop { background: var(--color-overlay); }
+.analytics-environment-dialog .btn, .analytics-environment-dialog input { min-height: var(--control-touch); }
+.analytics-environment-dialog-heading { flex-wrap: wrap; gap: var(--space-3); }
+.analytics-environment-dialog h2 { margin: 0; }
+.analytics-environment-tools { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3); margin-block: var(--space-4); }
+.analytics-environment-tools > div { flex: 1 1 15rem; min-width: 0; }
+.analytics-environment-tools label { display: block; margin-bottom: var(--space-1); }
+.analytics-environment-tools input { width: 100%; min-width: 0; }
+.analytics-environment-dialog table { min-inline-size: 58rem; }
+.analytics-environment-dialog .table-wrap { max-block-size: 55dvh; overflow: auto; }
+.analytics-environment-dialog th, .analytics-environment-dialog td { vertical-align: middle; }
+.analytics-environment-label { min-height: var(--control-touch); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--blue); font: inherit; text-align: start; padding: var(--space-2); cursor: pointer; overflow-wrap: anywhere; }
+
 /* --- Small screens --- */
 
 @media (max-width:1200px) {
@@ -209,6 +243,8 @@
   .analytics-stat:nth-child(3n) { border-right: 0; }
 }
 @media (max-width: 560px) {
+  .analytics-environment-dialog { padding: var(--space-3); max-block-size: calc(100dvh - 1rem); inline-size: calc(100vw - 1rem); max-inline-size: calc(100vw - 1rem); }
+  .analytics-environment-dialog-heading .btn { width: 100%; }
   .analytics { grid-template-columns: minmax(0,1fr); gap: 16px; }
   .analytics-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .analytics-stat:nth-child(3n) { border-right: 1px solid var(--line); }

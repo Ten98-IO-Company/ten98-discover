@@ -1,9 +1,10 @@
 import {useEffect,useState} from 'react';
 import type {AdvancedPredicates} from '../server/advanced-predicate-input';
+import {environmentCatalog,environmentFields,isEnvironmentFilter,type EnvironmentField} from '../lib/analytics-environment';
 type SessionSelection={method:'current-retained-session-properties-v1';asOf:string;retainedFrom:string;evidence:{lost:boolean;lostAt:string|null;expiredValuesPresent:boolean};candidates:{identifiedEvents:number|null;unidentifiedEvents:number|null};selection:{status:'available'|'unavailable';countsAreLowerBounds:boolean;reason:'missing_evidence_lost'|'identity_unavailable'|'candidate_scope_unavailable'|null};limitation:string};
 const KINDS=[['all','All events'],['pageviews','Page views'],['custom','Custom events']] as const;
 
-const FILTERS=[['eventName','Event name'],['path','Path'],['origin','Origin'],['referrer','Referrer'],['language','Language'],['campaignSource','Campaign source'],['campaignMedium','Campaign medium'],['campaignName','Campaign name'],['campaignTerm','Campaign term'],['campaignContent','Campaign content']] as const;
+const FILTERS=[['eventName','Event name'],['path','Path'],['origin','Origin'],['referrer','Referrer'],['language','Language'],['browser','Browser'],['os','OS'],['device','Device'],['campaignSource','Campaign source'],['campaignMedium','Campaign medium'],['campaignName','Campaign name'],['campaignTerm','Campaign term'],['campaignContent','Campaign content']] as const;
 const PROP_TYPES=['missing','string','number','boolean','null','date','array'] as const;
 const TIMEZONES=['UTC','America/New_York','America/Chicago','America/Los_Angeles','Europe/London','Europe/Berlin','Asia/Dubai','Asia/Tokyo','Australia/Sydney'];
 
@@ -42,7 +43,7 @@ function buildParams(d:Draft):{qs:string}|{error:string;advanced?:AdvancedIssue}
   p.set('from',d.from);p.set('to',d.to);p.set('timeZone',d.timeZone.trim());
   p.set('kind',d.kind);p.set('groupBy',d.groupBy);
   if(d.groupBy==='property')p.set('groupProperty',d.groupProperty);
-  for(const [k] of FILTERS){const f=d.filters[k];if(f.on)p.set(k,f.value);}
+  for(const [k,label] of FILTERS){const f=d.filters[k];if(f.on){if(environmentFields.includes(k as EnvironmentField)&&!isEnvironmentFilter(k as EnvironmentField,f.value))return {error:`Choose a supported ${label} category.`};p.set(k,f.value);}}
   if(d.prop.on){
     const key=d.prop.key;
     if(!key)return{error:'Enter a property key for the property filter, or turn it off.'};
@@ -83,6 +84,7 @@ function savedPredicates(query:unknown):Pick<Draft,'kind'|'filters'|'prop'|'adva
   for(const [key,value] of p)if(!allowed.has(key)||p.getAll(key).length!==1||!clean(value,key==='predicates'?20000:['path','origin'].includes(key)?2048:key==='propertyValue'?8192:320))return null;
   const kind=p.get('kind');if(!KINDS.some(([key])=>key===kind))return null;
   const filters=Object.fromEntries(FILTERS.map(([key])=>[key,{on:p.has(key),value:p.get(key)??''}]));
+  for(const field of environmentFields)if(p.has(field)&&!isEnvironmentFilter(field,p.get(field)))return null;
   let prop=initialDraft().prop;
   if(['propertyKey','propertyType','propertyValue'].some(key=>p.has(key))){
     const key=p.get('propertyKey'),type=p.get('propertyType'),value=p.get('propertyValue');
@@ -241,9 +243,10 @@ return (<details>
                 <input id={`${uid}-${k}-on`} type="checkbox" checked={draft.filters[k].on} onChange={e=>patchFilter(k,{on:e.target.checked})}/>
                 <label htmlFor={`${uid}-${k}-on`}>Enable {l}</label>
                 <label htmlFor={`${uid}-${k}-v`}>{l} equals</label>
-                <input id={`${uid}-${k}-v`} type="text" disabled={!draft.filters[k].on} value={draft.filters[k].value} onChange={e=>patchFilter(k,{value:e.target.value})}/>
+                {environmentFields.includes(k as EnvironmentField)?<select id={`${uid}-${k}-v`} disabled={!draft.filters[k].on} value={draft.filters[k].value} onChange={e=>patchFilter(k,{value:e.target.value})}><option value="">Choose a category</option>{environmentCatalog[k as EnvironmentField].map(value=><option key={value} value={value}>{value==='unknown'?'Unknown':value}</option>)}<option value="not-recorded">Not recorded</option></select>:<input id={`${uid}-${k}-v`} type="text" disabled={!draft.filters[k].on} value={draft.filters[k].value} onChange={e=>patchFilter(k,{value:e.target.value})}/>}
               </div>
             ))}
+            <p className="hint">For Browser, OS and Device, Unknown means classification was attempted; Not recorded means the event lacks environment evidence.</p>
             <div className="row">
               <input id={`${uid}-pf-on`} type="checkbox" checked={draft.prop.on} onChange={e=>patchProp({on:e.target.checked})}/>
               <label htmlFor={`${uid}-pf-on`}>Enable property filter</label>
