@@ -17,6 +17,10 @@ const locations=[
   {location_code:2826,location_name:'United Kingdom',location_code_parent:null,country_iso_code:'GB',location_type:'Country'},
   {location_code:1023191,location_name:'New York, United States',location_code_parent:2840,country_iso_code:'US',location_type:'City'},
   {location_code:1006886,location_name:'London, United Kingdom',location_code_parent:2826,country_iso_code:'GB',location_type:'City'},
+  {location_code:2060,location_name:'Bermuda',location_code_parent:null,country_iso_code:'BM',location_type:'Region'},
+  {location_code:3001,location_name:'Bermuda local region',location_code_parent:3999,country_iso_code:'BM',location_type:'Region'},
+  {location_code:20498,location_name:'Iran province',location_code_parent:2364,country_iso_code:'IR',location_type:'Province'},
+  {location_code:3002,location_name:'Belarus residual',location_code_parent:2112,country_iso_code:'BY',location_type:'City'},
 ];
 
 export async function runRankTrackingChecks(){
@@ -33,7 +37,7 @@ export async function runRankTrackingChecks(){
   const send:typeof fetch=async(address,options)=>{
     assert.equal(options?.method,'GET','Management may only request the free catalog.');assert.equal(options?.redirect,'error');assert.equal(options?.credentials,'omit');assert.ok(options?.signal);
     assert.ok(address===rankSerpEndpoints.locations||address===rankSerpEndpoints.languages,'No account or paid endpoint belongs to management.');freeCalls++;
-    const result=address===rankSerpEndpoints.locations?locations:[{language_code:'en',language_name:'English'}];
+    const result=address===rankSerpEndpoints.locations?locations:[{language_code:'en',language_name:'English'},{language_code:'es-419',language_name:'Spanish (Latin America)'},{language_code:'sr-Latn',language_name:'Serbian (Latin)'}];
     return Response.json({status_code:20000,cost:0,tasks_count:1,tasks_error:0,tasks:[{status_code:20000,cost:0,path:new URL(String(address)).pathname.slice(1).split('/'),result_count:result.length,result}]});
   };
   async function fixture():Promise<Fixture>{
@@ -64,6 +68,7 @@ export async function runRankTrackingChecks(){
     // Run before a successful catalog is cached: the free fetch must not carry stale authorization across its await.
     await heldCatalog(f,()=>role(f,editor,'viewer'),404);await role(f,editor,'editor');
     await heldCatalog(revoked,()=>revokeProvider(revoked.workspace,owner,revoked.connection),404);
+    await heldCatalog(f,()=>saveProvider(f.workspace,owner,{name:'Rotated synthetic catalog',credentials:{login:'rank@example.com',password:'replacement-never-live'},monthlyLimitUsd:'0'},f.connection),409);
     await assert.rejects(getRankCatalog(f.project,viewer,{connectionId:f.connection},send),failed(404));
     await assert.rejects(getRankCatalog(f.project,owner,{connectionId:foreign.connection},send),failed(404));
     console.log('PASS free catalog awaits recheck live role, connection revocation and workspace binding');
@@ -155,6 +160,17 @@ export async function runRankTrackingChecks(){
     const write=await handleApi(new Request(endpoint+'/'+id+'/update',{method:'POST',headers:{cookie,origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify(apiBody)}));assert.equal(write.status,200);assert.equal((await write.json()).tracker.name,apiBody.name);
     const bulkBody=JSON.stringify({requestId:randomUUID(),revision:(await current(f,local.tracker.id)).tracker.authoredRevision,keywords:Array.from({length:100},(_,i)=>'literal '+i+' '+('x'.repeat(95)))});assert.ok(Buffer.byteLength(bulkBody)>8192);
     const bulk=await handleApi(new Request(endpoint+'/'+local.tracker.id+'/keywords/add',{method:'POST',headers:{cookie,origin:config.appUrl,'content-type':'application/json'},body:bulkBody}));assert.equal(bulk.status,200);assert.equal((await bulk.json()).keywords.length,100);
+    const compatible=await fixture(),metadata=await getRankCatalog(compatible.project,editor,{connectionId:compatible.connection},send);
+    assert.equal(metadata.catalog.countries.find(c=>c.code===2060)?.type,'Region');
+    assert.deepEqual(metadata.catalog.coverage,{grouping:'country_iso_code',receivedRows:8,selectableRows:6,missingParentRows:3,unavailableGroups:[{countryIso:'BY',rows:1,reason:'provider_unsupported'},{countryIso:'IR',rows:1,reason:'missing_root'}]});
+    const regionPage=await searchRankLocations(compatible.project,editor,new URLSearchParams({connectionId:compatible.connection,countryCode:'2060'}),send);
+    assert.deepEqual(regionPage.rows.map(row=>row.code),[3001]);assert.deepEqual(regionPage.coverage,metadata.catalog.coverage);
+    for(const [locationCode,languageCode]of [[2060,'es-419'],[3001,'sr-Latn']] as const){
+      const saved=await createRankTracker(compatible.project,editor,creation(compatible,{countryCode:2060,locationCode,languageCode}),send);assert.ok(saved);
+      assert.equal(saved.tracker.countryCode,2060);assert.equal(saved.tracker.countryIso,'BM');assert.equal(saved.tracker.locationCode,locationCode);assert.equal(saved.tracker.locationType,'Region');assert.equal(saved.tracker.languageCode,languageCode);
+    }
+    for(const countryCode of [2364,2112])await assert.rejects(createRankTracker(compatible.project,editor,creation(compatible,{countryCode,locationCode:countryCode===2364?20498:3002}),send),failed(400));
+    console.log('PASS Region roots and descendants retain exact types, ISO groups, language subtags and unavailable coverage across catalog/search/create');
     assert.equal(unexpected,0);assert.equal((await pool.query('SELECT count(*)::int AS count FROM provider_request')).rows[0].count,0);
     console.log('PASS cookie-only API, Origin enforcement, secret-free DTOs and real mutation route without paid/provider traffic');
   }finally{try{await stopJobs();}finally{globalThis.fetch=originalFetch;}}

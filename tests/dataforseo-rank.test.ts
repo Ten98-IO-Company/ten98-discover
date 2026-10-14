@@ -16,7 +16,7 @@ const locals=[{location_code:21132,location_name:'Alaska,United States',location
 const languages=[{language_code:'en',language_name:'English'},{language_code:'zh-TW',language_name:'Chinese (Traditional)'}];
 function catalog():RankCatalog{
   const locations=parseRankLocations(envelope(rankSerpEndpoints.locations,[...locals,...countries]));
-  return {locations,countries:locations.filter(row=>row.type==='Country'),languages:parseRankLanguages(envelope(rankSerpEndpoints.languages,languages))};
+  return {...locations,languages:parseRankLanguages(envelope(rankSerpEndpoints.languages,languages))};
 }
 const safeError=(error:unknown)=>error instanceof Error&&!error.message.includes(credentials.login)&&!error.message.includes(credentials.password)&&!error.message.includes('Basic ')&&!error.cause;
 
@@ -92,7 +92,7 @@ test('complete catalog keeps every country, resolves unordered parents, and page
 
 test('catalog corruption or truncation fails wholly rather than trusting an incomplete location hierarchy',()=>{
   const valid=[...countries,...locals];
-  for(const rows of [[],[...valid,countries[0]],valid.filter(row=>row.location_code!==21132),[countries[0],{...locals[0],location_code_parent:100},{...locals[1],location_code_parent:21132}],[...countries,{...locals[0],location_code_parent:2826}],[{...countries[0],country_iso_code:'US\n'}],[{...countries[0],location_code:2147483648}],[{...countries[0],location_name:'bad\0'}],[{...countries[0],location_name:'\ud800'}],[...valid,{...countries[0],location_code:999}]])assert.throws(()=>parseRankLocations(envelope(rankSerpEndpoints.locations,rows)));
+  for(const rows of [[],[...valid,countries[0]],[countries[0],{...locals[0],location_code_parent:100},{...locals[1],location_code_parent:21132}],[...countries,{...locals[0],location_code_parent:2826}],[{...countries[0],country_iso_code:'US\n'}],[{...countries[0],location_code:2147483648}],[{...countries[0],location_name:'bad\0'}],[{...countries[0],location_name:'\ud800'}],[...valid,{...countries[0],location_code:999}]])assert.throws(()=>parseRankLocations(envelope(rankSerpEndpoints.locations,rows)));
   for(const change of ['count','charged','path','tasks'] as const){const value=envelope(rankSerpEndpoints.locations,valid);if(change==='count')value.body.tasks[0].result_count++;if(change==='charged')value.body.cost=0.000001;if(change==='path')value.body.tasks[0].path=['v3','serp','bing','locations'];if(change==='tasks')value.body.tasks_count=2;assert.throws(()=>parseRankLocations(value));}
   const joined=envelope(rankSerpEndpoints.locations,valid);joined.body.tasks[0].path=['v3/serp','google','locations'];assert.throws(()=>parseRankLocations(joined));
   for(const rows of [[],[...languages,languages[0]],[{language_code:'en\n',language_name:'English'}],[{language_code:'en',language_name:'\ud800'}]])assert.throws(()=>parseRankLanguages(envelope(rankSerpEndpoints.languages,rows)));
@@ -100,7 +100,24 @@ test('catalog corruption or truncation fails wholly rather than trusting an inco
 
 test('deep catalog parents resolve iteratively and deterministically without recursive stack growth',()=>{
   const deep:unknown[]=[countries[0]];for(let n=0;n<10_000;n++)deep.push({location_code:100_000+n,location_name:'Location '+n,location_code_parent:n===9999?2840:100_001+n,country_iso_code:'US',location_type:'City'});
-  const rows=parseRankLocations(envelope(rankSerpEndpoints.locations,deep));assert.equal(rows.length,10_001);assert.ok(rows.every(row=>row.countryCode===2840));
+  const {locations:rows}=parseRankLocations(envelope(rankSerpEndpoints.locations,deep));assert.equal(rows.length,10_001);assert.ok(rows.every(row=>row.countryCode===2840));
+});
+
+test('ISO grouping accepts missing ancestry with an actual Country or Region root and accounts for unavailable groups',()=>{
+  const missing=parseRankLocations(envelope(rankSerpEndpoints.locations,[...countries,...locals].filter(row=>row.location_code!==21132)));
+  assert.equal(missing.coverage.missingParentRows,1);assert.equal(missing.locations.find(row=>row.code===100)?.countryCode,2840);assert.equal(missing.locations.find(row=>row.code===100)?.parentCode,21132);
+  const region={location_code:2060,location_name:'Bermuda',location_code_parent:null,country_iso_code:'BM',location_type:'Region'};
+  const child={...region,location_code:3001,location_name:'Local region',location_code_parent:2060};
+  const unavailable=[{...region,location_code:20498,location_code_parent:2364,country_iso_code:'IR',location_type:'Province'},{...region,location_code:3002,location_code_parent:2112,country_iso_code:'BY'},{...region,location_code:3003,country_iso_code:'ZZ',location_type:'Unknown'}];
+  const result=parseRankLocations(envelope(rankSerpEndpoints.locations,[...countries,region,child,...unavailable]));
+  assert.deepEqual(result.coverage,{grouping:'country_iso_code',receivedRows:7,selectableRows:4,missingParentRows:2,unavailableGroups:[{countryIso:'BY',rows:1,reason:'provider_unsupported'},{countryIso:'IR',rows:1,reason:'missing_root'},{countryIso:'ZZ',rows:1,reason:'unsupported_root_type'}]});
+  const c={...result,languages:[{code:'es-419',name:'Spanish (Latin America)'}]};
+  assert.equal(validateRankCatalogSelection(c,{countryCode:2060,locationCode:2060,languageCode:'es-419'}).location.type,'Region');
+  assert.deepEqual(pageRankLocations(c,{kind:'local',countryCode:2060}).rows.map(r=>r.code),[3001]);
+  for(const locationCode of [20498,2364,3002,3003])assert.throws(()=>validateRankCatalogSelection(c,{countryCode:2060,locationCode,languageCode:'es-419'}));
+  const none=parseRankLocations(envelope(rankSerpEndpoints.locations,unavailable));assert.deepEqual(none.locations,[]);assert.deepEqual(none.countries,[]);assert.equal(none.coverage.selectableRows,0);
+  for(const rows of [[region,{...region,location_code:3004}],[{...region,location_code_parent:2060}],[region,{...child,country_iso_code:'US'}],[...unavailable,{...region,location_code:3010,location_code_parent:3011,country_iso_code:'BY'},{...region,location_code:3011,location_code_parent:3010,country_iso_code:'BY'}]])assert.throws(()=>parseRankLocations(envelope(rankSerpEndpoints.locations,rows)));
+  assert.deepEqual(parseRankLanguages(envelope(rankSerpEndpoints.languages,[{language_code:'es-419',language_name:'Spanish'},{language_code:'sr-Latn',language_name:'Serbian'}])).map(r=>r.code).sort(),['es-419','sr-Latn']);
 });
 
 test('rank account uses the shared version2 identity and returns no login or wallet metadata',()=>{

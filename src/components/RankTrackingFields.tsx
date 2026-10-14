@@ -17,6 +17,7 @@ export type RankTrackingFieldsValue = {
 export type RankLocationOption = {
   code: string;
   label: string;
+  countryIso?: string;
 };
 
 export type RankLocationOptions = {
@@ -131,7 +132,7 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
         </div>
 
         <div className="field">
-          <label htmlFor={id('countryLocationCode')}>Country</label>
+          <label htmlFor={id('countryLocationCode')}>Country or territory</label>
           <select
             id={id('countryLocationCode')}
             style={SELECT_STYLE}
@@ -148,7 +149,7 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
               errors.countryLocationCode && errorId('countryLocationCode'),
             )}
           >
-            <option value="">Choose a country</option>
+            <option value="">Choose a country or territory</option>
             {countries.map((country) => (
               <option key={country.code} value={country.code}>
                 {country.label}
@@ -175,13 +176,13 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
             aria-invalid={errors.targeting ? true : undefined}
             aria-describedby={describedBy(hintId('targeting'), errors.targeting && errorId('targeting'))}
           >
-            <option value="national">National</option>
+            <option value="national">Whole country or territory</option>
             <option value="local">City or region</option>
           </select>
           <p className="hint" id={hintId('targeting')}>
             {isLocal
-              ? 'Choose a provider-supported city or region in that country.'
-              : 'Search from the selected country.'}
+              ? 'Choose a provider-supported city or region in that country or territory.'
+              : 'Search from the selected country or territory.'}
           </p>
           {errors.targeting ? (
             <p className="alert" id={errorId('targeting')}>
@@ -250,7 +251,7 @@ export function RankTrackingFields(props: RankTrackingFieldsProps): React.JSX.El
                   {localStatus}
                 </div>
               ) : (
-                <p className="hint" id={hintId('localLocationCode')}>Choose a country first.</p>
+                <p className="hint" id={hintId('localLocationCode')}>Choose a country or territory first.</p>
               )}
               {localLocations.hasMore ? (
                 <button

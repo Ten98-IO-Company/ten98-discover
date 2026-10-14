@@ -20,7 +20,7 @@ export type RankTrackingViewProps = {
   prefix: string; role: RankRole | null; mode: 'list' | 'new' | 'detail'; locked: boolean; reading: boolean;
   pending: boolean; conflict: boolean; error: string; notice: string; loaded: boolean; filter: RankFilter;
   trackers: RankTracker[]; nextCursor: string | null; connections: RankConnection[]; vaultConfigured: boolean;
-  detail: RankDetail | null; create: RankCreate; catalogReady: boolean; countries: readonly RankLocationOption[];
+  detail: RankDetail | null; create: RankCreate; catalogReady: boolean; catalogNotice: string; countries: readonly RankLocationOption[];
   languages: readonly RankLanguageOption[]; localLocations: RankLocationOptions; fieldErrors: RankTrackingFieldErrors;
   editing: boolean; edit: RankEdit; adding: boolean; words: string; matchCase: boolean; selected: string[];
   onRefresh: () => void; onFilter: (v: RankFilter) => void; onMore: () => void; onNew: () => void;
@@ -82,13 +82,15 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
               : <p className="hint">Ask a workspace owner to configure DataForSEO.</p>)}
             <p><button type="button" className="btn ghost" onClick={p.onCatalog}
               disabled={p.locked || p.reading || p.create.connectionId === '' || !p.vaultConfigured}>Load search options</button></p>
+            {p.catalogNotice && <p className="notice" role="status">{p.catalogNotice}</p>}
+            {p.catalogReady && p.countries.length===0 && <p role="status">No country or territory can be selected from this catalogue.</p>}
             {p.catalogReady && (
               <RankTrackingFields value={p.create.value} onChange={(value) => p.onCreateChange({ ...p.create, value })}
                 countries={p.countries} languages={p.languages} localLocations={p.localLocations} errors={p.fieldErrors}
                 disabled={p.locked} prefix={pre + 'target-'} onLocalQueryChange={p.onLocalQuery}
                 onSearchLocalLocations={p.onSearchLocal} onLoadMoreLocalLocations={p.onMoreLocal} />
             )}
-            <div className="row"><button type="submit" className="btn primary" disabled={busy || !p.catalogReady}>Create tracker</button></div>
+            <div className="row"><button type="submit" className="btn primary" disabled={busy || !p.catalogReady || p.countries.length===0}>Create tracker</button></div>
           </form>
           )}
         </section>

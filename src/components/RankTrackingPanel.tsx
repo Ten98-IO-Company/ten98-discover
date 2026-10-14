@@ -1,3 +1,4 @@
+import type {RankLocationCoverage} from '../server/dataforseo-rank';
 import {useEffect,useId,useRef,useState} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
@@ -15,13 +16,24 @@ type Operation={controller:AbortController;write:boolean};
 type CheckEntry=RankCheckEntry&{generation:number;returnToSchedule?:boolean};
 type ScheduleEntry={quoteId?:string;returnCheck?:CheckEntry};
 type State={role:RankRole|null;mode:'list'|'new'|'detail';loaded:boolean;filter:Filter;trackers:RankTracker[];nextCursor:string|null;connections:RankConnection[];vaultConfigured:boolean;detail:RankDetail|null;
-  create:RankCreate;catalogReady:boolean;countries:RankLocationOption[];languages:RankLanguageOption[];localLocations:RankLocationOptions;localOffset:number|null;appliedQuery:string;fieldErrors:RankTrackingFieldErrors;
+  create:RankCreate;catalogReady:boolean;catalogNotice:string;countries:RankLocationOption[];languages:RankLanguageOption[];localLocations:RankLocationOptions;localOffset:number|null;appliedQuery:string;fieldErrors:RankTrackingFieldErrors;
   editing:boolean;edit:RankEdit;adding:boolean;words:string;matchCase:boolean;selected:string[];dirty:boolean;reading:boolean;writing:boolean;pending:boolean;conflict:boolean;error:string;notice:string;focus:string|null};
 const object=(v:unknown):v is Record<string,any>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const safeText=(v:unknown,max:number,min=1):v is string=>typeof v==='string'&&v.length>=min&&v.length<=max&&!v.includes('\0')&&!/[\uD800-\uDFFF]/u.test(v);
 const str=(v:unknown,max:number,min=1):v is string=>safeText(v,max,min)&&!/[\u0000-\u001f\u007f]/.test(v);
 const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const int=(v:unknown,min:number,max:number)=>Number.isInteger(v)&&Number(v)>=min&&Number(v)<=max;
+const iso=(v:unknown):v is string=>typeof v==='string'&&/^[A-Z]{2}$(?![\s\S])/.test(v);
+function validCoverage(v:unknown):v is RankLocationCoverage{
+  if(!object(v)||v.grouping!=='country_iso_code'||!int(v.receivedRows,1,300000)||!int(v.selectableRows,0,v.receivedRows)||!int(v.missingParentRows,0,v.receivedRows)||!Array.isArray(v.unavailableGroups)||v.unavailableGroups.length>300)return false;
+  let total=v.selectableRows,previous='';
+  for(const g of v.unavailableGroups){if(!object(g)||!iso(g.countryIso)||g.countryIso<=previous||!int(g.rows,1,300000)||!['provider_unsupported','missing_root','unsupported_root_type'].includes(g.reason)||(g.reason==='provider_unsupported')!==['RU','BY'].includes(g.countryIso))return false;previous=g.countryIso;total+=g.rows;}
+  return total===v.receivedRows;
+}
+function coverageNotice(v:RankLocationCoverage){
+  const reasons={provider_unsupported:'provider unsupported',missing_root:'top-level location unavailable',unsupported_root_type:'top-level location type unavailable'};
+  return [v.unavailableGroups.length?`${v.receivedRows-v.selectableRows} locations cannot be selected: ${v.unavailableGroups.map(g=>`${g.countryIso} — ${reasons[g.reason]}`).join('; ')}.`:'',v.missingParentRows?`Locations are grouped by the provider's country code. Some parent-location details are unavailable (${v.missingParentRows} locations).`:''].filter(Boolean).join(' ');
+}
 const date=(v:unknown)=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT/.test(v)&&Number.isFinite(Date.parse(v));
 const nullableDate=(v:unknown)=>v===null||date(v);
 const validRole=(v:unknown):v is RankRole=>['owner','admin','editor','viewer'].includes(v as string);
@@ -37,7 +49,7 @@ const editFor=(tracker:RankTracker):RankEdit=>({name:tracker.name,devices:tracke
 function initial(origin:string):State{
   let domain='';try{domain=new URL(origin).hostname;}catch{/* An invalid parent origin cannot create a target. */}
   return {role:null,mode:'list',loaded:false,filter:'active',trackers:[],nextCursor:null,connections:[],vaultConfigured:false,detail:null,
-    create:{name:domain,connectionId:'',value:{domain,countryLocationCode:'',targeting:'national',localLocationCode:'',languageCode:'',devices:'mobile',depth:10,maxCrawlPages:1}},catalogReady:false,countries:[],languages:[],localLocations:blankLocal(),localOffset:null,appliedQuery:'',fieldErrors:{},
+    create:{name:domain,connectionId:'',value:{domain,countryLocationCode:'',targeting:'national',localLocationCode:'',languageCode:'',devices:'mobile',depth:10,maxCrawlPages:1}},catalogReady:false,catalogNotice:'',countries:[],languages:[],localLocations:blankLocal(),localOffset:null,appliedQuery:'',fieldErrors:{},
     editing:false,edit:{name:'',devices:'mobile',depth:10,maxCrawlPages:1},adding:false,words:'',matchCase:false,selected:[],dirty:false,reading:false,writing:false,pending:false,conflict:false,error:'',notice:'',focus:null};
 }
 
@@ -68,7 +80,7 @@ function RankController(props:Props){
     patch({error:errMsg(error)});
   }
   function role(next:RankRole){
-    patch({role:next});if(next==='viewer'){patch({editing:false,adding:false,selected:[],words:'',dirty:false,catalogReady:false,countries:[],languages:[],localLocations:blankLocal(),create:initial(props.origin).create,...(state.current.mode==='new'?{mode:'list' as const}: {})});}
+    patch({role:next});if(next==='viewer'){patch({editing:false,adding:false,selected:[],words:'',dirty:false,catalogReady:false,catalogNotice:'',countries:[],languages:[],localLocations:blankLocal(),create:initial(props.origin).create,...(state.current.mode==='new'?{mode:'list' as const}: {})});}
   }
   function resetForms(){patch({dirty:false,editing:false,adding:false,words:'',matchCase:false,selected:[],fieldErrors:{}});}
   async function loadList(filter:Filter,cursor?:string,focus?:string){
@@ -86,10 +98,10 @@ function RankController(props:Props){
   function refresh(){if(!canLeave())return;resetForms();const at=state.current;if(at.mode==='detail'&&at.detail)void loadDetail(at.detail.tracker.id);else void loadList(at.filter);}
   function back(){if(!canLeave())return;const id=state.current.detail?.tracker.id;resetForms();void loadList(state.current.filter,undefined,id?'open-'+id:'list-heading');}
   function open(id:string){if(!canLeave())return;resetForms();void loadDetail(id,true);}
-  function newTracker(){if(!writer(state.current.role)||!canLeave())return;invalidate();resetForms();const defaults=initial(props.origin);patch({mode:'new',reading:false,create:defaults.create,catalogReady:false,countries:[],languages:[],localLocations:blankLocal(),localOffset:null,appliedQuery:'',focus:'new-heading',error:''});}
+  function newTracker(){if(!writer(state.current.role)||!canLeave())return;invalidate();resetForms();const defaults=initial(props.origin);patch({mode:'new',reading:false,create:defaults.create,catalogReady:false,catalogNotice:'',countries:[],languages:[],localLocations:blankLocal(),localOffset:null,appliedQuery:'',focus:'new-heading',error:''});}
   function changeCreate(next:RankCreate){
     if(locked()||!writer(state.current.role))return;const old=state.current.create;
-    if(next.connectionId!==old.connectionId){invalidate();patch({reading:false,create:{...next,value:{...next.value,countryLocationCode:'',localLocationCode:'',languageCode:'',targeting:'national'}},catalogReady:false,countries:[],languages:[],localLocations:blankLocal(),localOffset:null,appliedQuery:'',dirty:true,fieldErrors:{}});return;}
+    if(next.connectionId!==old.connectionId){invalidate();patch({reading:false,create:{...next,value:{...next.value,countryLocationCode:'',localLocationCode:'',languageCode:'',targeting:'national'}},catalogReady:false,catalogNotice:'',countries:[],languages:[],localLocations:blankLocal(),localOffset:null,appliedQuery:'',dirty:true,fieldErrors:{}});return;}
     if(next.value.countryLocationCode!==old.value.countryLocationCode||next.value.targeting!==old.value.targeting){invalidate();patch({reading:false,localLocations:blankLocal(),localOffset:null,appliedQuery:''});next={...next,value:{...next.value,localLocationCode:''}};}
     patch({create:next,dirty:true,fieldErrors:{}});
   }
@@ -97,11 +109,12 @@ function RankController(props:Props){
     const at=state.current;if(locked()||!writer(at.role)||!at.create.connectionId||!at.vaultConfigured)return;
     const op=begin();if(!op)return;
     try{const data=await api<unknown>(base+'/catalog',{method:'POST',body:{connectionId:at.create.connectionId},signal:op.controller.signal});if(!current(op))return;
-      if(!object(data)||!validRole(data.role)||!object(data.catalog)||!date(data.catalog.verifiedAt)||!Array.isArray(data.catalog.countries)||data.catalog.countries.length<1||data.catalog.countries.length>300||!data.catalog.countries.every(c=>object(c)&&int(c.code,1,2147483647)&&c.countryCode===c.code&&c.type==='Country'&&str(c.name,512))||!Array.isArray(data.catalog.languages)||data.catalog.languages.length<1||data.catalog.languages.length>200||!data.catalog.languages.every(l=>object(l)&&str(l.code,16)&&str(l.name,128)))throw badResponse();
+      if(!object(data)||!validRole(data.role)||!object(data.catalog)||!date(data.catalog.verifiedAt)||!validCoverage(data.catalog.coverage)||!Array.isArray(data.catalog.countries)||data.catalog.countries.length>300||!data.catalog.countries.every(c=>object(c)&&int(c.code,1,2147483647)&&c.countryCode===c.code&&['Country','Region'].includes(c.type)&&c.parentCode===null&&iso(c.countryIso)&&str(c.name,200))||!Array.isArray(data.catalog.languages)||data.catalog.languages.length<1||data.catalog.languages.length>200||!data.catalog.languages.every(l=>object(l)&&str(l.code,16)&&str(l.name,128)))throw badResponse();
       role(data.role);if(!writer(data.role))return;
-      const countries:RankLocationOption[]=data.catalog.countries.map(c=>({code:String(c.code),label:c.name})),languages:RankLanguageOption[]=data.catalog.languages.map(l=>({code:l.code,label:l.name}));
+      const countries:RankLocationOption[]=data.catalog.countries.map(c=>({code:String(c.code),label:c.name,countryIso:c.countryIso})),languages:RankLanguageOption[]=data.catalog.languages.map(l=>({code:l.code,label:l.name}));
       if(new Set(countries.map(c=>c.code)).size!==countries.length||new Set(languages.map(l=>l.code)).size!==languages.length)throw badResponse();
-      patch({countries,languages,catalogReady:true});
+      if(new Set(data.catalog.countries.map(c=>c.countryIso)).size!==countries.length||countries.length>data.catalog.coverage.selectableRows||(countries.length===0)!==(data.catalog.coverage.selectableRows===0)||countries.length+data.catalog.coverage.unavailableGroups.length>300||data.catalog.countries.some(c=>['RU','BY'].includes(c.countryIso)||data.catalog.coverage.unavailableGroups.some((g:RankLocationCoverage['unavailableGroups'][number])=>g.countryIso===c.countryIso)))throw badResponse();
+      patch({countries,languages,catalogReady:true,catalogNotice:coverageNotice(data.catalog.coverage)});
     }catch(e){failure(e,op);}finally{finish(op);}
   }
   function localQuery(query:string){if(locked())return;invalidate();const at=state.current;patch({reading:false,localLocations:{query,options:at.localLocations.options.filter(o=>o.code===at.create.value.localLocationCode),loading:false,error:null,hasMore:false},localOffset:null,appliedQuery:''});}
@@ -109,17 +122,18 @@ function RankController(props:Props){
     const at=state.current;if(locked()||!writer(at.role)||!at.catalogReady||!at.create.value.countryLocationCode||at.create.value.targeting!=='local'||(more&&(at.localOffset===null||at.appliedQuery!==at.localLocations.query)))return;
     const op=begin();if(!op)return;patch({localLocations:{...at.localLocations,loading:true,error:null}});
     const country=Number(at.create.value.countryLocationCode),query=at.localLocations.query;
+    const countryIso=at.countries.find(c=>c.code===String(country))?.countryIso;
     try{const data=await api<unknown>(`${base}/locations?${new URLSearchParams({connectionId:at.create.connectionId,countryCode:String(country),query,offset:String(more?at.localOffset:0)})}`,{signal:op.controller.signal});if(!current(op))return;
-      if(!object(data)||!validRole(data.role)||!date(data.verifiedAt)||!int(data.total,0,300000)||(data.nextOffset!==null&&!int(data.nextOffset,1,300000))||!Array.isArray(data.rows)||data.rows.length>50||!data.rows.every(r=>object(r)&&int(r.code,1,2147483647)&&r.countryCode===country&&r.type!=='Country'&&str(r.name,512)))throw badResponse();
+      if(!object(data)||!validRole(data.role)||!date(data.verifiedAt)||!validCoverage(data.coverage)||!iso(countryIso)||data.coverage.unavailableGroups.some(g=>g.countryIso===countryIso)||!int(data.total,0,300000)||data.total>=data.coverage.selectableRows||(data.nextOffset!==null&&!int(data.nextOffset,1,300000))||!Array.isArray(data.rows)||data.rows.length>50||data.rows.length>data.total||!data.rows.every(r=>object(r)&&int(r.code,1,2147483647)&&r.countryCode===country&&r.countryIso===countryIso&&r.code!==country&&str(r.type,80)&&iso(r.countryIso)&&str(r.name,200)))throw badResponse();
       role(data.role);if(!writer(data.role))return;
       const keep=more?state.current.localLocations.options:state.current.localLocations.options.filter(o=>o.code===state.current.create.value.localLocationCode),rows:RankLocationOption[]=data.rows.map(r=>({code:String(r.code),label:r.name}));
-      patch({localLocations:{query,options:[...new Map([...keep,...rows].map(r=>[r.code,r])).values()],loading:false,error:null,hasMore:data.nextOffset!==null},localOffset:data.nextOffset,appliedQuery:query});
+      patch({catalogNotice:coverageNotice(data.coverage),localLocations:{query,options:[...new Map([...keep,...rows].map(r=>[r.code,r])).values()],loading:false,error:null,hasMore:data.nextOffset!==null},localOffset:data.nextOffset,appliedQuery:query});
     }catch(e){failure(e,op);if(current(op))patch({localLocations:{...state.current.localLocations,loading:false,error:errMsg(e)}});}finally{finish(op);}
   }
   async function send(saved:Intent){
     if(operation.current?.write||!alive.current)return;intent.current=saved;const op=begin(true);if(!op)return;
     try{const data=await api<unknown>(saved.path,{method:'POST',body:saved.body,signal:op.controller.signal});if(!current(op))return;if(!validDetail(data,saved.trackerId)||typeof data.replayed!=='boolean')throw badResponse();
-      intent.current=null;resetForms();role(data.role);patch({mode:'detail',detail:data,edit:editFor(data.tracker),pending:false,conflict:false,notice:data.replayed?'Saved change recovered.':'Tracker saved.',focus:'detail-heading',catalogReady:false,countries:[],languages:[],localLocations:blankLocal(),create:initial(props.origin).create});
+      intent.current=null;resetForms();role(data.role);patch({mode:'detail',detail:data,edit:editFor(data.tracker),pending:false,conflict:false,notice:data.replayed?'Saved change recovered.':'Tracker saved.',focus:'detail-heading',catalogReady:false,catalogNotice:'',countries:[],languages:[],localLocations:blankLocal(),create:initial(props.origin).create});
     }catch(e){if(!current(op))return;
       if(e instanceof ApiError&&e.status>=400&&e.status<500&&![408,429].includes(e.status)){intent.current=null;patch({pending:false,conflict:e.status===409});failure(e,op);}
       else{patch({pending:true,error:e instanceof ApiError&&e.status===429?'The retry was rate limited. Wait before retrying the same request; its original outcome is still unknown.':''});}
@@ -132,7 +146,7 @@ function RankController(props:Props){
   function createTracker(){
     const at=state.current;if(locked()||!at.catalogReady)return;const c=at.create,v=c.value,errors:RankTrackingFieldErrors={};
     if(!str(v.domain,253))errors.domain='Enter the target domain.';
-    if(!at.countries.some(o=>o.code===v.countryLocationCode))errors.countryLocationCode='Choose a country.';
+    if(!at.countries.some(o=>o.code===v.countryLocationCode))errors.countryLocationCode='Choose a country or territory.';
     if(!at.languages.some(o=>o.code===v.languageCode))errors.languageCode='Choose a language.';
     if(v.targeting==='local'&&!at.localLocations.options.some(o=>o.code===v.localLocationCode))errors.localLocationCode='Choose a city or region from the search results.';
     patch({fieldErrors:errors});if(Object.keys(errors).length)return;

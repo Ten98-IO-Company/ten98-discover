@@ -14,7 +14,8 @@ export const rankSerpEndpoints={
 export type RankMethod='live'|'queued';
 export type RankDevice='desktop'|'mobile';
 export type RankSerpRequest={keyword:string;domain:string;locationCode:number;languageCode:string;device:RankDevice;depth:number;maxCrawlPages:number};
-const requestInput=z.object({keyword:z.string().refine(value=>validText(value,200)&&value.trim()===value),domain:z.string(),locationCode:z.number().int().min(1).max(2147483647),languageCode:z.string().regex(/^[a-z]{2,3}(?:-[A-Z]{2})?(?![\s\S])/),device:z.enum(['desktop','mobile']),depth:z.number().int().min(10).max(100).multipleOf(10),maxCrawlPages:z.number().int().min(1).max(10)}).strict();
+export const rankLanguagePattern=/^[a-z]{2,3}(?:-(?:[A-Z]{2}|[0-9]{3}|[A-Z][a-z]{3}))?$(?![\s\S])/;
+const requestInput=z.object({keyword:z.string().refine(value=>validText(value,200)&&value.trim()===value),domain:z.string(),locationCode:z.number().int().min(1).max(2147483647),languageCode:z.string().regex(rankLanguagePattern),device:z.enum(['desktop','mobile']),depth:z.number().int().min(10).max(100).multipleOf(10),maxCrawlPages:z.number().int().min(1).max(10)}).strict();
 function bad():never{throw new InputError(400,'Check the rank request and coverage settings.');}
 export function parseRankSerpRequest(raw:unknown):RankSerpRequest {
   const parsed=requestInput.safeParse(raw);if(!parsed.success)bad();

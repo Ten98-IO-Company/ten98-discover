@@ -16,7 +16,7 @@ const updateInput=z.object({requestId:z.uuid(),revision,...settings}).strict();
 const archiveInput=z.object({requestId:z.uuid(),revision,archived:z.boolean()}).strict();
 const connectionInput=z.object({connectionId:z.uuid()}).strict();
 type CachedCatalog={catalog:RankCatalog;verifiedAt:string;expiresAt:number};
-// ponytail: one complete public catalog per process for10minutes. No credentials
+// ponytail: one validated public catalog per process for10minutes. No credentials
 // or user-specific content are cached; multiple processes may each fetch a copy.
 let catalogCache:CachedCatalog|null=null;
 let catalogLoading=false;
@@ -73,14 +73,14 @@ async function catalogAfter(client:PoolClient,p:ContentProject,connectionId:stri
 }
 export async function getRankCatalog(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
   const {connectionId}=parse(connectionInput,raw),before=await catalogBefore(projectId,userId,connectionId),loaded=await catalogLoad(before.credentials,send);
-  return withContentProject(projectId,userId,true,async(client,p)=>{await catalogAfter(client,p,connectionId,before.revision,loaded);return {role:p.role,catalog:{countries:structuredClone(loaded.catalog.countries),languages:structuredClone(loaded.catalog.languages),verifiedAt:loaded.verifiedAt}};});
+  return withContentProject(projectId,userId,true,async(client,p)=>{await catalogAfter(client,p,connectionId,before.revision,loaded);return {role:p.role,catalog:{countries:structuredClone(loaded.catalog.countries),languages:structuredClone(loaded.catalog.languages),coverage:structuredClone(loaded.catalog.coverage),verifiedAt:loaded.verifiedAt}};});
 }
 export async function searchRankLocations(projectId:string,userId:string,params:URLSearchParams,send:typeof fetch=fetch){
   const digits=z.string().regex(/^(?:0|[1-9]\d*)(?![\s\S])/).transform(Number);
   const input=parse(z.object({connectionId:z.uuid(),countryCode:digits.pipe(z.number().int().positive().max(2147483647)),query:z.string().max(100).default(''),offset:digits.pipe(z.number().int().min(0).max(300000)).default(0)}).strict(),paramsObject(params,['connectionId','countryCode','query','offset']));
   const before=await catalogBefore(projectId,userId,input.connectionId),loaded=await catalogLoad(before.credentials,send);
   const page=pageRankLocations(loaded.catalog,{kind:'local',countryCode:input.countryCode,query:input.query,offset:input.offset});
-  return withContentProject(projectId,userId,true,async(client,p)=>{await catalogAfter(client,p,input.connectionId,before.revision,loaded);return {role:p.role,...structuredClone(page),verifiedAt:loaded.verifiedAt};});
+  return withContentProject(projectId,userId,true,async(client,p)=>{await catalogAfter(client,p,input.connectionId,before.revision,loaded);return {role:p.role,...structuredClone(page),coverage:structuredClone(loaded.catalog.coverage),verifiedAt:loaded.verifiedAt};});
 }
 export async function createRankTracker(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
   const uid=parse(z.uuid(),userId),input=parse(createInput,raw);input.domain=normalizePublicHostname(input.domain);

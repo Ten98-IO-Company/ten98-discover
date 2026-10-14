@@ -4,14 +4,13 @@ import {dataforseoJson,type DataforseoResponse} from './dataforseo-transport.ts'
 import {parseKeywordAccount} from './dataforseo-keywords.ts';
 import {getProviderAccountIdentityKey} from './provider-account-identity.ts';
 import {keywordAccountEndpoint,providerMicros,validText} from './keyword-research-input.ts';
-import {rankSerpEndpoints,rankSerpPayload,type RankMethod,type RankSerpRequest} from './rank-serp-input.ts';
+import {rankLanguagePattern,rankSerpEndpoints,rankSerpPayload,type RankMethod,type RankSerpRequest} from './rank-serp-input.ts';
 
 type ObjectValue=Record<string,unknown>;
 const object=(v:unknown):v is ObjectValue=>!!v&&typeof v==='object'&&!Array.isArray(v);
 function invalid():never{throw new Error('Unsupported DataForSEO rank response.');}
 function bad():never{throw new FoundationError(400,'Check the rank request or catalog selection.');}
 const code=(v:unknown):v is number=>Number.isInteger(v)&&Number(v)>0&&Number(v)<=2147483647;
-const languagePattern=/^[a-z]{2,3}(?:-[A-Z]{2})?$(?![\s\S])/;
 const taskIdPattern=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$(?![\s\S])/;
 function freeRows(response:DataforseoResponse,url:string,maximum:number){
   const body=response.body;
@@ -23,41 +22,51 @@ function freeRows(response:DataforseoResponse,url:string,maximum:number){
 }
 export type RankLocation={code:number;name:string;parentCode:number|null;countryIso:string;type:string;countryCode:number};
 export type RankLanguage={code:string;name:string};
-export type RankCatalog={locations:RankLocation[];countries:RankLocation[];languages:RankLanguage[]};
+export type RankLocationCoverage={grouping:'country_iso_code';receivedRows:number;selectableRows:number;missingParentRows:number;unavailableGroups:{countryIso:string;rows:number;reason:'provider_unsupported'|'missing_root'|'unsupported_root_type'}[]};
+export type RankCatalog={locations:RankLocation[];countries:RankLocation[];languages:RankLanguage[];coverage:RankLocationCoverage};
 
 // Official free catalog contract: https://docs.dataforseo.com/v3/serp/google/locations/
 // Keep every validated row server-side; never label a truncated response complete.
-export function parseRankLocations(response:DataforseoResponse):RankLocation[]{
+export function parseRankLocations(response:DataforseoResponse):Omit<RankCatalog,'languages'>{
   const raw=freeRows(response,rankSerpEndpoints.locations,300_000);if(!raw.length)invalid();
-  const rows:RankLocation[]=[],byCode=new Map<number,RankLocation>(),countries=new Map<string,RankLocation>();
+  const rows:RankLocation[]=[],byCode=new Map<number,RankLocation>(),countries=new Map<string,RankLocation>(),groups=new Map<string,{rows:number;hasRoot:boolean}>();
   for(const value of raw){
     if(!object(value)||!code(value.location_code)||!validText(value.location_name,200)||!validText(value.location_type,80)||typeof value.country_iso_code!=='string'||!/^[A-Z]{2}$(?![\s\S])/.test(value.country_iso_code)||(value.location_code_parent!==null&&!code(value.location_code_parent)))invalid();
     const row:RankLocation={code:value.location_code,name:value.location_name,parentCode:value.location_code_parent,type:value.location_type,countryIso:value.country_iso_code,countryCode:0};
     if(byCode.has(row.code))invalid();byCode.set(row.code,row);rows.push(row);
-    if(row.type==='Country'){
-      if(row.parentCode!==null||countries.has(row.countryIso))invalid();
-      row.countryCode=row.code;countries.set(row.countryIso,row);
+    const group=groups.get(row.countryIso)??{rows:0,hasRoot:false};group.rows++;group.hasRoot ||= row.parentCode===null;groups.set(row.countryIso,group);
+    if(row.type==='Country'&&row.parentCode!==null)invalid();
+    if(row.parentCode===null&&(row.type==='Country'||row.type==='Region')){
+      if(countries.has(row.countryIso))invalid();countries.set(row.countryIso,row);
     }
   }
-  if(!countries.size||countries.size>300)invalid();
-  // Iterative memoized parent resolution rejects missing/cyclic/cross-country
-  // chains in linear work, without stack exhaustion on hostile catalog nesting.
+  if(groups.size>300)invalid();
+  // Validate present edges in linear work; ISO grouping does not assert a complete tree.
+  const checked=new Set<number>();let missingParentRows=0;
+  for(const row of rows)if(row.parentCode!==null&&!byCode.has(row.parentCode))missingParentRows++;
   for(const row of rows){
-    const chain:RankLocation[]=[],seen=new Set<number>();let current=row;
-    while(!current.countryCode){
-      if(seen.has(current.code)||current.countryIso!==row.countryIso||current.parentCode===null)invalid();
+    const chain:RankLocation[]=[],seen=new Set<number>();let current:RankLocation|undefined=row;
+    while(current&&!checked.has(current.code)){
+      if(seen.has(current.code)||current.countryIso!==row.countryIso)invalid();
       seen.add(current.code);chain.push(current);
-      const parent=byCode.get(current.parentCode);if(!parent||parent.countryIso!==row.countryIso)invalid();current=parent;
+      const parent:RankLocation|undefined=current.parentCode===null?undefined:byCode.get(current.parentCode);if(parent&&parent.countryIso!==row.countryIso)invalid();current=parent;
     }
-    for(const child of chain)child.countryCode=current.countryCode;
+    for(const child of chain)checked.add(child.code);
   }
-  return rows.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:a.code-b.code);
+  const unavailableGroups:RankLocationCoverage['unavailableGroups']=[];
+  for(const [countryIso,group]of groups){
+    const reason=countryIso==='RU'||countryIso==='BY'?'provider_unsupported':!countries.has(countryIso)?group.hasRoot?'unsupported_root_type':'missing_root':null;
+    if(reason){unavailableGroups.push({countryIso,rows:group.rows,reason});countries.delete(countryIso);}
+  }
+  const locations=rows.filter(row=>{const root=countries.get(row.countryIso);if(!root)return false;row.countryCode=root.code;return true;}).sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:a.code-b.code);
+  unavailableGroups.sort((a,b)=>a.countryIso.localeCompare(b.countryIso));
+  return {locations,countries:locations.filter(row=>row.code===row.countryCode),coverage:{grouping:'country_iso_code',receivedRows:rows.length,selectableRows:locations.length,missingParentRows,unavailableGroups}};
 }
 export function parseRankLanguages(response:DataforseoResponse):RankLanguage[]{
   const rows=freeRows(response,rankSerpEndpoints.languages,200);if(!rows.length)invalid();
   const seen=new Set<string>();
   return rows.map(row=>{
-    if(!object(row)||!validText(row.language_name,80)||typeof row.language_code!=='string'||!languagePattern.test(row.language_code)||seen.has(row.language_code))invalid();
+    if(!object(row)||!validText(row.language_name,80)||typeof row.language_code!=='string'||!rankLanguagePattern.test(row.language_code)||seen.has(row.language_code))invalid();
     seen.add(row.language_code);return {code:row.language_code,name:row.language_name};
   }).sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:a.code<b.code?-1:a.code>b.code?1:0);
 }
@@ -65,15 +74,15 @@ export async function readRankCatalog(credentials:unknown,send:typeof fetch=fetc
   try{
     const locations=parseRankLocations(await dataforseoJson(rankSerpEndpoints.locations,credentials,'GET',undefined,send));
     const languages=parseRankLanguages(await dataforseoJson(rankSerpEndpoints.languages,credentials,'GET',undefined,send));
-    return {locations,countries:locations.filter(row=>row.type==='Country'),languages};
-  }catch{throw new FoundationError(502,'Could not load the complete supported rank locations and languages. Check the connection and try again.');}
+    return {...locations,languages};
+  }catch{throw new FoundationError(502,'Could not load rank locations and languages. Check the connection and try again.');}
 }
 const pageInput=z.object({kind:z.enum(['countries','local']),countryCode:z.number().int().min(1).max(2147483647).optional(),query:z.string().max(100).refine(value=>value===''||validText(value,100)).default(''),offset:z.number().int().min(0).max(300_000).default(0),limit:z.number().int().min(1).max(50).default(50)}).strict();
 export function pageRankLocations(catalog:RankCatalog,raw:unknown){
   const parsed=pageInput.safeParse(raw);if(!parsed.success)bad();const p=parsed.data;
   if(p.kind==='local'?!catalog.countries.some(row=>row.code===p.countryCode):p.countryCode!==undefined)bad();
   const query=p.query.trim().toLowerCase();
-  const selected=(p.kind==='countries'?catalog.countries:catalog.locations.filter(row=>row.type!=='Country'&&row.countryCode===p.countryCode)).filter(row=>row.name.toLowerCase().includes(query));
+  const selected=(p.kind==='countries'?catalog.countries:catalog.locations.filter(row=>row.code!==row.countryCode&&row.countryCode===p.countryCode)).filter(row=>row.name.toLowerCase().includes(query));
   const rows=selected.slice(p.offset,p.offset+p.limit);
   return {rows,total:selected.length,nextOffset:p.offset+rows.length<selected.length?p.offset+rows.length:null};
 }

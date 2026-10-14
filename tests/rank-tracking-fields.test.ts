@@ -71,7 +71,7 @@ test('no-country and national states suppress obsolete local errors and validati
     if (targeting === 'local') {
       assert.equal(f.field('localLocationCode').props.disabled, true);
       assert.equal(f.field('localLocationCode').props['aria-invalid'], undefined);
-      assert.match(html, /Choose a country first\./);
+      assert.match(html, /Choose a country or territory first\./);
     } else assert.ok(!html.includes('Find a city or region'));
   }
 });
