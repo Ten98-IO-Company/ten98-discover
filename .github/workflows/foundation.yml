@@ -144,7 +144,7 @@ jobs:
               ['ten98_prompt_citation_specializations_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-citation-specializations-integration.ts']], { TEN98_PROMPT_CITATION_SPECIALIZATIONS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_ai_suggestions_ci', [['src/server/cli.ts', 'migrate'], ['tests/ai-suggestions-integration.ts']], { TEN98_AI_SUGGESTIONS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_site_api', [['src/server/cli.ts', 'migrate'], ['tests/site-audits-integration.ts']]],
-              ['ten98_site_retention', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-retention-integration.ts']]],
+              ['ten98_site_retention', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-retention-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_site_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-worker-integration.ts']]],
               ['ten98_funnels_ci', [['src/server/cli.ts', 'migrate'], ['tests/funnels-integration.ts']]],
               ['ten98_saved_keywords_ci', [['src/server/cli.ts', 'migrate'], ['tests/saved-keywords-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
