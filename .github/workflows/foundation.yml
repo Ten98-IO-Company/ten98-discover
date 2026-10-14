@@ -103,6 +103,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_predicates_ci');
             await client.query('CREATE DATABASE ten98_identify_ci');
             await client.query('CREATE DATABASE ten98_session_ci');
+            await client.query('CREATE DATABASE ten98_session_explorer_ci');
             await client.query('CREATE DATABASE ten98_annotations_ci');
             await client.query('CREATE DATABASE ten98_segments_ci');
             await client.query('CREATE DATABASE ten98_saved_keywords_ci');
@@ -156,6 +157,7 @@ jobs:
               ['ten98_predicates_ci', [['src/server/cli.ts', 'migrate'], ['tests/advanced-predicates-integration.ts']], { TEN98_PREDICATES_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_identify_ci', [['src/server/cli.ts', 'migrate'], ['tests/native-identify-integration.ts']], { TEN98_IDENTIFY_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_session_ci', [['src/server/cli.ts', 'migrate'], ['tests/session-predicates-integration.ts']], { TEN98_SESSION_PREDICATE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_session_explorer_ci', [['src/server/cli.ts', 'migrate'], ['tests/session-explorer-integration.ts']], { TEN98_SESSION_EXPLORER_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_annotations_ci', [['src/server/cli.ts', 'migrate'], ['tests/annotations-integration.ts']], { TEN98_ANNOTATIONS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_segments_ci', [['src/server/cli.ts', 'migrate'], ['tests/segments-integration.ts']], { TEN98_SEGMENTS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_funnels_ci', [['src/server/cli.ts', 'migrate'], ['tests/funnels-integration.ts']]],

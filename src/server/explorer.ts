@@ -2,35 +2,15 @@ import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
 import { explorerQuery, csvCell } from './explorer-input.ts';
 import { retentionCoverage } from './retention.ts';
-import { analyticsCalendarSql, analyticsScopeSql, analyticsScopeValues } from './analytics-scope.ts';
-import {resolveCohort,type CohortItem} from './cohorts.ts';
-import {advancedPredicateSql,advancedPredicateMethod,sessionPredicateSql,validateAdvancedRegex} from './advanced-predicates.ts';
+import {analyticsPopulation,cohortCoverage,sessionScope,type CohortReport,type SessionPropertyScope} from './analytics-population.ts';
+export type {CohortReport,SessionPropertyScope} from './analytics-population.ts';
+import {resolveCohort} from './cohorts.ts';
+import {advancedPredicateMethod,validateAdvancedRegex} from './advanced-predicates.ts';
 
 type Totals = {events:number|null;pageViews:number|null;customEvents:number|null;identifiedEvents:number|null;unidentifiedEvents:number|null;visitors:number|null;visits:number|null};
 type Day = {date:string;start:string;end:string;events:number|null;pageViews:number|null;customEvents:number|null;skipped:boolean;coverage:'complete'|'partial'|'unavailable'};
 type Group = {type:string;value:unknown;events:number;identifiedEvents:number;visitors:number|null};
 type Numeric = {samples:number;sum:string|null;average:string|null;min:string|null;max:string|null};
-export type CohortReport={item:CohortItem;range:{from:string;to:string;timeZone:string;start:string;end:string};coverage:ReturnType<typeof retentionCoverage>;
-  identity:{status:'complete'|'partial'|'unavailable';identifiedEvents:number|null;unidentifiedEvents:number|null;observedMemberKeys:number|null};
-  membership:{status:'available'|'unavailable';countsAreLowerBounds:boolean};limitation:string;predicateMethod?:ReturnType<typeof advancedPredicateMethod>;sessionProperties?:SessionPropertyScope};
-export type SessionPropertyScope={method:'current-retained-session-properties-v1';asOf:string;retainedFrom:string;
-  evidence:{lost:boolean;lostAt:string|null;expiredValuesPresent:boolean};candidates:{identifiedEvents:number|null;unidentifiedEvents:number|null};
-  selection:{status:'available'|'unavailable';countsAreLowerBounds:boolean;reason:'missing_evidence_lost'|'identity_unavailable'|'candidate_scope_unavailable'|null};limitation:string};
-const sessionLimitation='Conditions use current retained properties of the observed project-scoped rotating visitor key at this report snapshot, not historical values at event time. Keys rotate monthly and when identity inputs or the signing secret change; persistent-person continuity is unavailable. Missing means unobserved only when no property evidence loss is known.';
-type SessionContext={asOf:string;cutoff:string;lostAt:string|null;expiredValuesPresent:boolean};
-function sessionScope(context:SessionContext,candidates:{identified:number;unidentified:number},missing:boolean,unavailable:boolean,partial:boolean):SessionPropertyScope{
-  const lost=context.lostAt!==null||context.expiredValuesPresent;
-  const reason=unavailable?'candidate_scope_unavailable':missing&&lost?'missing_evidence_lost':candidates.unidentified>0&&candidates.identified===0?'identity_unavailable':null;
-  return {method:'current-retained-session-properties-v1',asOf:new Date(context.asOf).toISOString(),retainedFrom:new Date(context.cutoff).toISOString(),
-    evidence:{lost,lostAt:context.lostAt===null?null:new Date(context.lostAt).toISOString(),expiredValuesPresent:context.expiredValuesPresent},
-    candidates:{identifiedEvents:unavailable?null:candidates.identified,unidentifiedEvents:unavailable?null:candidates.unidentified},
-    selection:{status:reason?'unavailable':'available',countsAreLowerBounds:!reason&&(lost||candidates.unidentified>0||partial),reason},limitation:sessionLimitation};
-}
-const cohortLimitation='Membership uses observed project-scoped visitor keys, not persistent people. Keys rotate each UTC month and when identity inputs or the signing secret change; continuity across those changes is unavailable. Identity coverage describes retained qualifying events only.';
-// Both templates are trusted constants. Reserve1–12 for the existing report query.
-const qualificationSql=analyticsScopeSql.replace(/\$(\d+)\b/g,(_,slot)=>`$${Number(slot)+12}`);
-const qualificationCalendarSql=analyticsCalendarSql.replace(/\$(\d+)\b/g,(_,slot)=>`$${Number(slot)+12}`);
-
 export async function exploreAnalytics(projectId:string,userId:string,params:URLSearchParams) {
   const query = explorerQuery(params);
   const client = await getDatabase().pool.connect();
@@ -59,30 +39,13 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       await validateAdvancedRegex(client,query.predicates,qualification?.predicates);
     }
     for(const zone of new Set([query.timeZone,...(qualification?[qualification.timeZone]:[])]))if (!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[zone])).rowCount) throw new FoundationError(400,'The database does not support this timezone.');
-    const values=[...analyticsScopeValues(projectId,userId,query),query.groupBy,query.groupProperty,...(qualification?analyticsScopeValues(projectId,userId,qualification):[])];
-    const bind=(value:unknown)=>{values.push(value);return `$${values.length}`;};
-    const reportPredicate=advancedPredicateSql(query.predicates,bind,query.timeZone),qualificationPredicate=advancedPredicateSql(qualification?.predicates,bind,qualification?.timeZone??query.timeZone);
-    const reportSessionPredicate=sessionPredicateSql(query.predicates?.sessionProperties,bind,query.timeZone),qualificationSessionPredicate=sessionPredicateSql(qualification?.predicates?.sessionProperties,bind,qualification?.timeZone??query.timeZone);
-    const basePopulation=item?'report_scope':'scope',population=query.predicates?'filtered_report':basePopulation;
-    const sessionSql=sessionAware?`, session_clock AS MATERIALIZED (SELECT date_trunc('milliseconds',clock_timestamp()) AS as_of),
-      session_cutoff AS MATERIALIZED (SELECT p.id,c.as_of,GREATEST(p.session_properties_retained_from,c.as_of-w.raw_analytics_days*interval '24 hours') AS cutoff,
-        p.session_properties_evidence_lost_at AS lost_at FROM project p JOIN target t ON t.id=p.id JOIN workspace w ON w.id=p.workspace_id CROSS JOIN session_clock c),
-      session_context AS MATERIALIZED (SELECT c.*,EXISTS(SELECT 1 FROM analytics_session_property sp WHERE sp.project_id=c.id AND sp.updated_at<c.cutoff) AS expired_values_present FROM session_cutoff c)`:'';
-    const cohortSql=item?`${qualificationSession?`, qualification_candidates AS MATERIALIZED (${qualificationSql} SELECT s.* FROM scope s WHERE ${qualificationPredicate}),
-      qualification AS MATERIALIZED (SELECT visitor_id FROM qualification_candidates s WHERE ${qualificationSessionPredicate})`:
-      `, qualification AS MATERIALIZED (${qualificationSql} SELECT visitor_id FROM scope s WHERE ${qualificationPredicate})`},
-      qualification_bounds AS (WITH RECURSIVE ${qualificationCalendarSql} SELECT start,finish FROM bounds),
-      cohort_keys AS MATERIALIZED (SELECT DISTINCT visitor_id FROM qualification WHERE visitor_id IS NOT NULL),
-      report_scope AS MATERIALIZED (SELECT s.* FROM scope s WHERE EXISTS(SELECT 1 FROM cohort_keys c WHERE c.visitor_id=s.visitor_id))`:'';
-    const advancedSql=reportSession?`, report_candidates AS MATERIALIZED (SELECT s.* FROM ${basePopulation} s WHERE ${reportPredicate}),
-      filtered_report AS MATERIALIZED (SELECT s.* FROM report_candidates s WHERE ${reportSessionPredicate})`:
-      query.predicates?`, filtered_report AS MATERIALIZED (SELECT s.* FROM ${basePopulation} s WHERE ${reportPredicate})`:'';
+    const {ctes,values,population}=analyticsPopulation(projectId,userId,query,qualification,false);
     // One statement binds membership, retention, buckets and totals to one snapshot.
     // ponytail: bounded raw aggregation; introduce rollups only after measured query limits.
     // PostgreSQL resolves ambiguous wall times to the later offset. Check both
     // neighbouring offsets for the first midnight; binary-search only missing
     // midnights to find a gap's first real instant (including skipped dates).
-    const {rows} = await client.query(`${analyticsScopeSql}${sessionSql}${cohortSql}${advancedSql}, labeled AS MATERIALIZED (
+    const {rows} = await client.query(`${ctes}, labeled AS MATERIALIZED (
       SELECT *,CASE $11::text
         WHEN 'event' THEN jsonb_build_object('type','string','value',event_name)
         WHEN 'path' THEN jsonb_build_object('type','string','value',path)
@@ -133,23 +96,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     if (!row.allowed) throw new FoundationError(404,'Project not found or unavailable.');
     const start = row.start.toISOString(), end = row.finish.toISOString();
     const coverage = retentionCoverage(start,end,row.retained_from);
-    let cohort:CohortReport|undefined;
-    if(item&&qualification){
-      const q=row.qualification,from=new Date(q.start).toISOString(),to=new Date(q.end).toISOString(),qualifiedCoverage=retentionCoverage(from,to,row.retained_from);
-      const expired=qualifiedCoverage.status==='unavailable',unidentified=q.events-q.identified,unavailable=expired||(q.events>0&&q.identified===0);
-      cohort={item,range:{from:qualification.from,to:qualification.to,timeZone:qualification.timeZone,start:from,end:to},coverage:qualifiedCoverage,
-        identity:{status:expired||(q.events>0&&q.identified===0)?'unavailable':unidentified>0?'partial':'complete',identifiedEvents:expired?null:q.identified,unidentifiedEvents:expired?null:unidentified,observedMemberKeys:expired?null:q.members},
-        membership:{status:unavailable?'unavailable':'available',countsAreLowerBounds:!unavailable&&(qualifiedCoverage.status==='partial'||unidentified>0)},limitation:cohortLimitation,
-        ...(qualification.predicates?{predicateMethod:advancedPredicateMethod(qualification.predicates)}:{})};
-      if(qualificationSession){
-        const sessionProperties=sessionScope(row.session_context,row.qualification_candidates,qualification.predicates!.sessionProperties!.some(filter=>filter.operator==='missing'),expired,qualifiedCoverage.status==='partial');
-        const unavailable=sessionProperties.selection.status==='unavailable',unknown=row.qualification_candidates.unidentified>0;
-        cohort.sessionProperties=sessionProperties;
-        cohort.identity={status:unavailable?'unavailable':unknown?'partial':'complete',identifiedEvents:unavailable?null:q.identified,
-          unidentifiedEvents:unavailable||unknown?null:0,observedMemberKeys:unavailable?null:q.members};
-        cohort.membership={status:sessionProperties.selection.status,countsAreLowerBounds:sessionProperties.selection.countsAreLowerBounds};
-      }
-    }
+    const cohort=cohortCoverage(item,qualification,row);
     const sessionProperties=reportSession?sessionScope(row.session_context,row.report_candidates,query.predicates!.sessionProperties!.some(filter=>filter.operator==='missing'),
       coverage.status==='unavailable'||cohort?.membership.status==='unavailable',coverage.status==='partial'||!!cohort?.membership.countsAreLowerBounds):undefined;
     const membershipUnavailable=cohort?.membership.status==='unavailable'||sessionProperties?.selection.status==='unavailable';

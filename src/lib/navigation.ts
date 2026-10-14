@@ -1,6 +1,26 @@
-export const views = ['project', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView }
+export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation
+
+export function sessionNavigation(raw:Record<string,unknown>):SessionNavigation {
+  const out:SessionNavigation={}, names=['from','to','timeZone','visitorKey','cohortId','cohortRevision','segmentId','segmentRevision','sessionInvalid'];
+  const invalid=()=>({sessionInvalid:'1'} as const);
+  if(raw.sessionInvalid!==undefined)return invalid();
+  if(Object.keys(raw).some(key=>!['workspace','project','view',...names].includes(key)))return invalid();
+  if(['from','to','timeZone'].some(key=>raw[key]!==undefined)){
+    const day=(value:unknown):value is string=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&value>='1970-01-01'&&value<='9998-12-31'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString().slice(0,10)===value;
+    if(!day(raw.from)||!day(raw.to)||raw.from>raw.to||(Date.parse(raw.to)-Date.parse(raw.from))/864e5>=366||typeof raw.timeZone!=='string'||raw.timeZone.length>80||!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(raw.timeZone))return invalid();
+    try{out.timeZone=new Intl.DateTimeFormat('en-US',{timeZone:raw.timeZone}).resolvedOptions().timeZone;}catch{return invalid();}
+    out.from=raw.from;out.to=raw.to;
+  }
+  if(raw.visitorKey!==undefined){if(typeof raw.visitorKey!=='string'||raw.visitorKey.length!==64||!/^[a-f0-9]{64}$/.test(raw.visitorKey)||!out.from)return invalid();out.visitorKey=raw.visitorKey;}
+  for(const kind of ['cohort','segment'] as const){const id=raw[`${kind}Id`],revision=raw[`${kind}Revision`];if(id===undefined&&revision===undefined)continue;
+    if(!navigationId(id)||!['string','number'].includes(typeof revision)||! /^[1-9][0-9]{0,9}$/.test(String(revision))||Number(revision)>2147483647)return invalid();
+    out[`${kind}Id`]=id.toLowerCase();out[`${kind}Revision`]=String(revision);
+  }
+  return out;
+}
 
 export function navigationId(value: unknown): value is string {
   return typeof value === 'string' && value.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
@@ -9,15 +29,17 @@ export function navigationId(value: unknown): value is string {
 // Search values are untrusted: TanStack can parse JSON values and repeated keys.
 export function parseNavigation(raw: Record<string, unknown>): NavigationSearch {
   const workspace = navigationId(raw.workspace) ? raw.workspace.toLowerCase() : undefined
+  const view = typeof raw.view === 'string' && (views as readonly string[]).includes(raw.view) ? raw.view as AppView : 'project'
   return {
     ...(workspace ? { workspace } : {}),
     ...(workspace && navigationId(raw.project) ? { project: raw.project.toLowerCase() } : {}),
-    view: typeof raw.view === 'string' && (views as readonly string[]).includes(raw.view) ? raw.view as AppView : 'project',
+    view,
+    ...(view==='sessions'&&workspace&&navigationId(raw.project)?sessionNavigation(raw):{}),
   }
 }
 
 export function navigationKey(search: NavigationSearch): string {
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
@@ -27,7 +49,7 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
 }
 
 export function projectView(view: AppView): boolean {
-  return ['project', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-insights', 'explore', 'google', 'meta', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
+  return ['project', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'meta', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
 }
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {
