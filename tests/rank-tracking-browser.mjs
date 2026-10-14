@@ -14,9 +14,10 @@ const pid='20000000-0000-4000-8000-000000000001',cid='40000000-0000-4000-8000-00
 const at='2026-10-13T09:00:00.000Z',base='/api/projects/'+pid+'/rank-trackers',alternatePid='20000000-0000-4000-8000-000000000002';
 const initial={id:tid,name:'Synthetic main tracker',domain:'example.com',countryCode:2840,countryIso:'US',locationCode:2840,locationName:'United States',locationType:'Country',languageCode:'en',languageName:'English',devices:'mobile',depth:10,maxCrawlPages:1,revision:1,keywordsRevision:1,authoredRevision:1,keywordCount:2,archivedAt:null,createdAt:at,updatedAt:at,schedule:{interval:'manual',enabled:false,nextDueAt:null}};
 const initialKeywords=[{id:'60000000-0000-4000-8000-000000000001',keyword:'literal C++ %20',matchCase:true,pinnedAt:null,createdAt:at},{id:'60000000-0000-4000-8000-000000000002',keyword:'ordinary term',matchCase:false,pinnedAt:null,createdAt:at}];
-const countries=[{code:2840,name:'United States',parentCode:null,countryIso:'US',type:'Country',countryCode:2840},{code:2250,name:'France',parentCode:null,countryIso:'FR',type:'Country',countryCode:2250}];
-const languages=[{code:'en',name:'English'},{code:'fr',name:'Français'}];
-const local=(country,code,name)=>({code,name,parentCode:country,countryIso:country===2840?'US':'FR',type:'City',countryCode:country});
+const countries=[{code:2840,name:'United States',parentCode:null,countryIso:'US',type:'Country',countryCode:2840},{code:2250,name:'France',parentCode:null,countryIso:'FR',type:'Country',countryCode:2250},{code:2060,name:'Bermuda',parentCode:null,countryIso:'BM',type:'Region',countryCode:2060}];
+const coverage={grouping:'country_iso_code',receivedRows:8,selectableRows:6,missingParentRows:2,unavailableGroups:[{countryIso:'BY',rows:1,reason:'provider_unsupported'},{countryIso:'IR',rows:1,reason:'missing_root'}]};
+const languages=[{code:'en',name:'English'},{code:'fr',name:'Français'},{code:'es-419',name:'Spanish (Latin America)'},{code:'sr-Latn',name:'Serbian (Latin)'}];
+const local=(country,code,name)=>({code,name,parentCode:country,countryIso:countries.find(c=>c.code===country).countryIso,type:country===2060?'Region':'City',countryCode:country});
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/rank-panel-vite-cache',appType:'custom',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url!=='/'&&req.url!=='/elsewhere')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rank parent synthetic acceptance</title><div id="root"></div><script type="module" src="/tests/rank-tracking-browser-fixture.tsx"></script></html>');});
 let browser;
@@ -24,9 +25,9 @@ try{
  await server.listen();const addr=server.httpServer.address();assert.equal(addr.address,'127.0.0.1');const origin='http://127.0.0.1:'+addr.port;
  const {chromium}=await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href : 'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
  const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
- const errors=[],unexpected=[],calls=[],mutations=[],receipts=new Map();let role='owner',vault=true,trackers=[structuredClone(initial)],keywords=new Map([[tid,structuredClone(initialKeywords)]]),nextWrite=null,nextGet=null,held=null;
+ const errors=[],unexpected=[],calls=[],mutations=[],receipts=new Map();let role='owner',vault=true,trackers=[structuredClone(initial)],keywords=new Map([[tid,structuredClone(initialKeywords)]]),nextWrite=null,nextGet=null,held=null,nextCatalog=null,nextLocations=null;
  const envelope=id=>({role,tracker:structuredClone(trackers.find(t=>t.id===id)),keywords:structuredClone(keywords.get(id)??[])});
- const locations=url=>{const country=Number(url.searchParams.get('countryCode'));return {role,rows:[local(country,country===2840?100:200,country===2840?'New York synthetic':'Paris synthetic')],total:1,nextOffset:null,verifiedAt:at};};
+ const locations=url=>{const country=Number(url.searchParams.get('countryCode'));return {role,rows:[local(country,country===2840?100:country===2060?300:200,country===2840?'New York synthetic':country===2060?'Bermuda local region':'Paris synthetic')],total:1,nextOffset:null,coverage,verifiedAt:at};};
  const fulfill=(route,value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname;
@@ -39,9 +40,9 @@ try{
   if(path===base&&req.method()==='GET'){
    const filter=url.searchParams.get('archived')??'active';return fulfill(route,{role,vaultConfigured:vault,connections:vault?[{id:cid,name:'Synthetic\tDataForSEO\nconnection',checkStatus:'ok'}]:[],trackers:trackers.filter(t=>filter==='all'||filter==='active'&&!t.archivedAt||filter==='archived'&&t.archivedAt),nextCursor:null});
   }
-  if(path===base+'/catalog')return fulfill(route,{role,catalog:{countries,languages,verifiedAt:at}});
+  if(path===base+'/catalog'){const catalog=nextCatalog??{countries,languages,coverage,verifiedAt:at};nextCatalog=null;return fulfill(route,{role,catalog});}
   if(path===base+'/locations'){
-   return fulfill(route,locations(url));
+   const reply=nextLocations??locations(url);nextLocations=null;return fulfill(route,reply);
   }
   if(req.method()==='GET')return fulfill(route,envelope(path.slice(base.length+1)));
   assert.equal(req.method(),'POST');const body=req.postDataJSON();mutations.push({path,body:structuredClone(body)});
@@ -49,7 +50,7 @@ try{
   let id=receipts.get(body.requestId);
   if(!id){
    id=path===base?randomUUID():path.slice(base.length+1).split('/')[0];
-   if(path===base){const country=countries.find(c=>c.code===body.countryCode);trackers.unshift({...structuredClone(initial),...body,id,keywordCount:0,countryIso:country.countryIso,locationName:body.locationCode===body.countryCode?country.name:'Synthetic local',locationType:body.locationCode===body.countryCode?'Country':'City',languageName:languages.find(l=>l.code===body.languageCode).name});keywords.set(id,[]);}
+   if(path===base){const country=countries.find(c=>c.code===body.countryCode);trackers.unshift({...structuredClone(initial),...body,id,keywordCount:0,countryIso:country.countryIso,locationName:body.locationCode===body.countryCode?country.name:'Synthetic local',locationType:body.locationCode===body.countryCode?country.type:country.code===2060?'Region':'City',languageName:languages.find(l=>l.code===body.languageCode).name});keywords.set(id,[]);}
    else{
     const tracker=trackers.find(t=>t.id===id);assert.ok(tracker);assert.equal(body.revision,tracker.authoredRevision,'Current authored revision');
     if(path.endsWith('/update')){for(const k of ['name','devices','depth','maxCrawlPages'])tracker[k]=body[k];}
@@ -92,7 +93,8 @@ try{
  await page.getByRole('button',{name:'New tracker',exact:true}).click();
  await page.getByLabel(/connection/i).selectOption(cid);
  await page.getByRole('button',{name:'Load search options',exact:true}).click();
- await page.getByLabel('Country',{exact:true}).selectOption('2840');
+ await page.getByText(/2 locations cannot be selected: BY/).waitFor();
+ await page.getByLabel('Country or territory',{exact:true}).selectOption('2840');
  await page.getByLabel('Language',{exact:true}).selectOption('en');
  assert.equal(await page.getByLabel('Requested results',{exact:true}).inputValue(),'10');
  assert.equal(await page.getByLabel('Maximum billable pages',{exact:true}).inputValue(),'1');
@@ -100,7 +102,7 @@ try{
  await page.getByLabel('Find a city or region',{exact:true}).fill('New');
  nextGet='hold';await page.getByLabel('Find a city or region',{exact:true}).press('Enter');
  await page.waitForTimeout(50);assert.ok(held);assert.equal(mutations.length,0,'Local Enter must never submit create');
- await page.getByLabel('Country',{exact:true}).selectOption('2250');
+ await page.getByLabel('Country or territory',{exact:true}).selectOption('2250');
  assert.equal(await page.getByLabel('Language',{exact:true}).inputValue(),'en');
  await fulfill(held.route,held.reply);held=null;
  assert.equal(await page.getByRole('option',{name:'New York synthetic',exact:true}).count(),0,'Old-country response is obsolete');
@@ -220,7 +222,7 @@ try{
  await page.screenshot({path:resolve('private/rank-panel-evidence/rank-list-360.png'),fullPage:true});
  await page.getByRole('button',{name:'New tracker',exact:true}).click();
  await page.getByLabel('DataForSEO connection',{exact:true}).selectOption(cid);await page.getByRole('button',{name:'Load search options',exact:true}).click();
- await page.getByLabel('Country',{exact:true}).selectOption('2840');await page.getByLabel('Language',{exact:true}).selectOption('en');
+ await page.getByLabel('Country or territory',{exact:true}).selectOption('2840');await page.getByLabel('Language',{exact:true}).selectOption('en');
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  await page.screenshot({path:resolve('private/rank-panel-evidence/rank-create-360.png'),fullPage:true});
  const primary=await page.getByRole('button',{name:'Create tracker',exact:true}).boundingBox();assert.ok(primary.height>=44);
@@ -264,4 +266,45 @@ try{
  await page.getByLabel('Select all keywords',{exact:true}).check();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Remove selected',exact:true}).click();await page.getByText('No keywords yet',{exact:true}).waitFor();assert.equal(await region.count(),0);assert.equal(await page.getByRole('button',{name:'Prepare a rank check',exact:true}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Check selected keywords',exact:true}).isDisabled(),true);
  nextGet=403;await page.getByRole('button',{name:'Refresh tracker',exact:true}).click();await page.getByRole('button',{name:'Reload access',exact:true}).waitFor();for(const width of [320,360,768,1440])await check('denied root '+width,async()=>{await page.setViewportSize({width,height:1000});await targets();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);});
  assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);assert.deepEqual(findings,[],'Every R01 hierarchy, draft and target requirement must pass');console.log('PASS native settings/order/draft retention, all-mode44px targets, long-text LTR/RTL/zoom/forced colors and explicit case-preserving add/unpin/remove without paid work.');
+
+ // Compatibility checks are additive; every earlier controller assertion stays intact.
+ const beginCompatible=async()=>{await page.reload();await page.getByRole('button',{name:'New tracker',exact:true}).click();await page.getByLabel('DataForSEO connection',{exact:true}).selectOption(cid);await page.getByRole('button',{name:'Load search options',exact:true}).click();};
+ await check('Region root and descendant preserve exact selected codes and language forms',async()=>{
+  for(const localTarget of [false,true]){
+   await beginCompatible();await page.getByLabel('Country or territory',{exact:true}).selectOption('2060');await page.getByLabel('Language',{exact:true}).selectOption(localTarget?'sr-Latn':'es-419');
+   assert.equal(await page.getByLabel('Search targeting',{exact:true}).inputValue(),'national');
+   if(localTarget){await page.getByLabel('Search targeting',{exact:true}).selectOption('local');await page.getByRole('button',{name:'Search locations',exact:true}).click();await page.getByRole('option',{name:'Bermuda local region',exact:true}).waitFor({state:'attached'});await page.getByLabel('City or region',{exact:true}).selectOption('300');}
+   assert.equal(await page.getByText(/2 locations cannot be selected: BY/).isVisible(),true);assert.equal(await page.getByText(/Some parent-location details are unavailable/).isVisible(),true);
+   await page.setViewportSize({width:360,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   const name=localTarget?'Bermuda local':'Bermuda whole';await page.getByLabel('Tracker name',{exact:true}).fill(name);await page.getByRole('button',{name:'Create tracker',exact:true}).click();await page.getByRole('heading',{name,exact:true}).waitFor();
+   assert.equal(mutations.at(-1).body.countryCode,2060);assert.equal(mutations.at(-1).body.locationCode,localTarget?300:2060);assert.equal(mutations.at(-1).body.languageCode,localTarget?'sr-Latn':'es-419');assert.equal(trackers.find(t=>t.name===name).locationType,'Region');
+  }
+ });
+ await check('unavailable and malformed catalogue coverage cannot invent choices',async()=>{
+  nextCatalog={countries:[],languages,coverage:{...coverage,receivedRows:2,selectableRows:0},verifiedAt:at};await beginCompatible();await page.getByText('No country or territory can be selected from this catalogue.',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Create tracker',exact:true}).isDisabled(),true);assert.equal(await page.getByLabel('Country or territory',{exact:true}).inputValue(),'');
+  for(const broken of [{...coverage,receivedRows:9},{...coverage,unavailableGroups:[{countryIso:'IR',rows:2,reason:'provider_unsupported'}]},coverage]){
+   nextCatalog={countries:broken===coverage?[{...countries[2],parentCode:99}]:countries,languages,coverage:broken,verifiedAt:at};await beginCompatible();await page.getByRole('alert').filter({hasText:'The server response could not be verified.'}).waitFor();assert.equal(await page.getByLabel('Country or territory',{exact:true}).count(),0);
+  }
+ });
+ await check('local results reject another ISO or the selected root code',async()=>{
+  for(const row of [{...local(2060,300,'Foreign ISO'),countryIso:'US'},{...countries[2]}]){
+   await beginCompatible();await page.getByLabel('Country or territory',{exact:true}).selectOption('2060');await page.getByLabel('Search targeting',{exact:true}).selectOption('local');
+   nextLocations={role,rows:[row],total:1,nextOffset:null,coverage,verifiedAt:at};await page.getByRole('button',{name:'Search locations',exact:true}).click();await page.getByRole('alert').filter({hasText:'The server response could not be verified.'}).first().waitFor();assert.equal(await page.getByLabel('City or region',{exact:true}).inputValue(),'');
+  }
+ });
+ await check('local coverage must include the selected ISO and account for its root and returned rows',async()=>{
+  const valid={role,rows:[local(2060,300,'Bermuda local region')],total:1,nextOffset:null,coverage,verifiedAt:at};
+  for(const reply of [
+   {...valid,coverage:{...coverage,receivedRows:1,selectableRows:0,missingParentRows:1,unavailableGroups:[{countryIso:'BM',rows:1,reason:'missing_root'}]}},
+   {...valid,coverage:{...coverage,receivedRows:7,selectableRows:6,unavailableGroups:[{countryIso:'BM',rows:1,reason:'missing_root'}]}},
+   {...valid,total:99},{...valid,total:coverage.selectableRows},{...valid,total:0},
+  ]){
+   await beginCompatible();await page.getByLabel('Country or territory',{exact:true}).selectOption('2060');await page.getByLabel('Search targeting',{exact:true}).selectOption('local');
+   nextLocations=reply;await page.getByRole('button',{name:'Search locations',exact:true}).click();await page.getByRole('alert').filter({hasText:'The server response could not be verified.'}).first().waitFor();
+   assert.equal(await page.getByRole('option',{name:'Bermuda local region',exact:true}).count(),0);assert.equal(await page.getByLabel('City or region',{exact:true}).inputValue(),'');
+   nextLocations=valid;await page.getByRole('button',{name:'Search locations',exact:true}).click();await page.getByRole('option',{name:'Bermuda local region',exact:true}).waitFor({state:'attached'});
+   assert.equal(await page.getByRole('alert').count(),0);await page.getByLabel('City or region',{exact:true}).selectOption('300');assert.equal(await page.getByLabel('City or region',{exact:true}).inputValue(),'300');assert.equal(await page.getByText(/2 locations cannot be selected: BY/).isVisible(),true);
+  }
+ });
+ assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);assert.deepEqual(findings,[],'Compatibility checks must preserve honest catalog scope');console.log('PASS ISO-grouped Country/Region choices, literal language forms, partial warnings, rootless empty state and malformed catalog/page rejection.');
 }finally{await browser?.close();await server.close();}
