@@ -129,6 +129,12 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .rank-reporting .field { margin: 0; min-width: 0; }
 .site-audits table { min-width: 640px; }
 .site-audits .metric-grid { grid-template-columns: repeat(auto-fit,minmax(min(100%,120px),1fr)); }
+.site-audits .audit-launch-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 12px; }
+.site-audits .audit-launch-fields > p, .site-audits .audit-launch-fields > label { grid-column: 1 / -1; }
+.site-audits .audit-launch-fields .field { margin: 0; min-width: 0; }
+.site-audits .audit-launch-fields input[type="number"] { max-width: 14rem; }
+.site-audits .audit-issue-group { border-block-start: 1px solid var(--line); padding-block: 8px; }
+.site-audits .audit-issue-group > h3 { margin: 8px 0; }
 .keyword-research td:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
 .keyword-tabs { margin-bottom: 20px; }
 .keyword-workspace > [hidden] { display: none; }
