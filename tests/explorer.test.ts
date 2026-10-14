@@ -39,3 +39,34 @@ test('Explorer cohort selection requires one valid paired ID and current bounded
   for(const query of [`cohortId=${id}`,'cohortRevision=1','cohortId=no&cohortRevision=1',...['0','-1','01','1.0','1e1','2147483648','1\n',''].map(revision=>new URLSearchParams({cohortId:id,cohortRevision:revision}).toString()),
     `cohortId=${id}&cohortId=${id}&cohortRevision=1`,`cohortId=${id}&cohortRevision=1&cohortRevision=1`])assert.throws(()=>explorerQuery(new URLSearchParams(query)),{status:400});
 });
+
+test('Explorer keeps legacy predicates required and exposes an optional canonical flat group',()=>{
+  assert.equal(Object.hasOwn(explorerQuery(new URLSearchParams()),'predicates'),false);
+  const predicates={properties:[{value:'2024-02-29T12:00:00.1234567+04:00',type:'date',operator:'eq',key:'when'}],fields:[{value:'/other',operator:'eq',field:'path'}],match:'any',version:1};
+  const params=new URLSearchParams({path:'/required',propertyKey:'required',propertyType:'null',propertyValue:'null',predicates:JSON.stringify(predicates)});
+  const parsed=explorerQuery(params);
+  assert.deepEqual(parsed.filters,{path:'/required'});assert.deepEqual(parsed.property,{key:'required',type:'null',value:null});
+  assert.deepEqual(parsed.predicates,{version:1,match:'any',fields:[{field:'path',operator:'eq',value:'/other'}],properties:[{key:'when',operator:'eq',type:'date',value:'2024-02-29T08:00:00.1234567Z'}]});
+  assert.equal(params.get('predicates'),JSON.stringify(predicates));
+  for(const value of ['', '{', 'null',JSON.stringify({...predicates,sessionProperties:[]})])assert.throws(()=>explorerQuery(new URLSearchParams({predicates:value})),{status:400});
+  params.append('predicates',JSON.stringify(predicates));assert.throws(()=>explorerQuery(params),{status:400});
+});
+
+test('Explorer checks the full encoded query again after advanced date normalization grows it',()=>{
+  const predicates={version:1,match:'all',fields:[],properties:[{key:'when',operator:'eq',type:'date',value:'2024-01-01T00:00:00Z'}]};
+  const params=new URLSearchParams({path:'中'.repeat(2048),eventName:'中'.repeat(120),predicates:JSON.stringify(predicates),language:''});
+  const padding=19998-params.toString().length;assert.ok(padding>=0&&padding<=320);
+  params.set('language','a'.repeat(padding));assert.equal(params.toString().length,19998);
+  assert.throws(()=>explorerQuery(params),{status:400});
+});
+
+test('advanced Explorer size includes resolved report defaults without mutating the caller',()=>{
+  const predicates={version:1,match:'all',fields:[{field:'path',operator:'eq',value:'/x'}],properties:[]};
+  const now=new Date('2026-10-14T12:00:00Z'),params=new URLSearchParams({path:'中'.repeat(2048),eventName:'中'.repeat(120),predicates:JSON.stringify(predicates),language:''});
+  const canonical=new URLSearchParams(params);
+  for(const [key,value]of Object.entries({from:'2026-10-08',to:'2026-10-14',timeZone:'UTC',kind:'all',groupBy:'event'}))canonical.set(key,value);
+  const padding=20000-canonical.toString().length;assert.ok(padding>=0&&padding<320);
+  params.set('language','a'.repeat(padding));canonical.set('language','a'.repeat(padding));assert.equal(canonical.toString().length,20000);
+  const original=params.toString();assert.doesNotThrow(()=>explorerQuery(params,now));assert.equal(params.toString(),original);assert.equal(params.has('kind'),false);
+  params.set('language','a'.repeat(padding+1));assert.ok(params.toString().length<20000);assert.throws(()=>explorerQuery(params,now),{status:400});
+});

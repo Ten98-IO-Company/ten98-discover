@@ -4,6 +4,7 @@ import { explorerQuery, csvCell } from './explorer-input.ts';
 import { retentionCoverage } from './retention.ts';
 import { analyticsCalendarSql, analyticsScopeSql, analyticsScopeValues } from './analytics-scope.ts';
 import {resolveCohort,type CohortItem} from './cohorts.ts';
+import {advancedPredicateSql,advancedPredicateMethod,validateAdvancedRegex} from './advanced-predicates.ts';
 
 type Totals = {events:number|null;pageViews:number|null;customEvents:number|null;identifiedEvents:number|null;unidentifiedEvents:number|null;visitors:number|null;visits:number|null};
 type Day = {date:string;start:string;end:string;events:number|null;pageViews:number|null;customEvents:number|null;skipped:boolean;coverage:'complete'|'partial'|'unavailable'};
@@ -11,7 +12,7 @@ type Group = {type:string;value:unknown;events:number;identifiedEvents:number;vi
 type Numeric = {samples:number;sum:string|null;average:string|null;min:string|null;max:string|null};
 export type CohortReport={item:CohortItem;range:{from:string;to:string;timeZone:string;start:string;end:string};coverage:ReturnType<typeof retentionCoverage>;
   identity:{status:'complete'|'partial'|'unavailable';identifiedEvents:number|null;unidentifiedEvents:number|null;observedMemberKeys:number|null};
-  membership:{status:'available'|'unavailable';countsAreLowerBounds:boolean};limitation:string};
+  membership:{status:'available'|'unavailable';countsAreLowerBounds:boolean};limitation:string;predicateMethod?:ReturnType<typeof advancedPredicateMethod>};
 const cohortLimitation='Membership uses observed project-scoped visitor keys, not persistent people. Keys rotate each UTC month and when identity inputs or the signing secret change; continuity across those changes is unavailable. Identity coverage describes retained qualifying events only.';
 // Both templates are trusted constants. Reserve1–12 for the existing report query.
 const qualificationSql=analyticsScopeSql.replace(/\$(\d+)\b/g,(_,slot)=>`$${Number(slot)+12}`);
@@ -25,17 +26,26 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     await client.query("SET LOCAL statement_timeout='5s'");
     const item=query.cohort?await resolveCohort(client,projectId,userId,query.cohort.id,query.cohort.revision):null;
     const qualification=item?explorerQuery(new URLSearchParams(item.definition.query)):null;
+    if(query.predicates||qualification?.predicates){
+      if(!(await client.query('SELECT 1 FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rowCount)throw new FoundationError(404,'Project not found or unavailable.');
+      await validateAdvancedRegex(client,query.predicates,qualification?.predicates);
+    }
     for(const zone of new Set([query.timeZone,...(qualification?[qualification.timeZone]:[])]))if (!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[zone])).rowCount) throw new FoundationError(400,'The database does not support this timezone.');
-    const population=item?'report_scope':'scope',cohortSql=item?`, qualification AS MATERIALIZED (${qualificationSql} SELECT visitor_id FROM scope),
+    const values=[...analyticsScopeValues(projectId,userId,query),query.groupBy,query.groupProperty,...(qualification?analyticsScopeValues(projectId,userId,qualification):[])];
+    const bind=(value:unknown)=>{values.push(value);return `$${values.length}`;};
+    const reportPredicate=advancedPredicateSql(query.predicates,bind,query.timeZone),qualificationPredicate=advancedPredicateSql(qualification?.predicates,bind,qualification?.timeZone??query.timeZone);
+    const basePopulation=item?'report_scope':'scope',population=query.predicates?'filtered_report':basePopulation;
+    const cohortSql=item?`, qualification AS MATERIALIZED (${qualificationSql} SELECT visitor_id FROM scope s WHERE ${qualificationPredicate}),
       qualification_bounds AS (WITH RECURSIVE ${qualificationCalendarSql} SELECT start,finish FROM bounds),
       cohort_keys AS MATERIALIZED (SELECT DISTINCT visitor_id FROM qualification WHERE visitor_id IS NOT NULL),
       report_scope AS MATERIALIZED (SELECT s.* FROM scope s WHERE EXISTS(SELECT 1 FROM cohort_keys c WHERE c.visitor_id=s.visitor_id))`:'';
+    const advancedSql=query.predicates?`, filtered_report AS MATERIALIZED (SELECT s.* FROM ${basePopulation} s WHERE ${reportPredicate})`:'';
     // One statement binds membership, retention, buckets and totals to one snapshot.
     // ponytail: bounded raw aggregation; introduce rollups only after measured query limits.
     // PostgreSQL resolves ambiguous wall times to the later offset. Check both
     // neighbouring offsets for the first midnight; binary-search only missing
     // midnights to find a gap's first real instant (including skipped dates).
-    const {rows} = await client.query(`${analyticsScopeSql}${cohortSql}, labeled AS MATERIALIZED (
+    const {rows} = await client.query(`${analyticsScopeSql}${cohortSql}${advancedSql}, labeled AS MATERIALIZED (
       SELECT *,CASE $11::text
         WHEN 'event' THEN jsonb_build_object('type','string','value',event_name)
         WHEN 'path' THEN jsonb_build_object('type','string','value',path)
@@ -77,7 +87,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       json_build_object('keys',COALESCE((SELECT json_agg(key ORDER BY key COLLATE "C") FROM (SELECT key FROM keys ORDER BY key COLLATE "C" LIMIT 100) k),'[]'::json),
         'truncated',(SELECT count(*)>100 FROM keys)) AS properties,
       (SELECT json_build_object('samples',count(*),'sum',sum(value)::text,'average',avg(value)::text,'min',min(value)::text,'max',max(value)::text) FROM numbers) AS numeric
-      FROM ${population}`,[...analyticsScopeValues(projectId,userId,query),query.groupBy,query.groupProperty,...(qualification?analyticsScopeValues(projectId,userId,qualification):[])]);
+      FROM ${population}`,values);
     await client.query('COMMIT');
     const row = rows[0];
     if (!row.allowed) throw new FoundationError(404,'Project not found or unavailable.');
@@ -89,7 +99,8 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       const expired=qualifiedCoverage.status==='unavailable',unidentified=q.events-q.identified,unavailable=expired||(q.events>0&&q.identified===0);
       cohort={item,range:{from:qualification.from,to:qualification.to,timeZone:qualification.timeZone,start:from,end:to},coverage:qualifiedCoverage,
         identity:{status:expired||(q.events>0&&q.identified===0)?'unavailable':unidentified>0?'partial':'complete',identifiedEvents:expired?null:q.identified,unidentifiedEvents:expired?null:unidentified,observedMemberKeys:expired?null:q.members},
-        membership:{status:unavailable?'unavailable':'available',countsAreLowerBounds:!unavailable&&(qualifiedCoverage.status==='partial'||unidentified>0)},limitation:cohortLimitation};
+        membership:{status:unavailable?'unavailable':'available',countsAreLowerBounds:!unavailable&&(qualifiedCoverage.status==='partial'||unidentified>0)},limitation:cohortLimitation,
+        ...(qualification.predicates?{predicateMethod:advancedPredicateMethod(qualification.predicates)}:{})};
     }
     const membershipUnavailable=cohort?.membership.status==='unavailable';
     const totals: Totals = row.totals;
@@ -100,6 +111,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       return {...day,start:from,end:to,skipped:from === to,coverage:status,...(status === 'unavailable'||membershipUnavailable ? {events:null,pageViews:null,customEvents:null} : {})};
     });
     const result = {range:{from:query.from,to:query.to,timeZone:query.timeZone,start,end},query,coverage,totals,daily,...(cohort?{cohort}:{}),
+      ...(query.predicates?{predicateMethod:advancedPredicateMethod(query.predicates)}:{}),
       breakdown:(membershipUnavailable?{groups:[],totalGroups:null,returnedGroupEvents:null,truncated:false}:row.breakdown) as {groups:Group[];totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean},
       properties:(membershipUnavailable?{keys:[],truncated:false}:row.properties) as {keys:string[];truncated:boolean},numeric:query.groupBy === 'property' && coverage.status !== 'unavailable'&&!membershipUnavailable ? row.numeric as Numeric : null};
     return {...result,csv:explorerCsv(result)};
@@ -110,10 +122,11 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
   } finally {client.release();}
 }
 
-function explorerCsv(result:{query:ReturnType<typeof explorerQuery>;range:{start:string;end:string};coverage:ReturnType<typeof retentionCoverage>;totals:Totals;daily:Day[];breakdown:{groups:Group[];totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean};numeric:Numeric|null;cohort?:CohortReport}) {
+function explorerCsv(result:{query:ReturnType<typeof explorerQuery>;range:{start:string;end:string};coverage:ReturnType<typeof retentionCoverage>;totals:Totals;daily:Day[];breakdown:{groups:Group[];totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean};numeric:Numeric|null;cohort?:CohortReport;predicateMethod?:ReturnType<typeof advancedPredicateMethod>}) {
   const lines:unknown[][] = [['ten98-monitor','Bounded exploration result'],['Scope',JSON.stringify(result.query)],['Start (inclusive)',result.range.start],['End (exclusive)',result.range.end],
     ['Selection','Only instants in the selected local calendar dates; UTC envelopes can overlap at a repeated midnight.'],
     ['Retention coverage',result.coverage.status],['Retained from',result.coverage.retainedFrom ?? 'No retention boundary'],
+    ...(result.predicateMethod?[['Predicate method',JSON.stringify(result.predicateMethod)]]:[]),
     ...(result.cohort?[['Cohort',JSON.stringify(result.cohort)]]:[]),[],['Metric','Value'],...Object.entries(result.totals),[],
     ['Groups returned',result.breakdown.groups.length],['Total groups',result.breakdown.totalGroups],['Returned group events',result.breakdown.returnedGroupEvents],['Truncated',result.breakdown.truncated],
     ['Type','Value','Events','Identified events','Visitors'],...result.breakdown.groups.map(g=>[g.type,g.type === 'null' ? 'null' : g.type === 'missing' ? 'Missing / uncollected' : g.value,g.events,g.identifiedEvents,g.visitors]),[],

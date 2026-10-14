@@ -4,7 +4,7 @@ import {cleanText,parse,text} from './context-input.ts';
 import {explorerFilters,explorerQuery} from './explorer-input.ts';
 
 const definition=z.object({schemaVersion:z.literal(1),name:text(200,1).refine(value=>value.length<=200),query:z.string().max(20000).refine(cleanText)}).strict();
-const predicateKeys=new Set(['kind',...explorerFilters,'propertyKey','propertyType','propertyValue']);
+const predicateKeys=new Set(['kind',...explorerFilters,'propertyKey','propertyType','propertyValue','predicates']);
 export type SegmentDefinition={schemaVersion:1;name:string;query:string};
 
 // Store predicates, never the report's calendar, grouping or computed results.
@@ -17,6 +17,7 @@ export function parseSegmentDefinition(raw:unknown):SegmentDefinition{
     query.set('propertyKey',value.property.key);query.set('propertyType',value.property.type);
     if(value.property.type!=='missing')query.set('propertyValue',JSON.stringify(value.property.value));
   }
+  if(value.predicates)query.set('predicates',JSON.stringify(value.predicates));
   const normalized=query.toString();
   if(normalized.length>20000)throw new FoundationError(400,'The saved filter query is too large.');
   return {schemaVersion:1,name:input.name,query:normalized};

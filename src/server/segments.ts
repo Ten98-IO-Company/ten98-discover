@@ -5,6 +5,8 @@ import {FoundationError} from './auth.ts';
 import {parse} from './context-input.ts';
 import {contentCursor,contentReceipt,readContentCursor,withContentProject} from './project-context.ts';
 import {parseSegmentDefinition,type SegmentDefinition} from './segment-input.ts';
+import {explorerQuery} from './explorer-input.ts';
+import {validateAdvancedRegex} from './advanced-predicates.ts';
 
 export type SegmentItem={id:string;projectId:string;revision:number;definition:SegmentDefinition;createdAt:string;updatedAt:string};
 type Row={id:string;project_id:string;name:string;schema_version:1;query:string;revision:number;created_at:Date;updated_at:Date};
@@ -36,8 +38,10 @@ export async function saveSegment(projectId:unknown,userId:unknown,raw:unknown,s
   const input=parse(id?request.extend({revision,definition:z.unknown()}):request.extend({definition:z.unknown()}),raw);
   const definition=parseSegmentDefinition(input.definition);
   return withContentProject(projectId,uid,true,async(client,project)=>{
+    await client.query("SET LOCAL statement_timeout='5s'");
     const receipt=await contentReceipt(client,project.id,input.requestId,`segment.${id?'update:'+id:'create'}`,{userId:uid,...input,definition});
     if(receipt.replayed){const row=await find(client,project.id,receipt.result.id);return {role:project.role,item:row?dto(row):null,deleted:!row,replayed:true};}
+    await validateAdvancedRegex(client,explorerQuery(new URLSearchParams(definition.query)).predicates);
     let row:Row;
     if(id){
       const old=await find(client,project.id,id);if(!old)throw unavailable();
@@ -50,6 +54,9 @@ export async function saveSegment(projectId:unknown,userId:unknown,raw:unknown,s
         [randomUUID(),project.id,definition.name,definition.schemaVersion,definition.query])).rows[0];
     }
     await receipt.save({id:row.id});return {role:project.role,item:dto(row),deleted:false,replayed:false};
+  }).catch((error:unknown)=>{
+    if((error as {code?:string})?.code==='57014')throw new FoundationError(503,'Saved filters took too long to save. Retry the same request.');
+    throw error;
   });
 }
 export async function deleteSegment(projectId:unknown,userId:unknown,segmentId:unknown,raw:unknown){

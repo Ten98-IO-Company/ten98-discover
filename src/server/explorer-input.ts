@@ -3,10 +3,11 @@ import {z} from 'zod';
 import { normalizeProperties } from './analytics-input.ts';
 import { analyticsRange } from './analytics.ts';
 import { InputError } from './validation.ts';
+import {parseAdvancedPredicates,predicateFields,type AdvancedPredicates} from './advanced-predicate-input.ts';
 
 export const explorerGroups = ['event','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','screenWidth','screenHeight','property'] as const;
-export const explorerFilters = ['eventName','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent'] as const;
-const parameterNames = new Set(['from','to','timeZone','kind','groupBy','groupProperty','propertyKey','propertyType','propertyValue','cohortId','cohortRevision',...explorerFilters]);
+export const explorerFilters = predicateFields;
+const parameterNames = new Set(['from','to','timeZone','kind','groupBy','groupProperty','propertyKey','propertyType','propertyValue','cohortId','cohortRevision','predicates',...explorerFilters]);
 function bad(message = 'Check the exploration filters and try again.'): never { throw new InputError(400, message); }
 function text(value: string, maximum: number, empty = false) {
   if ((!empty && !value.length) || value.length > maximum || toUSVString(value) !== value || value.includes('\0')) bad();
@@ -61,7 +62,17 @@ export function explorerQuery(params: URLSearchParams, now = new Date()) {
     if(!z.uuid().safeParse(id).success||!/^[1-9][0-9]{0,9}(?![\s\S])/.test(revision)||Number(revision)>2147483647)bad('Choose a cohort and its current revision.');
     cohort={id:id!,revision:Number(revision)};
   }
-  return {from:range.from,to:range.to,timeZone,kind,groupBy,groupProperty,filters,property,...(cohort?{cohort}:{})};
+  let predicates:AdvancedPredicates|undefined;
+  if(params.has('predicates')){
+    let raw:unknown;
+    try{raw=JSON.parse(params.get('predicates')!);}catch{return bad('Enter valid JSON for the additional filters.');}
+    predicates=parseAdvancedPredicates(raw);
+    const normalized=new URLSearchParams(params);normalized.set('predicates',JSON.stringify(predicates));
+    for(const [key,value]of Object.entries({from:range.from,to:range.to,timeZone,kind,groupBy}))normalized.set(key,value);
+    if(property&&property.type!=='missing')normalized.set('propertyValue',JSON.stringify(property.value));
+    if(normalized.toString().length>20000)bad('The exploration query is too large.');
+  }
+  return {from:range.from,to:range.to,timeZone,kind,groupBy,groupProperty,filters,property,...(cohort?{cohort}:{}),...(predicates?{predicates}:{})};
 }
 
 // Quoting alone does not stop spreadsheets from executing a leading formula.

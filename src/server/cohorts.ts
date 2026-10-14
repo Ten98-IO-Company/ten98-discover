@@ -5,6 +5,8 @@ import {FoundationError} from './auth.ts';
 import {parse} from './context-input.ts';
 import {contentCursor,contentReceipt,readContentCursor,withContentProject} from './project-context.ts';
 import {parseCohortDefinition,type CohortDefinition} from './cohort-input.ts';
+import {explorerQuery} from './explorer-input.ts';
+import {validateAdvancedRegex} from './advanced-predicates.ts';
 
 export type CohortItem={id:string;projectId:string;revision:number;definition:CohortDefinition;createdAt:string;updatedAt:string};
 type Row={id:string;project_id:string;name:string;schema_version:1;query:string;revision:number;created_at:Date;updated_at:Date};
@@ -54,6 +56,7 @@ export async function saveCohort(projectId:unknown,userId:unknown,raw:unknown,co
     await client.query("SET LOCAL statement_timeout='5s'");
     const receipt=await contentReceipt(client,project.id,input.requestId,`cohort.${id?'update:'+id:'create'}`,{userId:uid,...input,definition});
     if(receipt.replayed){const row=await find(client,project.id,receipt.result.id);return {role:project.role,item:row?dto(row):null,deleted:!row,replayed:true};}
+    await validateAdvancedRegex(client,explorerQuery(new URLSearchParams(definition.query)).predicates);
     let row:Row;
     if(id){
       const old=await find(client,project.id,id);if(!old)throw unavailable();

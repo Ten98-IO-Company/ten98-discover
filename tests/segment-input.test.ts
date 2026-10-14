@@ -45,3 +45,23 @@ test('adding a canonical default cannot save a filter that exceeds its own reloa
   assert.doesNotThrow(()=>explorerQuery(new URLSearchParams(query())));
   assert.throws(()=>saved(query()),{status:400});
 });
+
+test('saved filters round trip additional groups after legacy predicates without moving required fields',()=>{
+  const predicates={properties:[{operator:'missing',key:'absent'}],fields:[{value:'/a',field:'path',operator:'eq'},{operator:'eq',field:'path',value:'/b'}],match:'any',version:1};
+  const definition=saved(new URLSearchParams({predicates:JSON.stringify(predicates),path:'/required',propertyKey:'empty',propertyType:'string',propertyValue:'""'}).toString());
+  const params=new URLSearchParams(definition.query),parsed=explorerQuery(params);
+  assert.deepEqual([...params.keys()],['kind','path','propertyKey','propertyType','propertyValue','predicates']);
+  assert.deepEqual(parsed.filters,{path:'/required'});assert.deepEqual(parsed.property,{key:'empty',type:'string',value:''});
+  assert.equal(parsed.predicates?.match,'any');assert.equal(parsed.predicates?.fields.length,2);
+  assert.deepEqual(parseSegmentDefinition(definition),definition);
+  assert.throws(()=>saved(definition.query+'&predicates='+params.get('predicates')),{status:400});
+});
+
+test('saved additional predicates include normalization and canonical defaults in the reload budget',()=>{
+  const predicates={version:1,match:'all',fields:[],properties:[{key:'when',operator:'eq',type:'date',value:'2024-01-01T00:00:00Z'}]};
+  const params=new URLSearchParams({path:'中'.repeat(2048),eventName:'中'.repeat(120),predicates:JSON.stringify(predicates),language:''});
+  const padding=19988-params.toString().length;assert.ok(padding>=0&&padding<=320);
+  params.set('language','a'.repeat(padding));assert.equal(params.toString().length,19988);
+  assert.throws(()=>explorerQuery(params),{status:400});
+  assert.throws(()=>saved(params.toString()),{status:400});
+});

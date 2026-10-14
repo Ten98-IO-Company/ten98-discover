@@ -9,6 +9,7 @@ Read [README](README.md), the [accepted brief](https://wiki.ten98.io/s/ten98-doc
 - Full V1 parity across the pinned references is required. Internal milestones cannot remove first-release functions.
 - The owner explicitly excluded SaaS subscription sales. The application is free and fully featured with no seat/feature paywalls; retain provider usage and workspace budgets.
 - Use one issue, one isolated task checkout and an explicit file allowlist. Branch names use `codex/` unless the owner specifies otherwise.
+- `main` is the default branch. Start new feature branches from `dev` and target `dev` for reviewed merges. Promote tested release candidates from `dev` to `main`; explicit owner instructions can authorize an earlier consolidation.
 
 ## Ponytail
 
