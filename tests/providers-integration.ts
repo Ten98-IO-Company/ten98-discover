@@ -116,7 +116,7 @@ export async function runProviderChecks(options: Options) {
   await settle(wid, uncertain.id, '1.5');
   assert.equal((await listProviders(wid, owner)).budget.paused, true, 'A charge exceeding the quote pauses spending.');
   await saveBudget(wid, owner, { monthlyLimitUsd: '100', paused: false });
-  await rejects(reserveSpend(wid, owner, request(connection.id, '8')), 409, 'Connection caps apply even with a larger workspace cap.');
+  await rejects(reserveSpend(wid, owner, request(connection.id, '8')), 409, 'Connection caps apply independently of the legacy workspace monetary amount.');
   const reserved = await reserveSpend(wid, owner, request(connection.id, '1'));
   const inFlight = await reserveSpend(wid, owner, request(connection.id, '1'));
   await dispatchSpend(wid, owner, inFlight.id);

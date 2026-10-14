@@ -5,7 +5,7 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
 import {getAuth} from '../src/server/auth.ts';
-import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
+import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
 import {updateProjectContext} from '../src/server/project-context.ts';
 import {createPrompts,listPrompts} from '../src/server/prompts.ts';
 import {quoteAiSuggestions,startAiSuggestions,getAiSuggestion,getAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from '../src/server/ai-suggestions.ts';
@@ -70,7 +70,7 @@ export async function runSuggestionChecks(){
   boss.send=(async(...args:any[])=>{queuedId=await (originalSend as any)(...args);throw new Error('Synthetic queue rollback');}) as typeof boss.send;
   try{await assert.rejects(startAiSuggestions(rollback.project,owner,{requestId:randomUUID(),quoteId:rq.id}));}finally{boss.send=originalSend;}
   assert.ok(queuedId);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=$1',[queuedId])).rowCount,0);
-  const budget=await fixture();await saveBudget(budget.workspace,owner,{monthlyLimitUsd:'0.01',paused:false});await assert.rejects(start(budget),{status:409});
+  const budget=await fixture();await saveProviderLimit(budget.workspace,owner,budget.connectionId,{revision:1,expectedMonthlyLimitUsd:'5',monthlyLimitUsd:'0.01'});await assert.rejects(start(budget),{status:409});
   const cap=await fixture();await assert.rejects(quoteAiSuggestions(cap.project,owner,{...cap.input,maxSpendUsd:'0.01'},send),{status:409});
   const busy=await fixture(),first=await start(busy);busy.input.requestId=randomUUID();await assert.rejects(start(busy),{status:409});await cancelAiSuggestion(busy.project,owner,first.id,{requestId:randomUUID()});
   console.log('PASS queue rollback, conservative per-request/workspace caps and one active project request');

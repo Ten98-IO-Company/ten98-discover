@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { credentialKeys, decryptCredentials, encryptCredentials } from '../src/server/credential-vault.ts';
-import { providerAccountCheck, usd, usdMicros } from '../src/server/providers.ts';
+import { providerAccountCheck, saveProviderLimit, usd, usdMicros } from '../src/server/providers.ts';
 import { reserveSpend, settleSpend } from '../src/server/spending.ts';
 
 test('versioned authenticated encryption rejects tampering, missing keys and cross-resource substitution', () => {
@@ -59,6 +59,16 @@ test('reservation validation rejects malformed and zero estimates before touchin
   for (const estimateUsd of ['1e3', 'NaN', 'x', '0', '0.000000']) {
     await assert.rejects(reserveSpend(randomUUID(), randomUUID(), { connectionId: randomUUID(), requestKey: randomUUID(), operation: 'unit.check', inputHash: 'a'.repeat(64), estimateUsd }), { name: 'ZodError' });
   }
+});
+
+test('cap edits reject malformed revisions, amounts and extra credential fields before database access', async () => {
+  const valid = { revision: 1, expectedMonthlyLimitUsd: '1.000000', monthlyLimitUsd: '0' };
+  for (const input of [
+    { ...valid, revision: 0 }, { ...valid, revision: 1.5 }, { ...valid, revision: 2_147_483_648 },
+    { ...valid, expectedMonthlyLimitUsd: 'NaN' }, { ...valid, monthlyLimitUsd: '1e3' },
+    { ...valid, monthlyLimitUsd: '1000000.000001' }, { ...valid, credentials: { apiKey: 'never-read' } },
+    { revision: 1, monthlyLimitUsd: '1' }, { ...valid, monthlyLimitUsd: null },
+  ]) await assert.rejects(saveProviderLimit(randomUUID(), randomUUID(), randomUUID(), input), { name: 'ZodError' });
 });
 
 test('provider account checks use fixed read-only URLs, reject redirects, bound responses and redact errors', async () => {

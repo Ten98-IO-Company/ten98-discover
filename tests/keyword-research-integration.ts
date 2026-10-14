@@ -4,7 +4,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
-import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
+import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
 import {keywordPayload,keywordEndpoints,keywordAccountEndpoint,keywordCatalogEndpoint,keywordReconcileEndpoint,type KeywordRequest} from '../src/server/keyword-research-input.ts';
 import {refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,executeKeywordResearch,getKeywordRun,getKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch,reconcileKeywordJobs} from '../src/server/keyword-research.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
@@ -68,7 +68,7 @@ export async function runKeywordResearchChecks(){
   queue.send=(async()=>{queueCalls++;throw new Error('Synthetic enqueue failure.');}) as typeof queue.send;
   const rollbackKey=randomUUID();try{await assert.rejects(startKeywordResearch(f.project,owner,{quoteId:rollbackQuote.id,requestKey:rollbackKey}));}finally{queue.send=originalSend;}
   assert.equal(queueCalls,1);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1 AND request_key=$2',[f.workspace,rollbackKey])).rowCount,0);
-  const budget=await fixture();await saveBudget(budget.workspace,owner,{monthlyLimitUsd:'0.02',paused:false});const bq1=await quote(budget),bq2=await quote(budget);
+  const budget=await fixture();await saveProviderLimit(budget.workspace,owner,budget.connectionId,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.02'});const bq1=await quote(budget),bq2=await quote(budget);
   const concurrent=await Promise.allSettled([startKeywordResearch(budget.project,owner,{quoteId:bq1.id,requestKey:randomUUID()}),startKeywordResearch(budget.project,owner,{quoteId:bq2.id,requestKey:randomUUID()})]);assert.equal(concurrent.filter(r=>r.status==='fulfilled').length,1);
   console.log('PASS keyword expired/revised quote rejection, enqueue rollback and concurrent budget reservation');
 

@@ -4,7 +4,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs} from '../src/server/jobs.ts';
-import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
+import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {keywordAccountEndpoint,keywordCatalogEndpoint,keywordEndpoints,keywordReconcileEndpoint,keywordPayload,type KeywordRow} from '../src/server/keyword-research-input.ts';
@@ -178,8 +178,8 @@ export async function runSavedKeywordChecks(){
     const rollbackKey=randomUUID();try{await assert.rejects(start(rollback,rollbackQuote.id,owner,rollbackKey));}finally{boss.send=originalSend;}
     assert.equal(queuedIds.length,2);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=ANY($1::uuid[])',[queuedIds])).rowCount,0);assert.equal((await childRuns(rollbackQuote.id)).length,0);
     assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,rollbackQuote.id)).plan.startedAt,null);
-    await saveBudget(rollback.workspace,owner,{monthlyLimitUsd:'0.025',paused:false});await assert.rejects(start(rollback,rollbackQuote.id),failed(409));assert.equal((await childRuns(rollbackQuote.id)).length,0);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);
-    await saveBudget(rollback.workspace,owner,{monthlyLimitUsd:'10',paused:false});const cancel=(await start(rollback,rollbackQuote.id)).plan;const noDispatch=paidCalls;await cancelSavedKeywordRefresh(rollback.project,owner,cancel.id,{});for(const child of cancel.children)await executeKeywordResearch(child.runId!,send);assert.equal(paidCalls,noDispatch);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,cancel.id)).plan.status,'cancelled');
+    await saveProviderLimit(rollback.workspace,owner,rollback.connectionId!,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.025'});await assert.rejects(start(rollback,rollbackQuote.id),failed(409));assert.equal((await childRuns(rollbackQuote.id)).length,0);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);
+    await saveProviderLimit(rollback.workspace,owner,rollback.connectionId!,{revision:1,expectedMonthlyLimitUsd:'0.025',monthlyLimitUsd:'10'});const cancel=(await start(rollback,rollbackQuote.id)).plan;const noDispatch=paidCalls;await cancelSavedKeywordRefresh(rollback.project,owner,cancel.id,{});for(const child of cancel.children)await executeKeywordResearch(child.runId!,send);assert.equal(paidCalls,noDispatch);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,cancel.id)).plan.status,'cancelled');
     console.log('PASS actual queue insert rollback, all-child budget atomicity and undispatched cancellation');
 
     const invalid=await fixture(true),invalidIds=(await manual(invalid,['allowed','x'.repeat(81)])).ids;

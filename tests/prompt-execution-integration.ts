@@ -4,7 +4,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
-import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
+import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
 import {createPrompts,updatePrompt,setPromptArchived,listPrompts} from '../src/server/prompts.ts';
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,executePromptComparison,reconcilePromptExecution,reconcilePromptExecutionJobs} from '../src/server/prompt-execution.ts';
 import {runRetentionBatch,previewRetention,getRetention} from '../src/server/retention.ts';
@@ -85,12 +85,12 @@ export async function runPromptExecutionChecks(){
   const recoveredStart=await startPromptExecution(permissions.project,editor,{quoteId:permissionQuote.quote.id,requestKey:permissionKey});assert.equal(recoveredStart.role,'editor');assert.equal(recoveredStart.comparison.id,permissionStart.comparison.id);assert.equal(recoveredStart.comparison.canCancel,false);assert.equal(paid,2);
   console.log('PASS current-role cancellation metadata, immutable bounded authored preview and accepted-start recovery after quote expiry');
 
-  const budget=await fixture();await saveBudget(budget.workspace,owner,{monthlyLimitUsd:'0.03',paused:false});await assert.rejects(start(budget),{status:409});assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM prompt_comparison WHERE workspace_id=$1',[budget.workspace])).rowCount,0);
+  const budget=await fixture();await saveProviderLimit(budget.workspace,owner,budget.connectionId,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.03'});await assert.rejects(start(budget),{status:409});assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM prompt_comparison WHERE workspace_id=$1',[budget.workspace])).rowCount,0);
   const rollback=await fixture(),rq=await quote(rollback),boss=await getBoss(),originalSend=boss.send.bind(boss);let insertedQueueId:string|undefined;boss.send=(async(...args:any[])=>{insertedQueueId=await (originalSend as any)(...args);throw new Error('Synthetic failure after queue insertion');}) as typeof boss.send;
   try{await assert.rejects(startPromptExecution(rollback.project,owner,{quoteId:rq.id,requestKey:randomUUID()}));}finally{boss.send=originalSend;}
   assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.ok(insertedQueueId);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=$1',[insertedQueueId])).rowCount,0);
   const expired=await fixture(),eq=await quote(expired);await pool.query("UPDATE prompt_execution_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[eq.id]);await assert.rejects(startPromptExecution(expired.project,owner,{quoteId:eq.id,requestKey:randomUUID()}),{status:409});
-  const competition=await fixture();await saveBudget(competition.workspace,owner,{monthlyLimitUsd:'0.06',paused:false});const cq1=await quote(competition),cq2=await quote(competition);const concurrent=await Promise.allSettled([startPromptExecution(competition.project,owner,{quoteId:cq1.id,requestKey:randomUUID()}),startPromptExecution(competition.project,owner,{quoteId:cq2.id,requestKey:randomUUID()})]);assert.equal(concurrent.filter(v=>v.status==='fulfilled').length,1);
+  const competition=await fixture();await saveProviderLimit(competition.workspace,owner,competition.connectionId,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.06'});const cq1=await quote(competition),cq2=await quote(competition);const concurrent=await Promise.allSettled([startPromptExecution(competition.project,owner,{quoteId:cq1.id,requestKey:randomUUID()}),startPromptExecution(competition.project,owner,{quoteId:cq2.id,requestKey:randomUUID()})]);assert.equal(concurrent.filter(v=>v.status==='fulfilled').length,1);
   console.log('PASS second-child budget failure and enqueue failure roll back every reservation; concurrent budgets serialize');
 
   let before=paid;

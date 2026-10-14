@@ -4,7 +4,7 @@ import {FoundationError} from '../src/server/auth.ts';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,startWorker,stopJobs} from '../src/server/jobs.ts';
-import {saveBudget,saveProvider} from '../src/server/providers.ts';
+import {saveBudget,saveProvider,saveProviderLimit} from '../src/server/providers.ts';
 import {getRankTracker,changeRankKeywords,updateRankTracker} from '../src/server/rank-tracking.ts';
 import {quoteRankCheck,getRankRun,rankQueue} from '../src/server/rank-execution.ts';
 import {listRankRuns} from '../src/server/rank-history.ts';
@@ -68,7 +68,7 @@ export async function runRankRecurringChecks(){
 
     for(const failure of ['exception','conflict','budget'] as const){
       const n=transport(),x=await fixture(n,101);await due(x);const before=(await raw(x)).next_due_at.toISOString(),beforeJobs=(await pool.query('SELECT count(*)::int AS n FROM pgboss.job')).rows[0].n,send=boss.send;let sends=0;
-      if(failure==='budget')await saveBudget(x.workspace,owner,{monthlyLimitUsd:'0.100500',paused:false});
+      if(failure==='budget')await saveProviderLimit(x.workspace,owner,x.connection,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.100500'});
       boss.send=(async(...args:Parameters<typeof send>)=>{const result=await send.apply(boss,args);sends++;if(sends===2)throw failure==='conflict'?new FoundationError(409,'Synthetic invariant conflict.'):new Error('Synthetic post-queue failure.');return result;}) as typeof send;
       try{if(failure==='budget'){const skipped=await claimDueRankOccurrence(n.send);assert.equal(skipped.status,'skipped');assert.equal(sends,1);assert.deepEqual(await counts(x),{runs:1,ledger:0,dispatch:0,tasks:0});assert.ok((await raw(x)).next_due_at>new Date());}else{await assert.rejects(claimDueRankOccurrence(n.send),failure==='conflict'?rejected(409):/Synthetic post-queue failure/);assert.equal(sends,2);assert.deepEqual(await counts(x),{runs:0,ledger:0,dispatch:0,tasks:0});assert.equal((await raw(x)).next_due_at.toISOString(),before);}}
       finally{boss.send=send;await disable(x);}assert.equal((await pool.query('SELECT count(*)::int AS n FROM pgboss.job')).rows[0].n,beforeJobs);
