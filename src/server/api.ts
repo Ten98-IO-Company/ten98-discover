@@ -12,6 +12,7 @@ import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import { exploreAnalytics } from './explorer.ts';
+import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
 import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
 import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
@@ -215,6 +216,24 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit(`reports:${user.id}:${request.method === 'GET' ? 'read' : 'write'}`, request.method === 'GET' ? 120 : 30);
       const response = await handleReports(request, user.id);
       if (response) return response;
+    }
+    const annotationRoute=path.match(new RegExp('^/api/projects/('+id+')/annotations(?:/(timeline|'+id+')(?:/(update|delete))?)?$','i'));
+    if(annotationRoute){
+      const pid=annotationRoute[1],target=annotationRoute[2],action=annotationRoute[3];
+      await limit('annotations:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?60:30);
+      if(request.method==='GET'){
+        if(action)return json({error:'Method not allowed.'},405);
+        if(target==='timeline')return json(await annotationTimeline(pid,user.id,url.searchParams));
+        if(!target)return json(await listAnnotations(pid,user.id,url.searchParams));
+        if(url.search)throw new FoundationError(400,'This annotation read has no query parameters.');
+        return json(await getAnnotation(pid,user.id,target));
+      }
+      if(request.method==='POST'&&target!=='timeline'&&(!target||action==='update'||action==='delete')){
+        if(url.search)throw new FoundationError(400,'Annotation writes have no query parameters.');
+        const body=await readJson(request,8192);
+        return json(action==='delete'?await deleteAnnotation(pid,user.id,target,body):await saveAnnotation(pid,user.id,body,target));
+      }
+      return json({error:'Method not allowed.'},405);
     }
     const segmentRoute=path.match(new RegExp('^/api/projects/('+id+')/segments(?:/('+id+')(?:/(update|delete))?)?$','i'));
     if(segmentRoute){
