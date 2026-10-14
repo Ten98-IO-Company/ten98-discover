@@ -11,6 +11,7 @@ interface Settings {
   captureCampaigns: boolean;
   captureScreen: boolean;
   excludeBots: boolean;
+  linkIdentities?: boolean;
   excludedPaths: string[];
 }
 
@@ -352,6 +353,15 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
           which these settings do not change.
         </p>
       </fieldset>
+
+      <div className="field">
+        <label className="row" htmlFor={`${uid}-link-identities`}>
+          <input id={`${uid}-link-identities`} type="checkbox" style={{width:'auto',flexShrink:0}}
+            checked={draft.linkIdentities===true} disabled={inputsDisabled} onChange={e=>set('linkIdentities',e.target.checked)}/>
+          Link future identified activity across devices and months
+        </label>
+        <p className="hint">After fresh analytics consent, matching identifiers supplied by this website can link future activity within this project. Raw identifiers are not stored, and earlier anonymous activity stays separate. Disabling stops new link evidence; retained links remain until retention removes them. This does not verify a customer&apos;s identity.</p>
+      </div>
 
       <div className="field">
         <label className="row" htmlFor={`${uid}-bots`}>

@@ -9,11 +9,12 @@ import { normalizeDimensions, normalizeProperties } from './analytics-input.ts';
 import { resolveAnalyticsNetwork } from './analytics-network.ts';
 import { eventPath } from './validation.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
+import {recordIdentityLink} from './identity-links.ts';
 
 const settingsInput = z.object({
   enabled: z.boolean(), consentMode: z.enum(['builtin', 'external']),
   captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),
-  excludeBots: z.boolean(),
+  excludeBots: z.boolean(),linkIdentities:z.boolean().optional(),
   excludedPaths: z.array(z.string().min(1).max(256).regex(/^\/[^?#\u0000-\u001f\u007f]*$(?![\s\S])/).refine(value => { try { decodeURIComponent(value); return toUSVString(value) === value; } catch { return false; } })).max(50),
 }).strict();
 export type AnalyticsSettings = z.infer<typeof settingsInput>;
@@ -72,8 +73,9 @@ export async function saveAnalyticsSettings(projectId: string, userId: string, r
     await client.query('SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR UPDATE OF w', [projectId]);
     const role = await client.query('SELECT m.role FROM membership m JOIN project p ON p.workspace_id=m.workspace_id WHERE p.id=$1 AND m.user_id=$2', [projectId, userId]);
     if (!['owner','admin'].includes(role.rows[0]?.role)) throw new FoundationError(404, 'Project not found or unavailable.');
-    const result = await client.query(`UPDATE project SET analytics_settings=$3,analytics_revision=analytics_revision+1,analytics_epoch=$4
-      WHERE id=$1 AND analytics_revision=$2 RETURNING analytics_settings AS settings,analytics_revision AS revision`, [projectId, input.revision, JSON.stringify(input.settings), randomUUID()]);
+    const result = await client.query(`UPDATE project SET analytics_settings=$3,analytics_revision=analytics_revision+1,analytics_epoch=$4,
+      identity_links_started_at=CASE WHEN $5::boolean THEN COALESCE(identity_links_started_at,clock_timestamp()) ELSE identity_links_started_at END
+      WHERE id=$1 AND analytics_revision=$2 RETURNING analytics_settings AS settings,analytics_revision AS revision`, [projectId, input.revision, JSON.stringify(input.settings), randomUUID(),input.settings.linkIdentities===true]);
     if (!result.rowCount) throw new FoundationError(409, 'Settings changed. Reload before saving.');
     await client.query('COMMIT'); return result.rows[0];
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
@@ -98,7 +100,7 @@ export async function nativeCollectionPolicy(client:PoolClient,request:Request,s
   const reason=excluded?'collection_disabled' as const:input.consent?.analytics!==true||input.consent.epoch!==trackingConsentEpoch(project.analytics_epoch,project.destination_epoch)?'consent_required' as const:null;
   return {project,userAgent,reason};
 }
-async function writeObservation(client: PoolClient, project: Project, input: Observation, source: 'browser' | 'api', identity: ReturnType<typeof analyticsIdentity>, now: Date) {
+async function writeObservation(client: PoolClient, project: Project, input: Observation, source: 'browser' | 'api', identity: ReturnType<typeof analyticsIdentity>, now: Date|string) {
   const settings = publicAnalyticsSettings(project.analytics_settings), properties = normalizeProperties(input.properties === undefined ? {} : input.properties), dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
   // Distinct identifiers participate only in keyed identity derivation, never raw storage.
   delete dimensions.distinctId;
@@ -115,20 +117,30 @@ async function writeObservation(client: PoolClient, project: Project, input: Obs
 }
 
 export async function collectNative(request: Request, siteKey: string, input: Observation, peerAddress?: string) {
+  const dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
   const client = await getDatabase().pool.connect();
   try {
     await client.query('BEGIN');
     // Obtain the publication gate first. Read the epoch in a fresh statement after
     // any publisher finishes; a joined SELECT's old snapshot can otherwise survive a lock wait.
-    await client.query('SELECT id FROM project WHERE public_key=$1 FOR SHARE', [siteKey]);
+    if(dimensions.distinctId!==undefined){
+      await client.query("SET LOCAL statement_timeout='5s'");await client.query("SET LOCAL lock_timeout='250ms'");
+      await client.query('SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.public_key=$1 FOR SHARE OF w',[siteKey]);
+      await client.query('SELECT id FROM project WHERE public_key=$1 FOR UPDATE',[siteKey]);
+    }else await client.query('SELECT id FROM project WHERE public_key=$1 FOR SHARE', [siteKey]);
     const {project,userAgent:ua,reason}=await nativeCollectionPolicy(client,request,siteKey,input);
     if(reason){await client.query('COMMIT');return {accepted:false,reason};}
-    const dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
-    const now = new Date();
-    const identity = analyticsIdentity({ projectId: project.id, ip: resolveAnalyticsNetwork(request, peerAddress), userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now });
+    // Preserve one database acceptance instant through the event/link fence;
+    // Date is used only for monthly key/context derivation, never the fence.
+    const now:Date|string=dimensions.distinctId===undefined?new Date():(await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at`)).rows[0].accepted_at;
+    const identity = analyticsIdentity({ projectId: project.id, ip: resolveAnalyticsNetwork(request, peerAddress), userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now:new Date(now) });
     const response = await writeObservation(client, project, input, 'browser', identity, now);
+    if(!response.duplicate&&identity&&dimensions.distinctId!==undefined&&project.analytics_settings.linkIdentities===true)
+      await recordIdentityLink(client,project.id,identity.visitor,dimensions.distinctId,now as string);
     await client.query('COMMIT'); return response;
-  } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
+  } catch (error) { await client.query('ROLLBACK').catch(() => {});
+    if(['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Collection took too long. The outcome may be unknown.');
+    throw error; }
   finally { client.release(); }
 }
 

@@ -12,6 +12,7 @@ import { expireKeywordResults } from './keyword-retention.ts';
 import { expireRankData, previewRankRetention } from './rank-retention.ts';
 import { expireSiteAuditData, previewSiteAuditRetention } from './site-audit-retention.ts';
 import {expireSessionProperties,latchSessionPropertyRetention} from './session-property-retention.ts';
+import {expireIdentityLinks,latchIdentityLinkRetention} from './identity-links.ts';
 
 const days = z.number().int().min(1).max(3650);
 export const retentionSettingsInput = z.object({ rawAnalyticsDays: days, replayDays: days, rawProviderEvidenceDays: days, derivedHistoryDays: days }).strict();
@@ -70,6 +71,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     const cutoff = new Date(asOf.getTime() - input.settings.rawAnalyticsDays * 86_400_000);
     const profileCutoff = new Date(asOf.getTime()-Math.min(current.rows[0].raw_analytics_days,input.settings.rawAnalyticsDays)*86_400_000);
     let profileEstimate:{status:'available'|'unavailable';properties:number|null;atLeast:boolean}={status:'unavailable',properties:null,atLeast:false};
+    let identityLinkEstimate:{status:'available'|'unavailable';links:number|null;atLeast:boolean}={status:'unavailable',links:null,atLeast:false};
     const derivedCutoff = new Date(asOf.getTime() - input.settings.derivedHistoryDays * 86_400_000);
     let derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean } = { status: 'unavailable', imports: null, atLeast: false };
     let metaEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean } = { status: 'unavailable', imports: null, atLeast: false };
@@ -94,6 +96,10 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       const profiles=await client.query(`SELECT s.property_key FROM project p JOIN analytics_session_property s ON s.project_id=p.id
         WHERE p.workspace_id=$1 AND s.updated_at<GREATEST(p.session_properties_retained_from,$2::timestamptz) LIMIT 10001`,[workspaceId,profileCutoff]);
       profileEstimate={status:'available',properties:Math.min(profiles.rows.length,10000),atLeast:profiles.rows.length>10000};
+      const links=await client.query(`SELECT l.visitor_key FROM project p JOIN analytics_identity_link l ON l.project_id=p.id
+        JOIN workspace w ON w.id=p.workspace_id WHERE p.workspace_id=$1
+        AND l.last_accepted_at<GREATEST(p.identity_links_retained_from,statement_timestamp()-LEAST(w.raw_analytics_days,$2::integer)*interval '24 hours') LIMIT 10001`,[workspaceId,input.settings.rawAnalyticsDays]);
+      identityLinkEstimate={status:'available',links:Math.min(links.rows.length,10000),atLeast:links.rows.length>10000};
       const imports = await client.query(`SELECT i.id FROM project p JOIN google_import i ON i.project_id=p.id
         WHERE p.workspace_id=$1 AND i.completed_at<$2 AND i.data_expired_at IS NULL
           AND i.status IN ('completed','partial','failed','denied') LIMIT 10001`, [workspaceId, derivedCutoff]);
@@ -127,7 +133,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, profileEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, metaEstimate, metaInventoryEstimate, keywordEstimate, savedKeywordEstimate, promptEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, metaEstimate, metaInventoryEstimate, keywordEstimate, savedKeywordEstimate, promptEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
@@ -148,8 +154,12 @@ export async function saveRetention(workspaceId: string, userId: string, raw: un
     await client.query(`UPDATE workspace SET raw_analytics_days=$2,replay_days=$3,raw_provider_evidence_days=$4,derived_history_days=$5,
       retention_revision=retention_revision+1,retention_updated_at=clock_timestamp() WHERE id=$1`, [workspaceId, s.rawAnalyticsDays, s.replayDays, s.rawProviderEvidenceDays, s.derivedHistoryDays]);
     const projects=await client.query('UPDATE project SET retention_next_run_at=clock_timestamp() WHERE workspace_id=$1 RETURNING id', [workspaceId]);
-    const saveNow=(await client.query('SELECT clock_timestamp() AS now')).rows[0].now as Date;
+    const saveClock=(await client.query(`SELECT instant AS now,to_char(instant AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS link_as_of,
+      to_char((instant-$1::integer*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS link_cutoff
+      FROM (SELECT clock_timestamp() AS instant) clock`,[Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays)])).rows[0];
+    const saveNow=saveClock.now as Date;
     await latchSessionPropertyRetention(client,projects.rows.map(p=>p.id),new Date(saveNow.getTime()-Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays)*86_400_000),saveNow);
+    await latchIdentityLinkRetention(client,projects.rows.map(p=>p.id),saveClock.link_cutoff,saveClock.link_as_of);
     await client.query('COMMIT');
     return await getRetention(workspaceId, userId);
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
@@ -181,7 +191,9 @@ export async function runRetentionBatch(projectId?: string) {
     const { rows } = await client.query(`SELECT p.retention_cutoff,p.retention_policy_revision,w.retention_revision,
       clock_timestamp()-w.raw_analytics_days*interval '24 hours' AS cutoff,
       clock_timestamp()-w.derived_history_days*interval '24 hours' AS derived_cutoff,
-      clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' AS raw_evidence_cutoff,clock_timestamp() AS profile_as_of
+      clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' AS raw_evidence_cutoff,clock_timestamp() AS profile_as_of,
+      to_char((statement_timestamp()-w.raw_analytics_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS link_cutoff,
+      to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS link_as_of
       FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.id=$1`, [selected]);
     const state = rows[0];
     const cutoff = state.retention_policy_revision === state.retention_revision && state.retention_cutoff ? state.retention_cutoff : state.cutoff;
@@ -203,6 +215,7 @@ export async function runRetentionBatch(projectId?: string) {
       OR EXISTS(SELECT 1 FROM analytics_visitor v WHERE v.project_id=$1 AND v.last_seen_at<$2
         AND NOT EXISTS(SELECT 1 FROM event e WHERE e.project_id=v.project_id AND e.visitor_id=v.id)) AS pending`, [selected, cutoff]);
     const profiles=await expireSessionProperties(client,selected!,state.cutoff,state.profile_as_of);
+    const links=await expireIdentityLinks(client,selected!,state.link_cutoff,state.link_as_of);
     const imported = await expireGoogleImportPages(client, selected!, state.derived_cutoff);
     const keywords = await expireKeywordResults(client, selected!, state.derived_cutoff);
     const prompts=await expirePromptResults(client,selected!,state.raw_evidence_cutoff);
@@ -210,7 +223,7 @@ export async function runRetentionBatch(projectId?: string) {
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
     const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
     const ranks = await expireRankData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
-    const complete = !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
+    const complete = !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
@@ -219,6 +232,7 @@ export async function runRetentionBatch(projectId?: string) {
     return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
       expiredSuggestionResults:suggestions.expiredSuggestionResults,expiredSuggestionInputs:suggestions.expiredSuggestionInputs,
       expiredSessionProperties:profiles.expiredProperties,expiredIdentifyReceipts:profiles.expiredReceipts,
+      expiredIdentityLinks:links.expiredIdentityLinks,
       expiredRankRuns: ranks.expiredRankRuns, expiredRankTasks: ranks.expiredRankTasks, clearedRankEvidence: ranks.clearedRankEvidence, expiredRankKeywordMetrics: ranks.expiredRankKeywordMetrics,
       expiredAuditRuns: audits.expiredAuditRuns, removedAuditPages: audits.removedAuditPages, removedAuditEdges: audits.removedAuditEdges,
       removedAuditIssues: audits.removedAuditIssues, clearedAuditEvidence: audits.clearedAuditEvidence, complete };
