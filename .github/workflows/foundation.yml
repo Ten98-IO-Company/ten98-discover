@@ -99,6 +99,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_site_retention');
             await client.query('CREATE DATABASE ten98_site_worker_ci');
             await client.query('CREATE DATABASE ten98_funnels_ci');
+            await client.query('CREATE DATABASE ten98_segments_ci');
             await client.query('CREATE DATABASE ten98_saved_keywords_ci');
             await client.query('CREATE DATABASE ten98_provider_identity_legacy_ci');
             await client.query('CREATE DATABASE ten98_provider_identity_deferred_ci');
@@ -146,6 +147,7 @@ jobs:
               ['ten98_site_api', [['src/server/cli.ts', 'migrate'], ['tests/site-audits-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_site_retention', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-retention-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_site_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-worker-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_segments_ci', [['src/server/cli.ts', 'migrate'], ['tests/segments-integration.ts']], { TEN98_SEGMENTS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_funnels_ci', [['src/server/cli.ts', 'migrate'], ['tests/funnels-integration.ts']]],
               ['ten98_saved_keywords_ci', [['src/server/cli.ts', 'migrate'], ['tests/saved-keywords-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_provider_identity_legacy_ci', [['tests/provider-account-identity-integration.ts']], { TEN98_IDENTITY_TEST_CASE: 'legacy', TEN98_ISOLATED_CI_DATABASE: '1' }],
