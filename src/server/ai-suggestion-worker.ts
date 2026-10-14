@@ -41,6 +41,7 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
  });if(!captured)return;
  let secret:unknown,dispatchedAt:Date|undefined;
  try{
+  if(captured.quote_expired)throw new FoundationError(409,'The suggestion quote expired. Prepare another quote.');
   if(captured.input_expired)throw new FoundationError(409,'The captured input expired.');
   const input=parse(suggestionQuoteInput,captured.input);
   const credentials=await withContentProject(captured.project_id,captured.user_id,true,async(client,p)=>{
@@ -57,9 +58,12 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
    if(member?.role!=='owner'||row.status!=='queued'||row.lease_owner!==owner||row.lease_expires_at.getTime()<=Date.now()||row.input_expired)throw new FoundationError(409,'Suggestion authority changed before dispatch.');
    await assertSuggestionSnapshot(client,row.project_id,input,row.snapshot_hash);
    secret=suggestionCredentials(await suggestionConnection(client,row.workspace_id,row.connection_id,row.connection_revision));if(keyFingerprint(secret)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
-   dispatchedAt=(await client.query("UPDATE ai_suggestion_run SET status='running',dispatched_at=clock_timestamp(),lease_expires_at=clock_timestamp()+interval '120 seconds' WHERE id=$1 RETURNING dispatched_at",[id])).rows[0].dispatched_at;
+   const dispatched=(await client.query(`UPDATE ai_suggestion_run SET status='running',dispatched_at=clock_timestamp(),lease_expires_at=clock_timestamp()+interval '120 seconds' WHERE id=$1
+    AND EXISTS(SELECT 1 FROM ai_suggestion_quote q WHERE q.id=ai_suggestion_run.quote_id AND q.expires_at>clock_timestamp()) RETURNING dispatched_at`,[id])).rows[0];
+   if(!dispatched)throw new FoundationError(409,'The suggestion quote expired. Prepare another quote.');
+   dispatchedAt=dispatched.dispatched_at;
   });
- }catch{await withSuggestionRun(id,async(client,row)=>{if(row.lease_owner===owner)await cancelReserved(client,row,'Not sent: permissions, context, credentials, endpoint or spending limits changed.');});return;}
+ }catch{await withSuggestionRun(id,async(client,row)=>{if(row.lease_owner===owner)await cancelReserved(client,row,'Not sent: quote expiry, permissions, context, credentials, endpoint or spending limits changed. Prepare a new quote.');});return;}
  const outcome=await requestSuggestionExecution(secret,captured.messages,captured.route,id,captured.request_actor,dispatchedAt!,async generation=>{
   await withSuggestionRun(id,async(client,row)=>{
    if(row.lease_owner!==owner||!['dispatched','uncertain'].includes(row.charge_status)||row.generation_id&&row.generation_id!==generation)throw new Error('Suggestion receipt changed.');
