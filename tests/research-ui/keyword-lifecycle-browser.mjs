@@ -18,7 +18,7 @@ async function phase(label){
 }
 async function overview(panel,text){
   await openKeywordForm(panel);
-  await panel.getByLabel('Keywords (one per line)',{exact:true}).fill(text);await panel.getByLabel('Country and language',{exact:true}).selectOption('2840|en');
+  await panel.getByLabel('Keywords (one per line)',{exact:true}).fill(text);await panel.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
   await panel.getByRole('button',{name:'Prepare quote',exact:true}).click();await panel.getByRole('heading',{name:'Quote for keyword overview',exact:true}).waitFor();
 }
 async function start(page,panel,B,{double=false}={}){
@@ -41,7 +41,7 @@ try{
     for(const limit of [25,50,100]){
       await openKeywordForm(panel);
       await panel.getByLabel('Seed keyword',{exact:true}).fill('Synthetic ideas '+limit);await panel.getByLabel('Max ideas',{exact:true}).selectOption(String(limit));
-      await panel.getByLabel('Country and language',{exact:true}).selectOption('2840|en');
+      await panel.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
       const response=page.waitForResponse(response=>response.url().endsWith(B+'/quote')&&response.request().method()==='POST');
       await panel.getByRole('button',{name:'Prepare quote',exact:true}).click();const quote=(await (await response).json()).quote;
       assert.equal(quote.request.limit,limit);assert.equal(quote.request.mode,'ideas');assert.deepEqual(quote.request.keywords,['synthetic ideas '+limit]);
@@ -58,7 +58,7 @@ try{
     const quotePath='**'+B+'/quote';
     await page.route(quotePath,async route=>{quoteCalls++;const response=await route.fetch();entered.resolve();await release.promise;await route.fulfill({response});});
     cleanups.push(async()=>{release.resolve();await page.unroute(quotePath);});
-    await panel.getByLabel('Keywords (one per line)',{exact:true}).fill('Cancellation fixture');await panel.getByLabel('Country and language',{exact:true}).selectOption('2840|en');
+    await panel.getByLabel('Keywords (one per line)',{exact:true}).fill('Cancellation fixture');await panel.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
     await panel.getByRole('button',{name:'Prepare quote',exact:true}).evaluate(element=>{element.click();element.click();});await bounded(entered.promise);
     assert.equal(await panel.getByLabel('Keywords (one per line)',{exact:true}).isDisabled(),true);assert.equal(await panel.getByRole('button',{name:'Refresh markets',exact:true}).isDisabled(),true);
     release.resolve();await panel.getByRole('heading',{name:'Quote for keyword overview',exact:true}).waitFor();await page.unroute(quotePath);assert.equal(quoteCalls,1);

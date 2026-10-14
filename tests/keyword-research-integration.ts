@@ -22,14 +22,20 @@ export async function runKeywordResearchChecks(){
  const accountLogin='synthetic-provider@keywords.integration.test';
  let account=accountLogin,paidCalls=0,freeCalls=0,mode:'ok'|'unknown'|'over'|'invalid'|'error'|'pending'|'conflict'='ok';
  const sentTags:string[]=[];
+ const sentPayloads:Record<string,unknown>[]=[];
+ // Region rows from the public Labs CSV dated 2026-09-01:
+ // https://cdn.dataforseo.com/v3/locations/locations_and_languages_dataforseo_labs_2026_09_01.csv
+ const catalogRows=[{location_code:2840,location_name:'United States',location_type:'Country',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']}]},
+  {location_code:2158,location_name:'Taiwan',location_type:'Region',available_languages:[{language_code:'zh-TW',language_name:'Chinese (Traditional)',available_sources:['google']}]},
+  {location_code:2344,location_name:'Hong Kong',location_type:'Region',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']},{language_code:'zh-TW',language_name:'Chinese (Traditional)',available_sources:['google']}]}];
  let reconcileItems:unknown[]=[];
  const send:typeof fetch=async(url,init)=>{
    assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);
    if(url===keywordAccountEndpoint){freeCalls++;const prices={priority_normal:[{cost_type:'per_request',cost:0.012},{cost_type:'per_result',cost:0.00012}]};return free([{login:account,price:{dataforseo_labs:{keyword_overview:{live:prices},keyword_ideas:{live:prices}}}}]);}
-   if(url===keywordCatalogEndpoint){freeCalls++;return free([{location_code:2840,location_name:'United States',location_type:'Country',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']}]}]);}
+   if(url===keywordCatalogEndpoint){freeCalls++;return free(catalogRows);}
    if(url===keywordReconcileEndpoint){freeCalls++;return free(reconcileItems);}
    assert.ok(Object.values(keywordEndpoints).includes(String(url) as any),'No non-allowlisted provider traffic.');paidCalls++;
-   const data=JSON.parse(init?.body as string)[0];sentTags.push(data.tag);
+   const data=JSON.parse(init?.body as string)[0];sentTags.push(data.tag);sentPayloads.push(data);
    if(mode==='unknown')throw new Error('Synthetic interrupted provider response.');
    const cost=mode==='over'?0.03:mode==='pending'?0:0.01212;
    return Response.json({status_code:20000,cost:mode==='conflict'?0:cost,tasks_count:1,tasks:[{id:'fixture-'+randomUUID(),status_code:mode==='error'?40501:mode==='pending'?40602:20000,cost,path:new URL(String(url)).pathname.slice(1).split('/'),data,result:[{se_type:'google',location_code:data.location_code,language_code:data.language_code,items_count:1,items:[{keyword:data.keywords[0],keyword_info:{search_volume:mode==='invalid'?-1:0,cpc:null,competition:null,monthly_searches:[]}}]}]}]});
@@ -124,6 +130,32 @@ export async function runKeywordResearchChecks(){
   const keyToken=await createApiKey(f.workspace,owner,{name:'No implicit keyword scope',scopes:['analytics:read']});assert.equal((await handleApi(new Request(endpoint,{headers:{authorization:'Bearer '+keyToken.token}}))).status,403);
   await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[f.workspace,owner]);assert.equal((await handleApi(new Request(endpoint,{headers:{cookie}}))).status,404);
   console.log('PASS keyword cookie/Origin/API-key/live-membership boundaries and secret-free metadata');
+
+  mode='ok';const regions=await fixture(),regionPaidBefore=paidCalls;
+  await saveBudget(regions.workspace,owner,{paused:true});
+  const refreshed=await refreshKeywordMarkets(regions.project,owner,{connectionId:regions.connectionId},send);
+  assert.deepEqual(refreshed.catalog.markets.map((m:any)=>[m.locationCode,m.languageCode]).sort(),[[2158,'zh-TW'],[2344,'en'],[2344,'zh-TW'],[2840,'en']].sort());
+  assert.equal(paidCalls,regionPaidBefore);assert.equal((await getKeywordResearch(regions.project,viewer)).spendingPaused,true);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request WHERE workspace_id=$1',[regions.workspace])).rows[0].n,0);
+  const freeBeforeDenial=freeCalls;await assert.rejects(refreshKeywordMarkets(regions.project,viewer,{connectionId:regions.connectionId},send),{status:404});assert.equal(freeCalls,freeBeforeDenial);
+  const regionRequest={...regions.request,locationCode:2158,languageCode:'zh-TW'};
+  const pausedQuote=(await quoteKeywordResearch(regions.project,owner,regionRequest,send)).quote;
+  await assert.rejects(startKeywordResearch(regions.project,owner,{quoteId:pausedQuote.id,requestKey:randomUUID()}),{status:409});assert.equal(paidCalls,regionPaidBefore);
+  await saveBudget(regions.workspace,owner,{paused:false});
+  for(const [locationCode,languageCode] of [[2158,'zh-TW'],[2344,'en'],[2344,'zh-TW']] as const){
+   const exact={...regions.request,locationCode,languageCode};const quoted=(await quoteKeywordResearch(regions.project,owner,exact,send)).quote;assert.deepEqual(quoted.request,exact);assert.equal(quoted.estimateUsd,'0.012120');
+   const run=(await startKeywordResearch(regions.project,owner,{quoteId:quoted.id,requestKey:randomUUID()})).run;await executeKeywordResearch(run.id,send);
+   assert.deepEqual(sentPayloads.at(-1),keywordPayload(exact,run.id));
+   const saved=(await getKeywordRun(regions.project,viewer,run.id)).run;assert.equal(saved.status,'completed');assert.deepEqual(saved.request,exact);assert.equal(saved.result.rows[0].keyword,'example');assert.equal(saved.result.rows[0].searchVolume,0);assert.equal(saved.actualUsd,'0.012120');
+  }
+  assert.equal(paidCalls-regionPaidBefore,3);
+  const callsBeforeUnsupported=freeCalls;await assert.rejects(quoteKeywordResearch(regions.project,owner,{...regionRequest,languageCode:'en'},send),{status:409});assert.equal(freeCalls,callsBeforeUnsupported);
+  await pool.query("UPDATE keyword_market_catalog SET updated_at=clock_timestamp()-interval '8 days' WHERE workspace_id=$1",[regions.workspace]);await assert.rejects(quoteKeywordResearch(regions.project,owner,regionRequest,send),{status:409});
+  await refreshKeywordMarkets(regions.project,owner,{connectionId:regions.connectionId},send);
+  const catalogBeforeRotation=(await getKeywordResearch(regions.project,owner)).catalog;
+  await assert.rejects(refreshKeywordMarkets(regions.project,owner,{connectionId:regions.connectionId},async(...args)=>{await saveProvider(regions.workspace,owner,{name:'Region rotation',credentials:{login:accountLogin,password:'synthetic-region-rotation'}},regions.connectionId);return send(...args);}),{status:409});
+  assert.deepEqual((await getKeywordResearch(regions.project,owner)).catalog,catalogBeforeRotation);assert.equal(paidCalls-regionPaidBefore,3);
+  console.log('PASS public Region markets preserve exact quote/payload/result pairs, free paused refresh, viewer denial, stale-catalog and credential-revision guards');
  }finally{try{await stopJobs();}finally{globalThis.fetch=originalFetch;}}
 }
 if(import.meta.main){try{await runKeywordResearchChecks();}finally{await closeDatabase();}}

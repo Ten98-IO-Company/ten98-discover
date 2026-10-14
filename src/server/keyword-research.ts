@@ -74,7 +74,7 @@ export async function quoteKeywordResearch(projectId:string,userId:string,raw:un
   const request=parseKeywordRequest(raw);
   const saved=await scoped(projectId,userId,writers,async(client,wid)=>{
     const catalog=(await client.query("SELECT markets FROM keyword_market_catalog WHERE workspace_id=$1 AND updated_at>clock_timestamp()-interval '7 days'",[wid])).rows[0];
-    if(!catalog||(catalog.markets as KeywordMarket[]).every(m=>m.locationCode!==request.locationCode||m.languageCode!==request.languageCode))throw new FoundationError(409,'Refresh markets and choose a supported country and language before preparing a quote.');
+    if(!catalog||(catalog.markets as KeywordMarket[]).every(m=>m.locationCode!==request.locationCode||m.languageCode!==request.languageCode))throw new FoundationError(409,'Refresh markets and choose a supported country or territory and language before preparing a quote.');
     const row=await connection(client,wid,request.connectionId);return {revision:row.revision,name:row.name,credentials:credentials(row)};
   });
   const price=await readKeywordAccount(saved.credentials,request.mode,send);
