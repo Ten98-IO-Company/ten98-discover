@@ -23,7 +23,9 @@ function deferred(){let resolve!:()=>void;return {promise:new Promise<void>(done
 export async function runSiteAuditWorkerChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
  const config=getConfig(),db=new URL(config.databaseUrl);
- assert.ok(['localhost','127.0.0.1','[::1]'].includes(db.hostname));assert.match(db.pathname,/^\/ten98_site_worker_[a-z0-9]+$/);
+ const ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&db.pathname==='/ten98_site_worker_ci';
+ assert.ok(['localhost','127.0.0.1','[::1]'].includes(db.hostname));assert.equal(db.port,ci?'5432':'55501');assert.ok(ci||/^\/ten98_site_worker_[a-f0-9]{12}$/.test(db.pathname));assert.equal(db.search,'');assert.equal(db.hash,'');
+ for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[key],undefined);
  await assertSchema();const pool=getDatabase().pool;
  assert.equal((await pool.query('SELECT count(*) AS n FROM "user"')).rows[0].n,'0','Use a fresh worker-only database.');
  const owner=randomUUID(),workspace=randomUUID(),project=randomUUID(),otherWorkspace=randomUUID(),otherProject=randomUUID();
@@ -35,8 +37,8 @@ export async function runSiteAuditWorkerChecks(){
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Synthetic audit',$3,$4,'infinity')",[pid,wid,origin,randomUUID()]);
  }
  const read=async(id:string)=>(await pool.query<AuditRunRow>('SELECT * FROM site_audit_run WHERE id=$1',[id])).rows[0];
- const start=async(maxPages=50,pid=project)=>{
-  const result=await startSiteAudit(pid,owner,{requestId:randomUUID(),domainId:null,startPath:'/',maxPages,mode:'static'});return read(result.run.id);
+ const start=async(maxPages=50,pid=project,retainBodyText=false)=>{
+  const result=await startSiteAudit(pid,owner,{requestId:randomUUID(),domainId:null,startPath:'/',maxPages,mode:'static',retainBodyText});return read(result.run.id);
  };
  const execute=async(run:AuditRunRow)=>{
   await executeSiteAudit({runId:run.id,jobId:run.queue_job_id});
@@ -67,6 +69,7 @@ export async function runSiteAuditWorkerChecks(){
   assert.equal(saved.summary?.graph.status,'complete');assert.equal(saved.robots_state,'present');assert.ok(saved.robots_body);
   assert.ok(Number(saved.budget_charged_bytes)<10000);assert.equal(saved.wire_bytes,saved.decoded_bytes);
   assert.ok(requests.slice(1).every((r,i)=>r.at-requests[i].at>=950),'Persisted pacing must delay each actual request.');
+  assert.equal((await pool.query("SELECT body_capture_state FROM site_audit_page WHERE run_id=$1 AND resource_kind='html'",[clean.id])).rows[0].body_capture_state,'not_recorded');
   const count=requests.length;await execute(clean);await executeSiteAudit({runId:clean.id,jobId:randomUUID()});assert.equal(requests.length,count);
   console.log('PASS real queue receipt, native request settings, robots/sitemap/HTML children, graph publication, pacing and repeat no-op');
 
@@ -89,10 +92,10 @@ export async function runSiteAuditWorkerChecks(){
   let rootAttempts=0;
   route=url=>url.pathname==='/robots.txt'?{status:404}:url.pathname==='/sitemap.xml'?{body:sitemap(origin),headers:['Content-Type','application/xml']}:
    ++rootAttempts===1?{status:429,headers:['Retry-After','0','Cf-Mitigated','challenge']}:{body:html()};
-  const retry=await start();await execute(retry);saved=await read(retry.id);
+  const retry=await start(50,project,true);await execute(retry);saved=await read(retry.id);
   assert.equal(saved.robots_state,'absent');assert.equal(rootAttempts,2);assert.equal(saved.html_pages_started,1);assert.equal(saved.request_count,4);
   assert.equal(saved.status,'completed');assert.ok(Number(saved.budget_charged_bytes)>=1048576+524288);
-  const retryPage=(await pool.query('SELECT attempts_started,facts FROM site_audit_page WHERE run_id=$1 AND resource_kind=\'html\'',[retry.id])).rows[0];assert.equal(retryPage.attempts_started,2);assert.ok(retryPage.facts);
+  const retryPage=(await pool.query('SELECT attempts_started,facts,body_capture_state,body_text FROM site_audit_page WHERE run_id=$1 AND resource_kind=\'html\'',[retry.id])).rows[0];assert.equal(retryPage.attempts_started,2);assert.ok(retryPage.facts);assert.equal(retryPage.body_capture_state,'available');assert.ok(retryPage.body_text.startsWith('Synthetic page'));assert.ok(!retryPage.body_text.includes('Description'));
   console.log('PASS challenge prevents false absent robots; 429 priority, one paced retry and conservative reservations survive failed attempts');
 
   route=url=>url.pathname==='/robots.txt'?{status:404}:url.pathname==='/sitemap.xml'?{body:sitemap(origin,['/','/two']),headers:['Content-Type','application/xml']}:{body:html()};
@@ -138,7 +141,7 @@ export async function runSiteAuditWorkerChecks(){
   const staleEntered=deferred(),staleRelease=deferred();let staleRootAttempts=0;
   route=url=>url.pathname==='/robots.txt'?{status:404}:url.pathname==='/sitemap.xml'?{body:sitemap(origin),headers:['Content-Type','application/xml']}:
    (++staleRootAttempts,staleEntered.resolve(),{body:html(),...(staleRootAttempts===1?{hold:staleRelease.promise}:{})});
-  const stale=await start(),staleWork=execute(stale);await staleEntered.promise;
+  const stale=await start(50,project,true),staleWork=execute(stale);await staleEntered.promise;
   const beforeStale=await read(stale.id);
   try{
    await pool.query("UPDATE site_audit_run SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[stale.id]);
@@ -150,8 +153,8 @@ export async function runSiteAuditWorkerChecks(){
    assert.equal(saved.queue_job_id,fenced.queue_job_id);assert.equal(saved.generation,fenced.generation);
    assert.equal(saved.budget_charged_bytes,beforeStale.budget_charged_bytes,'A stale completion must not refund its reservation.');
    assert.equal(saved.request_count,beforeStale.request_count);assert.equal(saved.wire_bytes,beforeStale.wire_bytes);
-   const stalePage=(await pool.query("SELECT state,facts,evidence,attempt_settled_at FROM site_audit_page WHERE run_id=$1 AND resource_kind='html'",[stale.id])).rows[0];
-   assert.equal(stalePage.state,'leased');assert.equal(stalePage.facts,null);assert.equal(stalePage.evidence,null);assert.equal(stalePage.attempt_settled_at,null);
+   const stalePage=(await pool.query("SELECT state,facts,evidence,body_text,body_capture_state,attempt_settled_at FROM site_audit_page WHERE run_id=$1 AND resource_kind='html'",[stale.id])).rows[0];
+   assert.equal(stalePage.state,'leased');assert.equal(stalePage.facts,null);assert.equal(stalePage.evidence,null);assert.equal(stalePage.body_text,null);assert.equal(stalePage.body_capture_state,'not_recorded');assert.equal(stalePage.attempt_settled_at,null);
    await execute(fenced);saved=await read(stale.id);
    assert.equal(saved.status,'completed');assert.equal(staleRootAttempts,2);assert.equal(saved.html_pages_started,1);
    assert.equal(saved.request_count,beforeStale.request_count+1);assert.ok(Number(saved.budget_charged_bytes)>=Number(beforeStale.budget_charged_bytes));
@@ -173,20 +176,28 @@ export async function runSiteAuditWorkerChecks(){
   }
   console.log('PASS exact request ceiling and insufficient next-response body capacity stop before dispatch without counter inflation');
 
-  for(const action of ['cancel','revoke'] as const){
+  for(const action of ['cancel','revoke','scope'] as const){
    const entered=deferred(),release=deferred();
    route=url=>url.pathname==='/robots.txt'?{status:404}:url.pathname==='/sitemap.xml'?{body:sitemap(origin),headers:['Content-Type','application/xml']}:(entered.resolve(),{body:html(),hold:release.promise});
-   const run=await start(),work=execute(run);await entered.promise;
-   if(action==='cancel')await cancelSiteAudit(project,owner,run.id,{});else await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[workspace,owner]);
+   const run=await start(50,project,true),work=execute(run);await entered.promise;
+   if(action==='cancel')await cancelSiteAudit(project,owner,run.id,{});else if(action==='scope')await pool.query("UPDATE project SET origin='https://changed.example.com' WHERE id=$1",[project]);else await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[workspace,owner]);
    await reconcileSiteAudits();await work;release.resolve();saved=await read(run.id);
    assert.equal(saved.status,action==='cancel'?'cancelled':'partial');assert.equal(saved.lease_owner,null);
-   assert.equal(saved.stop_reason,action==='cancel'?'user_cancelled':'permission_changed');
+   assert.equal(saved.stop_reason,action==='cancel'?'user_cancelled':action==='scope'?'scope_changed':'permission_changed');
    assert.equal((await pool.query("SELECT facts FROM site_audit_page WHERE run_id=$1 AND resource_kind='html'",[run.id])).rows[0].facts,null);
-   assert.ok(requests.at(-1)!.destroyed);assert.ok(Number(saved.budget_charged_bytes)>=1048576);
+   assert.equal((await pool.query("SELECT body_text FROM site_audit_page WHERE run_id=$1 AND resource_kind='html'",[run.id])).rows[0].body_text,null);assert.ok(requests.at(-1)!.destroyed);assert.ok(Number(saved.budget_charged_bytes)>=1048576);
    if(action==='revoke')await pool.query("UPDATE membership SET role='owner' WHERE workspace_id=$1 AND user_id=$2",[workspace,owner]);
+   if(action==='scope')await pool.query('UPDATE project SET origin=$2 WHERE id=$1',[project,origin]);
   }
   console.log('PASS held native request is aborted on cancellation/revocation, owner drains, and late page results cannot publish');
 
+  for(const [body,state,text] of [['<html><body></body></html>','empty',''],['<html><body>'+ 'a'.repeat(65537)+'</body></html>','over_limit',null],['<html><body>'+ 'a'.repeat(65536)+'</body></html>','available','a'.repeat(65536)],['<html><body><div id="app"></div><script src="app.js"></script></body></html>','unavailable',null]] as const){
+   route=url=>url.pathname==='/robots.txt'?{status:404}:url.pathname==='/sitemap.xml'?{body:sitemap(origin),headers:['Content-Type','application/xml']}:{body};
+   const capture=await start(50,project,true);await execute(capture);
+   assert.deepEqual((await pool.query("SELECT body_capture_state AS state,body_extraction_version AS version,body_text AS text FROM site_audit_page WHERE run_id=$1 AND resource_kind='html'",[capture.id])).rows[0],{state,version:'static-dom-body-v1',text});
+   const before=requests.length;await execute(capture);assert.equal(requests.length,before);
+  }
+  console.log('PASS native worker persists empty, unavailable and whole exact 64KiB body; over-limit never stores a prefix and repeats never restore');
   const expired=await start(),created=new Date(Date.now()-31*60000);
   await pool.query('UPDATE site_audit_run SET created_at=$2,deadline_at=$2::timestamptz+interval \'30 minutes\' WHERE id=$1',[expired.id,created]);
   const beforeExpired=requests.length;await reconcileSiteAudits();await execute(expired);assert.equal((await read(expired.id)).status,'failed');assert.equal(requests.length,beforeExpired);

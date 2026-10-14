@@ -1,11 +1,13 @@
 import childProcess from 'node:child_process';
 import {resolve} from 'node:path';
 import {performance} from 'node:perf_hooks';
-import {crawlAnalysisLimits,crawlRuleVersion,type CrawlAnalysis,type CrawlPageInput} from './crawl-analysis.ts';
+import {createHash} from 'node:crypto';
+import {toUSVString} from 'node:util';
+import {crawlAnalysisLimits,crawlRuleVersion,crawlBodyVersion,crawlBodyLimit,type CrawlAnalysis,type CrawlPageInput} from './crawl-analysis.ts';
 
 export const crawlParserLimits=Object.freeze({inputBytes:7*1024*1024,outputBytes:12*1024*1024,stderrBytes:8192,deadlineMs:2000,heapMiB:64});
 export type IsolatedCrawlResult={status:'ok';analysis:CrawlAnalysis}|{status:'invalid_input'|'timeout'|'aborted'|'child_error'};
-const fields=new Set(['url','status','fetchState','contentType','html','bodyComplete','responseTimeMs','crawlDepth','linkHeaders','xRobotsTags']);
+const fields=new Set(['url','status','fetchState','contentType','html','bodyComplete','responseTimeMs','crawlDepth','linkHeaders','xRobotsTags','retainBodyText']);
 function encode(input:CrawlPageInput):Buffer|null {
   if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!fields.has(key)))return null;
   const text=(value:unknown,max:number)=>typeof value==='string'&&value.length<=max&&Buffer.byteLength(value)<=max;
@@ -14,7 +16,8 @@ function encode(input:CrawlPageInput):Buffer|null {
     !['ok','blocked','rate_limited','error','robots_disallowed','not_fetched'].includes(input.fetchState)||
     input.contentType!==null&&!text(input.contentType,1024)||input.html!==null&&!text(input.html,crawlAnalysisLimits.htmlBytes)||
     typeof input.bodyComplete!=='boolean'||input.responseTimeMs!==null&&(!Number.isFinite(input.responseTimeMs)||input.responseTimeMs<0)||
-    input.crawlDepth!==null&&(!Number.isSafeInteger(input.crawlDepth)||input.crawlDepth<0))return null;
+    input.crawlDepth!==null&&(!Number.isSafeInteger(input.crawlDepth)||input.crawlDepth<0)||
+    input.retainBodyText!==undefined&&typeof input.retainBodyText!=='boolean')return null;
   const linkHeaders=input.linkHeaders??[],xRobotsTags=input.xRobotsTags??[];
   if(!Array.isArray(linkHeaders)||!Array.isArray(xRobotsTags)||linkHeaders.length+xRobotsTags.length>100)return null;
   let bytes=0;
@@ -22,10 +25,10 @@ function encode(input:CrawlPageInput):Buffer|null {
   if(bytes>crawlAnalysisLimits.headerBytes)return null;
   // Never stringify the caller's object, its toJSON method, or unknown fields.
   const buffer=Buffer.from(JSON.stringify({url:input.url,status:input.status,fetchState:input.fetchState,contentType:input.contentType,html:input.html,
-    bodyComplete:input.bodyComplete,responseTimeMs:input.responseTimeMs,crawlDepth:input.crawlDepth,linkHeaders:[...linkHeaders],xRobotsTags:[...xRobotsTags]}));
+    bodyComplete:input.bodyComplete,responseTimeMs:input.responseTimeMs,crawlDepth:input.crawlDepth,linkHeaders:[...linkHeaders],xRobotsTags:[...xRobotsTags],retainBodyText:input.retainBodyText===true}));
   return buffer.length<=crawlParserLimits.inputBytes?buffer:null;
 }
-function result(value:unknown):IsolatedCrawlResult|null {
+function result(value:unknown,retainBodyText:boolean):IsolatedCrawlResult|null {
   if(!value||typeof value!=='object'||Array.isArray(value))return null;
   const envelope=value as Record<string,unknown>;
   if(envelope.status==='invalid_input'&&Object.keys(envelope).length===1)return {status:'invalid_input'};
@@ -35,7 +38,7 @@ function result(value:unknown):IsolatedCrawlResult|null {
     !['unavailable','blocked','rate_limited','robots_disallowed','not_fetched','http_error','redirect','non_html','partial','shell','analyzed'].includes(analysis.coverage)||
     !Array.isArray(analysis.reasons)||analysis.reasons.length>10||analysis.reasons.some(reason=>typeof reason!=='string'||!/^[a-z_]{1,80}$/u.test(reason))||
     !Array.isArray(analysis.findings)||analysis.findings.length>30||
-    analysis.findings.some(f=>!f||typeof f.code!=='string'||!/^[a-z-]{1,80}$/u.test(f.code)||!['critical','warning','info'].includes(f.severity)||!f.details||typeof f.details!=='object'||Array.isArray(f.details)||Object.values(f.details).some(n=>typeof n!=='number'||!Number.isFinite(n)))||
+    analysis.findings.some(f=>!f||typeof f.code!=='string'||!/^[a-z0-9-]{1,80}$/u.test(f.code)||!['critical','warning','info'].includes(f.severity)||!f.details||typeof f.details!=='object'||Array.isArray(f.details)||Object.values(f.details).some(n=>typeof n!=='number'||!Number.isFinite(n)))||
     analysis.facts!==null&&(!analysis.facts||typeof analysis.facts!=='object'||Array.isArray(analysis.facts))||
     analysis.evidence!==null&&(!analysis.evidence||typeof analysis.evidence!=='object'||Array.isArray(analysis.evidence)))return null;
   if(['analyzed','shell'].includes(analysis.coverage)?!analysis.facts||!analysis.evidence:analysis.facts!==null||analysis.evidence!==null)return null;
@@ -56,6 +59,20 @@ function result(value:unknown):IsolatedCrawlResult|null {
       !list(e.hreflang,100,h=>!!h&&typeof h==='object'&&text(h.language,200)&&text(h.url,2048))||
       !e.openGraph||typeof e.openGraph!=='object'||![e.openGraph.title,e.openGraph.description,e.openGraph.image].every(s=>s===null||text(s)))return null;
   }
+  const body=analysis.bodyCapture;
+  if(!retainBodyText){if(body!==undefined)return null;}
+  else{
+    if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).sort().join(',')!=='state,text,version'||body.version!==crawlBodyVersion)return null;
+    if(analysis.coverage!=='analyzed'){if(body.state!=='unavailable'||body.text!==null)return null;}
+    else if(body.state==='over_limit'){if(body.text!==null)return null;}
+    else{
+      if(!['available','empty'].includes(body.state)||typeof body.text!=='string'||Buffer.byteLength(body.text)>crawlBodyLimit||
+        toUSVString(body.text)!==body.text||body.text.includes('\0')||body.text!==body.text.replace(/\s+/gu,' ').trim()||
+        (body.state==='empty')!==(body.text==='')||!analysis.facts||
+        analysis.facts.contentHash!==(body.text?createHash('sha256').update(body.text).digest('hex'):null)||
+        analysis.facts.wordCount!==(body.text?body.text.split(' ').length:0))return null;
+    }
+  }
   return {status:'ok',analysis};
 }
 
@@ -63,10 +80,10 @@ function result(value:unknown):IsolatedCrawlResult|null {
 export async function analyzeCrawlPageIsolated(input:CrawlPageInput,signal?:AbortSignal):Promise<IsolatedCrawlResult> {
   const started=performance.now();
   if(signal?.aborted)return {status:'aborted'};
-  let payload:Buffer|null;
-  try{payload=encode(input);}catch{return {status:'invalid_input'};}
+  let payload:Buffer|null,retainBodyText=false;
+  try{retainBodyText=input?.retainBodyText===true;payload=encode(input);}catch{return {status:'invalid_input'};}
   if(!payload)return {status:'invalid_input'};
-  return runCrawlParser(payload,started,signal,result);
+  return runCrawlParser(payload,started,signal,value=>result(value,retainBodyText));
 }
 
 /** Shared lifetime for fixed parser operations; validators never select executable code. */

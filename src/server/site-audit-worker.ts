@@ -10,7 +10,7 @@ import {evaluateCrawlRobotsIsolated} from './crawl-robots-isolated.ts';
 import {prepareAuditObservation} from './site-audit-observation.ts';
 import {planAuditRequest,resolveAuditCandidate,resolveRobotsRedirect} from './site-audit-policy.ts';
 import {analyzeCrawlGraph,type GraphPage} from './crawl-graph.ts';
-import type {CrawlAnalysis,CrawlPageInput} from './crawl-analysis.ts';
+import {crawlBodyVersion,type CrawlAnalysis,type CrawlPageInput} from './crawl-analysis.ts';
 
 type Page={id:string;run_id:string;project_id:string;resource_kind:CrawlDocumentKind;url:string;discovered_start:boolean;discovered_link:boolean;discovered_sitemap:boolean;link_depth:number|null;sitemap_depth:number;redirect_hops:number;state:'pending'|'leased'|'done'|'excluded'|'unavailable';attempts_started:number;attempt_id:string|null;attempt_generation:string|null;reserved_bytes:number|null;retry_after_at:Date|null;http_status:number|null;fetch_state:CrawlPageInput['fetchState'];analysis_coverage:CrawlAnalysis['coverage'];facts:CrawlAnalysis['facts']};
 type Work={id:string;owner:string;generation:string;controller:AbortController;reason:string|null;task:Promise<void>};
@@ -191,7 +191,7 @@ async function dispatch(work:Work,page:Page,intervalMs:number):Promise<Page|null
 }
 
 async function publish(work:Work,run:AuditRunRow,page:Page,download:CrawlDocumentObservation){
- const prepared=await prepareAuditObservation(page.resource_kind==='html'?{kind:'html',url:page.url,download,crawlDepth:page.link_depth}:page.resource_kind==='robots'?{kind:'robots',url:page.url,download,policyOrigin:run.origin!}:{kind:'sitemap',url:page.url,download},work.controller.signal);
+ const prepared=await prepareAuditObservation(page.resource_kind==='html'?{kind:'html',url:page.url,download,crawlDepth:page.link_depth,retainBodyText:run.config?.retainBodyText===true}:page.resource_kind==='robots'?{kind:'robots',url:page.url,download,policyOrigin:run.origin!}:{kind:'sitemap',url:page.url,download},work.controller.signal);
  const discovery=discoveries(run,page);
  const redirect=!download.headers.challenge&&download.status!==null&&redirectStatuses.has(download.status);
  const transient=download.status===429||!download.headers.challenge&&([500,502,503,504].includes(download.status??0)||!download.complete&&['dns_error','network_error','timeout','incomplete_body'].includes(download.reason));
@@ -217,17 +217,18 @@ async function publish(work:Work,run:AuditRunRow,page:Page,download:CrawlDocumen
   if(pace.status!=='invalid_input'&&pace.retryAfter==='malformed')addReason(discovery.coverage,'retry_after_malformed');
   const analysis=prepared.status==='prepared'&&prepared.kind==='html'?prepared.analysis:null;
   const evidence=prepared.status==='prepared'&&prepared.kind==='html'?prepared.evidence:null;
+  const body=(!retry||stop!==null)&&page.resource_kind==='html'&&current.config?.retainBodyText===true?analysis?.bodyCapture??{state:'unavailable',version:crawlBodyVersion,text:null}:null;
   const failed=prepared.status==='unavailable';
   const robotsAbsent=page.resource_kind==='robots'&&!download.headers.challenge&&[404,410].includes(download.status??0);
   if(failed&&!redirect&&!retry&&!robotsAbsent){addReason(discovery.coverage,page.resource_kind==='sitemap'?'sitemap_unavailable':'page_coverage_incomplete');if(page.resource_kind==='sitemap')discovery.coverage.sitemapUnavailable=(discovery.coverage.sitemapUnavailable??0)+1;}
   const fetchState=prepared.status==='prepared'&&prepared.kind==='html'?prepared.fetchState:failed?'error':'ok';
   const reasons=failed?[prepared.reason]:analysis?.reasons??[];
   await client.query(`UPDATE site_audit_page SET state=$2,attempt_settled_at=$3,last_attempt_outcome=$4,observed_at=$3,http_status=$5,
-   fetch_state=$6,analysis_coverage=$7,reasons=$8,response_time_ms=$9,facts=$10,evidence=$11,evidence_recorded=$12,evidence_truncated=$13,retry_after_at=$14 WHERE id=$1`,
+   fetch_state=$6,analysis_coverage=$7,reasons=$8,response_time_ms=$9,facts=$10,evidence=$11,evidence_recorded=$12,evidence_truncated=$13,retry_after_at=$14,body_capture_state=$15,body_extraction_version=$16,body_text=$17 WHERE id=$1`,
    [page.id,retry&&!stop?'pending':failed&&!redirect?'unavailable':'done',at,download.complete?'complete':'failed',download.status,
     retry?'not_fetched':fetchState,retry?'not_fetched':analysis?.coverage??(redirect?'redirect':failed?'unavailable':'non_html'),JSON.stringify(reasons),Math.round(download.durationMs),
     retry?null:analysis?.facts??null,retry?null:evidence,!retry&&evidence!==null,!retry&&prepared.status==='prepared'&&prepared.kind==='html'&&prepared.evidenceTruncated,
-    pace.status==='ready'?new Date(pace.nextRequestAtMs!):null]);
+    pace.status==='ready'?new Date(pace.nextRequestAtMs!):null,body?.state??'not_recorded',body?.version??null,body?.text??null]);
   await client.query(`UPDATE site_audit_run SET budget_charged_bytes=budget_charged_bytes-$2,wire_bytes=wire_bytes+$3,http_decoded_bytes=http_decoded_bytes+$4,decoded_bytes=decoded_bytes+$5,
    next_request_at=CASE WHEN $6::timestamptz IS NULL THEN next_request_at ELSE greatest(next_request_at,$6) END WHERE id=$1`,[work.id,released,download.wireBytes,download.httpDecodedBytes,download.decodedBytes,pace.status==='ready'?new Date(pace.nextRequestAtMs!):null]);
   if(!retry&&analysis?.findings.length){

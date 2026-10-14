@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {randomBytes,randomUUID} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase,assertSchema} from '../src/server/db.ts';
@@ -11,7 +11,9 @@ import {siteAuditQueue,getSiteAuditSetup,startSiteAudit,getSiteAudit,listSiteAud
 
 export async function runSiteAuditChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig();
- assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(config.databaseUrl).hostname));await assertSchema();
+ const db=new URL(config.databaseUrl),ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&db.pathname==='/ten98_site_api';
+ assert.ok(['localhost','127.0.0.1','[::1]'].includes(db.hostname));assert.equal(db.port,ci?'5432':'55501');assert.ok(ci||/^\/ten98_site_api_[a-f0-9]{12}$/.test(db.pathname));assert.equal(db.search,'');assert.equal(db.hash,'');
+ for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[key],undefined);await assertSchema();assert.equal((await getDatabase().pool.query('SELECT count(*)::int AS n FROM workspace')).rows[0].n,0);
  const pool=getDatabase().pool,owner=randomUUID(),admin=randomUUID(),viewer=randomUUID(),stranger=randomUUID(),workspace=randomUUID(),foreignWorkspace=randomUUID(),project=randomUUID(),foreignProject=randomUUID();
  const password=randomBytes(32).toString('base64url'),email=`${owner}@audit.integration.test`;
  for(const id of [owner,admin,viewer,stranger])await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)',[id,'Audit fixture',`${id}@audit.integration.test`]);
@@ -35,12 +37,18 @@ export async function runSiteAuditChecks(){
   const intent=input(),[first,replay]=await Promise.all([start(project,owner,intent),start(project,owner,intent)]);
   assert.equal(first.run.id,replay.run.id);assert.notEqual(first.created,replay.created);assert.equal(first.run.progress.frontier,2);
   const persisted=(await pool.query('SELECT queue_job_id,request_hash FROM site_audit_run WHERE id=$1',[first.run.id])).rows[0];
+  assert.equal(persisted.request_hash,createHash('sha256').update(JSON.stringify({version:1,mode:'static',domainId:null,startPath:'/',maxPages:50})).digest('hex'),'Legacy opt-out hash is unchanged, not merely self-consistent.');
   const queued=(await pool.query('SELECT retry_limit,expire_seconds AS seconds,data FROM pgboss.job WHERE id=$1',[persisted.queue_job_id])).rows[0];
   assert.equal(queued.retry_limit,0);assert.equal(queued.seconds,2100);assert.deepEqual(queued.data,{runId:first.run.id});
   assert.equal((await pool.query('SELECT 1 FROM site_audit_page WHERE run_id=$1',[first.run.id])).rowCount,2);
   assert.ok(!JSON.stringify(first).includes(persisted.request_hash));assert.ok(!JSON.stringify(first).includes(persisted.queue_job_id));
   await assert.rejects(start(project,owner,{...intent,maxPages:51}),{status:409});await assert.rejects(start(),{status:409});await assert.rejects(getSiteAudit(foreignProject,owner,first.run.id),{status:404});
   await assert.rejects(deleteSiteAudit(project,owner,first.run.id,{}),{status:409});
+  assert.equal(first.run.config.retainBodyText,false);
+  await pool.query("UPDATE site_audit_run SET config=config-'retainBodyText' WHERE id=$1",[first.run.id]);
+  assert.equal((await startSiteAudit(project,owner,{...intent,retainBodyText:false})).run.id,first.run.id,'Explicit false must replay the legacy hash.');
+  assert.equal((await startSiteAudit(project,owner,intent)).run.config.retainBodyText,false);
+  await assert.rejects(startSiteAudit(project,owner,{...intent,retainBodyText:true}),{status:409});
   await cancelSiteAudit(project,admin,first.run.id,{});assert.equal((await start(project,owner,intent)).run.status,'cancelled');
   const doomed=input(),send=boss.send.bind(boss);let insertedJob:string|undefined;
   boss.send=(async(...args:Parameters<typeof boss.send>)=>{const result=await (send as (...a:unknown[])=>Promise<string|null>)(...args);insertedJob=result??undefined;throw new Error('Synthetic queue acknowledgment failure');}) as unknown as typeof boss.send;
@@ -69,6 +77,24 @@ export async function runSiteAuditChecks(){
   await pool.query("UPDATE site_audit_run SET status='cancelled',phase=NULL,completed_at=clock_timestamp(),lease_owner=NULL,lease_expires_at=NULL WHERE id=$1 AND status='cancelling' AND lease_owner=$2",[running.run.id,lease]);await finish(foreign.run.id);
   console.log('PASS cross-workspace active constraint and cancellation generation preserves exact draining owner');
 
+  const opted=await startSiteAudit(project,owner,{...input(),retainBodyText:true});
+  const pending=(await listSiteAuditPages(project,viewer,opted.run.id,new URLSearchParams())).pages[0];
+  assert.deepEqual(pending.bodyEvidence,{status:'pending',version:null,utf8Bytes:null,textIncluded:false,text:null});
+  await finish(opted.run.id);
+  assert.deepEqual((await getSiteAuditPage(project,viewer,opted.run.id,pending.id)).page.bodyEvidence,{status:'unavailable',version:null,utf8Bytes:null,textIncluded:false,text:null});
+  await assert.rejects(pool.query("UPDATE site_audit_page SET body_capture_state='available',body_extraction_version='static-dom-body-v1',body_text='not analyzed' WHERE id=$1",[pending.id]),{code:'23514'});
+  for(const [state,text] of [['available','A 🐎 body'],['empty',''],['unavailable',null],['over_limit',null]] as const){
+   await pool.query("UPDATE site_audit_page SET state='done',observed_at=clock_timestamp(),analysis_coverage='analyzed',body_capture_state=$2,body_extraction_version='static-dom-body-v1',body_text=$3 WHERE id=$1",[pending.id,state,text]);
+   const list=(await listSiteAuditPages(project,viewer,opted.run.id,new URLSearchParams())).pages[0].bodyEvidence;
+   assert.deepEqual(list,{status:state,version:'static-dom-body-v1',utf8Bytes:text===null?null:Buffer.byteLength(text),textIncluded:false,text:null});
+   const detail=(await getSiteAuditPage(project,viewer,opted.run.id,pending.id)).page.bodyEvidence;
+   assert.deepEqual(detail,{...list,textIncluded:text!==null,text});
+  }
+  await pool.query("UPDATE site_audit_page SET body_capture_state='available',body_text=NULL WHERE id=$1",[pending.id]);
+  assert.equal((await getSiteAuditPage(project,viewer,opted.run.id,pending.id)).page.bodyEvidence.status,'unavailable');
+  await assert.rejects(getSiteAuditPage(foreignProject,owner,opted.run.id,pending.id),{status:404});
+  for(const values of [['available',null,'x'],['available','static-dom-body-v1','x'.repeat(65537)],['empty','static-dom-body-v1','nonempty'],['unavailable','static-dom-body-v1','secret'],['not_recorded','static-dom-body-v1',null]])await assert.rejects(pool.query('UPDATE site_audit_page SET body_capture_state=$2,body_extraction_version=$3,body_text=$4 WHERE id=$1',[pending.id,...values]),{code:'23514'});
+  console.log('PASS body opt-in is immutable and legacy compatible; member list/detail bytes, empty/unavailable, tenant and schema bounds');
   const history=await start();await finish(history.run.id);
   const h1=await listSiteAudits(project,owner,new URLSearchParams('limit=1'));assert.equal(h1.runs.length,1);assert.ok(h1.nextCursor);
   const h2=await listSiteAudits(project,owner,new URLSearchParams({limit:'1',cursor:h1.nextCursor!}));assert.notEqual(h1.runs[0].id,h2.runs[0].id);

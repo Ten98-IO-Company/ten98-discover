@@ -84,15 +84,15 @@ export async function expireSiteAuditData(client: PoolClient, projectId: string,
           AND NOT EXISTS(SELECT 1 FROM site_audit_page WHERE run_id=r.id)`, [selected.id]);
     } else {
       const pages = await client.query(`WITH expired AS MATERIALIZED (
-        SELECT id FROM site_audit_page WHERE run_id=$1 AND evidence IS NOT NULL ORDER BY id LIMIT 1000
-      ) UPDATE site_audit_page p SET evidence=NULL FROM expired WHERE p.run_id=$1 AND p.id=expired.id`, [selected.id]);
+        SELECT id FROM site_audit_page WHERE run_id=$1 AND (evidence IS NOT NULL OR body_text IS NOT NULL) ORDER BY id LIMIT 1000
+      ) UPDATE site_audit_page p SET evidence=NULL,body_text=NULL FROM expired WHERE p.run_id=$1 AND p.id=expired.id`, [selected.id]);
       const edges = await client.query(`WITH expired AS MATERIALIZED (
         SELECT id FROM site_audit_edge WHERE run_id=$1 AND anchor IS NOT NULL ORDER BY id LIMIT 1000
       ) UPDATE site_audit_edge e SET anchor=NULL FROM expired WHERE e.run_id=$1 AND e.id=expired.id`, [selected.id]);
       result.clearedAuditEvidence += (pages.rowCount ?? 0) + (edges.rowCount ?? 0);
       await client.query(`UPDATE site_audit_run r SET raw_cleanup_completed_at=COALESCE(raw_cleanup_completed_at,clock_timestamp())
         WHERE r.id=$1 AND r.robots_body IS NULL
-          AND NOT EXISTS(SELECT 1 FROM site_audit_page WHERE run_id=r.id AND evidence IS NOT NULL)
+          AND NOT EXISTS(SELECT 1 FROM site_audit_page WHERE run_id=r.id AND (evidence IS NOT NULL OR body_text IS NOT NULL))
           AND NOT EXISTS(SELECT 1 FROM site_audit_edge WHERE run_id=r.id AND anchor IS NOT NULL)`, [selected.id]);
     }
   }
@@ -110,10 +110,10 @@ export async function previewSiteAuditRetention(client: PoolClient, workspaceId:
   const counts = (await client.query<{ raw_runs: number; raw_pages: number; raw_edges: number; derived_runs: number; derived_pages: number }>(`
     SELECT
       (SELECT count(*)::integer FROM (SELECT r.id FROM site_audit_run r WHERE ${raw}
-        AND (r.robots_body IS NOT NULL OR EXISTS(SELECT 1 FROM site_audit_page p WHERE p.run_id=r.id AND p.evidence IS NOT NULL)
+        AND (r.robots_body IS NOT NULL OR EXISTS(SELECT 1 FROM site_audit_page p WHERE p.run_id=r.id AND (p.evidence IS NOT NULL OR p.body_text IS NOT NULL))
           OR EXISTS(SELECT 1 FROM site_audit_edge e WHERE e.run_id=r.id AND e.anchor IS NOT NULL)) LIMIT 10001) s) AS raw_runs,
       (SELECT count(*)::integer FROM (SELECT p.id FROM site_audit_run r JOIN site_audit_page p ON p.run_id=r.id
-        WHERE ${raw} AND p.evidence IS NOT NULL LIMIT 10001) s) AS raw_pages,
+        WHERE ${raw} AND (p.evidence IS NOT NULL OR p.body_text IS NOT NULL) LIMIT 10001) s) AS raw_pages,
       (SELECT count(*)::integer FROM (SELECT e.id FROM site_audit_run r JOIN site_audit_edge e ON e.run_id=r.id
         WHERE ${raw} AND e.anchor IS NOT NULL LIMIT 10001) s) AS raw_edges,
       (SELECT count(*)::integer FROM (SELECT r.id FROM site_audit_run r WHERE ${derived} LIMIT 10001) s) AS derived_runs,

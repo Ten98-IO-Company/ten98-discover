@@ -4,10 +4,14 @@ import {parse, type DefaultTreeAdapterTypes as Html} from 'parse5';
 
 export const crawlAnalysisLimits=Object.freeze({htmlBytes:1048576,headerBytes:16384,urlBytes:2048,nodes:20000,depth:128,links:1000,images:1000,headings:1000,annotations:100,text:2048});
 export const crawlRuleVersion='static-html-v1';
+export const crawlBodyVersion='static-dom-body-v1';
+// ponytail: whole normalized bodies up to 64 KiB; review this version/ceiling before retaining larger pages.
+export const crawlBodyLimit=65536;
+export type CrawlBodyCapture={state:'available'|'empty'|'unavailable'|'over_limit';version:typeof crawlBodyVersion;text:string|null};
 export type CrawlPageInput={
   url:string; status:number|null; fetchState:'ok'|'blocked'|'rate_limited'|'error'|'robots_disallowed'|'not_fetched';
   contentType:string|null; html:string|null; bodyComplete:boolean; responseTimeMs:number|null; crawlDepth:number|null;
-  linkHeaders?:string[]; xRobotsTags?:string[];
+  linkHeaders?:string[]; xRobotsTags?:string[]; retainBodyText?:boolean;
 };
 const severities={
   'blocked-page':'critical','rate-limited-page':'warning','server-error':'critical','broken-page':'warning',
@@ -31,7 +35,7 @@ export type CrawlFacts={
   structuredDataPresent:boolean;hreflangCount:number;indexability:'noindex_observed'|'no_noindex_observed'|'unknown';
   canonical:'none'|'self'|'other'|'conflict'|'invalid';invalidCanonicals:number;
 };
-export type CrawlAnalysis={ruleVersion:typeof crawlRuleVersion;coverage:CrawlCoverage;reasons:string[];facts:CrawlFacts|null;evidence:CrawlEvidence|null;findings:CrawlFinding[]};
+export type CrawlAnalysis={ruleVersion:typeof crawlRuleVersion;coverage:CrawlCoverage;reasons:string[];facts:CrawlFacts|null;evidence:CrawlEvidence|null;findings:CrawlFinding[];bodyCapture?:CrawlBodyCapture};
 const namespace='http://www.w3.org/1999/xhtml';
 const omitted=new Set(['script','style','noscript','template','svg','math']);
 const blocks=new Set('address article aside blockquote br dd div dl dt fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hr li main nav ol p pre section table td th tr ul'.split(' '));
@@ -120,8 +124,10 @@ export function analyzeCrawlPage(input:CrawlPageInput):CrawlAnalysis {
   if(!url||!['ok','blocked','rate_limited','error','robots_disallowed','not_fetched'].includes(input.fetchState)||
     input.status!==null&&(!Number.isInteger(input.status)||input.status<200||input.status>599)||
     input.responseTimeMs!==null&&(!Number.isFinite(input.responseTimeMs)||input.responseTimeMs<0)||
-    input.crawlDepth!==null&&(!Number.isSafeInteger(input.crawlDepth)||input.crawlDepth<0)||typeof input.bodyComplete!=='boolean')throw new TypeError('Invalid crawl observation.');
+    input.crawlDepth!==null&&(!Number.isSafeInteger(input.crawlDepth)||input.crawlDepth<0)||typeof input.bodyComplete!=='boolean'||
+    input.retainBodyText!==undefined&&typeof input.retainBodyText!=='boolean')throw new TypeError('Invalid crawl observation.');
   const out:CrawlAnalysis={ruleVersion:crawlRuleVersion,coverage:'unavailable',reasons:[],facts:null,evidence:null,findings:[]};
+  if(input.retainBodyText)out.bodyCapture={state:'unavailable',version:crawlBodyVersion,text:null};
   const issue=(code:CrawlFinding['code'],details:Record<string,number>={})=>out.findings.push({code,severity:severities[code],details});
   if(input.fetchState!=='ok'){
     out.coverage=input.fetchState==='error'?'unavailable':input.fetchState;
@@ -254,6 +260,9 @@ export function analyzeCrawlPage(input:CrawlPageInput):CrawlAnalysis {
   const blockedIndex=noindex(robotMeta,robotHeaders);
   out.facts={titleLength:title.length,titleHash:hash(title),descriptionLength:descriptionText.length,descriptionHash:hash(descriptionText),headingCounts,headingOrder,wordCount,contentHash:hash(content),imagesTotal,imagesMissingAlt,linksTotal:links.size,internalLinks:evidence.links.filter(l=>l.internal).length,externalLinks:evidence.links.filter(l=>!l.internal).length,unresolvedLinks,structuredDataPresent,hreflangCount:evidence.hreflang.length,indexability:blockedIndex?'noindex_observed':shell?'unknown':'no_noindex_observed',canonical,invalidCanonicals};
   out.evidence=evidence;out.coverage=shell?'shell':'analyzed';
+  if(input.retainBodyText&&!shell)out.bodyCapture=Buffer.byteLength(content)>crawlBodyLimit
+    ?{state:'over_limit',version:crawlBodyVersion,text:null}
+    :{state:content?'available':'empty',version:crawlBodyVersion,text:content};
   if(blockedIndex)issue('noindex-page');
   if(canonical==='conflict')issue('canonical-conflict');
   if(canonical==='other')issue('canonicalized-page');
