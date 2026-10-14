@@ -45,6 +45,7 @@ interface PreviewDto {
     logicalBytes: number | null;
   };
   profileEstimate?: {status: 'available' | 'unavailable'; properties: number | null; atLeast: boolean};
+  identityLinkEstimate?: {status: 'available' | 'unavailable'; links: number | null; atLeast: boolean};
   categories: CategoryMap;
   previewToken: string;
 }
@@ -67,7 +68,7 @@ const FIELDS: ReadonlyArray<{
   label: string;
   helper: string;
 }> = [
-  {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep events and session properties, with each property timed from its own latest update (default 90).'},
+  {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep events, session properties and explicit identity links. Each property uses its latest update; each link uses its latest accepted evidence (default 90).'},
   {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep replays (default 7).'},
   {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep generated answers, copied execution input and observed redirect chains (default 90). Receipts and authored prompts remain.'},
   {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google and Meta reports, Meta campaign inventories, keyword research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
@@ -436,6 +437,9 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
                 ? `${preview.profileEstimate.atLeast ? 'At least ' : ''}${preview.profileEstimate.properties.toLocaleString()} session ${preview.profileEstimate.properties === 1 ? 'property' : 'properties'} eligible for cleanup.`
                 : 'Session-property estimate unavailable. Try previewing again; retention still applies.'}</p>
               <p className="hint" style={{margin: '8px 0'}}>Saving a shorter session-property retention period immediately hides expired values; increasing it later does not restore them.</p>
+              <p style={{margin:'8px 0'}}>{preview.identityLinkEstimate?.status==='available'&&preview.identityLinkEstimate.links!==null
+                ? `${preview.identityLinkEstimate.atLeast?'At least ':''}${preview.identityLinkEstimate.links.toLocaleString()} explicit identity links eligible for cleanup.`
+                : 'Identity link estimate unavailable.'} Shortening retention hides expired link evidence immediately; extending it does not restore that evidence.</p>
               <p style={{margin: '8px 0'}}>Derived data cutoff (UTC): {fmtUtc(preview.derivedCutoff)}. {preview.derivedEstimate.status === 'available' && preview.derivedEstimate.imports !== null ? `${preview.derivedEstimate.atLeast ? 'At least ' : ''}${preview.derivedEstimate.imports.toLocaleString()} finished Google imports eligible.` : 'Import estimate unavailable.'}</p>
               <p style={{margin: '8px 0'}}>{preview.metaEstimate?.status === 'available' && preview.metaEstimate.imports !== null ? `${preview.metaEstimate.atLeast ? 'At least ' : ''}${preview.metaEstimate.imports.toLocaleString()} finished Meta imports eligible or already awaiting cleanup. Their receipts remain.` : 'Meta import estimate unavailable. Finished Meta report rows still follow this policy.'}</p>
               <p style={{margin: '8px 0'}}>{preview.metaInventoryEstimate?.status === 'available' && preview.metaInventoryEstimate.inventories !== null ? `${preview.metaInventoryEstimate.atLeast ? 'At least ' : ''}${preview.metaInventoryEstimate.inventories.toLocaleString()} finished Meta campaign inventories eligible or already awaiting cleanup. Their receipts remain.` : 'Meta campaign inventory estimate unavailable. Finished campaign metadata still follows this policy.'}</p>

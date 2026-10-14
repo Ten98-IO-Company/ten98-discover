@@ -7,6 +7,7 @@ import type {IdentifyInput} from './identify-input.ts';
 import {analyticsIdentity,nativeCollectionPolicy} from './native-analytics.ts';
 import {resolveAnalyticsNetwork} from './analytics-network.ts';
 import {latchSessionPropertyRetention} from './session-property-retention.ts';
+import {recordIdentityLink} from './identity-links.ts';
 
 export type IdentifyResult={accepted:true;duplicate:false;context:string}|{accepted:true;duplicate:true}|
   {accepted:false;reason:'collection_disabled'|'consent_required'|'identity_unavailable'};
@@ -23,7 +24,10 @@ export async function collectIdentify(request:Request,input:IdentifyInput,peerAd
     await client.query('SELECT id FROM project WHERE public_key=$1 FOR UPDATE',[input.siteKey]);
     const {project,userAgent,reason}=await nativeCollectionPolicy(client,request,input.siteKey,input);
     if(reason){await client.query('COMMIT');return {accepted:false,reason};}
-    const state=(await client.query('SELECT clock_timestamp() AS now,w.raw_analytics_days AS days FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1',[project.id])).rows[0];
+    const state=(await client.query(project.analytics_settings.linkIdentities===true?
+      `SELECT c.instant AS now,w.raw_analytics_days AS days,to_char(c.instant AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at
+       FROM workspace w JOIN project p ON p.workspace_id=w.id CROSS JOIN (SELECT clock_timestamp() AS instant) c WHERE p.id=$1`:
+      'SELECT clock_timestamp() AS now,w.raw_analytics_days AS days FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1',[project.id])).rows[0];
     const now=state.now as Date,sentAt=new Date(input.sentAt),expiresAt=new Date(sentAt.getTime()+86_400_000);
     if(sentAt.getTime()>now.getTime()+300_000)throw new FoundationError(400,'Check the identify request timestamp.');
     if(now>=expiresAt)throw new IdentifyRequestExpired();
@@ -36,6 +40,8 @@ export async function collectIdentify(request:Request,input:IdentifyInput,peerAd
       if(receipt.visitor_key!==identity.visitor||receipt.operation_hash!==operationHash)throw new FoundationError(409,'This identify request ID was already used for another operation.');
       await client.query('COMMIT');return {accepted:true,duplicate:true};
     }
+    if(input.dimensions?.distinctId!==undefined&&project.analytics_settings.linkIdentities===true)
+      await recordIdentityLink(client,project.id,identity.visitor,input.dimensions.distinctId,state.accepted_at);
     const [{cutoff}]=await latchSessionPropertyRetention(client,[project.id],new Date(now.getTime()-state.days*86_400_000),now);
     const keys=Object.keys(input.properties);
     const count=(await client.query(`SELECT count(*)::int AS keys FROM (
