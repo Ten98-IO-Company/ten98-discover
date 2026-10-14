@@ -21,7 +21,7 @@ try{
   await page.getByRole('heading',{name:'Keyword research',exact:true}).last().waitFor();
   const panel=page.locator('section[aria-label="Keyword research"]');
   assert.deepEqual(await providerCounts(),initialCounts,'Opening the panel must cause no provider calls.');
-  assert.ok(await panel.getByRole('link',{name:'Providers and spending',exact:true}).isVisible());
+  assert.ok(await panel.getByRole('link',{name:'AI and search providers',exact:true}).isVisible());
   const quote=async text=>{
     await openKeywordForm(panel);
     await panel.getByLabel('Keywords (one per line)',{exact:true}).fill(text);
@@ -38,7 +38,7 @@ try{
   await runKeyword(first.id);
   await panel.getByRole('button',{name:'Check status',exact:true}).click();
   const table=panel.getByRole('region',{name:'Keyword data table',exact:true});await table.waitFor();
-  const cells=await table.locator('tbody > tr').first().locator(':scope > td').allTextContents();
+  const cells=await table.locator('tbody > tr').first().locator(':scope > td:not(:has(input[type=checkbox]))').allTextContents();
   assert.equal(cells[1],'0');assert.equal(cells[2],'Unavailable');assert.match(await panel.innerText(),/No data returned.*omitted fixture/);
   assert.match(await panel.innerText(),/DataForSEO Labs \/ Google/);assert.match(await panel.innerText(),/\$0\.012120/);
   await assertLayout(page,'keyword-result');console.log('PASS keyword free quote, explicit paid intent, one synthetic dispatch, exact charge/null metrics and responsive results.');
@@ -67,7 +67,7 @@ try{
 
   stage='delayed prior project cannot overwrite new scope';held=await holdNextGet(page,'**'+B);
   await panel.getByRole('button',{name:'Reload access',exact:true}).click();await bounded(held.entered);
-  await projectSection(page,group.other,'Keywords');await page.getByText(/No runs yet/).waitFor();held.release();await held.dispose();held=null;
+  await projectSection(page,group.other,'Keywords');await page.getByText('No research runs have been saved for this project.',{exact:true}).waitFor();held.release();await held.dispose();held=null;
   assert.equal(await page.getByText(/saved result for this run was purged/).count(),0);
   assert.equal(await page.getByRole('region',{name:'Keyword data table',exact:true}).count(),0);
 
@@ -75,16 +75,20 @@ try{
   for(const status of [401,503]){
     await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();held=await holdNextGet(page,'**'+B,{status});
     await panel.getByRole('button',{name:'Reload access',exact:true}).click();await bounded(held.entered);
-    await projectSection(page,group.other,'Keywords');await page.getByText(/No runs yet/).waitFor();
+    await projectSection(page,group.other,'Keywords');await page.getByText('No research runs have been saved for this project.',{exact:true}).waitFor();
     await projectSection(page,group.main,'Keywords');await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
     held.release();await held.dispose();held=null;await page.waitForTimeout(150);
+    const menu=page.getByRole('button',{name:/^(Menu|Close menu)$/});
+    if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();
+    const account=page.locator('details.account-menu');
+    if(await account.getAttribute('open')===null)await account.locator(':scope > summary').click();
     assert.ok(await page.getByRole('button',{name:'Sign out',exact:true}).isVisible());assert.equal(await page.getByText('Your session expired. Sign in again.',{exact:true}).count(),0);
     assert.equal(await page.getByText('Synthetic stale response.',{exact:true}).count(),0);
   }
   stage='actual live-role downgrade removes writes';
   await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[group.workspace.id,group.owner.id]);
   await panel.getByRole('button',{name:'Reload access',exact:true}).click();await panel.getByText(/Ask a workspace owner/).waitFor();
-  assert.equal(await panel.getByRole('button',{name:'Prepare quote',exact:true}).count(),0);assert.equal(await panel.getByRole('link',{name:'Providers and spending',exact:true}).count(),0);
+  assert.equal(await panel.getByRole('button',{name:'Prepare quote',exact:true}).count(),0);assert.equal(await panel.getByRole('link',{name:'AI and search providers',exact:true}).count(),0);
   assert.ok(await panel.getByRole('heading',{name:'Recent runs',exact:true}).isVisible());
   assert.deepEqual(session.errors,[]);assert.deepEqual(session.outbound,[]);
   console.log('PASS keyword expiry distinction, stale project response isolation and live viewer role gating.');

@@ -333,7 +333,7 @@ function AccountSection({providers, identities, hasPassword, busy, mutate, unaut
       )}
       <p><strong>Link a new sign-in method</strong></p>
       <p className="hint">You sign in at the provider, then review the returned identity here before anything is linked. Accounts are never merged by email alone.</p>
-      {!hasPassword ? <p className="hint">Use a fresh provider sign-in in account security to add a local recovery password before linking or removing sign-in methods.</p> : providers.length === 0 ? (
+      {!hasPassword ? <p className="hint">Use the Identity account security section on this page to verify with your linked provider and add a local recovery password before linking or removing sign-in methods.</p> : providers.length === 0 ? (
         <p className="dim">No external providers are enabled on this server yet.</p>
       ) : (
         <>

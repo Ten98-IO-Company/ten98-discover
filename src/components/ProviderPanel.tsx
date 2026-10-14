@@ -239,7 +239,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
       return
     }
     if (cProvider === 'dataforseo' && (cLogin.trim() === '' || cPassword === '')) {
-      setError('Enter the DataForSEO login and password.')
+      setError('Enter the DataForSEO API login email and API password.')
       return
     }
     const credentials = cProvider === 'openrouter' ? { apiKey: cApiKey } : { login: cLogin.trim(), password: cPassword }
@@ -287,7 +287,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
       return
     }
     if (rotateConn.provider === 'dataforseo' && (rLogin.trim() === '' || rPassword === '')) {
-      setError('Enter the full new DataForSEO login and password.')
+      setError('Enter the full new DataForSEO API login email and API password.')
       return
     }
     const credentials = rotateConn.provider === 'openrouter' ? { apiKey: rApiKey } : { login: rLogin.trim(), password: rPassword }
@@ -365,7 +365,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
         <>
           {!data.vaultConfigured && (
             <div className="banner">
-              Credential storage is not configured on this server. An operator must configure CREDENTIAL_KEYS before connections can be saved, rotated, or checked. Budget limits below still apply.
+              Credential storage is not configured on this server. Ask the installation operator to enable it before saving, rotating or checking connections. Budget limits below still apply.
             </div>
           )}
           {loadError !== null && (
@@ -383,7 +383,10 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
 
           <div className="card">
             <h2>Connections</h2>
+            <p className="hint">OpenRouter supplies AI model answers. DataForSEO supplies keyword research and search rankings. These credentials are separate from ten98 API access keys.</p>
             <p className="hint">Run check contacts the provider's read-only account endpoint. It does not start paid work and never runs automatically.</p>
+            <p>Saved workspace budget: ${data.budget.monthlyLimitUsd} per month. Paid provider work is {data.budget.paused ? 'paused' : 'not paused'}. <button type="button" className="btn ghost" onClick={() => document.getElementById('provider-budget')?.focus()}>Review budget</button></p>
+            <p className="hint">A passed check does not authorize a paid run. Each run still needs an explicit action and enough remaining budget in both the workspace and its connection. A $0 limit blocks positive-cost work.</p>
             {data.connections.length === 0 ? (
               <div className="empty">
                 <p><strong>No provider connections yet.</strong></p>
@@ -396,7 +399,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                     <tr>
                       <th>Name</th>
                       <th>Provider</th>
-                      <th>Limit / month</th>
+                      <th>Connection limit / month</th>
                       <th>Status</th>
                       <th>Last checked</th>
                       <th>Actions</th>
@@ -443,7 +446,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                     <input id="rot-name" value={rName} onChange={e => setRName(e.target.value)} maxLength={120} autoComplete="off" disabled={busy || !data.vaultConfigured} />
                   </div>
                   <div className="field" style={{ minWidth: 0, flex: '0 1 220px' }}>
-                    <label htmlFor="rot-limit">Monthly limit (USD)</label>
+                    <label htmlFor="rot-limit">Connection monthly limit (USD)</label>
                     <input id="rot-limit" inputMode="decimal" autoComplete="off" value={rLimit} onChange={e => setRLimit(e.target.value)} disabled={busy || !data.vaultConfigured} />
                     <p className="hint">{USD_LIMIT_HINT}</p>
                   </div>
@@ -456,11 +459,11 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                 ) : (
                   <>
                     <div className="field">
-                      <label htmlFor="rot-login">New DataForSEO login</label>
+                      <label htmlFor="rot-login">New DataForSEO API login email</label>
                       <input id="rot-login" autoComplete="off" maxLength={254} value={rLogin} onChange={e => setRLogin(e.target.value)} disabled={busy || !data.vaultConfigured} />
                     </div>
                     <div className="field">
-                      <label htmlFor="rot-password">New DataForSEO password</label>
+                      <label htmlFor="rot-password">New DataForSEO API password</label>
                       <input id="rot-password" type="password" autoComplete="off" maxLength={4096} value={rPassword} onChange={e => setRPassword(e.target.value)} disabled={busy || !data.vaultConfigured} />
                     </div>
                   </>
@@ -497,17 +500,17 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
               ) : (
                 <>
                   <div className="field">
-                    <label htmlFor="pc-login">DataForSEO login</label>
+                    <label htmlFor="pc-login">DataForSEO API login email</label>
                     <input id="pc-login" autoComplete="off" maxLength={254} value={cLogin} onChange={e => setCLogin(e.target.value)} disabled={busy || !data.vaultConfigured} />
                   </div>
                   <div className="field">
-                    <label htmlFor="pc-password">DataForSEO password</label>
+                    <label htmlFor="pc-password">DataForSEO API password</label>
                     <input id="pc-password" type="password" autoComplete="off" maxLength={4096} value={cPassword} onChange={e => setCPassword(e.target.value)} disabled={busy || !data.vaultConfigured} />
                   </div>
                 </>
               )}
               <div className="field" style={{ maxWidth: 260 }}>
-                <label htmlFor="pc-limit">Monthly limit (USD)</label>
+                <label htmlFor="pc-limit">Connection monthly limit (USD)</label>
                 <input id="pc-limit" inputMode="decimal" autoComplete="off" value={cLimit} onChange={e => setCLimit(e.target.value)} disabled={busy || !data.vaultConfigured} />
                 <p className="hint">{USD_LIMIT_HINT}</p>
               </div>
@@ -517,7 +520,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
           </div>
 
           <div className="card">
-            <h2>Budget</h2>
+            <h2 id="provider-budget" tabIndex={-1}>Budget</h2>
             <p className="hint">
               Current budget month: {data.budget.month} (UTC). Usage here tracks requests this app initiates, not the provider's entire account. Reserved covers queued or in-flight requests; uncertain holds estimated costs until the outcome can be confirmed.
             </p>
@@ -538,7 +541,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
             <form onSubmit={submitBudget}>
               <div className="row" style={{ alignItems: 'flex-start' }}>
                 <div className="field" style={{ minWidth: 0, flex: '1 1 220px', maxWidth: 280 }}>
-                  <label htmlFor="bl-limit">Monthly limit (USD)</label>
+                  <label htmlFor="bl-limit">Workspace monthly limit (USD)</label>
                   <input id="bl-limit" inputMode="decimal" autoComplete="off" value={bLimit} onChange={e => setBLimit(e.target.value)} disabled={busy} />
                   <p className="hint">{USD_LIMIT_HINT}</p>
                 </div>

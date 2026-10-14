@@ -481,7 +481,8 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
-  const pageTitles: Record<AppView, string> = {project: 'Web analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'API keys', providers: 'Providers and spending', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageTitles: Record<AppView, string> = {project: 'Web analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageScope = view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' || view === 'meta-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
   const projectDescriptions: Partial<Record<AppView, string>> = {project: 'Understand how people find and use your website.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', 'ai-insights': 'Review mentions and citations in retained prompt answers using current project context.', google: 'Import Search Console and GA4 reports without changing browser tracking.', sessions: 'Explore retained activity grouped by observed visitor keys. These keys are estimates and can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
   return (
@@ -501,12 +502,13 @@ function App() {
               </select>
             </div>
           ) : <p className='dim'>No workspaces yet.</p>}
+          {workspace && <p className='hint'>Your workspace role: {workspace.role}</p>}
         <details className='workspace-tools workspace-settings' open={view === 'team' || view === 'keys' || view === 'providers' || view === 'retention' || view === 'workspace'}>
           <summary className={view === 'team' || view === 'keys' || view === 'providers' || view === 'retention' || view === 'workspace' ? 'proj active' : 'proj'}>Workspace settings</summary>
           <nav aria-label='Workspace settings'>
             {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'team' ? 'proj active' : 'proj'} aria-current={view === 'team' ? 'page' : undefined} to='/' search={target('team')}>Manage team</Link>}
-            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'keys' ? 'proj active' : 'proj'} aria-current={view === 'keys' ? 'page' : undefined} to='/' search={target('keys')}>API keys</Link>}
-            {workspace?.role === 'owner' && <Link className={view === 'providers' ? 'proj active' : 'proj'} aria-current={view === 'providers' ? 'page' : undefined} to='/' search={target('providers')}>Providers and spending</Link>}
+            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'keys' ? 'proj active' : 'proj'} aria-current={view === 'keys' ? 'page' : undefined} to='/' search={target('keys')}>ten98 API access</Link>}
+            {workspace?.role === 'owner' && <Link className={view === 'providers' ? 'proj active' : 'proj'} aria-current={view === 'providers' ? 'page' : undefined} to='/' search={target('providers')}>AI and search providers</Link>}
             {workspace && <Link className={view === 'retention' ? 'proj active' : 'proj'} aria-current={view === 'retention' ? 'page' : undefined} to='/' search={target('retention')}>Data retention</Link>}
             <Link className={view === 'workspace' ? 'proj active' : 'proj'} aria-current={view === 'workspace' ? 'page' : undefined} to='/' search={target('workspace')}>Create workspace</Link>
           </nav>
@@ -528,47 +530,34 @@ function App() {
           {canWrite && <Link to='/' search={target('new-project')} className='btn ghost'>+ New project</Link>}
         </nav>
         {project && workspace && <nav aria-label='Project sections' className='section-nav'>
-          <details className='workspace-tools' open={view === 'project' || view === 'explore' || view === 'sessions' || view === 'conversions' || view === 'events'}>
-            <summary className={view === 'project' || view === 'explore' || view === 'sessions' || view === 'conversions' || view === 'events' ? 'proj active' : 'proj'}>Analytics</summary>
-            <Link className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={target('project')}>Analytics</Link>
-            <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={target('explore')}>Explore</Link>
-            <Link className={view === 'sessions' ? 'proj active' : 'proj'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}>Sessions</Link>
-            <Link className={view === 'conversions' ? 'proj active' : 'proj'} aria-current={view === 'conversions' ? 'page' : undefined} to='/' search={target('conversions')}>Conversions</Link>
-            <Link className={view === 'events' ? 'proj active' : 'proj'} aria-current={view === 'events' ? 'page' : undefined} to='/' search={target('events')}>Recent events</Link>
-          </details>
-          <details className='workspace-tools' open={view === 'ai-insights' || view === 'prompts'}>
-            <summary className={view === 'ai-insights' || view === 'prompts' ? 'proj active' : 'proj'}>AI visibility</summary>
-            <Link className={view === 'ai-insights' ? 'proj active' : 'proj'} aria-current={view === 'ai-insights' ? 'page' : undefined} to='/' search={target('ai-insights')}>AI insights</Link>
-            <Link className={view === 'prompts' ? 'proj active' : 'proj'} aria-current={view === 'prompts' ? 'page' : undefined} to='/' search={target('prompts')}>Prompts</Link>
-          </details>
-          <details className='workspace-tools' open={view === 'keywords' || view === 'ranks' || view === 'audits'}>
-            <summary className={view === 'keywords' || view === 'ranks' || view === 'audits' ? 'proj active' : 'proj'}>Search</summary>
-            <Link className={view === 'keywords' ? 'proj active' : 'proj'} aria-current={view === 'keywords' ? 'page' : undefined} to='/' search={target('keywords')}>Keywords</Link>
-            <Link className={view === 'ranks' ? 'proj active' : 'proj'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}>Rank tracking</Link>
-            <Link className={view === 'audits' ? 'proj active' : 'proj'} aria-current={view === 'audits' ? 'page' : undefined} to='/' search={target('audits')}>Site audits</Link>
-          </details>
-          <details className='workspace-tools' open={view === 'reports' || view === 'google' || view === 'meta-reports'}>
-            <summary className={view === 'reports' || view === 'google' || view === 'meta-reports' ? 'proj active' : 'proj'}>Reports</summary>
-            <Link className={view === 'reports' ? 'proj active' : 'proj'} aria-current={view === 'reports' ? 'page' : undefined} to='/' search={target('reports')}>Reports</Link>
-            <Link className={view === 'google' ? 'proj active' : 'proj'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}>Google reports</Link>
-            <Link className={view === 'meta-reports' ? 'proj active' : 'proj'} aria-current={view === 'meta-reports' ? 'page' : undefined} to='/' search={target('meta-reports')}>Meta reports</Link>
-          </details>
-          <details className='workspace-tools' open={view === 'meta'}>
-            <summary className={view === 'meta' ? 'proj active' : 'proj'}>Connections</summary>
-            <Link className={view === 'meta' ? 'proj active' : 'proj'} aria-current={view === 'meta' ? 'page' : undefined} to='/' search={target('meta')}>Meta ads</Link>
-          </details>
-          <details className='workspace-tools' open={view === 'installation' || view === 'destinations' || view === 'collection' || view === 'domains'}>
-            <summary className={view === 'installation' || view === 'destinations' || view === 'collection' || view === 'domains' ? 'proj active' : 'proj'}>Tracking</summary>
-            <Link className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}>Install tracker</Link>
-            {['owner','admin'].includes(workspace.role) && <Link className={view === 'destinations' ? 'proj active' : 'proj'} aria-current={view === 'destinations' ? 'page' : undefined} to='/' search={target('destinations')}>Destinations</Link>}
-            <Link className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}>Collection and privacy</Link>
-            {['owner','admin'].includes(workspace.role) && <Link className={view === 'domains' ? 'proj active' : 'proj'} aria-current={view === 'domains' ? 'page' : undefined} to='/' search={target('domains')}>Domains</Link>}
-          </details>
-          <Link className={view === 'context' ? 'proj active' : 'proj'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}>Project context</Link>
+          <p className='side-label'>Measure</p>
+          <Link className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={target('project')}>Analytics</Link>
+          <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={target('explore')}>Explore</Link>
+          <Link className={view === 'sessions' ? 'proj active' : 'proj'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}>Sessions</Link>
+          <Link className={view === 'conversions' ? 'proj active' : 'proj'} aria-current={view === 'conversions' ? 'page' : undefined} to='/' search={target('conversions')}>Conversions</Link>
+          <Link className={view === 'events' ? 'proj active' : 'proj'} aria-current={view === 'events' ? 'page' : undefined} to='/' search={target('events')}>Recent events</Link>
+          <Link className={view === 'reports' ? 'proj active' : 'proj'} aria-current={view === 'reports' ? 'page' : undefined} to='/' search={target('reports')}>Reports</Link>
+          <Link className={view === 'google' ? 'proj active' : 'proj'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}>Google reports</Link>
+          <Link className={view === 'audits' ? 'proj active' : 'proj'} aria-current={view === 'audits' ? 'page' : undefined} to='/' search={target('audits')}>Site audits</Link>
+          <p className='side-label section-label'>Research</p>
+          <Link className={view === 'context' ? 'proj active' : 'proj'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}>Context</Link>
+          <Link className={view === 'prompts' ? 'proj active' : 'proj'} aria-current={view === 'prompts' ? 'page' : undefined} to='/' search={target('prompts')}>Prompts</Link>
+          <Link className={view === 'ai-insights' ? 'proj active' : 'proj'} aria-current={view === 'ai-insights' ? 'page' : undefined} to='/' search={target('ai-insights')}>AI insights</Link>
+          <Link className={view === 'keywords' ? 'proj active' : 'proj'} aria-current={view === 'keywords' ? 'page' : undefined} to='/' search={target('keywords')}>Keywords</Link>
+          <Link className={view === 'ranks' ? 'proj active' : 'proj'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}>Rank tracking</Link>
+          <p className='side-label section-label'>Connect</p>
+          <Link className={view === 'google' ? 'proj active' : 'proj'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}>Google connections</Link>
+          <Link className={view === 'meta' ? 'proj active' : 'proj'} aria-current={view === 'meta' ? 'page' : undefined} to='/' search={target('meta')}>Meta ads</Link>
+          <Link className={view === 'meta-reports' ? 'proj active' : 'proj'} aria-current={view === 'meta-reports' ? 'page' : undefined} to='/' search={target('meta-reports')}>Meta reports</Link>
+          <Link className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}>Install tracker</Link>
+          {['owner','admin'].includes(workspace.role) && <Link className={view === 'destinations' ? 'proj active' : 'proj'} aria-current={view === 'destinations' ? 'page' : undefined} to='/' search={target('destinations')}>Destinations</Link>}
+          <Link className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}>Collection and privacy</Link>
+          {['owner','admin'].includes(workspace.role) && <Link className={view === 'domains' ? 'proj active' : 'proj'} aria-current={view === 'domains' ? 'page' : undefined} to='/' search={target('domains')}>Domains</Link>}
         </nav>}
         <details className='side-foot account-menu' open={view === 'security' || view === 'identity' || view === 'google-app' || view === 'meta-app'}>
           <summary className='account-summary' aria-label={`Account: ${me?.user.name || 'Account'}, ${me?.user.email ?? ''}`}>
             <span className='account-summary-text'>
+              <span className='hint'>Account</span>
               <span className='account-name'>{me?.user.name || 'Account'}</span>
               <span className='account-email'>{me?.user.email}</span>
             </span>
@@ -592,7 +581,7 @@ function App() {
         </div>
       </aside>
       <main className='main' id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
-        <header className='app-bar'><div className='breadcrumbs'><span>{workspace?.name ?? 'Your workspace'}</span>{project && <><span aria-hidden='true'>/</span><strong>{project.name}</strong></>}</div><span className='preview-badge'>Development preview</span></header>
+        <header className='app-bar'><div className='breadcrumbs'><span>{pageScope}</span>{project && projectView && <><span aria-hidden='true'>/</span><strong>{project.name}</strong></>}</div><span className='preview-badge'>Development preview</span></header>
         <div className='page-content'>
         {authNotice && <div role={authNotice.kind === 'error' ? 'alert' : 'status'} className={authNotice.kind === 'error' ? 'alert' : 'notice'}>{authNotice.message} <button className='btn ghost' onClick={() => setAuthNotice(null)}>Dismiss</button></div>}
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
@@ -602,6 +591,10 @@ function App() {
           <h1>{pageTitles[view]}</h1>
           <p className='project-origin'>{project.origin}</p>
           {projectDescriptions[view] && view !== 'events' && view !== 'installation' && <p className='dim'>{projectDescriptions[view]}</p>}
+        </header>}
+        {!projectView && view !== 'workspace' && view !== 'new-project' && <header className='proj-head'><h1>{pageTitles[view]}</h1>
+          {view === 'keys' && <p className='dim'>Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.</p>}
+          {view === 'providers' && <p className='dim'>Manage provider credentials and spending limits for this workspace.</p>}
         </header>}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
