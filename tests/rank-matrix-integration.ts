@@ -97,8 +97,20 @@ export async function runRankMatrixChecks(){
     assert.equal((await handleApi(new Request(config.appUrl+path+'/matrix?device=desktop'))).status,401);assert.equal((await handleApi(new Request(config.appUrl+path+'/matrix/export',{method:'POST',headers:{cookie,origin:'https://foreign.invalid','content-type':'application/json'},body:'{"device":"desktop"}'}))).status,403);
     assert.equal((await handleApi(new Request(config.appUrl+'/api/projects/'+f.project+'/rank-trackers/'+csv.tracker+'/matrix?device=desktop',{headers:{cookie}}))).status,404);
     const apiKey=(await createApiKey(csv.workspace,owner,{name:'No rank export capability',scopes:['projects:read']})).token;assert.equal((await handleApi(new Request(config.appUrl+path+'/matrix?device=desktop',{headers:{authorization:'Bearer '+apiKey}}))).status,403);
-    let exportLimited=false;for(let i=0;i<7;i++){const response=await request('/matrix/export','POST');if(response.status===429){exportLimited=true;break;}assert.equal(response.status,200);}assert.equal(exportLimited,true);
-    let readLimited=false;for(let i=0;i<31;i++){const response=await request('/matrix?device=desktop');if(response.status===429){readLimited=true;break;}assert.equal(response.status,200);}assert.equal(readLimited,true);
+    const rateClient=await pool.connect(),originalQuery=pool.query,reportKey='rank-report:'+viewer,exportKey='rank-report-export:'+viewer;
+    try{
+      // PostgreSQL now() stays fixed throughout this synthetic rate-check transaction.
+      await rateClient.query('BEGIN');pool.query=rateClient.query.bind(rateClient);
+      await pool.query('DELETE FROM request_limit WHERE key=ANY($1::text[])',[[reportKey,exportKey]]);
+      for(let i=0;i<6;i++)assert.equal((await request('/matrix/export','POST')).status,200);
+      assert.equal((await request('/matrix/export','POST')).status,429);
+      await pool.query('DELETE FROM request_limit WHERE key=$1',[reportKey]);
+      for(let i=0;i<30;i++)assert.equal((await request('/matrix?device=desktop')).status,200);
+      assert.equal((await request('/matrix?device=desktop')).status,429);
+    }finally{
+      pool.query=originalQuery;
+      try{await rateClient.query('ROLLBACK');}finally{rateClient.release();}
+    }
     console.log('PASS actual viewer reporting/export API,CSV headers, tenant/cookie/Origin/API-key boundaries, strict request size/query/method and report/export rate limits.');
 
     const full=await fixture(Array.from({length:1000},(_,i)=>'Export term '+i));for(let i=0;i<26;i++)await run(full,{days:26-i,keywords:full.keywords});const begin=performance.now(),all=await exportRankMatrix(full.project,viewer,full.tracker,{device:'desktop',runLimit:26});assert.equal(all.keywordCount,1000);assert.equal(all.rowCount,26000);assert.equal(all.runCount,26);assert.equal(all.body.split('\r\n').length,26002);assert.equal(external,0);
