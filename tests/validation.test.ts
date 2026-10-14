@@ -66,6 +66,16 @@ test('eventInput rejects bad name/uuid/url/unknown keys', () => {
   assert.throws(() => eventInput.parse({ ...base, extra: 1 }), z.ZodError);
 });
 
+test('basic collection envelope is strict; authenticated API retains its identity-free input contract',()=>{
+  const base={siteKey:ID1,eventId:ID2,name:'page_view',url:'https://a.com/'},collection={mode:'cookieless',epoch:ID1};
+  assert.deepEqual(eventInput.parse({...base,collection}).collection,collection);
+  for(const collection of [null,{},[],{mode:'consent',epoch:ID1},{mode:'cookieless',epoch:'bad'},{mode:'cookieless',epoch:ID1,extra:true}])assert.throws(()=>eventInput.parse({...base,collection}),z.ZodError);
+  assert.throws(()=>eventInput.parse({...base,collection,distinctId:'not-a-top-level-field'}),z.ZodError);
+  const apiInput=eventInput.omit({siteKey:true,consent:true,collection:true,context:true}),{siteKey:_,...apiEvent}=base;
+  assert.deepEqual(apiInput.parse(apiEvent),apiEvent);
+  for(const fields of [{collection},{consent:{analytics:true,epoch:ID1}},{context:'browser-memory-context'}])assert.throws(()=>apiInput.parse({...apiEvent,...fields}),z.ZodError);
+});
+
 test('eventPath returns pathname only, dropping query and hash', () => {
   assert.equal(eventPath('https://a.com/p/x?q=1#frag'), '/p/x');
   assert.equal(eventPath('https://a.com/'), '/');

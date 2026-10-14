@@ -53,7 +53,7 @@ export async function runDestinationChecks(options: Options): Promise<void> {
     assert.equal(active.consentEpoch, trackingConsentEpoch(nativeEpoch, first.active.consentEpoch));
     assert.deepEqual(active.configuration, config);
     assert.deepEqual(Object.keys(active).sort(), ['schemaVersion', 'siteKey', 'environment', 'origin', 'revisionId', 'consentEpoch', 'validUntil', 'configuration', 'nativeTracking'].sort());
-    assert.equal(active.schemaVersion, 2);
+    assert.equal(active.schemaVersion, 3);
     assert.ok(new Date(active.validUntil).getTime() > Date.now());
     assert.ok(new Date(active.validUntil).getTime() <= Date.now() + 65_000);
     assert.deepEqual((await getPublicDestinations(siteKey, 'test', origin)).configuration, { destinations: [] });

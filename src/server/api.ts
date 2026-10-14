@@ -735,7 +735,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if (match) {
       const target = await projectAccess(match[1], user.id, request.method !== 'GET');
       if (principal && request.method === 'POST' && match[2] === 'events') {
-        const input = eventInput.omit({ siteKey: true, consent: true, context: true }).parse(await readJson(request, 16384));
+        const input = eventInput.omit({ siteKey: true, consent: true, collection: true, context: true }).parse(await readJson(request, 16384));
         const client = await getDatabase().pool.connect();
         try {
           await client.query('BEGIN');

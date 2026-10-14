@@ -644,7 +644,7 @@ function App() {
         )}
         {view === 'project' && workspace && project !== null && (
           <>
-            {events?.total === 0 && <section className='connection-callout'><div><strong>Ready when your website is.</strong><p>Add the tracking snippet to start collecting consented visits.</p></div><Link className='btn primary' to='/' search={target('installation')}>Connect website</Link></section>}
+            {events?.total === 0 && <section className='connection-callout'><div><strong>Ready when your website is.</strong><p>Add the tracking snippet, then review Collection and privacy to choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Connect website</Link></section>}
             <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onUnauthorized={unauthorized} />
           </>
         )}
@@ -696,11 +696,11 @@ function App() {
               <pre className='snippet' role='region' aria-label='Tracking snippet' tabIndex={0}><code>{snippet}</code></pre>
               {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
               {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
-              <p className='dim footnote'>Install the snippet on the canonical origin or a verified HTTPS serving domain, choose analytics consent in Tracking preferences, then refresh events to confirm delivery. Earlier activity is discarded.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
+              <p className='dim footnote'>Install the snippet on the canonical origin or a verified HTTPS serving domain. Cookieless basic analytics starts with the current policy; consent-first analytics waits for a grant in Tracking preferences. Refresh events to confirm delivery. Explicit refusals and browser privacy signals stop collection.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
               <Link className='btn' to='/' search={target('events')}>View recent events</Link>
               <details className='installation-help'>
                 <summary>Custom events and collection details</summary>
-                <p className='dim footnote'>After consent, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Vendor tags have their own collection behavior.</p>
+                <p className='dim footnote'>When collection is allowed, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Advertising pixels and visitor identification still need explicit consent.</p>
               </details>
             </section>
             <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>

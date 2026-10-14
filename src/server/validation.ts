@@ -60,6 +60,7 @@ export const eventInput = z
     dimensions: z.unknown().optional(),
     context: z.string().max(1024).optional(),
     consent: z.object({ analytics: z.literal(true), epoch: z.uuid() }).strict().optional(),
+    collection: z.object({ mode: z.literal('cookieless'), epoch: z.uuid() }).strict().optional(),
   })
   .strict();
 

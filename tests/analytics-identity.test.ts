@@ -47,6 +47,20 @@ test('identify changes the visitor key without changing or merging an earlier an
   assert.notEqual(identity('2026-10-13T09:02:00Z', { distinctId: ' customer-a ' }).visitor, identified.visitor);
 });
 
+test('basic identity is separate from consented and explicit keys; contexts never cross collection bases',()=>{
+  const basic=identity('2026-10-13T09:50:00Z',{collectionBasis:'cookieless'}),consented=identity('2026-10-13T09:50:00Z');
+  assert.notEqual(basic.visitor,consented.visitor);assert.notEqual(basic.visit,consented.visit);
+  assert.deepEqual(identity('2026-10-13T10:10:00Z',{collectionBasis:'cookieless',context:consented.context}),identity('2026-10-13T10:10:00Z',{collectionBasis:'cookieless'}));
+  assert.deepEqual(identity('2026-10-13T10:10:00Z',{context:basic.context}),identity('2026-10-13T10:10:00Z'));
+  assert.equal(identity('2026-10-13T10:10:00Z',{collectionBasis:'cookieless',context:basic.context}).context,basic.context);
+  assert.notEqual(identity('2026-11-01T00:00:00Z',{collectionBasis:'cookieless',context:basic.context}).visitor,basic.visitor);
+  assert.notEqual(identity('2026-10-13T09:50:00Z',{collectionBasis:'cookieless',projectId:otherProject}).visitor,basic.visitor);
+  assert.throws(()=>identity('2026-10-13T10:10:00Z',{collectionBasis:'cookieless',distinctId:'private-customer'}),InputError);
+  // Explicit consent keeps the exact legacy formula, not merely a new stable hash.
+  const legacy=createHmac('sha256',secret).update(JSON.stringify(['ten98.analytics.visitor.v1',projectId,'2026-10',base.ip,base.userAgent,null])).digest('hex');
+  assert.equal(consented.visitor,legacy);assert.equal(identity('2026-10-13T09:50:00Z',{collectionBasis:'consent'}).visitor,legacy);
+});
+
 test('hourly visit IDs can span an hour through cache while retaining original issuance', () => {
   const initial = identity('2026-10-13T09:50:00Z');
   const continued = identity('2026-10-13T10:15:00Z', { context: initial.context });
@@ -168,6 +182,7 @@ test('API observations cannot impersonate a browser identity or retain disabled 
   assert.deepEqual(JSON.parse(values[8] as string), { language: 'en-US', origin: 'https://site.example' });
   assert.equal(values[9], 'api');
   assert.equal(values[10], 'observations-v2');
+  assert.equal(values[12],null,'API ingestion never claims a browser collection basis.');
   const serialized = JSON.stringify(values);
   for (const sentinel of ['private-query-sentinel', 'private-hash-sentinel', 'private-distinct-sentinel', 'private-referrer-sentinel', 'private-campaign-sentinel', browser.context, base.ip, base.userAgent]) {
     assert.equal(serialized.includes(sentinel), false);
