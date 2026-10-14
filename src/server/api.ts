@@ -14,6 +14,7 @@ import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import { exploreAnalytics } from './explorer.ts';
+import {listSessions,getSessionDetail} from './session-explorer.ts';
 import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
 import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
 import {listCohorts,getCohort,saveCohort,deleteCohort} from './cohorts.ts';
@@ -115,7 +116,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
       const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
-      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|explore)$`, 'i'));
+      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|explore|sessions(?:/[a-f0-9]{64})?)$`, 'i'));
       if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
         await authorizeApiKey(apiToken!, workspaceRoute[1], workspaceRoute[2] === 'team' ? 'team:read' : request.method === 'GET' ? 'projects:read' : 'projects:write');
       } else if (projectRoute && (request.method === 'GET' || (request.method === 'POST' && projectRoute[2] === 'events'))) {
@@ -717,6 +718,12 @@ export async function handleApi(request: Request): Promise<Response> {
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
         finally { client.release(); }
       }
+    }
+    match = path.match(new RegExp(`^/api/projects/(${id})/sessions(?:/([a-f0-9]{64}))?$`, 'i'));
+    if (match && request.method === 'GET') {
+      await limit(`sessions:${user.id}`,30);
+      const authority=apiToken?{kind:'api-key' as const,token:apiToken}:{kind:'session' as const,userId:user.id};
+      return json(match[2]?await getSessionDetail(match[1],match[2],authority,url.searchParams):await listSessions(match[1],authority,url.searchParams));
     }
     match = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|explore|jobs|check-worker)$`, 'i'));
     if (match) {

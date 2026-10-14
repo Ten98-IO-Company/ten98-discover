@@ -60,3 +60,38 @@ test('Meta returns accept only exact sanitized scope and fail without provider t
   assert.deepEqual(parseCallback('#meta=failed'), { kind: 'meta-error' })
   for (const hash of [meta+'&google=connected', meta+'&oidc-factor=1', meta+'&invite='+'a'.repeat(43), meta+'&meta=connected', meta+'&return=https://example.test', '#meta=failed&error=private-value', '#meta=connected', '#meta=connected&meta-project='+project+'&meta-workspace=bad']) assert.deepEqual(parseCallback(hash), {kind:'invalid'})
 })
+
+test('session deep links retain only bounded scope and definition references', () => {
+  const visitorKey='a'.repeat(64),base={workspace,project,view:'sessions',from:'2026-10-01',to:'2026-10-14',timeZone:'Asia/Dubai'};
+  const parsed=parseNavigation({...base,visitorKey,cohortId:project,cohortRevision:3,segmentId:workspace,segmentRevision:'2'});
+  assert.deepEqual(parsed,{workspace,project,view:'sessions',timeZone:'Asia/Dubai',from:base.from,to:base.to,visitorKey,cohortId:project,cohortRevision:'3',segmentId:workspace,segmentRevision:'2'});
+  assert.equal(canonicalNavigation('?'+new URLSearchParams(parsed as Record<string,string>),parsed),true);
+  assert.equal(projectView('sessions'),true);
+  assert.equal(allowedView('sessions','viewer',false),true);
+  assert.equal(allowedView('sessions',undefined,false),false);
+  assert.notEqual(navigationKey(parsed),navigationKey({...parsed,visitorKey:'b'.repeat(64)}));
+  assert.notEqual(navigationKey(parsed),navigationKey({...parsed,to:'2026-10-13'}));
+});
+
+test('session navigation fails closed for malformed scope without retaining property values', () => {
+  const base={workspace,project,view:'sessions',from:'2026-10-01',to:'2026-10-14',timeZone:'UTC'};
+  for(const patch of [{from:'2026-02-30'},{to:'2026-09-01'},{from:['2026-10-01']},{timeZone:'Etc/Unknown'},{visitorKey:'A'.repeat(64)},{visitorKey:'a'.repeat(64)+'\n'},{cohortId:project},{cohortId:project,cohortRevision:'0'},{segmentId:workspace,segmentRevision:'2147483648'},{predicates:'private values'},{propertyValue:'private value'},{cursor:'private state'}]){
+    const parsed=parseNavigation({...base,...patch});
+    assert.deepEqual(parsed,{workspace,project,view:'sessions',sessionInvalid:'1'});
+    assert.equal(JSON.stringify(parsed).includes('private'),false);
+    assert.deepEqual(parseNavigation(parsed),parsed);
+  }
+  assert.deepEqual(parseNavigation({workspace,project,view:'sessions',visitorKey:'a'.repeat(64)}),{workspace,project,view:'sessions',sessionInvalid:'1'});
+  assert.deepEqual(parseNavigation({...base,view:'events',visitorKey:'a'.repeat(64),cohortId:project,cohortRevision:'1'}),{workspace,project,view:'events'});
+  assert.deepEqual(parseNavigation({view:'sessions',from:base.from,to:base.to,timeZone:'UTC'}),{view:'sessions'});
+});
+
+test('a skipped local calendar day remains a valid explicit session range', () => {
+  // Apia skipped this date. The service may honestly return equal UTC bounds and zero events.
+  const scope={workspace,project,view:'sessions',from:'2011-12-30',to:'2011-12-30',timeZone:'Pacific/Apia',visitorKey:'c'.repeat(64)};
+  const parsed=parseNavigation(scope);
+  assert.equal(parsed.sessionInvalid,undefined);
+  assert.equal(parsed.from,'2011-12-30');assert.equal(parsed.to,'2011-12-30');assert.equal(parsed.timeZone,'Pacific/Apia');
+  assert.equal(parsed.visitorKey,scope.visitorKey);
+  assert.equal(canonicalNavigation('?'+new URLSearchParams(scope),parsed),true);
+});

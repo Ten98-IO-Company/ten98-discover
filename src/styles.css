@@ -87,6 +87,19 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .advanced-controls input, .advanced-controls select { inline-size: 100%; min-inline-size: 0; }
 .advanced-field { flex: 1 1 180px; min-inline-size: 0; }
 .advanced-controls, .advanced-summary { overflow-wrap: anywhere; }
+.session-explorer, .session-explorer .stack { display: grid; gap: var(--space-3); min-inline-size: 0; overflow-wrap: anywhere; }
+.session-explorer fieldset { min-inline-size: 0; border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-3); }
+.session-explorer input:not([type='checkbox']), .session-explorer select { min-inline-size: 0; max-inline-size: 100%; inline-size: 100%; min-block-size: var(--control-touch); }
+.session-explorer :is(button,summary,a.btn) { min-block-size: var(--control-touch); }
+.session-explorer summary { padding-block: var(--space-2); }
+.session-rows { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-4); }
+.session-rows > li { min-inline-size: 0; border-block-end: 1px solid var(--line); padding-block-end: var(--space-4); }
+.session-rows > li > a { display: inline-flex; align-items: center; min-block-size: var(--control-touch); }
+.session-metrics { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-6); }
+.session-metrics dt { color: var(--color-text-muted); font-size: var(--text-sm); }
+.session-metrics dd, .session-properties dd { margin-inline-start: 0; }
+.session-properties { display: grid; gap: var(--space-3); }
+.session-properties code { white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: isolate; }
 .card > h1 { font-size: var(--text-2xl); }
 .banner, .alert, .notice { margin: 12px 0 18px; padding: 12px 15px; border-radius: var(--radius-md); font-size: var(--text-sm); }
 .banner { background: var(--amber-tint); border: 1px solid var(--color-warning); }
