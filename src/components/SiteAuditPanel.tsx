@@ -1,5 +1,6 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
+import {auditCoverages,auditIssueCodes,auditNavigation,type AuditNavigation,type NavigationSearch} from '../lib/navigation';
 
 type Role='owner'|'admin'|'editor'|'viewer';
 type Status='queued'|'running'|'cancelling'|'completed'|'partial'|'failed'|'cancelled';
@@ -18,16 +19,16 @@ type View={runId:string|null;pageId:string|null;tab:'issues'|'pages';direction:'
 type Slot='setup'|'history'|'run'|'results'|'page'|'links';
 type Read={epoch:number;ticket:number;controller:AbortController};
 type Attempt={requestId:string;domainId:string|null;startPath:string;maxPages:number;mode:'static';retainBodyText:boolean};
-type Props={projectId:string;userId:string;onUnauthorized:()=>void;onOpenDomains:()=>void;onOpenRetention:()=>void};
+type Props={projectId:string;userId:string;search?:NavigationSearch;onNavigate?:(value:AuditNavigation,replace?:boolean)=>void;onUnauthorized:()=>void;onOpenDomains:()=>void;onOpenRetention:()=>void};
 const statuses:Status[]=['queued','running','cancelling','completed','partial','failed','cancelled'];
 const active=(s:Status)=>s==='queued'||s==='running'||s==='cancelling';
 const manages=(r:Role|null)=>r==='owner'||r==='admin';
 const empty=<T,>():List<T>=>({rows:[],cursor:null,loaded:false});
 const filters=():Filters=>({severity:'',code:'',pageId:'',coverage:'',resourceKind:'html'});
 const initialView=():View=>({runId:null,pageId:null,tab:'issues',direction:'out',filters:filters(),appliedFilters:filters()});
-const covers:Coverage[]=['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'];
+const covers=auditCoverages;
 const coverageLabels:Record<Coverage,string>={analyzed:'Analyzed',partial:'Partially analyzed',shell:'JavaScript rendering suspected',redirect:'Redirect',non_html:'Not HTML',http_error:'HTTP error',blocked:'Blocked',rate_limited:'Rate limited',robots_disallowed:'Disallowed by robots',not_fetched:'Not fetched',unavailable:'Unavailable'};
-const issueCodes='blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',');
+const issueCodes=auditIssueCodes;
 const words=(s:string)=>s.replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]/g,' ').replace(/^./,c=>c.toUpperCase());
 const date=(s:string|null)=>s&&Number.isFinite(Date.parse(s))?new Date(s).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'}):'Not recorded';
 const issueAdvice:Record<string,[string,string]>={
@@ -100,7 +101,7 @@ function Reasons({reasons}:{reasons:string[]}) {
 function TextItems({items}:{items:string[]}){return items.length?<ul>{items.map((item,i)=><li key={i}>{item||'Observed empty value'}</li>)}</ul>:<p className="dim">None recorded.</p>;}
 
 export function SiteAuditPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
-function Panel({projectId,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
+function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/audits',uid=useId();
   const [setup,setSetup]=useState<Setup|null>(null),[role,setRole]=useState<Role|null>(null);
   const [history,setHistory]=useState<List<Run>>(empty),[run,setRun]=useState<Run|null>(null),[page,setPage]=useState<Page|null>(null);
@@ -115,14 +116,20 @@ function Panel({projectId,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
   const resultRequest=useRef<Filters|null>(null);
   const alive=useRef(false),epoch=useRef(0),ticket=useRef(0),reads=useRef(new Map<Slot,Read>()),mutation=useRef<object|null>(null);
   const attemptRef=useRef<Attempt|null>(null),attemptOrigin=useRef<string|null>(null),viewRef=useRef(view),runRef=useRef<Run|null>(null),runTicket=useRef(0),roleTicket=useRef(0);
-  const callbacks=useRef({onUnauthorized,onOpenDomains,onOpenRetention});callbacks.current={onUnauthorized,onOpenDomains,onOpenRetention};
+  const callbacks=useRef({onNavigate,onUnauthorized,onOpenDomains,onOpenRetention});callbacks.current={onNavigate,onUnauthorized,onOpenDomains,onOpenRetention};
+  const navigation=search?auditNavigation(search):{},navigationString=JSON.stringify(navigation),ownNavigation=useRef<string|null>(null),receivedNavigation=useRef<string|null>(null);
   const chosenDomain=useRef(false),historyFocus=useRef<string|null>(null),resultFocus=useRef<string|null>(null),pendingFocus=useRef<string|null>(null),heading=useRef<HTMLHeadingElement|null>(null);
   const rawExpired=useRef(new Set<string>()),dataExpired=useRef(new Set<string>()),bodyExpired=useRef(new Set<string>());
   function invalidateReads(){epoch.current++;for(const op of reads.current.values())op.controller.abort();reads.current.clear();setBusy({});}
-  function changeView(next:View){viewRef.current=next;setView(next);}
+  function publishNavigation(next:View,replace=false){
+    if(!callbacks.current.onNavigate)return;
+    const f=next.appliedFilters,value:AuditNavigation=next.runId?{auditRun:next.runId,...(next.pageId?{auditPage:next.pageId}:{}),...(next.tab==='pages'?{auditTab:'pages'}:{}),...(f.severity?{auditSeverity:f.severity as AuditNavigation['auditSeverity']}:{}),...(f.code?{auditCode:f.code}:{}),...(f.pageId?{auditAffectedPage:f.pageId}:{}),...(f.coverage?{auditCoverage:f.coverage as AuditNavigation['auditCoverage']}:{}),...(f.resourceKind!=='html'?{auditResource:f.resourceKind}:{}),...(next.pageId&&next.direction==='in'?{auditDirection:'in'}:{})}:{};
+    const key=JSON.stringify(auditNavigation({workspace:search?.workspace,project:projectId,view:'audits',...value}));if(key===receivedNavigation.current||key===ownNavigation.current)return;ownNavigation.current=key;callbacks.current.onNavigate(value,replace);
+  }
+  function changeView(next:View,navigate=false,replace=false){viewRef.current=next;setView(next);if(navigate)publishNavigation(next,replace);}
   function receiveRole(next:Role,sequence:number){if(!roleValue(next)){const message='Audit access could not be verified. Reload access.';purge();setError(message);throw new Error(message);}if(sequence>=roleTicket.current){roleTicket.current=sequence;setRole(next);}}
   function clearLists(){resultRequest.current=null;setExpanded({});setFiltersOpen(false);setIssues(empty());setPages(empty());setLinks(empty());setIssueCount(null);setAllFindings(false);}
-  function purge(){invalidateReads();setSetup(null);setRole(null);setHistory(empty());setRun(null);runRef.current=null;setPage(null);clearLists();changeView(initialView());attemptRef.current=null;attemptOrigin.current=null;setAttempt(null);setUncertain(false);setDomain('');chosenDomain.current=false;setPath('/');setMaxPages('50');setRetainBodyText(false);setUpdated(null);setErrors({});setMessage('');pendingFocus.current=uid+'history-heading';}
+  function purge(){invalidateReads();setSetup(null);setRole(null);setHistory(empty());setRun(null);runRef.current=null;setPage(null);clearLists();changeView(initialView(),true,true);attemptRef.current=null;attemptOrigin.current=null;setAttempt(null);setUncertain(false);setDomain('');chosenDomain.current=false;setPath('/');setMaxPages('50');setRetainBodyText(false);setUpdated(null);setErrors({});setMessage('');pendingFocus.current=uid+'history-heading';}
   function rememberExpiry(value:Run){if(value.rawEvidenceStatus==='expired')rawExpired.current.add(value.id);if(value.dataStatus==='expired')dataExpired.current.add(value.id);return {...value,...(rawExpired.current.has(value.id)?{rawEvidenceStatus:'expired' as const}:{}),...(dataExpired.current.has(value.id)?{dataStatus:'expired' as const}:{})};}
   function expiredPage(value:Page):Page{
     if(value.bodyEvidence?.status==='expired')bodyExpired.current.add(value.id);
@@ -169,8 +176,8 @@ function Panel({projectId,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
     }
     if(e instanceof ApiError&&e.status===410){
       const current=viewRef.current;invalidateReads();setPage(null);clearLists();setError(errMsg(e));
-      if((slot==='page'||slot==='links')&&current.runId){changeView({...current,pageId:null});void loadRun();void loadResults();}
-      else{changeView(initialView());runRef.current=null;setRun(null);void loadHistory();}return;
+      if((slot==='page'||slot==='links')&&current.runId){changeView({...current,pageId:null},true,true);void loadRun();void loadResults();}
+      else{changeView(initialView(),true,true);runRef.current=null;setRun(null);void loadHistory();}return;
     }
     setErrors(old=>({...old,[slot]:errMsg(e)}));
   }
@@ -193,21 +200,21 @@ function Panel({projectId,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
     const q=new URLSearchParams({limit:'50'});if(cursor)q.set('cursor',cursor);
     if(current.tab==='issues'){
       if(scope.severity)q.set('severity',scope.severity);if(scope.code)q.set('code',scope.code);if(scope.pageId)q.set('pageId',scope.pageId);
-      return read<{role:Role;run:Run;issues:Issue[];nextCursor:string|null;matchingRetainedCount:number|null;findingsComplete:boolean}>('results',B+'/'+current.runId+'/issues?'+q,(data,sequence)=>{receiveRole(data.role,sequence);receiveRun(data.run,sequence);if(runRef.current?.dataStatus==='expired')return;changeView({...viewRef.current,appliedFilters:scope});setIssues(old=>append(old,data.issues,data.nextCursor,!!cursor));setIssueCount(data.matchingRetainedCount);setAllFindings(data.findingsComplete);});
+      return read<{role:Role;run:Run;issues:Issue[];nextCursor:string|null;matchingRetainedCount:number|null;findingsComplete:boolean}>('results',B+'/'+current.runId+'/issues?'+q,(data,sequence)=>{receiveRole(data.role,sequence);receiveRun(data.run,sequence);if(runRef.current?.dataStatus==='expired')return;changeView({...viewRef.current,appliedFilters:scope},true);setIssues(old=>append(old,data.issues,data.nextCursor,!!cursor));setIssueCount(data.matchingRetainedCount);setAllFindings(data.findingsComplete);});
     }
     q.set('resourceKind',scope.resourceKind);if(scope.coverage)q.set('coverage',scope.coverage);
-    return read<{role:Role;run:Run;pages:Page[];nextCursor:string|null}>('results',B+'/'+current.runId+'/pages?'+q,(data,sequence)=>{receiveRole(data.role,sequence);if(!validRun(data.run,projectId)||data.run.id!==current.runId||!Array.isArray(data.pages)){setPages(empty());throw new Error('The page observations could not be matched. Retry the results read.');}receiveRun(data.run,sequence);if(runRef.current?.dataStatus==='expired')return;const rows=data.pages.map(value=>checkedPage(value,false));changeView({...viewRef.current,appliedFilters:scope});setPages(old=>append(old,rows,data.nextCursor,!!cursor));});
+    return read<{role:Role;run:Run;pages:Page[];nextCursor:string|null}>('results',B+'/'+current.runId+'/pages?'+q,(data,sequence)=>{receiveRole(data.role,sequence);if(!validRun(data.run,projectId)||data.run.id!==current.runId||!Array.isArray(data.pages)){setPages(empty());throw new Error('The page observations could not be matched. Retry the results read.');}receiveRun(data.run,sequence);if(runRef.current?.dataStatus==='expired')return;const rows=data.pages.map(value=>checkedPage(value,false));changeView({...viewRef.current,appliedFilters:scope},true);setPages(old=>append(old,rows,data.nextCursor,!!cursor));});
   }
   function loadPage(){const current=viewRef.current;if(!current.runId||!current.pageId)return Promise.resolve();return read<{role:Role;run:Run;page:Page}>('page',B+'/'+current.runId+'/pages/'+current.pageId,(data,sequence)=>{receiveRole(data.role,sequence);if(!validRun(data.run,projectId)||data.run.id!==current.runId||data.page?.id!==current.pageId){setPage(null);throw new Error('The page observation could not be matched. Retry the page read.');}receiveRun(data.run,sequence);if(runRef.current?.dataStatus!=='expired')setPage(checkedPage(data.page,true));});}
   function loadLinks(cursor?:string){const current=viewRef.current;if(!current.runId||!current.pageId)return Promise.resolve();const q=new URLSearchParams({limit:'50',direction:current.direction});if(cursor)q.set('cursor',cursor);return read<{role:Role;run:Run;links:Edge[];nextCursor:string|null}>('links',B+'/'+current.runId+'/pages/'+current.pageId+'/links?'+q,(data,sequence)=>{receiveRole(data.role,sequence);receiveRun(data.run,sequence);if(runRef.current?.dataStatus==='expired')return;const rows=runRef.current?.rawEvidenceStatus==='expired'?data.links.map(edge=>({...edge,anchor:null,anchorStatus:'expired' as const})):data.links;setLinks(old=>append(old,rows,data.nextCursor,!!cursor));});}
-  function selectRun(id:string){if(mutation.current)return;historyFocus.current=uid+'audit-'+id;pendingFocus.current=uid+'run-heading';invalidateReads();setErrors({});setError('');setMessage('');setRun(null);runRef.current=null;runTicket.current=0;setPage(null);clearLists();changeView({...initialView(),runId:id,tab:'pages'});void loadRun();void loadResults();}
-  function selectPage(id:string){if(mutation.current)return;if(!viewRef.current.pageId)resultFocus.current=document.activeElement instanceof HTMLElement?document.activeElement.id:null;pendingFocus.current=uid+'page-heading';invalidateReads();setErrors(old=>({results:old.results}));setPage(null);setLinks(empty());changeView({...viewRef.current,pageId:id,direction:'out'});void loadPage();void loadLinks();}
-  function back(){if(mutation.current)return;const fromPage=!!viewRef.current.pageId;invalidateReads();setErrors(old=>fromPage?{results:old.results}:{});setError('');if(viewRef.current.pageId){pendingFocus.current=resultFocus.current||uid+'run-heading';setPage(null);setLinks(empty());changeView({...viewRef.current,pageId:null});if(!(viewRef.current.tab==='issues'?issues.loaded:pages.loaded))void loadResults();void loadRun();}else{pendingFocus.current=historyFocus.current||uid+'history-heading';changeView(initialView());setRun(null);runRef.current=null;setPage(null);clearLists();void loadSetup();if(!history.loaded)void loadHistory();}}
-  function switchTab(tab:View['tab']){if(mutation.current)return;invalidateReads();setErrors({});setIssues(empty());setPages(empty());setIssueCount(null);resultRequest.current=null;changeView({...viewRef.current,tab});void loadResults();void loadRun();}
+  function selectRun(id:string){if(mutation.current)return;historyFocus.current=uid+'audit-'+id;pendingFocus.current=uid+'run-heading';invalidateReads();setErrors({});setError('');setMessage('');setRun(null);runRef.current=null;runTicket.current=0;setPage(null);clearLists();changeView({...initialView(),runId:id,tab:'pages'},true);void loadRun();void loadResults();}
+  function selectPage(id:string){if(mutation.current)return;if(!viewRef.current.pageId)resultFocus.current=document.activeElement instanceof HTMLElement?document.activeElement.id:null;pendingFocus.current=uid+'page-heading';invalidateReads();setErrors(old=>({results:old.results}));setPage(null);setLinks(empty());changeView({...viewRef.current,pageId:id,direction:'out'},true);void loadPage();void loadLinks();}
+  function back(){if(mutation.current)return;const fromPage=!!viewRef.current.pageId;invalidateReads();setErrors(old=>fromPage?{results:old.results}:{});setError('');if(viewRef.current.pageId){pendingFocus.current=resultFocus.current||uid+'run-heading';setPage(null);setLinks(empty());changeView({...viewRef.current,pageId:null},true);if(!(viewRef.current.tab==='issues'?issues.loaded:pages.loaded))void loadResults();void loadRun();}else{pendingFocus.current=historyFocus.current||uid+'history-heading';changeView(initialView(),true);setRun(null);runRef.current=null;setPage(null);clearLists();void loadSetup();if(!history.loaded)void loadHistory();}}
+  function switchTab(tab:View['tab']){if(mutation.current)return;invalidateReads();setErrors({});setIssues(empty());setPages(empty());setIssueCount(null);resultRequest.current=null;changeView({...viewRef.current,tab},true);void loadResults();void loadRun();}
   function filterChange(patch:Partial<Filters>){if(mutation.current)return;changeView({...viewRef.current,filters:{...viewRef.current.filters,...patch}});}
   function applyFilters(next=viewRef.current.filters){if(mutation.current)return;const current=viewRef.current,fields=current.tab==='issues'?{severity:next.severity,code:next.code,pageId:next.pageId}:{coverage:next.coverage,resourceKind:next.resourceKind};changeView({...current,filters:{...current.filters,...fields}});void loadResults(undefined,{...current.appliedFilters,...fields});}
-  function pageFindings(){if(mutation.current||!viewRef.current.pageId)return;const pageId=viewRef.current.pageId;invalidateReads();setErrors({});setPage(null);setLinks(empty());setIssues(empty());setIssueCount(null);resultRequest.current=null;changeView({...viewRef.current,pageId:null,tab:'issues',filters:{...filters(),pageId},appliedFilters:{...filters(),pageId}});void loadResults();void loadRun();}
-  function directionChange(direction:View['direction']){if(mutation.current)return;reads.current.get('links')?.controller.abort();reads.current.delete('links');setLinks(empty());changeView({...viewRef.current,direction});void loadLinks();}
+  function pageFindings(){if(mutation.current||!viewRef.current.pageId)return;const pageId=viewRef.current.pageId;invalidateReads();setErrors({});setPage(null);setLinks(empty());setIssues(empty());setIssueCount(null);resultRequest.current=null;changeView({...viewRef.current,pageId:null,tab:'issues',filters:{...filters(),pageId},appliedFilters:{...filters(),pageId}},true);void loadResults();void loadRun();}
+  function directionChange(direction:View['direction']){if(mutation.current)return;reads.current.get('links')?.controller.abort();reads.current.delete('links');setLinks(empty());changeView({...viewRef.current,direction},true);void loadLinks();}
   function beginWrite(){if(mutation.current||!alive.current)return null;invalidateReads();const token={};mutation.current=token;setWriting(true);setError('');setMessage('');return {token,epoch:epoch.current,sequence:++ticket.current};}
   function currentWrite(op:NonNullable<ReturnType<typeof beginWrite>>){return alive.current&&mutation.current===op.token&&epoch.current===op.epoch;}
   function endWrite(op:NonNullable<ReturnType<typeof beginWrite>>){if(mutation.current===op.token){mutation.current=null;if(alive.current)setWriting(false);}}
@@ -219,7 +226,7 @@ function Panel({projectId,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
     try{
       const data=await api<unknown>(B,{method:'POST',body:intent});if(!currentWrite(op))return;
       if(!record(data)||!roleValue(data.role)||typeof data.created!=='boolean'||!validRun(data.run,projectId)||data.run.domainId!==intent.domainId||data.run.origin!==attemptOrigin.current||data.run.config.maxPages!==intent.maxPages||(data.run.config.retainBodyText??false)!==intent.retainBodyText||data.run.config.startPath!==new URL(intent.startPath,'https://example.com').pathname||data.run.config.startUrl!==new URL(intent.startPath,attemptOrigin.current!).href)throw new Error('The start acknowledgement was incomplete or did not match this request. Retry the same start request to confirm its receipt.');
-      attemptRef.current=null;attemptOrigin.current=null;setAttempt(null);setUncertain(false);setRetainBodyText(false);receiveRole(data.role,op.sequence);pendingFocus.current=uid+'run-heading';changeView({...initialView(),runId:data.run.id});runTicket.current=0;runRef.current=null;clearLists();setPage(null);receiveRun(data.run,op.sequence);setMessage(data.created?'Audit request accepted.':'The original audit receipt was recovered.');
+      attemptRef.current=null;attemptOrigin.current=null;setAttempt(null);setUncertain(false);setRetainBodyText(false);receiveRole(data.role,op.sequence);pendingFocus.current=uid+'run-heading';changeView({...initialView(),runId:data.run.id},true);runTicket.current=0;runRef.current=null;clearLists();setPage(null);receiveRun(data.run,op.sequence);setMessage(data.created?'Audit request accepted.':'The original audit receipt was recovered.');
     }catch(e){if(currentWrite(op)){const status=e instanceof ApiError?e.status:0;if(status===0||status===408||status===429||status>=500){setUncertain(true);setError(errMsg(e)+' The outcome is unknown; retry this unchanged request.');}else{attemptRef.current=null;attemptOrigin.current=null;setAttempt(null);setUncertain(false);if([401,403,404].includes(status))readError(e,'setup',true);else setError(errMsg(e));}}}
     finally{endWrite(op);}
     if(alive.current&&epoch.current===op.epoch&&!attemptRef.current){void loadHistory(undefined,true,true);if(viewRef.current.runId)void loadResults();else void loadSetup();}
@@ -230,21 +237,42 @@ function Panel({projectId,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
     const op=beginWrite();if(!op)return;
     try{const data=await api<unknown>(B+'/'+selected.id+'/'+action,{method:'POST',body:{}});if(!currentWrite(op))return;
       if(action==='cancel'){if(!record(data)||!roleValue(data.role)||!validRun(data.run,projectId)||data.run.id!==selected.id)throw new Error('Cancellation could not be confirmed. Refresh the audit before trying again.');receiveRole(data.role,op.sequence);receiveRun(data.run,op.sequence);setMessage(data.run.status==='cancelling'?'Cancellation request accepted.':'Audit cancellation confirmed.');}
-      else{if(!record(data)||data.deleted!==true||data.id!==selected.id)throw new Error('Deletion could not be confirmed. Refresh history before trying again.');changeView(initialView());runRef.current=null;setRun(null);setPage(null);clearLists();setHistory(old=>({...old,rows:old.rows.filter(row=>row.id!==selected.id)}));setMessage('Audit deleted. Collected details are queued for cleanup.');}
+      else{if(!record(data)||data.deleted!==true||data.id!==selected.id)throw new Error('Deletion could not be confirmed. Refresh history before trying again.');changeView(initialView(),true);runRef.current=null;setRun(null);setPage(null);clearLists();setHistory(old=>({...old,rows:old.rows.filter(row=>row.id!==selected.id)}));setMessage('Audit deleted. Collected details are queued for cleanup.');}
     }catch(e){if(currentWrite(op)){setError(errMsg(e));readError(e,'run',true);}}
     finally{endWrite(op);}
     if(alive.current&&epoch.current===op.epoch){void loadHistory(undefined,true,true);if(viewRef.current.runId)void loadRun();else void loadSetup();}
   }
   useEffect(()=>{alive.current=true;void loadSetup();void loadHistory();return()=>{alive.current=false;epoch.current++;for(const op of reads.current.values())op.controller.abort();reads.current.clear();attemptRef.current=null;attemptOrigin.current=null;};},[]);
+  useEffect(()=>{
+    if(!search||receivedNavigation.current===navigationString)return;
+    if(ownNavigation.current===navigationString){ownNavigation.current=null;receivedNavigation.current=navigationString;return;}
+    // External history/URL intent invalidates older reads, never starts an audit.
+    invalidateReads();
+    if(mutation.current){if(attemptRef.current){setUncertain(true);setError('The start outcome is unknown after navigation changed. Return to audits and retry the unchanged request.');}return;}
+    ownNavigation.current=null;receivedNavigation.current=navigationString;
+    const f:Filters={severity:navigation.auditSeverity??'',code:navigation.auditCode??'',pageId:navigation.auditAffectedPage??'',coverage:navigation.auditCoverage??'',resourceKind:navigation.auditResource??'html'};
+    const prior=viewRef.current,next:View={runId:navigation.auditRun??null,pageId:navigation.auditPage??null,tab:navigation.auditTab??'issues',direction:navigation.auditDirection??'out',filters:f,appliedFilters:f};
+    const sameResults=prior.runId===next.runId&&prior.tab===next.tab&&JSON.stringify(prior.appliedFilters)===JSON.stringify(f);
+    setErrors(old=>sameResults?{results:old.results}:{});setPage(null);setLinks(empty());
+    if(!sameResults){clearLists();setRun(null);runRef.current=null;runTicket.current=0;}else next.filters=prior.filters;
+    pendingFocus.current=next.pageId?uid+'page-heading':next.runId?(prior.pageId?resultFocus.current:uid+'run-heading'):historyFocus.current||uid+'history-heading';
+    changeView(next);
+    if(navigation.auditInvalid){setError('This audit link is invalid. Open audit history to choose a saved audit.');return;}
+    setError('');
+    if(next.runId){void loadRun();if(next.pageId){void loadPage();void loadLinks();}else if(!sameResults||!(next.tab==='issues'?issues.loaded:pages.loaded))void loadResults();}
+    else{void loadSetup();if(!history.loaded)void loadHistory();}
+  },[navigationString,writing]);
   useEffect(()=>{if(!run||!active(run.status)||view.runId!==run.id)return;const id=run.id;const refresh=()=>{if(!document.hidden&&alive.current&&viewRef.current.runId===id&&!mutation.current&&!reads.current.has('run'))void loadRun();};const timer=window.setInterval(refresh,5000);document.addEventListener('visibilitychange',refresh);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};},[run?.id,run?.status,view.runId]);
   useEffect(()=>{if(view.runId||!history.rows.some(row=>active(row.status)))return;const refresh=()=>{if(!document.hidden&&alive.current&&!viewRef.current.runId&&!mutation.current&&!reads.current.has('history'))void loadHistory(undefined,true,true);};const timer=window.setInterval(refresh,5000);document.addEventListener('visibilitychange',refresh);return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};},[view.runId,history.rows]);
-  useEffect(()=>{if(!pendingFocus.current)return;const target=document.getElementById(pendingFocus.current);if(target){target.focus();pendingFocus.current=null;return;}const ready=view.pageId?!!page||!!errors.page:view.runId?!!run||!!errors.run:history.loaded||!!errors.history;if(ready){heading.current?.focus();pendingFocus.current=null;}});
+  useEffect(()=>{if(view!==viewRef.current||!pendingFocus.current)return;const target=document.getElementById(pendingFocus.current);if(target){target.focus();pendingFocus.current=null;return;}const ready=view.pageId?!!page||!!errors.page:view.runId?!!run||!!errors.run:history.loaded||!!errors.history;if(ready){heading.current?.focus();pendingFocus.current=null;}});
   const managed=manages(role),selectedOrigin=setup?.origins.find(o=>(o.domainId??'canonical')===domain);
   const grouped=new Map<string,Issue[]>();for(const item of issues.rows){const key=item.severity+':'+item.code,rows=grouped.get(key)??[];rows.push(item);grouped.set(key,rows);}
   const issueGroups=[...grouped].sort(([a,ar],[b,br])=>['critical','warning','info'].indexOf(ar[0].severity)-['critical','warning','info'].indexOf(br[0].severity)||a.localeCompare(b));
   const errorBox=(slot:Slot,retry:()=>void)=>errors[slot]?<div className="alert" role="alert">{errors[slot]} <button type="button" className="btn" disabled={writing} onClick={retry}>Retry {slot==='run'?'refresh':slot}</button></div>:null;
   const listStatus=(loaded:boolean,slot:Slot)=>busy[slot]?<p role="status">Loading…</p>:!loaded&&!errors[slot]?<p className="hint">Apply filters to load results.</p>:null;
+  if(search&&receivedNavigation.current!==navigationString&&ownNavigation.current!==navigationString)return <section className="research-panel site-audits" aria-label="Site audits"><p role="status">Loading audit navigation…</p></section>;
   return <section className="research-panel site-audits" aria-label="Site audits" style={{'--control-md':'var(--control-touch)'} as import('react').CSSProperties}>
+    {navigation.auditInvalid&&<button className="btn" disabled={writing} onClick={()=>callbacks.current.onNavigate?.({},true)}>Open audit history</button>}
     {error&&<div className="alert" role="alert">{error} {!writing&&!setup&&<button className="btn" onClick={()=>{void loadSetup();void loadHistory();}}>Reload access</button>}</div>}
     {message&&<p className="notice" role="status">{message}</p>}
     <p className="hint">Manual static HTML audit. Rendered pages, protected-site credentials, scheduling and Lighthouse are not available yet.</p>

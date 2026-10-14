@@ -1,7 +1,22 @@
 export const views = ['project', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation
+export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
+export const auditCoverages = ['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'] as const
+export type AuditNavigation = {auditRun?:string;auditPage?:string;auditTab?:'pages';auditSeverity?:'critical'|'warning'|'info';auditCode?:string;auditAffectedPage?:string;auditCoverage?:typeof auditCoverages[number];auditResource?:'robots'|'sitemap';auditDirection?:'in';auditInvalid?:'1'}
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation
+
+export function auditNavigation(raw:Record<string,unknown>):AuditNavigation {
+  const out:AuditNavigation={},names=['auditRun','auditPage','auditTab','auditSeverity','auditCode','auditAffectedPage','auditCoverage','auditResource','auditDirection','auditInvalid'];
+  const invalid=()=>({auditInvalid:'1'} as const);
+  if(raw.auditInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view',...names].includes(key)))return invalid();
+  for(const key of ['auditRun','auditPage','auditAffectedPage'] as const){if(raw[key]===undefined)continue;if(!navigationId(raw[key]))return invalid();out[key]=raw[key].toLowerCase();}
+  for(const [key,values,fallback] of [['auditTab',['issues','pages'],'issues'],['auditSeverity',['critical','warning','info'],null],['auditCode',auditIssueCodes,null],['auditCoverage',auditCoverages,null],['auditResource',['html','robots','sitemap'],'html'],['auditDirection',['out','in'],'out']] as const){
+    const value=raw[key];if(value===undefined)continue;if(typeof value!=='string'||!(values as readonly string[]).includes(value))return invalid();if(value!==fallback)Object.assign(out,{[key]:value});
+  }
+  if(names.some(key=>raw[key]!==undefined)&&(!out.auditRun||!navigationId(raw.workspace)||!navigationId(raw.project))||raw.auditDirection!==undefined&&!out.auditPage)return invalid();
+  return out;
+}
 
 export function sessionNavigation(raw:Record<string,unknown>):SessionNavigation {
   const out:SessionNavigation={}, names=['from','to','timeZone','visitorKey','cohortId','cohortRevision','segmentId','segmentRevision','sessionInvalid'];
@@ -35,11 +50,12 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     ...(workspace && navigationId(raw.project) ? { project: raw.project.toLowerCase() } : {}),
     view,
     ...(view==='sessions'&&workspace&&navigationId(raw.project)?sessionNavigation(raw):{}),
+    ...(view==='audits'?auditNavigation(raw):{}),
   }
 }
 
 export function navigationKey(search: NavigationSearch): string {
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
