@@ -71,7 +71,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039']);
   assert.equal(sources.find(m=>m.version==='0029')!.checksum,'8c7559f0e64f899bae4dc36aa9afa521b69624dba7849f28dfc3c1cb730097de','Append0030 without rewriting the published0029 migration.');
   assert.equal(sources.find(m=>m.version==='0030')!.checksum,'87b06aefbfe1b2228bda7fe91a28563265e908b92f07574ad3cb7e5380bbb28e','Append0031 without rewriting the published0030 migration.');
   assert.equal(sources.find(m=>m.version==='0031')!.checksum,'0a5d1fc0ee88c4aad84dbb41b32eb2d80bf0b5d816a907dfabb5a0228925ee65','Append0032 without rewriting published0031.');
@@ -316,11 +316,22 @@ try {
   const identityTables=['project','event','analytics_visitor','analytics_identity_link','analytics_session_property','analytics_identify_receipt'];
   async function identityRecords(){const out:Record<string,Record<string,unknown>[]>={};for(const table of identityTables)out[table]=(await pool.query(`SELECT to_jsonb(t) AS data FROM ${table} t ORDER BY to_jsonb(t)::text`)).rows.map(row=>row.data);return out;}
   const identity37=await identityRecords(),history37=await history();assert.equal(history37.at(-1)?.version,'0037');await assert.rejects(assertSchema(),{code:'SCHEMA_MISMATCH'});
-  stage='upgrade actual schema34 notes and populated0037 evidence through0038';runMigrate(0);await assertSchema();
+  stage='upgrade actual schema34 notes and populated0037 evidence through0038';
+  const proofMigration=sources.find(m=>m.version==='0038')!,proofClient=await pool.connect();
+  try{await proofClient.query('BEGIN');await proofClient.query(proofMigration.sql);await proofClient.query('INSERT INTO schema_version VALUES($1,$2)',[proofMigration.version,proofMigration.checksum]);await proofClient.query('COMMIT');}finally{await proofClient.query('ROLLBACK').catch(()=>{});proofClient.release();}
   assert.deepEqual((await history()).slice(0,37),history37,'Forward event proof preserves every old migration checksum.');
   const identity38=await identityRecords();
   for(const table of identityTables)assert.deepEqual(identity38[table].map(({identity_link_evidence_version,identity_event_evidence_started_at,...prior})=>prior),identity37[table],'Forward proof preserves every old identity, event, settings, epoch and retention value.');
   assert.ok(identity38.event.every(row=>row.identity_link_evidence_version===null));assert.ok(identity38.project.every(row=>row.identity_event_evidence_started_at===null));
+  // Existing schema38 proof and every saved setting/epoch survive the default change.
+  await pool.query('UPDATE event SET identity_link_evidence_version=1 WHERE project_id=$1',[project]);
+  await pool.query("UPDATE project SET identity_event_evidence_started_at='2026-10-03T00:00:00.123456Z' WHERE id=$1",[project]);
+  const proven38=await identityRecords(),history38=await history();assert.equal(history38.at(-1)?.version,'0038');
+  stage='upgrade populated0038 proof and settings through0039';runMigrate(0);await assertSchema();
+  const identity39=await identityRecords();
+  for(const table of identityTables)assert.deepEqual(identity39[table].map(({collection_basis,...prior})=>prior),proven38[table],'Cookieless migration preserves every existing row, settings, epoch, revision and forward identity proof.');
+  assert.ok(identity39.event.every(row=>row.collection_basis===null));assert.ok(identity39.project.every(row=>!(row.analytics_settings as Record<string,unknown>).collectionMode));
+  assert.deepEqual((await history()).slice(0,38),history38);
   assert.deepEqual((await history()).slice(0,34),history34);assert.deepEqual((await pool.query('SELECT to_jsonb(a) AS data FROM analytics_annotation a ORDER BY id')).rows.map(r=>r.data),retained34);assert.equal((await pool.query('SELECT 1 FROM analytics_cohort')).rowCount,0,'Migration must not invent cohorts or membership.');
   assert.deepEqual((await history()).slice(0,33),history33);assert.deepEqual((await pool.query('SELECT to_jsonb(s) AS data FROM analytics_segment s ORDER BY id')).rows.map(r=>r.data),retained33);
   assert.deepEqual((await history()).slice(0,32),history32);assert.deepEqual((await pool.query('SELECT to_jsonb(p) AS data FROM site_audit_page p ORDER BY id')).rows.map(r=>r.data),retained32,'Saved filters preserve every actual schema32 page field and body byte.');
@@ -331,6 +342,12 @@ try {
   try{
     await defaultsClient.query('BEGIN');const defaultsProject=randomUUID();
     await defaultsClient.query("INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,'Defaults fixture','https://defaults.example.com',$3)",[defaultsProject,workspace,randomUUID()]);
+    assert.deepEqual((await defaultsClient.query('SELECT analytics_settings FROM project WHERE id=$1',[defaultsProject])).rows[0].analytics_settings,{enabled:true,consentMode:'builtin',collectionMode:'cookieless',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:[]},'Only future project collection mode differs from the original default.');
+    for(const values of [['api','consent',null],['browser','unknown',null],['browser','cookieless',1]]){
+      await defaultsClient.query('SAVEPOINT rejected_basis');
+      await assert.rejects(defaultsClient.query("INSERT INTO event(id,project_id,event_name,path,source,collection_basis,identity_link_evidence_version,visitor_id,visit_id) VALUES($1,$2,'page_view','/',$3,$4,$5,$6,$6)",[randomUUID(),project,values[0],values[1],values[2],identityVisitor]),{code:'23514'});
+      await defaultsClient.query('ROLLBACK TO SAVEPOINT rejected_basis');
+    }
     await defaultsClient.query("INSERT INTO project_context(project_id,brand_name) VALUES($1,'New context')",[defaultsProject]);
     assert.deepEqual((await defaultsClient.query('SELECT revision,brand_aliases,brand_citation_domains,citation_category_overrides FROM project_context WHERE project_id=$1',[defaultsProject])).rows,[{revision:1,brand_aliases:[],brand_citation_domains:[],citation_category_overrides:[]}],'New rows retain original defaults and gain only empty citation metadata.');
   }finally{await defaultsClient.query('ROLLBACK');defaultsClient.release();}
@@ -381,7 +398,7 @@ try {
   }
   const upgradedSchema = await schemaSnapshot();
   runMigrate(0);
-  assert.deepEqual(await identityRecords(),identity38,'Repeat migration cannot backfill or change existing identity evidence.');
+  assert.deepEqual(await identityRecords(),identity39,'Repeat migration cannot backfill basis or change existing identity evidence.');
   assert.deepEqual(await history(), upgradedHistory);
   assert.deepEqual(await schemaSnapshot(), upgradedSchema);
   assert.deepEqual(await records(), upgradedRecords);
@@ -401,6 +418,7 @@ try {
   console.log('PASS actual0029 authored context survives0035 unchanged with empty citation defaults, empty suggestion tables, preserved checksums and idempotent repeat migration');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
   console.log('PASS populated0037 events, assignments, properties, receipts and exact project markers survive0038 unchanged; new proof fields remain NULL and repeat migration is inert');
+  console.log('PASS populated0038 proof/settings/epochs survive0039 unchanged; historical basis stays NULL, future default is cookieless and invalid basis/proof combinations fail');
   console.log('Migration integration checks passed. Synthetic fixtures remain in the isolated database.');
 } catch {
   console.error(`Migration integration checks failed during: ${stage}.`);

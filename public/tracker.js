@@ -32,13 +32,14 @@
     }
   }
 
-  function nativeReady(state) {
+  function nativeReady(state, consentOnly) {
     var h = hub(), settings = state.config && state.config.nativeTracking;
-    return !!(h && h.nativeAllowed && h.nativeAllowed(state) && settings && settings.enabled && state.environment === 'live' &&
+    var allowed = h && (consentOnly ? h.nativeConsentAllowed : h.nativeAllowed);
+    return !!(allowed && allowed.protocolVersion === 3 && allowed(state) && settings && settings.enabled && state.environment === 'live' &&
       !settings.excludedPaths.some(function (path) { return decodeURIComponent(location.pathname).startsWith(decodeURIComponent(path)); }));
   }
-  function nativeCurrent(state, epoch, generation, controller) {
-    return !controller.signal.aborted && state.nativeGeneration === generation && state.config && state.config.consentEpoch === epoch && nativeReady(state);
+  function nativeCurrent(state, epoch, generation, controller, consentOnly) {
+    return !controller.signal.aborted && state.nativeGeneration === generation && state.config && state.config.consentEpoch === epoch && nativeReady(state, consentOnly);
   }
   async function readNativeResponse(response, signal) {
     var reader = response.body.getReader(), bytes = 0, text = '';
@@ -59,13 +60,13 @@
     finally { signal.removeEventListener('abort', cancel); reader.releaseLock(); }
   }
 
-  // Called only by the consent coordinator. No activity is queued before consent.
+  // Called only by the coordinator. Disallowed activity is never queued.
   function nativeEvent(state, event) {
     try {
       var config = state.config, settings = config.nativeTracking;
       if (!nativeReady(state) || state.nativeRequests.size >= 20 || typeof TextDecoder !== 'function' || typeof ReadableStream !== 'function') return;
-      var dimensions = {}, epoch = config.consentEpoch, generation = state.nativeGeneration;
-      if (state.nativeIdentifier !== undefined) dimensions.distinctId = state.nativeIdentifier;
+      var consented = hub().nativeConsentAllowed(state), dimensions = {}, epoch = config.consentEpoch, generation = state.nativeGeneration;
+      if (consented && state.nativeIdentifier !== undefined) dimensions.distinctId = state.nativeIdentifier;
       if (navigator.language) dimensions.language = navigator.language;
       if (settings.captureReferrer && document.referrer) dimensions.referrer = new URL(document.referrer).origin;
       if (settings.captureScreen && window.screen) dimensions.screen = {width: screen.width, height: screen.height};
@@ -74,12 +75,18 @@
         ['source', 'medium', 'campaign', 'term', 'content'].forEach(function (key) { var value = query.get('utm_' + key); if (value) campaign[key] = value; });
         if (Object.keys(campaign).length) dimensions.campaign = campaign;
       }
-      var body = JSON.stringify({siteKey: state.siteKey, name: event.name, eventId: event.eventId, url: event.url, properties: event.properties,
-        dimensions: dimensions, context: state.nativeContext || undefined, consent: {analytics: true, epoch: epoch}});
+      var payload = {siteKey: state.siteKey, name: event.name, eventId: event.eventId, url: event.url, properties: event.properties,
+        dimensions: dimensions, context: state.nativeContext || undefined};
+      if (consented) payload.consent = {analytics: true, epoch: epoch};
+      else payload.collection = {mode: 'cookieless', epoch: epoch};
+      var body = JSON.stringify(payload);
       if (new TextEncoder().encode(body).length > 16384) return;
+      // An attempted basic observation may already be stored even if its receipt is lost.
+      var observation = event.name === PAGE_VIEW ? {url: event.url, basic: !consented, sent: false} : null;
+      if (observation) state.nativePageObservation = observation;
       var controller = new AbortController(); state.nativeRequests.add(controller);
       var timer = setTimeout(function () { controller.abort(); }, 5000);
-      Promise.resolve().then(function () { if (!nativeCurrent(state, epoch, generation, controller)) return; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
+      Promise.resolve().then(function () { if (!nativeCurrent(state, epoch, generation, controller)) return; if (observation) observation.sent = true; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
         cache: 'no-store', redirect: 'error', signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body}); })
         .then(async function (response) {
           if (!response) return;
@@ -148,7 +155,7 @@
     var requestId, sentAt, controller, timer, sent = false;
     function outcome(status, reason) { return Object.assign({status: status}, requestId ? {requestId: requestId, sentAt: sentAt} : {}, reason ? {reason: reason} : {}); }
     try {
-      if (!nativeReady(state)) return outcome('not_sent', 'collection_unavailable');
+      if (!nativeReady(state, true)) return outcome('not_sent', 'collection_unavailable');
       if (state.nativeRequests.size >= 20) return outcome('not_sent', 'busy');
       if (typeof TextEncoder !== 'function' || typeof TextDecoder !== 'function' || typeof ReadableStream !== 'function' || typeof AbortController !== 'function' || typeof fetch !== 'function' || typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') return outcome('not_sent', 'browser_unavailable');
       var snapshot;
@@ -159,18 +166,18 @@
       var body = JSON.stringify({type: 'identify', siteKey: state.siteKey, requestId: requestId, sentAt: sentAt, url: currentUrl(), properties: snapshot.properties,
         dimensions: nextId === undefined ? undefined : {distinctId: nextId}, context: changed ? undefined : state.nativeContext || undefined, consent: {analytics: true, epoch: epoch}});
       if (new TextEncoder().encode(body).length > 16384) return outcome('invalid', 'invalid_input');
-      if (!nativeReady(state)) return outcome('not_sent', 'collection_unavailable');
+      if (!nativeReady(state, true)) return outcome('not_sent', 'collection_unavailable');
       if (changed) { nativeStop(state); state.nativeIdentifier = nextId; }
       var generation = state.nativeGeneration;
       state.nativeRequests.add(controller);
       var aborted = new Promise(function (resolve) { controller.signal.addEventListener('abort', function () { resolve(outcome(sent ? 'unknown' : 'not_sent', sent ? undefined : 'cancelled')); }, {once: true}); });
       timer = setTimeout(function () { controller.abort(); }, 5000);
       var work = Promise.resolve().then(async function () {
-        if (!nativeCurrent(state, epoch, generation, controller)) return outcome('not_sent', 'cancelled');
+        if (!nativeCurrent(state, epoch, generation, controller, true)) return outcome('not_sent', 'cancelled');
         sent = true;
         var response = await fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors', cache: 'no-store', redirect: 'error', signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body});
         var text = await readNativeResponse(response, controller.signal);
-        if (!nativeCurrent(state, epoch, generation, controller)) return outcome('unknown');
+        if (!nativeCurrent(state, epoch, generation, controller, true)) return outcome('unknown');
         var result = JSON.parse(text);
         if (!result || typeof result !== 'object' || Array.isArray(result)) return outcome('unknown');
         if ([400, 409].includes(response.status) && typeof result.error === 'string' && Object.keys(result).every(function (key) { return ['error', 'reason'].includes(key); })) {
@@ -261,6 +268,7 @@
   }
 
   function install() {
+    nativeEvent.protocolVersion = nativeStop.protocolVersion = nativeIdentify.protocolVersion = 3;
     var h = { sites: [], lastUrl: currentUrl(), restored: false, nativeEvent: nativeEvent, nativeStop: nativeStop, nativeIdentify: nativeIdentify, api: { track: track, identify: identify, resetIdentity: resetIdentity } };
     window.__ten98FoundationHub = h;
     patchHistory('pushState');
@@ -278,7 +286,7 @@
       if (h.destinationLoaderRequested || window.ten98 !== h.api) return;
       h.destinationLoaderRequested = true;
       var loader = document.createElement('script');
-      loader.src = new URL('/destinations.js', site.endpoint).href;
+      loader.src = new URL('/destinations.js?v=3', site.endpoint).href;
       loader.async = true;
       loader.referrerPolicy = 'no-referrer';
       loader.onerror = function () { warn('ten98-monitor: destination loader unavailable or blocked.'); };

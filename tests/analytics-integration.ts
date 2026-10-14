@@ -34,6 +34,7 @@ export async function runAnalyticsChecks(options: { baseUrl: string; appUrl: str
   assert.equal(report.status, 200);
   assert.deepEqual(report.data.range, { from: '2024-02-28', to: '2024-03-01', timeZone: 'UTC' });
   assert.deepEqual(report.data.totals, { pageViews: 3, customEvents: 3 });
+  assert.deepEqual(report.data.collection,{mode:'cookieless',captureCoverage:'unknown',pageViews:{cookieless:0,consent:0,unknown:3}});
   assert.equal(report.data.coverage.status, 'complete');
   assert.deepEqual(report.data.daily, [
     { date: '2024-02-28', pageViews: 1, customEvents: 1, coverage: 'complete' },
@@ -60,5 +61,18 @@ export async function runAnalyticsChecks(options: { baseUrl: string; appUrl: str
   const custom = await pool.query('SELECT event_name,path FROM event WHERE project_id=$1 AND id=$2', [project.id, event.eventId]);
   assert.deepEqual(custom.rows, [{ event_name: 'checkout.success', path: '/checkout' }]);
   assert.equal((await request('/api/collect', 'POST', { ...event, name: 'invalid event' }, origin)).status, 400);
-  console.log('PASS analytics date boundaries, empty days, page/custom counts, tenant scope and custom event privacy');
+  // The selected range reports actual recorded basis, independently of the current mode.
+  for(const basis of ['cookieless','consent']) {
+    const page={siteKey:project.publicKey,eventId:randomUUID(),name:'page_view',url:origin+'/basis',
+      ...(basis==='cookieless'?{collection:{mode:'cookieless',epoch:tracking.data.consentEpoch}}:{consent:{analytics:true,epoch:tracking.data.consentEpoch}})};
+    const result=await request('/api/collect','POST',page,origin);
+    assert.equal(result.status,202);assert.equal(result.data.accepted,true);
+  }
+  await pool.query("INSERT INTO event(id,project_id,event_name,path,source) VALUES($1,$2,'page_view','/api-basis','api')",[randomUUID(),project.id]);
+  const today=new Date().toISOString().slice(0,10);
+  const mixed=await request(`/api/projects/${project.id}/analytics?from=${today}&to=${today}`);
+  assert.equal(mixed.status,200);
+  assert.equal(mixed.data.totals.pageViews,3);
+  assert.deepEqual(mixed.data.collection,{mode:'cookieless',captureCoverage:'unknown',pageViews:{cookieless:1,consent:1,unknown:1}});
+  console.log('PASS analytics date boundaries, empty days, page/custom counts, tenant scope, custom event privacy and mixed collection basis');
 }

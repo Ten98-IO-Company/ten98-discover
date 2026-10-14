@@ -6,6 +6,7 @@ type NetworkMode = 'off' | 'direct' | 'proxy';
 
 interface Settings {
   enabled: boolean;
+  collectionMode: 'consent-first' | 'cookieless';
   consentMode: 'builtin' | 'external';
   captureReferrer: boolean;
   captureCampaigns: boolean;
@@ -253,8 +254,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
     <section className="card" aria-busy={pending}>
       <h2>Collection and privacy</h2>
       <p className="hint">
-        Native collection waits for analytics consent and honors the browser&apos;s Do Not Track and Global Privacy
-        Control signals.
+        Basic analytics can start without a consent choice. Explicit refusals, Do Not Track and Global Privacy Control stop collection.
       </p>
 
       {error && (
@@ -293,6 +293,23 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
           Enable native analytics
         </label>
       </div>
+
+      <fieldset className="field" disabled={inputsDisabled}>
+        <legend>Analytics collection</legend>
+        <label className="row">
+          <input type="radio" style={{width:'auto',flexShrink:0}} name={`${uid}-collection`}
+            checked={draft.collectionMode==='cookieless'} onChange={()=>set('collectionMode','cookieless')}/>
+          Cookieless basic analytics
+        </label>
+        <p className="hint">Counts pageviews and developer-defined events without a consent grant; no cookies or stored browser identity are used.</p>
+        <label className="row">
+          <input type="radio" style={{width:'auto',flexShrink:0}} name={`${uid}-collection`}
+            checked={draft.collectionMode==='consent-first'} onChange={()=>set('collectionMode','consent-first')}/>
+          Consent-first analytics
+        </label>
+        <p className="hint">Waits for an explicit analytics grant before sending any native pageviews or events.</p>
+        <p className="hint">Visitor identification, replay and advertising pixels still require their own consent; this setting does not grant it.</p>
+      </fieldset>
 
       <fieldset className="field" disabled={inputsDisabled}>
         <legend>Consent interface</legend>
@@ -349,7 +366,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
           Screen dimensions
         </label>
         <p className="hint">
-          Language is always included after consent. Third-party vendor SDKs have their own data collection behavior,
+          Language is included with accepted events. Third-party vendor SDKs have their own data collection behavior,
           which these settings do not change.
         </p>
       </fieldset>
@@ -415,9 +432,9 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
       {confirming ? (
         <div className="alert">
           <p>
-            Saving applies this configuration immediately. Previous consent no longer matches it, so the monitored
-            website must ask visitors for a fresh consent choice before native collection resumes. Data already sent
-            is not retracted.
+            Saving updates the website&apos;s collection policy. Previous consent grants expire; explicit basic-analytics opt-outs remain.
+            {current.collectionMode==='cookieless'?' Basic analytics resumes when the website loads the current policy.':' Native collection waits for a fresh analytics grant.'}
+            {' '}Data already sent is not retracted.
           </p>
           <div className="row">
             <button type="button" className="btn primary" disabled={!canSave} onClick={save}>

@@ -531,7 +531,7 @@ export async function getPublicDestinations(siteKey: unknown, environment: unkno
   if (!row || !await collectionOriginAllowed(client, requestedOrigin, row)) throw new FoundationError(404, 'Not found');
   const hasActive = typeof row.revision_id === 'string';
   const configuration = {
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     siteKey: key,
     environment: env,
     origin: requestedOrigin,

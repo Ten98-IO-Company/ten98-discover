@@ -40,7 +40,7 @@ async function fixture(destinations: unknown[], settings: { saved?: boolean; pri
   }
   const document: any = { createElement: element, createTextNode: (text: string) => ({ textContent: text }),
     querySelectorAll: () => scripts, body: element('body'), activeElement: { focus() {} },
-    head: { appendChild(script: any) { scripts.push(script); return script; } } };
+    head: { appendChild(script: any) { if (script.tag === 'script') scripts.push(script); return script; } } };
   Object.defineProperty(document, 'cookie', { get() { throw new Error('Cookie access forbidden'); } });
   const context: any = { document, navigator: { globalPrivacyControl: !!settings.privacy, doNotTrack: settings.dnt },
     location: { origin: 'https://site.example', pathname: '/shop', reload() { actions.push('reload'); }, replace(url: string) { actions.push(url); } },

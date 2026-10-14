@@ -17,11 +17,11 @@ const config = getConfig(), local = ['localhost', '127.0.0.1', '[::1]'];
 assert.ok(local.includes(new URL(config.appUrl).hostname) && local.includes(new URL(config.databaseUrl).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Supply an installed Playwright module URL.');
 const {chromium} = await import(process.env.PLAYWRIGHT_MODULE!);
-const siteKey = randomUUID(), projectId = randomUUID();
+const siteKey = randomUUID(), projectId = randomUUID(); let fixtureSiteKey = siteKey;
 const fixture = createServer((request, response) => {
   if (request.url === '/favicon.ico') { response.writeHead(204); response.end(); return; }
-  response.writeHead(200, {'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store'});
-  response.end(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local consent fixture</title><body><h1>Local consent fixture</h1><p>Only synthetic local traffic is used.</p><script defer src="${config.appUrl}/tracker.js" data-site-key="${siteKey}"></script></body></html>`);
+  response.writeHead(200, {'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': `default-src 'self'; script-src 'self' ${config.appUrl}; style-src 'self' ${config.appUrl}; connect-src 'self' ${config.appUrl}; object-src 'none'; base-uri 'none'`});
+  response.end(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local consent fixture</title><body><h1>Local consent fixture</h1><p>Only synthetic local traffic is used.</p><script defer src="${config.appUrl}/tracker.js" data-site-key="${fixtureSiteKey}"></script></body></html>`);
 });
 await new Promise<void>((resolve, reject) => { fixture.once('error', reject); fixture.listen(0, '127.0.0.1', resolve); });
 const fixtureOrigin = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}`;
@@ -33,7 +33,7 @@ try {
   await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,$3,$2,$4)', [randomUUID(), userId, 'credential', await hashPassword(password)]);
   const {workspace} = await createWorkspace(userId, {name: 'Native browser sandbox'});
   await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [projectId, workspace.id, 'Native consent sandbox', fixtureOrigin, siteKey]);
-  await saveAnalyticsSettings(projectId, userId, {revision: 1, settings: {enabled: true, consentMode: 'builtin', captureReferrer: false,
+  await saveAnalyticsSettings(projectId, userId, {revision: 1, settings: {enabled: true, collectionMode: 'consent-first', consentMode: 'builtin', captureReferrer: false,
     captureCampaigns: false, captureScreen: false, excludeBots: false, excludedPaths: ['/private']}});
   const destination = (assetId: string) => ({provider: 'meta', assetId, enabled: true, owner: 'managed', ownershipConfirmed: true, mappings: [{event: 'page_view'}]});
   async function publish(assetId: string) {
@@ -157,7 +157,7 @@ try {
   await selectProject(dashboard,'Native consent sandbox');
   const metric = (name: string) => dashboard.locator('.analytics-stat').filter({has: dashboard.getByText(name, {exact: true})}).locator('p');
   await metric('Estimated visitors').filter({hasText: /^1$/}).waitFor();
-  assert.equal(await metric('Page views').textContent(), '2'); assert.equal(await metric('Visits').textContent(), '1');
+  assert.equal(await metric('Recorded pageviews').textContent(), '2'); assert.equal(await metric('Visits').textContent(), '1');
   await dashboard.setViewportSize({width: 360, height: 740});
   async function capture(name: string) {
     assert.equal(await dashboard.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'The dashboard must not overflow horizontally on mobile.');
@@ -173,7 +173,7 @@ try {
   await selectProject(dashboard,'Unmeasured native sandbox');
   await metric('Estimated visitors').filter({hasText: /^Unavailable$/}).waitFor();
   for (const name of ['Visits', 'Bounce rate', 'Average observed visit']) assert.equal(await metric(name).textContent(), 'Unavailable');
-  assert.equal(await metric('Page views').textContent(), '1');
+  assert.equal(await metric('Recorded pageviews').textContent(), '1');
   await capture('native-metrics-unavailable-mobile.png');
   await dashboard.setViewportSize({width:320,height:740});await capture('native-metrics-unavailable-320.png');
   await dashboard.setViewportSize({width:360,height:740});
@@ -186,7 +186,7 @@ try {
   await paths.fill('/private\n/secret'); await settingsPanel.getByRole('button', {name: 'Cancel changes', exact: true}).click();
   assert.equal(await paths.inputValue(), '/private');
   await settingsPanel.getByRole('checkbox', {name: 'Screen dimensions', exact: true}).check();
-  await save.click(); await settingsPanel.getByText(/Previous consent no longer matches/).waitFor();
+  await save.click(); await settingsPanel.getByText(/Previous consent grants expire/).waitFor();
   const saved = dashboard.waitForResponse((res: any) => res.url().endsWith(`/api/projects/${projectId}/analytics-settings`) && res.request().method() === 'POST');
   await save.click(); assert.equal((await saved).status(), 200); await settingsPanel.getByText('Settings saved.', {exact: true}).waitFor();
   await settingsPanel.getByRole('checkbox', {name: 'Referrer hostname', exact: true}).check();
@@ -223,8 +223,46 @@ try {
   await viewer.getByRole('button', {name: 'Reload settings', exact: true}).click();
   await viewer.getByText('Analytics settings are not available for this project.', {exact: true}).waitFor();
   assert.equal(await viewer.getByRole('textbox', {name: 'Excluded path prefixes'}).count(), 0);
+  const {workspace: basicWorkspace} = await createWorkspace(userId, {name: 'Cookieless browser sandbox'});
+  const basicProjectId = randomUUID(); fixtureSiteKey = randomUUID();
+  await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [basicProjectId, basicWorkspace.id, 'Cookieless browser sandbox', fixtureOrigin, fixtureSiteKey]);
+  await saveAnalyticsSettings(basicProjectId, userId, {revision: 1, settings: {enabled: true, collectionMode: 'cookieless', consentMode: 'builtin', captureReferrer: false, captureCampaigns: false, captureScreen: false, excludeBots: false, excludedPaths: []}});
+  const basicContext = await browser.newContext({viewport: {width: 320, height: 740}, serviceWorkers: 'block'}); await basicContext.route('**/*', blockExternal);
+  const basicPage = await basicContext.newPage(), basicEvents: any[] = [];
+  basicPage.on('request', (request: any) => {if (request.url() === `${config.appUrl}/api/collect`) basicEvents.push(request.postDataJSON());});
+  const firstBasic = basicPage.waitForResponse((res: any) => res.url() === `${config.appUrl}/api/collect` && res.request().method() === 'POST');
+  await basicPage.goto(`${fixtureOrigin}/basic?private=hidden#secret`, {waitUntil: 'networkidle'}); assert.equal((await (await firstBasic).json()).accepted, true);
+  assert.equal(basicEvents.length, 1); assert.equal(basicEvents[0].consent, undefined); assert.deepEqual(basicEvents[0].collection.mode, 'cookieless');
+  assert.equal(basicEvents[0].dimensions.distinctId, undefined); assert.equal(JSON.stringify(basicEvents).includes('private'), false);
+  assert.deepEqual(await basicPage.evaluate(() => ({cookies: document.cookie, local: localStorage.length, session: sessionStorage.length})), {cookies: '', local: 0, session: 0});
+  const basicScope = {siteKey: fixtureSiteKey, environment: 'live', collectorOrigin: config.appUrl};
+  assert.equal((await basicPage.evaluate((scope: any) => (window as any).ten98.identify('not-granted', {plan: 'not-stored'}, scope), basicScope)).status, 'not_sent');
+  assert.equal(Number((await pool.query('SELECT count(*) AS n FROM analytics_identify_receipt WHERE project_id=$1', [basicProjectId])).rows[0].n), 0);
+  await basicPage.getByRole('button', {name: `Tracking preferences for ${config.appUrl}`, exact: true}).click();
+  const basicDialog = basicPage.getByRole('dialog', {name: 'Tracking preferences', exact: true});
+  assert.equal(await basicDialog.getByRole('checkbox', {name: 'Allow cookieless basic analytics', exact: true}).isChecked(), true);
+  assert.equal(await basicDialog.getByRole('checkbox', {name: 'Enhanced analytics', exact: true}).isChecked(), false);
+  assert.equal(await basicPage.locator('[style]').count(), 0, 'The embedded widget must require no unsafe-inline style permission.');
+  const basicLayout = await basicDialog.evaluate((node: HTMLElement) => ({height: getComputedStyle(node).overflowY, width: node.getBoundingClientRect().right, targets: [...node.querySelectorAll('label,button')].map(item => item.getBoundingClientRect().height)}));
+  assert.equal(basicLayout.height, 'auto'); assert.ok(basicLayout.width <= 320); assert.ok(basicLayout.targets.every((height: number) => height >= 44));
+  await basicDialog.getByRole('checkbox', {name: 'Enhanced analytics', exact: true}).check(); await basicDialog.getByRole('button', {name: 'Save choices', exact: true}).click();
+  await basicPage.waitForFunction((scope: any) => (window as any).ten98.destinationStatus(scope).consent.analytics === true, basicScope);
+  assert.equal(basicEvents.length, 1, 'Granting enhanced analytics must not recount the basic pageview.');
+  const enhanced = basicPage.waitForResponse((res: any) => res.url() === `${config.appUrl}/api/collect` && res.request().postDataJSON().name === 'enhanced_event');
+  await basicPage.evaluate(() => (window as any).ten98.track('enhanced_event', {plan: 'free'})); assert.equal((await (await enhanced).json()).accepted, true);
+  assert.equal(basicEvents.at(-1).collection, undefined); assert.equal(basicEvents.at(-1).consent.analytics, true); assert.equal(basicEvents.at(-1).context, undefined);
+  await basicPage.getByRole('button', {name: `Tracking preferences for ${config.appUrl}`, exact: true}).click(); await basicDialog.getByRole('button', {name: 'Deny all', exact: true}).click();
+  const priorBasicCount = basicEvents.length; await basicPage.reload({waitUntil: 'networkidle'}); assert.equal(basicEvents.length, priorBasicCount, 'A stored refusal must survive a fresh page load.');
+  for (const signal of ['globalPrivacyControl', 'doNotTrack']) {
+    const vetoContext = await browser.newContext({serviceWorkers: 'block'}); await vetoContext.route('**/*', blockExternal);
+    await vetoContext.addInitScript((name: string) => Object.defineProperty(navigator, name, {get: () => name === 'globalPrivacyControl' ? true : '1'}), signal);
+    const vetoPage = await vetoContext.newPage(); let requests = 0; vetoPage.on('request', (request: any) => {if (request.url() === `${config.appUrl}/api/collect`) requests++;});
+    await vetoPage.goto(`${fixtureOrigin}/privacy-signal`, {waitUntil: 'networkidle'}); assert.equal(requests, 0); await vetoContext.close();
+  }
+  assert.deepEqual((await pool.query('SELECT collection_basis,count(*)::integer AS n FROM event WHERE project_id=$1 GROUP BY collection_basis ORDER BY collection_basis', [basicProjectId])).rows, [{collection_basis: 'consent', n: 1}, {collection_basis: 'cookieless', n: 1}]);
+  await basicContext.close();
   assert.equal(outbound.length, 0);
-  console.log('PASS Edge: fresh consent/no replay, credential-free native requests, withdrawal abort/context reset, stale dialog rejection,44px mobile dialog targets, known/unavailable metric cards, settings save and409 draft recovery, invalid confirmation guards, viewer read-only and membership-removal clearing; no external requests.');
+  console.log('PASS Edge: preserved consent-first acceptance, cookieless real-loader counts, consent/identify separation, no double pageview after grant, strict CSP external styling, 44px/320px controls, persistent refusal and GPC/DNT vetoes; no external requests.');
 } finally {
   releaseHeld?.(); await browser?.close(); fixture.closeAllConnections();
   await new Promise<void>(resolve => fixture.close(() => resolve())); await closeDatabase();

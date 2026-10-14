@@ -29,9 +29,11 @@ test('anonymous, switched-ID and reset contexts never select an identified assig
   assert.notEqual(anonymous.visitor,a.visitor);assert.notEqual(a.visitor,b.visitor);assert.equal(reset.visitor,anonymous.visitor);
   assert.equal(analyticsIdentity({...base,ip:null,distinctId:'A',context:a.context}),null);
 });
-test('identity linking is optional off and leaves legacy settings bytes unchanged',()=>{
+test('identity linking stays optional off and legacy settings normalize consent-first without mutating input',()=>{
   const legacy={enabled:true,consentMode:'builtin',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:[]};
-  assert.equal(JSON.stringify(publicAnalyticsSettings(legacy)),JSON.stringify(legacy));assert.equal(Object.hasOwn(publicAnalyticsSettings(legacy),'linkIdentities'),false);
+  const original=JSON.stringify(legacy),{collectionMode,...unchanged}=publicAnalyticsSettings(legacy);
+  assert.equal(collectionMode,'consent-first');assert.equal(JSON.stringify(unchanged),original);assert.equal(JSON.stringify(legacy),original);
+  assert.equal(Object.hasOwn(publicAnalyticsSettings(legacy),'linkIdentities'),false);
   assert.equal(publicAnalyticsSettings({...legacy,linkIdentities:true}).linkIdentities,true);assert.equal(publicAnalyticsSettings({...legacy,linkIdentities:false}).linkIdentities,false);
   for(const value of ['true',null,0,{}])assert.throws(()=>publicAnalyticsSettings({...legacy,linkIdentities:value}));
   assert.throws(()=>publicAnalyticsSettings({...legacy,linkIdentity:true}));

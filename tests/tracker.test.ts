@@ -21,7 +21,8 @@ type IdentifyPayload = {type: 'identify'; siteKey: string; requestId: string; se
 
 function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; environment?: string; saved?: boolean;
   pageAge?: number; privacy?: boolean; dnt?: string; failStorage?: boolean; settings?: Record<string, unknown>;
-  destinations?: unknown[]; deferCoordinator?: boolean; secondCollector?: boolean } = {}) {
+  destinations?: unknown[]; deferCoordinator?: boolean; secondCollector?: boolean; collectionMode?: 'cookieless' | 'consent-first'; preference?: unknown; failRead?: boolean;
+  trackerSource?: string; coordinatorSource?: string } = {}) {
   const listeners = new Map<string, Array<(ev: any) => void>>(), warnings: string[] = [], scripts: any[] = [];
   const fetchCalls: Array<{ url: string; options: any }> = [], payloads: Payload[] = [];
   const identifyPayloads: IdentifyPayload[] = [];
@@ -70,9 +71,9 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
       fetchCalls.push({ url: String(url), options });
       if (String(url).endsWith('/api/tracking-config')) {
         const input = JSON.parse(options.body);
-        return Promise.resolve({ ok: true, headers: { get: () => null }, text: async () => JSON.stringify({ schemaVersion: 2,
+        return Promise.resolve({ ok: true, headers: { get: () => null }, text: async () => JSON.stringify({ schemaVersion: opts.collectionMode ? 3 : 2,
           siteKey: input.siteKey, environment: input.environment, origin: 'https://site.example', revisionId: null,
-          consentEpoch: EPOCH, validUntil: new Date(now + 60000).toISOString(), nativeTracking: settings,
+          consentEpoch: EPOCH, validUntil: new Date(now + 60000).toISOString(), nativeTracking: {...settings, ...(opts.collectionMode ? {collectionMode: opts.collectionMode} : {})},
           configuration: { destinations: opts.destinations ?? [] }, ...(opts.destinations?.length ? { revisionId: SECOND_SITE } : {}), ...flags.config }) });
       }
       if (opts.secondCollector && String(url) === 'https://analytics-other.example.com/api/collect') assert.equal(new URL(String(url)).origin, 'https://analytics-other.example.com');
@@ -90,15 +91,17 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   const local = (value: unknown) => vm.runInContext(`JSON.parse(${JSON.stringify(JSON.stringify(value))})`, context);
   const storageKey = (key = SITE, environment = opts.environment ?? 'live') => `ten98:consent:v1:https://analytics.example.com:${key}:${environment}`;
   if (opts.saved) storage.set(storageKey(), JSON.stringify({ epoch: EPOCH, choice: ANALYTICS, updatedAt: now - 1000, expiresAt: now + 86400000 }));
+  if (opts.preference !== undefined) storage.set(storageKey(), typeof opts.preference === 'string' ? opts.preference : JSON.stringify(opts.preference));
+  if (opts.failRead) sandbox.localStorage.getItem = () => {throw new Error('Storage read blocked');};
   const setScript = (key: string | null, src: string | null, environment = opts.environment) => {
     document.currentScript = src === null ? null : { src,
       getAttribute: (attr: string) => attr === 'data-site-key' ? key : attr === 'data-environment' ? environment : null };
   };
   setScript('siteKey' in opts ? opts.siteKey ?? null : SITE, 'scriptSrc' in opts ? opts.scriptSrc ?? null : SCRIPT_SRC);
   const run = () => {
-    vm.runInContext(SRC, context, { filename: 'tracker.js' });
-    if (!opts.deferCoordinator && !coordinatorLoaded && scripts.some(s => s.src.endsWith('/destinations.js'))) {
-      coordinatorLoaded = true; vm.runInContext(COORDINATOR, context, { filename: 'destinations.js' });
+    vm.runInContext(opts.trackerSource ?? SRC, context, { filename: 'tracker.js' });
+    if (!opts.deferCoordinator && !coordinatorLoaded && scripts.some(s => new URL(s.src).pathname === '/destinations.js')) {
+      coordinatorLoaded = true; vm.runInContext(opts.coordinatorSource ?? COORDINATOR, context, { filename: 'destinations.js' });
     }
   };
   const drain = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
@@ -121,7 +124,7 @@ const meta = { provider: 'meta', assetId: '123', enabled: true, owner: 'managed'
 
 test('one header loads the actual coordinator once; consent takes a fresh native page observation without replay or vendor invocation', async () => {
   const e = makeEnv({ destinations: [meta] }); e.run(); e.run(); await e.drain();
-  assert.equal(e.scripts.length, 1); assert.equal(e.scripts[0].src, 'https://analytics.example.com/destinations.js');
+  assert.equal(e.scripts.length, 1); assert.equal(e.scripts[0].src, 'https://analytics.example.com/destinations.js?v=3');
   assert.equal(e.scripts[0].referrerPolicy, 'no-referrer');
   e.history.pushState({}, '', '/before?private=1#secret');
   e.sandbox.ten98.track('purchase', { value: '19.95', currency: 'USD', transactionId: 'private-order' });
@@ -288,7 +291,8 @@ test('only consent is persisted; cookies and session storage stay untouched, and
   const e = makeEnv(); assert.throws(() => e.document.cookie, /cookie/); assert.throws(() => e.sandbox.sessionStorage, /sessionStorage/);
   await e.start(); e.history.pushState({}, '', '/clean'); e.sandbox.ten98.track('signup'); await e.drain(); assert.equal(e.payloads.length, 3);
   assert.equal(e.storage.size, 1); const record = JSON.parse(e.storage.get(e.storageKey())!);
-  assert.deepEqual(Object.keys(record).sort(), ['choice', 'epoch', 'expiresAt', 'updatedAt']);
+  assert.deepEqual(Object.keys(record).sort(), ['basicOptOut', 'choice', 'epoch', 'expiresAt', 'updatedAt', 'version']);
+  assert.equal(record.version, 2); assert.equal(record.basicOptOut, false);
   assert.equal(JSON.stringify(record).includes('signed-synthetic-context'), false);
   const blocked = makeEnv({ failStorage: true }); assert.equal((await blocked.start()).ok, false);
   blocked.sandbox.ten98.track('signup'); await blocked.drain(); assert.equal(blocked.collectCalls().length, 0);
@@ -505,13 +509,138 @@ test('identify shares the native in-flight bound and leaves only consent in stor
   held.shift()!(); await e.drain(); e.sandbox.ten98.track('after_capacity'); await e.drain(); assert.equal(e.payloads.at(-1)!.dimensions.distinctId, 'stable-id');
   e.sandbox.ten98.resetIdentity(scope(e)); held.forEach(resolve => resolve()); await Promise.all(pending); await e.drain();
   e.flags.collectionResponse = null; assert.equal((await identify(e, {plan: 'profile-sentinel'}, 'identifier-sentinel')).status, 'accepted');
-  assert.equal(e.storage.size, 1); assert.deepEqual(Object.keys(JSON.parse(e.storage.get(e.storageKey())!)).sort(), ['choice', 'epoch', 'expiresAt', 'updatedAt']);
+  assert.equal(e.storage.size, 1); assert.deepEqual(Object.keys(JSON.parse(e.storage.get(e.storageKey())!)).sort(), ['basicOptOut', 'choice', 'epoch', 'expiresAt', 'updatedAt', 'version']);
   assert.equal(JSON.stringify([...e.storage]).includes('sentinel'), false); assert.equal(JSON.stringify(e.warnings).includes('sentinel'), false);
   for (const primitive of ['crypto', 'TextEncoder', 'TextDecoder', 'ReadableStream', 'AbortController', 'fetch']) {
     const missing = makeEnv(); await missing.start(); missing.sandbox[primitive] = undefined;
     assert.equal((await identify(missing, {}, 'discard')).status, 'not_sent', primitive); assert.doesNotThrow(() => missing.history.pushState({}, '', '/safe')); await missing.drain();
     assert.equal(missing.identifyPayloads.length, 0);
   }
+});
+
+test('cookieless configuration starts exactly one basic observation without consent or persistent identity', async () => {
+  const e = makeEnv({collectionMode: 'cookieless', destinations: [meta]}); e.run(); e.run(); await e.drain();
+  assert.equal(e.payloads.length, 1); const payload = e.payloads[0] as any;
+  assert.deepEqual(payload.collection, {mode: 'cookieless', epoch: EPOCH}); assert.equal(payload.consent, undefined);
+  assert.equal(payload.dimensions.distinctId, undefined); assert.equal(e.storage.size, 0); assert.equal(e.scripts.length, 1);
+  assert.equal((await identify(e, {plan: 'never-profile'}, 'never-identity')).status, 'not_sent'); assert.equal(e.identifyPayloads.length, 0);
+  e.sandbox.ten98.track('feature_used', e.local({plan: 'free', nested: {enabled: true}})); await e.drain();
+  assert.deepEqual(e.payloads.at(-1)!.properties, {plan: 'free', nested: {enabled: true}});
+  e.history.pushState({}, '', '/next?secret=1#hidden'); e.history.replaceState({}, '', '/next'); await e.drain();
+  assert.equal(e.payloads.filter(p => p.name === 'page_view').length, 2);
+  e.dispatch('pageshow', {persisted: false}); e.dispatch('pageshow', {persisted: true}); e.dispatch('pageshow', {persisted: true}); await e.drain();
+  assert.equal(e.payloads.filter(p => p.name === 'page_view').length, 3);
+  assert.equal(JSON.stringify(e.payloads).includes('secret'), false); assert.equal(e.storage.size, 0);
+});
+
+test('a grant clears basic context and never doubles an attempted basic pageview, including uncertain receipts', async () => {
+  for (const outcome of ['accepted', 'pending', 'rejected']) {
+    const e = makeEnv({collectionMode: 'cookieless'}); e.flags.hold = outcome === 'pending'; e.flags.fetchReject = outcome === 'rejected';
+    e.run(); await e.drain(); const original = e.collectCalls()[0].options.signal;
+    e.flags.fetchReject = false; await e.grant(); assert.equal(e.payloads.length, 1, outcome); assert.equal(original.aborted, outcome === 'pending');
+    await e.complete(); e.flags.hold = false; e.sandbox.ten98.track('after_grant'); await e.drain();
+    const next = e.payloads.at(-1) as any; assert.equal(next.collection, undefined); assert.deepEqual(next.consent, {analytics: true, epoch: EPOCH}); assert.equal(next.context, undefined);
+    assert.equal((await identify(e, {plan: 'explicit'}, 'explicit')).status, 'accepted');
+  }
+});
+
+test('explicit refusal survives expiry and publication; a basic-only reset grants no richer permission', async () => {
+  const now = Date.now(), old = {epoch: SECOND_SITE, choice: DENIED, updatedAt: now - 200 * 86400000, expiresAt: now - 21 * 86400000};
+  const e = makeEnv({collectionMode: 'cookieless', preference: old}); e.run(); await e.drain(); assert.equal(e.payloads.length, 0);
+  e.flags.config = {consentEpoch: SECOND_SITE}; await e.runTimers(30000); assert.equal(e.payloads.length, 0);
+  assert.equal(e.sandbox.ten98.setAnalyticsOptOut(false, scope(e)).ok, true); await e.drain();
+  assert.equal(e.payloads.length, 1); assert.equal((e.payloads[0] as any).consent, undefined); assert.equal((await identify(e, {}, 'forbidden')).status, 'not_sent');
+  const record = JSON.parse(e.storage.get(e.storageKey())!); assert.equal(record.basicOptOut, false); assert.deepEqual(record.choice, DENIED);
+  e.history.pushState({}, '', '/later'); await e.grant(DENIED); await e.drain(); const count = e.payloads.length;
+  e.flags.config = {consentEpoch: EPOCH}; await e.runTimers(30000); e.sandbox.ten98.track('refused'); await e.drain(); assert.equal(e.payloads.length, count);
+  assert.equal(JSON.parse(e.storage.get(e.storageKey())!).basicOptOut, true);
+});
+
+test('malformed or unreadable preferences block first basic collection; first-load unknown preferences write nothing', async () => {
+  for (const opts of [{failRead: true}, {preference: ''}, {preference: 'null'}, {preference: '{'}, {preference: {version: 2, basicOptOut: false}}, {preference: {epoch: EPOCH, choice: DENIED, updatedAt: 1, expiresAt: 2, extra: true}}]) {
+    const e = makeEnv({collectionMode: 'cookieless', ...opts}); e.run(); await e.drain(); e.sandbox.ten98.track('blocked'); await e.drain(); assert.equal(e.payloads.length, 0);
+  }
+  const e = makeEnv({collectionMode: 'cookieless'}); e.run(); await e.drain(); await e.runTimers(30000); assert.equal(e.storage.size, 0); assert.equal(e.payloads.length, 1);
+  e.advance(60001); e.sandbox.ten98.track('expired'); await e.drain(); assert.equal(e.payloads.length, 1);
+  assert.equal(JSON.parse(e.storage.get(e.storageKey())!).basicOptOut, false, 'Automatic invalidation must not invent an explicit refusal.');
+});
+
+test('publication does not recount an already dispatched page but can first observe a newly allowed page', async () => {
+  for(const collectionMode of ['cookieless','consent-first'] as const) {
+    const e=makeEnv({collectionMode});e.run();await e.drain();
+    e.flags.config={consentEpoch:SECOND_SITE,nativeTracking:{enabled:true,consentMode:'external',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:[],collectionMode:'cookieless'}};
+    await e.runTimers(30000);assert.equal(e.payloads.length,1,collectionMode);
+  }
+});
+
+test('changing only basic opt-out never revokes or renews existing grants', async () => {
+  const e=makeEnv({collectionMode:'cookieless'});e.run();await e.drain();await e.grant();
+  const before=e.storage.get(e.storageKey());
+  assert.equal(e.sandbox.ten98.setAnalyticsOptOut(false,scope(e)).ok,true);
+  assert.equal(e.storage.get(e.storageKey()),before);
+  assert.equal((await identify(e,{plan:'retained'},'retained')).status,'accepted');
+  const now=Date.now(),choice={analytics:false,advertising:true,adUserData:true,adPersonalization:true};
+  for(const expired of [false,true]) {
+    const until=now+(expired?-1000:10000),f=makeEnv({collectionMode:'cookieless',preference:{version:2,basicOptOut:true,epoch:EPOCH,choice,updatedAt:now-10000,expiresAt:until}});
+    f.run();await f.drain();f.advance(expired?0:10001);
+    assert.equal(f.sandbox.ten98.setAnalyticsOptOut(false,scope(f,{acknowledgeReload:true})).ok,true);
+    const saved=JSON.parse(f.storage.get(f.storageKey())!);assert.deepEqual(saved.choice,DENIED,'Expired purposes cannot be revived by clearing a basic refusal.');
+  }
+  const valid=makeEnv({collectionMode:'cookieless',preference:{version:2,basicOptOut:true,epoch:EPOCH,choice,updatedAt:now-1000,expiresAt:now+10000}});
+  valid.run();await valid.drain();assert.equal(valid.sandbox.ten98.setAnalyticsOptOut(false,scope(valid,{acknowledgeReload:true})).ok,true);
+  const saved=JSON.parse(valid.storage.get(valid.storageKey())!);assert.deepEqual(saved.choice,choice);assert.equal(saved.expiresAt,now+10000,'A valid grant keeps its original expiry.');
+});
+
+test('cross-tab opt-out revokes only its scoped basic stream and cannot restore enhanced grants', async () => {
+  const e = makeEnv({collectionMode: 'cookieless'}); e.run(); await e.drain();
+  e.setScript(SECOND_SITE, SCRIPT_SRC); e.run(); await e.drain(); assert.equal(e.payloads.length, 2);
+  e.flags.hold = true; e.sandbox.ten98.track('pending'); await e.drain(); const requests = e.collectCalls().slice(-2);
+  const now = Date.now(), refusal = {version: 2, basicOptOut: true, epoch: EPOCH, choice: DENIED, updatedAt: now, expiresAt: now + 10000};
+  e.dispatch('storage', {key: e.storageKey(), newValue: JSON.stringify(refusal)});
+  assert.equal(requests[0].options.signal.aborted, true); assert.equal(requests[1].options.signal.aborted, false);
+  await e.complete(); e.flags.hold = false; e.sandbox.ten98.track('after_refusal'); await e.drain(); assert.equal(e.payloads.at(-1)!.siteKey, SECOND_SITE);
+  const count = e.payloads.length; e.dispatch('storage', {key: e.storageKey(), newValue: JSON.stringify({...refusal, basicOptOut: false, choice: ANALYTICS})});
+  assert.equal((await identify(e, {}, 'no-cross-tab-grant')).status, 'not_sent'); e.dispatch('storage', {key: null, newValue: null});
+  e.sandbox.ten98.track('after_removal'); await e.drain(); assert.equal(e.payloads.length, count);
+});
+
+test('each browser privacy source vetoes cookieless events without granting or loading a vendor', async () => {
+  for (const source of ['gpc', 'navigator', 'window', 'ms']) {
+    const e = makeEnv({collectionMode: 'cookieless', destinations: [meta]});
+    if (source === 'gpc') e.sandbox.navigator.globalPrivacyControl = true;
+    else if (source === 'window') e.sandbox.doNotTrack = '1';
+    else e.sandbox.navigator[source === 'ms' ? 'msDoNotTrack' : 'doNotTrack'] = 'yes';
+    e.run(); await e.drain(); assert.equal(e.payloads.length, 0); assert.equal(e.scripts.length, 1);
+    assert.equal(e.sandbox.ten98.setAnalyticsOptOut(false, scope(e)).ok, true); await e.grant(); assert.equal(e.payloads.length, 0);
+  }
+});
+
+test('basic permission checks currently installed hook versions rather than a shared mutable stamp', async () => {
+  const e = makeEnv({collectionMode: 'cookieless'}); e.run(); await e.drain(); const count = e.payloads.length;
+  e.sandbox.__ten98FoundationHub.protocolVersion = 3;
+  const current = e.sandbox.__ten98FoundationHub.nativeEvent; e.sandbox.__ten98FoundationHub.nativeEvent = () => {throw new Error('Legacy sender must not run');};
+  e.sandbox.ten98.track('mixed'); await e.drain(); assert.equal(e.payloads.length, count);
+  e.sandbox.__ten98FoundationHub.nativeEvent = current; e.sandbox.__ten98FoundationHub.nativeAllowed = () => true;
+  e.sandbox.ten98.track('old_coordinator'); await e.drain(); assert.equal(e.payloads.length, count);
+});
+
+test('a synchronous external-CMP grant on readiness observes the current page only once', async () => {
+  for (const collectionMode of ['cookieless', 'consent-first'] as const) {
+    const e = makeEnv({collectionMode});
+    e.sandbox.addEventListener('ten98:destinations-ready', () => e.sandbox.ten98.consent(e.local(ANALYTICS), scope(e, {acknowledgeReload: true})));
+    e.run(); await e.drain(); assert.equal(e.payloads.length, 1, collectionMode);
+    assert.equal((e.payloads[0] as any).collection, undefined, 'The known-undispatched basic attempt is replaced by one explicitly granted observation.');
+    assert.equal(e.payloads[0].consent.analytics, true);
+  }
+});
+
+test('malformed stored preferences are not overwritten by automatic invalidation, and privacy aborts basic work', async () => {
+  const e = makeEnv({collectionMode: 'cookieless', preference: '{'}); e.run(); await e.drain(); e.advance(60001);
+  e.sandbox.ten98.track('expired'); await e.drain(); assert.equal(e.storage.get(e.storageKey()), '{'); assert.equal(e.payloads.length, 0);
+  const basic = makeEnv({collectionMode: 'cookieless'}); basic.flags.hold = true; basic.run(); await basic.drain();
+  const signal = basic.collectCalls()[0].options.signal; basic.sandbox.navigator.globalPrivacyControl = true; basic.sandbox.ten98.track('veto');
+  assert.equal(signal.aborted, true); await basic.complete(); assert.equal(basic.payloads.length, 1);
+  basic.sandbox.ten98.setAnalyticsOptOut(false, scope(basic)); assert.equal(basic.storage.has(basic.storageKey()), false, 'Clearing an already-clear basic refusal writes no invented choice; privacy still vetoes collection.');
 });
 
 test('native responses enforce a streaming UTF-8 byte limit and cancel unread bytes for both request types', async () => {
