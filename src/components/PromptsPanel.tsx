@@ -1,6 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
+import {AiSuggestionsPanel} from './AiSuggestionsPanel';
 import type {ExecutionEntry} from './PromptExecutionsPanel';
 
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
@@ -105,6 +106,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
   const base = `/api/projects/${encodeURIComponent(projectId)}/prompts`;
 
   const [execution, setExecution] = useState<{generation: number; entry: ExecutionEntry} | null>(null);
+  const [suggestions, setSuggestions] = useState<number | null>(null);
   const [returning, setReturning] = useState(false);
   const entryGeneration = useRef(0);
   const returnFocus = useRef<string | null>(null);
@@ -212,9 +214,10 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
     closeVersions();
     setNotice(null);
     setExecution(null);
+    setSuggestions(null);
   }
 
-  async function load(cursor: string | null, filters: Filters, accessOnly = false) {
+  async function load(cursor: string | null, filters: Filters, accessOnly = false, failClosed = false) {
     const gen = ++genRef.current;
     acRef.current?.abort();
     const ac = new AbortController();
@@ -231,6 +234,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
       if (cursor) p.set('cursor', cursor); // cursor only ever follows an unchanged filter set
       const r = await api<ListResponse>(`${base}?${p.toString()}`, {signal: ac.signal});
       if (!aliveRef.current || gen !== genRef.current) return;
+      if ((accessOnly || failClosed) && (!r || !['owner','admin','editor','viewer'].includes(r.role) || !Array.isArray(r.items) || !(r.nextCursor === null || typeof r.nextCursor === 'string') || r.items.some(p => !p || typeof p.id !== 'string' || typeof p.text !== 'string' || typeof p.topic !== 'string' || typeof p.enabled !== 'boolean' || !Array.isArray(p.userTags) || !Array.isArray(p.systemTags) || !p.classification))) throw new Error('Prompt library access could not be verified. Reload the list.');
       setRole(r.role);
       if (!accessOnly) {
         setItems(prev => (cursor ? [...prev, ...r.items] : r.items));
@@ -243,7 +247,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
         unauthorizedRef.current();
         return;
       }
-      if (accessOnly || e instanceof ApiError && (e.status === 403 || e.status === 404)) purge();
+      if (accessOnly || failClosed || e instanceof ApiError && (e.status === 403 || e.status === 404)) purge();
       setErr(errMsg(e));
     } finally {
       if (aliveRef.current && gen === genRef.current) {
@@ -422,12 +426,36 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
     if (aliveRef.current) setReturning(false);
   }
 
+  function openSuggestions() {
+    if (opRef.current || returning || !confirmDiscard()) return;
+    genRef.current += 1;
+    verGenRef.current += 1;
+    acRef.current?.abort();
+    verAcRef.current?.abort();
+    setLoading(false);
+    setLoadingMore(false);
+    setVerLoading(false);
+    closeForm();
+    setShowCreate(false);
+    returnFocus.current = 'pl-suggest-prompts';
+    setSuggestions(++entryGeneration.current);
+  }
+
+  async function backFromSuggestions(saved: boolean) {
+    setSuggestions(null);
+    setReturning(true);
+    const access = accessRef.current;
+    await load(null, applied, !saved, true);
+    if (saved && aliveRef.current && access === accessRef.current) setNotice('Suggested prompts were saved disabled. Current library filters still apply.');
+    if (aliveRef.current) setReturning(false);
+  }
+
   useEffect(() => {
-    if (execution || returning || !returnFocus.current) return;
+    if (execution || suggestions !== null || returning || !returnFocus.current) return;
     const trigger = document.getElementById(returnFocus.current);
     (trigger instanceof HTMLButtonElement && !trigger.disabled ? trigger : libraryHeading.current)?.focus();
     returnFocus.current = null;
-  }, [execution, returning]);
+  }, [execution, suggestions, returning]);
 
   const onApply = () => {
     if (!confirmDiscard()) return;
@@ -580,6 +608,8 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
 
   if (execution) return <PromptExecutionsPanel key={execution.generation} workspaceId={workspaceId} projectId={projectId} userId={userId}
     entry={execution.entry} onBack={() => void backToLibrary()} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
+  if (suggestions !== null) return <AiSuggestionsPanel key={suggestions} workspaceId={workspaceId} projectId={projectId} userId={userId}
+    onBack={saved => void backFromSuggestions(saved)} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
   if (returning) return <section className="card"><p role="status">Checking access to the prompt library…</p></section>;
 
   return (
@@ -590,6 +620,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
           <p className="footnote">Saving prompts does not run them. Automatic scheduling is not available yet.</p>
         </div>
         <div className="row">
+          {role && <button style={{minHeight:44}} id="pl-suggest-prompts" type="button" className="btn ghost" onClick={openSuggestions} disabled={busy || loading}>Suggest prompts</button>}
           {role && <button id="pl-recent-runs" type="button" className="btn ghost" onClick={() => openExecution({kind: 'history'}, 'pl-recent-runs')} disabled={busy || loading}>Recent runs</button>}
           <button type="button" className="btn ghost" onClick={onRefresh} disabled={busy || loading || loadingMore}>
             Refresh
