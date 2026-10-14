@@ -13,6 +13,7 @@ import {quoteAiSuggestions,startAiSuggestions,getAiSuggestion,getAiSuggestions,c
 import {executeAiSuggestion,reconcileAiSuggestion,reconcileAiSuggestionJobs} from '../src/server/ai-suggestion-worker.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
+import {suggestionProfiles} from '../src/server/ai-suggestion-input.ts';
 
 export async function runSuggestionChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_AI_SUGGESTIONS_TEST,'1');
@@ -30,7 +31,7 @@ export async function runSuggestionChecks(){
  const send:typeof fetch=async(address,init)=>{
   const url=String(address);assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);
   if(url==='https://openrouter.ai/api/v1/key'){free++;return Response.json({data:{is_free_tier:false,is_management_key:false}});}
-  if(url.endsWith('/endpoints')){free++;const model=url.includes('gpt-4o-mini')?'openai/gpt-4o-mini':'openai/gpt-4o';return Response.json({data:{id:model,endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens','response_format','structured_outputs'],pricing:{prompt:changedPrice?'0.00000016':'0.00000015',completion:'0.0000006',discount:0}}]}});}
+  if(url.endsWith('/endpoints')){free++;const model=new URL(url).pathname.slice('/api/v1/models/'.length,-'/endpoints'.length);assert.ok(suggestionProfiles.some(p=>p.model===model));return Response.json({data:{id:model,endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens','response_format','structured_outputs'],pricing:{prompt:changedPrice?'0.00000016':'0.00000015',completion:'0.0000006',discount:0}}]}});}
   if(url.startsWith('https://openrouter.ai/api/v1/generation?id=')){free++;const data=receipts.get(new URL(url).searchParams.get('id')!);assert.ok(data);return Response.json({data});}
   assert.equal(url,'https://openrouter.ai/api/v1/chat/completions');assert.equal(init?.method,'POST');paid++;
   const body=JSON.parse(String(init?.body));assert.equal(body.response_format.json_schema.strict,true);assert.deepEqual(body.provider.only,['openai']);assert.equal(body.provider.allow_fallbacks,false);assert.equal(body.tools,undefined);assert.equal(body.plugins,undefined);
@@ -147,6 +148,24 @@ export async function runSuggestionChecks(){
   await assert.rejects(acceptAiSuggestions(legacy.project,viewer,legacyRun.id,legacySave),{status:404});await assert.rejects(acceptAiSuggestions(legacy.project,editor,legacyRun.id,legacySave),{status:409});
   await assert.rejects(acceptAiSuggestions(legacy.project,owner,legacyRun.id,{...legacySave,selections:legacySave.selections.map(s=>({...s,text:s.text+' changed'}))}),{status:409});
   console.log('PASS pre-policy Unicode acceptance receipts replay under fresh authorization without regeneration or reinsertion');
+  const beforeCandidates=paid;
+  for(const profile of suggestionProfiles.slice(2)){
+   const f=await fixture(),oldQuote=await quote(f),candidateInput={...f.input,requestId:randomUUID(),profileId:profile.id};
+   await assert.rejects(quoteAiSuggestions(f.project,owner,{...f.input,profileId:profile.id},send),{status:409},'Changed model cannot reuse an existing quote receipt');
+   const q=(await quoteAiSuggestions(f.project,owner,candidateInput,send)).quote;assert.notEqual(q.id,oldQuote.id);assert.equal(q.input!.profileId,profile.id);assert.equal(q.route.model,profile.model);assert.equal(q.estimateUsd,'0.020429');
+   assert.equal((await quote(f)).route.model,'openai/gpt-4o-mini');assert.equal((await getAiSuggestions(f.project,owner)).runs.length,0,'Model discovery and quotation do not generate or reserve');
+   const started=(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),quoteId:q.id})).run;await executeAiSuggestion(started.id,send);
+   const result=await detail(f,started.id);assert.equal(result.model,profile.model);assert.equal(result.status,'completed');assert.equal(result.actualUsd,'0.000013');assert.equal((await listPrompts(f.project,owner,new URLSearchParams())).items.length,0);
+   assert.equal((await pool.query('SELECT route FROM ai_suggestion_quote WHERE id=$1',[oldQuote.id])).rows[0].route.model,'openai/gpt-4o-mini');
+  }
+  assert.equal(paid,beforeCandidates+2);const choices=await getAiSuggestions(cas.project,viewer);assert.deepEqual(choices.profiles.map(p=>[p.id,p.model]),suggestionProfiles.map(p=>[p.id,p.model]));assert.deepEqual(choices.defaults,{economy:null,balanced:null});assert.equal(choices.canQuote,false);
+  console.log('PASS candidate-only metadata, permanent old receipts, fresh immutable model quotes and exact candidate dispatch');
+
+  for(const profile of suggestionProfiles.slice(2)){
+   const f=await fixture(),q=(await quoteAiSuggestions(f.project,owner,{...f.input,profileId:profile.id},send)).quote,started=(await startAiSuggestions(f.project,owner,{requestId:randomUUID(),quoteId:q.id})).run;const prior:number=paid;
+   changedPrice=true;await executeAiSuggestion(started.id,send);changedPrice=false;assert.equal(paid,prior);assert.equal((await detail(f,started.id)).status,'cancelled');
+  }
+  console.log('PASS fresh candidate route changes cancel before completion without fallback or new quote');
 
   const retained=await fixture(),retainedRun=await start(retained);await executeAiSuggestion(retainedRun.id,send);const originalProposal=(await detail(retained,retainedRun.id)).proposal!;
   await pool.query("UPDATE ai_suggestion_quote SET created_at=clock_timestamp()-interval '91 days' WHERE id=$1",[retainedRun.quoteId]);

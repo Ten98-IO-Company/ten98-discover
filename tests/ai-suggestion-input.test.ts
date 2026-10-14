@@ -1,14 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {suggestionQuoteInput,suggestionAcceptInput,suggestionMessages,suggestionTextKey,parseSuggestionProposal,type SuggestionSnapshot} from '../src/server/ai-suggestion-input.ts';
-import {readSuggestionRoute,requestSuggestionExecution,readOpenRouterRoutes} from '../src/server/openrouter.ts';
+import {suggestionQuoteInput,suggestionAcceptInput,suggestionMessages,suggestionTextKey,suggestionProfiles,suggestionProfile,parseSuggestionProposal,type SuggestionSnapshot} from '../src/server/ai-suggestion-input.ts';
+import {executionInput,executionBody,parseOpenRouterJson} from '../src/server/openrouter-input.ts';
+import {readSuggestionRoute,requestSuggestionExecution,readOpenRouterRoutes,parseExecutionOutcome,reconcileOpenRouter} from '../src/server/openrouter.ts';
 
 const model='openai/gpt-4o-mini' as const;
 const input=()=>({requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'benchmark-mini-v1',benchmark:true,fundedCredits:true,maxSpendUsd:'1',topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]});
 const snapshot=():SuggestionSnapshot=>({version:1,project:{id:randomUUID(),name:'Coffee',origin:'https://example.org'},contextRevision:1,profile:{name:'Coffee',aliases:[],citationDomains:[]},sections:[],competitors:[],topic:'Coffee',country:'Global',language:'English',existingPrompts:[],excludedPrompts:[],evidence:[{id:'profile',kind:'profile',sha256:'a'.repeat(64),value:{name:'Coffee'}}],topicLibraryHash:'b'.repeat(64),snapshotHash:'c'.repeat(64)});
 const proposal=()=>({version:1,limitation:'none',prompts:[{text:'Which grinder is easy to clean?',tags:['Maintenance'],rationale:'This helps evaluate the saved topic.',evidenceIds:['profile']}]});
 const endpoint=()=>({data:{id:model,endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens','response_format','structured_outputs'],pricing:{prompt:'0.00000015',completion:'0.0000006',discount:0}}]}});
+
+test('suggestion candidates have permanent model identities without broadening comparison admission',()=>{
+ assert.deepEqual(suggestionProfiles.map(p=>[p.id,p.model]),[['benchmark-mini-v1','openai/gpt-4o-mini'],['benchmark-standard-v1','openai/gpt-4o'],['benchmark-nano-v1','openai/gpt-4.1-nano'],['benchmark-4-1-mini-v1','openai/gpt-4.1-mini']]);
+ for(const profile of suggestionProfiles){const parsed=suggestionQuoteInput.parse({...input(),profileId:profile.id});assert.equal(suggestionProfile(parsed.profileId).model,profile.model);assert.match(profile.label,/evaluation/);}
+ for(const candidate of ['openai/gpt-4.1-nano','openai/gpt-4.1-mini'])assert.equal(executionInput.safeParse({connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),systemText:'',models:[candidate],maxCompletionTokens:16,fundedCredits:true}).success,false);
+});
+test('every suggestion candidate verifies exact capabilities, arithmetic, dispatch and receipt identity',async()=>{
+ for(const profile of suggestionProfiles){
+  const data:any=endpoint();data.data.id=profile.model;data.data.endpoints[0].model_id=profile.model;
+  data.data.endpoints[0].supported_parameters=['max_completion_tokens','response_format','structured_outputs'];
+  data.data.endpoints[0].pricing={prompt:'1e-7',completion:'4e-7',request:'0.0000001',discount:0};
+  const send:typeof fetch=async url=>{assert.ok(String(url).endsWith('/key')||String(url)===`https://openrouter.ai/api/v1/models/${profile.model}/endpoints`);return Response.json(String(url).endsWith('/key')?{data:{is_free_tier:false,is_management_key:false}}:data);};
+  const route=await readSuggestionRoute({apiKey:'synthetic'},profile.model,send);assert.equal(route.model,profile.model);assert.equal(route.estimateMicros,'13620');
+  const now=new Date(),runId=randomUUID(),actor='a'.repeat(64),body=executionBody(suggestionMessages(snapshot()),route,2048,runId,actor);
+  assert.equal(body.model,profile.model);assert.deepEqual(body.provider.only,['openai']);assert.equal(body.provider.require_parameters,true);assert.equal(body.provider.allow_fallbacks,false);assert.match(JSON.stringify(body),/"prompt":0.1,"completion":0.4,"request":0.0000001/);
+  let paid=0;const outcome=await requestSuggestionExecution({apiKey:'synthetic'},suggestionMessages(snapshot()),route,runId,actor,now,async()=>{},async(url,init)=>{
+   paid++;assert.equal(String(url),'https://openrouter.ai/api/v1/chat/completions');const sent=JSON.parse(String(init?.body));assert.equal(sent.model,profile.model);assert.equal(sent.response_format.json_schema.strict,true);assert.equal(sent.tools,undefined);assert.equal(sent.plugins,undefined);
+   return Response.json({id:'gen-candidate',created:Math.floor(now.getTime()/1000),model:profile.model,provider:'OpenAI',usage:{cost:0.000012345,is_byok:false},choices:[{finish_reason:'stop',message:{content:JSON.stringify(proposal())}}]});
+  });assert.equal(paid,1);assert.equal(outcome.result?.resolvedModel,profile.model);assert.equal(outcome.cost,'0.000013');
+  const receipt={id:'gen-candidate',model:profile.model,provider_name:'OpenAI',session_id:runId,external_user:actor,created_at:now.toISOString(),finish_reason:'stop',is_byok:false,total_cost:0.000012345};
+  assert.equal((await reconcileOpenRouter({apiKey:'synthetic'},receipt.id,route,now,runId,actor,async()=>Response.json({data:receipt}))).cost,'0.000013');
+  const wrong=parseOpenRouterJson(JSON.stringify({id:receipt.id,model:'openai/other',provider:'OpenAI',created:Math.floor(now.getTime()/1000),usage:{cost:0.000012345,is_byok:false},choices:[{finish_reason:'stop',message:{content:'text'}}]}));assert.equal(parseExecutionOutcome(wrong,200,null,route,now).cost,null);
+  for(const mutate of [(e:any)=>e.supported_parameters=['max_tokens'],(e:any)=>e.pricing.overrides=[],(e:any)=>e.pricing.prompt='-1',(e:any)=>e.pricing.prompt='1e99',(e:any)=>e.pricing.unknown='0',(e:any)=>e.max_completion_tokens=1024,(e:any)=>e.tag='openai/variant']){const broken=structuredClone(data);mutate(broken.data.endpoints[0]);await assert.rejects(readSuggestionRoute({apiKey:'synthetic'},profile.model,async url=>Response.json(String(url).endsWith('/key')?{data:{is_free_tier:false,is_management_key:false}}:broken)),{status:502});}
+ }
+});
 
 test('only explicit benchmark profiles and bounded authored selections enter quotation',()=>{
  assert.ok(suggestionQuoteInput.safeParse(input()).success);

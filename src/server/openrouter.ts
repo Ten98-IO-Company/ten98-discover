@@ -3,7 +3,7 @@ import {createHmac,createHash} from 'node:crypto';
 import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
 import {usd} from './providers.ts';
-import {decimal,decimalSumMicros,decimalText,ExactCost,parseOpenRouterJson,executionBody,type PromptModel,type RouteSnapshot,type RenderedInput} from './openrouter-input.ts';
+import {decimal,decimalSumMicros,decimalText,ExactCost,parseOpenRouterJson,executionBody,type PromptModel,type OpenRouterModel,type RouteSnapshot,type RenderedInput} from './openrouter-input.ts';
 import {suggestionSchema,suggestionOutputTokens} from './ai-suggestion-input.ts';
 
 export const openRouterBase='https://openrouter.ai/api/v1';
@@ -24,7 +24,7 @@ async function read(path:string,credentials:unknown,send:typeof fetch){
   const response=await send(openRouterBase+path,{headers:headers(credentials),redirect:'error',credentials:'omit',signal:AbortSignal.timeout(10_000)});
   if(!response.ok){await response.body?.cancel();invalid();}return responseJson(response);
 }
-export function parseRoute(model:PromptModel,body:unknown,maxCompletionTokens:number):RouteSnapshot{
+export function parseRoute(model:OpenRouterModel,body:unknown,maxCompletionTokens:number):RouteSnapshot{
   if(!object(body)||!object(body.data)||body.data.id!==model||!Array.isArray(body.data.endpoints)||body.data.endpoints.length>100)invalid();
   if(body.data.endpoints.some((e:unknown)=>object(e)&&typeof e.tag==='string'&&e.tag.startsWith('openai/')))invalid();
   const matches=body.data.endpoints.filter((e:unknown)=>object(e)&&e.tag==='openai');if(matches.length!==1)invalid();const e=matches[0];
@@ -46,7 +46,7 @@ export function parseRoute(model:PromptModel,body:unknown,maxCompletionTokens:nu
   if(estimate<1n||estimate>1_000_000_000_000n)invalid();
   return {model,tag:'openai',providerName:'OpenAI',promptCapacity:input,completionCapacity:e.max_completion_tokens,promptPrice,completionPrice,requestPrice,estimateMicros:estimate.toString()};
 }
-async function readRoutes(credentials:unknown,models:PromptModel[],maxCompletionTokens:number,send:typeof fetch,structured=false){
+async function readRoutes(credentials:unknown,models:OpenRouterModel[],maxCompletionTokens:number,send:typeof fetch,structured=false){
   try{
     const key=await read('/key',credentials,send);
     if(!object(key?.data)||key.data.is_free_tier!==false||key.data.is_management_key!==false||key.data.is_provisioning_key===true)invalid();
@@ -60,7 +60,7 @@ async function readRoutes(credentials:unknown,models:PromptModel[],maxCompletion
   }catch{throw new FoundationError(502,'Could not verify the ordinary funded OpenRouter key and supported endpoint prices. No model request was sent.');}
 }
 export async function readOpenRouterRoutes(credentials:unknown,models:PromptModel[],maxCompletionTokens:number,send:typeof fetch=fetch){return readRoutes(credentials,models,maxCompletionTokens,send);}
-export async function readSuggestionRoute(credentials:unknown,model:PromptModel,send:typeof fetch=fetch){return (await readRoutes(credentials,[model],suggestionOutputTokens,send,true))[0];}
+export async function readSuggestionRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch){return (await readRoutes(credentials,[model],suggestionOutputTokens,send,true))[0];}
 export type ExecutionResult={text:string;resolvedModel:string;provider:string;finishReason:string;citations:{url:string;title:string|null}[];promptTokens:number|null;completionTokens:number|null;receivedAt:string};
 export type ExecutionOutcome={cost:string|null;reference:string|null;result:ExecutionResult|null;diagnostic:string|null;pause:boolean;evidence:Record<string,unknown>};
 export function unknownExecution(reference:string|null=null,diagnostic='The provider charge is unresolved. Reconcile this request before spending again.'):ExecutionOutcome{
