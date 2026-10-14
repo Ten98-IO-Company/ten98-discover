@@ -5,6 +5,7 @@ import {api,ApiError,errMsg} from '../lib/api';
 import {useAnnotations} from './AnnotationsPanel';
 import type {AdvancedPredicates} from '../server/advanced-predicate-input';
 import type {advancedPredicateMethod} from '../server/advanced-predicates';
+import {environmentCatalog,environmentFields,type EnvironmentField} from '../lib/analytics-environment';
 
 type Coverage='complete'|'partial'|'unavailable';
 
@@ -24,7 +25,7 @@ interface ExploreResult{
   cohort?:{item:SavedFilter;range:{from:string;to:string;timeZone:string;start:string;end:string};coverage:{status:Coverage;retainedFrom:string|null};identity:{status:Coverage;identifiedEvents:number|null;unidentifiedEvents:number|null;observedMemberKeys:number|null};membership:{status:'available'|'unavailable';countsAreLowerBounds:boolean};limitation:string;predicateMethod?:ReturnType<typeof advancedPredicateMethod>;sessionProperties?:SessionSelection};
 }
 
-const GROUPS=[['event','Event name'],['path','Path'],['origin','Origin'],['referrer','Referrer'],['language','Language'],['campaignSource','Campaign source'],['campaignMedium','Campaign medium'],['campaignName','Campaign name'],['campaignTerm','Campaign term'],['campaignContent','Campaign content'],['screenWidth','Screen width'],['screenHeight','Screen height'],['property','Property']] as const;
+const GROUPS=[['event','Event name'],['path','Path'],['origin','Origin'],['referrer','Referrer'],['language','Language'],['browser','Browser'],['os','OS'],['device','Device'],['campaignSource','Campaign source'],['campaignMedium','Campaign medium'],['campaignName','Campaign name'],['campaignTerm','Campaign term'],['campaignContent','Campaign content'],['screenWidth','Screen width'],['screenHeight','Screen height'],['property','Property']] as const;
 type Role='owner'|'admin'|'editor'|'viewer';
 type SaveAttempt={kind:'create'|'update'|'delete';id?:string;body:{requestId:string;revision?:number;definition?:Definition}};
 type CohortEditor={item:SavedFilter|null;name:string;draft:Draft};
@@ -48,7 +49,8 @@ function validCohortResult(result:ExploreResult,params:URLSearchParams,projectId
   return c.membership.status!=='unavailable'||redactedReport(result);
 }
 
-function groupValue(type:string,value:unknown):string{
+function groupValue(type:string,value:unknown,field?:string):string{
+  if(environmentFields.includes(field as EnvironmentField)&&(type==='missing'||value==='unknown'))return type==='missing'?'Not recorded':'Unknown';
   if(type==='missing')return 'Missing / uncollected';
   if(value===null)return 'null';
   if(typeof value==='string'&&value==='')return '(empty string)';
@@ -407,7 +409,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
             <div><label htmlFor={`${uid}-qkind`}>Qualifying event kind</label><select id={`${uid}-qkind`} value={qualification.kind} onChange={e=>patchQualification({kind:e.target.value})}>{KINDS.map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></div>
             <details><summary>More qualification filters</summary><div className="stack">
               <p><strong>Required filters — all</strong></p><p className="hint">The qualifying action and event conditions must match the same event. Session conditions use that event's visitor key and current retained values.</p>
-              {FILTERS.filter(([key])=>!['path','eventName'].includes(key)).map(([key,label])=><div className="row" key={key}><label className="row cohort-check"><input type="checkbox" checked={qualification.filters[key].on} onChange={e=>patchQualification({filters:{...qualification.filters,[key]:{...qualification.filters[key],on:e.target.checked}}})}/>Enable qualification {label}</label><div className="cohort-field"><label htmlFor={`${uid}-q-${key}`}>Qualification {label} equals</label><input id={`${uid}-q-${key}`} maxLength={key==='origin'?2048:320} disabled={!qualification.filters[key].on} value={qualification.filters[key].value} onChange={e=>patchQualification({filters:{...qualification.filters,[key]:{on:true,value:e.target.value}}})}/></div></div>)}
+              {FILTERS.filter(([key])=>!['path','eventName'].includes(key)).map(([key,label])=><div className="row" key={key}><label className="row cohort-check"><input type="checkbox" checked={qualification.filters[key].on} onChange={e=>patchQualification({filters:{...qualification.filters,[key]:{...qualification.filters[key],on:e.target.checked}}})}/>Enable qualification {label}</label><div className="cohort-field"><label htmlFor={`${uid}-q-${key}`}>Qualification {label} equals</label>{environmentFields.includes(key as EnvironmentField)?<select id={`${uid}-q-${key}`} disabled={!qualification.filters[key].on} value={qualification.filters[key].value} onChange={e=>patchQualification({filters:{...qualification.filters,[key]:{on:true,value:e.target.value}}})}><option value="">Choose a category</option>{environmentCatalog[key as EnvironmentField].map(value=><option key={value} value={value}>{value==='unknown'?'Unknown':value}</option>)}<option value="not-recorded">Not recorded</option></select>:<input id={`${uid}-q-${key}`} maxLength={key==='origin'?2048:320} disabled={!qualification.filters[key].on} value={qualification.filters[key].value} onChange={e=>patchQualification({filters:{...qualification.filters,[key]:{on:true,value:e.target.value}}})}/>}</div></div>)}
               <label className="row cohort-check"><input type="checkbox" checked={qualification.prop.on} onChange={e=>patchQualification({prop:{...qualification.prop,on:e.target.checked}})}/>Enable qualification property filter</label>
               {qualification.prop.on&&<><div className="row"><div className="cohort-field"><label htmlFor={`${uid}-qkey`}>Qualification property key</label><input id={`${uid}-qkey`} required maxLength={320} value={qualification.prop.key} onChange={e=>patchQualification({prop:{...qualification.prop,key:e.target.value}})}/></div><div className="cohort-field"><label htmlFor={`${uid}-qtype`}>Qualification property type</label><select id={`${uid}-qtype`} value={qualification.prop.type} onChange={e=>patchQualification({prop:{...qualification.prop,type:e.target.value}})}>{PROP_TYPES.map(type=><option key={type} value={type}>{type}</option>)}</select></div></div>{qualification.prop.type!=='missing'&&<div><label htmlFor={`${uid}-qvalue`}>Qualification value (JSON literal)</label><input id={`${uid}-qvalue`} required maxLength={8192} value={qualification.prop.value} onChange={e=>patchQualification({prop:{...qualification.prop,value:e.target.value}})}/></div>}<p className="hint">Valid date strings are normalized; arrays compare the whole array. Missing is distinct from null.</p></>}
             </div></details>
@@ -487,7 +489,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
                 <tbody>
                   {result.breakdown.groups.slice(0,100).map((g,i)=>(
                     <tr key={i}>
-                      <td>{groupValue(g.type,g.value)}</td>
+                      <td>{groupValue(g.type,g.value,result.query.groupBy)}</td>
                       <td>{groupType(g.type)}</td>
                       <td>{g.events}</td>
                       <td>{g.visitors==null?'Unavailable':g.visitors}</td>
