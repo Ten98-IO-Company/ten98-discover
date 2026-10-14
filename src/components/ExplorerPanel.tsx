@@ -1,6 +1,7 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
+import {useAnnotations} from './AnnotationsPanel';
 
 type Coverage='complete'|'partial'|'unavailable';
 
@@ -125,7 +126,7 @@ type Props={projectId:string;userId:string;onUnauthorized:()=>void};
 export function ExplorerPanel(props:Props){
   return <ExplorerInner key={`${props.userId}:${props.projectId}`} {...props}/>;
 }
-function ExplorerInner({projectId,onUnauthorized}:Props){
+function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   const uid=useId();
   const unauthRef=useRef(onUnauthorized);
   unauthRef.current=onUnauthorized;
@@ -274,6 +275,8 @@ function ExplorerInner({projectId,onUnauthorized}:Props){
   const t=result?.totals;
   const currentParams=buildParams(draft);
   const unapplied='error'in currentParams||currentParams.qs!==applied;
+  const appliedDates=new URLSearchParams(applied);
+  const annotations=useAnnotations({projectId,userId,range:accessDenied.current?null:{from:appliedDates.get('from')!,to:appliedDates.get('to')!,timeZone:result?.range.timeZone??appliedDates.get('timeZone')!},onUnauthorized,onAccessLost:status=>purgeAccess(status)});
 
   return(
     <section className="explorer stack" aria-labelledby={`${uid}-h`} style={{'--control-md':'var(--control-touch)'} as import('react').CSSProperties}>
@@ -458,7 +461,7 @@ function ExplorerInner({projectId,onUnauthorized}:Props){
           <summary>Daily data ({result.daily.length} {result.daily.length===1?'day':'days'})</summary>
           <div className="table-wrap" tabIndex={0} role="region" aria-label="Daily data, scroll horizontally for all columns">
             <table>
-              <thead><tr><th>Date</th><th>Events</th><th>Page views</th><th>Custom events</th><th>Coverage</th></tr></thead>
+              <thead><tr><th>Date</th><th>Events</th><th>Page views</th><th>Custom events</th><th>Coverage</th><th>Notes</th></tr></thead>
               <tbody>
                 {result.daily.map(d=>(
                   <tr key={d.date}>
@@ -477,12 +480,16 @@ function ExplorerInner({projectId,onUnauthorized}:Props){
                     <td>{d.skipped?'—':num(d.pageViews)}</td>
                     <td>{d.skipped?'—':num(d.customEvents)}</td>
                     <td>{d.coverage}</td>
+                    <td>{annotations.dayButton(d.date)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </details>
+      </>)}
+      <div className="card">{annotations.panel}</div>
+      {phase==='ok'&&result&&(<>
 
         {result.numeric&&(
           <div className="card stack">

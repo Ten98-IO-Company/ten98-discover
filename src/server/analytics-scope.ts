@@ -2,9 +2,8 @@ import type { explorerQuery } from './explorer-input.ts';
 
 // Shared event population and local-calendar boundaries for analytics reports.
 // PostgreSQL ambiguous/gap midnight behavior is covered by the Explorer fixtures.
-export const analyticsScopeSql = `WITH RECURSIVE target AS MATERIALIZED (
-      SELECT p.id,p.origin,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
-    ), raw_days AS (
+// Parameter slots3/4/5 are from, to and IANA timezone, shared with Explorer.
+export const analyticsCalendarSql = `raw_days AS (
       SELECT day,day AT TIME ZONE $5 AS nominal FROM generate_series($3::date::timestamp,($4::date+1)::timestamp,interval '1 day') day
     ), exact_days AS MATERIALIZED (
       SELECT day,nominal,min(candidate) FILTER (WHERE candidate AT TIME ZONE $5=day) AS instant,
@@ -26,7 +25,11 @@ export const analyticsScopeSql = `WITH RECURSIVE target AS MATERIALIZED (
       SELECT day,instant AS start,lead(last_instant) OVER(ORDER BY day) AS finish FROM midnights
     ), bounds AS (
       SELECT min(instant) AS start,max(last_instant) AS finish FROM midnights
-    ), scope AS MATERIALIZED (
+    )`;
+
+export const analyticsScopeSql = `WITH RECURSIVE target AS MATERIALIZED (
+      SELECT p.id,p.origin,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
+    ), ${analyticsCalendarSql}, scope AS MATERIALIZED (
       SELECT e.*,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN target p ON p.id=e.project_id CROSS JOIN bounds b
       WHERE e.received_at>=b.start AND e.received_at<b.finish AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
         AND (e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date

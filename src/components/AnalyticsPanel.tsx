@@ -1,10 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
+import { useAnnotations } from './AnnotationsPanel';
 import './analytics.css';
 
 export type AnalyticsPanelProps = {
   projectId: string;
+  userId: string;
   onUnauthorized: () => void;
 };
 
@@ -34,6 +36,7 @@ type View = {
   error: string | null;
   loading: boolean;
   nonce: number; // lets Apply/Retry refetch an unchanged range
+  denied?: boolean;
 };
 
 const DAY_MS = 86_400_000;
@@ -130,7 +133,10 @@ function DailyChart({ daily }: { daily: Daily[] }) {
   );
 }
 
-export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProps) {
+export function AnalyticsPanel(props: AnalyticsPanelProps) {
+  return <AnalyticsInner key={`${props.userId}:${props.projectId}`} {...props} />;
+}
+function AnalyticsInner({ projectId, userId, onUnauthorized }: AnalyticsPanelProps) {
   const uid = useId();
   const [view, setView] = useState<View>(() => fresh(projectId));
   // Synchronous reset on project switch: never render another project's data.
@@ -153,7 +159,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
     ).then(
       (data) => {
         if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId) return;
-        setView((v) => (v.key === projectId ? { ...v, data, loading: false, error: null } : v));
+        setView((v) => (v.key === projectId ? { ...v, data, loading: false, error: null, denied: false } : v));
       },
       (err: unknown) => {
         if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId) return;
@@ -161,7 +167,7 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
           unauthRef.current();
           return;
         }
-        setView((v) => (v.key === projectId ? { ...v, loading: false, error: errMsg(err) } : v));
+        setView((v) => (v.key === projectId ? { ...v, data: null, loading: false, error: errMsg(err), denied: err instanceof ApiError && [403,404].includes(err.status) } : v));
       },
     );
     return () => ctrl.abort();
@@ -192,6 +198,10 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
   const data = view.data;
   const today = todayUtc();
   const hasData = data !== null && (data.totals.pageViews ?? 0) + (data.totals.customEvents ?? 0) > 0;
+  const annotations = useAnnotations({projectId,userId,range:view.denied?null:{from,to,timeZone:'UTC'},onUnauthorized,onAccessLost:()=>{
+    reqRef.current++;
+    setView(v=>({...v,data:null,loading:false,denied:true,error:'Project access could not be verified. Retry to check current access.'}));
+  }});
 
   return (
     <div className="analytics" aria-busy={busy}>
@@ -320,8 +330,11 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
             </p>
           </section>
 
+        </>
+      )}
           <section className="card analytics-activity">
             <h2>Daily activity (UTC)</h2>
+            {data && <>
             {!hasData && data.coverage.status === 'complete' ? (
               <div className="empty analytics-empty-chart">
                 <p>
@@ -361,8 +374,14 @@ export function AnalyticsPanel({ projectId, onUnauthorized }: AnalyticsPanelProp
                 </details>
               </>
             )}
+            <div className="annotation-dates" tabIndex={0} role="region" aria-label="Notes by day, scroll for more dates">
+              {data.daily.map(d=><div className="annotation-date" key={d.date}><span className="hint">{d.date}</span>{annotations.dayButton(d.date)}</div>)}
+            </div>
+            </>}
+            {annotations.panel}
           </section>
-
+      {data && (
+        <>
           <section className="card analytics-breakdown">
             <h2>Top pages</h2>
             <p className="hint">Up to 20 paths in this date range.</p>

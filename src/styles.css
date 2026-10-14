@@ -71,6 +71,12 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .proj-head h1 { margin-bottom: 6px; }
 .card { min-width: 0; margin-bottom: 20px; padding: var(--space-4); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-panel); }
 .card h2 { margin-bottom: 12px; }
+.annotation-dates { display: flex; gap: var(--space-2); overflow-x: auto; padding-block: var(--space-2); margin-block-end: var(--space-4); }
+.annotation-date { display: grid; gap: var(--space-1); flex-shrink: 0; text-align: center; }
+.annotation-day { min-block-size: var(--control-touch); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.annotations, .annotations .stack { display: grid; gap: var(--space-3); min-width: 0; }
+.annotations p, .annotations h3, .annotations h4 { margin: 0; }
+.annotations > details { border-block-start: 1px solid var(--line); }
 .card > h1 { font-size: var(--text-2xl); }
 .banner, .alert, .notice { margin: 12px 0 18px; padding: 12px 15px; border-radius: var(--radius-md); font-size: var(--text-sm); }
 .banner { background: var(--amber-tint); border: 1px solid var(--color-warning); }
