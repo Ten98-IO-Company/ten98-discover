@@ -2,18 +2,20 @@ import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {canonicalHash,cleanText,parse,revision,sectionKeys,tags,text} from './context-input.ts';
 import {moneyInput,usdMicros} from './providers.ts';
-import type {PromptModel,RenderedInput} from './openrouter-input.ts';
+import type {OpenRouterModel,RenderedInput} from './openrouter-input.ts';
 
 export const suggestionProfiles=[
  {id:'benchmark-mini-v1',model:'openai/gpt-4o-mini',label:'GPT-4o mini — evaluation only'},
  {id:'benchmark-standard-v1',model:'openai/gpt-4o',label:'GPT-4o — evaluation only'},
-] as const satisfies readonly {id:string;model:PromptModel;label:string}[];
+ {id:'benchmark-nano-v1',model:'openai/gpt-4.1-nano',label:'GPT-4.1 nano — evaluation candidate'},
+ {id:'benchmark-4-1-mini-v1',model:'openai/gpt-4.1-mini',label:'GPT-4.1 mini — evaluation candidate'},
+] as const satisfies readonly {id:string;model:OpenRouterModel;label:string}[];
 export const suggestionOutputTokens=2048;
 const unique=<T>(values:T[])=>new Set(values).size===values.length;
 const hex=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/);
 const suggestionTags=z.array(text(80,1)).max(3).pipe(tags);
 export const suggestionQuoteInput=z.object({requestId:z.uuid(),connectionId:z.uuid(),contextRevision:revision,
- profileId:z.enum(['benchmark-mini-v1','benchmark-standard-v1']),benchmark:z.literal(true),fundedCredits:z.literal(true),
+ profileId:z.enum(suggestionProfiles.map(p=>p.id)),benchmark:z.literal(true),fundedCredits:z.literal(true),
  maxSpendUsd:moneyInput.refine(v=>usdMicros(v)>0n),topic:text(100,1),country:text(80,1),language:text(80,1),
  sectionKeys:z.array(z.enum(sectionKeys)).max(4).refine(unique),competitorIds:z.array(z.uuid()).max(10).refine(unique),
  excludedPrompts:z.array(text(2000,1)).max(20)}).strict();
