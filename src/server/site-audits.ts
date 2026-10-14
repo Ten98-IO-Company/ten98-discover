@@ -6,6 +6,7 @@ import {getDatabase} from './db.ts';
 import {normalizePublicHostname} from './domains.ts';
 import {getBoss} from './jobs.ts';
 import {resolveAuditCandidate} from './site-audit-policy.ts';
+import {markSiteAuditReadExpiry} from './site-audit-retention.ts';
 import type {CrawlFacts,CrawlCoverage,CrawlPageInput} from './crawl-analysis.ts';
 
 export const siteAuditQueue='site-audit';
@@ -61,8 +62,10 @@ export async function withAuditLock<T>(target:ActorTarget|InternalTarget,operati
   let role:AuditRole|null=null;
   if(actor){role=(await client.query<{role:AuditRole}>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2',[project.workspaceId,actor.userId])).rows[0]?.role??null;
    if(role===null)throw missing();if(actor.permission==='manage'&&!managed(role))throw new FoundationError(403,'Only a workspace owner or admin can manage audits.');}
-  const run=runId?(await client.query<AuditRunRow>(`SELECT * FROM site_audit_run WHERE id=$1 AND project_id=$2 FOR ${lock}`,[runId,project.id])).rows[0]??null:null;
+  // Reads can latch expiry: lock the run for UPDATE initially, never upgrade SHARE.
+  const run=runId?(await client.query<AuditRunRow>('SELECT * FROM site_audit_run WHERE id=$1 AND project_id=$2 FOR UPDATE',[runId,project.id])).rows[0]??null:null;
   if(runId&&!run){if(internal){await client.query('COMMIT');return null;}throw missing();}
+  if(actor&&run)Object.assign(run,(await markSiteAuditReadExpiry(client,project.id,[run.id]))[0]);
   const result=await operation({client,project,run,role});await client.query('COMMIT');return result;
  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
 }
@@ -114,8 +117,9 @@ export function parseSiteAuditStart(raw:unknown){
 }
 function intentHash(input:ReturnType<typeof parseSiteAuditStart>){return createHash('sha256').update(JSON.stringify({version:1,mode:input.mode,domainId:input.domainId,startPath:input.startPath,maxPages:input.maxPages})).digest('hex');}
 async function priorStart(client:PoolClient,projectId:string,userId:string,input:ReturnType<typeof parseSiteAuditStart>,role:AuditRole|null){
- const prior=(await client.query<AuditRunRow>('SELECT * FROM site_audit_run WHERE project_id=$1 AND user_id=$2 AND request_id=$3',[projectId,userId,input.requestId])).rows[0];
+ const prior=(await client.query<AuditRunRow>('SELECT * FROM site_audit_run WHERE project_id=$1 AND user_id=$2 AND request_id=$3 FOR UPDATE',[projectId,userId,input.requestId])).rows[0];
  if(!prior)return null;if(prior.request_hash!==intentHash(input))throw new FoundationError(409,'This request ID was already used for a different audit. Use a new request ID.');
+ Object.assign(prior,(await markSiteAuditReadExpiry(client,projectId,[prior.id]))[0]);
  return {created:false,role:role!,run:auditRunDto(prior,role)};
 }
 async function selectedOrigin(client:PoolClient,project:AuditProject,domainId:string|null){
@@ -176,7 +180,9 @@ export async function listSiteAudits(projectId:string,userId:string,params:URLSe
  return withAuditLock(actorTarget(projectId,userId),async({client,role})=>{
   if(before&&!(await client.query('SELECT id FROM site_audit_run WHERE id=$1 AND project_id=$2 AND deleted_at IS NULL',[before,projectId])).rowCount)throw new FoundationError(400,'This audit cursor is no longer available.');
   const rows=(await client.query<AuditRunRow>(`SELECT ${runDtoColumns} FROM site_audit_run WHERE project_id=$1 AND deleted_at IS NULL
-   AND ($2::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM site_audit_run WHERE id=$2 AND project_id=$1)) ORDER BY created_at DESC,id DESC LIMIT $3`,[projectId,before,query.limit+1])).rows;
+   AND ($2::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM site_audit_run WHERE id=$2 AND project_id=$1)) ORDER BY created_at DESC,id DESC LIMIT $3 FOR UPDATE`,[projectId,before,query.limit+1])).rows;
+  const expired=new Map((await markSiteAuditReadExpiry(client,projectId,rows.map(row=>row.id))).map(row=>[row.id,row]));
+  for(const row of rows)Object.assign(row,expired.get(row.id));
   return {role:role!,runs:rows.slice(0,query.limit).map(row=>auditRunDto(row,role)),nextCursor:rows.length>query.limit?nextCursor(rows[query.limit-1].id,scope):null};
  });
 }
@@ -205,11 +211,14 @@ export async function listSiteAuditPages(projectId:string,userId:string,runId:st
  });
 }
 export async function getSiteAuditPage(projectId:string,userId:string,runId:string,pageId:string){
- parse(z.uuid(),pageId);return withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
-  const run=requireRun(saved);if(run.data_expired_at)throw new FoundationError(410,'Audit page data expired under this workspace’s retention policy.');
+ parse(z.uuid(),pageId);const result=await withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
+  const run=requireRun(saved);if(run.data_expired_at)return null;
   const page=(await client.query<PageRow>(`SELECT ${pageColumns},CASE WHEN $3::boolean THEN NULL ELSE p.evidence END AS evidence FROM site_audit_page p WHERE p.run_id=$1 AND p.id=$2`,[run.id,pageId,run.raw_expired_at!==null])).rows[0];
   if(!page)throw missing();return {role:role!,run:auditRunDto(run,role),page:pageDto(page,run,true)};
  });
+ // Commit the irreversible read marker before reporting expiry to the caller.
+ if(result===null)throw new FoundationError(410,'Audit page data expired under this workspace’s retention policy.');
+ return result;
 }
 export async function listSiteAuditIssues(projectId:string,userId:string,runId:string,params:URLSearchParams){
  const query=parseAuditListQuery(params,'issues'),scope={projectId,runId,list:'issues',code:query.code,severity:query.severity,pageId:query.pageId},before=cursor(query.cursor,scope);
