@@ -100,10 +100,30 @@ export async function runSiteAuditRetentionChecks() {
   }
   const isStatus = (status: number) => (error: unknown) => (error as { status?: number }).status === status;
 
+  {
+    const p=await project(),r=await receipt(p,{at:new Date(Date.now()-100*86400000)}),ids=await pages(r,1001,false);
+    await pool.query("UPDATE site_audit_run SET robots_body=NULL,config=config||'{\"retainBodyText\":true}'::jsonb WHERE id=$1",[r.id]);
+    await pool.query("UPDATE site_audit_page SET body_capture_state='available',body_extraction_version='static-dom-body-v1',body_text='Synthetic 🐎 body' WHERE run_id=$1",[r.id]);
+    await pool.query("UPDATE site_audit_page SET evidence='{\"title\":\"Also raw\"}',evidence_recorded=true WHERE id=$1",[ids[0]]);
+    const oldPreview=await preview(p);assert.equal(oldPreview.rawPages,1001);assert.equal(oldPreview.rawRuns,1);
+    const page=await getSiteAuditPage(p.id,owner,r.id,ids[0]);assert.equal(page.page.analysis.facts?.wordCount,42);
+    assert.deepEqual(page.page.bodyEvidence,{status:'expired',version:'static-dom-body-v1',utf8Bytes:null,textIncluded:false,text:null});
+    assert.ok((await row(r)).raw_expired_at);assert.equal((await pool.query('SELECT count(*)::int AS n FROM site_audit_page WHERE run_id=$1 AND body_text IS NOT NULL',[r.id])).rows[0].n,1001,'Read latches expiry without unbounded payload cleanup.');
+    await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650,derived_history_days=3650 WHERE id=$1',[p.workspaceId]);
+    const expanded={rawCutoff:beforeAll,derivedCutoff:beforeAll};assert.equal((await preview(p,expanded)).rawPages,1001);
+    assert.equal((await listSiteAuditPages(p.id,owner,r.id,new URLSearchParams('limit=1'))).pages[0].bodyEvidence.status,'expired');
+    const first=await expire(p,expanded);assert.equal(first.clearedAuditEvidence,1000,'Evidence and body on one page count once.');assert.equal(first.pending,true);assert.equal((await row(r)).raw_cleanup_completed_at,null);
+    const last=await expire(p,expanded);assert.equal(last.clearedAuditEvidence,1);assert.equal(last.pending,false);assert.ok((await row(r)).raw_cleanup_completed_at);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM site_audit_page WHERE run_id=$1 AND body_text IS NOT NULL',[r.id])).rows[0].n,0);
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM site_audit_page WHERE run_id=$1 AND body_extraction_version='static-dom-body-v1' AND facts IS NOT NULL",[r.id])).rows[0].n,1001);
+    assert.equal((await getSiteAuditPage(p.id,owner,r.id,ids[0])).page.bodyEvidence.status,'expired');
+    console.log('PASS body-only raw preview and bounded1001 cleanup, row deduplication, retained version/facts and irreversible expiry after policy extension');
+  }
   for (const derived of [false, true]) {
     for (const entry of ['history', 'run', 'pages', 'page', 'issues', 'links', 'replay', 'cancel']) {
       const p = await project(), r = await receipt(p, { at: new Date(Date.now() - (derived ? 400 : 100) * 86400000) }), ids = await pages(r, 2);
       await graph(r, ids[0], ids[1], 1);
+      await pool.query("UPDATE site_audit_page SET body_capture_state='available',body_extraction_version='static-dom-body-v1',body_text='Expired body' WHERE run_id=$1",[r.id]);
       assert.equal((await row(r)).raw_expired_at, null);
       if (entry === 'history') {
         const d = await listSiteAudits(p.id, owner, new URLSearchParams());
@@ -112,11 +132,11 @@ export async function runSiteAuditRetentionChecks() {
         const d = await getSiteAudit(p.id, owner, r.id); assert.equal(d.run.rawEvidenceStatus, 'expired'); assert.equal(d.run.dataStatus, derived ? 'expired' : 'available');
       } else if (entry === 'pages') {
         const d = await listSiteAuditPages(p.id, owner, r.id, new URLSearchParams());
-        assert.equal(d.pages.length, derived ? 0 : 2); assert.equal(d.nextCursor, null);
+        assert.equal(d.pages.length, derived ? 0 : 2); assert.equal(d.nextCursor, null);if(!derived)assert.equal(d.pages[0].bodyEvidence.status,'expired');
         if (!derived) assert.ok(d.pages.every(page => page.rawEvidenceStatus === 'expired' && page.evidence === null && page.analysis.facts?.wordCount === 42));
       } else if (entry === 'page') {
         if (derived) await assert.rejects(getSiteAuditPage(p.id, owner, r.id, ids[0]), isStatus(410));
-        else { const d = await getSiteAuditPage(p.id, owner, r.id, ids[0]); assert.equal(d.page.evidence, null); assert.equal(d.page.analysis.facts?.wordCount, 42); }
+        else { const d = await getSiteAuditPage(p.id, owner, r.id, ids[0]); assert.equal(d.page.evidence, null);assert.equal(d.page.bodyEvidence.text,null);assert.equal(d.page.bodyEvidence.status,'expired'); assert.equal(d.page.analysis.facts?.wordCount, 42); }
       } else if (entry === 'issues') {
         const d = await listSiteAuditIssues(p.id, owner, r.id, new URLSearchParams()); assert.equal(d.issues.length, derived ? 0 : 1); assert.equal(d.matchingRetainedCount, derived ? null : 1);
       } else if (entry === 'links') {
@@ -306,16 +326,17 @@ export async function runSiteAuditRetentionChecks() {
 
   const rollbackProject = await project(), rollbackRun = await receipt(rollbackProject), rollbackPage = (await pages(rollbackRun))[0], neverRecorded = randomUUID();
   await pool.query("INSERT INTO site_audit_page(id,run_id,project_id,resource_kind,url) VALUES($1,$2,$3,'html','https://example.com/unfetched')", [neverRecorded, rollbackRun.id, rollbackProject.id]);
+  await pool.query("UPDATE site_audit_page SET body_capture_state='available',body_extraction_version='static-dom-body-v1',body_text='Atomic body' WHERE id=$1",[rollbackPage]);
   const transaction = await pool.connect();
   try {
     await lock(transaction, rollbackProject); await expireSiteAuditData(transaction, rollbackProject.id, cutoffPair);
     let readResolved = false;
     const reading = getSiteAuditPage(rollbackProject.id, owner, rollbackRun.id, rollbackPage).then(value => { readResolved = true; return value; });
     await delay(35); assert.equal(readResolved, false);
-    await transaction.query('ROLLBACK'); assert.notEqual((await reading).page.evidence, null);
+    await transaction.query('ROLLBACK'); const restored=(await reading).page;assert.notEqual(restored.evidence,null);assert.equal(restored.bodyEvidence.text,'Atomic body');assert.equal((await row(rollbackRun)).raw_expired_at,null);
     await lock(transaction, rollbackProject); await expireSiteAuditData(transaction, rollbackProject.id, cutoffPair);
     const committed = getSiteAuditPage(rollbackProject.id, owner, rollbackRun.id, rollbackPage);
-    await transaction.query('COMMIT'); assert.equal((await committed).page.evidence, null);
+    await transaction.query('COMMIT');const erased=(await committed).page;assert.equal(erased.evidence,null);assert.equal(erased.bodyEvidence.status,'expired');assert.equal(erased.bodyEvidence.text,null);assert.equal((await pool.query('SELECT body_text FROM site_audit_page WHERE id=$1',[rollbackPage])).rows[0].body_text,null);
   } finally { await transaction.query('ROLLBACK').catch(() => {}); transaction.release(); }
   assert.equal((await getSiteAuditPage(rollbackProject.id, owner, rollbackRun.id, neverRecorded)).page.rawEvidenceStatus, 'not_recorded');
   await assert.rejects(getSiteAuditPage(foreign.id, owner, rollbackRun.id, rollbackPage), isStatus(404));
