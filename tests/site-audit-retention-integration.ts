@@ -5,14 +5,21 @@ import type { PoolClient } from 'pg';
 import { getConfig } from '../src/server/config.ts';
 import { closeDatabase, getDatabase } from '../src/server/db.ts';
 import { expireSiteAuditData, previewSiteAuditRetention } from '../src/server/site-audit-retention.ts';
-import { deleteSiteAudit, getSiteAudit, getSiteAuditPage, listSiteAuditIssues, listSiteAuditLinks, listSiteAuditPages, listSiteAudits, startSiteAudit } from '../src/server/site-audits.ts';
+import { cancelSiteAudit, deleteSiteAudit, getSiteAudit, getSiteAuditPage, listSiteAuditIssues, listSiteAuditLinks, listSiteAuditPages, listSiteAudits, startSiteAudit } from '../src/server/site-audits.ts';
 import { getRetention, previewRetention, runRetentionBatch, saveRetention } from '../src/server/retention.ts';
 
 export async function runSiteAuditRetentionChecks() {
   assert.equal(process.env.TEN98_INTEGRATION_TEST, '1');
   for (const value of [getConfig().appUrl, getConfig().databaseUrl]) assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(new URL(value).hostname));
+  const database = new URL(getConfig().databaseUrl), ci = process.env.GITHUB_ACTIONS === 'true' && process.env.TEN98_ISOLATED_CI_DATABASE === '1' && database.pathname === '/ten98_site_retention';
+  assert.equal(database.port, ci ? '5432' : '55501');
+  assert.ok(ci || /^\/ten98_site_retention_[a-f0-9]{12}$/.test(database.pathname));
+  assert.equal(database.search, ''); assert.equal(database.hash, '');
+  for (const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE']) assert.equal(process.env[key], undefined);
   const { pool } = getDatabase(), owner = randomUUID();
-  const cutoff = new Date('2026-01-01T00:00:00.000Z'), beforeAll = new Date('2000-01-01T00:00:00.000Z');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM workspace')).rows[0].n, 0, 'Use a fresh owned fixture.');
+  // Manual cutoff cases remain inside the live 90-day policy; fresh-policy cases below use older receipts.
+  const cutoff = new Date(Date.now() - 30 * 86400000), beforeAll = new Date(Date.now() - 4000 * 86400000);
   const cutoffPair = { rawCutoff: cutoff, derivedCutoff: beforeAll };
   const startIntent = { version: 1, mode: 'static', domainId: null, startPath: '/', maxPages: 50 };
   const hash = createHash('sha256').update(JSON.stringify(startIntent)).digest('hex');
@@ -81,7 +88,125 @@ export async function runSiteAuditRetentionChecks() {
       (SELECT count(*)::int FROM site_audit_page WHERE run_id=$1 AND evidence IS NOT NULL) AS evidence,
       (SELECT count(*)::int FROM site_audit_edge WHERE run_id=$1 AND anchor IS NOT NULL) AS anchors`, [run.id])).rows[0];
   }
+  async function waitingLocks(queryPattern: string, expected: number) {
+    const deadline = Date.now() + 3000;
+    do {
+      const n = (await pool.query(`SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE datname=current_database() AND state='active' AND wait_event_type='Lock' AND query LIKE $1`, [queryPattern])).rows[0].n;
+      if (n === expected) return;
+      await delay(10);
+    } while (Date.now() < deadline);
+    assert.fail(`Expected ${expected} audit requests blocked on the controlled gate.`);
+  }
   const isStatus = (status: number) => (error: unknown) => (error as { status?: number }).status === status;
+
+  for (const derived of [false, true]) {
+    for (const entry of ['history', 'run', 'pages', 'page', 'issues', 'links', 'replay', 'cancel']) {
+      const p = await project(), r = await receipt(p, { at: new Date(Date.now() - (derived ? 400 : 100) * 86400000) }), ids = await pages(r, 2);
+      await graph(r, ids[0], ids[1], 1);
+      assert.equal((await row(r)).raw_expired_at, null);
+      if (entry === 'history') {
+        const d = await listSiteAudits(p.id, owner, new URLSearchParams());
+        assert.equal(d.runs[0].rawEvidenceStatus, 'expired'); assert.equal(d.runs[0].dataStatus, derived ? 'expired' : 'available');
+      } else if (entry === 'run') {
+        const d = await getSiteAudit(p.id, owner, r.id); assert.equal(d.run.rawEvidenceStatus, 'expired'); assert.equal(d.run.dataStatus, derived ? 'expired' : 'available');
+      } else if (entry === 'pages') {
+        const d = await listSiteAuditPages(p.id, owner, r.id, new URLSearchParams());
+        assert.equal(d.pages.length, derived ? 0 : 2); assert.equal(d.nextCursor, null);
+        if (!derived) assert.ok(d.pages.every(page => page.rawEvidenceStatus === 'expired' && page.evidence === null && page.analysis.facts?.wordCount === 42));
+      } else if (entry === 'page') {
+        if (derived) await assert.rejects(getSiteAuditPage(p.id, owner, r.id, ids[0]), isStatus(410));
+        else { const d = await getSiteAuditPage(p.id, owner, r.id, ids[0]); assert.equal(d.page.evidence, null); assert.equal(d.page.analysis.facts?.wordCount, 42); }
+      } else if (entry === 'issues') {
+        const d = await listSiteAuditIssues(p.id, owner, r.id, new URLSearchParams()); assert.equal(d.issues.length, derived ? 0 : 1); assert.equal(d.matchingRetainedCount, derived ? null : 1);
+      } else if (entry === 'links') {
+        const d = await listSiteAuditLinks(p.id, owner, r.id, ids[0], new URLSearchParams()); assert.equal(d.links.length, derived ? 0 : 1); assert.ok(d.links.every(link => link.anchor === null && link.anchorStatus === 'expired'));
+      } else if (entry === 'replay') {
+        const d = await startSiteAudit(p.id, owner, { requestId: r.requestId, domainId: null, startPath: '/', mode: 'static' });
+        assert.equal(d.created, false); assert.equal(d.run.rawEvidenceStatus, 'expired'); assert.equal(d.run.dataStatus, derived ? 'expired' : 'available');
+      } else {
+        const d = await cancelSiteAudit(p.id, owner, r.id, {}); assert.equal(d.run.rawEvidenceStatus, 'expired'); assert.equal(d.run.dataStatus, derived ? 'expired' : 'available');
+      }
+      const marked = await row(r); assert.ok(marked.raw_expired_at); assert.equal(marked.data_expired_at !== null, derived, entry);
+      assert.deepEqual(marked.summary, { findings: 2, findingsComplete: true });
+      assert.equal((await counts(r)).evidence, 2, 'Reads mark visibility without unbounded physical cleanup.');
+      await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650,derived_history_days=3650 WHERE id=$1', [p.workspaceId]);
+      const repeated = await getSiteAudit(p.id, owner, r.id); assert.equal(repeated.run.rawEvidenceStatus, 'expired'); assert.equal(repeated.run.dataStatus, derived ? 'expired' : 'available');
+      if (derived) await assert.rejects(getSiteAuditPage(p.id, owner, r.id, ids[0]), isStatus(410));
+      else assert.equal((await getSiteAuditPage(p.id, owner, r.id, ids[0])).page.evidence, null);
+      const estimate = await preview(p, { rawCutoff: beforeAll, derivedCutoff: beforeAll });
+      assert.equal(estimate.rawPages, 2); assert.equal(estimate.derivedPages, derived ? 2 : 0);
+      const cleaned = await expire(p, { rawCutoff: beforeAll, derivedCutoff: beforeAll }); assert.equal(cleaned.pending, false);
+      assert.equal((await counts(r)).evidence, 0); assert.equal((await counts(r)).pages, derived ? 0 : 2);
+    }
+  }
+  console.log('PASS every audit read/replay masks unswept policy expiry, page410 commits tombstones and extension cannot revive or strand payloads');
+
+  const scoped = await project(), outside = await project(), denied = randomUUID();
+  await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Denied fixture\',$2)', [denied, `${denied}@integration.test`]);
+  const guarded = await receipt(scoped, { at: new Date(Date.now() - 400 * 86400000) }), guardedPage = (await pages(guarded))[0];
+  await assert.rejects(getSiteAudit(scoped.id, denied, guarded.id), isStatus(404));
+  await assert.rejects(getSiteAuditPage(outside.id, owner, guarded.id, guardedPage), isStatus(404));
+  await assert.rejects(listSiteAudits(scoped.id, denied, new URLSearchParams()), isStatus(404));
+  assert.equal((await row(guarded)).raw_expired_at, null); assert.equal((await row(guarded)).data_expired_at, null);
+  const history = await project(), historyRuns: Receipt[] = [];
+  for (let i = 0; i < 4; i++) historyRuns.push(await receipt(history, { at: new Date(Date.now() - (100 + i) * 86400000) }));
+  const firstHistory = await listSiteAudits(history.id, owner, new URLSearchParams('limit=1')); assert.equal(firstHistory.runs.length, 1); assert.ok(firstHistory.nextCursor);
+  assert.deepEqual(await Promise.all(historyRuns.map(async r => (await row(r)).raw_expired_at !== null)), [true, true, false, false]);
+  const activeProject = await project(), unsweptActive = await receipt(activeProject, { status: 'queued', at: new Date(Date.now() - 400 * 86400000) });
+  const activeRead = await getSiteAudit(activeProject.id, owner, unsweptActive.id); assert.equal(activeRead.run.dataStatus, 'available'); assert.equal(activeRead.run.rawEvidenceStatus, 'available');
+  assert.equal((await row(unsweptActive)).raw_expired_at, null);
+  console.log('PASS authorization precedes marking, history touches only requested rows plus sentinel and active work remains untouched');
+
+  const racing = await project(), raceRun = await receipt(racing, { at: new Date(Date.now() - 100 * 86400000) }), racePage = (await pages(raceRun))[0];
+  const sharedGate = await pool.connect(); let concurrentReads: Promise<unknown> | undefined;
+  try {
+    await sharedGate.query('BEGIN'); await sharedGate.query('SELECT id FROM site_audit_run WHERE id=$1 FOR SHARE', [raceRun.id]);
+    let finished = 0;
+    const reads = Promise.all([1, 2].map(async () => { const value = await getSiteAuditPage(racing.id, owner, raceRun.id, racePage); finished++; return value; }));
+    concurrentReads = reads; void reads.catch(() => {});
+    await waitingLocks('SELECT * FROM site_audit_run%FOR UPDATE', 2); assert.equal(finished, 0); await sharedGate.query('COMMIT');
+    const results = await reads; assert.equal(results.length, 2); assert.ok(results.every(d => d.page.evidence === null));
+  } finally { await sharedGate.query('ROLLBACK').catch(() => {}); sharedGate.release(); await concurrentReads?.catch(() => {}); }
+  const waited = await project(), waitedRun = await receipt(waited, { at: new Date(Date.now() - 2 * 86400000) });
+  const policyGate = await pool.connect(); let waitingRead: Promise<unknown> | undefined;
+  try {
+    await lock(policyGate, waited); let finished = false;
+    const reading = getSiteAudit(waited.id, owner, waitedRun.id).then(value => { finished = true; return value; });
+    waitingRead = reading; void reading.catch(() => {});
+    await waitingLocks('SELECT id FROM workspace%FOR SHARE', 1); assert.equal(finished, false);
+    await policyGate.query('UPDATE workspace SET raw_provider_evidence_days=1 WHERE id=$1', [waited.workspaceId]);
+    await policyGate.query('COMMIT'); assert.equal((await reading).run.rawEvidenceStatus, 'expired');
+  } finally { await policyGate.query('ROLLBACK').catch(() => {}); policyGate.release(); await waitingRead?.catch(() => {}); }
+  const dst = await project(), probe = await pool.connect(); let dstBoundary: { days: number; completed: Date; expired: boolean };
+  try {
+    await probe.query('BEGIN'); await probe.query("SET LOCAL TimeZone='America/New_York'");
+    dstBoundary = (await probe.query(`WITH cutoffs AS (
+      SELECT d,transaction_timestamp()-make_interval(days=>d) AS civil,
+        transaction_timestamp()-d*interval '24 hours' AS elapsed FROM generate_series(1,366) d
+      ) SELECT d AS days,elapsed+(civil-elapsed)/2 AS completed,civil<elapsed AS expired
+        FROM cutoffs WHERE civil<>elapsed ORDER BY d LIMIT 1`)).rows[0];
+    assert.ok(dstBoundary, 'Explicit DST session must have a civil/elapsed difference.');
+  } finally { await probe.query('ROLLBACK'); probe.release(); }
+  await pool.query('UPDATE workspace SET raw_provider_evidence_days=$2,derived_history_days=3650 WHERE id=$1', [dst.workspaceId, dstBoundary!.days]);
+  const dstRun = await receipt(dst, { at: dstBoundary!.completed, microseconds: 0 });
+  const connect = pool.connect.bind(pool); let dstSessions = 0;
+  pool.connect = (async (...args: any[]) => {
+    if (args.length) return (connect as any)(...args);
+    const client = await connect(), query = client.query.bind(client), release = client.release.bind(client);
+    client.query = (async (...queryArgs: any[]) => {
+      const result = await (query as any)(...queryArgs);
+      if (String(queryArgs[0]) === 'BEGIN') { await query("SET LOCAL TimeZone='America/New_York'"); dstSessions++; }
+      return result;
+    }) as typeof client.query;
+    client.release = ((...releaseArgs: any[]) => { client.query = query; return (release as any)(...releaseArgs); }) as typeof client.release;
+    return client;
+  }) as typeof pool.connect;
+  try {
+    const d = await getSiteAudit(dst.id, owner, dstRun.id); assert.equal(dstSessions, 1);
+    assert.equal(d.run.rawEvidenceStatus, dstBoundary!.expired ? 'expired' : 'available', 'Read policy uses elapsed 24-hour days in a DST session.');
+  } finally { pool.connect = connect; }
+  console.log('PASS simultaneous readers avoid lock conversion, fresh policy after gate wait and elapsed24h DST-session expiry');
 
   const boundary = await project(), foreign = await project();
   const old = await receipt(boundary), exact = await receipt(boundary, { microseconds: 0 }), newer = await receipt(boundary, { microseconds: 1 }), other = await receipt(foreign);
@@ -140,10 +265,10 @@ export async function runSiteAuditRetentionChecks() {
   const expiredIssues = await listSiteAuditIssues(derivedProject.id, owner, derivedRun.id, new URLSearchParams());
   assert.equal(expiredIssues.run.dataStatus, 'expired'); assert.equal(expiredIssues.matchingRetainedCount, null); assert.deepEqual(expiredIssues.issues, []);
   await assert.rejects(getSiteAuditPage(derivedProject.id, owner, derivedRun.id, derivedPages[0]), isStatus(410));
-  assert.equal((await expire(derivedProject, { rawCutoff: beforeAll, derivedCutoff: beforeAll })).pending, false);
-  assert.equal((await counts(derivedRun)).pages, 2, 'Derived policy extension also stops physical cleanup despite old markers.');
+  const derivedLast = await expire(derivedProject, { rawCutoff: beforeAll, derivedCutoff: beforeAll });
+  assert.equal(derivedLast.pending, false);
+  assert.equal((await counts(derivedRun)).pages, 0, 'Derived tombstones require cleanup even after policy extension.');
   assert.equal((await getSiteAudit(derivedProject.id, owner, derivedRun.id)).run.dataStatus, 'expired');
-  const derivedLast = await expire(derivedProject, { rawCutoff: beforeAll, derivedCutoff: cutoff });
   assert.equal(derivedLast.removedAuditPages, 2); assert.equal(derivedLast.expiredAuditRuns, 0); assert.equal(derivedLast.pending, false);
   assert.ok((await row(derivedRun)).raw_cleanup_completed_at); assert.ok((await row(derivedRun)).data_cleanup_completed_at);
   assert.deepEqual((await row(derivedRun)).summary, { findings: 2, findingsComplete: true });
@@ -158,7 +283,7 @@ export async function runSiteAuditRetentionChecks() {
   const current = await getRetention(extensionProject.workspaceId, owner);
   const proposal = await previewRetention(extensionProject.workspaceId, owner, { revision: current.revision,
     settings: { ...current.settings, rawProviderEvidenceDays: 3650, derivedHistoryDays: 3650 } });
-  assert.deepEqual(proposal.auditEstimate, { status: 'available', rawRuns: 0, rawPages: 0, rawEdges: 0, derivedRuns: 0, derivedPages: 0, atLeast: false });
+  assert.deepEqual(proposal.auditEstimate, { status: 'available', rawRuns: 1, rawPages: 1, rawEdges: 0, derivedRuns: 0, derivedPages: 0, atLeast: false });
   const gate = await pool.connect();
   try {
     await lock(gate, extensionProject);
@@ -169,15 +294,15 @@ export async function runSiteAuditRetentionChecks() {
     await gate.query('COMMIT'); await save;
   } finally { await gate.query('ROLLBACK').catch(() => {}); gate.release(); }
   assert.equal((await runRetentionBatch(extensionProject.id))?.complete, true);
-  assert.equal((await counts(extensionRun)).evidence, 1, 'Old markers must not override a newly extended cutoff.');
+  assert.equal((await counts(extensionRun)).evidence, 0, 'Irreversible raw expiry must finish cleanup after extension.');
   assert.equal((await getSiteAudit(extensionProject.id, owner, extensionRun.id)).run.rawEvidenceStatus, 'expired');
   await assert.rejects(saveRetention(extensionProject.workspaceId, owner, { previewToken: proposal.previewToken }), isStatus(409));
   const shortened = await getRetention(extensionProject.workspaceId, owner);
   const shortPreview = await previewRetention(extensionProject.workspaceId, owner, { revision: shortened.revision, settings: { ...shortened.settings, rawProviderEvidenceDays: 1 } });
-  assert.equal(shortPreview.auditEstimate.rawPages, 1);
+  assert.equal(shortPreview.auditEstimate.rawPages, 0);
   await saveRetention(extensionProject.workspaceId, owner, { previewToken: shortPreview.previewToken });
   assert.equal((await runRetentionBatch(extensionProject.id))?.complete, true); assert.equal((await counts(extensionRun)).evidence, 0);
-  console.log('PASS audit fresh policy extension, gated save, stale preview and later eligible resumption');
+  console.log('PASS audit policy extension, gated save, stale preview and irreversible cleanup completion');
 
   const rollbackProject = await project(), rollbackRun = await receipt(rollbackProject), rollbackPage = (await pages(rollbackRun))[0], neverRecorded = randomUUID();
   await pool.query("INSERT INTO site_audit_page(id,run_id,project_id,resource_kind,url) VALUES($1,$2,$3,'html','https://example.com/unfetched')", [neverRecorded, rollbackRun.id, rollbackProject.id]);

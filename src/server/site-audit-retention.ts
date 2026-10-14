@@ -2,10 +2,32 @@ import type { PoolClient } from 'pg';
 
 type Cutoffs = { rawCutoff: Date; derivedCutoff: Date };
 const terminal = "r.completed_at IS NOT NULL AND r.status IN('completed','partial','failed','cancelled')";
+const rawDue = '(r.deleted_at IS NOT NULL OR r.raw_expired_at IS NOT NULL OR r.data_expired_at IS NOT NULL OR r.completed_at<$2 OR r.completed_at<$3)';
+const derivedDue = '(r.deleted_at IS NOT NULL OR r.data_expired_at IS NOT NULL OR r.completed_at<$3)';
 const eligible = `(${terminal}) AND (
-  (r.deleted_at IS NOT NULL AND (r.raw_cleanup_completed_at IS NULL OR r.data_cleanup_completed_at IS NULL))
-  OR (r.completed_at<$2 AND r.raw_cleanup_completed_at IS NULL)
-  OR (r.completed_at<$3 AND r.data_cleanup_completed_at IS NULL))`;
+  (${rawDue} AND r.raw_cleanup_completed_at IS NULL)
+  OR (${derivedDue} AND r.data_cleanup_completed_at IS NULL))`;
+
+/** Caller holds authorized W/P gates and UPDATE locks on these bounded run IDs. */
+export async function markSiteAuditReadExpiry(client: PoolClient, projectId: string, ids: string[]) {
+  if (!ids.length) return [];
+  if (ids.length > 101) throw new Error('Audit read selection exceeds its bound.');
+  // Fresh DB clock after lock waits; retain native microseconds and elapsed days.
+  return (await client.query<{ id: string; raw_expired_at: Date | null; data_expired_at: Date | null }>(`
+    WITH policy AS MATERIALIZED (
+      SELECT clock_timestamp() AS at,w.raw_provider_evidence_days AS raw_days,w.derived_history_days AS derived_days
+      FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.id=$1
+    ) UPDATE site_audit_run r SET
+      raw_expired_at=COALESCE(r.raw_expired_at,policy.at),
+      data_expired_at=CASE WHEN r.data_expired_at IS NOT NULL OR r.completed_at<policy.at-policy.derived_days*interval '24 hours'
+        THEN COALESCE(r.data_expired_at,policy.at) ELSE NULL END
+    FROM policy WHERE r.project_id=$1 AND r.id=ANY($2::uuid[]) AND ${terminal} AND r.deleted_at IS NULL
+      AND ((r.raw_expired_at IS NULL AND (r.data_expired_at IS NOT NULL
+        OR r.completed_at<policy.at-policy.raw_days*interval '24 hours'
+        OR r.completed_at<policy.at-policy.derived_days*interval '24 hours'))
+        OR (r.data_expired_at IS NULL AND r.completed_at<policy.at-policy.derived_days*interval '24 hours'))
+    RETURNING r.id,r.raw_expired_at,r.data_expired_at`, [projectId, ids])).rows;
+}
 
 // Caller holds workspace -> project locks and supplies freshly read policy cutoffs.
 // ponytail: one run and at most 1,000 rows per child category per tick. Increase
@@ -15,7 +37,7 @@ export async function expireSiteAuditData(client: PoolClient, projectId: string,
   const result = { expiredAuditRuns: 0, removedAuditPages: 0, removedAuditEdges: 0,
     removedAuditIssues: 0, clearedAuditEvidence: 0, pending: false };
   const selected = (await client.query<{ id: string; derived: boolean; newly_expired: boolean; robots_recorded: boolean }>(`
-    SELECT r.id,(r.deleted_at IS NOT NULL OR r.completed_at<$3) AS derived,
+    SELECT r.id,${derivedDue} AS derived,
       r.data_expired_at IS NULL AS newly_expired,r.robots_body IS NOT NULL AS robots_recorded
     FROM site_audit_run r WHERE r.project_id=$1 AND ${eligible}
     ORDER BY r.completed_at,r.id LIMIT 1 FOR UPDATE`, values)).rows[0];
@@ -83,9 +105,8 @@ export async function previewSiteAuditRetention(client: PoolClient, workspaceId:
   // Limits belong inside each aggregate: callers need a bounded lower bound,
   // never a count(*) over all historical child rows or an invented exact zero.
   const values = [workspaceId, cutoffs.rawCutoff, cutoffs.derivedCutoff];
-  const raw = `r.workspace_id=$1 AND (${terminal}) AND r.raw_cleanup_completed_at IS NULL AND
-    (r.deleted_at IS NOT NULL OR r.completed_at<$2 OR r.completed_at<$3)`;
-  const derived = `r.workspace_id=$1 AND (${terminal}) AND r.data_cleanup_completed_at IS NULL AND (r.deleted_at IS NOT NULL OR r.completed_at<$3)`;
+  const raw = `r.workspace_id=$1 AND (${terminal}) AND r.raw_cleanup_completed_at IS NULL AND ${rawDue}`;
+  const derived = `r.workspace_id=$1 AND (${terminal}) AND r.data_cleanup_completed_at IS NULL AND ${derivedDue}`;
   const counts = (await client.query<{ raw_runs: number; raw_pages: number; raw_edges: number; derived_runs: number; derived_pages: number }>(`
     SELECT
       (SELECT count(*)::integer FROM (SELECT r.id FROM site_audit_run r WHERE ${raw}
