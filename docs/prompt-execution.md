@@ -2,6 +2,8 @@
 
 This internal increment implements explicit paid requests for one or both of `openai/gpt-4o-mini` and `openai/gpt-4o` through the standard OpenAI route on OpenRouter. It does not complete V1 AI monitoring. The manual execution UI is implemented; scheduling, the seven-day result cache, other provider/model routes, visibility analysis and live paid acceptance remain pending. Saving or enabling a library prompt does not start a request.
 
+Prompt suggestions separately admit `benchmark-nano-v1` (`openai/gpt-4.1-nano`) and `benchmark-4-1-mini-v1` (`openai/gpt-4.1-mini`) as evaluation candidates. The existing `benchmark-mini-v1` and `benchmark-standard-v1` retain their original model identities. Changing the selection requires a fresh immutable quote; no candidate is a quality/cost recommendation, and economy/balanced defaults remain unavailable. These choices do not broaden monitored comparison admission or add a subscription/feature tier. Current exact endpoint capability and pricing checks still apply; live candidate compatibility and quality remain unverified.
+
 The approved [execution UI contract](https://wiki.ten98.io/s/ten98-docs/p/prompt-execution-ui-VotwUEEttQ) describes the implemented manual flow, current DTOs, immutable authored previews and current-role cancellation metadata. Its metadata preparation and existing prompt-library mobile checks are tested, and the execution UI has synthetic production-browser evidence in [research UI](https://wiki.ten98.io/s/ten98-docs/p/research-ui-QI3jrak1kA); live provider acceptance and full V1 coverage remain open.
 
 ## Authorization and API

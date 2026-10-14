@@ -4,6 +4,7 @@ import {FoundationError} from './auth.ts';
 
 export const promptModels=['openai/gpt-4o-mini','openai/gpt-4o'] as const;
 export type PromptModel=typeof promptModels[number];
+export type OpenRouterModel=PromptModel|'openai/gpt-4.1-nano'|'openai/gpt-4.1-mini';
 export const executionInput=z.object({connectionId:z.uuid(),promptId:z.uuid(),versionId:z.uuid(),
   systemText:z.string().max(4000).refine(v=>toUSVString(v)===v&&!/[\x00\x0b\x0c]/.test(v)),
   models:z.array(z.enum(promptModels)).min(1).max(2).refine(v=>new Set(v).size===v.length),
@@ -47,7 +48,7 @@ export function parseOpenRouterJson(text:string):any{
   });
 }
 export function exactJsonNumber(value:string){return (JSON as NativeJson).rawJSON(decimalText(value));}
-export type RouteSnapshot={model:PromptModel;tag:'openai';providerName:'OpenAI';promptCapacity:number;completionCapacity:number;promptPrice:string;completionPrice:string;requestPrice:string;estimateMicros:string};
+export type RouteSnapshot={model:OpenRouterModel;tag:'openai';providerName:'OpenAI';promptCapacity:number;completionCapacity:number;promptPrice:string;completionPrice:string;requestPrice:string;estimateMicros:string};
 export function executionBody(messages:RenderedInput,route:RouteSnapshot,maxCompletionTokens:number,runId:string,actor:string){
   return {model:route.model,messages,max_completion_tokens:maxCompletionTokens,stream:false,service_tier:'default',
     provider:{only:[route.tag],order:[route.tag],allow_fallbacks:false,require_parameters:true,
