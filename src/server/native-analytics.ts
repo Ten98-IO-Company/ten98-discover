@@ -100,17 +100,17 @@ export async function nativeCollectionPolicy(client:PoolClient,request:Request,s
   const reason=excluded?'collection_disabled' as const:input.consent?.analytics!==true||input.consent.epoch!==trackingConsentEpoch(project.analytics_epoch,project.destination_epoch)?'consent_required' as const:null;
   return {project,userAgent,reason};
 }
-async function writeObservation(client: PoolClient, project: Project, input: Observation, source: 'browser' | 'api', identity: ReturnType<typeof analyticsIdentity>, now: Date|string) {
+async function writeObservation(client: PoolClient, project: Project, input: Observation, source: 'browser' | 'api', identity: ReturnType<typeof analyticsIdentity>, now: Date|string, identityEvidence:1|null) {
   const settings = publicAnalyticsSettings(project.analytics_settings), properties = normalizeProperties(input.properties === undefined ? {} : input.properties), dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
   // Distinct identifiers participate only in keyed identity derivation, never raw storage.
   delete dimensions.distinctId;
   if (!settings.captureReferrer) delete dimensions.referrerHost;
   if (!settings.captureCampaigns) delete dimensions.campaign;
   if (!settings.captureScreen) { delete dimensions.screenWidth; delete dimensions.screenHeight; }
-  const inserted = await client.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,properties,dimensions,source,metric_version)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(project_id,id) DO NOTHING RETURNING id`,
+  const inserted = await client.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,properties,dimensions,source,metric_version,identity_link_evidence_version)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(project_id,id) DO NOTHING RETURNING id`,
     [input.eventId, project.id, input.name, eventPath(input.url), now, identity?.visitor ?? null, identity?.visit ?? null,
-      JSON.stringify(properties), JSON.stringify({ ...dimensions, origin: new URL(input.url).origin }), source, identity?.metricVersion ?? 'observations-v2']);
+      JSON.stringify(properties), JSON.stringify({ ...dimensions, origin: new URL(input.url).origin }), source, identity?.metricVersion ?? 'observations-v2',identityEvidence]);
   if (inserted.rowCount && identity) await client.query(`INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,$3,$3)
     ON CONFLICT(project_id,id) DO UPDATE SET first_seen_at=LEAST(analytics_visitor.first_seen_at,excluded.first_seen_at),last_seen_at=GREATEST(analytics_visitor.last_seen_at,excluded.last_seen_at)`, [project.id, identity.visitor, now]);
   return { accepted: true, duplicate: !inserted.rowCount, ...(inserted.rowCount && identity ? { context: identity.context } : {}) };
@@ -134,9 +134,12 @@ export async function collectNative(request: Request, siteKey: string, input: Ob
     // Date is used only for monthly key/context derivation, never the fence.
     const now:Date|string=dimensions.distinctId===undefined?new Date():(await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at`)).rows[0].accepted_at;
     const identity = analyticsIdentity({ projectId: project.id, ip: resolveAnalyticsNetwork(request, peerAddress), userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now:new Date(now) });
-    const response = await writeObservation(client, project, input, 'browser', identity, now);
-    if(!response.duplicate&&identity&&dimensions.distinctId!==undefined&&project.analytics_settings.linkIdentities===true)
-      await recordIdentityLink(client,project.id,identity.visitor,dimensions.distinctId,now as string);
+    const eligible=identity!==null&&dimensions.distinctId!==undefined&&project.analytics_settings.linkIdentities===true;
+    const response = await writeObservation(client, project, input, 'browser', identity, now,eligible?1:null);
+    if(!response.duplicate&&eligible){
+      await recordIdentityLink(client,project.id,identity!.visitor,dimensions.distinctId!,now as string);
+      await client.query('UPDATE project SET identity_event_evidence_started_at=$2 WHERE id=$1 AND identity_event_evidence_started_at IS NULL',[project.id,now]);
+    }
     await client.query('COMMIT'); return response;
   } catch (error) { await client.query('ROLLBACK').catch(() => {});
     if(['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Collection took too long. The outcome may be unknown.');
@@ -152,5 +155,5 @@ export async function insertApiObservation(client: PoolClient, projectId: string
   if (!project || !await collectionOriginAllowed(client, new URL(input.url).origin, project)) throw new FoundationError(400, 'Event URL must use an allowed project origin.');
   const settings = publicAnalyticsSettings(project.analytics_settings);
   if (!settings.enabled || analyticsPathExcluded(new URL(input.url).pathname, settings.excludedPaths)) return { accepted: false, reason: 'collection_disabled' };
-  return writeObservation(client, project, input, 'api', null, new Date());
+  return writeObservation(client, project, input, 'api', null, new Date(),null);
 }
