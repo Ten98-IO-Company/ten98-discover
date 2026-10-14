@@ -6,6 +6,7 @@ import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { expireGoogleImportPages } from './google-retention.ts';
 import { expirePromptResults } from './prompt-execution-retention.ts';
+import {expireAiSuggestions} from './ai-suggestion-worker.ts';
 import { expireDomainRedirectEvidence } from './domain-redirects.ts';
 import { expireKeywordResults } from './keyword-retention.ts';
 import { expireRankData, previewRankRetention } from './rank-retention.ts';
@@ -196,16 +197,18 @@ export async function runRetentionBatch(projectId?: string) {
     const imported = await expireGoogleImportPages(client, selected!, state.derived_cutoff);
     const keywords = await expireKeywordResults(client, selected!, state.derived_cutoff);
     const prompts=await expirePromptResults(client,selected!,state.raw_evidence_cutoff);
+    const suggestions=await expireAiSuggestions(client,selected!,state.raw_evidence_cutoff);
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
     const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
     const ranks = await expireRankData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
-    const complete = !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
+    const complete = !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
     return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
+      expiredSuggestionResults:suggestions.expiredSuggestionResults,expiredSuggestionInputs:suggestions.expiredSuggestionInputs,
       expiredRankRuns: ranks.expiredRankRuns, expiredRankTasks: ranks.expiredRankTasks, clearedRankEvidence: ranks.clearedRankEvidence, expiredRankKeywordMetrics: ranks.expiredRankKeywordMetrics,
       expiredAuditRuns: audits.expiredAuditRuns, removedAuditPages: audits.removedAuditPages, removedAuditEdges: audits.removedAuditEdges,
       removedAuditIssues: audits.removedAuditIssues, clearedAuditEvidence: audits.clearedAuditEvidence, complete };

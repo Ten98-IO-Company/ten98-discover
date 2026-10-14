@@ -2,6 +2,10 @@
 
 The application includes the attributed Elmo adaptations recorded below. Statements describing an empty application import ledger refer to the earlier planning/foundation stage.
 
+## Search-query analysis adaptation
+
+The bounded helper in `src/server/ai-search-evidence.ts`, specified by `docs/ai-search-evidence.md`, adapts the ASCII tokenizer, 99-word stopword set and word-frequency/change behavior in [`apps/web/src/lib/fanout-analysis.ts`](https://github.com/elmohq/elmo/blob/3c673d0253d01ae030fa41519f62ad7e54f2281b/apps/web/src/lib/fanout-analysis.ts), Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`, for `src/server/ai-search-evidence.ts`. The complete MIT notice below applies (Copyright 2026 Blue Whale Software, LLC). Native query derivation uses immutable prompt text, typed unavailable evidence and explicit eligible-answer denominators. The pure helper is implemented and independently tested; paid capture, persistence, reporting and live-provider acceptance remain separate work.
+
 ## Citation classification adaptation
 
 The following files reuse Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`, covered by the complete MIT notice below (Copyright 2026 Blue Whale Software, LLC):
