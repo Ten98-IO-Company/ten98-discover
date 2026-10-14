@@ -77,6 +77,10 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .annotations, .annotations .stack { display: grid; gap: var(--space-3); min-width: 0; }
 .annotations p, .annotations h3, .annotations h4 { margin: 0; }
 .annotations > details { border-block-start: 1px solid var(--line); }
+.cohort-controls { min-width: 0; overflow-wrap: anywhere; }
+.cohort-controls input:not([type='checkbox']), .cohort-controls select { width: 100%; min-width: 0; }
+.cohort-field { flex: 1 1 220px; min-width: 0; }
+.cohort-check { min-height: var(--control-touch); }
 .card > h1 { font-size: var(--text-2xl); }
 .banner, .alert, .notice { margin: 12px 0 18px; padding: 12px 15px; border-radius: var(--radius-md); font-size: var(--text-sm); }
 .banner { background: var(--amber-tint); border: 1px solid var(--color-warning); }
