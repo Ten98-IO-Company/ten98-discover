@@ -136,15 +136,17 @@ export async function cancelAiSuggestion(projectId:string,userId:string,id:strin
 }
 export async function acceptAiSuggestions(projectId:string,userId:string,id:string,raw:unknown){
  parse(z.uuid(),id);const input=parse(suggestionAcceptInput,raw);
- if(new Set(input.selections.map(s=>suggestionTextKey(s.text))).size!==input.selections.length)throw new FoundationError(400,'Select distinct prompt drafts.');
  return withContentProject(projectId,userId,true,async(client,p)=>{
   const receipt=await contentReceipt(client,p.id,input.requestId,'ai-suggestion.accept',{userId,id,input}),row=await runRow(client,p.id,id);
   let accepted=receipt.result?.accepted as {candidateId:string;promptId:string;versionId:string}[]|undefined;
   if(!receipt.replayed){
+   if(new Set(input.selections.map(s=>suggestionTextKey(s.text))).size!==input.selections.length)throw new FoundationError(400,'Select distinct prompt drafts.');
    if(row.input_expired||row.result_expired||!row.proposal)throw new FoundationError(409,'The retained proposal is unavailable.');
    const snapshot=row.snapshot as SuggestionSnapshot,proposal=row.proposal as SuggestionProposal,profile=await contentProfile(client,p),library=await topicLibrary(client,p.id,snapshot.topic);
    if(row.proposal_revision!==input.expectedProposalRevision||row.proposal_revision>=2147483646||profile.revision!==input.expectedContextRevision||library.hash!==input.expectedTopicLibraryHash)throw new FoundationError(409,'The proposal or project context changed. Review current context before saving.');
    if(input.selections.some(s=>!proposal.prompts.some(c=>c.id===s.candidateId)||(row.accepted_candidate_ids as string[]).includes(s.candidateId)))throw new FoundationError(409,'A selected draft is unavailable or already saved.');
+   const excluded=new Set([...library.rows.map(p=>p.text),...snapshot.excludedPrompts].map(suggestionTextKey));
+   if(input.selections.some(s=>excluded.has(suggestionTextKey(s.text))))throw new FoundationError(409,'A selected draft matches a saved or excluded prompt. Edit it before saving.');
    accepted=[];for(const selected of input.selections){const saved=await insertPromptInTransaction(client,p.id,userId,{text:selected.text,tags:selected.tags,topic:snapshot.topic,enabled:false});accepted.push({candidateId:selected.candidateId,promptId:saved.id,versionId:saved.versionId});}
    await client.query('UPDATE ai_suggestion_run SET accepted_candidate_ids=$2,proposal_revision=proposal_revision+1 WHERE id=$1',[id,JSON.stringify([...row.accepted_candidate_ids,...accepted.map(a=>a.candidateId)])]);await receipt.save({id,accepted});
   }

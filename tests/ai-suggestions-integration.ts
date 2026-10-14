@@ -7,7 +7,8 @@ import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
 import {getAuth} from '../src/server/auth.ts';
 import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
 import {updateProjectContext} from '../src/server/project-context.ts';
-import {createPrompts,listPrompts} from '../src/server/prompts.ts';
+import {canonicalHash} from '../src/server/context-input.ts';
+import {createPrompts,listPrompts,updatePrompt} from '../src/server/prompts.ts';
 import {quoteAiSuggestions,startAiSuggestions,getAiSuggestion,getAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from '../src/server/ai-suggestions.ts';
 import {executeAiSuggestion,reconcileAiSuggestion,reconcileAiSuggestionJobs} from '../src/server/ai-suggestion-worker.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
@@ -108,6 +109,45 @@ export async function runSuggestionChecks(){
   const again=acceptance(await detail(cas,casRun.id));again.selections=again.selections.slice(0,1);await assert.rejects(acceptAiSuggestions(cas.project,owner,casRun.id,again),{status:409});
   console.log('PASS current-context CAS review, exact global duplicate rollback and one acceptance per candidate');
 
+  const exclusions=await fixture(),excludedQuote=(await quoteAiSuggestions(exclusions.project,owner,{...exclusions.input,excludedPrompts:['Excluded grinder guide?']},send)).quote;
+  const exclusionsRun=(await startAiSuggestions(exclusions.project,owner,{requestId:randomUUID(),quoteId:excludedQuote.id})).run;await executeAiSuggestion(exclusionsRun.id,send);
+  const beforeLibrary=acceptance(await detail(exclusions,exclusionsRun.id));
+  const library=(await createPrompts(exclusions.project,owner,{requestId:randomUUID(),prompts:[{text:'Initial office question',topic:'Coffee'}]})).items[0];
+  await updatePrompt(exclusions.project,owner,library.id,{requestId:randomUUID(),revision:library.revision,text:'Which grinder fits an office?'});
+  await assert.rejects(acceptAiSuggestions(exclusions.project,owner,exclusionsRun.id,beforeLibrary),{status:409});
+  const review=acceptance(await detail(exclusions,exclusionsRun.id)),paidAtReview=paid;
+  const acceptanceState=async()=>(await pool.query(`SELECT r.accepted_candidate_ids,r.proposal_revision,
+   (SELECT count(*)::int FROM project_prompt WHERE project_id=$2) AS prompts,
+   (SELECT count(*)::int FROM prompt_text_version WHERE project_id=$2) AS versions,
+   (SELECT count(*)::int FROM project_content_request WHERE project_id=$2) AS receipts FROM ai_suggestion_run r WHERE r.id=$1`,[exclusionsRun.id,exclusions.project])).rows[0];
+  const untouched=await acceptanceState();
+  for(const [texts,status] of [
+   [['Unique clean guide?','Ｗｈｉｃｈ　ｇｒｉｎｄｅｒ　ｆｉｔｓ　ａｎ　ｏｆｆｉｃｅ？'],409],
+   [['Unique clean guide?','Ｅｘｃｌｕｄｅｄ　ｇｒｉｎｄｅｒ　ｇｕｉｄｅ？'],409],
+   [['Office grinder?','Ｏｆｆｉｃｅ　ｇｒｉｎｄｅｒ？'],400],
+  ] as const){
+   const save={...review,requestId:randomUUID(),selections:review.selections.map((s,i)=>({...s,text:texts[i]}))};
+   await assert.rejects(acceptAiSuggestions(exclusions.project,owner,exclusionsRun.id,save),{status});assert.deepEqual(await acceptanceState(),untouched,'Mixed selections must not insert prompts, versions, receipts or acceptance state');
+  }
+  const preservedText='Ｐｒｅｍｉｕｍ\t  grinder?',valid={...review,requestId:randomUUID(),selections:review.selections.map((s,i)=>({...s,text:i?preservedText:'Unique clean guide?'}))};
+  await acceptAiSuggestions(exclusions.project,owner,exclusionsRun.id,valid);const savedEdits=await listPrompts(exclusions.project,owner,new URLSearchParams());
+  assert.ok(savedEdits.items.some(p=>p.text===preservedText&&!p.enabled));assert.equal(savedEdits.items.length,3);assert.equal(paid,paidAtReview);
+  console.log('PASS edited exclusions use fresh topic text and captured exclusions, reject mixed saves atomically and preserve authored Unicode');
+
+  const legacy=await fixture(),legacyRun=await start(legacy);await executeAiSuggestion(legacyRun.id,send);const legacySave=acceptance(await detail(legacy,legacyRun.id));
+  legacySave.selections[0].text='Office grinder?';legacySave.selections[1].text='Ｏｆｆｉｃｅ　ｇｒｉｎｄｅｒ？';
+  assert.equal(new Set(legacySave.selections.map(s=>s.text.trim().replace(/\s+/gu,' ').toLowerCase())).size,2,'This completed receipt was admissible under the prior comparison policy');
+  const legacyPrompts=(await createPrompts(legacy.project,owner,{requestId:randomUUID(),prompts:legacySave.selections.map(s=>({text:s.text,topic:'Coffee',tags:s.tags,enabled:false}))})).items;
+  const legacyAccepted=legacySave.selections.map((s,i)=>({candidateId:s.candidateId,promptId:legacyPrompts[i].id,versionId:legacyPrompts[i].currentVersionId}));
+  await pool.query('INSERT INTO project_content_request(project_id,request_id,operation,input_hash,result) VALUES($1,$2,$3,$4,$5)',[legacy.project,legacySave.requestId,'ai-suggestion.accept',canonicalHash({userId:owner,id:legacyRun.id,input:legacySave}),JSON.stringify({id:legacyRun.id,accepted:legacyAccepted})]);
+  await pool.query('UPDATE ai_suggestion_run SET accepted_candidate_ids=$2,proposal_revision=proposal_revision+1 WHERE id=$1',[legacyRun.id,JSON.stringify(legacyAccepted.map(s=>s.candidateId))]);
+  await updateProjectContext(legacy.project,owner,{requestId:randomUUID(),revision:1,updates:[{kind:'profile',name:'Later authored context'}]});
+  const legacyPaid=paid,legacyState=(await pool.query('SELECT count(*)::int AS prompts FROM project_prompt WHERE project_id=$1',[legacy.project])).rows[0];
+  const replay=await acceptAiSuggestions(legacy.project,owner,legacyRun.id,legacySave);assert.equal(replay.replayed,true);assert.deepEqual(replay.acknowledgement.accepted,legacyAccepted);
+  assert.deepEqual((await pool.query('SELECT count(*)::int AS prompts FROM project_prompt WHERE project_id=$1',[legacy.project])).rows[0],legacyState);assert.equal(paid,legacyPaid);
+  await assert.rejects(acceptAiSuggestions(legacy.project,viewer,legacyRun.id,legacySave),{status:404});await assert.rejects(acceptAiSuggestions(legacy.project,editor,legacyRun.id,legacySave),{status:409});
+  await assert.rejects(acceptAiSuggestions(legacy.project,owner,legacyRun.id,{...legacySave,selections:legacySave.selections.map(s=>({...s,text:s.text+' changed'}))}),{status:409});
+  console.log('PASS pre-policy Unicode acceptance receipts replay under fresh authorization without regeneration or reinsertion');
   const beforeCandidates=paid;
   for(const profile of suggestionProfiles.slice(2)){
    const f=await fixture(),oldQuote=await quote(f),candidateInput={...f.input,requestId:randomUUID(),profileId:profile.id};

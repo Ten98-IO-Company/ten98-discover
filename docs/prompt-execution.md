@@ -43,6 +43,8 @@ Generated answers/citations and copied execution input are **raw provider eviden
 
 ## Validation and remaining gate
 
+AI suggestion comparisons use NFKC Unicode normalization, whitespace collapse and lowercase only for duplicate/exclusion checks. Fresh draft acceptance checks all edited selections against the current bounded topic library and the quote's captured exclusions before inserting any prompt; authored text and project-wide exact-text uniqueness remain unchanged. Completed acceptance receipts replay under fresh project authorization without rerunning those checks against a changed library or a newer comparison policy.
+
 Run `node --test tests/prompt-execution.test.ts` for exact arithmetic, public-catalog shape, finality, safe output, fixed transport and receipt matching. On an isolated migrated local database with synthetic credentials, run `TEN98_INTEGRATION_TEST=1 node --env-file=.env tests/prompt-execution-integration.ts`. Its default network path is blocked until workers stop, including failure cleanup. It checks atomic reservations and queue rollback, live revocation, idempotency, immutable versions, crash/reconciliation, retention and real pg-boss execution using a fake transport.
 
 No live paid request or authenticated provider account test is part of this increment. Real response-model compatibility and presence of reconciliation context fields still require an explicitly bounded paid acceptance allowance. Unknown shapes fail closed; these synthetic checks are not live-provider validation.
