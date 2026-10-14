@@ -8,6 +8,8 @@ import { claimInstallation, FoundationError, getAuth } from './auth.ts';
 import { enqueueProbe, reconcileProbes } from './jobs.ts';
 import { eventInput, InputError, projectInput, readJson } from './validation.ts';
 import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
+import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
+import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
@@ -149,12 +151,17 @@ export async function handleApi(request: Request): Promise<Response> {
         await limit(`tracking-config:${input.siteKey}`, 600);
         return json(await getPublicDestinations(input.siteKey, input.environment, origin), 200, cors);
       }
-      const event = eventInput.parse(await readJson(request, 16384));
+      const raw = await readJson(request, identifyBodyLimit);
+      const event = (raw as {type?:unknown}|null)?.type==='identify' ? parseIdentifyInput(raw) : eventInput.parse(raw);
       const { rows } = await getDatabase().pool.query('SELECT id,origin FROM project WHERE public_key=$1', [event.siteKey]);
       const project = rows[0];
       if (!project || new URL(event.url).origin !== origin || !await collectionOriginAllowed(getDatabase().pool, origin, project)) throw new FoundationError(403, 'Event does not match an allowed website origin.');
       await limit(`collector:${project.id}`, 3000);
       // Origin and a site key are public routing values, never visitor identity proof.
+      if ('type' in event) {
+        try { return json(await collectIdentify(request,event,extractAnalyticsPeer(request)),202,cors); }
+        catch(error) { if(error instanceof IdentifyRequestExpired)return json({error:error.message,reason:'request_expired'},400,cors);throw error; }
+      }
       return json(await collectNative(request, event.siteKey, event, extractAnalyticsPeer(request)), 202, cors);
     }
     // Meta verifies provider-signed callbacks itself; its browser writes still require Origin and a session.

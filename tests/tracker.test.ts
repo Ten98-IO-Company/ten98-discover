@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID, webcrypto } from 'node:crypto';
 import vm from 'node:vm';
+import { parseIdentifyInput } from '../src/server/identify-input.ts';
 
 const SRC = readFileSync(new URL('../public/tracker.js', import.meta.url), 'utf8');
 const COORDINATOR = readFileSync(new URL('../public/destinations.js', import.meta.url), 'utf8');
@@ -16,17 +17,22 @@ const DENIED = { analytics: false, advertising: false, adUserData: false, adPers
 const ANALYTICS = { ...DENIED, analytics: true };
 type Payload = { name: string; eventId: string; siteKey: string; url: string; properties?: unknown;
   context?: string; consent: { analytics: boolean; epoch: string }; dimensions: Record<string, unknown> };
+type IdentifyPayload = {type: 'identify'; siteKey: string; requestId: string; sentAt: string; url: string; properties: Record<string, unknown>; dimensions?: {distinctId?: string}; context?: string; consent: {analytics: true; epoch: string}};
 
 function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; environment?: string; saved?: boolean;
   pageAge?: number; privacy?: boolean; dnt?: string; failStorage?: boolean; settings?: Record<string, unknown>;
-  destinations?: unknown[] } = {}) {
+  destinations?: unknown[]; deferCoordinator?: boolean; secondCollector?: boolean } = {}) {
   const listeners = new Map<string, Array<(ev: any) => void>>(), warnings: string[] = [], scripts: any[] = [];
   const fetchCalls: Array<{ url: string; options: any }> = [], payloads: Payload[] = [];
+  const identifyPayloads: IdentifyPayload[] = [];
   const historyCalls: Array<{ method: string; thisArg: unknown; args: unknown[] }> = [];
-  const storage = new Map<string, string>(), timers = new Map<number, () => void>();
+  const storage = new Map<string, string>(), timers = new Map<number, {fn: () => void; delay: number; interval: boolean}>();
   const pending: Array<(result: unknown) => void> = [];
-  const now = Date.now(); let timerId = 0, coordinatorLoaded = false;
+  let now = Date.now(), timerId = 0, coordinatorLoaded = false;
+  class Clock extends Date { constructor(value?: string | number) { super(value === undefined ? now : value); } static now() { return now; } }
   const flags = { fetchOk: true, fetchReject: false, fetchThrows: false, hold: false,
+    identifyStatus: 202, identifyResponse: {accepted: true, duplicate: false, context: 'identified-synthetic-context'} as unknown,
+    collectionResponse: null as null | ((payload: Payload | IdentifyPayload, options: any) => any), config: {} as Record<string, unknown>,
     response: { accepted: true, context: 'signed-synthetic-context' }, historyThrows: false, historyResult: undefined as unknown };
   const location = { origin: 'https://site.example', pathname: '/dashboard', search: '', hash: '',
     get href() { return this.origin + this.pathname + this.search + this.hash; }, reload() {}, replace() {} };
@@ -42,17 +48,17 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   const history = { pushState: native('pushState'), replaceState: native('replaceState') };
   const settings = { enabled: true, consentMode: 'external', captureReferrer: false, captureCampaigns: false,
     captureScreen: false, excludeBots: true, excludedPaths: [], ...opts.settings };
-  const response = () => ({ ok: flags.fetchOk, text: async () => JSON.stringify(flags.response) });
+  const response = () => new Response(JSON.stringify(flags.response), {status: flags.fetchOk ? 202 : 400});
   const document: any = { currentScript: null, referrer: 'https://referrer.example/path?secret=hidden#fragment',
     createElement: () => ({}), querySelectorAll: () => scripts, head: { appendChild(script: any) { scripts.push(script); return script; } },
     get cookie(): never { throw new Error('document.cookie must not be touched'); } };
-  const sandbox: any = { document, history, location, URL, Intl, Date, AbortController, TextEncoder,
+  const sandbox: any = { document, history, location, URL, Intl, Date: Clock, AbortController, TextEncoder, TextDecoder, ReadableStream,
     crypto: { randomUUID, getRandomValues: webcrypto.getRandomValues.bind(webcrypto) },
     navigator: { language: 'en-GB', globalPrivacyControl: !!opts.privacy, doNotTrack: opts.dnt },
     screen: { width: 1280, height: 720 }, performance: { timeOrigin: now - (opts.pageAge ?? 0) },
     console: { warn: (msg: unknown) => warnings.push(String(msg)) },
-    setTimeout(fn: () => void) { timers.set(++timerId, fn); return timerId; }, clearTimeout(id: number) { timers.delete(id); },
-    setInterval(fn: () => void) { timers.set(++timerId, fn); return timerId; },
+    setTimeout(fn: () => void, delay: number) { timers.set(++timerId, {fn, delay, interval: false}); return timerId; }, clearTimeout(id: number) { timers.delete(id); },
+    setInterval(fn: () => void, delay: number) { timers.set(++timerId, {fn, delay, interval: true}); return timerId; },
     localStorage: { getItem: (key: string) => storage.get(key) ?? null,
       setItem(key: string, value: string) { if (opts.failStorage) throw new Error('Storage blocked'); storage.set(key, value); },
       removeItem(key: string) { if (opts.failStorage) throw new Error('Storage blocked'); storage.delete(key); } },
@@ -66,13 +72,17 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
         const input = JSON.parse(options.body);
         return Promise.resolve({ ok: true, headers: { get: () => null }, text: async () => JSON.stringify({ schemaVersion: 2,
           siteKey: input.siteKey, environment: input.environment, origin: 'https://site.example', revisionId: null,
-          consentEpoch: EPOCH, validUntil: new Date(Date.now() + 60000).toISOString(), nativeTracking: settings,
-          configuration: { destinations: opts.destinations ?? [] }, ...(opts.destinations?.length ? { revisionId: SECOND_SITE } : {}) }) });
+          consentEpoch: EPOCH, validUntil: new Date(now + 60000).toISOString(), nativeTracking: settings,
+          configuration: { destinations: opts.destinations ?? [] }, ...(opts.destinations?.length ? { revisionId: SECOND_SITE } : {}), ...flags.config }) });
       }
-      assert.equal(String(url), ENDPOINT, 'The VM must never make a third-party network call.');
+      if (opts.secondCollector && String(url) === 'https://analytics-other.example.com/api/collect') assert.equal(new URL(String(url)).origin, 'https://analytics-other.example.com');
+      else assert.equal(String(url), ENDPOINT, 'The VM must never make a third-party network call.');
       if (flags.fetchThrows) throw new Error('fetch exploded');
-      payloads.push(JSON.parse(options.body));
+      const payload = JSON.parse(options.body);
+      if (payload.type === 'identify') identifyPayloads.push(payload); else payloads.push(payload);
       if (flags.fetchReject) return Promise.reject(new Error('network down'));
+      if (flags.collectionResponse) return flags.collectionResponse(payload, options);
+      if (payload.type === 'identify') return Promise.resolve(new Response(JSON.stringify(flags.identifyResponse), {status: flags.identifyStatus}));
       return flags.hold ? new Promise(resolve => pending.push(resolve)) : Promise.resolve(response());
     } };
   sandbox.window = sandbox;
@@ -87,7 +97,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   setScript('siteKey' in opts ? opts.siteKey ?? null : SITE, 'scriptSrc' in opts ? opts.scriptSrc ?? null : SCRIPT_SRC);
   const run = () => {
     vm.runInContext(SRC, context, { filename: 'tracker.js' });
-    if (!coordinatorLoaded && scripts.some(s => s.src.endsWith('/destinations.js'))) {
+    if (!opts.deferCoordinator && !coordinatorLoaded && scripts.some(s => s.src.endsWith('/destinations.js'))) {
       coordinatorLoaded = true; vm.runInContext(COORDINATOR, context, { filename: 'destinations.js' });
     }
   };
@@ -98,8 +108,10 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   };
   const start = async () => { run(); await drain(); return grant(); };
   const dispatch = (type: string, event: any = {}) => sandbox.dispatchEvent({ ...event, type });
-  return { sandbox, document, history, location, listeners, warnings, fetchCalls, payloads, historyCalls, scripts,
+  return { sandbox, document, history, location, listeners, warnings, fetchCalls, payloads, identifyPayloads, historyCalls, scripts, local,
     storage, storageKey, settings, flags, setScript, run, start, grant, dispatch, drain,
+    loadCoordinator() { opts.deferCoordinator = false; run(); }, advance(ms: number) { now += ms; },
+    async runTimers(delay: number) { for (const [id, timer] of [...timers]) if (timer.delay === delay) { if (!timer.interval) timers.delete(id); timer.fn(); } await drain(); },
     complete: async () => { for (const resolve of pending.splice(0)) resolve(response()); await drain(); },
     collectCalls: () => fetchCalls.filter(c => c.url.endsWith('/api/collect')) };
 }
@@ -280,4 +292,254 @@ test('only consent is persisted; cookies and session storage stay untouched, and
   assert.equal(JSON.stringify(record).includes('signed-synthetic-context'), false);
   const blocked = makeEnv({ failStorage: true }); assert.equal((await blocked.start()).ok, false);
   blocked.sandbox.ten98.track('signup'); await blocked.drain(); assert.equal(blocked.collectCalls().length, 0);
+});
+
+const scope = (e: ReturnType<typeof makeEnv>, extra: Record<string, unknown> = {}) => e.local({siteKey: SITE, environment: 'live', ...extra});
+const identify = (e: ReturnType<typeof makeEnv>, properties: unknown, id?: string, extra?: Record<string, unknown>) => id === undefined
+  ? e.sandbox.ten98.identify(e.local(properties), scope(e, extra)) : e.sandbox.ten98.identify(id, e.local(properties), scope(e, extra));
+const reply = (value: unknown, status = 202) => new Response(JSON.stringify(value), {status});
+
+test('identify overloads snapshot typed input and consume only the top-level identity shortcut', async () => {
+  const e = makeEnv(); await e.start();
+  const values = {empty: '', zero: 0, off: false, nil: null, date: '2024-02-29T23:59:59.123456789+04:00', array: [1, '1', null, false, '2024-01-01T00:00:00Z'], nested: {id: 'caller metadata'}, 'a.b': 2};
+  assert.equal((await identify(e, values)).status, 'accepted');
+  assert.equal(e.identifyPayloads[0].dimensions, undefined); assert.deepEqual(e.identifyPayloads[0].properties, values);
+  const normalized = parseIdentifyInput(e.identifyPayloads[0]);
+  assert.deepEqual(normalized.properties.date, {type: 'date', value: '2024-02-29T19:59:59.123456789Z'});
+  assert.deepEqual(normalized.properties['a\\.b'], {type: 'number', value: 2});
+  const properties = e.local({id: 'account-A', plan: 'pro'});
+  assert.equal((await e.sandbox.ten98.identify(properties, scope(e))).status, 'accepted');
+  assert.equal(properties.id, 'account-A'); assert.deepEqual(e.identifyPayloads.at(-1)!.properties, {plan: 'pro'});
+  assert.equal((await identify(e, {id: 'account-A'}, 'account-A')).status, 'accepted');
+  assert.deepEqual(e.identifyPayloads.at(-1)!.properties, {});
+  assert.equal((await identify(e, {}, 'account-B')).status, 'accepted');
+  const count = e.identifyPayloads.length;
+  assert.equal((await identify(e, {id: 'different'}, 'account-B')).status, 'invalid');
+  for (const id of ['', 'x'.repeat(257), '\n', '\0', '\ud800']) assert.equal((await identify(e, {}, id)).status, 'invalid');
+  const expressions = [
+    '({x:undefined})', '({x:NaN})', '({x:Infinity})', '({x:1e15+1})', '({x:1n})', '({x:Symbol()})', '({x:()=>0})',
+    '({x:new Date()})', '({x:[,]})', '({x:[{}]})', '({x:[[1]]})', '({x:Array(51).fill(0)})', '({x:Array(5).fill("x".repeat(1000))})',
+    '({x:"x".repeat(1001)})', '({x:"\\ud800"})', '({x:"\\0"})', '({a:{b:{c:{d:{e:1}}}}})',
+    'Object.fromEntries(Array.from({length:51},(_,i)=>["k"+i,i]))', 'Object.fromEntries(Array.from({length:7},(_,i)=>["k"+i,"x".repeat(1000)]))',
+    '({["x".repeat(81)]:1})', '({constructor:1})', '({["__proto__"]:1})', '({prototype:1})',
+    'Object.defineProperty({},"hidden",{value:1})', '({[Symbol()]:1})', '(()=>{const a={};a.self=a;return a})()',
+    '({get id(){window.hooks++;return "bad"}})', '({get plan(){window.hooks++;return "bad"}})', '({toJSON(){window.hooks++;return {}}})',
+    '({x:Object.assign([1],{extra:2})})', '({x:Object.defineProperty([1],"0",{get(){window.hooks++;return 1}})})',
+  ];
+  e.sandbox.hooks = 0;
+  for (const expression of expressions) assert.equal((await e.sandbox.ten98.identify(vm.runInContext(expression, e.sandbox), scope(e))).status, 'invalid', expression);
+  assert.equal(e.sandbox.hooks, 0); assert.equal(e.identifyPayloads.length, count);
+  assert.equal((await identify(e, Object.fromEntries(Array.from({length: 50}, (_, i) => ['k' + i, i])))).status, 'accepted');
+  const nullObject = vm.runInContext('Object.assign(Object.create(null), {empty:"", n:1e15})', e.sandbox);
+  assert.equal((await e.sandbox.ten98.identify(nullObject, scope(e))).status, 'accepted');
+  e.sandbox.ten98.track('after_invalid'); await e.drain(); assert.equal(e.payloads.at(-1)!.dimensions.distinctId, 'account-B');
+});
+
+test('identify never queues or assigns identity before a live native consent gate', async () => {
+  const loading = makeEnv({deferCoordinator: true}); loading.run();
+  assert.equal((await identify(loading, {plan: 'discard'}, 'discard-id')).status, 'not_sent');
+  loading.loadCoordinator();
+  assert.equal((await identify(loading, {}, 'discard-id')).status, 'not_sent');
+  await loading.drain(); await loading.grant();
+  assert.equal(loading.identifyPayloads.length, 0); assert.equal(loading.payloads[0].dimensions.distinctId, undefined);
+  for (const opts of [{}, {privacy: true}, {dnt: 'yes'}, {settings: {enabled: false}}, {environment: 'test'}, {settings: {excludedPaths: ['/private']}}]) {
+    const e = makeEnv(opts); e.run(); await e.drain();
+    if ('settings' in opts && opts.settings?.excludedPaths) e.location.pathname = '/%70rivate/child';
+    if (Object.keys(opts).length) await e.grant();
+    const count = e.collectCalls().length;
+    const result = await identify(e, {plan: 'discard'}, 'discard-id', {environment: 'environment' in opts ? opts.environment : 'live'});
+    assert.equal(result.status, 'not_sent', JSON.stringify(opts)); assert.equal(e.collectCalls().length, count); assert.equal(e.identifyPayloads.length, 0);
+    if (!('environment' in opts)) {
+      e.sandbox.navigator.globalPrivacyControl = false; e.sandbox.navigator.doNotTrack = undefined; e.settings.enabled = true; e.location.pathname = '/public';
+      await e.runTimers(30000); await e.grant(); e.sandbox.ten98.track('after_gate'); await e.drain();
+      assert.equal(e.payloads.at(-1)!.dimensions.distinctId, undefined); assert.equal(e.identifyPayloads.length, 0);
+    }
+  }
+  const malformed = makeEnv({settings: {excludedPaths: ['/private']}}); await malformed.start(); malformed.location.pathname = '/bad%ZZ';
+  assert.equal((await identify(malformed, {}, 'discard-id')).status, 'not_sent');
+  malformed.location.pathname = '/public'; malformed.sandbox.ten98.track('after_bad_path'); await malformed.drain(); assert.equal(malformed.payloads.at(-1)!.dimensions.distinctId, undefined);
+});
+
+test('identify is native-only and selects future identity synchronously', async () => {
+  const e = makeEnv({destinations: [meta]}); e.run(); await e.drain(); await e.grant({analytics: true, advertising: true, adUserData: true, adPersonalization: true});
+  e.location.search = '?email=hidden'; e.location.hash = '#hidden';
+  const promise = identify(e, {plan: 'profile-sentinel'}, 'identifier-sentinel');
+  e.sandbox.ten98.track('purchase', e.local({value: '1.25', currency: 'USD', transactionId: 'order'}));
+  assert.equal((await promise).status, 'accepted'); await e.drain();
+  assert.equal(e.identifyPayloads.length, 1); assert.equal(e.payloads.length, 2); assert.equal(e.payloads[1].dimensions.distinctId, 'identifier-sentinel');
+  assert.deepEqual(e.payloads[1].properties, {value: '1.25', currency: 'USD', transactionId: 'order'});
+  assert.equal(e.identifyPayloads[0].url, 'https://site.example/dashboard'); assert.equal(e.scripts.length, 2, 'Only the explicit purchase initializes its mapped vendor.');
+  e.scripts[1].onload(); await e.drain();
+  assert.equal(JSON.stringify(e.sandbox.fbq.queue).includes('identifier-sentinel'), false); assert.equal(JSON.stringify(e.sandbox.fbq.queue).includes('profile-sentinel'), false);
+  const scripts = e.scripts.length, vendorCalls = e.sandbox.fbq.queue.length, events = e.payloads.length;
+  await identify(e, {plan: 'next'}); await identify(e, {}, 'identifier-sentinel');
+  assert.equal(e.scripts.length, scripts); assert.equal(e.sandbox.fbq.queue.length, vendorCalls); assert.equal(e.payloads.length, events);
+  assert.equal(e.identifyPayloads.at(-1)!.dimensions?.distinctId, 'identifier-sentinel');
+  const call = e.collectCalls().find(c => JSON.parse(c.options.body).type === 'identify')!;
+  for (const [key, value] of Object.entries({method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors', cache: 'no-store', redirect: 'error'})) assert.equal(call.options[key], value);
+  const held: Array<() => void> = [], signals: AbortSignal[] = [];
+  e.flags.collectionResponse = (_payload, options) => { signals.push(options.signal); return new Promise(resolve => held.push(() => resolve(reply({accepted: true, duplicate: false})))); };
+  const a = identify(e, {}, 'identifier-sentinel'); await e.drain(); const b = identify(e, {same: true}, 'identifier-sentinel'); await e.drain();
+  assert.equal(signals.some(signal => signal.aborted), false); held.forEach(resolve => resolve()); await Promise.all([a, b]);
+});
+
+test('identify and reset resolve one site without cross-site identity or consent changes', async () => {
+  const e = makeEnv({secondCollector: true}); await e.start(); await identify(e, {}, 'primary');
+  e.setScript(SECOND_SITE, SCRIPT_SRC); e.run(); await e.drain(); await e.grant(ANALYTICS, SECOND_SITE); await identify(e, {}, 'secondary', {siteKey: SECOND_SITE});
+  e.setScript(SITE, 'https://analytics-other.example.com/tracker.js'); e.run(); await e.drain();
+  assert.equal(e.sandbox.ten98.consent(e.local(ANALYTICS), scope(e, {collectorOrigin: 'https://analytics-other.example.com', acknowledgeReload: true})).ok, true); await e.drain();
+  await identify(e, {}, 'other-origin', {collectorOrigin: 'https://analytics-other.example.com'});
+  const count = e.identifyPayloads.length;
+  for (const options of [undefined, {}, {siteKey: SITE}, {siteKey: SITE, environment: 'live'}, {siteKey: SITE, environment: 'live', collectorOrigin: 'https://missing.example'}]) {
+    assert.equal((await e.sandbox.ten98.identify(e.local({}), options === undefined ? undefined : e.local(options))).status, 'not_sent');
+  }
+  assert.equal(e.identifyPayloads.length, count); assert.equal(e.sandbox.ten98.resetIdentity(scope(e)).ok, false);
+  assert.equal(e.sandbox.ten98.resetIdentity(scope(e, {collectorOrigin: 'https://analytics.example.com'})).ok, true);
+  e.sandbox.ten98.track('scoped'); await e.drain();
+  const last = e.collectCalls().slice(-3).map(call => ({origin: new URL(call.url).origin, payload: JSON.parse(call.options.body)}));
+  assert.equal(last.find(x => x.origin === 'https://analytics.example.com' && x.payload.siteKey === SITE)!.payload.dimensions.distinctId, undefined);
+  assert.equal(last.find(x => x.payload.siteKey === SECOND_SITE)!.payload.dimensions.distinctId, 'secondary');
+  assert.equal(last.find(x => x.origin === 'https://analytics-other.example.com')!.payload.dimensions.distinctId, 'other-origin');
+  const test = makeEnv({environment: 'test'}); await test.start(); assert.equal((await identify(test, {}, 'test-id', {environment: 'test'})).status, 'not_sent');
+  e.advance(60001); assert.equal(e.sandbox.ten98.resetIdentity(scope(e, {siteKey: SECOND_SITE})).ok, true);
+});
+
+test('identity generations reject late event and identify bodies across A to B to A', async () => {
+  for (const kind of ['event', 'identify']) for (const phase of ['headers', 'body']) {
+    const e = makeEnv(); await e.start(); await identify(e, {}, 'A');
+    let release!: () => void, signal!: AbortSignal, cancelled = false;
+    const stale = {accepted: true, duplicate: false, context: 'stale-' + kind + '-' + phase};
+    e.flags.collectionResponse = (_payload, options) => {
+      signal = options.signal;
+      return phase === 'headers' ? new Promise(resolve => { release = () => resolve(reply(stale)); })
+        : new Response(new ReadableStream({start(controller) { release = () => { if (!cancelled) { controller.enqueue(new TextEncoder().encode(JSON.stringify(stale))); controller.close(); } }; }, cancel() { cancelled = true; }}), {status: 202});
+    };
+    const pending = kind === 'identify' ? identify(e, {old: true}) : (e.sandbox.ten98.track('old'), null); await e.drain();
+    e.flags.collectionResponse = null;
+    await identify(e, {}, 'B'); await identify(e, {}, 'A');
+    assert.equal(signal.aborted, true); release(); await e.drain(); if (pending) assert.equal((await pending).status, 'unknown');
+    if (phase === 'body') assert.equal(cancelled, true, kind + ' cancels its deferred response body');
+    e.sandbox.ten98.track('after_race'); await e.drain();
+    assert.equal(e.payloads.at(-1)!.dimensions.distinctId, 'A'); assert.equal(e.payloads.at(-1)!.context, 'identified-synthetic-context', kind + '/' + phase);
+  }
+  const queued = makeEnv(); await queued.start(); const count = queued.collectCalls().length;
+  const pending = identify(queued, {}, 'queued'); queued.sandbox.ten98.resetIdentity(scope(queued));
+  assert.equal((await pending).status, 'not_sent'); assert.equal(queued.collectCalls().length, count);
+  queued.sandbox.ten98.track('after_cancel'); await queued.drain(); assert.equal(queued.payloads.at(-1)!.dimensions.distinctId, undefined);
+});
+
+test('withdrawal expiry and privacy clear native identity while valid refresh preserves it', async () => {
+  for (const action of ['reset', 'withdraw', 'cross-tab', 'storage-failure', 'configuration-expiry', 'consent-expiry', 'epoch', 'privacy']) {
+    const options = {failStorage: false}, e = makeEnv(options); await e.start(); await identify(e, {}, 'old-id');
+    const releases: Array<() => void> = [];
+    e.flags.collectionResponse = () => {
+      let cancelled = false;
+      return new Response(new ReadableStream({start(controller) { releases.push(() => { if (!cancelled) { controller.enqueue(new TextEncoder().encode(JSON.stringify({accepted: true, duplicate: false, context: 'stale-cleanup'}))); controller.close(); } }); }, cancel() { cancelled = true; }}), {status: 202});
+    };
+    e.sandbox.ten98.track('held_event'); const pending = identify(e, {old: true}); await e.drain();
+    if (action === 'reset') e.sandbox.ten98.resetIdentity(scope(e));
+    if (action === 'withdraw') await e.grant(DENIED);
+    if (action === 'cross-tab') e.dispatch('storage', {key: e.storageKey(), newValue: JSON.stringify({epoch: EPOCH, choice: DENIED, expiresAt: Date.now() + 86400000})});
+    if (action === 'storage-failure') { options.failStorage = true; await e.grant(DENIED); options.failStorage = false; }
+    if (action === 'configuration-expiry') { e.advance(60001); e.sandbox.ten98.track('expired'); await e.runTimers(30000); }
+    if (action === 'consent-expiry') { e.advance(181 * 86400000); await e.runTimers(30000); }
+    if (action === 'epoch') { e.flags.config = {consentEpoch: SECOND_SITE}; await e.runTimers(30000); }
+    if (action === 'privacy') { e.sandbox.navigator.globalPrivacyControl = true; e.sandbox.ten98.track('privacy'); e.sandbox.navigator.globalPrivacyControl = false; }
+    releases.forEach(resolve => resolve()); await e.drain(); assert.equal((await pending).status, 'unknown', action);
+    e.flags.collectionResponse = null; await e.grant(); e.sandbox.ten98.track('after_cleanup'); await e.drain();
+    assert.equal(e.payloads.at(-1)!.dimensions.distinctId, undefined, action); assert.notEqual(e.payloads.at(-1)!.context, 'stale-cleanup', action);
+    await identify(e, {}, 'new-id'); await e.runTimers(30000); e.sandbox.ten98.track('same_config'); await e.drain(); assert.equal(e.payloads.at(-1)!.dimensions.distinctId, 'new-id', action);
+    const count = e.payloads.length; e.dispatch('pagehide', {persisted: true}); e.dispatch('pageshow', {persisted: true}); e.dispatch('pageshow', {persisted: true}); await e.drain(); assert.equal(e.payloads.length, count + 1);
+  }
+});
+
+test('identify outcomes distinguish validation expiry policy denial and uncertainty', async () => {
+  const cases: Array<[number, unknown, string]> = [
+    [202, {accepted: true, duplicate: false}, 'accepted'], [202, {accepted: true, duplicate: true}, 'accepted'],
+    [202, {accepted: false, reason: 'identity_unavailable'}, 'identity_unavailable'],
+    [202, {accepted: false, reason: 'collection_disabled'}, 'rejected'], [202, {accepted: false, reason: 'consent_required'}, 'rejected'],
+    [400, {error: 'generic', reason: 'request_expired'}, 'expired'], [400, {error: 'generic future/invalid'}, 'invalid'], [409, {error: 'generic conflict'}, 'invalid'],
+    [503, {error: 'generic'}, 'unknown'], [200, {accepted: true, duplicate: false}, 'unknown'], [202, null, 'unknown'],
+    [202, {accepted: true}, 'unknown'], [202, {accepted: true, duplicate: true, context: 'unexpected'}, 'unknown'],
+    [202, {accepted: true, duplicate: false, context: 1}, 'unknown'], [202, {accepted: true, duplicate: false, context: 'x'.repeat(1025)}, 'unknown'],
+    [202, {accepted: true, duplicate: false, extra: 'secret-sentinel'}, 'unknown'], [202, {accepted: false, reason: 'unknown'}, 'unknown'],
+  ];
+  const e = makeEnv(); await e.start();
+  for (const [status, body, expected] of cases) {
+    e.flags.identifyStatus = status; e.flags.identifyResponse = body;
+    const result = await identify(e, {plan: 'secret-sentinel'}, 'explicit-intent'); assert.equal(result.status, expected, JSON.stringify(body));
+    if (expected === 'expired') assert.equal(result.reason, 'request_expired');
+    assert.match(result.requestId, UUID_RE); assert.equal(new Date(result.sentAt).toISOString(), result.sentAt);
+    assert.equal(JSON.stringify(result).includes('secret-sentinel'), false); assert.equal(JSON.stringify(result).includes('explicit-intent'), false);
+    e.sandbox.ten98.track('after_outcome'); await e.drain(); assert.equal(e.payloads.at(-1)!.dimensions.distinctId, 'explicit-intent');
+  }
+  for (const text of ['{', 'x'.repeat(2049)]) { e.flags.collectionResponse = () => new Response(text, {status: 202}); assert.equal((await identify(e, {})).status, 'unknown'); }
+  e.flags.collectionResponse = null;
+  e.flags.fetchReject = true; assert.equal((await identify(e, {})).status, 'unknown'); e.flags.fetchReject = false;
+  e.flags.fetchThrows = true; assert.equal((await identify(e, {})).status, 'unknown'); e.flags.fetchThrows = false;
+  assert.equal(JSON.stringify(e.warnings).includes('secret-sentinel'), false);
+});
+
+test('identify keeps immutable request identity and never retries an unknown outcome', async () => {
+  const e = makeEnv(); await e.start();
+  e.flags.collectionResponse = () => new Promise(() => {});
+  const properties = e.local({plan: 'original', tags: [1, false]});
+  const pending = e.sandbox.ten98.identify('fixed-id', properties, scope(e)); properties.plan = 'mutated'; properties.tags.push('mutated'); await e.drain();
+  const call = e.collectCalls().at(-1)!, exactBody = call.options.body, body = JSON.parse(exactBody);
+  assert.deepEqual(body.properties, {plan: 'original', tags: [1, false]}); assert.match(body.requestId, UUID_RE); assert.equal(new Date(body.sentAt).toISOString(), body.sentAt);
+  await e.runTimers(5000); const result = await pending; assert.equal(result.status, 'unknown'); assert.equal(result.requestId, body.requestId); assert.equal(result.sentAt, body.sentAt);
+  const count = e.identifyPayloads.length; await e.runTimers(30000); await e.runTimers(5000); await e.drain();
+  assert.equal(e.identifyPayloads.length, count); assert.equal(call.options.body, exactBody);
+  e.flags.collectionResponse = null; await e.grant(DENIED); await e.grant(); assert.equal(e.identifyPayloads.length, count);
+  const next = await identify(e, {plan: 'intentional update'}, 'fixed-id'); assert.equal(next.status, 'accepted'); assert.notEqual(next.requestId, body.requestId);
+});
+
+test('identify shares the native in-flight bound and leaves only consent in storage', async () => {
+  const e = makeEnv(); await e.start(); await identify(e, {}, 'stable-id');
+  const held: Array<() => void> = [];
+  e.flags.collectionResponse = () => new Promise(resolve => held.push(() => resolve(reply({accepted: true, duplicate: false}))));
+  const pending: Array<Promise<any>> = [];
+  for (let i = 0; i < 10; i++) { e.sandbox.ten98.track('held'); pending.push(identify(e, {index: i})); }
+  await e.drain(); assert.equal(held.length, 20);
+  const count = e.collectCalls().length, blocked = await identify(e, {}, 'blocked-id'); assert.equal(blocked.status, 'not_sent'); assert.equal(blocked.reason, 'busy'); assert.equal(e.collectCalls().length, count);
+  held.shift()!(); await e.drain(); e.sandbox.ten98.track('after_capacity'); await e.drain(); assert.equal(e.payloads.at(-1)!.dimensions.distinctId, 'stable-id');
+  e.sandbox.ten98.resetIdentity(scope(e)); held.forEach(resolve => resolve()); await Promise.all(pending); await e.drain();
+  e.flags.collectionResponse = null; assert.equal((await identify(e, {plan: 'profile-sentinel'}, 'identifier-sentinel')).status, 'accepted');
+  assert.equal(e.storage.size, 1); assert.deepEqual(Object.keys(JSON.parse(e.storage.get(e.storageKey())!)).sort(), ['choice', 'epoch', 'expiresAt', 'updatedAt']);
+  assert.equal(JSON.stringify([...e.storage]).includes('sentinel'), false); assert.equal(JSON.stringify(e.warnings).includes('sentinel'), false);
+  for (const primitive of ['crypto', 'TextEncoder', 'TextDecoder', 'ReadableStream', 'AbortController', 'fetch']) {
+    const missing = makeEnv(); await missing.start(); missing.sandbox[primitive] = undefined;
+    assert.equal((await identify(missing, {}, 'discard')).status, 'not_sent', primitive); assert.doesNotThrow(() => missing.history.pushState({}, '', '/safe')); await missing.drain();
+    assert.equal(missing.identifyPayloads.length, 0);
+  }
+});
+
+test('native responses enforce a streaming UTF-8 byte limit and cancel unread bytes for both request types', async () => {
+  for (const kind of ['event', 'identify']) for (const mode of ['overflow', 'malformed', 'truncated', 'read-error', 'decoder-unavailable', 'exact-limit', 'split-valid']) {
+    const e = makeEnv(); await e.start(); await identify(e, {}, 'stable');
+    const valid = JSON.stringify({accepted: true, duplicate: false, context: 'bounded-é'}), encoder = new TextEncoder();
+    const oversized = encoder.encode(JSON.stringify({accepted: true, duplicate: false, context: 'é'.repeat(1024)}));
+    assert.ok(oversized.length > 2048 && new TextDecoder().decode(oversized).length < 2048, 'The overflow fixture distinguishes bytes from JS text length.');
+    const split = encoder.encode(valid), unicode = split.indexOf(0xc3);
+    const chunks = mode === 'overflow' ? [oversized.slice(0, 2000), oversized.slice(2000), new Uint8Array(1_000_000)]
+      : mode === 'malformed' ? [new Uint8Array([0xc3, 0x28]), new Uint8Array(1_000_000)]
+      : mode === 'truncated' ? [new Uint8Array([0xc3])]
+      : mode === 'exact-limit' ? [encoder.encode(valid + ' '.repeat(2048 - encoder.encode(valid).length))]
+      : [split.slice(0, unicode + 1), split.slice(unicode + 1)];
+    let pulls = 0, cancels = 0;
+    const stream = new ReadableStream<Uint8Array>({pull(controller) { const index = pulls++; if (mode === 'read-error') { controller.error(new Error('read failed')); return; } if (index < chunks.length) controller.enqueue(chunks[index]); else controller.close(); }, cancel() { cancels++; }}, {highWaterMark: 0});
+    e.flags.collectionResponse = () => { if (mode === 'decoder-unavailable') e.sandbox.TextDecoder = undefined; return new Response(stream, {status: 202}); };
+    const success = ['exact-limit', 'split-valid'].includes(mode);
+    if (kind === 'identify') assert.equal((await identify(e, {})).status, success ? 'accepted' : 'unknown', mode);
+    else { e.sandbox.ten98.track('bounded_response'); await e.drain(); }
+    assert.equal(stream.locked, false, kind + '/' + mode + ' releases its reader');
+    if (mode === 'overflow' || mode === 'malformed') { assert.equal(cancels, 1); assert.equal(pulls, mode === 'overflow' ? 2 : 1, 'Unread tail must never be pulled.'); }
+    if (mode === 'decoder-unavailable') { assert.equal(cancels, 1); assert.equal(pulls, 0, 'A decoder lost after dispatch cancels without consuming the body.'); }
+    e.sandbox.TextDecoder = TextDecoder;
+    e.flags.collectionResponse = null; e.sandbox.ten98.track('after_stream'); await e.drain();
+    assert.equal(e.payloads.at(-1)!.context, success ? 'bounded-é' : 'identified-synthetic-context', kind + '/' + mode);
+  }
+  const missing = makeEnv(); await missing.start(); let fallbackReads = 0;
+  missing.flags.collectionResponse = () => ({status: 202, text() { fallbackReads++; return Promise.resolve('{"accepted":true,"duplicate":false}'); }});
+  assert.equal((await identify(missing, {}, 'intent')).status, 'unknown'); assert.equal(fallbackReads, 0, 'No unbounded response.text fallback is allowed.');
 });

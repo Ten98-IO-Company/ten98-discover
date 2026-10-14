@@ -145,6 +145,12 @@
     var found = sites.filter(function (s) { return s.siteKey === options.siteKey && s.environment === options.environment && (!options.collectorOrigin || s.origin === options.collectorOrigin); });
     return found.length === 1 ? found[0] : null;
   }
+  function nativeAllowed(state) {
+    if (state.config && Date.now() >= state.expires) { expire(state); return false; }
+    if ((privacy() || Date.now() >= state.consentExpires) && granted(state.consent)) applyChoice(state, denied(), false);
+    return !state.reload && !!state.config && Date.now() < state.expires && Date.now() < state.consentExpires && !privacy() && state.consent.analytics;
+  }
+  hub.nativeAllowed = nativeAllowed;
   function inject(state, route, url, attributes) {
     return new Promise(function (resolve, reject) {
       if (!permitted(state, route)) return reject(new Error('Consent unavailable.'));
@@ -159,8 +165,7 @@
     });
   }
   function dispatch(state, input) {
-    if ((privacy() || Date.now() >= state.consentExpires) && granted(state.consent)) applyChoice(state, denied(), false);
-    if (!state.reload && state.config && Date.now() < state.expires && Date.now() < state.consentExpires && !privacy() && state.consent.analytics && typeof hub.nativeEvent === 'function') hub.nativeEvent(state, input);
+    if (nativeAllowed(state) && typeof hub.nativeEvent === 'function') hub.nativeEvent(state, input);
     var event = eventInput(input);
     if (!event) return;
     state.routes.forEach(function (route) {
@@ -249,11 +254,13 @@
       if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) return;
       if (sites.some(function (s) { return s.siteKey === site.siteKey && s.environment === environment && s.origin === endpoint.origin; }) || sites.length >= 20) return;
       var state = {siteKey: site.siteKey, environment: environment, origin: endpoint.origin, storageKey: 'ten98:consent:v1:' + endpoint.origin + ':' + site.siteKey + ':' + environment,
-        consent: denied(), consentExpires: 0, config: null, expires: 0, routes: [], loaded: false, reload: false, reloaded: false, nativeContext: null, nativeRequests: new Set()};
+        consent: denied(), consentExpires: 0, config: null, expires: 0, routes: [], loaded: false, reload: false, reloaded: false, nativeContext: null, nativeIdentifier: undefined, nativeGeneration: 0, nativeRequests: new Set()};
       sites.push(state); void refresh(state); setInterval(function () { void refresh(state); }, 30000);
     } catch (_) {}
   };
   hub.destinationEvent = function (site, event) { try { var state = findSite({siteKey: site.siteKey, environment: site.environment || 'live', collectorOrigin: new URL(site.endpoint).origin}); if (state) dispatch(state, event); } catch (_) {} };
+  hub.destinationIdentify = function (identifier, properties, options) { var state = findSite(options); return state ? hub.nativeIdentify(state, identifier, properties) : Promise.resolve({status: 'not_sent', reason: 'site_unavailable'}); };
+  hub.destinationResetIdentity = function (options) { var state = findSite(options); if (!state) return {ok: false, reason: 'Choose one configured site and environment.'}; hub.nativeStop(state); return {ok: true}; };
   hub.api.consent = function (value, options) { var state = findSite(options); return state ? applyChoice(state, value, options.acknowledgeReload) : {ok: false, reason: 'Choose one configured site and environment.'}; };
   hub.api.destinationStatus = function (options) {
     var state = findSite(options); if (!state) return {ready: false, revisionId: null, expiresAt: null, consent: denied(), routes: []};
@@ -279,7 +286,7 @@
     dialog.setAttribute('aria-label', 'Tracking preferences');
     dialog.style.cssText = 'box-sizing:border-box;width:32rem;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;padding:20px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#17243a;font:14px/1.5 system-ui,sans-serif;';
     var title = document.createElement('h2'); title.textContent = 'Tracking preferences'; title.style.cssText = 'font:600 20px/1.3 system-ui,sans-serif;margin:0 0 12px;color:inherit;'; dialog.appendChild(title);
-    var nativeNotice = document.createElement('p'); nativeNotice.textContent = 'Analytics records page paths and events after you agree. Earlier activity is discarded. Optional referrer, campaign and screen details depend on this website\'s settings.'; dialog.appendChild(nativeNotice);
+    var nativeNotice = document.createElement('p'); nativeNotice.textContent = 'Analytics records page paths and events after you agree. This website may also send an identifier and profile details to its native analytics collector. The identifier helps derive a rotating visitor key; supplied profile details are stored and may contain personal data. Earlier activity is discarded. Optional referrer, campaign and screen details depend on this website\'s settings.'; dialog.appendChild(nativeNotice);
     var warning = document.createElement('p'); warning.textContent = 'Changing consent after a vendor tag loads reloads this page and may lose unsaved work. If consent storage fails, this page closes to stop loaded SDKs; clear site data before returning. Vendor SDKs may read the full URL, referrer and automatic events. Already shared or in-flight data cannot be withdrawn here.'; dialog.appendChild(warning);
     var vendors = document.createElement('p'), vendorNames = state.routes.filter(function (r) { return r.destination.enabled; }).map(function (r) { return r.destination.provider; }); vendors.textContent = vendorNames.length ? 'Configured vendors: ' + vendorNames.join(', ') : 'No additional vendor tags are configured.'; dialog.appendChild(vendors);
     var controls = {}, feedback = document.createElement('p'); feedback.setAttribute('role', 'status');
