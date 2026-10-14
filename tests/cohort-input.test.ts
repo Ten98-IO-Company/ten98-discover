@@ -100,3 +100,23 @@ test('canonical defaults cannot save a cohort larger than its reload limit',()=>
   assert.doesNotThrow(()=>explorerQuery(new URLSearchParams(oversized())));
   assert.throws(()=>saved(oversized()),{status:400});
 });
+
+test('cohorts retain a required top-level action alongside additional all/any fields and typed properties',()=>{
+  const predicates={properties:[{value:0,type:'number',operator:'gte',key:'amount'}],fields:[{operator:'eq',value:'/optional',field:'path'}],match:'any',version:1};
+  const definition=saved(query({path:'/required',predicates:JSON.stringify(predicates)})),params=new URLSearchParams(definition.query),parsed=explorerQuery(params);
+  assert.deepEqual([...params.keys()],['from','to','timeZone','kind','path','predicates']);
+  assert.deepEqual(parsed.filters,{path:'/required'});assert.equal(parsed.predicates?.match,'any');
+  assert.deepEqual(parseCohortDefinition(definition),definition);
+  assert.throws(()=>saved(query({predicates:JSON.stringify(predicates)})),{status:400});
+  assert.throws(()=>saved(query({path:'/required',eventName:'signup',predicates:JSON.stringify(predicates)})),{status:400});
+  assert.throws(()=>saved(definition.query+'&predicates='+params.get('predicates')),{status:400});
+});
+
+test('cohort additional predicates count normalized dates and default kind against the saved query budget',()=>{
+  const predicates={version:1,match:'all',fields:[],properties:[{key:'when',operator:'eq',type:'date',value:'2024-01-01T00:00:00Z'}]};
+  const params=new URLSearchParams({...calendar,path:'中'.repeat(2048),referrer:'中'.repeat(110),predicates:JSON.stringify(predicates),language:''});
+  const padding=19988-params.toString().length;assert.ok(padding>=0&&padding<=320);
+  params.set('language','a'.repeat(padding));assert.equal(params.toString().length,19988);
+  assert.throws(()=>explorerQuery(params),{status:400});
+  assert.throws(()=>saved(params.toString()),{status:400});
+});

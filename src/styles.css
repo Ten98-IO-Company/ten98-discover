@@ -81,6 +81,12 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .cohort-controls input:not([type='checkbox']), .cohort-controls select { width: 100%; min-width: 0; }
 .cohort-field { flex: 1 1 220px; min-width: 0; }
 .cohort-check { min-height: var(--control-touch); }
+.advanced-controls, .advanced-controls fieldset { min-inline-size: 0; }
+.advanced-controls fieldset { margin: 0; border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-3); }
+.advanced-controls summary { min-block-size: var(--control-touch); }
+.advanced-controls input, .advanced-controls select { inline-size: 100%; min-inline-size: 0; }
+.advanced-field { flex: 1 1 180px; min-inline-size: 0; }
+.advanced-controls, .advanced-summary { overflow-wrap: anywhere; }
 .card > h1 { font-size: var(--text-2xl); }
 .banner, .alert, .notice { margin: 12px 0 18px; padding: 12px 15px; border-radius: var(--radius-md); font-size: var(--text-sm); }
 .banner { background: var(--amber-tint); border: 1px solid var(--color-warning); }
