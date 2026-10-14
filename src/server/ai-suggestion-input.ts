@@ -35,7 +35,7 @@ export const suggestionSchema={type:'object',additionalProperties:false,required
  rationale:{type:'string',minLength:1,maxLength:280},evidenceIds:{type:'array',minItems:1,maxItems:3,items:{type:'string'}}}}}}} as const;
 const proposalSchema=z.object({version:z.literal(1),limitation:z.enum(['none','insufficient_context']),prompts:z.array(z.object({text:text(2000,1),
  tags:suggestionTags,rationale:text(280,1),evidenceIds:z.array(text(80,1)).min(1).max(3).refine(unique)}).strict()).max(5)}).strict();
-export const suggestionTextKey=(value:string)=>value.trim().replace(/\s+/gu,' ').toLowerCase();
+export const suggestionTextKey=(value:string)=>value.normalize('NFKC').trim().replace(/\s+/gu,' ').toLowerCase();
 export function parseSuggestionProposal(raw:string,snapshot:SuggestionSnapshot){
  try{
   if(!cleanText(raw)||Buffer.byteLength(raw,'utf8')>65_536)throw new Error();
