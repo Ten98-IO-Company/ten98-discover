@@ -9,6 +9,7 @@ import {collectIdentify} from '../src/server/native-identify.ts';
 import {parseIdentifyInput} from '../src/server/identify-input.ts';
 import {explicitIdentityReference,recordIdentityLink,latchIdentityLinkRetention,expireIdentityLinks} from '../src/server/identity-links.ts';
 import {getRetention,previewRetention,runRetentionBatch,saveRetention} from '../src/server/retention.ts';
+import {getLinkedSessionActivity,getSessionDetail} from '../src/server/session-explorer.ts';
 
 const fail=(status:number)=>(error:unknown)=>!!error&&typeof error==='object'&&'status'in error&&error.status===status;
 export async function runIdentityLinkChecks(){
@@ -184,6 +185,14 @@ export async function runIdentityLinkChecks(){
     const bReplay=await at(instant+'.125900Z',()=>sendCurrent(bId));assert.equal('duplicate' in bReplay?bReplay.duplicate:null,true);
     assert.deepEqual(await eventEvidence(offOn.pid),offOnRows,'An off-period replay cannot upgrade NULL evidence.');
     assert.deepEqual((await pool.query('SELECT to_jsonb(l) AS row FROM analytics_identity_link l WHERE project_id=$1',[offOn.pid])).rows,linkBefore);assert.equal(await evidenceStart(offOn.pid),aAt);
+    const activityRange=new URLSearchParams({from:instant.slice(0,10),to:instant.slice(0,10),timeZone:'UTC'});
+    const combined=await getLinkedSessionActivity(offOn.pid,offOnRows[0].visitor_id,{kind:'session',userId:owner},activityRange);
+    assert.equal(combined.selection.status,'available');assert.equal(combined.summary?.events,2);assert.equal(combined.coverage.unprovenEventsExcluded,1);
+    assert.deepEqual(combined.activity?.map(row=>row.id),[cId,aId]);assert.ok(combined.activity?.every(row=>row.identityEvidenceVersion===1));
+    assert.equal((await getSessionDetail(offOn.pid,offOnRows[0].visitor_id,{kind:'session',userId:owner},activityRange)).summary.events,3);
+    await toggle(false);const historical=await getLinkedSessionActivity(offOn.pid,offOnRows[0].visitor_id,{kind:'session',userId:owner},activityRange);
+    assert.equal(historical.summary?.events,2);assert.equal(historical.coverage.linkingEnabled,false);assert.ok(historical.coverage.warnings.includes('new_linking_disabled'));await toggle(true);
+    console.log('PASS actual same-key off/on identified read includes only marked A/C while base detail preserves B and linking-off historical reads stay available');
     const identifyOnly=await fixture();await collectIdentify(identifyOnly.req(),identifyOnly.raw(),ip);assert.equal(await evidenceStart(identifyOnly.pid),null);assert.equal(await identifyOnly.count('event'),0);assert.equal(await identifyOnly.count('analytics_identity_link'),1);
     const legacyId=randomUUID();await pool.query("INSERT INTO event(id,project_id,event_name,path) VALUES($1,$2,'legacy','/')",[legacyId,identifyOnly.pid]);
     assert.equal((await eventEvidence(identifyOnly.pid))[0].identity_link_evidence_version,null);await identifyOnly.send(identifyOnly.observation(legacyId));assert.equal(await evidenceStart(identifyOnly.pid),null,'A legacy duplicate cannot start event evidence.');

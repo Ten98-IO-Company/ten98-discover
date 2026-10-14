@@ -1,6 +1,6 @@
 # Explicit identity-link evidence
 
-Collection/storage contract; linked-activity reads are still unavailable.
+Collection/storage and standalone linked-activity backend contract. The existing observed-key UI still shows unavailable linked identities until the combined view and its availability contract are updated together.
 
 ## Admission and identity
 
@@ -14,7 +14,7 @@ Each project/rotating-visitor-key assignment is immutable. An incompatible assig
 
 ## Time, retention and locking
 
-First and last acceptance preserve PostgreSQL UTC microseconds. Future linked reads must exclude events received before each assignment's first acceptance, even within the same millisecond. No earlier anonymous or pre-link identified activity is merged.
+First and last acceptance preserve PostgreSQL UTC microseconds. Linked reads exclude events received before each assignment's first acceptance, even within the same millisecond. No earlier anonymous or pre-link identified activity is merged.
 
 Migration 0038 adds nullable per-event identity_link_evidence_version and project identity_event_evidence_started_at. Existing rows remain NULL, without defaults or backfill. Version 1 requires a browser event with non-null native visitor/visit IDs; only the trusted collector can supply it after validated explicit identity, current linking opt-in and usable server identity. Event insertion, successful assignment and the first project event-evidence timestamp commit atomically using the same acceptance instant. Assignment failure rolls them back. API observations always write NULL.
 
@@ -30,4 +30,6 @@ Migration 0037 creates an empty analytics_identity_link table and three nullable
 
 The pure checks are tests/identity-links.test.ts. The database runner is tests/identity-links-integration.ts with TEN98_INTEGRATION_TEST=1 and TEN98_IDENTITY_LINK_TEST=1; it requires a fresh empty schema-38 loopback database named ten98_identity_<12 lowercase hex digits> on port 55501. The existing isolated CI job uses ten98_identity_ci on port 5432 with its explicit CI guard. These guards exclude preview and production databases.
 
-The integration checks cover exact prospective fences and first-event milestones, per-event same-key off/on evidence and NULL replay, identify-only/legacy exclusions, database source/version constraints, immutable conflicts and atomic rollback, duplicate no-op, observed consent-publication lock races, concurrent writers, monthly context continuation, missing/API identity exclusions, irreversible retention and 1,001-row cleanup continuation. No paid provider request is needed. The migration harness covers a populated 0037 upgrade and repeat migration; these checks do not implement linked reads or UI.
+The integration checks cover exact prospective fences and first-event milestones, per-event same-key off/on evidence and NULL replay, identify-only/legacy exclusions, database source/version constraints, immutable conflicts and atomic rollback, duplicate no-op, observed consent-publication lock races, concurrent writers, monthly context continuation, missing/API identity exclusions, irreversible retention and 1,001-row cleanup continuation. The actual on/off/on sequence also asserts that the linked backend includes marked A/C while observed-key detail keeps unproven B. No paid provider request is needed. The migration harness covers a populated 0037 upgrade and repeat migration. Added acceptance cases require independent execution; a runnable test is not a deployment/readiness claim.
+
+The [session explorer contract](session-explorer.md) specifies the authorized, project-anchored linked endpoint. Its single final statement rechecks authority and returns only retained direct marked observations, with separate event/link/prospective-start coverage, bounded microsecond keyset pagination and truthful unavailable versus zero metrics. Reads never renew assignments or modify evidence. There is no raw identifier search, profile merge, historical backfill, erasure workflow or combined-view UI in this backend slice.
