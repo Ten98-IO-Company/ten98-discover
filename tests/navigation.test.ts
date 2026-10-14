@@ -96,6 +96,16 @@ test('a skipped local calendar day remains a valid explicit session range', () =
   assert.equal(canonicalNavigation('?'+new URLSearchParams(scope),parsed),true);
 });
 
+test('identified activity navigation is a closed range and observed-key mode', () => {
+  const base={workspace,project,view:'sessions',from:'2026-10-01',to:'2026-10-14',timeZone:'UTC',visitorKey:'a'.repeat(64)};
+  const parsed=parseNavigation({...base,activity:'identified'});
+  assert.equal(parsed.activity,'identified');assert.equal(parsed.sessionInvalid,undefined);
+  assert.equal(canonicalNavigation('?'+new URLSearchParams({...base,activity:'identified'}),parsed),true);
+  assert.notEqual(navigationKey(parsed),navigationKey(parseNavigation(base)));
+  for(const patch of [{activity:'all'},{activity:['identified']},{activity:{mode:'identified'}},{visitorKey:undefined},{from:undefined},{identityToken:'private'},{keyGeneration:'private'},{rawId:'private'},{returnTo:'private'},{cursor:'private'}])assert.deepEqual(parseNavigation({...base,activity:'identified',...patch}),{workspace,project,view:'sessions',sessionInvalid:'1'});
+  assert.equal(canonicalNavigation('?'+new URLSearchParams({...base,activity:'identified'})+'&activity=identified',parsed),false);
+});
+
 test('audit links retain only bounded applied scope and omit default values', () => {
   const base={workspace,project,view:'audits',auditRun:project} as const;
   const parsed=parseNavigation({...base,auditPage:workspace.toUpperCase(),auditTab:'pages',auditSeverity:'warning',auditCode:'missing-title',auditAffectedPage:workspace,auditCoverage:'analyzed',auditResource:'sitemap',auditDirection:'in'});

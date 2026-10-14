@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
-import {listSessions,getSessionDetail,type SessionReadAuthority} from '../src/server/session-explorer.ts';
+import {listSessions,getSessionDetail,getLinkedSessionActivity,type SessionReadAuthority} from '../src/server/session-explorer.ts';
 import {parseSessionCursor,encodeSessionCursor} from '../src/server/session-explorer-input.ts';
 import {normalizeProperties} from '../src/server/analytics-input.ts';
 import {exploreAnalytics} from '../src/server/explorer.ts';
@@ -65,6 +65,68 @@ export async function runSessionExplorerChecks(){
     const wrongScope=parseSessionCursor(first.paging.nextCursor!);wrongScope.scope='0'.repeat(64);await assert.rejects(list({pageSize:'1',cursor:encodeSessionCursor(wrongScope)}),fail(400));
     console.log('PASS typed ungrouped SQL slots, event-derived discovery, distinct visits, microsecond list/activity paging, explicit all-activity detail and identity limits');
 
+    const linkedProject=randomUUID(),linkedKeys=['e','f','1','2','3','4'].map(s=>s.repeat(64)),generation='5'.repeat(64),token='6'.repeat(64),sharedVisit='7'.repeat(64);
+    await pool.query(`INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at,identity_event_evidence_started_at,identity_links_started_at)
+      VALUES($1,$2,'Linked activity','https://linked.session.example',$3,'infinity','2026-10-02T12:00:00.123456Z','2026-10-02')`,[linkedProject,workspace,randomUUID()]);
+    const linked=(extra:Record<string,string>={},anchor=linkedKeys[0],auth:SessionReadAuthority=authority)=>getLinkedSessionActivity(linkedProject,anchor,auth,query(extra));
+    for(const key of linkedKeys)await pool.query("INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,'2026-10-01','2026-10-03')",[linkedProject,key]);
+    for(let i=0;i<linkedKeys.length;i++)await pool.query(`INSERT INTO analytics_identity_link(project_id,visitor_key,identity_version,key_generation,identity_token,first_accepted_at,last_accepted_at)
+      VALUES($1,$2,1,$3,$4,$5,$6)`,[linkedProject,linkedKeys[i],i===2?'8'.repeat(64):generation,i===4?'9'.repeat(64):token,
+        i===3?'2026-01-01T00:00:00Z':i===1?'2026-10-02T12:00:00.123457Z':'2026-10-02T12:00:00.123456Z',i===3?'2026-01-01T00:00:00Z':'2026-10-02T12:01:00Z']);
+    const markedIds:string[]=[];
+    async function linkedEvent(key:string,at:string,marker:1|null=1){const id=randomUUID();await pool.query(`INSERT INTO event(id,project_id,visitor_id,visit_id,event_name,path,received_at,source,identity_link_evidence_version,dimensions)
+      VALUES($1,$2,$3,$4,'case','/linked',$5,'browser',$6,'{"distinctId":"must-not-escape"}')`,[id,linkedProject,key,sharedVisit,at,marker]);return id;}
+    markedIds.push(await linkedEvent(linkedKeys[0],'2026-10-02T12:00:00.123456Z'),await linkedEvent(linkedKeys[1],'2026-10-02T12:00:00.123457Z'));
+    await linkedEvent(linkedKeys[0],'2026-10-02T12:00:00.123455Z');await linkedEvent(linkedKeys[1],'2026-10-02T12:00:00.123456Z');
+    await linkedEvent(linkedKeys[2],'2026-10-02T12:01:00Z');await linkedEvent(linkedKeys[3],'2026-10-02T12:01:00Z');await linkedEvent(linkedKeys[4],'2026-10-02T12:01:00Z');
+    const unproven=await linkedEvent(linkedKeys[0],'2026-10-02T12:01:00Z',null);
+    const lookup=await getSessionDetail(linkedProject,linkedKeys[0],authority,query());
+    assert.equal(lookup.linkedIdentities.status,'lookup-available');assert.equal('action'in lookup.linkedIdentities&&lookup.linkedIdentities.action,'open-linked-activity');
+    assert.equal((await getSessionDetail(linkedProject,linkedKeys[3],authority,query())).linkedIdentities.status,'unavailable','Naturally expired stored assignments are not available before cleanup.');
+    assert.equal((await getSessionDetail(linkedProject,linkedKeys[0],authority,query({from:'2026-10-03',to:'2026-10-03'}))).linkedIdentities.status,'lookup-available','Lookup availability does not assert events in selected dates.');
+    await assert.rejects(getSessionDetail(linkedProject,linkedKeys[0],{kind:'session',userId:outsider},query()),fail(404));
+    const linkedFirst=await linked({pageSize:'1'});assert.equal(linkedFirst.selection.status,'available');assert.equal(linkedFirst.summary?.events,2);
+    assert.equal(linkedFirst.summary?.visits,2,'Same visit id in two keys is two observed visits.');assert.equal(linkedFirst.summary?.observedKeys,2);
+    assert.equal(linkedFirst.coverage.unprovenEventsExcluded,1);assert.equal(linkedFirst.activity?.[0].id,markedIds[1]);assert.ok(linkedFirst.paging.nextCursor);
+    assert.equal(Object.hasOwn(linkedFirst.activity![0].dimensions,'distinctId'),false);assert.equal(linkedFirst.activity![0].identityEvidenceVersion,1);
+    const linkedSecond=await linked({pageSize:'1',cursor:linkedFirst.paging.nextCursor!});assert.equal(linkedSecond.activity?.[0].id,markedIds[0]);assert.equal(linkedSecond.paging.eventBefore,linkedFirst.paging.eventBefore);
+    assert.equal(linkedSecond.coverage.historyComplete,false);assert.equal(linkedSecond.paging.retentionEvidenceChanged,false);
+    await assert.rejects(linked({pageSize:'1',cursor:linkedFirst.paging.nextCursor!},linkedKeys[1]),fail(400));await assert.rejects(linked({},'0'.repeat(64)),fail(404));
+    await assert.rejects(linked({},linkedKeys[0],{kind:'session',userId:outsider}),fail(404));
+    const wrongLinked=parseSessionCursor(linkedFirst.paging.nextCursor!);if(wrongLinked.route!=='linked-activity')assert.fail('Expected linked cursor.');wrongLinked.scope='0'.repeat(64);
+    await assert.rejects(linked({pageSize:'1',cursor:encodeSessionCursor(wrongLinked)}),fail(400));
+    await pool.query('UPDATE analytics_identity_link SET first_accepted_at=first_accepted_at+interval \'1 microsecond\' WHERE project_id=$1 AND visitor_key=$2',[linkedProject,linkedKeys[0]]);
+    await assert.rejects(linked({pageSize:'1',cursor:linkedFirst.paging.nextCursor!}),fail(409));
+    await pool.query("UPDATE analytics_identity_link SET first_accepted_at='2026-10-02T12:00:00.123456Z' WHERE project_id=$1 AND visitor_key=$2",[linkedProject,linkedKeys[0]]);
+    await pool.query(`INSERT INTO event(id,project_id,visitor_id,visit_id,event_name,path,received_at,source,identity_link_evidence_version)
+      SELECT gen_random_uuid(),$1,$2,$3,'case','/many','2026-10-02T12:02:00Z'::timestamptz+n*interval '1 microsecond','browser',1 FROM generate_series(1,501) n`,[linkedProject,linkedKeys[0],sharedVisit]);
+    const allIds:string[]=[];let more:string|null=null;do{const response=await linked({pageSize:'100',...more?{cursor:more}:{}});assert.equal(response.summary?.events,503);allIds.push(...response.activity!.map(row=>row.id));more=response.paging.nextCursor;}while(more);
+    assert.equal(allIds.length,503);assert.equal(new Set(allIds).size,503);assert.equal(allIds.includes(unproven),false);
+    await pool.query("INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,'2026-10-02','2026-10-03')",[empty,linkedKeys[0]]);
+    await pool.query(`INSERT INTO analytics_identity_link(project_id,visitor_key,identity_version,key_generation,identity_token,first_accepted_at,last_accepted_at)
+      VALUES($1,$2,1,$3,$4,'2026-10-02','2026-10-02')`,[empty,linkedKeys[0],generation,token]);
+    await pool.query(`INSERT INTO event(id,project_id,visitor_id,visit_id,event_name,path,received_at,source,identity_link_evidence_version)
+      VALUES($1,$2,$3,$4,'foreign','/foreign','2026-10-02T12:03:00Z','browser',1)`,[randomUUID(),empty,linkedKeys[0],sharedVisit]);
+    assert.equal((await linked()).summary?.events,503,'Even equal stored tuples never cross the requested project.');
+    const legacyAnchor=await linkedEvent(linkedKeys[5],'2026-10-02T12:00:00.123458Z',null);
+    await pool.query('UPDATE analytics_identity_link SET identity_token=$3 WHERE project_id=$1 AND visitor_key=$2',[linkedProject,linkedKeys[5],'a'.repeat(64)]);
+    const legacy=await linked({},linkedKeys[5]);assert.equal(legacy.selection.status,'unavailable');assert.equal(legacy.selection.reason,'explicit_event_evidence_unavailable');assert.equal(legacy.summary,null);assert.equal(legacy.activity,null);
+    assert.equal((await getSessionDetail(linkedProject,linkedKeys[5],authority,query())).linkedIdentities.status,'lookup-available','One-key legacy-only evidence can still be checked without promising verified history.');
+    await pool.query('DELETE FROM analytics_identity_link WHERE project_id=$1 AND visitor_key=$2',[linkedProject,linkedKeys[5]]);
+    assert.equal((await linked({},linkedKeys[5])).selection.reason,'link_evidence_unavailable');assert.ok(legacyAnchor);
+    const outside=await linked({from:'2026-01-01',to:'2026-01-01'});assert.equal(outside.selection.status,'unavailable');assert.equal(outside.summary,null);
+    const clipped=await linked({from:'2026-07-01',to:'2026-10-02'});assert.ok(clipped.coverage.warnings.includes('retained_range_clipped'));assert.equal(clipped.summary?.events,503);
+    const zero=await linked({from:'2026-10-03',to:'2026-10-03'});assert.equal(zero.selection.status,'available');assert.equal(zero.summary?.events,0);assert.equal(zero.summary?.firstAt,null);assert.equal(zero.summary?.observedVisitSpanSeconds,null);assert.deepEqual(zero.activity,[]);
+    await pool.query('UPDATE project SET identity_event_evidence_started_at=NULL WHERE id=$1',[linkedProject]);
+    assert.equal((await getSessionDetail(linkedProject,linkedKeys[0],authority,query())).linkedIdentities.status,'lookup-available','A missing forward milestone does not hide the retained lookup.');
+    const noMilestone=await linked();assert.equal(noMilestone.selection.reason,'explicit_event_evidence_unavailable');assert.equal(noMilestone.summary,null);assert.equal(noMilestone.activity,null);
+    await pool.query("UPDATE project SET identity_event_evidence_started_at='2026-10-02T12:00:00.123456Z' WHERE id=$1",[linkedProject]);
+    await pool.query("UPDATE project SET identity_links_retained_from='2026-10-02T12:00:00.123457Z',identity_links_evidence_lost_at=clock_timestamp() WHERE id=$1",[linkedProject]);
+    const cutoff=await linked();assert.equal(cutoff.summary?.events,502);assert.ok(cutoff.coverage.warnings.includes('project_link_evidence_lost'));
+    const narrowed=await linked({pageSize:'1',cursor:linkedFirst.paging.nextCursor!});assert.equal(narrowed.paging.retentionEvidenceChanged,true);
+    await pool.query("UPDATE project SET identity_links_retained_from=NULL,identity_links_evidence_lost_at=NULL WHERE id=$1",[linkedProject]);
+    console.log('PASS marked direct same-generation fences, mixed and legacy-only evidence, tuple visits, >500 bounded pages, anchor renewal409, retained clipping and link watermark before cleanup');
+
     const predicates=(operator='eq',value=10)=>JSON.stringify({version:1,match:'all',fields:[],properties:[{key:'amount',operator:'eq',type:'number',value:7}],
       sessionProperties:[operator==='missing'?{key:'absent',operator}:{key:'score',operator,type:'number',value}]});
     const selected=await list({predicates:predicates()});assert.deepEqual(selected.rows?.map(row=>row.visitorKey),[a]);assert.equal(selected.sessionProperties?.candidates.unidentifiedEvents,1);
@@ -80,7 +142,8 @@ export async function runSessionExplorerChecks(){
     await revokeApiKey(workspace,owner,key.key.id);await assert.rejects(listSessions(project,{kind:'api-key',token:key.token},query()),fail(401));
     console.log('PASS current typed properties, combined cohort/report bindings, unchanged Explorer population, empty-data regex validation and current API key checks');
 
-    const connect=pool.connect.bind(pool),dataSql=(sql:unknown)=>typeof sql==='string'&&sql.startsWith('WITH RECURSIVE target')&&sql.includes('selected_candidates AS MATERIALIZED');
+    const connect=pool.connect.bind(pool),dataSql=(sql:unknown)=>typeof sql==='string'&&
+      (sql.startsWith('WITH RECURSIVE target')&&sql.includes('selected_candidates AS MATERIALIZED')||sql.startsWith('WITH RECURSIVE clock')&&sql.includes('edges AS MATERIALIZED'));
     const waitFor=async(check:()=>Promise<boolean>,message:string,milliseconds=200)=>{
       const deadline=Date.now()+milliseconds;
       do{if(await check())return;await delay(5);}while(Date.now()<deadline);assert.fail(message);
@@ -104,6 +167,11 @@ export async function runSessionExplorerChecks(){
     await admissionRace(()=>revokeApiKey(workspace,owner,revokeAtGate.key.id),()=>listSessions(project,{kind:'api-key',token:revokeAtGate.token},query()),401);
     await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'viewer')",[workspace,outsider]);
     await admissionRace(()=>removeMember(workspace,owner,outsider),()=>listSessions(project,{kind:'session',userId:outsider},query()),404);
+    const linkedRevoked=await createApiKey(workspace,owner,{name:'Linked revoked during admission',scopes:['analytics:read']});
+    await admissionRace(()=>revokeApiKey(workspace,owner,linkedRevoked.key.id),()=>linked({},linkedKeys[0],{kind:'api-key',token:linkedRevoked.token}),401);
+    await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'viewer')",[workspace,outsider]);
+    assert.equal((await linked({},linkedKeys[0],{kind:'session',userId:outsider})).summary?.events,503);
+    await admissionRace(()=>removeMember(workspace,owner,outsider),()=>linked({},linkedKeys[0],{kind:'session',userId:outsider}),404);
 
     const expiring=await createApiKey(workspace,owner,{name:'Expires before data statement',scopes:['analytics:read']});
     await pool.query("UPDATE api_key SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1",[expiring.key.id]);
@@ -123,6 +191,25 @@ export async function runSessionExplorerChecks(){
     }finally{pool.connect=connect;resumeData();await expiredRead.catch(()=>{});expiryClient.query=expiryQuery;}
     const valid=await createApiKey(workspace,owner,{name:'Unexpired control',scopes:['analytics:read']});
     assert.equal((await listSessions(project,{kind:'api-key',token:valid.token},query())).totalKeys,3);
+    assert.equal((await linked({},linkedKeys[0],{kind:'api-key',token:valid.token})).summary?.events,503);
+    const insufficient=await createApiKey(workspace,owner,{name:'Not analytics',scopes:['projects:read']});
+    await assert.rejects(linked({},linkedKeys[0],{kind:'api-key',token:insufficient.token}),fail(403));
+    const linkedExpiring=await createApiKey(workspace,owner,{name:'Linked final statement expiry',scopes:['analytics:read']});
+    await pool.query("UPDATE api_key SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1",[linkedExpiring.key.id]);
+    const linkedClient=await connect(),linkedQuery=linkedClient.query;let linkedChecks=0,linkedReached!:()=>void,linkedResume!:()=>void,linkedDispatched=false;
+    const linkedHeld=new Promise<void>(r=>linkedReached=r),linkedRelease=new Promise<void>(r=>linkedResume=r);
+    linkedClient.query=(async function(...args:unknown[]){
+      if(dataSql(args[0])){assert.equal(linkedChecks,3);linkedReached();await linkedRelease;linkedDispatched=true;}
+      const result=await (linkedQuery as any).apply(linkedClient,args);if(typeof args[0]==='string'&&args[0].startsWith('SELECT k.id')){assert.equal(result.rowCount,1);linkedChecks++;}return result;
+    }) as typeof linkedClient.query;
+    pool.connect=(async()=>{pool.connect=connect;return linkedClient;}) as typeof pool.connect;
+    const linkedExpiryRead=linked({},linkedKeys[0],{kind:'api-key',token:linkedExpiring.token});void linkedExpiryRead.catch(()=>{});
+    try{
+      await Promise.race([linkedHeld,delay(3000).then(()=>{throw Error('Linked final statement hold not reached.');})]);
+      await waitFor(async()=>(await pool.query('SELECT expires_at<=clock_timestamp() AS expired FROM api_key WHERE id=$1',[linkedExpiring.key.id])).rows[0].expired,'Linked key deadline did not pass.',3000);
+      linkedResume();await assert.rejects(linkedExpiryRead,fail(401));assert.equal(linkedDispatched,true);
+    }finally{pool.connect=connect;linkedResume();await linkedExpiryRead.catch(()=>{});linkedClient.query=linkedQuery;}
+    console.log('PASS linked viewer read, blocked member/key revocation, scope rejection and actual final-statement expiry after all three key checks');
     console.log('PASS actual blocked admission with key revocation/member removal and final-statement key expiry after successful validators; valid key control');
 
     async function sleepingRead(seconds:number){
@@ -180,6 +267,7 @@ export async function runSessionExplorerChecks(){
     assert.equal((await getSessionDetail(project,a,authority,query())).summary.events,3,'Profile evidence loss must not hide retained events.');
     const settings=await getRetention(workspace,owner),preview=await previewRetention(workspace,owner,{revision:settings.revision,settings:{...settings.settings,rawAnalyticsDays:settings.settings.rawAnalyticsDays-1}});
     await saveRetention(workspace,owner,{previewToken:preview.previewToken});await assert.rejects(list({pageSize:'1',cursor:first.paging.nextCursor!}),fail(409));
+    await assert.rejects(linked({pageSize:'1',cursor:linkedFirst.paging.nextCursor!}),fail(409));
     await pool.query("UPDATE project SET analytics_retained_from='2026-10-03' WHERE id=$1",[project]);
     const expired=await list();assert.equal(expired.selection.reason,'event_history_unavailable');assert.equal(expired.totalKeys,null);assert.equal(expired.rows,null);
     await assert.rejects(getSessionDetail(project,a,authority,query()),fail(404));assert.equal(outbound,0);

@@ -15,6 +15,7 @@ export type SessionPopulationQuery={from:string;to:string;timeZone:string;kind:'
 export type CanonicalSessionListQuery=SessionPopulationQuery&{visitorKey:string|null};
 export type SessionListInput={query:CanonicalSessionListQuery;pageSize:number;cursor:Extract<SessionCursor,{route:'list'}>|null};
 export type SessionActivityInput={visitorKey:string;from:string;to:string;timeZone:string;pageSize:number;cursor:Extract<SessionCursor,{route:'activity'}>|null};
+export type LinkedActivityInput=Omit<SessionActivityInput,'cursor'>&{cursor:Extract<SessionCursor,{route:'linked-activity'}>|null};
 export type StoredSessionDimensions=Omit<NormalizedDimensions,'distinctId'>&{origin?:string};
 export type SessionSelection={status:'available';reason:null;countsAreLowerBounds:boolean}|{status:'unavailable';
   reason:'event_history_unavailable'|'identity_unavailable'|'cohort_membership_unavailable'|'session_property_selection_unavailable';countsAreLowerBounds:false};
@@ -36,7 +37,19 @@ export type SessionDetail=SessionReadMeta&{visitorKey:string;activityScope:'all-
     observedVisitSpanSeconds:string|null;meanObservedVisitSpanSeconds:string|null};
   activity:{id:string;receivedAt:string;visitKey:string;kind:'pageview'|'custom';eventName:string;path:string;origin:string;
     properties:NormalizedProperties;dimensions:StoredSessionDimensions;source:'legacy'|'browser'|'api';metricVersion:string}[]|null;
-  currentProperties:CurrentPropertyEvidence;linkedIdentities:{status:'unavailable';reason:'link-evidence-not-stored';limitation:string}};
+  currentProperties:CurrentPropertyEvidence;linkedIdentities:{status:'lookup-available';action:'open-linked-activity';limitation:string}|
+    {status:'unavailable';reason:'link_evidence_unavailable';limitation:string}};
+export type LinkedActivity={projectId:string;baseVisitorKey:string;method:'explicit-identified-activity-v1';asOf:string;range:SessionReadMeta['range'];
+  selection:{status:'available';reason:null;reference:{version:1;keyGeneration:string;token:string};scope:'direct-marked-events-in-selected-dates'}|
+    {status:'unavailable';reason:'link_evidence_unavailable'|'explicit_event_evidence_unavailable'|'event_history_unavailable'};
+  summary:{events:number;pageViews:number;customEvents:number;observedKeys:number;visits:number;firstAt:string|null;lastAt:string|null;
+    observedVisitSpanSeconds:string|null;meanObservedVisitSpanSeconds:string|null}|null;
+  activity:(NonNullable<SessionDetail['activity']>[number]&{source:'browser';visitorKey:string;identityEvidenceVersion:1})[]|null;
+  coverage:{status:'partial'|'unavailable';eventRetainedFrom:string;linkRetainedFrom:string;eventEvidenceStartedAt:string|null;
+    linksStartedAt:string|null;linkEvidenceLostAt:string|null;linkingEnabled:boolean;unprovenEventsExcluded:number;
+    legacyEvidence:'not_backfilled';historyComplete:false;historyScope:'retained_direct_explicit_observations_only';
+    warnings:('legacy_evidence_excluded'|'retained_range_clipped'|'project_link_evidence_lost'|'new_linking_disabled'|'evidence_changed')[]};
+  paging:SessionReadMeta['paging']};
 
 function bad(message='Check the session dates, filters and page cursor.'):never{throw new InputError(400,message);}
 const hex=z.string().regex(/^[a-f0-9]{64}$/).refine(value=>value.length===64);
@@ -48,6 +61,7 @@ const cursorFields={version:z.literal(1),projectId:uuid,scope:hex,pageSize:z.num
 const cursorInput=z.discriminatedUnion('route',[
   z.object({...cursorFields,route:z.literal('list'),last:z.object({at:instant,visitorKey:hex}).strict()}).strict(),
   z.object({...cursorFields,route:z.literal('activity'),visitorKey:hex,last:z.object({at:instant,id:uuid}).strict()}).strict(),
+  z.object({...cursorFields,route:z.literal('linked-activity'),visitorKey:hex,anchor:hex,last:z.object({at:instant,id:uuid}).strict()}).strict(),
 ]);
 export type SessionCursor=z.infer<typeof cursorInput>;
 
@@ -114,6 +128,17 @@ export function sessionActivityQuery(visitorKey:string,params:URLSearchParams,no
   if(cursor&&cursor.route!=='activity')bad();
   const {from,to,timeZone}=explorerQuery(population,now);
   return {visitorKey,from,to,timeZone,pageSize,cursor};
+}
+export function linkedActivityQuery(visitorKey:string,params:URLSearchParams,now=new Date()):LinkedActivityInput{
+  if(!hex.safeParse(visitorKey).success)bad();
+  const {pageSize,cursor,population}=parameters(params,activityKeys,50);
+  if(cursor&&cursor.route!=='linked-activity')bad();
+  const {from,to,timeZone}=explorerQuery(population,now);
+  return {visitorKey,from,to,timeZone,pageSize,cursor};
+}
+export function linkedActivityScope(projectId:string,input:LinkedActivityInput,anchor:string):string{
+  if(!uuid.safeParse(projectId).success||!hex.safeParse(anchor).success)bad();
+  return canonicalHash(['linked-activity-scope-v1',projectId,input.visitorKey,input.from,input.to,input.timeZone,input.pageSize,anchor]);
 }
 // Scope checks, current authorization, policy hashes and eventBefore<=asOf belong to the gated service.
 export function sessionCursorScope(projectId:string,input:SessionListInput|SessionActivityInput):string{

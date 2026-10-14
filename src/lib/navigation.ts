@@ -1,6 +1,6 @@
 export const views = ['project', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
-export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
+export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
 export const auditCoverages = ['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'] as const
 export type AuditNavigation = {auditRun?:string;auditPage?:string;auditTab?:'pages';auditSeverity?:'critical'|'warning'|'info';auditCode?:string;auditAffectedPage?:string;auditCoverage?:typeof auditCoverages[number];auditResource?:'robots'|'sitemap';auditDirection?:'in';auditInvalid?:'1'}
@@ -19,7 +19,7 @@ export function auditNavigation(raw:Record<string,unknown>):AuditNavigation {
 }
 
 export function sessionNavigation(raw:Record<string,unknown>):SessionNavigation {
-  const out:SessionNavigation={}, names=['from','to','timeZone','visitorKey','cohortId','cohortRevision','segmentId','segmentRevision','sessionInvalid'];
+  const out:SessionNavigation={}, names=['from','to','timeZone','visitorKey','activity','cohortId','cohortRevision','segmentId','segmentRevision','sessionInvalid'];
   const invalid=()=>({sessionInvalid:'1'} as const);
   if(raw.sessionInvalid!==undefined)return invalid();
   if(Object.keys(raw).some(key=>!['workspace','project','view',...names].includes(key)))return invalid();
@@ -30,6 +30,7 @@ export function sessionNavigation(raw:Record<string,unknown>):SessionNavigation 
     out.from=raw.from;out.to=raw.to;
   }
   if(raw.visitorKey!==undefined){if(typeof raw.visitorKey!=='string'||raw.visitorKey.length!==64||!/^[a-f0-9]{64}$/.test(raw.visitorKey)||!out.from)return invalid();out.visitorKey=raw.visitorKey;}
+  if(raw.activity!==undefined){if(raw.activity!=='identified'||!out.visitorKey)return invalid();out.activity='identified';}
   for(const kind of ['cohort','segment'] as const){const id=raw[`${kind}Id`],revision=raw[`${kind}Revision`];if(id===undefined&&revision===undefined)continue;
     if(!navigationId(id)||!['string','number'].includes(typeof revision)||! /^[1-9][0-9]{0,9}$/.test(String(revision))||Number(revision)>2147483647)return invalid();
     out[`${kind}Id`]=id.toLowerCase();out[`${kind}Revision`]=String(revision);

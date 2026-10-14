@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import type {SessionList,SessionDetail} from '../server/session-explorer-input';
+import type {SessionList,SessionDetail,LinkedActivity} from '../server/session-explorer-input';
 import {buildParams,buildAdvanced,validAdvancedResult,validSessionSelection,validCohort,qualificationDraft,preciseDate,clean,FILTERS,type Draft,type CohortRef} from '../components/ExplorerFilters';
 
 const text=(max:number)=>z.string().max(max).refine(value=>clean(value,max));
@@ -29,7 +29,38 @@ const list=z.object({...base,query,rows:z.array(z.object({visitorKey:key,firstAt
 const currentProperties=z.object({method:z.literal('current-retained-session-properties-v1'),asOf:stamp,retainedFrom:stamp,evidence,values:z.array(z.object({key:text(320).min(1),property,updatedAt:stamp}).strict()).max(50),absence:z.enum(['unobserved-without-known-loss','unknown-after-evidence-loss']),limitation:text(2000)}).strict();
 const dimensions=z.object({origin:text(2048).optional(),referrerHost:text(320).optional(),language:text(320).optional(),screenWidth:count.optional(),screenHeight:count.optional(),campaign:z.object({source:text(320).optional(),medium:text(320).optional(),campaign:text(320).optional(),term:text(320).optional(),content:text(320).optional()}).strict().optional()}).strict();
 const duration=z.string().regex(/^\d+(?:\.\d+)?$/).nullable();
-const detail=z.object({...base,visitorKey:key,activityScope:z.literal('all-key-activity-in-selected-dates'),summary:z.object({events:count.nullable(),pageViews:count.nullable(),customEvents:count.nullable(),visits:count.nullable(),firstAt:stamp.nullable(),lastAt:stamp.nullable(),observedVisitSpanSeconds:duration,meanObservedVisitSpanSeconds:duration}).strict(),activity:z.array(z.object({id:uuid,receivedAt:stamp,visitKey:key,kind:z.enum(['pageview','custom']),eventName:text(320),path:text(2048),origin:text(2048),properties,dimensions,source:z.enum(['legacy','browser','api']),metricVersion:text(2000)}).strict()).max(100).nullable(),currentProperties,linkedIdentities:z.object({status:z.literal('unavailable'),reason:z.literal('link-evidence-not-stored'),limitation:text(2000)}).strict()}).strict();
+const detail=z.object({...base,visitorKey:key,activityScope:z.literal('all-key-activity-in-selected-dates'),summary:z.object({events:count.nullable(),pageViews:count.nullable(),customEvents:count.nullable(),visits:count.nullable(),firstAt:stamp.nullable(),lastAt:stamp.nullable(),observedVisitSpanSeconds:duration,meanObservedVisitSpanSeconds:duration}).strict(),activity:z.array(z.object({id:uuid,receivedAt:stamp,visitKey:key,kind:z.enum(['pageview','custom']),eventName:text(320),path:text(2048),origin:text(2048),properties,dimensions,source:z.enum(['legacy','browser','api']),metricVersion:text(2000)}).strict()).max(100).nullable(),currentProperties,linkedIdentities:z.discriminatedUnion('status',[
+  z.object({status:z.literal('lookup-available'),action:z.literal('open-linked-activity'),limitation:text(2000)}).strict(),
+  z.object({status:z.literal('unavailable'),reason:z.literal('link_evidence_unavailable'),limitation:text(2000)}).strict(),
+])}).strict();
+const linkedInstant=instant.refine(value=>/\.\d{6}Z$/.test(value));
+const linked=z.object({projectId:uuid,baseVisitorKey:key,method:z.literal('explicit-identified-activity-v1'),asOf:linkedInstant,range,
+  selection:z.discriminatedUnion('status',[
+    z.object({status:z.literal('available'),reason:z.null(),reference:z.object({version:z.literal(1),keyGeneration:key,token:key}).strict(),scope:z.literal('direct-marked-events-in-selected-dates')}).strict(),
+    z.object({status:z.literal('unavailable'),reason:z.enum(['link_evidence_unavailable','explicit_event_evidence_unavailable','event_history_unavailable'])}).strict()]),
+  summary:z.object({events:count,pageViews:count,customEvents:count,observedKeys:count,visits:count,firstAt:stamp.nullable(),lastAt:stamp.nullable(),observedVisitSpanSeconds:duration,meanObservedVisitSpanSeconds:duration}).strict().nullable(),
+  activity:z.array(z.object({id:uuid,receivedAt:linkedInstant,visitorKey:key,visitKey:key,kind:z.enum(['pageview','custom']),eventName:text(320),path:text(2048),origin:text(2048),properties,dimensions,source:z.literal('browser'),metricVersion:text(2000),identityEvidenceVersion:z.literal(1)}).strict()).max(100).nullable(),
+  coverage:z.object({status:z.enum(['partial','unavailable']),eventRetainedFrom:linkedInstant,linkRetainedFrom:linkedInstant,eventEvidenceStartedAt:linkedInstant.nullable(),linksStartedAt:linkedInstant.nullable(),linkEvidenceLostAt:linkedInstant.nullable(),linkingEnabled:z.boolean(),unprovenEventsExcluded:count,
+    legacyEvidence:z.literal('not_backfilled'),historyComplete:z.literal(false),historyScope:z.literal('retained_direct_explicit_observations_only'),
+    warnings:z.array(z.enum(['legacy_evidence_excluded','retained_range_clipped','project_link_evidence_lost','new_linking_disabled','evidence_changed'])).max(5)}).strict(),paging:base.paging.extend({eventBefore:linkedInstant}).strict()}).strict();
+
+export function readLinkedActivityResponse(value:unknown,params:URLSearchParams,projectId:string,visitorKey:string):LinkedActivity{
+  const fail=():never=>{throw new Error('The identified activity response could not be confirmed. Retry this request.');};
+  const parsed=linked.safeParse(value);if(!parsed.success)return fail();const v=parsed.data;
+  let zone:string;try{zone=new Intl.DateTimeFormat('en-US',{timeZone:params.get('timeZone')!}).resolvedOptions().timeZone;}catch{return fail();}
+  const micro=(s:string)=>s.replace(/\.(\d{3})Z$/,'.$1000Z');
+  if(v.projectId!==projectId||v.baseVisitorKey!==visitorKey||v.range.from!==params.get('from')||v.range.to!==params.get('to')||v.range.timeZone!==zone||v.range.start>v.range.end||v.paging.limit!==Number(params.get('pageSize')??50)||micro(v.paging.eventBefore)>micro(v.asOf))return fail();
+  const c=v.coverage,w=c.warnings;if(new Set(w).size!==w.length||c.eventRetainedFrom<c.linkRetainedFrom||c.eventEvidenceStartedAt!==null&&c.eventRetainedFrom<c.eventEvidenceStartedAt||w.includes('legacy_evidence_excluded')!==(c.unprovenEventsExcluded>0)||w.includes('retained_range_clipped')!==(micro(v.range.start)<c.eventRetainedFrom)||w.includes('project_link_evidence_lost')!==(c.linkEvidenceLostAt!==null)||w.includes('new_linking_disabled')===c.linkingEnabled||w.includes('evidence_changed')!==v.paging.retentionEvidenceChanged)return fail();
+  if(v.selection.status==='unavailable'){
+    if(v.summary!==null||v.activity!==null||v.paging.nextCursor!==null||c.status!=='unavailable')return fail();
+  }else{
+    const s=v.summary,a=v.activity;if(!s||!a||c.status!=='partial'||c.eventEvidenceStartedAt===null||s.events!==s.pageViews+s.customEvents||a.length>v.paging.limit||a.length>s.events||s.observedKeys>s.events||s.visits>s.events||new Set(a.map(e=>e.id)).size!==a.length)return fail();
+    if(s.events===0){if(s.observedKeys||s.visits||s.firstAt!==null||s.lastAt!==null||s.observedVisitSpanSeconds!==null||s.meanObservedVisitSpanSeconds!==null||a.length||v.paging.nextCursor!==null||c.unprovenEventsExcluded>0)return fail();}
+    else if(!s.observedKeys||!s.visits||s.firstAt===null||s.lastAt===null||s.firstAt>s.lastAt||s.observedVisitSpanSeconds===null||s.meanObservedVisitSpanSeconds===null)return fail();
+    if(a.some((e,i)=>micro(e.receivedAt)<micro(c.eventRetainedFrom)||micro(e.receivedAt)<micro(c.eventEvidenceStartedAt!)||micro(e.receivedAt)<micro(v.range.start)||micro(e.receivedAt)>=micro(v.range.end)||micro(e.receivedAt)>=micro(v.paging.eventBefore)||e.kind!==(e.eventName==='page_view'?'pageview':'custom')||i>0&&(a[i-1].receivedAt<e.receivedAt||a[i-1].receivedAt===e.receivedAt&&a[i-1].id<=e.id)))return fail();
+  }
+  return v;
+}
 
 export function sessionParams(draft:Draft,cohort:CohortRef|null,visitorKey=''){
   const built=buildParams({...draft,groupBy:'event',groupProperty:''});if('error'in built)return built;

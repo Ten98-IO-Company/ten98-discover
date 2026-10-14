@@ -4,7 +4,7 @@ import {canonicalHash} from '../src/server/context-input.ts';
 import {explorerQuery} from '../src/server/explorer-input.ts';
 import {parseSegmentDefinition} from '../src/server/segment-input.ts';
 import {parseCohortDefinition} from '../src/server/cohort-input.ts';
-import {sessionListQuery,sessionActivityQuery,canonicalSessionListQuery,sessionCursorScope,parseSessionCursor,encodeSessionCursor,type SessionCursor} from '../src/server/session-explorer-input.ts';
+import {sessionListQuery,sessionActivityQuery,linkedActivityQuery,linkedActivityScope,canonicalSessionListQuery,sessionCursorScope,parseSessionCursor,encodeSessionCursor,type SessionCursor} from '../src/server/session-explorer-input.ts';
 
 const now=new Date('2026-10-14T12:00:00Z'),project='11111111-1111-4111-8111-111111111111',event='22222222-2222-4222-8222-222222222222';
 const key='a'.repeat(64),otherKey='b'.repeat(64),calendar={from:'2024-02-29',to:'2024-03-01',timeZone:'Asia/Dubai'};
@@ -119,4 +119,23 @@ test('scope hashes canonical inputs and changes for every population/navigation 
   assert.notEqual(scope,sessionCursorScope(event,input));
   const activity=sessionActivityQuery(key,params(),now);assert.notEqual(sessionCursorScope(project,activity),sessionCursorScope(project,{...activity,visitorKey:otherKey}));
   assert.notEqual(sessionCursorScope(project,activity),sessionCursorScope(project,list()));
+});
+
+test('identified activity rejects raw lookup, list predicates, wrong route cursors and noncanonical scope',()=>{
+  const input=linkedActivityQuery(key,params({timeZone:'Etc/UTC'}),now),anchor='f'.repeat(64);
+  assert.equal(input.timeZone,'UTC');assert.equal(input.pageSize,50);
+  for(const name of ['distinctId','identityToken','generation','email','predicates','path','cohortId','eventBefore','returnTo'])assert.throws(()=>linkedActivityQuery(key,params({[name]:'x'}),now),{status:400});
+  for(const name of ['from','to','timeZone','pageSize','cursor']){const p=params();p.append(name,'x');assert.throws(()=>linkedActivityQuery(key,p,now),{status:400});}
+  for(const route of ['list','activity'] as const)assert.throws(()=>linkedActivityQuery(key,params({cursor:encodeSessionCursor(cursor(route))}),now),{status:400});
+  const scope=linkedActivityScope(project,input,anchor);
+  const activity=cursor('activity');if(activity.route!=='activity')throw Error('Expected the activity control cursor.');
+  const value:SessionCursor={...activity,route:'linked-activity',scope,anchor};
+  const wire=encodeSessionCursor(value);assert.deepEqual(parseSessionCursor(wire),value);
+  assert.equal(linkedActivityQuery(key,params({timeZone:'UTC',cursor:wire}),now).cursor?.last.at,'2024-03-01T10:00:00.123456Z');
+  assert.throws(()=>sessionActivityQuery(key,params({cursor:wire}),now),{status:400});
+  assert.throws(()=>parseSessionCursor(encoded({...value,identityToken:key})),{status:400});
+  assert.throws(()=>parseSessionCursor(encoded({...value,anchor:'raw-customer-id'})),{status:400});
+  for(const changed of [{...input,visitorKey:otherKey},{...input,pageSize:1},{...input,timeZone:'Asia/Dubai'},{...input,to:'2024-03-02'}])assert.notEqual(linkedActivityScope(project,changed,anchor),scope);
+  assert.notEqual(linkedActivityScope(event,input,anchor),scope);assert.notEqual(linkedActivityScope(project,input,key),scope);
+  assert.equal(Buffer.from(wire,'base64url').toString().includes('identityToken'),false);
 });
