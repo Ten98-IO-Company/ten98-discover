@@ -28,7 +28,7 @@ function successfulFree(response:{httpStatus:number;body:unknown}) {
 export function parseKeywordMarkets(response:{httpStatus:number;body:unknown}):KeywordMarket[] {
   const rows=successfulFree(response);if(rows.length>500)invalid();
   const markets:KeywordMarket[]=[];const ids=new Set<string>();
-  for(const row of rows){if(!object(row)||row.location_type!=='Country'||!Number.isSafeInteger(row.location_code)||row.location_code<=0||!validText(row.location_name,200)||!Array.isArray(row.available_languages)||row.available_languages.length>100)invalid();
+  for(const row of rows){if(!object(row)||!['Country','Region'].includes(row.location_type)||!Number.isSafeInteger(row.location_code)||row.location_code<=0||!validText(row.location_name,200)||!Array.isArray(row.available_languages)||row.available_languages.length>100)invalid();
     for(const language of row.available_languages){if(!object(language)||!Array.isArray(language.available_sources))invalid();if(!language.available_sources.includes('google'))continue;
       if(!validText(language.language_name,80)||typeof language.language_code!=='string'||!/^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(language.language_code))invalid();
       const key=`${row.location_code}:${language.language_code}`;if(ids.has(key))invalid();ids.add(key);

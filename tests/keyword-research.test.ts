@@ -32,6 +32,33 @@ test('market catalog retains only supported Google country/language pairs',()=>{
  assert.deepEqual(parseKeywordMarkets(free(rows)),[{locationCode:2840,locationName:'United States',languageCode:'en',languageName:'English'}]);
  assert.throws(()=>parseKeywordMarkets(free([{...rows[0],location_type:'City'}])));
 });
+
+test('public Labs Region markets retain exact identity through request, payload and result binding',()=>{
+ // Public metadata: https://cdn.dataforseo.com/v3/locations/locations_and_languages_dataforseo_labs_2026_09_01.csv
+ const regions=[{location_code:2158,location_name:'Taiwan',location_type:'Region',available_languages:[{language_code:'zh-TW',language_name:'Chinese (Traditional)',available_sources:['google']}]},
+  {location_code:2344,location_name:'Hong Kong',location_type:'Region',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']},{language_code:'zh-TW',language_name:'Chinese (Traditional)',available_sources:['google']}]}];
+ const markets=parseKeywordMarkets(free(regions));
+ assert.deepEqual(markets,[{locationCode:2344,locationName:'Hong Kong',languageCode:'zh-TW',languageName:'Chinese (Traditional)'},{locationCode:2344,locationName:'Hong Kong',languageCode:'en',languageName:'English'},{locationCode:2158,locationName:'Taiwan',languageCode:'zh-TW',languageName:'Chinese (Traditional)'}]);
+ for(const market of markets){
+  const scoped=parseKeywordRequest({...request,keywords:['Example'],locationCode:market.locationCode,languageCode:market.languageCode});
+  const payload=keywordPayload(scoped,id);assert.equal(payload.location_code,market.locationCode);assert.equal(payload.language_code,market.languageCode);
+  const reply=response();reply.body.tasks[0].data=payload;reply.body.tasks[0].result[0].location_code=market.locationCode;reply.body.tasks[0].result[0].language_code=market.languageCode;
+  assert.equal(parseKeywordOutcome(reply,scoped,id).result?.rows[0].keyword,'example');
+  reply.body.tasks[0].result[0].language_code='un';assert.equal(parseKeywordOutcome(reply,scoped,id).result,null);
+  reply.body.tasks[0].result[0].language_code=market.languageCode;reply.body.tasks[0].result[0].location_code=2840;assert.equal(parseKeywordOutcome(reply,scoped,id).result,null);
+ }
+ for(const type of ['City','Unknown','region',null])assert.throws(()=>parseKeywordMarkets(free([{...regions[0],location_type:type}])));
+ assert.throws(()=>parseKeywordMarkets(free([regions[0],regions[0]])));
+ const language=regions[0].available_languages[0];
+ assert.equal(parseKeywordMarkets(free([{...regions[0],available_languages:[{...language,available_sources:['google','amazon']},{language_code:'en',language_name:'English',available_sources:['amazon','bing']}]}])).length,1);
+ for(const available_sources of [null,'google',{}])assert.throws(()=>parseKeywordMarkets(free([{...regions[0],available_languages:[{...language,available_sources}]}])));
+ assert.throws(()=>parseKeywordMarkets(free([{...regions[0],location_name:'bad\0'}])));
+ assert.throws(()=>parseKeywordMarkets(free(Array.from({length:501},(_,i)=>({...regions[0],location_code:i+1})))));
+ const languages=Array.from({length:101},(_,i)=>({...language,language_code:String.fromCharCode(97+Math.floor(i/26),97+i%26)}));
+ assert.throws(()=>parseKeywordMarkets(free([{...regions[0],available_languages:languages}])));
+ assert.throws(()=>parseKeywordMarkets(free(Array.from({length:51},(_,i)=>({...regions[0],location_code:i+1,available_languages:languages.slice(0,100)})))));
+ const charged=free(regions);charged.body.cost=1;assert.throws(()=>parseKeywordMarkets(charged));
+});
 test('provider response preserves unavailable versus zero and distinguishes charge from usable data',()=>{
  const parsed=parseKeywordOutcome(response(),request,id,new Date('2026-02-01T00:00:00Z'));
  assert.equal(parsed.cost,'0.012120');assert.deepEqual(parsed.result?.missingKeywords,['missing']);assert.equal(parsed.result?.rows[0].searchVolume,0);assert.equal(parsed.result?.rows[0].cpcUsd,'0.000000');assert.equal(parsed.result?.rows[0].monthlySearches[0].searchVolume,null);assert.equal(parsed.result?.rows[0].metricsUpdatedAt,'2026-01-31T12:00:00.000Z');

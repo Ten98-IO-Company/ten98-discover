@@ -248,7 +248,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     clearQuote();setErr(null);setMsg(null);
     try{
       const problem=keywordProblem(parsed,mode);if(problem)throw new Error(problem);
-      if(!market)throw new Error('Choose a country and language. Refresh markets first if none are listed.');
+      if(!market)throw new Error('Choose a country or territory and language. Refresh markets first if none are listed.');
       const body:Req={connectionId:connId,mode,keywords:parsed,locationCode:market.locationCode,languageCode:market.languageCode,limit:mode==='overview'?100:limit};
       const state=await access(op);if(!state||!current(op))return;
       if(state.role==='viewer')throw new Error('Your current role can read research but cannot prepare quotes.');
@@ -366,7 +366,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
           <summary>Market and result limit</summary>
           <div className="stack">
             <div>
-              <label htmlFor={uid+'-market'}>Country and language</label>
+              <label htmlFor={uid+'-market'}>Country or territory and language</label>
               <select id={uid+'-market'} style={{width:'100%'}} value={marketKey} onChange={e=>edit(()=>setMarketKey(e.target.value))} required disabled={markets.length===0}>
                 <option value="">Choose a market…</option>
                 {markets.map(m=><option key={m.locationCode+'|'+m.languageCode} value={m.locationCode+'|'+m.languageCode}>{m.locationName} / {m.languageName} ({m.languageCode})</option>)}

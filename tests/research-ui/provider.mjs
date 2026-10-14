@@ -23,7 +23,10 @@ export function createSyntheticProviderFetch({allowDispatch=false,promptMode='ok
     assert.equal(init.redirect,'error');assert.equal(init.credentials,'omit');assert.ok(init.signal);
     if(address===dfs+'dataforseo_labs/locations_and_languages'){
       assert.equal(init.method,'GET');record('keyword-catalog');
-      return free([{location_code:2840,location_name:'United States',location_type:'Country',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']}]}]);
+      // https://cdn.dataforseo.com/v3/locations/locations_and_languages_dataforseo_labs_2026_09_01.csv
+      return free([{location_code:2840,location_name:'United States',location_type:'Country',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']}]},
+        {location_code:2158,location_name:'Taiwan',location_type:'Region',available_languages:[{language_code:'zh-TW',language_name:'Chinese (Traditional)',available_sources:['google']}]},
+        {location_code:2344,location_name:'Hong Kong',location_type:'Region',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']},{language_code:'zh-TW',language_name:'Chinese (Traditional)',available_sources:['google']}]}]);
     }
     if(address===dfs+'appendix/user_data'){
       assert.equal(init.method,'GET');record('keyword-price');
