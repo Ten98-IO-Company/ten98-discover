@@ -14,6 +14,7 @@ import { projectAnalytics } from './analytics.ts';
 import { exploreAnalytics } from './explorer.ts';
 import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
 import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
+import {listCohorts,getCohort,saveCohort,deleteCohort} from './cohorts.ts';
 import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
@@ -232,6 +233,23 @@ export async function handleApi(request: Request): Promise<Response> {
         if(url.search)throw new FoundationError(400,'Annotation writes have no query parameters.');
         const body=await readJson(request,8192);
         return json(action==='delete'?await deleteAnnotation(pid,user.id,target,body):await saveAnnotation(pid,user.id,body,target));
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const cohortRoute=path.match(new RegExp('^/api/projects/('+id+')/cohorts(?:/('+id+')(?:/(update|delete))?)?$','i'));
+    if(cohortRoute){
+      const [,projectId,cohortId,action]=cohortRoute;
+      await limit('cohorts:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?60:30);
+      if(request.method==='GET'){
+        if(!cohortId)return json(await listCohorts(projectId,user.id,url.searchParams));
+        if(!action){if(url.search)throw new FoundationError(400,'Cohort details do not accept query parameters.');return json(await getCohort(projectId,user.id,cohortId));}
+      }
+      if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'Cohort changes do not accept query parameters.');
+        const input=await readJson(request,32768);
+        if(!cohortId)return json(await saveCohort(projectId,user.id,input));
+        if(action==='update')return json(await saveCohort(projectId,user.id,input,cohortId));
+        if(action==='delete')return json(await deleteCohort(projectId,user.id,cohortId,input));
       }
       return json({error:'Method not allowed.'},405);
     }

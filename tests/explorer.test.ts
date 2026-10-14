@@ -31,3 +31,11 @@ test('CSV quotes text and neutralizes formulas including whitespace, while prese
   assert.equal(csvCell('1000000000000000.123456'),'"1000000000000000.123456"');
   assert.equal(csvCell(['1',1]),'"[""1"",1]"');
 });
+
+test('Explorer cohort selection requires one valid paired ID and current bounded revision',()=>{
+  const id='4455af22-3e1b-4aa8-a837-20189d42a615';
+  assert.equal(Object.hasOwn(explorerQuery(new URLSearchParams()),'cohort'),false);
+  assert.deepEqual(explorerQuery(new URLSearchParams({cohortId:id,cohortRevision:'2147483647'})).cohort,{id,revision:2147483647});
+  for(const query of [`cohortId=${id}`,'cohortRevision=1','cohortId=no&cohortRevision=1',...['0','-1','01','1.0','1e1','2147483648','1\n',''].map(revision=>new URLSearchParams({cohortId:id,cohortRevision:revision}).toString()),
+    `cohortId=${id}&cohortId=${id}&cohortRevision=1`,`cohortId=${id}&cohortRevision=1&cohortRevision=1`])assert.throws(()=>explorerQuery(new URLSearchParams(query)),{status:400});
+});

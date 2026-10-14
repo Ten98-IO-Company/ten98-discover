@@ -1,11 +1,12 @@
 import { toUSVString } from 'node:util';
+import {z} from 'zod';
 import { normalizeProperties } from './analytics-input.ts';
 import { analyticsRange } from './analytics.ts';
 import { InputError } from './validation.ts';
 
 export const explorerGroups = ['event','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','screenWidth','screenHeight','property'] as const;
 export const explorerFilters = ['eventName','path','origin','referrer','language','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent'] as const;
-const parameterNames = new Set(['from','to','timeZone','kind','groupBy','groupProperty','propertyKey','propertyType','propertyValue',...explorerFilters]);
+const parameterNames = new Set(['from','to','timeZone','kind','groupBy','groupProperty','propertyKey','propertyType','propertyValue','cohortId','cohortRevision',...explorerFilters]);
 function bad(message = 'Check the exploration filters and try again.'): never { throw new InputError(400, message); }
 function text(value: string, maximum: number, empty = false) {
   if ((!empty && !value.length) || value.length > maximum || toUSVString(value) !== value || value.includes('\0')) bad();
@@ -54,7 +55,13 @@ export function explorerQuery(params: URLSearchParams, now = new Date()) {
       property = {key,type,value:type === 'string' ? raw : normalized.value};
     }
   }
-  return {from:range.from,to:range.to,timeZone,kind,groupBy,groupProperty,filters,property};
+  let cohort:{id:string;revision:number}|undefined;
+  if(params.has('cohortId')||params.has('cohortRevision')){
+    const id=params.get('cohortId'),revision=params.get('cohortRevision')??'';
+    if(!z.uuid().safeParse(id).success||!/^[1-9][0-9]{0,9}(?![\s\S])/.test(revision)||Number(revision)>2147483647)bad('Choose a cohort and its current revision.');
+    cohort={id:id!,revision:Number(revision)};
+  }
+  return {from:range.from,to:range.to,timeZone,kind,groupBy,groupProperty,filters,property,...(cohort?{cohort}:{})};
 }
 
 // Quoting alone does not stop spreadsheets from executing a leading formula.
