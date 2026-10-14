@@ -48,7 +48,7 @@ test('Explorer keeps legacy predicates required and exposes an optional canonica
   assert.deepEqual(parsed.filters,{path:'/required'});assert.deepEqual(parsed.property,{key:'required',type:'null',value:null});
   assert.deepEqual(parsed.predicates,{version:1,match:'any',fields:[{field:'path',operator:'eq',value:'/other'}],properties:[{key:'when',operator:'eq',type:'date',value:'2024-02-29T08:00:00.1234567Z'}]});
   assert.equal(params.get('predicates'),JSON.stringify(predicates));
-  for(const value of ['', '{', 'null',JSON.stringify({...predicates,sessionProperties:[]})])assert.throws(()=>explorerQuery(new URLSearchParams({predicates:value})),{status:400});
+  for(const value of ['', '{', 'null',JSON.stringify({...predicates,sessionProperty:[]})])assert.throws(()=>explorerQuery(new URLSearchParams({predicates:value})),{status:400});
   params.append('predicates',JSON.stringify(predicates));assert.throws(()=>explorerQuery(params),{status:400});
 });
 

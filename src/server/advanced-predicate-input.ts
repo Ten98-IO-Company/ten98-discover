@@ -20,7 +20,7 @@ export type AdvancedPropertyPredicate=
   |{key:string;operator:Equality|'before'|'after';type:'date';value:string}
   |{key:string;operator:Equality;type:'array';value:PropertyPrimitive[]}
   |{key:string;operator:'includes'|'not_includes';type:'array';value:PropertyPrimitive};
-export type AdvancedPredicates={version:1;match:'all'|'any';fields:AdvancedFieldPredicate[];properties:AdvancedPropertyPredicate[]};
+export type AdvancedPredicates={version:1;match:'all'|'any';fields:AdvancedFieldPredicate[];properties:AdvancedPropertyPredicate[];sessionProperties?:AdvancedPropertyPredicate[]};
 const textOperators=['eq','neq','contains','not_contains','prefix','suffix','regex','not_regex'];
 function bad():never{throw new InputError(400,'Check the additional filters, their types and limits.');}
 function literal(value:unknown,max:number,empty=false):string{
@@ -103,11 +103,13 @@ function propertyPredicate(raw:unknown):AdvancedPropertyPredicate{
 // Flat groups only. Existing exact filters remain a separate required AND group.
 // Returned member order is the canonical wire order; repeated clauses stay ordered.
 export function parseAdvancedPredicates(raw:unknown):AdvancedPredicates{
-  const input=object(raw,['version','match','fields','properties']);
+  const input=object(raw,['version','match','fields','properties','sessionProperties']);
   if(input.version!==1||(input.match!=='all'&&input.match!=='any'))bad();
-  const fields=array(input.fields,20),properties=array(input.properties,10);
-  if(fields.length+properties.length===0||fields.length+properties.length>20||(input.match==='any'&&!fields.length))bad();
-  const result:AdvancedPredicates={version:1,match:input.match,fields:fields.map(fieldPredicate),properties:properties.map(propertyPredicate)};
+  const fields=array(input.fields,20),properties=array(input.properties,10),sessionProperties=Object.hasOwn(input,'sessionProperties')?array(input.sessionProperties,10):[];
+  const propertyCount=properties.length+sessionProperties.length,total=fields.length+propertyCount;
+  if(!total||total>20||propertyCount>10||(input.match==='any'&&!fields.length))bad();
+  const result:AdvancedPredicates={version:1,match:input.match,fields:fields.map(fieldPredicate),properties:properties.map(propertyPredicate),
+    ...(sessionProperties.length?{sessionProperties:sessionProperties.map(propertyPredicate)}:{})};
   if(new URLSearchParams({predicates:JSON.stringify(result)}).toString().length>20000)bad();
   return result;
 }
