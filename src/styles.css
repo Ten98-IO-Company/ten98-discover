@@ -135,6 +135,13 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .site-audits .audit-launch-fields input[type="number"] { max-width: 14rem; }
 .site-audits .audit-issue-group { border-block-start: 1px solid var(--line); padding-block: 8px; }
 .site-audits .audit-issue-group > h3 { margin: 8px 0; }
+.site-audits .audit-issue-list, .site-audits .audit-issue-group, .site-audits .audit-finding-list > li { min-inline-size: 0; text-align: start; }
+.site-audits .audit-issue-group > details > summary { overflow-wrap: anywhere; }
+.site-audits .audit-group-count { display: inline-block; margin-inline-start: var(--space-3); font-variant-numeric: tabular-nums; }
+.site-audits .audit-finding-list { list-style: none; padding: 0; margin: 0; }
+.site-audits .audit-finding-list > li { border-block-start: 1px solid var(--line); padding-block: var(--space-3); }
+.site-audits .audit-finding-list a { display: inline-flex; align-items: center; min-block-size: var(--control-touch); max-inline-size: 100%; overflow-wrap: anywhere; }
+@media(max-width:560px) { .site-audits .audit-group-count { display: block; margin-inline-start: var(--space-4); } }
 .keyword-research td:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
 .keyword-tabs { margin-bottom: 20px; }
 .keyword-workspace > [hidden] { display: none; }
