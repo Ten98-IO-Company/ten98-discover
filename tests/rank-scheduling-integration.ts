@@ -51,7 +51,12 @@ export async function runRankSchedulingChecks(){
     for(const uid of [admin,editor,viewer,outsider])await assert.rejects(approve(f,input,uid),fails(404));
     await assert.rejects(getRankSchedule(foreign.project,owner,f.tracker),fails(404));await assert.rejects(current(f,outsider),fails(404));
     assert.equal((await current(f,viewer)).canManage,false);assert.equal((await current(f)).schedule.approval,null);
-    const keyring=process.env.CREDENTIAL_KEYS;delete process.env.CREDENTIAL_KEYS;try{const visible=await current(f,viewer);assert.equal(visible.schedule.enabled,false);}finally{process.env.CREDENTIAL_KEYS=keyring;}
+    const keyring=process.env.CREDENTIAL_KEYS,keyFile=process.env.CREDENTIAL_KEYS_FILE;
+    delete process.env.CREDENTIAL_KEYS;delete process.env.CREDENTIAL_KEYS_FILE;
+    try{const visible=await current(f,viewer);assert.equal(visible.schedule.enabled,false);}finally{
+      if(keyring===undefined)delete process.env.CREDENTIAL_KEYS;else process.env.CREDENTIAL_KEYS=keyring;
+      if(keyFile===undefined)delete process.env.CREDENTIAL_KEYS_FILE;else process.env.CREDENTIAL_KEYS_FILE=keyFile;
+    }
     for(const uid of [admin,editor,viewer])await assert.rejects(previewRankSchedule(f.project,uid,f.tracker,schedule),fails(404));
     const preview=await previewRankSchedule(f.project,owner,f.tracker,schedule);assert.equal(preview.occurrences.length,5);let prior=preview.capturedAt;
     for(const item of preview.occurrences){assert.ok(item.utc>prior);assert.match(item.local,/^\d{4}-\d\d-\d\dT01:30:00$/);assert.ok([-14400,-18000].includes(item.offsetSeconds));assert.equal(Date.parse(item.utc)+item.offsetSeconds*1000,Date.parse(item.local+'Z'));prior=item.utc;}
@@ -129,7 +134,16 @@ export async function runRankSchedulingChecks(){
     const save=await request(route+'/approve','POST',hi);assert.equal(save.status,200);const saved=await save.json();assert.equal(saved.replayed,false);assert.equal(saved.schedule.enabled,true);assert.equal((await (await request(route+'/approve','POST',hi)).json()).replayed,true);
     const disable={requestId:randomUUID(),revision:saved.authoredRevision},disabledHttp=await request(route+'/disable','POST',disable);assert.equal(disabledHttp.status,200);assert.equal((await disabledHttp.json()).schedule.enabled,false);assert.equal((await (await request(route+'/disable','POST',disable)).json()).replayed,true);
     await pool.query("DELETE FROM request_limit WHERE key=$1",['rank-schedule-write:'+owner]);
-    for(let n=0;n<10;n++)assert.equal((await request(route+'/preview','POST',schedule)).status,200);assert.equal((await request(route+'/preview','POST',schedule)).status,429);
+    // Observe the actual fixed-minute bucket: the wall clock can roll over between requests.
+    let limited=false,previous={minute:'',count:0};
+    for(let n=0;n<21;n++){
+      const status=(await request(route+'/preview','POST',schedule)).status;
+      const counter=(await pool.query<{minute:string;count:number}>('SELECT minute::text,count FROM request_limit WHERE key=$1 ORDER BY minute DESC LIMIT 1',['rank-schedule-write:'+owner])).rows[0];
+      assert.ok(counter);assert.equal(counter.count,previous.minute===counter.minute?previous.count+1:1);
+      assert.equal(status,counter.count<=10?200:429);previous=counter;
+      if(status===429){limited=true;break;}
+    }
+    assert.equal(limited,true,'The eleventh request in one minute must be rejected within the bounded check.');
     await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[http.workspace,viewer]);assert.equal((await request(route,'GET',undefined,viewer)).status,404);await noPaidWork();
     console.log('PASS real schedule HTTP routes: cookie/Origin/roles/scoping, strict methods/query/body caps, receipts, revoke and per-user write rate limit');
   }finally{try{await stopJobs();}finally{globalThis.fetch=oldFetch;}}
