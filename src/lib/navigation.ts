@@ -1,11 +1,12 @@
 import { environmentFields, isEnvironmentFilter } from './analytics-environment.ts';
+import {normalizeAuditPageFields,type AuditPageFields} from './site-audit-pages.ts'
 
 export const views = ['project', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
 export const auditCoverages = ['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'] as const
-export type AuditNavigation = {auditRun?:string;auditPage?:string;auditTab?:'pages';auditSeverity?:'critical'|'warning'|'info';auditCode?:string;auditAffectedPage?:string;auditCoverage?:typeof auditCoverages[number];auditResource?:'robots'|'sitemap';auditDirection?:'in';auditInvalid?:'1'}
+export type AuditNavigation = {auditRun?:string;auditPage?:string;auditTab?:'pages';auditSeverity?:'critical'|'warning'|'info';auditCode?:string;auditAffectedPage?:string;auditCoverage?:typeof auditCoverages[number];auditResource?:'robots'|'sitemap';auditSearch?:string;auditSearchIn?:'url';auditSort?:Exclude<AuditPageFields['sort'],'url'>;auditOrder?:'desc';auditDirection?:'in';auditInvalid?:'1'}
 export type AnalyticsNavigation = { analyticsFrom?: string; analyticsTo?: string; analyticsBrowser?: string; analyticsOs?: string; analyticsDevice?: string; analyticsInvalid?: '1' }
 export const analyticsNavigationNames = { browser: 'analyticsBrowser', os: 'analyticsOs', device: 'analyticsDevice' } as const;
 export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation
@@ -38,13 +39,18 @@ export function analyticsNavigation(raw: Record<string, unknown>): AnalyticsNavi
 }
 
 export function auditNavigation(raw:Record<string,unknown>):AuditNavigation {
-  const out:AuditNavigation={},names=['auditRun','auditPage','auditTab','auditSeverity','auditCode','auditAffectedPage','auditCoverage','auditResource','auditDirection','auditInvalid'];
+  const out:AuditNavigation={},names=['auditRun','auditPage','auditTab','auditSeverity','auditCode','auditAffectedPage','auditCoverage','auditResource','auditSearch','auditSearchIn','auditSort','auditOrder','auditDirection','auditInvalid'];
   const invalid=()=>({auditInvalid:'1'} as const);
   if(raw.auditInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view',...names].includes(key)))return invalid();
   for(const key of ['auditRun','auditPage','auditAffectedPage'] as const){if(raw[key]===undefined)continue;if(!navigationId(raw[key]))return invalid();out[key]=raw[key].toLowerCase();}
   for(const [key,values,fallback] of [['auditTab',['issues','pages'],'issues'],['auditSeverity',['critical','warning','info'],null],['auditCode',auditIssueCodes,null],['auditCoverage',auditCoverages,null],['auditResource',['html','robots','sitemap'],'html'],['auditDirection',['out','in'],'out']] as const){
     const value=raw[key];if(value===undefined)continue;if(typeof value!=='string'||!(values as readonly string[]).includes(value))return invalid();if(value!==fallback)Object.assign(out,{[key]:value});
   }
+  const pages=normalizeAuditPageFields({search:raw.auditSearch,searchIn:raw.auditSearchIn,sort:raw.auditSort,order:raw.auditOrder});if(!pages)return invalid();
+  if(pages.search)out.auditSearch=pages.search;
+  if(pages.searchIn!=='url_title_meta')out.auditSearchIn=pages.searchIn;
+  if(pages.sort!=='url')out.auditSort=pages.sort;
+  if(pages.order!=='asc')out.auditOrder=pages.order;
   if(names.some(key=>raw[key]!==undefined)&&(!out.auditRun||!navigationId(raw.workspace)||!navigationId(raw.project))||raw.auditDirection!==undefined&&!out.auditPage)return invalid();
   return out;
 }
