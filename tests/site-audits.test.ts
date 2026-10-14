@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
-import {parseSiteAuditStart,parseAuditListQuery,auditRunDto,type AuditRunRow} from '../src/server/site-audits.ts';
+import {parseSiteAuditStart,parseAuditListQuery,parseSiteAuditPagesExport,auditRunDto,type AuditRunRow} from '../src/server/site-audits.ts';
 import {normalizeAuditPageFields,auditPageSearchIn,auditPageSort,auditPageOrder} from '../src/lib/site-audit-pages.ts';
 
 const input={requestId:randomUUID(),domainId:null,startPath:'/',mode:'static'};
@@ -46,4 +46,11 @@ test('page API fields use the shared normalization without broadening other list
  assert.deepEqual(Object.fromEntries(Object.entries(parseAuditListQuery(new URLSearchParams('search=%20pricing%20&searchIn=url&sort=wordCount&order=desc'),'pages')).filter(([key])=>['search','searchIn','sort','order'].includes(key))),{search:'pricing',searchIn:'url',sort:'wordCount',order:'desc'});
  for(const raw of ['search=x&search=y','searchIn=url&searchIn=url','sort=title&sort=url','order=asc&order=desc','searchIn=','sort=','order=','search=x%0a','search='+encodeURIComponent('🐎'.repeat(201))])assert.throws(()=>parseAuditListQuery(new URLSearchParams(raw),'pages'),{status:400});
  for(const kind of ['runs','issues','links'] as const)for(const key of ['search','searchIn','sort','order'])assert.throws(()=>parseAuditListQuery(new URLSearchParams({[key]:key==='search'?'x':key==='searchIn'?'url':key==='sort'?'url':'asc'}),kind),{status:400});
+});
+test('Pages export accepts only the complete applied selector and exact revision',()=>{
+ const selection={coverage:null,resourceKind:'html',search:'  %_\\🐎  ',searchIn:'url',sort:'images',order:'desc',expectedSelectionRevision:'a'.repeat(64)};
+ assert.deepEqual(parseSiteAuditPagesExport(selection),{...selection,search:'%_\\🐎'});
+ for(const sort of auditPageSort)for(const order of auditPageOrder)assert.equal(parseSiteAuditPagesExport({...selection,sort,order}).sort,sort);
+ for(const key of Object.keys(selection)){const missing={...selection} as Record<string,unknown>;delete missing[key];assert.throws(()=>parseSiteAuditPagesExport(missing),{status:400});}
+ for(const change of [{limit:50},{cursor:'copied'},{pageIds:[randomUUID()]},{projectId:randomUUID()},{columns:['url']},{coverage:'complete'},{resourceKind:'script'},{search:null},{search:'x\n'},{search:'🐎'.repeat(201)},{searchIn:'title'},{sort:'p.id'},{order:'ASC'},{expectedSelectionRevision:'A'.repeat(64)},{expectedSelectionRevision:'a'.repeat(64)+'\n'}])assert.throws(()=>parseSiteAuditPagesExport({...selection,...change}),{status:400});
 });
