@@ -17,6 +17,17 @@ function incomplete(status:number|null,reason:CrawlDownloadReason):CrawlDocument
 const prepare=(download:CrawlDocumentObservation,signal?:AbortSignal)=>prepareAuditObservation({kind:'html',url,download,crawlDepth:0},signal);
 const page=(html:string,contentType='text/html'):CrawlPageInput=>({url,status:200,fetchState:'ok',contentType,html,bodyComplete:true,responseTimeMs:20,crawlDepth:0});
 
+test('opted-in complete body has a separate ceiling and never displaces existing copied evidence',async()=>{
+  for(const text of ['x'.repeat(65536),'x'.repeat(65537)]){
+    const download=complete('<title>A retained title</title><meta name="description" content="Description"><body>'+text+'</body>');
+    const baseline=await prepare(download),captured=await prepareAuditObservation({kind:'html',url,download,crawlDepth:0,retainBodyText:true});
+    assert.equal(baseline.status,'prepared');assert.equal(captured.status,'prepared');
+    if(baseline.status!=='prepared'||baseline.kind!=='html'||captured.status!=='prepared'||captured.kind!=='html')throw new Error('Expected HTML observations.');
+    const {bodyCapture,...analysis}=captured.analysis;assert.deepEqual({...captured,analysis},baseline);
+    assert.equal(bodyCapture?.state,text.length===65536?'available':'over_limit');assert.equal(bodyCapture.text,text.length===65536?text:null);
+  }
+});
+
 // Independent recursive count of jsonb's structural spaces; punctuation inside evidence text does not count.
 function jsonbBytes(value:unknown):number {
   function spaces(item:unknown):number {

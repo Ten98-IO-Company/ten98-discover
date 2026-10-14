@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {createHash} from 'node:crypto';
 import {analyzeCrawlPage,crawlAnalysisLimits as limits,type CrawlPageInput} from '../src/server/crawl-analysis.ts';
 
 const origin='https://example.com/';
@@ -8,6 +9,30 @@ function page(body=`<h1></h1><p>${words(150)}</p><a href="/next"></a>`,head='<ti
 function analyze(html:string|null=page(),extra:Partial<CrawlPageInput>={}){return analyzeCrawlPage({url:origin,status:200,fetchState:'ok',contentType:'text/html; charset=UTF-8',html,bodyComplete:true,responseTimeMs:1500,crawlDepth:0,...extra});}
 const codes=(result:ReturnType<typeof analyze>)=>result.findings.map(f=>f.code);
 const has=(html:string,code:string,extra:Partial<CrawlPageInput>={})=>codes(analyze(html,extra)).includes(code as never);
+
+test('opt-in body capture reuses normalized static text without changing facts, findings or existing evidence',()=>{
+  const html=page('<nav>Navigation</nav><main><h1>Visible &amp; safe</h1><p>One\n two&nbsp;😀</p><script>secret</script><style>secret</style><template>secret</template><noscript>secret</noscript><svg><text>secret</text></svg><div hidden>secret</div><div aria-hidden="true">secret</div><p style="display:none">CSS-hidden remains</p></main><footer>Footer</footer>');
+  const baseline=analyze(html),captured=analyze(html,{retainBodyText:true});
+  const {bodyCapture,...same}=captured;assert.deepEqual(same,baseline);assert.deepEqual(analyze(html,{retainBodyText:false}),baseline);
+  const text='Navigation Visible & safe One two 😀 CSS-hidden remains Footer';
+  assert.deepEqual(bodyCapture,{state:'available',version:'static-dom-body-v1',text});
+  assert.equal(captured.facts!.contentHash,createHash('sha256').update(text).digest('hex'));
+  assert.equal(captured.facts!.wordCount,10);assert.equal(html.includes('secret'),true);
+  assert.equal(JSON.stringify(captured).includes('secret'),false);assert.equal('bodyCapture' in baseline,false);
+});
+
+test('body capture bounds UTF-8 bytes without prefixes and distinguishes observed empty from missing evidence',()=>{
+  for(const text of ['x'.repeat(65536),'😀'.repeat(16384)]){
+    const exact=analyze(page(text),{retainBodyText:true});assert.equal(exact.bodyCapture?.state,'available');assert.equal(exact.bodyCapture.text,text);
+    const over=analyze(page(text+'x'),{retainBodyText:true});assert.deepEqual(over.bodyCapture,{state:'over_limit',version:'static-dom-body-v1',text:null});
+    assert.equal(over.coverage,'analyzed');assert.equal(over.facts?.contentHash,createHash('sha256').update(text+'x').digest('hex'));
+  }
+  const empty=analyze(page(''),{retainBodyText:true});assert.deepEqual(empty.bodyCapture,{state:'empty',version:'static-dom-body-v1',text:''});assert.equal(empty.facts?.contentHash,null);assert.equal(empty.facts?.wordCount,0);
+  for(const [html,extra] of [[page('<div id="root"></div><script src="/app.js"></script>'),{}],[page('x'),{status:206}],[page('x'),{bodyComplete:false}],[page('x'),{fetchState:'robots_disallowed'}],[page('x'),{status:403}],[page('x'),{status:429}],[page('x'),{contentType:'text/plain'}],[page('bad\0text'),{}],[page('x'.repeat(limits.htmlBytes)),{}]] as [string,Partial<CrawlPageInput>][]){
+    const result=analyze(html,{...extra,retainBodyText:true});assert.notEqual(result.coverage,'analyzed');assert.deepEqual(result.bodyCapture,{state:'unavailable',version:'static-dom-body-v1',text:null});
+  }
+  for(const retainBodyText of [null,1,'true'])assert.throws(()=>analyze(page(),{retainBodyText} as unknown as Partial<CrawlPageInput>),TypeError);
+});
 
 test('complete HTML exposes measured facts separately from bounded text; no body or markup returned',()=>{
   const result=analyze();assert.equal(result.coverage,'analyzed');assert.deepEqual(result.findings,[]);

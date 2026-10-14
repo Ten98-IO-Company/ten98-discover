@@ -9,7 +9,7 @@ import type {CrawlDocumentKind,CrawlDocumentObservation,CrawlDownloadReason} fro
 export const auditEvidenceLimit=65536;
 export type AuditEvidence=Omit<CrawlEvidence,'links'>;
 export type AuditPreparationInput={url:string;download:CrawlDocumentObservation}&(
-  {kind:'html';crawlDepth:number|null}|{kind:'robots';policyOrigin:string}|{kind:'sitemap'});
+  {kind:'html';crawlDepth:number|null;retainBodyText?:boolean}|{kind:'robots';policyOrigin:string}|{kind:'sitemap'});
 export type PreparedAuditObservation=
   |{status:'prepared';kind:'html';fetchState:CrawlPageInput['fetchState'];analysis:Omit<CrawlAnalysis,'evidence'>;evidence:AuditEvidence|null;evidenceBytes:number;evidenceTruncated:boolean;links:CrawlEvidence['links']}
   |{status:'prepared';kind:'robots';evaluation:CrawlRobotsEvaluation}
@@ -66,7 +66,7 @@ export async function prepareAuditObservation(input:AuditPreparationInput,signal
     const fetchState:CrawlPageInput['fetchState']=status===429?'rate_limited':challenge||status===401||status===403||status===407||download.reason==='blocked'?'blocked':
       download.complete||status!==null&&(status>=300||[204,205,206].includes(status))||download.reason==='unsupported_mime'||download.reason==='expanded_limit'||download.reason==='wire_limit'||download.reason==='partial_response'||download.reason==='incomplete_body'?'ok':'error';
     const parsed=await analyzeCrawlPageIsolated({url:input.url,status,fetchState,contentType:statusOnly?null:download.headers.contentType,
-      html,bodyComplete:download.complete,responseTimeMs:download.durationMs,crawlDepth:input.crawlDepth,linkHeaders:statusOnly?[]:download.headers.link,xRobotsTags:statusOnly?[]:download.headers.xRobotsTag},signal);
+      html,bodyComplete:download.complete,responseTimeMs:download.durationMs,crawlDepth:input.crawlDepth,linkHeaders:statusOnly?[]:download.headers.link,xRobotsTags:statusOnly?[]:download.headers.xRobotsTag,retainBodyText:input.retainBodyText===true},signal);
     if(parsed.status!=='ok')return unavailable(`parser_${parsed.status}`);
     if(challenge&&status!==429)parsed.analysis.reasons.push('challenge_observed');
     else if(!download.complete&&!statusOnly)parsed.analysis.reasons.push(download.reason);

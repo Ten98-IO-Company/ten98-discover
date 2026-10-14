@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test,{mock} from 'node:test';
 import childProcess from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {PassThrough,Writable} from 'node:stream';
 import {copyFile,mkdir,mkdtemp,realpath,rm,symlink,writeFile} from 'node:fs/promises';
@@ -13,9 +14,48 @@ const input:CrawlPageInput={url:'https://example.com/',status:200,fetchState:'ok
 
 test('real fixed child matches the pure analyzer and only returns complete output',async()=>{
   assert.deepEqual(await analyzeCrawlPageIsolated(input),{status:'ok',analysis:analyzeCrawlPage(input)});
+  for(const [html,code] of [['<title>A useful page</title><p>Body without a heading</p>','missing-h1'],['<title>A useful page</title><h1>First</h1><h1>Second</h1>','multiple-h1']] as const){
+    const sample={...input,html},parsed=await analyzeCrawlPageIsolated(sample);
+    assert.deepEqual(parsed,{status:'ok',analysis:analyzeCrawlPage(sample)});
+    assert.equal(parsed.status,'ok');if(parsed.status==='ok')assert.ok(parsed.analysis.findings.some(finding=>finding.code===code));
+  }
   const challenge={...input,html:'<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></script>'};
   const result=await analyzeCrawlPageIsolated(challenge);assert.equal(result.status,'ok');
   if(result.status==='ok'){assert.equal(result.analysis.coverage,'unavailable');assert.deepEqual(result.analysis.reasons,['challenge_suspected']);assert.equal(result.analysis.facts,null);}
+});
+
+test('real child returns opted-in body evidence bound to its exact hash and opt-in is fixed before await',async()=>{
+  const opted={...input,retainBodyText:true};
+  const expected=analyzeCrawlPage(opted),pending=analyzeCrawlPageIsolated(opted);opted.retainBodyText=false;
+  assert.deepEqual(await pending,{status:'ok',analysis:expected});
+  for(const html of ['', '😀'.repeat(16384), '😀'.repeat(16384)+'x']){
+    const next={...input,html,retainBodyText:true};assert.deepEqual(await analyzeCrawlPageIsolated(next),{status:'ok',analysis:analyzeCrawlPage(next)});
+  }
+  assert.deepEqual(await analyzeCrawlPageIsolated({...input,retainBodyText:'true'} as unknown as CrawlPageInput),{status:'invalid_input'});
+});
+
+test('child body evidence cannot bypass opt-in, provenance, completeness, Unicode or byte bounds',async()=>{
+  const valid=analyzeCrawlPage({...input,retainBodyText:true});
+  const changes=[{}, {state:'available',version:'other',text:'Hello Next'}, {state:'available',version:'static-dom-body-v1',text:'different'},
+    {state:'empty',version:'static-dom-body-v1',text:''},{state:'unavailable',version:'static-dom-body-v1',text:null},
+    {state:'over_limit',version:'static-dom-body-v1',text:'prefix'},{state:'available',version:'static-dom-body-v1',text:'x'.repeat(65537)},
+    {state:'available',version:'static-dom-body-v1',text:'bad\0text'},{state:'available',version:'static-dom-body-v1',text:'bad\ud800text'},
+    {...valid.bodyCapture,extra:'unreviewed'},undefined];
+  for(const bodyCapture of changes){
+    const mocked=mock.method(childProcess,'spawn',()=>fakeChild(child=>{child.stdout.write(JSON.stringify({status:'ok',analysis:{...valid,bodyCapture}}));child.emit('close',0,null);}));
+    try{assert.deepEqual(await analyzeCrawlPageIsolated({...input,retainBodyText:true}),{status:'child_error'});}finally{mocked.mock.restore();}
+  }
+  // Consistent hashes/counts must not let malformed or unbounded text pass independent guards.
+  const malformed=['bad\0text','bad\ud800text',' leading','two  spaces','line\nbreak','x'.repeat(65537),'😀'.repeat(16385)].map(text=>({
+    ...valid,bodyCapture:{state:'available',version:'static-dom-body-v1',text},
+    facts:{...valid.facts,contentHash:createHash('sha256').update(text).digest('hex'),wordCount:text.split(' ').length},
+  }));
+  for(const analysis of [...malformed,{...valid,facts:{...valid.facts,wordCount:valid.facts!.wordCount+1}},{...valid,coverage:'shell'}]){
+    const mocked=mock.method(childProcess,'spawn',()=>fakeChild(child=>{child.stdout.write(JSON.stringify({status:'ok',analysis}));child.emit('close',0,null);}));
+    try{assert.deepEqual(await analyzeCrawlPageIsolated({...input,retainBodyText:true}),{status:'child_error'});}finally{mocked.mock.restore();}
+  }
+  const mocked=mock.method(childProcess,'spawn',()=>fakeChild(child=>{child.stdout.write(JSON.stringify({status:'ok',analysis:valid}));child.emit('close',0,null);}));
+  try{assert.deepEqual(await analyzeCrawlPageIsolated(input),{status:'child_error'});}finally{mocked.mock.restore();}
 });
 
 test('validation rejects unsupported and oversized input before spawning or calling toJSON',async()=>{
