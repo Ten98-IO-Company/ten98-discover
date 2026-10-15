@@ -1,4 +1,5 @@
 import type {CitationReport,CitationFilters,CitationNavigation,CitationCount,CitationAxes,CitationPeriod,CitationEvidence} from '../server/prompt-citations';
+import {openRouterModelId} from './openrouter-models.ts';
 
 // Browser-side enum values only: never import the server's domain lists/classifier.
 export const citationPublishers=['editorial','reviews','ecommerce','social','developer','pr','reference','institutional','other'] as const;
@@ -10,7 +11,6 @@ const kinds=['eligible','queued','running','no_answer','empty','truncated','cont
 const coverageKeys=['attempted',...kinds] as const;
 const filterKeys=['from','to','timeZone','model','promptId','tag','urlGrouping','query','publisherCategory','pageType','sourceType','ownership','entityId'];
 const navigationKeys=['view','period','urlId','domainId','changeKind'];
-const models=['openai/gpt-4o-mini','openai/gpt-4o'];
 const object=(v:unknown):v is Record<string,any>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const integer=(v:unknown,max=100000):v is number=>Number.isSafeInteger(v)&&Number(v)>=0&&Number(v)<=max;
 const text=(v:unknown,max=2048,min=0):v is string=>typeof v==='string'&&v.length>=min&&v.length<=max&&!/[\x00-\x1f\x7f\uD800-\uDFFF]/u.test(v);
@@ -23,7 +23,7 @@ const member=(v:unknown,values:readonly string[])=>typeof v==='string'&&values.i
 const equal=(v:unknown,expected:object,keys:string[])=>object(v)&&Object.keys(v).length===keys.length&&keys.every(k=>v[k]===(expected as any)[k]);
 
 export function validCitationFilters(v:unknown):v is CitationFilters {
-  if(!object(v)||Object.keys(v).length!==filterKeys.length||!filterKeys.every(k=>k in v)||!day(v.from)||!day(v.to)||v.from>v.to||Date.parse(v.to)-Date.parse(v.from)>30*86400000||!text(v.timeZone,120,1)||v.model!==null&&!models.includes(v.model)||v.promptId!==null&&!uuid(v.promptId)||v.tag!==null&&(!prose(v.tag,80)||!v.tag||v.tag.trim()!==v.tag)||!member(v.urlGrouping,['retained-fragment-v1','elmo-url-v1']))return false;
+  if(!object(v)||Object.keys(v).length!==filterKeys.length||!filterKeys.every(k=>k in v)||!day(v.from)||!day(v.to)||v.from>v.to||Date.parse(v.to)-Date.parse(v.from)>30*86400000||!text(v.timeZone,120,1)||v.model!==null&&!openRouterModelId(v.model)||v.promptId!==null&&!uuid(v.promptId)||v.tag!==null&&(!prose(v.tag,80)||!v.tag||v.tag.trim()!==v.tag)||!member(v.urlGrouping,['retained-fragment-v1','elmo-url-v1']))return false;
   try{new Intl.DateTimeFormat('en',{timeZone:v.timeZone});}catch{return false;}
   if(v.query!==null&&(!text(v.query,200,1)||v.query.trim()!==v.query)||v.entityId!==null&&v.entityId!=='brand'&&!uuid(v.entityId))return false;
   return (v.publisherCategory===null||member(v.publisherCategory,citationPublishers))&&(v.pageType===null||member(v.pageType,citationPageTypes))&&(v.sourceType===null||member(v.sourceType,citationSources))&&(v.ownership===null||member(v.ownership,citationOwners));
@@ -108,7 +108,7 @@ export function validCitationEvidence(r:unknown,f:CitationFilters,scope:Citation
     if(!validCitationFilters(f))return false;
     const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:f.timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
     const localDay=(timestamp:string)=>{const parts=formatter.formatToParts(new Date(timestamp)),p=(type:string)=>parts.find(p=>p.type===type)!.value;return `${p('year')}-${p('month')}-${p('day')}`;};
-    if(!object(r)||!hex(r.id)||!hex(r.urlId)||![r.executionId,r.comparisonId,r.promptId,r.versionId].every(uuid)||r.period!==scope.period||!scope.eligible(r.executionId)||!stamp(r.requestedAt)||!day(r.date)||localDay(r.requestedAt)!==r.date||r.date<scope.from||r.date>scope.to||!models.includes(r.model)||f.model!==null&&r.model!==f.model||f.promptId!==null&&r.promptId!==f.promptId||!integer(r.retainedCitationIndex,99)||!retained(r.retainedUrl)||(r.retainedTitle!==null&&!prose(r.retainedTitle))||!prose(r.groupedUrl,20480)||citationSafeHref(r.groupedUrl)===null||r.hostname!==citationRetainedHost(r.retainedUrl)||r.trackable!==(r.hostname!==null)||scope.urlId!=null&&r.urlId!==scope.urlId)return false;
+    if(!object(r)||!hex(r.id)||!hex(r.urlId)||![r.executionId,r.comparisonId,r.promptId,r.versionId].every(uuid)||r.period!==scope.period||!scope.eligible(r.executionId)||!stamp(r.requestedAt)||!day(r.date)||localDay(r.requestedAt)!==r.date||r.date<scope.from||r.date>scope.to||!openRouterModelId(r.model)||f.model!==null&&r.model!==f.model||f.promptId!==null&&r.promptId!==f.promptId||!integer(r.retainedCitationIndex,99)||!retained(r.retainedUrl)||(r.retainedTitle!==null&&!prose(r.retainedTitle))||!prose(r.groupedUrl,20480)||citationSafeHref(r.groupedUrl)===null||r.hostname!==citationRetainedHost(r.retainedUrl)||r.trackable!==(r.hostname!==null)||scope.urlId!=null&&r.urlId!==scope.urlId)return false;
     const c=r.classification,o=c?.ownership;
     if(!object(c)||!object(o)||typeof o.brand!=='boolean'||!Array.isArray(o.competitorIds)||o.competitorIds.length>100||!o.competitorIds.every((id:unknown,i:number)=>uuid(id)&&scope.competitorIds.includes(id)&&(i===0||o.competitorIds[i-1]<id))||o.ambiguous!==(o.competitorIds.length>1||o.brand&&o.competitorIds.length>0)||!member(c.publisherCategory,citationPublishers)||!member(c.automaticPublisherCategory,citationPublishers)||!member(c.publisherBasis,['override','elmo-automatic','unclassified'])||!member(c.pageType,citationPageTypes)||c.pageTypeBasis!=='elmo-url-title-heuristic-v1'||!member(c.sourceType,citationSources))return false;
     if(r.hostname===null?(c.publisherBasis!=='unclassified'||c.sourceType!=='unclassified'||c.publisherCategory!=='other'||c.automaticPublisherCategory!=='other'||o.brand||o.competitorIds.length>0):(c.publisherBasis==='unclassified'||c.sourceType==='unclassified'))return false;

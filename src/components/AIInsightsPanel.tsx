@@ -1,5 +1,7 @@
 import {useEffect,useId,useRef,useState} from 'react';
-import {api,ApiError,errMsg} from '../lib/api';
+import {ApiError,errMsg} from '../lib/api';
+import {openRouterModelId} from '../lib/openrouter-models';
+import {modelApi as api,validObservedModels} from './OpenRouterModelPicker';
 import type {InsightCoverage,InsightFilters,InsightMetric,PromptInsightsReport} from '../server/prompt-insights';
 import {AIInsightsView,type AIInsightsDraft,type AIInsightsViewProps} from './AIInsightsView';
 import {AIComparisonPanel} from './AIComparisonPanel';
@@ -13,7 +15,7 @@ type Option={id:string;label:string};
 type Op={controller:AbortController;signal:AbortSignal;exporting:boolean};
 type State={role:Role|null;reading:boolean;exporting:boolean;error:string;notice:string;draft:AIInsightsDraft;applied:AIInsightsDraft;data:PromptInsightsReport|null;
  pages:(string|null)[];promptSearch:string;promptQuery:string;promptPages:(string|null)[];promptNext:string|null;options:Option[];selected:Option|null;appliedPromptLabel:string|null;dailyEntity:string;focus:boolean};
-const models=['openai/gpt-4o-mini','openai/gpt-4o'],methods=['unicode-boundary-v1','elmo-substring-v1'];
+const methods=['unicode-boundary-v1','elmo-substring-v1'];
 const kinds=['eligible','queued','running','no_answer','empty','truncated','content_filtered','expired','invalid'] as const;
 const coverageKeys=['attempted',...kinds] as const;
 const labels:Record<typeof coverageKeys[number],string>={attempted:'Attempted',eligible:'Eligible',queued:'Queued',running:'Running',no_answer:'No answer',empty:'Empty',truncated:'Truncated',content_filtered:'Content filtered',expired:'Expired',invalid:'Invalid'};
@@ -30,12 +32,13 @@ const stamp=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT\d\d
 const day=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\d$(?![\s\S])/.test(v)&&!v.startsWith('0000')&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
 function zone(v:string){try{return new Intl.DateTimeFormat('en',{timeZone:v}).resolvedOptions().timeZone;}catch{return null;}}
 function initial():AIInsightsDraft{const timeZone=Intl.DateTimeFormat().resolvedOptions().timeZone,parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()),p=(type:string)=>parts.find(p=>p.type===type)!.value,to=`${p('year')}-${p('month')}-${p('day')}`;return {from:new Date(Date.parse(to)-6*86400000).toISOString().slice(0,10),to,timeZone,model:'',promptId:'',tag:'',matcher:'unicode-boundary-v1'};}
-function filters(d:AIInsightsDraft):InsightFilters|null{const timeZone=zone(d.timeZone);if(!day(d.from)||!day(d.to)||d.from>d.to||Date.parse(d.to)-Date.parse(d.from)>30*86400000||!text(d.timeZone,120,1)||!timeZone||d.model!==''&&!models.includes(d.model)||d.promptId!==''&&!uuid(d.promptId)||!multiline(d.tag,80)||d.tag.trim()!==d.tag||!methods.includes(d.matcher))return null;return {...d,timeZone,model:d.model||null,promptId:d.promptId.toLowerCase()||null,tag:d.tag||null};}
+function filters(d:AIInsightsDraft):InsightFilters|null{const timeZone=zone(d.timeZone);if(!day(d.from)||!day(d.to)||d.from>d.to||Date.parse(d.to)-Date.parse(d.from)>30*86400000||!text(d.timeZone,120,1)||!timeZone||d.model!==''&&!openRouterModelId(d.model)||d.promptId!==''&&!uuid(d.promptId)||!multiline(d.tag,80)||d.tag.trim()!==d.tag||!methods.includes(d.matcher))return null;return {...d,timeZone,model:d.model||null,promptId:d.promptId.toLowerCase()||null,tag:d.tag||null};}
 const same=(a:AIInsightsDraft,b:AIInsightsDraft)=>Object.keys(a).every(k=>a[k as keyof AIInsightsDraft]===b[k as keyof AIInsightsDraft]);
 const equalFilters=(v:unknown,f:InsightFilters)=>object(v)&&Object.entries(f).every(([k,value])=>v[k]===value)&&Object.keys(v).length===7;
 function validCoverage(v:unknown):v is InsightCoverage{return object(v)&&coverageKeys.every(k=>integer(v[k]))&&kinds.reduce((n,k)=>n+v[k],0)===v.attempted;}
 function validMetrics(v:unknown,ids:string[],c:InsightCoverage):v is InsightMetric[]{if(!Array.isArray(v)||v.length!==ids.length)return false;const denominator=v.reduce((n,m)=>n+(object(m)&&integer(m.mentions)?m.mentions:NaN),0)||null;return v.every((m,i)=>object(m)&&m.id===ids[i]&&integer(m.mentions,c.eligible)&&integer(m.citations,c.eligible)&&m.eligibleAnswers===(c.eligible||null)&&m.citationDenominator===(c.eligible||null)&&m.shareOfVoiceDenominator===denominator);}
 function validReport(v:unknown,f:InsightFilters,d:Drill,page:number):v is PromptInsightsReport{
+ if(!object(v)||v.modelOptions!==undefined&&!validObservedModels(v.modelOptions))return false;
  if(!object(v)||!role(v.role)||!equalFilters(v.filters,f)||!object(v.drilldown)||v.drilldown.entityId!==d.entityId||v.drilldown.outcome!==d.outcome||!stamp(v.asOf)||!integer(v.contextRevision,2147483647)||v.contextRevision<1||!hex(v.profileHash)||!hex(v.selectionRevision)||v.matcherVersion!==f.matcher||v.label!==contextLabel||!Array.isArray(v.warnings)||v.warnings.length>10||!v.warnings.every((s:unknown)=>text(s,2048))||!Array.isArray(v.subjects)||v.subjects.length<1||v.subjects.length>101)return false;
  if(!v.subjects.every((s:unknown,i:number)=>object(s)&&(i===0?s.id==='brand':uuid(s.id))&&text(s.name,512,1)&&Array.isArray(s.aliases)&&s.aliases.length<=20&&s.aliases.every((x:unknown)=>text(x,512,1))&&Array.isArray(s.domains)&&s.domains.length<=20&&s.domains.every((x:unknown)=>text(x,253,1))))return false;
  const ids=v.subjects.map((s:{id:string})=>s.id);if(new Set(ids).size!==ids.length||ids.slice(1).some((id:string,i:number)=>i>0&&id<=ids[i])||d.entityId!==null&&!ids.includes(d.entityId)||!validCoverage(v.coverage)||!validMetrics(v.metrics,ids,v.coverage))return false;
@@ -47,7 +50,7 @@ function validReport(v:unknown,f:InsightFilters,d:Drill,page:number):v is Prompt
  if(!integer(v.totalRows)||v.totalRows!==expected||!Array.isArray(v.executions)||v.executions.length!==Math.min(50,Math.max(0,expected-page*50))||!cursor(v.nextCursor,512)||(v.nextCursor!==null)!==(expected>(page+1)*50))return false;
  const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:f.timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
  return new Set(v.executions.map((e:any)=>e.id)).size===v.executions.length&&v.executions.every((e:unknown)=>{
-  if(!object(e)||![e.id,e.comparisonId,e.promptId,e.versionId].every(uuid)||!stamp(e.requestedAt)||!day(e.date)||e.date<f.from||e.date>f.to||!models.includes(e.model)||f.model!==null&&e.model!==f.model||f.promptId!==null&&e.promptId!==f.promptId||!['queued','running','completed','failed','uncertain','cancelled','reconciled'].includes(e.status)||!kinds.includes(e.eligibility)||e.resolvedModel!==null&&e.resolvedModel!==e.model)return false;
+  if(!object(e)||![e.id,e.comparisonId,e.promptId,e.versionId].every(uuid)||!stamp(e.requestedAt)||!day(e.date)||e.date<f.from||e.date>f.to||!openRouterModelId(e.model)||f.model!==null&&e.model!==f.model||f.promptId!==null&&e.promptId!==f.promptId||!['queued','running','completed','failed','uncertain','cancelled','reconciled'].includes(e.status)||!kinds.includes(e.eligibility)||e.resolvedModel!==null&&e.resolvedModel!==e.model)return false;
   if(!v.evidenceStates.some((state:any)=>state.id===e.id&&state.eligibility===e.eligibility))return false;
   const parts=formatter.formatToParts(new Date(e.requestedAt)),p=(type:string)=>parts.find(p=>p.type===type)!.value;if(e.date!==`${p('year')}-${p('month')}-${p('day')}`)return false;
   if(e.eligibility==='eligible'){
@@ -86,8 +89,17 @@ function Controller(props:Props){
  async function load(draft:AIInsightsDraft,pages:(string|null)[]=[null],drill:Drill={entityId:null,outcome:'all'}){
   const f=filters(draft);if(!f)return;const before=state.current,old=before.data,op=begin(),needsOptions=before.role===null;patch({data:null,pages,focus:false});
   try{const params=new URLSearchParams();for(const [k,v]of Object.entries(f))if(v!==null)params.set(k,v);params.set('outcome',drill.outcome);if(drill.entityId)params.set('entityId',drill.entityId);if(pages.at(-1))params.set('cursor',pages.at(-1)!);
-   const [data,options]=await Promise.all([api<unknown>(base+'/prompt-insights?'+params,{signal:op.signal}),needsOptions?readPrompts(op,'',[null]):Promise.resolve(null)]);if(!current(op))return;
-   if(op.signal.aborted)throw new Error('The insight read timed out.');if(!validReport(data,f,drill,pages.length-1))throw new Error('The insight response could not be verified. Reload insights.');
+   const [reportRead,promptRead]=await Promise.allSettled([api<unknown>(base+'/prompt-insights?'+params,{signal:op.signal}),needsOptions?readPrompts(op,'',[null]):Promise.resolve(null)]);if(!current(op))return;
+   for(const status of [401,403,404])for(const read of [reportRead,promptRead])if(read.status==='rejected'&&read.reason instanceof ApiError&&read.reason.status===status)throw read.reason;
+   if(op.signal.aborted)throw new Error('The insight read timed out.');if(promptRead.status==='rejected')throw promptRead.reason;
+   if(reportRead.status==='rejected'){
+    const error=reportRead.reason;
+    if(!(error instanceof ApiError)||error.status!==413||error.message!=='Narrow the date range. This report exceeds its analysis capacity.')throw error;
+    const options=promptRead.value??await readPrompts(op,before.promptQuery,before.promptPages);if(!current(op))return;if(op.signal.aborted)throw new Error('The prompt read timed out.');
+    const selected=!before.draft.promptId?null:options.options.find(o=>o.id===before.draft.promptId)??{id:before.draft.promptId,label:'Selected prompt (outside this option page)'};
+    patch({role:options.role,options:options.options,promptNext:options.nextCursor,promptPages:needsOptions?[null]:before.promptPages,promptQuery:needsOptions?'':before.promptQuery,promptSearch:needsOptions?'':before.promptSearch,selected,data:null,pages:[null],appliedPromptLabel:null,dailyEntity:'brand',error:errMsg(error)});return;
+   }
+   const data=reportRead.value,options=promptRead.value;if(!validReport(data,f,drill,pages.length-1))throw new Error('The insight response could not be verified. Reload insights.');
    if(pages.length>1&&old&&data.selectionRevision!==old.selectionRevision||data.evidenceStates.some(e=>expired.current.has(e.id)&&e.eligibility!=='expired')){const e=new ApiError('The insight evidence changed. Reload insights.');e.status=409;throw e;}
    for(const e of data.evidenceStates)if(e.eligibility==='expired')expired.current.add(e.id);
    const selected=!draft.promptId?null:options?.options.find(o=>o.id===draft.promptId)??(before.selected?.id===draft.promptId?before.selected:{id:draft.promptId,label:'Selected prompt (outside this option page)'});
@@ -109,7 +121,7 @@ function Controller(props:Props){
  const entity=(id:string)=>d?.subjects.find(s=>s.id===id)?.name??'Entity';
  const drillLabel=d?d.drilldown.outcome==='all'?'All executions':d.drilldown.outcome==='eligible'?'Eligible answers':d.drilldown.outcome==='unavailable'?'Unavailable answers':`${d.drilldown.outcome==='mentioned'?'Mentions':d.drilldown.outcome==='not_mentioned'?'Eligible non-mentions':'Citation hits'} · ${entity(d.drilldown.entityId!)}`:'';
  const filterError=filters(s.draft)?'':'Choose valid dates (at most 31 days), an IANA timezone and supported filters.';
- const view:AIInsightsViewProps={prefix,role:s.role,reading:s.reading,exporting:s.exporting,error:s.error,notice:s.notice,filterError,dirty,draft:s.draft,promptSearch:s.promptSearch,promptOptions:options,canPreviousPrompts:s.promptPages.length>1,canNextPrompts:!!s.promptNext,canApply:!!s.role&&!filterError,backLabel:props.backLabel,
+ const view:AIInsightsViewProps={prefix,role:s.role,reading:s.reading,exporting:s.exporting,error:s.error,notice:s.notice,filterError,dirty,draft:s.draft,modelOptions:d?.modelOptions??{values:[],complete:false},promptSearch:s.promptSearch,promptOptions:options,canPreviousPrompts:s.promptPages.length>1,canNextPrompts:!!s.promptNext,canApply:!!s.role&&!filterError,backLabel:props.backLabel,
   report:d?{scopeLabel:`${d.filters.from} to ${d.filters.to} · ${d.filters.timeZone} · ${d.filters.model?modelLabel(d.filters.model):'All models'} · ${d.filters.promptId?s.appliedPromptLabel??'Selected prompt':'All prompts'}${d.filters.tag?' · Current tag: '+d.filters.tag:''} · ${d.matcherVersion==='unicode-boundary-v1'?'Unicode word boundaries':'Elmo substring baseline'}`,
    contextLabel:d.label,snapshotLabel:`Context revision ${d.contextRevision} · Report generated ${d.asOf}`,warnings:[...d.warnings,...(!d.coverage.eligible?['No eligible retained answers in this range.']:[])],coverageCounts:{attempted:d.coverage.attempted,eligible:d.coverage.eligible},pooledModels:d.filters.model===null,brandCitationDomainCount:d.subjects[0].domains.length,coverage:coverageKeys.map(k=>({label:labels[k],value:String(d.coverage[k])})),
    metrics:d.metrics.map(m=>({id:m.id,name:entity(m.id),visibility:rate(m.mentions,m.eligibleAnswers),shareOfVoice:rate(m.mentions,m.shareOfVoiceDenominator),citations:rate(m.citations,m.citationDenominator),canDrill:!!d.coverage.eligible,counts:m})),dailyEntityId:s.dailyEntity,dailyEntities:d.subjects.map(s=>({id:s.id,label:s.name})),dailyRows:d.daily.map(row=>{const m=row.metrics.find(m=>m.id===s.dailyEntity)!;return {date:row.date,attempted:String(row.coverage.attempted),eligible:String(row.coverage.eligible),visibility:rate(m.mentions,m.eligibleAnswers),shareOfVoice:rate(m.mentions,m.shareOfVoiceDenominator),citations:rate(m.citations,m.citationDenominator),counts:m,coverageCounts:{attempted:row.coverage.attempted,eligible:row.coverage.eligible}};}),

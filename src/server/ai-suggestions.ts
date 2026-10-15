@@ -9,10 +9,11 @@ import {canonicalHash,parse} from './context-input.ts';
 import {contentCursor,readContentCursor,contentProfile,contentReceipt,withContentProject,type ContentProject} from './project-context.ts';
 import {usd,usdMicros} from './providers.ts';
 import {reserveSpendInTransaction} from './spending.ts';
-import {keyFingerprint,executionActor,readSuggestionRoute} from './openrouter.ts';
+import {keyFingerprint,executionActor,executionRequestBody,readSuggestionRoute} from './openrouter.ts';
+import {openRouterTextProfile} from '../lib/openrouter-models.ts';
 import {insertPromptInTransaction} from './prompts.ts';
-import {suggestionQuoteInput,suggestionStartInput,suggestionActionInput,suggestionAcceptInput,suggestionProfiles,suggestionProfile,suggestionMessages,
- suggestionBodyHash,suggestionTextKey,type SuggestionInput,type SuggestionSnapshot,type SuggestionProposal} from './ai-suggestion-input.ts';
+import {suggestionQuoteInput,suggestionStartInput,suggestionActionInput,suggestionAcceptInput,suggestionProfiles,suggestionMessages,
+ suggestionBodyHash,suggestionTextKey,suggestionModel,type SuggestionInput,type SuggestionSnapshot,type SuggestionProposal} from './ai-suggestion-input.ts';
 
 export const suggestionQueue='ai-suggestion';
 export const suggestionSelect=`SELECT r.*,q.connection_id,q.connection_revision,q.key_fingerprint,q.request_actor,q.input,q.snapshot,q.messages,q.route,q.input_hash,q.snapshot_hash,q.input_purged_at,
@@ -78,7 +79,7 @@ export async function getAiSuggestions(projectId:string,userId:string,params=new
  return withContentProject(projectId,userId,false,async(client,p)=>{
   const scope={projectId:p.id,list:'ai-suggestions'},cursor=readContentCursor(params.get('cursor'),scope);
   const rows=(await client.query(suggestionSelect+` WHERE r.project_id=$1 AND ($2::timestamptz IS NULL OR (r.created_at,r.id)<($2::timestamptz,$3::uuid)) ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,[p.id,cursor?.at??null,cursor?.id??null])).rows;
-  return {role:p.role,profiles:suggestionProfiles.map(profile=>({...profile,admission:'benchmark' as const})),defaults:{economy:null,balanced:null},canQuote:p.role==='owner',runs:await Promise.all(rows.slice(0,50).map(r=>runDto(client,p,r,false))),
+  return {role:p.role,profiles:[...suggestionProfiles.map(profile=>({...profile,admission:'benchmark' as const})),{id:'catalog-text-schema-v1',model:null,label:'Choose a model — evaluation only',admission:'benchmark' as const}],defaults:{economy:null,balanced:null},canQuote:p.role==='owner',runs:await Promise.all(rows.slice(0,50).map(r=>runDto(client,p,r,false))),
    nextCursor:rows.length>50?contentCursor({id:rows[49].id,createdAt:rows[49].created_at},scope):null};
  });
 }
@@ -93,7 +94,8 @@ export async function quoteAiSuggestions(projectId:string,userId:string,raw:unkn
  });
  const result=(role:ContentProject['role'],quote:Awaited<ReturnType<typeof quoteDto>>,replayed:boolean)=>({role,acknowledgement:{requestId:input.requestId,quoteId:quote.id,inputHash:quote.inputHash},quote,replayed});
  if('prior' in saved)return result(saved.role!,saved.prior!,true);
- const route=await readSuggestionRoute(saved.credentials,suggestionProfile(input.profileId).model,send);
+ const route=await readSuggestionRoute(saved.credentials,suggestionModel(input),send,openRouterTextProfile);
+ executionRequestBody(suggestionMessages(saved.snapshot),route,2048,'00000000-0000-4000-8000-000000000000',executionActor(userId),true);
  if(BigInt(route.estimateMicros)>usdMicros(input.maxSpendUsd))throw new FoundationError(409,'The verified reservation exceeds the selected per-request ceiling.');
  return withContentProject(projectId,userId,true,async(client,p)=>{
   requireOwner(p);const receipt=await contentReceipt(client,p.id,input.requestId,'ai-suggestion.quote',receiptBody);if(receipt.replayed)return result(p.role,await quoteDto(client,p.id,receipt.result.id as string),true);

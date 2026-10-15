@@ -6,8 +6,8 @@ import {getDatabase} from './db.ts';
 import {parse,canonicalHash} from './context-input.ts';
 import {contentReceipt,withContentProject} from './project-context.ts';
 import {dispatchSpend,settleSpend} from './spending.ts';
-import {keyFingerprint,readSuggestionRoute,requestSuggestionExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
-import {parseSuggestionProposal,suggestionActionInput,suggestionQuoteInput,suggestionProfile,type SuggestionSnapshot} from './ai-suggestion-input.ts';
+import {keyFingerprint,readSuggestionRoute,executionRequestBody,requestSuggestionExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
+import {parseSuggestionProposal,suggestionActionInput,suggestionQuoteInput,suggestionModel,type SuggestionSnapshot} from './ai-suggestion-input.ts';
 import {suggestionQueue,suggestionSelect,suggestionConnection,suggestionCredentials,assertSuggestionSnapshot,withSuggestionRun,getAiSuggestion} from './ai-suggestions.ts';
 
 async function cancelReserved(client:PoolClient,row:any,message:string){
@@ -49,7 +49,8 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
    return suggestionCredentials(await suggestionConnection(client,captured.workspace_id,captured.connection_id,captured.connection_revision));
   });
   if(keyFingerprint(credentials)!==captured.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
-  const fresh=await readSuggestionRoute(credentials,suggestionProfile(input.profileId).model,send);
+  executionRequestBody(captured.messages,captured.route,2048,id,captured.request_actor,true);
+  const fresh=await readSuggestionRoute(credentials,suggestionModel(input),send,captured.route.profile,captured.route.profile?captured.route.tag:undefined);
   if(canonicalHash(fresh)!==canonicalHash(captured.route))throw new FoundationError(409,'Endpoint price or capacity changed.');
   await dispatchSpend(captured.workspace_id,captured.user_id,id,async(client)=>{
    await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[captured.project_id]);

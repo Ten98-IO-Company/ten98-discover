@@ -1,21 +1,23 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {Link} from '@tanstack/react-router';
-import {api,ApiError,errMsg} from '../lib/api';
+import {ApiError,errMsg} from '../lib/api';
+import {openRouterModelId,openRouterProviderName,type OpenRouterCatalog} from '../lib/openrouter-models';
+import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelReservation,modelUsdMicros,type ModelQuoteRoute} from './OpenRouterModelPicker';
 
 type Role='owner'|'admin'|'editor'|'viewer';
-type Model='openai/gpt-4o-mini'|'openai/gpt-4o';
+type Model=string;
 type Status='queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'reconciled';
 type Charge='reserved'|'dispatched'|'uncertain'|'settled'|'cancelled';
 type Input={connectionId:string;promptId:string;versionId:string;systemText:string;models:Model[];maxCompletionTokens:number;fundedCredits:true};
 type Message={role:'system'|'user';content:string};
-type RouteQuote={model:Model;tag:'openai';providerName:'OpenAI';promptCapacity:number;completionCapacity:number;promptPrice:string;completionPrice:string;requestPrice:string;estimateUsd:string};
+type RouteQuote=ModelQuoteRoute;
 type Quote={id:string;createdAt:string;expiresAt:string;input:Input;messages:Message[];connectionName:string;routes:RouteQuote[];estimateUsd:string;explanation:string;cacheReused:false};
 type Answer={text:string;resolvedModel:string;provider:string;finishReason:string;citations:{url:string;title:string|null}[];promptTokens:number|null;completionTokens:number|null;receivedAt:string};
 type RunSummary={id:string;model:Model;provider:string;status:Status;chargeStatus:Charge;estimateUsd:string;actualUsd:string|null;dispatchedAt:string|null;completedAt:string|null;diagnostic:string|null;resultExpired:boolean};
 type Run=RunSummary&{result:Answer|null;reportedCost:string|null;isByok:boolean|null;upstreamReportedCost:string|null;generationId:string|null};
 type Summary={id:string;quoteId:string;createdAt:string;cancelRequested:boolean;prompt:{id:string;versionId:string;textPreview:string};canCancel:boolean;runs:RunSummary[]};
 type Comparison=Omit<Summary,'runs'>&{runs:Run[];input:Input|null;messages:Message[]|null;inputExpired:boolean;cache:{reused:false;available:false}};
-type Metadata={role:Role;models:Model[];vaultConfigured:boolean;spendingPaused:boolean;connections:{id:string;name:string;checkStatus:'untested'|'ok'|'error'}[];comparisons:Summary[];cache:{available:false};scheduling:{available:false}};
+type Metadata={role:Role;models:Model[];catalog:OpenRouterCatalog|null;vaultConfigured:boolean;spendingPaused:boolean;connections:{id:string;name:string;checkStatus:'untested'|'ok'|'error'}[];comparisons:Summary[];cache:{available:false};scheduling:{available:false}};
 type DetailResponse={role:Role;comparison:Comparison};
 type ReconcileResponse=DetailResponse&{reconciliation:{status:'matched'|'inconclusive';message:string}};
 export type ExecutionEntry={kind:'configure';promptId:string;versionId:string;authoredText:string}|{kind:'history'}|{kind:'receipt';comparisonId:string;promptId:string};
@@ -38,7 +40,7 @@ function checkedRole(value:unknown):Role{if(!roles.includes(value as Role))throw
 const nullableString=(value:unknown)=>value===null||typeof value==='string';
 const date=(value:unknown)=>typeof value==='string'&&Number.isFinite(Date.parse(value));
 const optionalDate=(value:unknown)=>value===null||date(value);
-const model=(value:unknown)=>value==='openai/gpt-4o-mini'||value==='openai/gpt-4o';
+const model=openRouterModelId;
 const tokens=(value:unknown)=>value===null||typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
 function validMessages(value:unknown):value is Message[]{return Array.isArray(value)&&value.every(m=>m&&['system','user'].includes(m.role)&&typeof m.content==='string');}
 function validInput(value:unknown):value is Input{
@@ -51,7 +53,7 @@ function validAnswer(value:unknown):value is Answer{
 }
 function validRunSummary(value:unknown):value is RunSummary{
   const r=value as RunSummary|null;
-  return !!r&&uuid(r.id)&&model(r.model)&&typeof r.provider==='string'&&statuses.includes(r.status)&&charges.includes(r.chargeStatus)&&typeof r.estimateUsd==='string'&&nullableString(r.actualUsd)&&optionalDate(r.dispatchedAt)&&optionalDate(r.completedAt)&&nullableString(r.diagnostic)&&typeof r.resultExpired==='boolean';
+  return !!r&&uuid(r.id)&&model(r.model)&&openRouterProviderName(r.provider)&&statuses.includes(r.status)&&charges.includes(r.chargeStatus)&&modelUsdMicros(r.estimateUsd)!==null&&(r.actualUsd===null||modelUsdMicros(r.actualUsd)!==null)&&optionalDate(r.dispatchedAt)&&optionalDate(r.completedAt)&&nullableString(r.diagnostic)&&typeof r.resultExpired==='boolean';
 }
 function validSummary(value:unknown):value is Summary{
   const c=value as Summary|null;
@@ -86,7 +88,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
   const initialized=useRef(false),notified=useRef(false),unauthorizedRef=useRef(onUnauthorized),backRef=useRef(onBack),expiryRef=useRef(onEvidenceExpired);
   unauthorizedRef.current=onUnauthorized;backRef.current=onBack;expiryRef.current=onEvidenceExpired;
   const heading=useRef<HTMLHeadingElement|null>(null),focusNext=useRef(true);
-  const connectionControl=useRef<HTMLSelectElement|null>(null),modelControl=useRef<HTMLInputElement|null>(null);
+  const connectionControl=useRef<HTMLSelectElement|null>(null),modelControl=useRef<HTMLDivElement|null>(null);
   const systemControl=useRef<HTMLTextAreaElement|null>(null),tokensControl=useRef<HTMLInputElement|null>(null),fundedControl=useRef<HTMLInputElement|null>(null);
   const current=(op:Operation)=>mounted.current&&operation.current===op&&generation.current===op.generation;
   function invalidate(){generation.current++;operation.current?.controller.abort();operation.current=null;setBusy(false);setWriting(false);setPolling(false);}
@@ -106,6 +108,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
   }
   function failure(e:unknown,op:Operation):boolean{
     if(!current(op)||(e instanceof Error&&e.name==='AbortError'))return true;
+    if(e instanceof ModelResponseError&&e.readOnly){purge('The complete saved response could not be verified. Reload access to continue.');return true;}
     if(e instanceof ApiError&&[401,403,404].includes(e.status)){
       purge(e.status===401?'Your session expired. Sign in again.':'Access unavailable. Reload access to continue.');
       if(e.status===401&&!notified.current){notified.current=true;unauthorizedRef.current();}return true;
@@ -114,12 +117,15 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
   function rememberExpiredResults(c:Summary){const answerIds=c.runs.filter(run=>run.resultExpired).map(run=>run.id);for(const id of answerIds)expiredResults.current.add(id);if(answerIds.length)expiryRef.current?.({comparisonId:c.id,answerIds,inputIds:[]});}
   async function readMetadata(op:Operation){
     const data=await api<Metadata>(B,{signal:op.controller.signal});if(!current(op))return null;
-    try{checkedRole(data?.role);if(!Array.isArray(data.models)||!data.models.every(model)||!Array.isArray(data.connections)||data.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(data.comparisons)||!data.comparisons.every(validSummary)||typeof data.vaultConfigured!=='boolean'||typeof data.spendingPaused!=='boolean')throw new Error();}
+    try{checkedRole(data?.role);if(!Array.isArray(data.models)||data.models.length>2000||!data.models.every(model)||new Set(data.models).size!==data.models.length||!Array.isArray(data.connections)||data.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(data.comparisons)||!data.comparisons.every(validSummary)||typeof data.vaultConfigured!=='boolean'||typeof data.spendingPaused!=='boolean')throw new Error();
+      // Older metadata has no discovery snapshot: history remains readable, but
+      // its finite model hints are not promoted into a current catalog.
+      data.catalog=data.catalog===undefined?null:readModelCatalog(data.catalog);if(data.catalog&&JSON.stringify(data.models)!==JSON.stringify(data.catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id)))throw new Error();}
     catch{purge('Readiness could not be verified. Reload access to continue.');return null;}
     data.comparisons.forEach(rememberExpiredResults);setMetadata(data);applyRole(data.role);
     if(!initialized.current&&data.role!=='viewer'){
       initialized.current=true;setConnectionId(data.connections.length===1&&data.connections[0].checkStatus==='ok'?data.connections[0].id:'');
-      setModels(data.models.includes('openai/gpt-4o-mini')?['openai/gpt-4o-mini']:data.models.slice(0,1));
+      setModels([]);
     }return data;
   }
   async function refreshMetadata(){
@@ -129,6 +135,13 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
       const data=await readMetadata(op);if(!data||!current(op))return;
       if(entry.kind==='receipt'&&restoreReceipt.current){selection.current=entry.comparisonId;move('detail');if(await readComparison(op,entry.comparisonId))restoreReceipt.current=false;}
     }catch(e){if(current(op)&&!failure(e,op))setError(errMsg(e));}finally{finish(op);}
+  }
+  async function refreshModels(){
+    if(role==='viewer'||attemptRef.current)return;const op=begin(true);if(!op)return;setError(null);
+    try{const data=await api<{role:Role;catalog:unknown}>('/api/projects/'+encodeURIComponent(projectId)+'/openrouter-models',{method:'POST',body:{},signal:op.controller.signal});if(!current(op))return;checkedRole(data?.role);const catalog=readModelCatalog(data.catalog);applyRole(data.role);if(data.role==='viewer')return;
+      setMetadata(old=>old?{...old,role:data.role,catalog,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id)}:old);
+      if(models.some(id=>!catalog.models.some(m=>m.id===id&&!modelUnavailableReason(m))))setQuote(null);setNotice('Model metadata refreshed. Your selections were kept; no quote or paid request was started.');
+    }catch(e){if(current(op)&&!failure(e,op)){if(e instanceof ApiError&&(e.status===0||e.status>=500)){setMetadata(old=>old?.catalog?{...old,catalog:{...old.catalog,status:old.catalog.status==='unavailable'?'unavailable':'stale'}}:old);setError(errMsg(e));}else if(e instanceof ApiError){setError(errMsg(e));}else purge('The model catalog response could not be verified. Reload access.');}}finally{finish(op);}
   }
   useEffect(()=>{mounted.current=true;void refreshMetadata();return ()=>{mounted.current=false;generation.current++;operation.current?.controller.abort();operation.current=null;};},[B]);
   useEffect(()=>{if(focusNext.current){heading.current?.focus();focusNext.current=false;}},[screen,quote?.id,comparison?.id,accessLost]);
@@ -177,7 +190,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
     event.preventDefault();if(operation.current?.write||entry.kind!=='configure'||attemptRef.current)return;
     const checks:[boolean,string,HTMLElement|null][]=[
       [!metadata?.connections.some(c=>c.id===connectionId&&c.checkStatus==='ok'),'Choose a connection whose account check passed.',connectionControl.current],
-      [models.length<1||models.length>2||new Set(models).size!==models.length||models.some(m=>!metadata?.models.includes(m)),'Choose one or two supported models.',modelControl.current],
+      [models.length<1||models.length>2||new Set(models).size!==models.length||models.some(id=>!metadata?.catalog?.models.some(m=>m.id===id&&!modelUnavailableReason(m))),'Choose one or two supported models.',modelControl.current],
       [!/^\d+$/.test(maxTokens)||!Number.isInteger(Number(maxTokens))||Number(maxTokens)<16||Number(maxTokens)>4096,'Choose an integer output allowance from 16 to 4096.',tokensControl.current],
       [systemText.length>4000||/[\u0000\u000b\u000c\uD800-\uDFFF]/u.test(systemText),'Use a valid system message of at most 4000 characters without unsupported control characters.',systemControl.current],
       [!funded,'Confirm that this connection uses OpenRouter funded credits.',fundedControl.current],
@@ -189,7 +202,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
       const data=await api<{role:Role;quote:Quote}>(B+'/quote',{method:'POST',body,signal:op.controller.signal});if(!current(op))return;
       checkedRole(data?.role);
       const q=data.quote;
-      if(!uuid(q?.id)||!date(q.expiresAt)||!date(q.createdAt)||!validMessages(q.messages)||!validInput(q.input)||q.input.promptId!==body.promptId||q.input.versionId!==body.versionId||typeof q.connectionName!=='string'||typeof q.explanation!=='string'||!Array.isArray(q.routes)||q.routes.length<1||q.routes.length>2||q.routes.some(r=>!r||!model(r.model)||typeof r.providerName!=='string'||typeof r.estimateUsd!=='string'||typeof r.promptPrice!=='string'||typeof r.completionPrice!=='string'||typeof r.requestPrice!=='string'||!Number.isSafeInteger(r.promptCapacity)||!Number.isSafeInteger(r.completionCapacity))||typeof q.estimateUsd!=='string')throw new Error('The quote could not be read. Get a new quote.');
+      if(!uuid(q?.id)||!date(q.expiresAt)||!date(q.createdAt)||!validMessages(q.messages)||!validInput(q.input)||Object.keys(q.input).length!==Object.keys(body).length||Object.entries(body).some(([k,v])=>JSON.stringify(q.input[k as keyof Input])!==JSON.stringify(v))||typeof q.connectionName!=='string'||typeof q.explanation!=='string'||!validModelReservation(q.routes,q.estimateUsd,body.models,body.maxCompletionTokens)||q.cacheReused!==false||JSON.stringify(q.messages)!==JSON.stringify([...(body.systemText?[{role:'system',content:body.systemText}]:[]),{role:'user',content:entry.authoredText}]))throw new Error('The quote did not match the complete submitted request and reservation. Get a new quote.');
       applyRole(data.role);if(data.role==='viewer')return;setClock(Date.now());setQuote(data.quote);move('quote');
     }catch(e){if(current(op)&&!failure(e,op))setError(errMsg(e));}finally{finish(op);}
   }
@@ -243,7 +256,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
         <h3>Authored prompt version</h3><p style={textStyle}>{entry.authoredText}</p>
         <fieldset disabled={writing||attempt!==null} style={{border:0,padding:0,minWidth:0}}><legend>Run setup</legend>
           <div className="field"><label htmlFor={uid+'-connection'}>OpenRouter connection</label><select ref={connectionControl} id={uid+'-connection'} aria-describedby={error?uid+'-error':undefined} value={connectionId} onChange={e=>edit(()=>setConnectionId(e.target.value))} style={{width:'100%'}}><option value="">Choose a connection</option>{metadata.connections.map(c=><option key={c.id} value={c.id} disabled={c.checkStatus!=='ok'}>{c.name} — {c.checkStatus==='ok'?'Check passed':c.checkStatus==='error'?'Check failed':'Not checked'}</option>)}</select><p className="hint">A successful account check does not guarantee funding, route availability or execution permission.</p></div>
-          <fieldset className="field"><legend>Models</legend>{metadata.models.map((model,index)=><label className="row" key={model} style={{minHeight:44}}><input ref={index===0?modelControl:undefined} type="checkbox" checked={models.includes(model)} onChange={e=>edit(()=>setModels(e.target.checked?[...models,model]:models.filter(m=>m!==model)))} aria-describedby={error?uid+'-error':undefined}/>{modelName(model)}</label>)}<p className="hint">Choose one or two models. Each selected model is a separate paid request.</p></fieldset>
+          <div ref={modelControl} tabIndex={-1} aria-describedby={error?uid+'-error':undefined}><OpenRouterModelPicker catalog={metadata.catalog} selected={models} maximum={2} disabled={busy||!!attempt} refreshing={busy} canRefresh={writer} onChange={value=>edit(()=>setModels(value))} onRefresh={()=>void refreshModels()}/></div>
           <div className="field"><label htmlFor={uid+'-tokens'}>Maximum output tokens</label><input ref={tokensControl} id={uid+'-tokens'} type="number" min={16} max={4096} step={1} value={maxTokens} onChange={e=>edit(()=>setMaxTokens(e.target.value))} aria-describedby={error?uid+'-error':undefined}/><p className="hint">Allowed: 16–4096.</p></div>
           <details className="field"><summary>Optional system message</summary><label htmlFor={uid+'-system'}>System message</label><textarea ref={systemControl} id={uid+'-system'} maxLength={4000} value={systemText} onChange={e=>edit(()=>setSystemText(e.target.value))} style={{width:'100%',minHeight:96}} aria-describedby={error?uid+'-error':undefined}/><p className="hint">Up to 4000 characters. Project context is not added automatically.</p></details>
           <label className="row" style={{minHeight:44}}><input ref={fundedControl} type="checkbox" checked={funded} onChange={e=>edit(()=>setFunded(e.target.checked))} aria-describedby={error?uid+'-error':undefined}/>This connection uses OpenRouter funded credits.</label><p className="hint">Upstream BYOK invoices are outside this app’s supported billing route.</p>
@@ -252,7 +265,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
       </form>}
       {(screen==='quote'||screen==='unknown')&&quote&&writer&&<div className="card stack">
         <div><p className="hint">Total reservation</p><strong style={{fontSize:26,overflowWrap:'anywhere'}}>{money(quote.estimateUsd)}</strong><p>Connection: {quote.connectionName} · Valid until {when(quote.expiresAt)}</p><p className="hint">Prices observed {when(quote.createdAt)}. OpenRouter funded credits · No fallback · No cache reuse.</p></div>
-        <div className="stack">{quote.routes.map(route=><div key={route.model}><strong>{modelName(route.model)} · {route.providerName}</strong><p>{money(route.estimateUsd)} reservation</p><details><summary>Price and capacity details</summary><p>Prompt capacity {route.promptCapacity}; output capacity {route.completionCapacity}. Prompt-token price USD {route.promptPrice}; completion-token price USD {route.completionPrice}; request price USD {route.requestPrice}.</p></details></div>)}</div>
+        <div className="stack">{quote.routes.map(route=><div key={route.model}><strong><bdi dir="ltr">{modelName(route.model)}</bdi> · {route.providerName}</strong><p>Exact serving route: <bdi dir="ltr">{route.tag}</bdi> · Context {route.contextLength??'Not recorded in this older quote'}</p><p>{money(route.estimateUsd)} reservation</p><details><summary>Price and capacity details</summary><p>Prompt capacity {route.promptCapacity}; output capacity {route.completionCapacity}. Prompt-token price USD {route.promptPrice}; completion-token price USD {route.completionPrice}; request price USD {route.requestPrice}.</p></details></div>)}</div>
         <h3>Exact request</h3><Messages messages={quote.messages}/><p>Maximum output tokens: {quote.input.maxCompletionTokens}</p>
         <p className="hint">{quote.explanation}</p><p className="hint">This conservative reservation uses full prompt-capacity pricing. Actual credit charges may be lower; it is not an invoice guarantee. Taxes, credit-purchase fees and upstream BYOK invoices are excluded.</p>
         {screen==='unknown'?<div className="banner"><p>This start may already have been accepted. Retrying resends the identical quote and request key; it does not create a new paid attempt. This recovery remains available after quote expiry.</p><button type="button" className="btn primary" onClick={()=>void start()} disabled={writing||!attempt}>Retry same start request</button></div>:<div className="row"><button type="button" className="btn primary" onClick={()=>void start()} disabled={writing||blocked||expired}>Start {quote.routes.length} paid {quote.routes.length===1?'request':'requests'}</button><button type="button" className="btn ghost" onClick={setup} disabled={writing}>Back to setup</button>{expired&&<button type="button" className="btn" onClick={setup} disabled={writing}>Get new quote</button>}</div>}

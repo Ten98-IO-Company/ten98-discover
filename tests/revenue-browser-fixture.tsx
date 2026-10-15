@@ -5,6 +5,7 @@ import {RevenuePanel,readRevenueResult} from '../src/components/RevenuePanel';
 import {parseNavigation,type NavigationSearch} from '../src/lib/navigation';
 import '../src/styles.css';
 const workspace='10000000-0000-4000-8000-000000000001',project='20000000-0000-4000-8000-000000000001',other='20000000-0000-4000-8000-000000000002';
+let pickerAborts=0;const originalFetch=window.fetch.bind(window);window.fetch=(input,init)=>{if(typeof input==='string'&&/\/(segments|cohorts)(?:[/?]|$)/.test(input))init?.signal?.addEventListener('abort',()=>{pickerAborts++;},{once:true});return originalFetch(input,init);};Object.defineProperty(window,'__pickerAborts',{get:()=>pickerAborts});
 // Reader accepts unchanged SQL DTOs; browser routing rebinds only projectId explicitly.
 Object.assign(window,{__readRevenue:(data:unknown,query:string,id:string,expectedRoute?:'report'|'sessions'|'detail')=>{try{readRevenueResult(data,query,id,expectedRoute??(data as {route?:'report'|'sessions'|'detail'}).route??'report',(data as {detail?:{visitorKey:string}|null}).detail?.visitorKey??null,(data as {sessions:{search:string}}).sessions.search,(data as {paging:{limit:number}}).paging.limit);return true;}catch{return false;}}});
 function Fixture(){const current=useLocation(),router=useRouter();const search=index.useSearch(),navigate=index.useNavigate(),[user,setUser]=React.useState('30000000-0000-4000-8000-000000000001'),[signedOut,setSignedOut]=React.useState(false);const target=(id=project):NavigationSearch=>({workspace,project:id,view:'revenue'});

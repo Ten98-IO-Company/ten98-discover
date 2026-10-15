@@ -4,7 +4,8 @@ import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {canonicalHash,classifyPrompt,contextHost} from './context-input.ts';
 import {csvCell,explorerQuery} from './explorer-input.ts';
-import {executionInput,promptModels} from './openrouter-input.ts';
+import {executionInput,validateExecutionPayload,type RouteSnapshot} from './openrouter-input.ts';
+import {openRouterModelId,openRouterProviderName,openRouterRouteIdentity,openRouterSavedProvider} from '../lib/openrouter-models.ts';
 import {contentProfile,withContentProject,type ContentProject} from './project-context.ts';
 import {matchAnswer,AnswerMentionError,type MentionSubject,type MentionMethod,type AnswerMention} from './answer-mentions.ts';
 
@@ -14,7 +15,7 @@ export type InsightCoverage=Record<InsightEligibility,number>&{attempted:number}
 export type InsightMetric={id:string;mentions:number;eligibleAnswers:number|null;shareOfVoiceDenominator:number|null;citations:number;citationDenominator:number|null};
 export type InsightExecution={id:string;comparisonId:string;promptId:string;versionId:string;requestedAt:string;date:string;model:string;resolvedModel:string|null;status:string;eligibility:InsightEligibility;matches:AnswerMention[]|null};
 type Drilldown={entityId:string|null;outcome:'all'|'mentioned'|'not_mentioned'|'cited'|'eligible'|'unavailable'};
-export type PromptInsightsReport={role:ContentProject['role'];filters:InsightFilters;drilldown:Drilldown;asOf:string;contextRevision:number;profileHash:string;matcherVersion:MentionMethod;selectionRevision:string;label:string;warnings:string[];subjects:MentionSubject[];coverage:InsightCoverage;evidenceStates:Pick<InsightExecution,'id'|'eligibility'>[];metrics:InsightMetric[];daily:{date:string;coverage:InsightCoverage;metrics:InsightMetric[]}[];executions:InsightExecution[];totalRows:number;nextCursor:string|null};
+export type PromptInsightsReport={role:ContentProject['role'];filters:InsightFilters;modelOptions:{values:string[];complete:boolean};drilldown:Drilldown;asOf:string;contextRevision:number;profileHash:string;matcherVersion:MentionMethod;selectionRevision:string;label:string;warnings:string[];subjects:MentionSubject[];coverage:InsightCoverage;evidenceStates:Pick<InsightExecution,'id'|'eligibility'>[];metrics:InsightMetric[];daily:{date:string;coverage:InsightCoverage;metrics:InsightMetric[]}[];executions:InsightExecution[];totalRows:number;nextCursor:string|null};
 const label='Recomputed from retained answers using current project context';
 const hex=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/),uuid=z.uuid().transform(v=>v.toLowerCase());
 const keys=['from','to','timeZone','model','promptId','tag','matcher','entityId','outcome','cursor'];
@@ -26,7 +27,7 @@ function parseQuery(params:URLSearchParams){
  const dateParams=new URLSearchParams();for(const key of ['from','to','timeZone'])if(params.has(key))dateParams.set(key,params.get(key)!);
  const {from,to,timeZone}=explorerQuery(dateParams);if(Date.parse(to)-Date.parse(from)>30*86400000)throw bad();
  const model=params.get('model'),rawPrompt=params.get('promptId'),tag=params.get('tag'),matcher=params.get('matcher')??'unicode-boundary-v1';
- if(model!==null&&!promptModels.includes(model as typeof promptModels[number]))throw bad();
+ if(model!==null&&!openRouterModelId(model))throw bad();
  if(tag!==null&&(!tag||tag.length>80||tag.trim()!==tag||toUSVString(tag)!==tag||tag.includes('\0')))throw bad();
  if(!['elmo-substring-v1','unicode-boundary-v1'].includes(matcher))throw bad();
  const parsedId=rawPrompt===null?null:uuid.safeParse(rawPrompt);if(parsedId!==null&&!parsedId.success)throw bad();
@@ -51,10 +52,10 @@ const fromSql=`FROM prompt_comparison c JOIN prompt_execution e ON e.comparison_
  AND (c.created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date
  AND ($5::text IS NULL OR e.route->>'model'=$5) AND ($6::uuid IS NULL OR q.prompt_id=$6)
  AND ($7::text IS NULL OR p.user_tags ? $7)`;
-type Stored={id:string;comparisonId:string;promptId:string;versionId:string;requestedAt:string;date:string;model:string;status:string;expired:boolean;resultHash:string|null;tags:string[];hasResult:boolean};
-export type InsightIdentity={state:'available'|'unavailable'|'invalid';requestHash:string|null;maxCompletionTokens:number|null;isBranded:boolean;promptPreview:string};
+type Stored={id:string;comparisonId:string;promptId:string;versionId:string;requestedAt:string;date:string;model:string;route:unknown;status:string;expired:boolean;resultHash:string|null;tags:string[];hasResult:boolean};
+export type InsightIdentity={state:'available'|'unavailable'|'invalid';requestHash:string|null;maxCompletionTokens:number|null;providerName:string|null;isBranded:boolean;promptPreview:string};
 const safeText=z.string().refine(v=>toUSVString(v)===v&&!v.includes('\0'));
-const answer=z.object({text:safeText.max(250000),resolvedModel:z.enum(promptModels),provider:z.literal('OpenAI'),finishReason:z.enum(['stop','length','content_filter']),
+const answer=z.object({text:safeText.max(250000),resolvedModel:z.string().refine(openRouterModelId),provider:z.string().refine(openRouterProviderName),finishReason:z.enum(['stop','length','content_filter']),
  citations:z.array(z.object({url:safeText.max(2048).refine(v=>{try{const u=new URL(v);return u.protocol==='https:'&&!u.username&&!u.password;}catch{return false;}}),title:safeText.nullable()})).max(100)});
 function coverage():InsightCoverage{return {attempted:0,eligible:0,queued:0,running:0,no_answer:0,empty:0,truncated:0,content_filtered:0,expired:0,invalid:0};}
 function metrics(subjects:MentionSubject[],rows:InsightExecution[]):InsightMetric[]{
@@ -92,7 +93,7 @@ export async function selectPromptInsights(client:PoolClient,p:ContentProject,fi
    (SELECT DISTINCT q.id,CASE WHEN ${inputExpired} THEN 0 ELSE COALESCE(octet_length(q.input::text),0)+COALESCE(octet_length(q.messages::text),0) END AS bytes ${fromSql}) bounded`,values)).rows[0];
   if(BigInt(bounds.bytes)+BigInt(inputs.bytes)>10n*1024n*1024n)throw cap();}
  const stored=(await client.query<Stored>(`SELECT e.id,c.id AS "comparisonId",q.prompt_id AS "promptId",q.version_id AS "versionId",
- ${stamp('c.created_at')} AS "requestedAt",(c.created_at AT TIME ZONE $4)::date::text AS date,e.route->>'model' AS model,e.status,
+ ${stamp('c.created_at')} AS "requestedAt",(c.created_at AT TIME ZONE $4)::date::text AS date,e.route->>'model' AS model,e.route,e.status,
  ${expired} AS expired,e.result IS NOT NULL AS "hasResult",p.user_tags AS tags,
  CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(e.result::text,'UTF8')),'hex') END AS "resultHash"
  ${fromSql} ORDER BY c.created_at DESC,c.id DESC,e.position,e.id`,values)).rows;
@@ -101,13 +102,15 @@ export async function selectPromptInsights(client:PoolClient,p:ContentProject,fi
   const captured=(await client.query(`SELECT e.id,q.prompt_id,q.version_id,e.route,v.text,${inputExpired} AS input_expired,
     CASE WHEN ${inputExpired} THEN NULL ELSE q.input END AS input,CASE WHEN ${inputExpired} THEN NULL ELSE q.messages END AS messages,p.user_tags
     ${fromSql.replace(' WHERE c.project_id', ' JOIN prompt_text_version v ON v.id=q.version_id AND v.prompt_id=q.prompt_id AND v.project_id=q.project_id WHERE c.project_id')}`,values)).rows;
-  for(const row of captured){check();const identity:InsightIdentity={state:'unavailable',requestHash:null,maxCompletionTokens:null,isBranded:classifyPrompt(row.text,profile.name,p.origin,profile.aliases,row.user_tags).isBranded,promptPreview:(row.text as string).slice(0,160).replace(/[\uD800-\uDBFF]$/,'')};
+  for(const row of captured){check();const identity:InsightIdentity={state:'unavailable',requestHash:null,maxCompletionTokens:null,providerName:null,isBranded:classifyPrompt(row.text,profile.name,p.origin,profile.aliases,row.user_tags).isBranded,promptPreview:(row.text as string).slice(0,160).replace(/[\uD800-\uDBFF]$/,'')};
    if(!row.input_expired){const parsed=executionInput.safeParse(row.input);identity.state='invalid';
     if(parsed.success){const input=parsed.data,messages=[...(input.systemText?[{role:'system',content:input.systemText}]:[]),{role:'user',content:row.text}];
      const saved=z.array(z.object({role:z.enum(['system','user']),content:safeText.max(4000)}).strict()).min(1).max(2).safeParse(row.messages);
-     if(saved.success&&input.promptId.toLowerCase()===row.prompt_id&&input.versionId.toLowerCase()===row.version_id&&input.models.includes(row.route?.model)&&row.route?.tag==='openai'&&row.route?.providerName==='OpenAI'&&canonicalHash(messages)===canonicalHash(saved.data)){
-      identity.state='available';identity.maxCompletionTokens=input.maxCompletionTokens;
-      identity.requestHash=canonicalHash({profile:'openrouter-api-text-no-search-v1',promptId:row.prompt_id,versionId:row.version_id,messages,maxCompletionTokens:input.maxCompletionTokens,model:row.route.model,provider:'openai',serviceTier:'default',fallback:false});
+     if(saved.success&&input.promptId.toLowerCase()===row.prompt_id&&input.versionId.toLowerCase()===row.version_id&&openRouterRouteIdentity(row.route)&&input.models.includes(row.route.model)&&canonicalHash(messages)===canonicalHash(saved.data)){
+      try{validateExecutionPayload(saved.data,row.route as RouteSnapshot,input.maxCompletionTokens);
+       identity.state='available';identity.maxCompletionTokens=input.maxCompletionTokens;identity.providerName=row.route.providerName;
+       identity.requestHash=canonicalHash({profile:row.route.profile??'openrouter-api-text-no-search-v1',promptId:row.prompt_id,versionId:row.version_id,messages,maxCompletionTokens:input.maxCompletionTokens,model:row.route.model,provider:row.route.tag,serviceTier:'default',fallback:false});
+      }catch{/* Invalid saved v2 request capacity cannot create a comparison cell. */}
      }
     }
    }identities.set(row.id,identity);
@@ -123,7 +126,7 @@ export async function selectPromptInsights(client:PoolClient,p:ContentProject,fi
   if(row.expired)eligibility='expired';
   else if(!row.hasResult)eligibility=row.status==='queued'?'queued':row.status==='running'?'running':'no_answer';
   else{const result=answer.safeParse(payloads.get(row.id));
-   if(!result.success||result.data.resolvedModel!==row.model)eligibility='invalid';
+   if(!result.success||result.data.resolvedModel!==row.model||result.data.provider!==openRouterSavedProvider(row.route))eligibility='invalid';
    else{parsed=result.data;eligibility=parsed.finishReason==='length'?'truncated':parsed.finishReason==='content_filter'?'content_filtered':!parsed.text.trim()?'empty':'eligible';}
   }
   if(eligibility==='eligible'){
@@ -133,11 +136,14 @@ export async function selectPromptInsights(client:PoolClient,p:ContentProject,fi
   }
   observations.push({id:row.id,comparisonId:row.comparisonId,promptId:row.promptId,versionId:row.versionId,requestedAt:row.requestedAt,date:row.date,model:row.model,status:row.status,resolvedModel:parsed?.resolvedModel??null,eligibility,matches});
  }
- check();const asOf=(await client.query<{at:string}>(`SELECT ${stamp('transaction_timestamp()')} AS at`)).rows[0].at;
+ check();const optionValues=[...values];optionValues[4]=null;
+ const observed=(await client.query<{model:string|null}>(`SELECT DISTINCT CASE WHEN octet_length(e.route->>'model')<=256 THEN e.route->>'model' ELSE NULL END AS model ${fromSql} ORDER BY model LIMIT 1001`,optionValues)).rows;
+ const modelOptions={values:observed.slice(0,1000).map(r=>r.model).filter(openRouterModelId),complete:observed.length<=1000&&observed.every(r=>openRouterModelId(r.model))};
+ const asOf=(await client.query<{at:string}>(`SELECT ${stamp('transaction_timestamp()')} AS at`)).rows[0].at;
  const scope=canonicalHash({projectId:p.id,filters}),selectionRevision=canonicalHash({scope,contextRevision:profile.revision,profileHash,stored});
  const daily:PromptInsightsReport['daily']=[];
  for(let day=Date.parse(filters.from);day<=Date.parse(filters.to);day+=86400000){const date=new Date(day).toISOString().slice(0,10),rows=observations.filter(r=>r.date===date);daily.push({date,coverage:count(rows),metrics:citationOnly?[]:metrics(subjects,rows)});}
- return {scope,observations,identities,citationEvidence,citationCategoryOverrides:profile.citationCategoryOverrides??[],report:{role:p.role,filters,asOf,contextRevision:profile.revision,profileHash,matcherVersion:filters.matcher,selectionRevision,label,warnings,subjects,coverage:count(observations),evidenceStates:observations.map(({id,eligibility})=>({id,eligibility})),metrics:citationOnly?[]:metrics(subjects,observations),daily}};
+ return {scope,observations,identities,citationEvidence,citationCategoryOverrides:profile.citationCategoryOverrides??[],report:{role:p.role,filters,modelOptions,asOf,contextRevision:profile.revision,profileHash,matcherVersion:filters.matcher,selectionRevision,label,warnings,subjects,coverage:count(observations),evidenceStates:observations.map(({id,eligibility})=>({id,eligibility})),metrics:citationOnly?[]:metrics(subjects,observations),daily}};
 }
 const cursorSchema=z.object({scope:hex,revision:hex,offset:z.number().int().min(1).max(999)}).strict();
 function pageOffset(raw:string|null,scope:string,revision:string){
