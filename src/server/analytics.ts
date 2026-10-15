@@ -5,8 +5,8 @@ import { retentionCoverage } from './retention.ts';
 import {publicAnalyticsSettings} from './native-analytics.ts';
 import {environmentFields,environmentVersion,isEnvironmentFilter,type EnvironmentFilters,type AnalyticsEnvironment} from '../lib/analytics-environment.ts';
 import {deriveAnalyticsComparison,type AnalyticsComparisonMode,type AnalyticsComparison,type AnalyticsPeriodReport} from '../lib/analytics-comparison.ts';
-import {geographyFields,geographyFiltersValid,type GeographyFilters} from '../lib/analytics-geography.ts';
-import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geographyReportSql,applyGeographyCoverage} from './geography-sql.ts';
+import {geographyFields,geographyFiltersValid,geographySearch,type GeographyFilters,type GeographyDetailIntent,type GeographyDetail} from '../lib/analytics-geography.ts';
+import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geographyReportSql,geographyDetailSql,applyGeographyCoverage} from './geography-sql.ts';
 
 const dayMs = 86_400_000;
 function dateValue(value: string): Date {
@@ -34,8 +34,14 @@ export function analyticsRange(params: URLSearchParams, now = new Date()) {
 }
 
 export function analyticsQuery(params:URLSearchParams,now=new Date()) {
-  for(const key of params.keys())if(!['from','to','compare',...environmentFields,...geographyFields].includes(key)||params.getAll(key).length!==1)throw new InputError(400,'Use each supported analytics filter only once.');
+  for(const key of params.keys())if(!['from','to','compare','geoDetail','geoSearch','geoPeriod',...environmentFields,...geographyFields].includes(key)||params.getAll(key).length!==1)throw new InputError(400,'Use each supported analytics filter only once.');
   const compare=params.get('compare');if(compare!==null&&!['prev','yoy'].includes(compare))throw new InputError(400,'Choose previous period or previous year.');
+  let detail:GeographyDetailIntent|undefined;
+  if(params.has('geoDetail')){
+    const field=params.get('geoDetail'),period=params.get('geoPeriod')??'current',search=geographySearch(params.get('geoSearch')??'');
+    if(field!=='region'&&field!=='city'||period!=='current'&&period!=='comparison'||period==='comparison'&&!compare||search===null)throw new InputError(400,'Choose a region or city, a valid period and a location search of at most 128 characters.');
+    detail={field,period,search};
+  }else if(params.has('geoSearch')||params.has('geoPeriod'))throw new InputError(400,'Choose region or city details before searching locations.');
   const dates=new URLSearchParams(),filters:EnvironmentFilters={},geographyFilters:GeographyFilters={};
   for(const field of ['from','to'])if(params.has(field))dates.set(field,params.get(field)!);
   for(const field of environmentFields)if(params.has(field)){
@@ -45,12 +51,12 @@ export function analyticsQuery(params:URLSearchParams,now=new Date()) {
   }
   for(const field of geographyFields)if(params.has(field))geographyFilters[field]=params.get(field)!;
   if(!geographyFiltersValid(geographyFilters))throw new InputError(400,'Choose compatible location filters.');
-  return {range:analyticsRange(dates,now),filters,geographyFilters,...compare===null?{}:{compare:compare as AnalyticsComparisonMode}};
+  return {range:analyticsRange(dates,now),filters,geographyFilters,...compare===null?{}:{compare:compare as AnalyticsComparisonMode},...detail?{detail}:{}};
 }
-export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string):Promise<AnalyticsPeriodReport&{comparison?:AnalyticsComparison}> {
-  const {range,filters,geographyFilters,compare} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
+export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string):Promise<AnalyticsPeriodReport&{comparison?:AnalyticsComparison;geographyDetail?:GeographyDetail}> {
+  const {range,filters,geographyFilters,compare,detail} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
   if(compare&&!derived)throw new InputError(400,'Choose a later start date so the comparison stays on or after 1970-01-01.');
-  const client=compare?await getDatabase().pool.connect():null;
+  const client=compare||detail?await getDatabase().pool.connect():null;
   try{
   if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");}
   // One statement gives totals, buckets and rankings the same database snapshot.
@@ -117,7 +123,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
           'visitors',m.visitors,'visits',m.visits,'bounceRate',m.bounce_rate,'averageVisitSeconds',m.duration) AS row
       FROM environment_counts c LEFT JOIN environment_measurement m ON c.field=m.field AND c.value IS NOT DISTINCT FROM m.value
     )${geographyAggregateCtes}
-    SELECT (SELECT analytics_retained_from FROM target) AS retained_from,(SELECT analytics_settings FROM target) AS analytics_settings,
+    SELECT ${geographyDetailSql} AS geography_detail,(SELECT analytics_retained_from FROM target) AS retained_from,(SELECT analytics_settings FROM target) AS analytics_settings,
       EXISTS(SELECT 1 FROM target) AS allowed,json_build_object(
       'totals',json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
         'customEvents',count(*) FILTER (WHERE event_name<>'page_view')),
@@ -148,7 +154,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
         'method',json_build_object('source','bounded-request-user-agent','device','ua-parser-v1-screen-if-enabled','rawUserAgentStored',false)),
       'geography',${geographyReportSql('$14::jsonb')},'lastReceivedAt',max(received_at)
     ) AS report FROM observations) r ORDER BY CASE q.period WHEN 'current' THEN 0 ELSE 1 END`,
-    [projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters)]);
+    [projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters),detail?JSON.stringify(detail):null]);
   if(apiKeyId&&!rows[0]?.key_valid)throw new FoundationError(401,'The API key is invalid, expired or unavailable.');
   if(!rows[0]?.allowed)throw new FoundationError(404,'Project not found or unavailable.');
   const current=formatReport(rows[0],range);
@@ -163,8 +169,13 @@ export async function projectAnalytics(projectId: string, userId: string, params
       averageVisitSeconds:change(current.measurement.averageVisitSeconds,previous.measurement.averageVisitSeconds),
       bounceRate:{percentagePoints:available&&current.measurement.bounceRate!==null&&previous.measurement.bounceRate!==null?current.measurement.bounceRate-previous.measurement.bounceRate:null}}};
   }
-  if(client)await client.query('COMMIT');return comparison?{...current,comparison}:current;
-  }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if(compare&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Comparison took too long. Choose a shorter date range.');throw error;}
+  let geographyDetail:GeographyDetail|undefined;
+  if(detail){
+    const selected=detail.period==='comparison'?comparison!.report:current,raw=rows[detail.period==='comparison'?1:0].geography_detail;
+    geographyDetail={version:'native-geography-detail-v1',...detail,range:{from:selected.range.from,to:selected.range.to},generatedAt:(rows[0].as_of as Date).toISOString(),limit:500,...raw,...selected.coverage.status==='unavailable'?{rows:[],matchingGroups:null,matchingPageViews:null,returnedPageViews:null,truncated:false}:{}};
+  }
+  if(client)await client.query('COMMIT');return {...current,...comparison?{comparison}:{},...geographyDetail?{geographyDetail}:{}};
+  }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if((compare||detail)&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,detail?'Location search took too long. Choose a shorter date range.':'Comparison took too long. Choose a shorter date range.');throw error;}
   finally{client?.release();}
 }
 type RawAnalyticsReport=Omit<AnalyticsPeriodReport,'range'|'coverage'|'daily'>&{daily:{date:string;pageViews:number;customEvents:number}[]};

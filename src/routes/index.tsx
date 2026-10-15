@@ -638,7 +638,7 @@ function App() {
         {view === 'meta' && project && me && <MetaConnectionPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenAppSetup={() => go(target('meta-app'))} />}
         {view === 'meta-reports' && project && me && <MetaImportPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onConnections={() => go(target('meta'))} />}
         {view === 'meta-app' && me?.instanceOperator && <MetaAppPanel userId={me.user.id} onUnauthorized={unauthorized} onBack={() => go(target(project?'meta':'security'))} backLabel={project?'Back to connections':'Back to account'} />}
-        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
         </>}
