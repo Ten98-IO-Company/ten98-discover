@@ -50,6 +50,8 @@ function TeamPanelContent(props: TeamPanelProps) {
   const [inviteRole, setInviteRole] = useState<Role>('editor');
   const [inviteLink, setInviteLink] = useState<{ email: string; url: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [transferTo, setTransferTo] = useState('');
+  const [transferEmail, setTransferEmail] = useState('');
 
   const reqRef = useRef(0);
   const mutRef = useRef<AbortController | null>(null);
@@ -105,6 +107,7 @@ function TeamPanelContent(props: TeamPanelProps) {
   const canManage = myRole === 'owner' || myRole === 'admin';
   const roleOptions = myRole === 'owner' ? ALL_ROLES : LIMITED_ROLES;
   const inviteRoles = myRole === 'owner' ? INVITE_ROLES : LIMITED_ROLES;
+  const transferTarget = data?.members.find(member => member.userId === transferTo && member.userId !== userId);
 
   function canManageMember(m: Member): boolean {
     if (!data) return false;
@@ -239,6 +242,17 @@ function TeamPanelContent(props: TeamPanelProps) {
     });
   }
 
+  function submitTransfer(e: FormEvent) {
+    e.preventDefault();
+    if (myRole !== 'owner' || !transferTarget || transferEmail.trim().toLowerCase() !== transferTarget.email.toLowerCase()) return;
+    void runMutation('Ownership transfer was not confirmed. Refresh the team to check the saved roles before trying again', async signal => {
+      await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/transfer-ownership`, {
+        method: 'POST', body: { targetUserId: transferTarget.userId, confirmationEmail: transferEmail.trim().toLowerCase() }, signal,
+      });
+      return () => { setTransferTo(''); setTransferEmail(''); setInviteLink(null); linkRef.current = null; setData(null); };
+    });
+  }
+
   async function copyInvite() {
     if (!inviteLink) return;
     const link = inviteLink;
@@ -274,6 +288,7 @@ function TeamPanelContent(props: TeamPanelProps) {
       <div className='proj-head'>
         <h1>{data.workspace.name}</h1>
         <p className='dim'>Your role: {data.role}</p>
+        <button type='button' className='btn' disabled={busy} onClick={() => setReload(value => value + 1)}>Refresh team</button>
       </div>
 
       {error && (
@@ -370,6 +385,31 @@ function TeamPanelContent(props: TeamPanelProps) {
           </div>
         )}
       </section>
+
+      {myRole === 'owner' && (
+        <section className='card' aria-labelledby='ownership-heading'>
+          <h2 id='ownership-heading'>Transfer your ownership</h2>
+          <p>Choose an existing member to become an owner. You will become an administrator and lose owner-only controls. Other owners keep their roles.</p>
+          <form onSubmit={submitTransfer}>
+            <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0 }}>
+              <legend className='sr-only'>New workspace owner</legend>
+              <div className='field'>
+                <label htmlFor='transfer-owner'>New owner</label>
+                <select id='transfer-owner' value={transferTo} required onChange={e => { setTransferTo(e.target.value); setTransferEmail(''); }}>
+                  <option value=''>Choose a team member</option>
+                  {data.members.filter(member => member.userId !== userId).map(member => <option key={member.userId} value={member.userId}>{member.name} ({member.email})</option>)}
+                </select>
+              </div>
+              {transferTarget && <div className='field'>
+                <label htmlFor='transfer-confirm'>Type {transferTarget.email} to confirm</label>
+                <input id='transfer-confirm' type='email' value={transferEmail} onChange={e => setTransferEmail(e.target.value)} maxLength={254} autoComplete='off' required aria-describedby='transfer-effect'/>
+                <p id='transfer-effect' className='hint'>{transferTarget.name} will control this workspace’s provider credentials, security and members. Your pending administrator invitations will be revoked.</p>
+              </div>}
+              <button className='btn' type='submit' disabled={busy || !transferTarget || transferEmail.trim().toLowerCase() !== transferTarget.email.toLowerCase()}>Transfer ownership and become administrator</button>
+            </fieldset>
+          </form>
+        </section>
+      )}
 
       <section className='card'>
         <h2>Pending invitations</h2>
