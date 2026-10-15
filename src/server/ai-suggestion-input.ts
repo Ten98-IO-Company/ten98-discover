@@ -3,6 +3,7 @@ import {FoundationError} from './auth.ts';
 import {canonicalHash,cleanText,parse,revision,sectionKeys,tags,text} from './context-input.ts';
 import {moneyInput,usdMicros} from './providers.ts';
 import type {OpenRouterModel,RenderedInput} from './openrouter-input.ts';
+import {openRouterModelId} from '../lib/openrouter-models.ts';
 
 export const suggestionProfiles=[
  {id:'benchmark-mini-v1',model:'openai/gpt-4o-mini',label:'GPT-4o mini — evaluation only'},
@@ -14,11 +15,15 @@ export const suggestionOutputTokens=2048;
 const unique=<T>(values:T[])=>new Set(values).size===values.length;
 const hex=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/);
 const suggestionTags=z.array(text(80,1)).max(3).pipe(tags);
-export const suggestionQuoteInput=z.object({requestId:z.uuid(),connectionId:z.uuid(),contextRevision:revision,
- profileId:z.enum(suggestionProfiles.map(p=>p.id)),benchmark:z.literal(true),fundedCredits:z.literal(true),
+const suggestionQuoteFields=z.object({requestId:z.uuid(),connectionId:z.uuid(),contextRevision:revision,
+ benchmark:z.literal(true),fundedCredits:z.literal(true),
  maxSpendUsd:moneyInput.refine(v=>usdMicros(v)>0n),topic:text(100,1),country:text(80,1),language:text(80,1),
  sectionKeys:z.array(z.enum(sectionKeys)).max(4).refine(unique),competitorIds:z.array(z.uuid()).max(10).refine(unique),
  excludedPrompts:z.array(text(2000,1)).max(20)}).strict();
+export const suggestionQuoteInput=z.union([
+ suggestionQuoteFields.extend({profileId:z.enum(suggestionProfiles.map(p=>p.id))}).strict(),
+ suggestionQuoteFields.extend({profileId:z.literal('catalog-text-schema-v1'),model:z.string().refine(openRouterModelId)}).strict(),
+]);
 export type SuggestionInput=z.infer<typeof suggestionQuoteInput>;
 export const suggestionStartInput=z.object({requestId:z.uuid(),quoteId:z.uuid()}).strict();
 export const suggestionActionInput=z.object({requestId:z.uuid()}).strict();
@@ -53,5 +58,6 @@ export function suggestionMessages(snapshot:SuggestionSnapshot):RenderedInput{
  return messages;
 }
 export function suggestionProfile(id:SuggestionInput['profileId']){return suggestionProfiles.find(p=>p.id===id)!;}
+export function suggestionModel(input:SuggestionInput){return input.profileId==='catalog-text-schema-v1'?input.model:suggestionProfile(input.profileId).model;}
 export function suggestionBodyHash(userId:string,input:unknown){return canonicalHash({userId,input});}
 export {parse as parseSuggestionInput};

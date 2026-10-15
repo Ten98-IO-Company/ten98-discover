@@ -16,7 +16,7 @@ export type ComparisonPeriod={from:string;to:string;coverage:InsightCoverage;usa
  /** Eligible answers excluded from cell rates because captured input cannot be used. */
  identityUnavailable:number;identityInvalid:number;excludedByCohort:number;cells:number;matchedCells:number;matchedExecutions:number};
 export type ComparisonCellPart={attempted:number;usable:number;metrics:{id:string;mentions:number;citations:number}[]};
-export type ComparisonCell={id:string;promptId:string;versionId:string;promptPreview:string;model:string;provider:'OpenAI';maxCompletionTokens:number;
+export type ComparisonCell={id:string;promptId:string;versionId:string;promptPreview:string;model:string;provider:string;maxCompletionTokens:number;
  status:'matched'|'current_only'|'previous_only'|'unavailable';current:ComparisonCellPart;previous:ComparisonCellPart};
 export type ComparisonExecution=InsightExecution&{period:'current'|'previous';cellId:string|null;identity:'available'|'unavailable'|'invalid';usable:boolean};
 export type ComparisonEvidenceState=Pick<ComparisonExecution,'id'|'period'|'eligibility'|'identity'>;
@@ -78,7 +78,7 @@ async function select(client:PoolClient,p:ContentProject,filters:ComparisonFilte
   const usable=row.eligibility==='eligible'&&captured.state==='available',cellId=captured.requestHash?canonicalHash({projectId:p.id,request:captured.requestHash,profile:r.profileHash,matcher:filters.matcher,eligibilityVersion}):null;
   if(usable)at.usable++;else if(row.eligibility==='eligible'){if(captured.state==='unavailable')at.identityUnavailable++;else at.identityInvalid++;}
   executions.push({...row,period:side,cellId,identity:captured.state,usable});
-  if(!cellId)continue;let cell=cells.get(cellId);if(!cell){cell={id:cellId,promptId:row.promptId,versionId:row.versionId,promptPreview:captured.promptPreview,model:row.model,provider:'OpenAI',maxCompletionTokens:captured.maxCompletionTokens!,status:'unavailable',current:part(),previous:part()};cells.set(cellId,cell);}
+  if(!cellId)continue;let cell=cells.get(cellId);if(!cell){cell={id:cellId,promptId:row.promptId,versionId:row.versionId,promptPreview:captured.promptPreview,model:row.model,provider:captured.providerName!,maxCompletionTokens:captured.maxCompletionTokens!,status:'unavailable',current:part(),previous:part()};cells.set(cellId,cell);}
   cell[side].attempted++;if(usable){cell[side].usable++;for(const [i,match]of row.matches!.entries()){cell[side].metrics[i].mentions+=Number(match.mentioned);cell[side].metrics[i].citations+=Number(match.cited);}}
  }
  const allCells=[...cells.values()].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0),matched=allCells.filter(c=>c.current.usable>0&&c.previous.usable>0);

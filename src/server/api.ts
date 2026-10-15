@@ -59,6 +59,7 @@ import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAud
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
 import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
 import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
+import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
 import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
@@ -400,6 +401,20 @@ export async function handleApi(request: Request): Promise<Response> {
         await limit(`prompt-insights-export:${user.id}`,5);
         const result=await exportPromptInsights(projectId,user.id,await readJson(request,4096),request.signal);
         return new Response(result.body,{headers:{'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount),'cache-control':'no-store','x-content-type-options':'nosniff'}});
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const modelCatalogRoute=path.match(new RegExp(`^/api/projects/(${id})/openrouter-models$`,'i'));
+    if(modelCatalogRoute){
+      const projectId=modelCatalogRoute[1];
+      if(url.search)throw new FoundationError(400,'The model catalog does not accept query parameters.');
+      await projectAccess(projectId,user.id,request.method==='POST');
+      if(request.method==='GET'){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Model catalog reads do not accept a body.');
+        await limit(`openrouter-models-read:${user.id}`,60);return json(await getOpenRouterModels(projectId,user.id));
+      }
+      if(request.method==='POST'){
+        await limit(`openrouter-models-refresh:${projectId}`,3);return json(await refreshOpenRouterModels(projectId,user.id,await readJson(request,256)));
       }
       return json({error:'Method not allowed.'},405);
     }
