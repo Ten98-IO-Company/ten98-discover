@@ -89,7 +89,7 @@
       var controller = new AbortController(); state.nativeRequests.add(controller);
       var timer = setTimeout(function () { controller.abort(); }, 5000);
       Promise.resolve().then(function () { if (!nativeCurrent(state, epoch, generation, controller)) return; if (observation) observation.sent = true; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
-        cache: 'no-store', redirect: 'error', signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body}); })
+        cache: 'no-store', redirect: 'error', keepalive: true, signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body}); })
         .then(async function (response) {
           if (!response) return;
           var text = await readNativeResponse(response, controller.signal);
@@ -269,6 +269,27 @@
     } catch (ignore) {}
   }
 
+  function onDeclaredClick(event) {
+    try {
+      var target = event.target;
+      if (target && target.nodeType === 3) target = target.parentElement;
+      var element = target && typeof target.closest === 'function' && target.closest('[data-ten98-event]');
+      if (!element) return;
+      var name = element.getAttribute('data-ten98-event');
+      if (typeof name !== 'string' || name === PAGE_VIEW || name !== name.trim() || !NAME_RE.test(name)) return;
+      var properties = {}, count = 0, prefix = 'data-ten98-event-', attributes = element.getAttributeNames();
+      for (var i = 0; i < attributes.length; i++) {
+        if (!attributes[i].startsWith(prefix)) continue;
+        var key = attributes[i].slice(prefix.length), value = element.getAttribute(attributes[i]);
+        if (!key.length || key.length > 80 || !clean(key) || ['__proto__', 'prototype', 'constructor'].includes(key) ||
+            typeof value !== 'string' || value.length > 1000 || !clean(value) || ++count > 50) return;
+        properties[key] = value;
+      }
+      if (new TextEncoder().encode(JSON.stringify(properties)).length > 6144) return;
+      track(name, properties); // Existing collection and destination gates decide whether anything is sent.
+    } catch (ignore) {} // Never inspect undeclared content or interfere with the page's click/navigation.
+  }
+
   function install() {
     nativeEvent.protocolVersion = nativeStop.protocolVersion = nativeIdentify.protocolVersion = 3;
     var h = { sites: [], lastUrl: currentUrl(), restored: false, nativeEvent: nativeEvent, nativeStop: nativeStop, nativeIdentify: nativeIdentify, api: { track: track, identify: identify, resetIdentity: resetIdentity } };
@@ -278,6 +299,7 @@
     window.addEventListener('popstate', afterNav);
     window.addEventListener('pageshow', onPageshow);
     window.addEventListener('pagehide', onPagehide);
+    try { document.addEventListener('click', onDeclaredClick, true); } catch (ignore) {}
     if (!window.ten98) window.ten98 = h.api; // never overwrite a foreign global
     return h;
   }

@@ -16,6 +16,22 @@ GTM, [Cloudflare Zaraz](https://developers.cloudflare.com/zaraz/), and Segment-s
 
 This module does not create campaigns, change bids/budgets, bulk-sync audiences or publish ads. Reporting is read-only; browser tags are separately enabled. A server-side advertising conversion gateway is not part of this addition: CAPI/Events APIs remain a possible separately scoped extension, while existing external CAPI integrations must be recorded during duplicate-ownership checks. Authenticated native analytics ingestion remains part of P28/P39 and is not an ad-platform proxy. External provider scripts, APIs and data remain governed by their terms and are not relicensed MIT by this application.
 
+## Developer-declared HTML events
+
+The native tracker accepts explicit click instrumentation through the same `track` → coordinator → native/destination policy gates as a JavaScript call:
+
+```html
+<button type="button" data-ten98-event="signup" data-ten98-event-plan="starter">Sign up</button>
+```
+
+One delegated capture listener handles the nearest declared element, including nested/dynamic descendants and browser-generated keyboard clicks. Event names follow the existing 1–64 character native contract; `page_view` is reserved for automatic page observations. Only `data-ten98-event-*` attributes on that element become properties. It reads no form values, page text, link destinations or other DOM content. Attributes supply primitive strings, with existing server-side ISO timestamp normalization unchanged; use `ten98.track` for typed numbers, booleans, arrays, nested objects or exact advertising conversion fields.
+
+Reject the complete event for empty/over-80-character property keys, forbidden prototype keys, invalid Unicode/NUL, more than 50 properties, over-1,000-character values or more than 6,144 UTF-8 bytes of serialized properties. There is no truncation or implicit JSON coercion. All existing collection settings, exclusions, explicit refusal, DNT/GPC, configuration expiry and per-destination consent rules still apply; blocked clicks are discarded rather than replayed. Declared events fan out to the same configured sites as the existing JavaScript API. Repeated snippet initialization does not add another listener.
+
+The workflow follows pinned Umami 3.4.0's declared-event pattern with an explicit namespace mapping: `data-umami-event` → `data-ten98-event`, and `data-umami-event-plan` → `data-ten98-event-plan`. Existing Umami attributes are not automatically consumed, avoiding two installed trackers claiming the same declaration. This does not implement general Umami script/API compatibility or complete P28.
+
+Unlike Umami's awaited link handler, native tracking never prevents a click, delays navigation, submits a form or assigns a location. The existing bounded native event request uses Fetch `keepalive`; navigation delivery remains best effort, including first-request CORS preflight and the browser's shared 64 KiB in-flight keepalive-body limit. Individual bodies remain at most 16 KiB with the existing 20-request concurrency cap, five-second abort, privacy cancellation and bounded response reader. A lost receipt does not trigger a retry or beacon fallback. Identification and configuration requests do not use keepalive. See the [Fetch standard's keepalive quota](https://fetch.spec.whatwg.org/#http-network-or-cache-fetch) and [Request.keepalive](https://developer.mozilla.org/en-US/docs/Web/API/Request/keepalive).
+
 ## Provider capability matrix
 
 All paths below are **planned**, not runtime-verified. Discovery records a separate status for tag configuration, SDK loading/invocation, reporting, account eligibility and test facilities. Every adapter records its supported contract/version and rechecks documentation before implementation/release. Some vendor scripts use unversioned URLs; disclose that limitation rather than claiming they are pinned.
