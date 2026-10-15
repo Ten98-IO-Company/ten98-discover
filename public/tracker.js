@@ -2,6 +2,8 @@
 // Dependency-free IIFE. Instrumentation must never break the host page.
 (function () {
   'use strict';
+  // Disk previews and opaque sandboxed documents have no verifiable website origin.
+  if (!['http:', 'https:'].includes(location.protocol) || location.origin === 'null' || window.origin === 'null') return;
 
   var NAME_RE = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
   var PAGE_VIEW = 'page_view';

@@ -22,12 +22,13 @@ type IdentifyPayload = {type: 'identify'; siteKey: string; requestId: string; se
 function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; environment?: string; saved?: boolean;
   pageAge?: number; privacy?: boolean; dnt?: string; failStorage?: boolean; settings?: Record<string, unknown>;
   destinations?: unknown[]; deferCoordinator?: boolean; secondCollector?: boolean; collectionMode?: 'cookieless' | 'consent-first'; preference?: unknown; failRead?: boolean;
-  trackerSource?: string; coordinatorSource?: string } = {}) {
+  trackerSource?: string; coordinatorSource?: string; pageUrl?: string; windowOrigin?: string } = {}) {
   const listeners = new Map<string, Array<(ev: any) => void>>(), warnings: string[] = [], scripts: any[] = [];
   const fetchCalls: Array<{ url: string; options: any }> = [], payloads: Payload[] = [];
   const identifyPayloads: IdentifyPayload[] = [];
   const historyCalls: Array<{ method: string; thisArg: unknown; args: unknown[] }> = [];
   const storage = new Map<string, string>(), timers = new Map<number, {fn: () => void; delay: number; interval: boolean}>();
+  const storageCalls: string[] = [];
   const pending: Array<(result: unknown) => void> = [];
   let now = Date.now(), timerId = 0, coordinatorLoaded = false;
   class Clock extends Date { constructor(value?: string | number) { super(value === undefined ? now : value); } static now() { return now; } }
@@ -35,14 +36,15 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
     identifyStatus: 202, identifyResponse: {accepted: true, duplicate: false, context: 'identified-synthetic-context'} as unknown,
     collectionResponse: null as null | ((payload: Payload | IdentifyPayload, options: any) => any), config: {} as Record<string, unknown>,
     response: { accepted: true, context: 'signed-synthetic-context' }, historyThrows: false, historyResult: undefined as unknown };
-  const location = { origin: 'https://site.example', pathname: '/dashboard', search: '', hash: '',
-    get href() { return this.origin + this.pathname + this.search + this.hash; }, reload() {}, replace() {} };
+  const pageUrl = new URL(opts.pageUrl ?? 'https://site.example/dashboard');
+  const location = { protocol: pageUrl.protocol, origin: pageUrl.origin, pathname: pageUrl.pathname, search: pageUrl.search, hash: pageUrl.hash,
+    get href() { return ['http:', 'https:'].includes(this.protocol) ? this.origin + this.pathname + this.search + this.hash : pageUrl.href; }, reload() {}, replace() {} };
   const native = (method: string) => function (this: unknown, ...args: unknown[]) {
     historyCalls.push({ method, thisArg: this, args });
     if (flags.historyThrows) throw new Error('native history failure');
     if (args[2] !== undefined && args[2] !== null) {
       const u = new URL(String(args[2]), location.href);
-      location.origin = u.origin; location.pathname = u.pathname; location.search = u.search; location.hash = u.hash;
+      location.protocol = u.protocol; location.origin = u.origin; location.pathname = u.pathname; location.search = u.search; location.hash = u.hash;
     }
     return flags.historyResult;
   };
@@ -53,16 +55,16 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   const document: any = { currentScript: null, referrer: 'https://referrer.example/path?secret=hidden#fragment',
     createElement: () => ({}), querySelectorAll: () => scripts, head: { appendChild(script: any) { scripts.push(script); return script; } },
     get cookie(): never { throw new Error('document.cookie must not be touched'); } };
-  const sandbox: any = { document, history, location, URL, Intl, Date: Clock, AbortController, TextEncoder, TextDecoder, ReadableStream,
+  const sandbox: any = { document, history, location, origin: opts.windowOrigin ?? pageUrl.origin, URL, Intl, Date: Clock, AbortController, TextEncoder, TextDecoder, ReadableStream,
     crypto: { randomUUID, getRandomValues: webcrypto.getRandomValues.bind(webcrypto) },
     navigator: { language: 'en-GB', globalPrivacyControl: !!opts.privacy, doNotTrack: opts.dnt },
     screen: { width: 1280, height: 720 }, performance: { timeOrigin: now - (opts.pageAge ?? 0) },
     console: { warn: (msg: unknown) => warnings.push(String(msg)) },
     setTimeout(fn: () => void, delay: number) { timers.set(++timerId, {fn, delay, interval: false}); return timerId; }, clearTimeout(id: number) { timers.delete(id); },
     setInterval(fn: () => void, delay: number) { timers.set(++timerId, {fn, delay, interval: true}); return timerId; },
-    localStorage: { getItem: (key: string) => storage.get(key) ?? null,
-      setItem(key: string, value: string) { if (opts.failStorage) throw new Error('Storage blocked'); storage.set(key, value); },
-      removeItem(key: string) { if (opts.failStorage) throw new Error('Storage blocked'); storage.delete(key); } },
+    localStorage: { getItem: (key: string) => { storageCalls.push('read'); return storage.get(key) ?? null; },
+      setItem(key: string, value: string) { storageCalls.push('write'); if (opts.failStorage) throw new Error('Storage blocked'); storage.set(key, value); },
+      removeItem(key: string) { storageCalls.push('remove'); if (opts.failStorage) throw new Error('Storage blocked'); storage.delete(key); } },
     get sessionStorage(): never { throw new Error('sessionStorage must not be touched'); },
     addEventListener(type: string, fn: (event: any) => void) { const list = listeners.get(type) ?? []; list.push(fn); listeners.set(type, list); },
     dispatchEvent(event: any) { for (const fn of listeners.get(event.type) ?? []) fn(event); },
@@ -72,7 +74,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
       if (String(url).endsWith('/api/tracking-config')) {
         const input = JSON.parse(options.body);
         return Promise.resolve({ ok: true, headers: { get: () => null }, text: async () => JSON.stringify({ schemaVersion: opts.collectionMode ? 3 : 2,
-          siteKey: input.siteKey, environment: input.environment, origin: 'https://site.example', revisionId: null,
+          siteKey: input.siteKey, environment: input.environment, origin: location.origin, revisionId: null,
           consentEpoch: EPOCH, validUntil: new Date(now + 60000).toISOString(), nativeTracking: {...settings, ...(opts.collectionMode ? {collectionMode: opts.collectionMode} : {})},
           configuration: { destinations: opts.destinations ?? [] }, ...(opts.destinations?.length ? { revisionId: SECOND_SITE } : {}), ...flags.config }) });
       }
@@ -112,7 +114,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   const start = async () => { run(); await drain(); return grant(); };
   const dispatch = (type: string, event: any = {}) => sandbox.dispatchEvent({ ...event, type });
   return { sandbox, document, history, location, listeners, warnings, fetchCalls, payloads, identifyPayloads, historyCalls, scripts, local,
-    storage, storageKey, settings, flags, setScript, run, start, grant, dispatch, drain,
+    storage, storageCalls, timers, storageKey, settings, flags, setScript, run, start, grant, dispatch, drain,
     loadCoordinator() { opts.deferCoordinator = false; run(); }, advance(ms: number) { now += ms; },
     async runTimers(delay: number) { for (const [id, timer] of [...timers]) if (timer.delay === delay) { if (!timer.interval) timers.delete(id); timer.fn(); } await drain(); },
     complete: async () => { for (const resolve of pending.splice(0)) resolve(response()); await drain(); },
@@ -279,6 +281,33 @@ test('invalid collector URL, current script, site key or foreign API leaves coll
   const e = makeEnv(); const foreign = { track() { throw new Error('foreign track must not be called'); } }; e.sandbox.ten98 = foreign;
   e.run(); e.history.pushState({}, '', '/foreign'); await e.drain(); assert.equal(e.sandbox.ten98, foreign);
   assert.equal(e.scripts.length, 0); assert.equal(e.fetchCalls.length, 0);
+});
+
+test('non-HTTP and opaque documents leave tracking globals, navigation and all work untouched', async () => {
+  for (const opts of [{pageUrl: 'file:///C:/preview/index.html'}, {pageUrl: 'data:text/html,preview'}, {pageUrl: 'about:blank'},
+    {pageUrl: 'blob:https://site.example/preview'}, {pageUrl: 'ftp://site.example/preview'}, {windowOrigin: 'null'}, {nullLocation: true}]) {
+    for (const foreign of [false, true]) {
+      const e = makeEnv({...opts, collectionMode: 'cookieless', destinations: [meta]});
+      if ('nullLocation' in opts) e.location.origin = 'null';
+      if (foreign) e.sandbox.ten98 = {track() { assert.fail('Foreign API must not be called.'); }};
+      const globals = Object.keys(e.sandbox).sort(), api = e.sandbox.ten98, push = e.history.pushState, replace = e.history.replaceState;
+      assert.doesNotThrow(() => { e.run(); e.run(); }); await e.drain(); await e.runTimers(30000);
+      e.dispatch('popstate'); e.dispatch('pageshow', {persisted: true}); await e.drain();
+      assert.deepEqual(Object.keys(e.sandbox).sort(), globals, JSON.stringify(opts)); assert.equal(e.sandbox.ten98, api);
+      assert.equal(e.history.pushState, push); assert.equal(e.history.replaceState, replace); assert.equal(e.historyCalls.length, 0);
+      assert.equal(e.listeners.size, 0); assert.equal(e.scripts.length, 0); assert.equal(e.fetchCalls.length, 0); assert.equal(e.timers.size, 0);
+      assert.equal(e.storage.size, 0); assert.deepEqual(e.storageCalls, []); assert.deepEqual(e.warnings, []);
+    }
+  }
+});
+
+test('HTTPS and registered HTTP localhost documents still configure and collect basic analytics', async () => {
+  for (const pageUrl of ['https://site.example/dashboard', 'http://localhost:4173/dashboard', 'http://127.0.0.1:4173/dashboard']) {
+    const e = makeEnv({pageUrl, collectionMode: 'cookieless'}); e.run(); await e.drain();
+    assert.equal(e.fetchCalls.filter(call => call.url.endsWith('/api/tracking-config')).length, 1);
+    assert.equal(e.payloads.length, 1); assert.equal(e.payloads[0].url, pageUrl); assert.equal(e.scripts.length, 1);
+    assert.equal(e.sandbox.ten98.destinationStatus(e.local({siteKey: SITE, environment: 'live'})).ready, true);
+  }
 });
 
 test('a frozen history method still permits custom events and remaining navigation methods', async () => {
