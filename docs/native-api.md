@@ -42,6 +42,14 @@ The whole batch succeeds or fails in one transaction. Duplicate normalized text 
 
 Project creation has no such receipt. API event ID deduplication lasts only while its evidence is retained. Neither contract is promoted to generic batch idempotency.
 
+## Expanded location search
+
+The existing analytics GET accepts `geoDetail=region|city`, optional `geoPeriod=current|comparison` (default `current`) and optional `geoSearch` (default empty). Both companion parameters require `geoDetail`; `comparison` also requires `compare=prev|yoy`. Each parameter occurs once. Current input dates remain limited to 366 days; the selected derived prior range may contain 367 days.
+
+Search has a 2048-byte raw UTF-8 ceiling, then trims and normalizes NFC before enforcing 128 Unicode scalars / 512 UTF-8 bytes. Controls and isolated surrogates are rejected. It is a literal case-insensitive contains search using the database locale across recorded names, region identity and country code, without accent folding, wildcard syntax or localized country-name matching. Search applies before the 500-row detail ceiling; no page, offset or unbounded export is supported.
+
+One aggregate SQL statement refreshes the parent overview, both periods when comparing, and the selected `geographyDetail`. Detail identifies its actual period/dates, normalized search, generation time, matching/returned counts and truncation. Unavailable history yields no rows and null counts; retained empty results yield zero counts. Generation time is not an event-time upper bound or a replay token. Coverage and provenance remain in the selected parent period. Calls without `geoDetail` retain their previous response shape; country detail remains its complete bounded parent report. See [geography](analytics-geography.md) for the full contract and returned-row CSV scope.
+
 ## Schema coverage and source mapping
 
 `src/server/openapi.ts` has exact operation paths, permission requirements, prompt wire fields and batch bounds. It intentionally leaves complex analytics, team, project and nested classification responses broad; it is not a complete generated SDK schema. Cross-field rules, Unicode normalization, canonical geography JSON, retention and cursor validation remain authoritative in the implementations. Native unknown/unavailable values must not be converted to zero.
@@ -54,7 +62,7 @@ Project creation has no such receipt. API event ID deduplication lasts only whil
 | `analytics.ts`, `analytics-comparison.ts` | Overview filters and paired periods |
 | `realtime.ts`, `explorer-input.ts`, `session-explorer-input.ts` | Fixed live window, exploration and session query rules |
 
-See [Explorer](explorer.md), [session evidence](session-explorer.md), [tracking](tracking.md) and [prompt execution](prompt-execution.md) for the separate measurement and paid-execution boundaries. At this increment's base, the spec has no Journeys or expanded geography-search operation; those must be added only when their supported bearer routes are integrated. Compatibility APIs and full upstream MCP tool coverage remain required work.
+See [Explorer](explorer.md), [session evidence](session-explorer.md), [tracking](tracking.md) and [prompt execution](prompt-execution.md) for the separate measurement and paid-execution boundaries. Expanded geography search is part of the existing analytics operation, so the inventory remains 18 operations. Journeys is not in this integrated inventory and must be documented when its supported bearer route is integrated. Compatibility APIs and full upstream MCP tool coverage remain required work.
 
 ## Runnable checks
 
