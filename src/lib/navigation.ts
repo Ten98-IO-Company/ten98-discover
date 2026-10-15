@@ -3,10 +3,12 @@ import {normalizeAuditPageFields,type AuditPageFields} from './site-audit-pages.
 import type {AnalyticsComparisonMode} from './analytics-comparison.ts'
 import {geographyFields,geographyFiltersValid,parseGeographyKey,serializeGeographyKey,type GeoField,type GeographyKey} from './analytics-geography.ts'
 import {journeysLimits} from './journeys.ts'
+import {attributionLimits} from './attribution.ts'
 
-export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'journeys', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'journeys', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
+export type AttributionNavigation={attributionQuery?:string;attributionInvalid?:'1'};
 export type JourneysNavigation={journeyQuery?:string;journeyInvalid?:'1'};
 export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
 export const auditCoverages = ['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'] as const
@@ -28,7 +30,7 @@ export function applyGeographyFilter(intent:AnalyticsNavigation,field:GeoField,k
   if(field==='region'&&!geographyFiltersValid(filters()))delete next.analyticsCity;
   return next;
 }
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & AttributionNavigation
 
 // The panel verifies the closed nested scope with the existing Explorer controls
 // before fetching; this boundary keeps its URL value scalar and project-scoped.
@@ -36,6 +38,12 @@ export function journeysNavigation(raw:Record<string,unknown>):JourneysNavigatio
  if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.journeyInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','journeyQuery','journeyInvalid'].includes(key)))return{journeyInvalid:'1'};
  if(raw.journeyQuery===undefined)return{};
  return typeof raw.journeyQuery==='string'&&raw.journeyQuery.length>0&&raw.journeyQuery.length<=journeysLimits.queryCharacters&&!/[\u0000\ud800-\udfff]/u.test(raw.journeyQuery)?{journeyQuery:raw.journeyQuery}:{journeyInvalid:'1'};
+}
+
+export function attributionNavigation(raw:Record<string,unknown>):AttributionNavigation{
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.attributionInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','attributionQuery','attributionInvalid'].includes(key)))return{attributionInvalid:'1'};
+ if(raw.attributionQuery===undefined)return{};
+ return typeof raw.attributionQuery==='string'&&raw.attributionQuery.length>0&&raw.attributionQuery.length<=attributionLimits.queryCharacters&&!/[\u0000\ud800-\udfff]/u.test(raw.attributionQuery)?{attributionQuery:raw.attributionQuery}:{attributionInvalid:'1'};
 }
 
 export function analyticsDay(value: unknown): number | null {
@@ -122,13 +130,14 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     view,
     ...(view==='sessions'&&workspace&&navigationId(raw.project)?sessionNavigation(raw):{}),
     ...(view==='journeys'?journeysNavigation(raw):{}),
+    ...(view==='attribution'?attributionNavigation(raw):{}),
     ...(view==='audits'?auditNavigation(raw):{}),
     ...(['project','compare'].includes(view)?analyticsNavigation(raw):{}),
   }
 }
 
 export function navigationKey(search: NavigationSearch): string {
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
@@ -139,7 +148,7 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
 }
 
 export function projectView(view: AppView): boolean {
-  return ['project', 'realtime', 'compare', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'journeys', 'google', 'meta', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
+  return ['project', 'realtime', 'compare', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'journeys', 'attribution', 'google', 'meta', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
 }
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {

@@ -15,6 +15,7 @@ import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {projectRealtime} from './realtime.ts';
 import {projectJourneys} from './journeys.ts';
+import {projectAttribution} from './attribution.ts';
 import { exploreAnalytics } from './explorer.ts';
 import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
 import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
@@ -118,7 +119,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
       const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
-      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|journeys|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
+      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|journeys|attribution|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
       if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
         await authorizeApiKey(apiToken!, workspaceRoute[1], workspaceRoute[2] === 'team' ? 'team:read' : request.method === 'GET' ? 'projects:read' : 'projects:write');
       } else if (projectRoute && (request.method === 'GET' || (request.method === 'POST' && projectRoute[2] === 'events'))) {
@@ -739,6 +740,13 @@ export async function handleApi(request: Request): Promise<Response> {
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
         finally { client.release(); }
       }
+    }
+    match=path.match(new RegExp(`^/api/projects/(${id})/attribution$`,'i'));
+    if(match){
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Attribution accepts query parameters without a request body.');
+      await limit(`attribution:${user.id}`,30);
+      return json(await projectAttribution(match[1],apiToken?{kind:'api-key',token:apiToken}:{kind:'session',userId:user.id},url.searchParams));
     }
     match=path.match(new RegExp(`^/api/projects/(${id})/journeys$`,'i'));
     if(match){
