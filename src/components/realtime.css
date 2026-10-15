@@ -1,0 +1,58 @@
+/* Realtime keeps the established card, control and semantic token system. */
+.realtime { --control-md: var(--control-touch); display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-5); min-width: 0; }
+.realtime > * { grid-column: 1 / -1; min-width: 0; }
+.realtime > .card { margin-bottom: 0; }
+.realtime > .realtime-ranking { grid-column: auto; }
+.realtime-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.realtime-toolbar .row, .realtime-activity-controls .row { flex-wrap: wrap; }
+.realtime-freshness { flex-basis: 100%; font-variant-numeric: tabular-nums; }
+.realtime .btn, .realtime input, .realtime summary { min-height: var(--control-touch); }
+.realtime .btn { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+.realtime summary { padding-block: var(--space-3); cursor: pointer; color: var(--blue); }
+.realtime-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); margin-block: var(--space-4); }
+.realtime-stat { padding: var(--space-3); border-inline-end: 1px solid var(--line); }
+.realtime-stat:last-child { border: 0; }
+.realtime-stat > .hint { display: block; min-height: 2.5em; }
+.realtime-unavailable { font-size: var(--text-lg); color: var(--muted); margin-block: var(--space-3); }
+.realtime-active { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); margin-block-start: var(--space-5); }
+.realtime-active strong { font-size: var(--text-metric); max-width: 100%; overflow-wrap: anywhere; }
+.realtime-active .realtime-active-unavailable { font-size: var(--text-lg); color: var(--muted); }
+.realtime-active span { color: var(--muted); }
+.realtime-chart { display: block; width: 100%; height: 220px; margin-block-start: var(--space-4); }
+.realtime-bar-views { fill: var(--color-chart-1); }
+.realtime-bar-visitors { fill: var(--color-chart-2); }
+.realtime-bar-unavailable { fill: var(--color-text-muted); opacity: .15; }
+.realtime-baseline { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.realtime-axis { display: flex; direction: ltr; justify-content: space-between; gap: var(--space-3); font-size: var(--text-xs); color: var(--muted); }
+.realtime-legend { display: flex; flex-wrap: wrap; gap: var(--space-4); color: var(--muted); font-size: var(--text-sm); margin-block-start: var(--space-3); }
+.realtime-legend span { display: inline-flex; align-items: center; gap: var(--space-2); }
+.realtime-swatch { width: 10px; height: 10px; border-radius: var(--radius-sm); }
+.realtime-swatch-views { background: var(--color-chart-1); }
+.realtime-swatch-visitors { background: var(--color-chart-2); }
+.realtime-activity-controls { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: var(--space-3); margin-block: var(--space-4); }
+.realtime-activity-controls > div:first-child { flex: 1 1 16rem; min-width: 0; }
+.realtime-activity-controls label { display: block; margin-block-end: var(--space-1); }
+.realtime-activity-controls input { min-width: 0; width: 100%; }
+.realtime-activity-controls .active { background: var(--blue-tint); color: var(--blue); border-color: var(--blue); }
+.realtime-log { max-height: 500px; overflow: auto; margin-block: var(--space-4); }
+.realtime-log ol { list-style: none; margin: 0; padding: 0; }
+.realtime-log li { display: grid; grid-template-columns: 7.5rem minmax(0,1fr) auto; align-items: start; gap: var(--space-3); border-block-end: 1px solid var(--line); padding-block: var(--space-3); }
+.realtime-log li > div { min-width: 0; overflow-wrap: anywhere; }
+.realtime-log time { padding-block: var(--space-2); }
+.realtime-kind { color: var(--muted); font-size: var(--text-xs); display: block; margin-block-end: var(--space-1); }
+.realtime-event { display: block; margin-block-end: var(--space-1); overflow-wrap: anywhere; }
+.realtime-ranking th:first-child, .realtime-ranking td:first-child { overflow-wrap: anywhere; max-width: 25rem; }
+.realtime-ranking th:last-child, .realtime-ranking td:last-child { text-align: end; font-variant-numeric: tabular-nums; }
+.realtime .table-wrap { max-width: 100%; }
+@media (max-width:700px) {
+  .realtime { grid-template-columns: minmax(0,1fr); gap: var(--space-4); }
+  .realtime-stats { grid-template-columns: repeat(2,minmax(0,1fr)); row-gap: var(--space-4); }
+  .realtime-stat:nth-child(2n) { border: 0; }
+  .realtime-log li { grid-template-columns: minmax(0,1fr); gap: var(--space-2); }
+  .realtime-log li .btn { justify-self: start; }
+  .realtime-activity-controls > div { width: 100%; }
+}
+@media (max-width:400px) {
+  .realtime-stats { grid-template-columns: minmax(0,1fr); gap: var(--space-3); }
+  .realtime-stat { border: 0; padding: var(--space-2); }
+}

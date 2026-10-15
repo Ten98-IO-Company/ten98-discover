@@ -1,13 +1,14 @@
 import { environmentFields, isEnvironmentFilter } from './analytics-environment.ts';
 import {normalizeAuditPageFields,type AuditPageFields} from './site-audit-pages.ts'
+import type {AnalyticsComparisonMode} from './analytics-comparison.ts'
 
-export const views = ['project', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
 export const auditCoverages = ['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'] as const
 export type AuditNavigation = {auditRun?:string;auditPage?:string;auditTab?:'pages';auditSeverity?:'critical'|'warning'|'info';auditCode?:string;auditAffectedPage?:string;auditCoverage?:typeof auditCoverages[number];auditResource?:'robots'|'sitemap';auditSearch?:string;auditSearchIn?:'url';auditSort?:Exclude<AuditPageFields['sort'],'url'>;auditOrder?:'desc';auditDirection?:'in';auditInvalid?:'1'}
-export type AnalyticsNavigation = { analyticsFrom?: string; analyticsTo?: string; analyticsBrowser?: string; analyticsOs?: string; analyticsDevice?: string; analyticsInvalid?: '1' }
+export type AnalyticsNavigation = { analyticsFrom?: string; analyticsTo?: string; analyticsBrowser?: string; analyticsOs?: string; analyticsDevice?: string; analyticsCompare?: AnalyticsComparisonMode; analyticsInvalid?: '1' }
 export const analyticsNavigationNames = { browser: 'analyticsBrowser', os: 'analyticsOs', device: 'analyticsDevice' } as const;
 export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation
 
@@ -18,11 +19,15 @@ export function analyticsDay(value: unknown): number | null {
 }
 
 export function analyticsNavigation(raw: Record<string, unknown>): AnalyticsNavigation {
-  const names = [...Object.values(analyticsNavigationNames), 'analyticsFrom', 'analyticsTo', 'analyticsInvalid'];
+  const names = [...Object.values(analyticsNavigationNames), 'analyticsFrom', 'analyticsTo', 'analyticsCompare', 'analyticsInvalid'];
   if (!Object.keys(raw).some(key => key.startsWith('analytics'))) return {};
   const invalid = () => ({ analyticsInvalid: '1' } as const);
   if (raw.analyticsInvalid !== undefined || !navigationId(raw.workspace) || !navigationId(raw.project) || Object.keys(raw).some(key => !['workspace', 'project', 'view', ...names].includes(key))) return invalid();
   const out: AnalyticsNavigation = {};
+  if (raw.analyticsCompare !== undefined) {
+    if (raw.view !== 'compare' || typeof raw.analyticsCompare !== 'string' || !['prev','yoy'].includes(raw.analyticsCompare)) return invalid();
+    out.analyticsCompare = raw.analyticsCompare as AnalyticsComparisonMode;
+  }
   if (raw.analyticsFrom !== undefined || raw.analyticsTo !== undefined) {
     const from = analyticsDay(raw.analyticsFrom), to = analyticsDay(raw.analyticsTo);
     if (from === null || to === null || from > to || to > analyticsDay(new Date().toISOString().slice(0, 10))! || (to - from) / 864e5 >= 366) return invalid();
@@ -89,12 +94,12 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     view,
     ...(view==='sessions'&&workspace&&navigationId(raw.project)?sessionNavigation(raw):{}),
     ...(view==='audits'?auditNavigation(raw):{}),
-    ...(view==='project'?analyticsNavigation(raw):{}),
+    ...(['project','compare'].includes(view)?analyticsNavigation(raw):{}),
   }
 }
 
 export function navigationKey(search: NavigationSearch): string {
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):search.view==='project'?':'+JSON.stringify(analyticsNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
@@ -104,7 +109,7 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
 }
 
 export function projectView(view: AppView): boolean {
-  return ['project', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'meta', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
+  return ['project', 'realtime', 'compare', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'meta', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
 }
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {
