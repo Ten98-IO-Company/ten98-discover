@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {createServer,request as httpRequest} from 'node:http';
-import {Readable} from 'node:stream';
+import {createRequire} from 'node:module';
 import type {PoolClient} from 'pg';
 import {handleApi} from '../src/server/api.ts';
 import {getConfig} from '../src/server/config.ts';
@@ -18,11 +18,9 @@ export async function runMcpChecks(){
   for(const name of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[name],undefined);
   const {pool}=getDatabase();assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public'")).rows[0].n,0);
   const client=await pool.connect();try{await client.query('BEGIN');await client.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');for(const source of await migrationSources()){await client.query(source.sql);await client.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}await initializeProviderAccountIdentity(client,true);await client.query('COMMIT');}finally{client.release();}await assertSchema();
-  const server=createServer(async(req,res)=>{try{
-    const headers=new Headers();for(let i=0;i<req.rawHeaders.length;i+=2)headers.append(req.rawHeaders[i],req.rawHeaders[i+1]);
-    const response=await handleApi(new Request(origin+req.url,{method:req.method,headers,...['GET','HEAD'].includes(req.method!)?{}:{body:Readable.toWeb(req) as ReadableStream<Uint8Array>,duplex:'half'}}as RequestInit));
-    res.writeHead(response.status,Object.fromEntries(response.headers));if(response.body)Readable.fromWeb(response.body as any).pipe(res);else res.end();
-  }catch{res.writeHead(500);res.end();}});
+  // Use the production server's lazy Node request adapter; eager toWeb consumes bodies even when headers reject them.
+  const {toNodeHandler}=createRequire(import.meta.resolve('nitro/package.json'))('srvx/node');
+  const server=createServer(toNodeHandler(handleApi));
   const http=(path:string,headers:Record<string,string>={},body?:unknown,method=body===undefined?'GET':'POST',raw?:Buffer)=>new Promise<{status:number;wire:any;headers:Record<string,any>;bytes:number;complete:boolean}>((resolve,reject)=>{
     const bytes=raw??(body===undefined?undefined:Buffer.from(JSON.stringify(body)));const req=httpRequest(origin+path,{method,agent:false,headers:{...bytes?{'content-type':'application/json','content-length':String(bytes.length)}:{},...headers}},res=>{
       const chunks:Buffer[]=[];res.on('data',chunk=>chunks.push(chunk));res.on('error',reject);res.on('end',()=>{try{assert.equal(res.complete,true);const text=Buffer.concat(chunks).toString('utf8'),line=text.split('\n').find(x=>x.startsWith('data: {'));resolve({status:res.statusCode!,wire:text?JSON.parse(line?line.slice(6):text):null,headers:res.headers,bytes:Buffer.byteLength(text),complete:res.complete});}catch(error){reject(error);}});
