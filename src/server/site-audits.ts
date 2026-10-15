@@ -305,15 +305,31 @@ export async function readAuditCoveragePages(locked:AuditLock,query:ReturnType<t
  });
  const readable=pages.filter(p=>p.state==='available'||p.state==='empty'),rawBytes=metadata.reduce((sum,row,index)=>sum+(pages[index].state==='available'||pages[index].state==='empty'?row.bytes:0),0);
  if(readable.length>contentCoverageLimits.readablePages||rawBytes>contentCoverageLimits.rawBytes)return {coverageError:'body_capacity' as const};
- if(materialize){
+ if(materialize){const hydrated=await materializeAuditCoveragePages(locked,pages,metadata);if('coverageError'in hydrated)return hydrated;}
+ return {pages,selectionRevision:selection.selectionRevision,receipt:{run:{id:run.id,origin:run.origin,domainId:run.domain_id,config:run.config,status:run.status,...clocks,coverage:run.coverage},query:fields,selectionRevision:selection.selectionRevision,metadata}};
+}
+/** Materializes only checked metadata in the caller's current W/P/audit gate.
+ * selectedIds is the bounded C3 subset; omission preserves the complete C1/C2 read.
+ * These values are internal evidence, never a substitute for current authority. */
+export async function materializeAuditCoveragePages(locked:AuditLock,pages:ContentPage[],metadata:readonly {id:string;bytes:number|null}[],selectedIds?:readonly string[]):Promise<{pages:ContentPage[]}|{coverageError:'selection_changed'}>{
+ const {client,project}=locked,run=requireRun(locked.run);
+ if(run.project_id!==project.id||run.workspace_id!==project.workspaceId)throw new FoundationError(404,'Audit or project not found or unavailable.');
+ let readable=pages.filter(p=>p.state==='available'||p.state==='empty');
+ if(selectedIds!==undefined){
+  const ids=parse(z.array(z.uuid().transform(v=>v.toLowerCase())).min(1).max(20).refine(v=>new Set(v).size===v.length),selectedIds),byId=new Map(pages.map(p=>[p.id,p])),bytesById=new Map(metadata.map(p=>[p.id,p.bytes]));
+  if(active.includes(run.status)||!run.completed_at||run.deleted_at||run.config?.retainBodyText!==true||byId.size!==pages.length||bytesById.size!==metadata.length||pages.some(p=>p.text!==null))throw new FoundationError(409,'Reload the current retained page selection before materializing its text.');
+  const selected=ids.map(id=>byId.get(id));if(selected.some(p=>!p||!['available','empty'].includes(p.state)||p.extractionVersion!=='static-dom-body-v1'||!p.observedAt||!p.bodySha256||!/^[a-f0-9]{64}$/.test(p.bodySha256)))throw new FoundationError(409,'A selected readable page is unavailable. Reload the selection.');
+  let bytes=0;for(const id of ids){const size=bytesById.get(id);if(typeof size!=='number'||!Number.isSafeInteger(size)||size<0||size>65536)throw new FoundationError(409,'Selected page metadata is inconsistent. Reload the selection.');bytes+=size;}
+  if(bytes>65536)throw new FoundationError(413,'The complete selected bodies exceed 64 KiB. Select fewer or smaller pages.');readable=selected as ContentPage[];
+ }
   // Read complete bodies in bounded batches only after the full metadata/byte preflight.
   for(let offset=0;offset<readable.length;offset+=100){
    Object.assign(run,(await markSiteAuditReadExpiry(client,project.id,[run.id]))[0]);if(run.raw_expired_at)return {coverageError:'selection_changed' as const};
    const batch=readable.slice(offset,offset+100),rows=(await client.query<{id:string;body_text:string}>(`SELECT p.id,CASE WHEN r.completed_at<clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' OR r.completed_at<clock_timestamp()-w.derived_history_days*interval '24 hours' THEN NULL ELSE p.body_text END AS body_text FROM site_audit_page p JOIN site_audit_run r ON r.id=p.run_id JOIN workspace w ON w.id=r.workspace_id WHERE p.run_id=$1 AND p.id=ANY($2::uuid[])`,[run.id,batch.map(p=>p.id)])).rows,byId=new Map(rows.map(row=>[row.id,row.body_text]));
    for(const page of batch){const text=byId.get(page.id);if(typeof text!=='string'||Buffer.byteLength(text)>65536||createHash('sha256').update(text).digest('hex')!==page.bodySha256){Object.assign(run,(await markSiteAuditReadExpiry(client,project.id,[run.id]))[0]);return {coverageError:'selection_changed' as const};}page.text=text;}
   }
- }
- return {pages,selectionRevision:selection.selectionRevision,receipt:{run:{id:run.id,origin:run.origin,domainId:run.domain_id,config:run.config,status:run.status,...clocks,coverage:run.coverage},query:fields,selectionRevision:selection.selectionRevision,metadata}};
+ if(selectedIds!==undefined&&readable.reduce((sum,p)=>sum+Buffer.byteLength(p.text!),0)>65536)throw new FoundationError(413,'The complete selected bodies exceed 64 KiB. Select fewer or smaller pages.');
+ return {pages:readable};
 }
 export const siteAuditPagesExportMaxBytes=64*1024*1024;
 // ponytail: one export body per web process, capped at 64 MiB; use an async artifact job if measured demand needs concurrent large exports.

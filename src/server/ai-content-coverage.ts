@@ -1,6 +1,6 @@
 import {contentCoverageLimits as limits,contentCoverageMethod,normalizeContentText,contentPhraseMatches} from '../lib/ai-content-coverage.ts';
 import {contentCoverageInputSchema,contentCoverageExportInputSchema,contentCoverageReportSchema,contentPageStates,projectContentQueryLimit,projectContentCoverageInputSchema,projectContentCoverageExportInputSchema,projectContentCoverageReportSchema,type ContentCoverageInput,type ContentCoverageReport,type ProjectContentCoverageInput,type ProjectContentCoverageReport} from '../lib/ai-content-coverage.ts';
-import {withAuditLock,readAuditCoveragePages,parseSiteAuditPagesExport,auditAuthorityCurrent} from './site-audits.ts';
+import {withAuditLock,readAuditCoveragePages,parseSiteAuditPagesExport,auditAuthorityCurrent,type AuditLock} from './site-audits.ts';
 import {readAiSearchCoverageSource,readAiSearchAnalysisPopulation,latchAiSearchExpiry} from './ai-search.ts';
 import {aggregateAiSearchQueryPopulation,AiQueryCapacityError,AiQueryDataError} from './ai-search-analysis.ts';
 import type {AiQueryRow} from '../lib/ai-search-analysis.ts';
@@ -74,9 +74,10 @@ function refused(reason:string):never{
 const abort=(signal?:AbortSignal)=>{if(signal?.aborted)throw new FoundationError(499,'Website-text comparison was cancelled.');};
 
 /** Internal two-phase read boundary; no network or nested transaction is used. */
-export async function readContentCoverageSnapshot(projectId:string,userId:string,input:ContentCoverageInput,materialize=true,signal?:AbortSignal){
- abort(signal);const query=parseSiteAuditPagesExport(input.pages);
- const result=await withAuditLock({projectId,runId:input.auditRunId,actor:{userId,permission:'read'}},async locked=>{
+/** Internal same-client leaf; caller owns current W/P/audit locks and authority.
+ * Logical refusals must commit expiry markers before the outer caller throws. */
+export async function readContentCoverageSourceInLock(locked:AuditLock,projectId:string,input:ContentCoverageInput,query:ReturnType<typeof parseSiteAuditPagesExport>,materialize=true,signal?:AbortSignal){
+ if(locked.project.id!==projectId||locked.run?.id!==input.auditRunId)throw new FoundationError(404,'Audit or project not found or unavailable.');
   abort(signal);await locked.client.query("SET LOCAL statement_timeout='5s'");
   const source=await readAiSearchCoverageSource(locked.client,projectId,input.captureId,materialize);
   // Tagged logical refusals commit newly observed raw-expiry markers.
@@ -85,7 +86,10 @@ export async function readContentCoverageSnapshot(projectId:string,userId:string
   const policy=(await locked.client.query('SELECT retention_revision AS revision,raw_provider_evidence_days AS "rawProviderEvidenceDays",derived_history_days AS "derivedHistoryDays",clock_timestamp() AS at FROM workspace WHERE id=$1',[locked.project.workspaceId])).rows[0];
   if(!policy)throw new FoundationError(404,'Project not found or unavailable.');
   abort(signal);return {source:source.source,queryReceiptHash:canonicalHash({version:'captured-query-receipt-v1',derivationVersion:queryDerivationVersion,method:contentCoverageMethod,...source.receipt}),corpusReceiptHash:canonicalHash({version:'captured-body-receipt-v1',projectId,projectOrigin:locked.project.origin,policy:{revision:policy.revision,rawProviderEvidenceDays:policy.rawProviderEvidenceDays,derivedHistoryDays:policy.derivedHistoryDays},...selected.receipt}),pages:selected.pages,policy:{revision:policy.revision as number,rawProviderEvidenceDays:policy.rawProviderEvidenceDays as number,derivedHistoryDays:policy.derivedHistoryDays as number},audit:selected.receipt.run,projectOrigin:locked.project.origin,role:locked.role!,asOf:(policy.at as Date).toISOString(),sourceReceipt:source.receipt};
- });
+}
+export async function readContentCoverageSnapshot(projectId:string,userId:string,input:ContentCoverageInput,materialize=true,signal?:AbortSignal){
+ abort(signal);const query=parseSiteAuditPagesExport(input.pages);
+ const result=await withAuditLock({projectId,runId:input.auditRunId,actor:{userId,permission:'read'}},locked=>readContentCoverageSourceInLock(locked,projectId,input,query,materialize,signal));
  if('coverageError'in result)refused(result.coverageError!);return result;
 }
 type CoverageSnapshot=Awaited<ReturnType<typeof readContentCoverageSnapshot>>;
@@ -129,9 +133,10 @@ export async function exportContentCoverage(projectId:string,userId:string,raw:u
 }
 
 /** Complete applied B population and one selected audit, in the existing W/P/audit gate. */
-export async function readProjectContentCoverageSnapshot(projectId:string,userId:string,input:ProjectContentCoverageInput,materialize=true,signal?:AbortSignal){
- abort(signal);const query=parseSiteAuditPagesExport(input.pages);
- const result=await withAuditLock({projectId,runId:input.auditRunId,actor:{userId,permission:'read'}},async locked=>{
+/** Internal same-client leaf; caller owns current W/P/audit locks and authority.
+ * Logical refusals must commit expiry markers before the outer caller throws. */
+export async function readProjectContentCoverageSourceInLock(locked:AuditLock,projectId:string,input:ProjectContentCoverageInput,query:ReturnType<typeof parseSiteAuditPagesExport>,materialize=true,signal?:AbortSignal){
+ if(locked.project.id!==projectId||locked.run?.id!==input.auditRunId)throw new FoundationError(404,'Audit or project not found or unavailable.');
   abort(signal);await locked.client.query("SET LOCAL statement_timeout='5s'");
   if(locked.run!.deleted_at)throw new FoundationError(410,'This audit was deleted. Choose another audit.');
   if(locked.run!.data_expired_at)return {coverageError:'audit_expired' as const};
@@ -149,7 +154,10 @@ export async function readProjectContentCoverageSnapshot(projectId:string,userId
   const retention={revision:policy.revision as number,rawProviderEvidenceDays:policy.rawProviderEvidenceDays as number,derivedHistoryDays:policy.derivedHistoryDays as number};
   abort(signal);return {population,queryReceiptHash:canonicalHash({version:'project-query-receipt-v1',derivationVersion:queryDerivationVersion,method:contentCoverageMethod,projectId,filters:population.filters,range:population.resolvedRange,contextRevision:population.contextRevision,profileHash:population.profileHash,selectionRevision:population.selectionRevision,policy:retention,rows:population.receipts}),
    corpusReceiptHash:canonicalHash({version:'project-body-receipt-v1',method:contentCoverageMethod,projectId,projectOrigin:locked.project.origin,policy:retention,authority:{userId:locked.run!.user_id,domainHostname:locked.run!.domain_hostname,domainVerifiedAt:locked.run!.domain_verified_at?.toISOString()??null,domainRevision:locked.run!.domain_revision},...selected.receipt}),pages:selected.pages,policy:retention,audit:selected.receipt.run,projectOrigin:locked.project.origin,role:locked.role!,asOf:(policy.at as Date).toISOString()};
- });
+}
+export async function readProjectContentCoverageSnapshot(projectId:string,userId:string,input:ProjectContentCoverageInput,materialize=true,signal?:AbortSignal){
+ abort(signal);const query=parseSiteAuditPagesExport(input.pages);
+ const result=await withAuditLock({projectId,runId:input.auditRunId,actor:{userId,permission:'read'}},locked=>readProjectContentCoverageSourceInLock(locked,projectId,input,query,materialize,signal));
  // A logical refusal commits the selected source/audit expiry markers first.
  if('coverageError'in result)refused(result.coverageError!);return result;
 }
