@@ -3,7 +3,7 @@ import {normalizeAuditPageFields,type AuditPageFields} from './site-audit-pages.
 import type {AnalyticsComparisonMode} from './analytics-comparison.ts'
 import {geographyFields,geographyFiltersValid,parseGeographyKey,serializeGeographyKey,type GeoField,type GeographyKey} from './analytics-geography.ts'
 
-export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
@@ -26,7 +26,16 @@ export function applyGeographyFilter(intent:AnalyticsNavigation,field:GeoField,k
   if(field==='region'&&!geographyFiltersValid(filters()))delete next.analyticsCity;
   return next;
 }
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation
+export type RetentionNavigation={retentionMonth?:string;retentionTimeZone?:string;retentionEntry?:string;retentionInvalid?:'1'}
+export function retentionNavigation(raw:Record<string,unknown>):RetentionNavigation{
+  const names=['retentionMonth','retentionTimeZone','retentionEntry','retentionInvalid'],invalid=()=>({retentionInvalid:'1'} as const);
+  if(raw.retentionInvalid!==undefined||!navigationId(raw.workspace)||!navigationId(raw.project)||Object.keys(raw).some(key=>!['workspace','project','view',...names].includes(key)))return invalid();
+  if(!names.some(key=>raw[key]!==undefined))return {};
+  const month=raw.retentionMonth,zone=raw.retentionTimeZone,entry=raw.retentionEntry;
+  if(typeof month!=='string'||!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||month<'1970-01'||month>'9998-12'||typeof zone!=='string'||zone.length>80||!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(zone)||entry!==undefined&&(typeof entry!=='string'||entry.length>20000||entry.includes('\0')||new TextDecoder().decode(new TextEncoder().encode(entry))!==entry))return invalid();
+  try{const format=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit'}),parts=format.formatToParts(new Date()),current=['year','month'].map(key=>parts.find(part=>part.type===key)!.value).join('-');if(month>current)return invalid();return {retentionMonth:month,retentionTimeZone:format.resolvedOptions().timeZone,...entry!==undefined?{retentionEntry:entry as string}:{}};}catch{return invalid();}
+}
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation & RetentionNavigation
 
 export function analyticsDay(value: unknown): number | null {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value < '1970-01-01' || value > '9998-12-31') return null;
@@ -113,11 +122,12 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     ...(view==='sessions'&&workspace&&navigationId(raw.project)?sessionNavigation(raw):{}),
     ...(view==='audits'?auditNavigation(raw):{}),
     ...(['project','compare'].includes(view)?analyticsNavigation(raw):{}),
+    ...(view==='visitor-retention'?retentionNavigation(raw):{}),
   }
 }
 
 export function navigationKey(search: NavigationSearch): string {
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
@@ -128,7 +138,7 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
 }
 
 export function projectView(view: AppView): boolean {
-  return ['project', 'realtime', 'compare', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'meta', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
+  return ['project', 'realtime', 'compare', 'visitor-retention', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'meta', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'].includes(view)
 }
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {
