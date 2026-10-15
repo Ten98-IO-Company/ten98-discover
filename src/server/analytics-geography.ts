@@ -46,10 +46,13 @@ export async function loadGeographyDatabase(path?:string):Promise<GeographyReade
  }};
 }
 
-let active:GeographyReader={database:{status:'unavailable',reason:'not-configured'},lookup:()=>null},initializing:Promise<void>|undefined;
+type Runtime={active:GeographyReader;initializing?:Promise<void>};
+const key=Symbol.for('ten98-monitor.analytics-geography'),shared=globalThis as typeof globalThis&{[key]?:Runtime};
+// Nitro startup and TanStack SSR are separate bundles, as in resource-cleanup.ts.
+function runtime(){return shared[key]??={active:{database:{status:'unavailable',reason:'not-configured'},lookup:()=>null}};}
 /** Web startup only: collection never opens a file or initiates retries. Restart to replace a database. */
-export function initializeAnalyticsGeography(path=process.env.ANALYTICS_GEO_DB_FILE):Promise<void>{return initializing??=loadGeographyDatabase(path).then(reader=>{active=reader;});}
-export function collectGeography(address:string|null):GeographyObservation|null{return active.lookup(address);}
+export function initializeAnalyticsGeography(path=process.env.ANALYTICS_GEO_DB_FILE):Promise<void>{const state=runtime();return state.initializing??=loadGeographyDatabase(path).then(reader=>{state.active=reader;});}
+export function collectGeography(address:string|null):GeographyObservation|null{return runtime().active.lookup(address);}
 export function geographyReadiness(capture:boolean,networkMode=process.env.ANALYTICS_NETWORK_MODE??'off'):GeographyReadiness{
- const database=active.database;return{status:!capture?'disabled':networkMode==='off'?'network-off':database.status==='unavailable'?'database-unavailable':'ready',database};
+ const database=runtime().active.database;return{status:!capture?'disabled':networkMode==='off'?'network-off':database.status==='unavailable'?'database-unavailable':'ready',database};
 }

@@ -6,9 +6,15 @@ import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {geographyName,geographyObservationSchema,geographyKey,parseGeographyKey,serializeGeographyKey,projectGeography,geographyFiltersValid,type GeoField} from '../src/lib/analytics-geography.ts';
-import {loadGeographyDatabase,normalizeGeographyLookup,geographyFileLimit} from '../src/server/analytics-geography.ts';
+import {loadGeographyDatabase,normalizeGeographyLookup,geographyFileLimit,initializeAnalyticsGeography,geographyReadiness} from '../src/server/analytics-geography.ts';
 import {normalizeDimensions} from '../src/server/analytics-input.ts';
 import {publicAnalyticsSettings,publicTrackingSettings} from '../src/server/native-analytics.ts';
+
+test('Nitro startup and separate SSR module instances share one immutable reader',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'ten98-geo-shared-'));
+ try{const first=initializeAnalyticsGeography(join(directory,'missing'));await first;const second=await import(new URL('../src/server/analytics-geography.ts?second-bundle',import.meta.url).href);assert.deepEqual(second.geographyReadiness(true,'direct'),geographyReadiness(true,'direct'));assert.equal(second.initializeAnalyticsGeography(join(directory,'another')),first);await first;assert.equal(second.geographyReadiness(true,'direct').database.reason,'missing');}
+ finally{assert.equal(dirname(resolve(directory)),resolve(tmpdir()));assert.ok(basename(directory).startsWith('ten98-geo-shared-'));await rm(directory,{recursive:true,force:true});}
+});
 
 test('geography uses strict provenance, normalized bounded names and qualified categorical keys',()=>{
  const provenance={databaseBuild:1790818881,databaseSha256:'a'.repeat(64)},a=normalizeGeographyLookup({country:{iso_code:'US'},subdivisions:[{iso_code:'CA',names:{en:' California '}}],city:{names:{en:'Cafe\u0301'}}},provenance);
