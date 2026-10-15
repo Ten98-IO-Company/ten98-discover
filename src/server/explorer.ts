@@ -6,7 +6,7 @@ import {analyticsPopulation,cohortCoverage,sessionScope,type CohortReport,type S
 export type {CohortReport,SessionPropertyScope} from './analytics-population.ts';
 import {resolveCohort} from './cohorts.ts';
 import {advancedPredicateMethod,validateAdvancedRegex} from './advanced-predicates.ts';
-import {geographyKeySql} from './geography-sql.ts';
+import {analyticsDimensionValueSql} from './analytics-dimensions.ts';
 import {geographyFields,parseGeographyKey,serializeGeographyKey,type GeoField,type GeographyProvenance} from '../lib/analytics-geography.ts';
 
 type Totals = {events:number|null;pageViews:number|null;customEvents:number|null;identifiedEvents:number|null;unidentifiedEvents:number|null;visitors:number|null;visits:number|null};
@@ -51,23 +51,10 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     // neighbouring offsets for the first midnight; binary-search only missing
     // midnights to find a gap's first real instant (including skipped dates).
     const {rows} = await client.query(`${ctes}, labeled AS MATERIALIZED (
-      SELECT *,CASE $11::text
-        WHEN 'event' THEN jsonb_build_object('type','string','value',event_name)
-        WHEN 'path' THEN jsonb_build_object('type','string','value',path)
-        WHEN 'origin' THEN jsonb_build_object('type','string','value',origin)
-        WHEN 'country' THEN jsonb_build_object('type','string','value',${geographyKeySql('country')})
-        WHEN 'region' THEN jsonb_build_object('type','string','value',${geographyKeySql('region')})
-        WHEN 'city' THEN jsonb_build_object('type','string','value',${geographyKeySql('city')})
-        WHEN 'property' THEN COALESCE(properties->$12::text,'{"type":"missing","value":null}'::jsonb)
-        ELSE CASE WHEN dimension IS NULL THEN '{"type":"missing","value":null}'::jsonb
-          ELSE jsonb_build_object('type',jsonb_typeof(dimension),'value',dimension) END END AS label
-      FROM ${population} LEFT JOIN LATERAL (SELECT CASE $11::text
-        WHEN 'referrer' THEN dimensions->'referrerHost' WHEN 'language' THEN dimensions->'language'
-        WHEN 'browser' THEN dimensions->'browser' WHEN 'os' THEN dimensions->'os' WHEN 'device' THEN dimensions->'device'
-        WHEN 'screenWidth' THEN dimensions->'screenWidth' WHEN 'screenHeight' THEN dimensions->'screenHeight'
-        WHEN 'campaignSource' THEN dimensions->'campaign'->'source' WHEN 'campaignMedium' THEN dimensions->'campaign'->'medium'
-        WHEN 'campaignName' THEN dimensions->'campaign'->'campaign' WHEN 'campaignTerm' THEN dimensions->'campaign'->'term'
-        WHEN 'campaignContent' THEN dimensions->'campaign'->'content' END AS dimension) d ON true
+      SELECT s.*,CASE WHEN $11::text='property' THEN COALESCE(s.properties->$12::text,'{"type":"missing","value":null}'::jsonb)
+        WHEN d.dimension IS NULL THEN '{"type":"missing","value":null}'::jsonb
+        ELSE jsonb_build_object('type',CASE WHEN $11 IN ('country','region','city') THEN 'string' ELSE jsonb_typeof(d.dimension) END,'value',d.dimension) END AS label
+      FROM ${population} s CROSS JOIN LATERAL (SELECT ${analyticsDimensionValueSql('$11::text','s')} AS dimension) d
     ), grouped AS MATERIALIZED (
       SELECT label,count(*) AS events,count(visitor_id) AS identified,
         CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END AS visitors FROM labeled GROUP BY label

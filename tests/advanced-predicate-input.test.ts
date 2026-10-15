@@ -102,3 +102,5 @@ test('data-only parsing rejects sparse arrays and hooks without invoking them',(
   for(const value of [getter,proxy,hooked,group([getter]),group(Array(1)),group(arrayGetter)])assert.throws(()=>parseAdvancedPredicates(value),{status:400});
   assert.equal(calls,0);
 });
+
+test('referrer predicates preserve the accepted2048-character normalizer bound',()=>{const input={version:1,match:'all',fields:[{field:'referrer',operator:'eq',value:'a'.repeat(2048)}],properties:[]};assert.equal(parseAdvancedPredicates(input).fields.length,1);assert.throws(()=>parseAdvancedPredicates({...input,fields:[{...input.fields[0],value:'a'.repeat(2049)}]}),{status:400});});

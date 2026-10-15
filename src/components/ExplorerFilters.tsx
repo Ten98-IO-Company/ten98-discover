@@ -1,3 +1,4 @@
+import {analyticsFieldLimit} from '../lib/analytics-dimensions';
 import {useEffect,useState} from 'react';
 import type {AdvancedPredicates} from '../server/advanced-predicate-input';
 import {environmentCatalog,environmentFields,isEnvironmentFilter,type EnvironmentField} from '../lib/analytics-environment';
@@ -101,7 +102,7 @@ function draftFilterQuery(draft:Draft){
 function savedPredicates(query:unknown):Pick<Draft,'kind'|'filters'|'prop'|'advanced'>|null{
   if(!clean(query,20000))return null;
   const p=new URLSearchParams(query),allowed=new Set<string>(['kind',...FILTERS.map(([key])=>key),'propertyKey','propertyType','propertyValue','predicates']);
-  for(const [key,value] of p)if(!allowed.has(key)||p.getAll(key).length!==1||!clean(value,key==='predicates'?20000:['path','origin'].includes(key)||isGeo(key)?2048:key==='propertyValue'?8192:320))return null;
+  for(const [key,value] of p)if(!allowed.has(key)||p.getAll(key).length!==1||!clean(value,key==='predicates'?20000:key==='propertyValue'?8192:analyticsFieldLimit(key)))return null;
   const kind=p.get('kind');if(!KINDS.some(([key])=>key===kind))return null;
   const filters=Object.fromEntries(FILTERS.map(([key])=>[key,{on:p.has(key),value:p.get(key)??''}]));
   for(const field of environmentFields)if(p.has(field)&&!isEnvironmentFilter(field,p.get(field)))return null;
@@ -160,7 +161,7 @@ function buildAdvanced(draft:AdvancedDraft):{predicates?:AdvancedPredicates}|Adv
     let value:unknown=row.value;
     if(property&&!dayOperator(row.operator)){try{value=JSON.parse(row.value);}catch{return issue('value','enter a valid JSON value of the selected type.');}}
     if(!property||row.type==='string'){
-      if(!clean(value,property?1000:['path','origin'].includes(row.field)?2048:320)||!['eq','neq'].includes(row.operator)&&!value.length)return issue('value','enter supported text within the limit; search and pattern values cannot be empty.');
+      if(!clean(value,property?1000:analyticsFieldLimit(row.field))||!['eq','neq'].includes(row.operator)&&!value.length)return issue('value','enter supported text within the limit; search and pattern values cannot be empty.');
       if(!property&&row.field==='origin'&&['eq','neq'].includes(row.operator)){try{const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.origin!==value)return issue('value','enter an exact HTTP(S) origin without a path.');}catch{return issue('value','enter an exact HTTP(S) origin without a path.');}}
     }else if(row.type==='date'){
       if(dayOperator(row.operator)){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value<'1970-01-01'||value>'9998-12-31'||!preciseDate(value+'T00:00:00Z'))return issue('value','choose a real comparison day from 1970 to 9998.');}

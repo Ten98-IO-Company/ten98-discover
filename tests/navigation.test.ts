@@ -332,3 +332,13 @@ test('Attribution keeps a scalar nested applied scope only in its own project re
  for(const patch of [{workspace:undefined},{project:undefined},{from:'2026-01-01'}])assert.equal(parseNavigation({...value,...patch}).attributionInvalid,'1');
  assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});assert.deepEqual(parseNavigation({...value,view:'explore'}),{workspace,project,view:'explore'});
 });
+test('comparison dimension namespace and selection shape remain scope-bound',()=>{
+ const base={workspace,project,view:'compare'} as const,selection=new URLSearchParams({path:'/pricing'}).toString();
+ for(const analyticsDimension of ['path','referrer','browser','os','device','country','region','city','language','event','campaignSource','campaignMedium','campaignName','campaignContent','campaignTerm'] as const){const value={...base,analyticsDimension,analyticsSelection:selection};assert.deepEqual(parseNavigation(value),value);assert.notEqual(navigationKey(value),navigationKey(base));}
+ assert.deepEqual(parseNavigation({...base,view:'project',analyticsSelection:selection}),{...base,view:'project',analyticsSelection:selection});
+ for(const analyticsDimension of ['channel','screen','hostname','distinctId','tag','',null,['path'],{value:'path'}])assert.equal(parseNavigation({...base,analyticsDimension}).analyticsInvalid,'1');
+ assert.equal(parseNavigation({...base,view:'project',analyticsDimension:'path'}).analyticsInvalid,'1');
+ for(const analyticsSelection of ['',null,['path=x'],{path:'x'},'x'.repeat(20001),'x\0','x\ud800'])assert.equal(parseNavigation({...base,analyticsSelection}).analyticsInvalid,'1');
+ for(const view of ['explore','sessions','realtime'])assert.equal(parseNavigation({...base,view,analyticsDimension:'path',analyticsSelection:selection}).analyticsSelection,undefined);
+ const value=parseNavigation({...base,analyticsDimension:'path',analyticsSelection:selection});assert.equal(canonicalNavigation('?'+new URLSearchParams({...base,analyticsDimension:'path',analyticsSelection:selection})+'&analyticsSelection=x',value),false);
+});

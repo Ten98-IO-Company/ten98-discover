@@ -13,8 +13,20 @@ import {retentionReportQuery} from '../src/server/retention-report-input.ts';
 import {retentionLimits} from '../src/lib/retention-report.ts';
 import {attributionQuery} from '../src/server/attribution.ts';
 import {attributionLimits} from '../src/lib/attribution.ts';
+import {analyticsDimensions,analyticsSelectionFields,analyticsFieldLimit} from '../src/lib/analytics-dimensions.ts';
 import {revenueQuery} from '../src/server/revenue.ts';
 import {revenueCurrencies,revenueReportLimits} from '../src/lib/revenue.ts';
+
+test('comparison dimension and selection contract describes the closed native parser',()=>{
+ const params=nativeOpenApi.paths['/api/projects/{projectId}/analytics'].get.parameters as any[],parameter=(name:string)=>params.find(x=>x.name===name);
+ assert.deepEqual(parameter('dimension').schema.enum,analyticsDimensions);assert.match(parameter('dimension').description,/Requires compare/);assert.equal(parameter('selection').schema.maxLength,20000);
+ for(const dimension of analyticsDimensions){assert.equal(analyticsQuery(new URLSearchParams({compare:'prev',dimension})).dimension,dimension);assert.throws(()=>analyticsQuery(new URLSearchParams({dimension})));}
+ for(const field of analyticsSelectionFields)for(const operator of ['eq','exists','missing']){const fields=[{field,operator,...operator==='eq'?{value:''}:{}}],selection=new URLSearchParams({predicates:JSON.stringify({version:1,match:'all',fields,properties:[]})}).toString(),result=analyticsQuery(new URLSearchParams({selection}));assert.deepEqual(result.selection?.fields,fields);assert.equal(result.selectionQuery,selection);}
+ for(const field of analyticsSelectionFields){const query=(n:number)=>new URLSearchParams({selection:new URLSearchParams({[field]:'x'.repeat(n)}).toString()});assert.ok(analyticsQuery(query(analyticsFieldLimit(field))).selection);assert.throws(()=>analyticsQuery(query(analyticsFieldLimit(field)+1)));}
+ const invalid:Record<string,string>[]=[{dimension:'channel',compare:'prev'},{dimension:'path'},{selection:'path=a&path=b'},{selection:'origin=https%3A%2F%2Fexample.test'}];for(const value of invalid)assert.throws(()=>analyticsQuery(new URLSearchParams(value)));
+ for(const patch of [{match:'any'}, {fields:[{field:'path',operator:'contains',value:'a'}]}, {properties:[{key:'x',operator:'exists'}]}, {sessionProperties:[{key:'x',operator:'exists'}]}]){const selection=new URLSearchParams({predicates:JSON.stringify({version:1,match:'all',fields:[{field:'path',operator:'eq',value:'a'}],properties:[],...patch})}).toString();assert.throws(()=>analyticsQuery(new URLSearchParams({selection})));}
+ const repeated=new URLSearchParams({dimension:'path',compare:'prev'});repeated.append('dimension','event');assert.throws(()=>analyticsQuery(repeated));
+});
 
 test('Revenue inventory matches the three closed native readers and pinned currencies',()=>{
  const paths=['/api/projects/{projectId}/revenue','/api/projects/{projectId}/revenue/sessions','/api/projects/{projectId}/revenue/sessions/{visitorKey}'] as const;
