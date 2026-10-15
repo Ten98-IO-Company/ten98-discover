@@ -60,6 +60,8 @@ import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prom
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
 import {getPromptCitationSpecializations,exportPromptCitationSpecializations} from './prompt-citation-specializations.ts';
 
+import {nativeOpenApi} from './openapi.ts';
+
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
   const headers = new Headers({ 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
@@ -111,6 +113,11 @@ export async function handleApi(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/$/, '');
     if (path === '/api/health/live' && request.method === 'GET') return json({ status: 'alive' });
+    if(path==='/api/openapi.json') {
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405,{allow:'GET'});
+      if(url.search||request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')return json({error:'Use the specification URL without parameters or a body.'},400);
+      return json(nativeOpenApi);
+    }
     const config = getConfig();
     await assertSchema();
     const apiToken = parseApiKeyHeaders(request.headers);
@@ -118,7 +125,14 @@ export async function handleApi(request: Request): Promise<Response> {
     if (principal) {
       const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
       const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
-      if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
+      const promptApiRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?$`,'i'));
+      const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
+      const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
+      if(promptApiRoute&&(promptRead||promptWrite)) {
+        const target=await getDatabase().pool.query('SELECT workspace_id FROM project WHERE id=$1 AND workspace_id=$2',[promptApiRoute[1],principal.workspaceId]);
+        if(!target.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
+        await authorizeApiKey(apiToken!,target.rows[0].workspace_id,promptWrite?'prompts:write':'prompts:read');
+      } else if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
         await authorizeApiKey(apiToken!, workspaceRoute[1], workspaceRoute[2] === 'team' ? 'team:read' : request.method === 'GET' ? 'projects:read' : 'projects:write');
       } else if (projectRoute && (request.method === 'GET' || (request.method === 'POST' && projectRoute[2] === 'events'))) {
         const target = await getDatabase().pool.query('SELECT workspace_id FROM project WHERE id=$1 AND workspace_id=$2', [projectRoute[1], principal.workspaceId]);
@@ -608,14 +622,14 @@ export async function handleApi(request: Request): Promise<Response> {
     if(promptRoute) {
       await limit(`project-content:${user.id}`,120);
       const pid=promptRoute[1],promptId=promptRoute[3],action=promptRoute[4];
-      if(request.method==='GET'&&!promptRoute[2]) return json(await listPrompts(pid,user.id,url.searchParams));
-      if(request.method==='GET'&&promptId&&!action&&!url.search) return json(await getPrompt(pid,user.id,promptId));
-      if(request.method==='GET'&&action==='versions') return json(await promptVersions(pid,user.id,promptId,url.searchParams));
+      if(request.method==='GET'&&!promptRoute[2]) return json(await listPrompts(pid,user.id,url.searchParams,apiToken??undefined));
+      if(request.method==='GET'&&promptId&&!action&&!url.search) return json(await getPrompt(pid,user.id,promptId,apiToken??undefined));
+      if(request.method==='GET'&&action==='versions') return json(await promptVersions(pid,user.id,promptId,url.searchParams,apiToken??undefined));
       if(request.method==='POST'&&!url.search) {
         const input=await readJson(request,262144);
-        if(promptRoute[2]==='bulk') return json(await createPrompts(pid,user.id,input),201);
-        if(action==='update') return json(await updatePrompt(pid,user.id,promptId,input));
-        if(action==='archive'||action==='restore') return json(await setPromptArchived(pid,user.id,promptId,action==='archive',input));
+        if(promptRoute[2]==='bulk') return json(await createPrompts(pid,user.id,input,apiToken??undefined),201);
+        if(action==='update') return json(await updatePrompt(pid,user.id,promptId,input,apiToken??undefined));
+        if(action==='archive'||action==='restore') return json(await setPromptArchived(pid,user.id,promptId,action==='archive',input,apiToken??undefined));
       }
       return json({error:'Method or parameters not allowed.'},405);
     }

@@ -24,6 +24,8 @@ const SCOPES: { value: string; label: string }[] = [
   { value: 'analytics:read', label: 'Read analytics' },
   { value: 'events:write', label: 'Send events' },
   { value: 'team:read', label: 'Read team members' },
+  { value: 'prompts:read', label: 'Read authored prompts' },
+  { value: 'prompts:write', label: 'Create and edit authored prompts' },
 ]
 
 export function ApiKeysPanel({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {
@@ -236,6 +238,8 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
         A key works until it expires or you revoke it — the server checks scopes on every request.
       </div>
 
+      <p className="hint"><a href="/api/openapi.json" target="_blank" rel="noopener noreferrer">Open native API specification (JSON)</a></p>
+
       <div className="card">
         <h2>Create API key</h2>
         <form onSubmit={createKey}>
@@ -268,7 +272,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
                 </span>
               </label>
             ))}
-            <p className="hint">The key can only do what you tick here, nothing more.</p>
+            <p className="hint">The key can only do what you tick here. Prompt write access does not include reading prompts or running paid work.</p>
           </fieldset>
           <div className="field">
             <label htmlFor="ak-days">Expires after (days)</label>
