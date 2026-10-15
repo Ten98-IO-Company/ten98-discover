@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
+import { GoogleInspectionPanel } from './GoogleInspectionPanel';
 
 const BTN = { minHeight: 44 };
 
@@ -96,7 +97,7 @@ function googleAuthUrl(s: string): string | null {
   }
 }
 
-interface Ops {
+export interface GoogleReportOps {
   busy: boolean;
   notify(message: string): void;
   begin(): { serial: number; controller: AbortController } | null;
@@ -157,7 +158,7 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
       applyOverview(serial, c, r);
     } catch (e) { terminal(serial, c, e); throw e; }
   };
-  const ops: Ops = { begin, end, alive, terminal, refresh, busy: pending, notify: setNotice };
+  const ops: GoogleReportOps = { begin, end, alive, terminal, refresh, busy: pending, notify: setNotice };
 
   useEffect(() => {
     const ac = new AbortController();
@@ -230,7 +231,7 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
       {!overview.app.configured && <p className="hint">The instance operator has not configured the Google OAuth app yet.</p>}
       {overview.app.configured && !overview.app.enabled && <p className="hint">Google connections are disabled by the instance operator.</p>}
       {overview.app.configured && overview.app.testing && <p className="hint">The Google consent app is in testing mode; refresh tokens may expire after seven days.</p>}
-      {!owner && <p className="hint">Only workspace owners can connect Google sources, choose properties, or queue imports. You can view existing connections and reports.</p>}
+      {!owner && <p className="hint">Only workspace owners can connect Google sources, choose properties, inspect indexed URLs, or queue imports. You can view existing connections and reports.</p>}
 
       {owner && appOn && (
         <details className="card google-connect" open={overview.connections.length === 0}>
@@ -284,7 +285,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
   conn: Connection;
   owner: boolean;
   appOn: boolean;
-  ops: Ops;
+  ops: GoogleReportOps;
   onReconnect: (conn: Connection) => void;
 }) {
   const base = `/api/projects/${projectId}/google/connections/${conn.id}`;
@@ -488,6 +489,8 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
       <p className="dim">
         Property: {conn.propertyName ?? 'Not selected'}{conn.propertyId ? ` (${conn.propertyId})` : ''} · Time zone: {conn.timeZone ?? 'Not set'} · Currency: {conn.currencyCode ?? 'Not set'}
       </p>
+
+      {owner && appOn && conn.provider === 'gsc' && conn.status === 'ready' && conn.propertyId && <GoogleInspectionPanel key={`${conn.id}:${conn.revision}:${conn.propertyId}`} projectId={projectId} connection={{id:conn.id,revision:conn.revision,propertyId:conn.propertyId}} ops={ops} />}
 
       {(conn.status === 'reconnect' || conn.status === 'disconnected') && owner && appOn && (
         <div className="row">
