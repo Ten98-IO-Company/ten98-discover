@@ -1,6 +1,6 @@
 # Native bearer API contract
 
-This development increment documents 20 implemented operations: 13 project/team/analytics operations, including Journeys and observed-key Retention, and seven authored-prompt operations. It does not complete the 81-requirement register, provide MCP transport, expose paid prompt execution, or implement a generic HTTP batch dispatcher.
+This development increment documents 21 implemented operations: 14 project/team/analytics operations, including Journeys, observed-key Retention and observed Attribution, and seven authored-prompt operations. It does not complete the 81-requirement register, provide MCP transport, expose paid prompt execution, or implement a generic HTTP batch dispatcher.
 
 `GET /api/openapi.json` returns a static OpenAPI 3.1.2 document before configuration, database readiness and installation setup checks. It accepts no query or body, uses relative server `/`, and does not reflect request hosts or credentials. Other methods return 405. There is no hosted documentation renderer, CDN or automatic provider request. The document describes bearer access; browser cookie routes and the separate public tracker are not its inventory.
 
@@ -13,7 +13,7 @@ Send one `Authorization: Bearer <token>` header without cookies or alternate key
 | `projects:read` | List workspace projects |
 | `projects:write` | Create project |
 | `team:read` | Read team; current owner/admin required |
-| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, observed-key Retention, Explorer, sessions, session details and explicitly linked activity |
+| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, observed-key Retention, observed Attribution, Explorer, sessions, session details and explicitly linked activity |
 | `events:write` | Record API observation |
 | `prompts:read` | List/search prompts, read prompt, list text versions |
 | `prompts:write` | Create 1–100 prompts atomically, update, archive, restore |
@@ -64,6 +64,8 @@ The full eligible population is aggregated before the top 100 typed prefixes, wi
 
 ## Schema coverage and source mapping
 
+`GET /api/projects/{projectId}/attribution` requires the typed `conversionKind`/`conversionValue` pair and accepts `model=first-click|last-click` plus inherited Explorer population filters without grouping. Conversion filters do not also filter the retained keyed touch pool. One touch credit per converted observed key precedes the top20 source-value display; missing/empty metadata, unkeyed conversions, unavailable history and timestamp ties are explicit. Incomplete evidence suppresses shares. Referrers are recorded hosts including self; no Direct or paid-click identity is inferred. There is no new collection. The complete JSON ceiling is2MiB; see [Attribution](attribution.md) for exact scope, authority and assignment rules.
+
 `src/server/openapi.ts` has exact operation paths, permission requirements, prompt wire fields and batch bounds. It intentionally leaves complex analytics, team, project and nested classification responses broad; it is not a complete generated SDK schema. Cross-field rules, Unicode normalization, canonical geography JSON, retention and cursor validation remain authoritative in the implementations. Native unknown/unavailable values must not be converted to zero.
 
 | Source | Contract |
@@ -74,8 +76,9 @@ The full eligible population is aggregated before the top 100 typed prefixes, wi
 | `analytics.ts`, `analytics-comparison.ts` | Overview filters and paired periods |
 | `realtime.ts`, `explorer-input.ts`, `session-explorer-input.ts` | Fixed live window, exploration and session query rules |
 | `journeys.ts`, `lib/journeys.ts` | Typed observed-visit prefixes, shared population filters and complete-response ceiling |
+| `attribution.ts`, `lib/attribution.ts` | Typed conversion, unfiltered retained touches, one observed-key credit and incomplete-evidence shares |
 
-See [Explorer](explorer.md), [session evidence](session-explorer.md), [tracking](tracking.md) and [prompt execution](prompt-execution.md) for the separate measurement and paid-execution boundaries. Expanded geography search is part of the existing analytics operation; Journeys adds one operation, bringing the inventory to 19. Compatibility APIs and full upstream MCP tool coverage remain required work.
+See [Explorer](explorer.md), [session evidence](session-explorer.md), [tracking](tracking.md) and [prompt execution](prompt-execution.md) for the separate measurement and paid-execution boundaries. Expanded geography search is part of the existing analytics operation; Journeys, Retention and Attribution bring the inventory to21. Compatibility APIs and full upstream MCP tool coverage remain required work.
 
 ## Runnable checks
 
