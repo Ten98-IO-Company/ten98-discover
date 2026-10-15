@@ -714,6 +714,9 @@ function App() {
               <details className='installation-help'>
                 <summary>Custom events and collection details</summary>
                 <p className='dim footnote'>When collection is allowed, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Advertising pixels and visitor identification still need explicit consent.</p>
+                <p>For buttons and links, you can also declare an event in your HTML:</p>
+                <pre className='snippet' tabIndex={0} aria-label='HTML custom event example'><code>{'<button type="button" data-ten98-event="signup" data-ten98-event-plan="starter">Sign up</button>'}</code></pre>
+                <p className='dim footnote'>Only the nearest element with a declared event is tracked. Attribute properties are passed as strings; use the JavaScript call for numbers, arrays, nested properties or advertising conversion fields. Use fixed, non-personal values. Click tracking does not delay navigation, and delivery during navigation is best effort.</p>
               </details>
             </section>
             <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>

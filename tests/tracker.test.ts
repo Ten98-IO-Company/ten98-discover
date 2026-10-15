@@ -23,7 +23,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   pageAge?: number; privacy?: boolean; dnt?: string; failStorage?: boolean; settings?: Record<string, unknown>;
   destinations?: unknown[]; deferCoordinator?: boolean; secondCollector?: boolean; collectionMode?: 'cookieless' | 'consent-first'; preference?: unknown; failRead?: boolean;
   trackerSource?: string; coordinatorSource?: string; pageUrl?: string; windowOrigin?: string } = {}) {
-  const listeners = new Map<string, Array<(ev: any) => void>>(), warnings: string[] = [], scripts: any[] = [];
+  const listeners = new Map<string, Array<(ev: any) => void>>(), documentListeners = new Map<string, Array<(ev: any) => void>>(), warnings: string[] = [], scripts: any[] = [];
   const fetchCalls: Array<{ url: string; options: any }> = [], payloads: Payload[] = [];
   const identifyPayloads: IdentifyPayload[] = [];
   const historyCalls: Array<{ method: string; thisArg: unknown; args: unknown[] }> = [];
@@ -53,6 +53,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
     captureScreen: false, excludeBots: true, excludedPaths: [], ...opts.settings };
   const response = () => new Response(JSON.stringify(flags.response), {status: flags.fetchOk ? 202 : 400});
   const document: any = { currentScript: null, referrer: 'https://referrer.example/path?secret=hidden#fragment',
+    addEventListener(type: string, fn: (event: any) => void) { const list = documentListeners.get(type) ?? []; list.push(fn); documentListeners.set(type, list); },
     createElement: () => ({}), querySelectorAll: () => scripts, head: { appendChild(script: any) { scripts.push(script); return script; } },
     get cookie(): never { throw new Error('document.cookie must not be touched'); } };
   const sandbox: any = { document, history, location, origin: opts.windowOrigin ?? pageUrl.origin, URL, Intl, Date: Clock, AbortController, TextEncoder, TextDecoder, ReadableStream,
@@ -113,13 +114,94 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   };
   const start = async () => { run(); await drain(); return grant(); };
   const dispatch = (type: string, event: any = {}) => sandbox.dispatchEvent({ ...event, type });
-  return { sandbox, document, history, location, listeners, warnings, fetchCalls, payloads, identifyPayloads, historyCalls, scripts, local,
+  return { sandbox, document, history, location, listeners, documentListeners, warnings, fetchCalls, payloads, identifyPayloads, historyCalls, scripts, local,
     storage, storageCalls, timers, storageKey, settings, flags, setScript, run, start, grant, dispatch, drain,
     loadCoordinator() { opts.deferCoordinator = false; run(); }, advance(ms: number) { now += ms; },
     async runTimers(delay: number) { for (const [id, timer] of [...timers]) if (timer.delay === delay) { if (!timer.interval) timers.delete(id); timer.fn(); } await drain(); },
     complete: async () => { for (const resolve of pending.splice(0)) resolve(response()); await drain(); },
     collectCalls: () => fetchCalls.filter(c => c.url.endsWith('/api/collect')) };
 }
+
+function declaredElement(attributes: Record<string, string>) {
+  return {
+    getAttribute: (name: string) => Object.hasOwn(attributes, name) ? attributes[name] : null,
+    getAttributeNames: () => Object.keys(attributes),
+    get textContent(): never { return assert.fail('Declared events must not read page text.'); },
+    get value(): never { return assert.fail('Declared events must not read form values.'); },
+    get href(): never { return assert.fail('Declared events must not inspect or change navigation.'); },
+  };
+}
+
+test('declared HTML clicks reuse native custom events once, including nested and dynamic targets, without reading page contents or delaying navigation', async () => {
+  const e = makeEnv({collectionMode: 'cookieless'}); e.run(); e.run(); await e.drain();
+  assert.equal(e.documentListeners.get('click')?.length, 1);
+  const click = (target: unknown) => e.documentListeners.get('click')!.forEach(fn => fn({target,
+    preventDefault() { assert.fail('Tracking must not delay a link or form.'); }}));
+  const element = declaredElement({'data-ten98-event': 'signup', 'data-ten98-event-plan': 'starter',
+    'data-ten98-event-empty': '', 'data-ten98-event-count': '2', 'data-unrelated': 'private'});
+  click({closest: () => element}); await e.drain();
+  assert.equal(e.payloads.length, 2); assert.equal(e.payloads[1].name, 'signup');
+  assert.deepEqual(e.payloads[1].properties, {plan: 'starter', empty: '', count: '2'});
+  assert.equal(e.payloads[1].url, 'https://site.example/dashboard');
+  assert.equal(e.collectCalls()[1].options.keepalive, true);
+  click({nodeType: 3, parentElement: {closest: () => declaredElement({'data-ten98-event': 'dynamic_action'})}});
+  await e.drain(); assert.equal(e.payloads.at(-1)!.name, 'dynamic_action');
+  const before = e.payloads.length;
+  for (const target of [null, {}, {closest: () => null}]) assert.doesNotThrow(() => click(target));
+  await e.drain(); assert.equal(e.payloads.length, before);
+});
+
+test('declared HTML events reject invalid names or entire oversized/unsafe property sets without truncation', async () => {
+  const e = makeEnv({collectionMode: 'cookieless'}); e.run(); await e.drain();
+  const bad: Record<string, string>[] = [
+    {'data-ten98-event': ''}, {'data-ten98-event': 'page_view'}, {'data-ten98-event': 'signup\n'},
+    {'data-ten98-event': 'signup', 'data-ten98-event-__proto__': 'unsafe'},
+    {'data-ten98-event': 'signup', 'data-ten98-event-prototype': 'unsafe'},
+    {'data-ten98-event': 'signup', 'data-ten98-event-constructor': 'unsafe'},
+    {'data-ten98-event': 'signup', 'data-ten98-event-': 'unsafe'},
+    {'data-ten98-event': 'signup', ['data-ten98-event-'+'x'.repeat(81)]: 'unsafe'},
+    {'data-ten98-event': 'signup', 'data-ten98-event-plan': 'x'.repeat(1001)},
+    {'data-ten98-event': 'signup', 'data-ten98-event-plan': '\ud800'},
+    {'data-ten98-event': 'signup', 'data-ten98-event-plan': '\u0000'},
+    {'data-ten98-event': 'signup', ...Object.fromEntries(Array.from({length: 51}, (_,i)=>['data-ten98-event-p'+i,'x']))},
+    {'data-ten98-event': 'signup', ...Object.fromEntries(Array.from({length: 8}, (_,i)=>['data-ten98-event-p'+i,'x'.repeat(1000)]))},
+    {'data-ten98-event': 'signup', ...Object.fromEntries(Array.from({length: 4}, (_,i)=>['data-ten98-event-p'+i,'🐎'.repeat(500)]))},
+  ];
+  const before=e.payloads.length;
+  for(const attributes of bad) e.documentListeners.get('click')!.forEach(fn=>fn({target:{closest:()=>declaredElement(attributes)}}));
+  await e.drain(); assert.equal(e.payloads.length,before);
+});
+
+test('declared attributes preserve supported boundary values and do not claim legacy declarations', async () => {
+  const e=makeEnv({collectionMode:'cookieless'});e.run();await e.drain();
+  const click=(attributes:Record<string,string>)=>e.documentListeners.get('click')!.forEach(fn=>fn({target:{closest:()=>declaredElement(attributes)}}));
+  const properties=Object.fromEntries(Array.from({length:50},(_,i)=>['data-ten98-event-p'+i,'0']));
+  click({'data-ten98-event':'a'.repeat(64),...properties});await e.drain();
+  assert.equal(Object.keys(e.payloads.at(-1)!.properties as object).length,50);
+  click({'data-ten98-event':'limits',['data-ten98-event-'+'x'.repeat(80)]:'x'.repeat(1000),'data-ten98-event-unicode':'🐎'.repeat(500)});
+  await e.drain();assert.equal((e.payloads.at(-1)!.properties as Record<string,string>).unicode,'🐎'.repeat(500));
+  const before=e.payloads.length;
+  click({'data-umami-event':'legacy','data-umami-event-plan':'private'});await e.drain();assert.equal(e.payloads.length,before);
+  click({'data-ten98-event':'native','data-umami-event':'legacy','data-umami-event-plan':'private'});await e.drain();
+  assert.equal(e.payloads.at(-1)!.name,'native');assert.deepEqual(e.payloads.at(-1)!.properties,{});
+});
+
+test('declared clicks honor current collection gates, never queue blocked interactions, and keep advertiser consent separate', async () => {
+  for(const options of [{collectionMode:'consent-first' as const},{collectionMode:'cookieless' as const,privacy:true},
+    {collectionMode:'cookieless' as const,dnt:'1'},{collectionMode:'cookieless' as const,settings:{enabled:false}},
+    {collectionMode:'cookieless' as const,settings:{excludedPaths:['/dashboard']}}]) {
+    const e=makeEnv(options); e.run(); await e.drain();
+    e.documentListeners.get('click')!.forEach(fn=>fn({target:{closest:()=>declaredElement({'data-ten98-event':'blocked_click'})}}));
+    await e.drain(); assert.equal(e.payloads.length,0);
+    if(options.collectionMode==='consent-first'){await e.grant();assert.equal(e.payloads.length,1);assert.equal(e.payloads[0].name,'page_view');}
+  }
+  const e=makeEnv({collectionMode:'cookieless',destinations:[meta]}); e.run(); await e.drain();
+  e.documentListeners.get('click')!.forEach(fn=>fn({target:{closest:()=>declaredElement({'data-ten98-event':'sign_up'})}}));
+  await e.drain(); assert.equal(e.payloads.at(-1)!.name,'sign_up');assert.equal(e.scripts.length,1,'Basic clicks cannot load a vendor SDK.');
+  await e.grant(DENIED);const before=e.payloads.length;
+  e.documentListeners.get('click')!.forEach(fn=>fn({target:{closest:()=>declaredElement({'data-ten98-event':'after_refusal'})}}));
+  await e.drain(); assert.equal(e.payloads.length,before);
+});
 
 const meta = { provider: 'meta', assetId: '123', enabled: true, owner: 'managed', ownershipConfirmed: true,
   mappings: [{ event: 'page_view' }, { event: 'purchase' }] };
