@@ -74,7 +74,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042', '0043']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042', '0043', '0044']);
   assert.equal(sources.find(m=>m.version==='0029')!.checksum,'8c7559f0e64f899bae4dc36aa9afa521b69624dba7849f28dfc3c1cb730097de','Append0030 without rewriting the published0029 migration.');
   assert.equal(sources.find(m=>m.version==='0030')!.checksum,'87b06aefbfe1b2228bda7fe91a28563265e908b92f07574ad3cb7e5380bbb28e','Append0031 without rewriting the published0030 migration.');
   assert.equal(sources.find(m=>m.version==='0031')!.checksum,'0a5d1fc0ee88c4aad84dbb41b32eb2d80bf0b5d816a907dfabb5a0228925ee65','Append0032 without rewriting published0031.');
@@ -205,7 +205,7 @@ try {
   await saveSavedKeywords(originalRecords.project[0].id,originalRecords.user[0].id,{requestId:randomUUID(),revision:1,
     source:{type:'manual',keywords:['preserved authored keyword'],locationCode:2840,languageCode:'en'},tags:['Preserved intent']});
   const preservedTables=['google_connection','google_import','google_import_page','provider_connection','provider_request','keyword_research_run','project_prompt','prompt_text_version','project_content_request','analytics_definition','saved_keyword','saved_keyword_tag','saved_keyword_tag_assignment','project_domain','domain_redirect_check','site_audit_run','site_audit_page','site_audit_edge','site_audit_issue'];
-  async function featureRecords() {const snapshot:Record<string,unknown>={};for(const table of preservedTables)snapshot[table]=(await pool.query(`SELECT to_jsonb(t)-'body_capture_state'-'body_extraction_version'-'body_text' AS data FROM ${table} t`)).rows;return snapshot;}
+  async function featureRecords() {const snapshot:Record<string,unknown>={};for(const table of preservedTables)snapshot[table]=(await pool.query(`SELECT to_jsonb(t)-'body_capture_state'-'body_extraction_version'-'body_text'${table==='google_connection'?"-'login_customer_id'":''} AS data FROM ${table} t`)).rows;return snapshot;}
   const featureSnapshot=await featureRecords();
   const quoteBefore=(await pool.query('SELECT row_to_json(q) AS data FROM keyword_quote q')).rows[0].data;
   const policyBefore=(await pool.query('SELECT raw_analytics_days,replay_days,raw_provider_evidence_days,derived_history_days,retention_revision FROM workspace')).rows;
@@ -359,13 +359,26 @@ try {
   // remain untouched. This fixture does not claim a populated AI-search run.
   const history42=await history(),tables42=(await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename<>'schema_version' ORDER BY tablename")).rows.map(row=>row.tablename);
   assert.deepEqual(history42,sources.filter(s=>s.version<='0042').map(({version,checksum})=>({version,checksum})));
-  async function rows42(){const snapshot:Record<string,unknown[]>={};for(const table of tables42)snapshot[table]=(await pool.query(`SELECT to_jsonb(t) AS row FROM ${pg.escapeIdentifier(table)} t ORDER BY to_jsonb(t)::text`)).rows.map(row=>row.row);return snapshot;}
+  async function rows42(){const snapshot:Record<string,unknown[]>={};for(const table of tables42)snapshot[table]=(await pool.query(`SELECT to_jsonb(t)${table==='google_connection'?"-'login_customer_id'":''} AS row FROM ${pg.escapeIdentifier(table)} t ORDER BY to_jsonb(t)::text`)).rows.map(row=>row.row);return snapshot;}
   const data42=await rows42(),bossSchema42=(await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema;assert.equal(data42.ai_search_quote.length,2);assert.equal(data42.ai_search_run.length,0);
-  stage='actual CLI upgrade populated0042 to0043';assert.match(runMigrate(0),/Database migrations applied: 0043\./);await assertSchema();
+  // Preserve the exact43-only schema/row checks before the current CLI applies44.
+  // PR166's historical actual CLI42-to43 proof remains a separate acceptance run.
+  stage='native SQL upgrade populated0042 to0043';const supportMigration=sources.find(m=>m.version==='0043')!,supportClient=await pool.connect();
+  try{await supportClient.query('BEGIN');await supportClient.query(supportMigration.sql);await supportClient.query('INSERT INTO schema_version VALUES($1,$2)',[supportMigration.version,supportMigration.checksum]);await supportClient.query('COMMIT');}finally{await supportClient.query('ROLLBACK').catch(()=>{});supportClient.release();}await assert.rejects(assertSchema(),{code:'SCHEMA_MISMATCH'});
   assert.deepEqual((await history()).slice(0,42),history42,'0043 preserves all42 published migration checksums.');assert.deepEqual(await rows42(),data42,'0043 preserves every field in every populated42 public table, including quote payloads/tombstones, original finance, credentials, grants and bodies.');
   const schema43=await schemaSnapshot(),new43Tables=['ai_content_support_quote','ai_content_support_run'];for(const kind of ['columns','constraints','indexes']as const)assert.deepEqual(schema43[kind].filter(row=>!new43Tables.includes(row.table_name??row.tablename)),schema42[kind],'0043 changes no prior column, constraint or index.');
   assert.deepEqual((await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename<>'schema_version' ORDER BY tablename")).rows.map(row=>row.tablename),[...tables42,...new43Tables].sort(),'Only the two dedicated43 tables are new.');for(const table of new43Tables)assert.equal((await pool.query(`SELECT 1 FROM ${pg.escapeIdentifier(table)}`)).rowCount,0,'0043 creates no quote, run, charge or implicit paid work.');assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'Migration must not start a queue.');
-  console.log('PASS actual CLI populated42-to43 preserves all42 rows/schema/checksums and retained/purged quote evidence; only two empty support tables are added');
+  console.log('PASS native SQL populated42-to43 preserves all42 rows/schema/checksums and retained/purged quote evidence; only two empty support tables are added');
+  const history43=await history(),tables43=[...tables42,...new43Tables].sort();
+  async function rows44(){const snapshot:Record<string,Record<string,unknown>[]>={};for(const table of tables43)snapshot[table]=(await pool.query(`SELECT to_jsonb(t) AS row FROM ${pg.escapeIdentifier(table)} t ORDER BY to_jsonb(t)::text`)).rows.map(r=>r.row);return snapshot;}
+  const data43=await rows44();stage='actual current CLI upgrade populated0043 to0044';assert.match(runMigrate(0),/Database migrations applied: 0044\./);await assertSchema();
+  assert.deepEqual((await history()).slice(0,43),history43,'0044 preserves all43 published migration checksums.');
+  const data44=await rows44();for(const table of tables43){assert.equal(data44[table].length,data43[table].length);assert.deepEqual(data44[table].map(row=>table==='google_connection'?Object.fromEntries(Object.entries(row).filter(([key])=>key!=='login_customer_id')):row),data43[table],'0044 preserves every prior field, body, token, identity and financial row.');}
+  assert.ok(data44.google_connection.every(row=>row.login_customer_id===null),'Existing sources gain only a NULL login manager; no account is inferred.');
+  const schema44=await schemaSnapshot();assert.deepEqual(schema44.columns.filter(row=>!(row.table_name==='google_connection'&&row.column_name==='login_customer_id')),schema43.columns,'0044 adds only the declared nullable manager column.');assert.deepEqual(schema44.indexes,schema43.indexes);
+  const changed44=new Set(['google_connection_provider_check','google_oauth_flow_provider_check','google_import_report_check','google_connection_ads_login_check']);assert.deepEqual(schema44.constraints.filter(row=>!changed44.has(row.name)),schema43.constraints.filter(row=>!changed44.has(row.name)),'Only the declared Google provider/report/login checks change.');assert.deepEqual(schema44.constraints.filter(row=>changed44.has(row.name)).map(row=>row.name).sort(),[...changed44].sort());
+  assert.deepEqual((await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename<>'schema_version' ORDER BY tablename")).rows.map(row=>row.tablename),tables43,'0044 adds no table.');assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'0044 starts no queue.');
+  console.log('PASS actual CLI43-to44 preserves all prior fields/checksums/financial evidence; only nullable Ads login and declared checks are added');
   const identity40=await identityRecords();
   for(const table of identityTables)assert.deepEqual(identity40[table].map(({collection_basis,...prior})=>prior),proven38[table],'Cookieless migration preserves every existing row, settings, epoch, revision and forward identity proof.');
   assert.ok(identity40.event.every(row=>row.collection_basis===null));assert.ok(identity40.project.every(row=>!(row.analytics_settings as Record<string,unknown>).collectionMode));
@@ -453,8 +466,9 @@ try {
   assert.equal((await pool.query("SELECT 1 FROM meta_campaign_inventory WHERE status IN ('queued','reading')")).rowCount,1,'Only the prior captured inventory remains active; migration creates no work.');
   assert.deepEqual((await pool.query('SELECT to_jsonb(s) AS data FROM analytics_segment s ORDER BY id')).rows.map(r=>r.data),retained33,'No-op migration preserves the exact authored schema33 filter.');
   assert.deepEqual((await pool.query('SELECT to_jsonb(a) AS data FROM analytics_annotation a ORDER BY id')).rows.map(r=>r.data),retained34,'No-op migration preserves the exact authored schema34 note.');
-  assert.deepEqual(await rows42(),data42,'No-op43 migration preserves every42 table and retained/purged quote payload exactly.');
-  for(const table of new43Tables)assert.equal((await pool.query(`SELECT 1 FROM ${pg.escapeIdentifier(table)}`)).rowCount,0,'No-op43 migration creates no semantic work.');
+  assert.deepEqual(await rows42(),data42,'No-op44 migration preserves every42 field and retained/purged quote payload exactly.');
+  assert.deepEqual(await rows44(),data44,'Actual44 no-op preserves the complete post44 rows, including NULL login managers.');
+  for(const table of new43Tables)assert.equal((await pool.query(`SELECT 1 FROM ${pg.escapeIdentifier(table)}`)).rowCount,0,'No-op44 migration creates no semantic work.');
   console.log('PASS prior0022 feature evidence,0023 rank and0026–28 Meta receipts/pages survive0035; profile and active evidenced cooldown backfills preserve all prior fields and are idempotent; no implicit paid work');
   console.log('PASS actual0029 authored context survives0035 unchanged with empty citation defaults, empty suggestion tables, preserved checksums and idempotent repeat migration');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
