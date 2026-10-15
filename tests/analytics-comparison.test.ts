@@ -2,6 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {analyticsQuery,analyticsRange} from '../src/server/analytics.ts';
 import {deriveAnalyticsComparison} from '../src/lib/analytics-comparison.ts';
+import {analyticsDimensions} from '../src/lib/analytics-dimensions.ts';
+
+test('dimension comparisons accept only collected fields and reuse closed Explorer selection keys',()=>{
+ for(const dimension of analyticsDimensions)assert.equal(analyticsQuery(new URLSearchParams({compare:'prev',dimension})).dimension,dimension);
+ for(const dimension of ['channel','screen','hostname','distinctId','tag','property','__proto__'])assert.throws(()=>analyticsQuery(new URLSearchParams({compare:'prev',dimension})),{status:400});
+ assert.throws(()=>analyticsQuery(new URLSearchParams({dimension:'path'})),{status:400});
+ const host='a'.repeat(2039)+'.example';assert.equal(host.length,2047);
+ const selected=analyticsQuery(new URLSearchParams({selection:new URLSearchParams({referrer:host,campaignSource:'',path:'/x'}).toString()}));assert.equal(selected.selection!.fields.length,3);assert.ok(selected.selectionQuery);
+ const predicates={version:1,match:'all',fields:[{field:'referrer',operator:'missing'}],properties:[]};assert.equal(analyticsQuery(new URLSearchParams({selection:new URLSearchParams({predicates:JSON.stringify(predicates)}).toString()})).selection!.fields[0].operator,'missing');
+ for(const selection of ['',new URLSearchParams({referrer:'a'.repeat(2049)}).toString(),'path=x&path=y','kind=all','predicates=broken',new URLSearchParams({predicates:JSON.stringify({...predicates,match:'any'})}).toString(),new URLSearchParams({predicates:JSON.stringify({...predicates,fields:[{field:'referrer',operator:'contains',value:'x'}]})}).toString(),new URLSearchParams({predicates:JSON.stringify(predicates),referrer:'x'}).toString()])assert.throws(()=>analyticsQuery(new URLSearchParams({selection})),{status:400});
+});
 
 test('comparison is optional, closed and does not widen the shared current-range parser',()=>{
  assert.deepEqual(analyticsQuery(new URLSearchParams('from=2024-02-28&to=2024-02-29')).filters,{});assert.equal(Object.hasOwn(analyticsQuery(new URLSearchParams()),'compare'),false);

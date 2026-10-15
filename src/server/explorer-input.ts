@@ -1,3 +1,4 @@
+import {analyticsFieldLimit} from '../lib/analytics-dimensions.ts';
 import { toUSVString } from 'node:util';
 import {z} from 'zod';
 import { normalizeProperties } from './analytics-input.ts';
@@ -36,7 +37,7 @@ export function explorerQuery(params: URLSearchParams, now = new Date()) {
   if (params.has('groupProperty') !== (groupBy === 'property')) bad('Choose a property key only when grouping by a property.');
   const groupProperty = groupBy === 'property' ? text(params.get('groupProperty')!,320) : null;
   const filters: Record<string,string> = {};
-  for (const key of explorerFilters) if (params.has(key)) filters[key] = text(params.get(key)!,['path','origin',...geographyFields].includes(key) ? 2048 : 320,true);
+  for (const key of explorerFilters) if (params.has(key)) filters[key] = text(params.get(key)!,analyticsFieldLimit(key),true);
   if(!geographyFiltersValid(Object.fromEntries(geographyFields.filter(field=>Object.hasOwn(filters,field)).map(field=>[field,filters[field]]))))bad('Choose compatible location filters.');
   for(const field of environmentFields)if(params.has(field)&&!isEnvironmentFilter(field,filters[field]))bad('Choose a supported browser, OS or device filter.');
   if (filters.origin !== undefined) {
