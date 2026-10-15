@@ -5,6 +5,9 @@ import {FoundationError} from './auth.ts';
 import {usd} from './providers.ts';
 import {decimal,decimalSumMicros,decimalText,ExactCost,parseOpenRouterJson,executionBody,type PromptModel,type OpenRouterModel,type RouteSnapshot,type RenderedInput} from './openrouter-input.ts';
 import {suggestionSchema,suggestionOutputTokens} from './ai-suggestion-input.ts';
+import {legacyOpenRouterModels,openRouterModelId,openRouterProviderName,openRouterProviderTag,openRouterTextProfile,type OpenRouterRequestProfile} from '../lib/openrouter-models.ts';
+import {requireCatalogModels} from './openrouter-models.ts';
+import {validateExecutionPayload} from './openrouter-input.ts';
 
 export const openRouterBase='https://openrouter.ai/api/v1';
 const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -24,15 +27,11 @@ async function read(path:string,credentials:unknown,send:typeof fetch){
   const response=await send(openRouterBase+path,{headers:headers(credentials),redirect:'error',credentials:'omit',signal:AbortSignal.timeout(10_000)});
   if(!response.ok){await response.body?.cancel();invalid();}return responseJson(response);
 }
-export function parseRoute(model:OpenRouterModel,body:unknown,maxCompletionTokens:number):RouteSnapshot{
-  if(!object(body)||!object(body.data)||body.data.id!==model||!Array.isArray(body.data.endpoints)||body.data.endpoints.length>100)invalid();
-  if(body.data.endpoints.some((e:unknown)=>object(e)&&typeof e.tag==='string'&&e.tag.startsWith('openai/')))invalid();
-  const matches=body.data.endpoints.filter((e:unknown)=>object(e)&&e.tag==='openai');if(matches.length!==1)invalid();const e=matches[0];
-  if(e.provider_name!=='OpenAI'||e.model_id!==model||e.status!==0||!positiveInteger(e.context_length)||!positiveInteger(e.max_completion_tokens)||e.max_completion_tokens<maxCompletionTokens||!Array.isArray(e.supported_parameters)||!e.supported_parameters.some((p:unknown)=>p==='max_tokens'||p==='max_completion_tokens'))invalid();
+function endpointRoute(model:string,e:Record<string,any>,maxCompletionTokens:number,profile?:OpenRouterRequestProfile):RouteSnapshot{
+  if(!openRouterProviderTag(e.tag)||!openRouterProviderName(e.provider_name)||e.model_id!==model||e.status!==0||!positiveInteger(e.context_length)||!positiveInteger(e.max_completion_tokens)||e.max_completion_tokens<maxCompletionTokens||!Array.isArray(e.supported_parameters)||e.supported_parameters.length>100||!e.supported_parameters.some((p:unknown)=>p==='max_tokens'||p==='max_completion_tokens'))invalid();
+  if(profile&&(!Number.isInteger(maxCompletionTokens)||maxCompletionTokens<16||maxCompletionTokens>4096||maxCompletionTokens>=e.context_length))invalid();
   const input=e.max_prompt_tokens===null||e.max_prompt_tokens===undefined?e.context_length:e.max_prompt_tokens;
   if(!positiveInteger(input)||input>e.context_length||!object(e.pricing))invalid();
-  // The public endpoint catalog omits optional request fees and reports discount as metadata.
-  // Only the standard undiscounted route is supported by this first accounting adapter.
   const allowed=['prompt','completion','request','image','input_cache_read','input_cache_write','web_search','internal_reasoning'];
   for(const [field,value] of Object.entries(e.pricing)){
     if(field==='discount'){if(value!==0)invalid();continue;}
@@ -44,23 +43,49 @@ export function parseRoute(model:OpenRouterModel,body:unknown,maxCompletionToken
   if(e.pricing.input_cache_read!==undefined){const p=decimal(promptPrice),r=decimal(e.pricing.input_cache_read),s=Math.max(p.scale,r.scale);if(r.coefficient*10n**BigInt(s-r.scale)>p.coefficient*10n**BigInt(s-p.scale))invalid();}
   const estimate=decimalSumMicros([{price:promptPrice,count:input},{price:completionPrice,count:maxCompletionTokens},{price:requestPrice,count:1}]);
   if(estimate<1n||estimate>1_000_000_000_000n)invalid();
-  return {model,tag:'openai',providerName:'OpenAI',promptCapacity:input,completionCapacity:e.max_completion_tokens,promptPrice,completionPrice,requestPrice,estimateMicros:estimate.toString()};
+  return {model,tag:e.tag,providerName:e.provider_name,promptCapacity:input,completionCapacity:e.max_completion_tokens,promptPrice,completionPrice,requestPrice,estimateMicros:estimate.toString(),...(profile?{profile,contextLength:e.context_length}:{})};
 }
-async function readRoutes(credentials:unknown,models:OpenRouterModel[],maxCompletionTokens:number,send:typeof fetch,structured=false){
+export function parseRoute(model:OpenRouterModel,body:unknown,maxCompletionTokens:number,profile?:OpenRouterRequestProfile,structured=false,pinnedTag?:string):RouteSnapshot{
+  if(!openRouterModelId(model)||!object(body)||!object(body.data)||body.data.id!==model||!Array.isArray(body.data.endpoints)||body.data.endpoints.length>100)invalid();
+  const endpoints=body.data.endpoints;
+  if(profile===undefined){
+    if(!(legacyOpenRouterModels as readonly string[]).includes(model))invalid();
+    if(endpoints.some((e:unknown)=>object(e)&&typeof e.tag==='string'&&e.tag.startsWith('openai/')))invalid();
+    const matches=endpoints.filter((e:unknown)=>object(e)&&e.tag==='openai');if(matches.length!==1||matches[0].provider_name!=='OpenAI')invalid();
+    if(structured&&!['structured_outputs','response_format'].every(p=>matches[0].supported_parameters?.includes(p)))invalid();
+    return endpointRoute(model,matches[0],maxCompletionTokens);
+  }
+  if(profile!==openRouterTextProfile)invalid();
+  const architecture=body.data.architecture;
+  if(!object(architecture)||!Array.isArray(architecture.input_modalities)||!architecture.input_modalities.includes('text')||!Array.isArray(architecture.output_modalities)||architecture.output_modalities.length!==1||architecture.output_modalities[0]!=='text')invalid();
+  const reasoning=body.data.reasoning;
+  if((reasoning!=null&&(!object(reasoning)||reasoning.mandatory!==false||reasoning.default_enabled!==false))||((body.data.supported_parameters?.includes('reasoning')||endpoints.some((e:unknown)=>object(e)&&Array.isArray(e.supported_parameters)&&e.supported_parameters.includes('reasoning')))&&(!object(reasoning)||reasoning.mandatory!==false||reasoning.default_enabled!==false)))invalid();
+  const routes:RouteSnapshot[]=[];
+  for(const e of endpoints){
+    if(!object(e)||!openRouterProviderTag(e.tag)||pinnedTag!==undefined&&e.tag!==pinnedTag||endpoints.filter((x:unknown)=>object(x)&&x.tag===e.tag).length!==1||endpoints.some((x:unknown)=>object(x)&&typeof x.tag==='string'&&x.tag.startsWith(e.tag+'/')))continue;
+    if(structured&&!['structured_outputs','response_format'].every(p=>Array.isArray(e.supported_parameters)&&e.supported_parameters.includes(p)))continue;
+    try{routes.push(endpointRoute(model,e,maxCompletionTokens,profile));}catch{/* Unsupported routes cannot authorize spending. */}
+  }
+  routes.sort((a,b)=>BigInt(a.estimateMicros)<BigInt(b.estimateMicros)?-1:BigInt(a.estimateMicros)>BigInt(b.estimateMicros)?1:a.tag<b.tag?-1:a.tag>b.tag?1:0);
+  if(!routes.length)invalid();return routes[0];
+}
+async function readRoutes(credentials:unknown,models:OpenRouterModel[],maxCompletionTokens:number,send:typeof fetch,structured=false,profile?:OpenRouterRequestProfile,pinnedTags?:string[]){
   try{
+    if(!Array.isArray(models)||models.length<1||models.length>2||new Set(models).size!==models.length)invalid();
+    if(profile){if(profile!==openRouterTextProfile)invalid();await requireCatalogModels(models,send,structured);}
     const key=await read('/key',credentials,send);
     if(!object(key?.data)||key.data.is_free_tier!==false||key.data.is_management_key!==false||key.data.is_provisioning_key===true)invalid();
     const routes:RouteSnapshot[]=[];
-    for(const model of models){
-      const body=await read(`/models/${model}/endpoints`,credentials,send),route=parseRoute(model,body,maxCompletionTokens);
-      if(structured){const endpoint=body.data.endpoints.find((e:any)=>e.tag===route.tag);if(!['structured_outputs','response_format'].every(p=>endpoint.supported_parameters.includes(p)))invalid();}
-      routes.push(route);
+    for(const [index,model]of models.entries()){
+      if(!openRouterModelId(model))invalid();const [author,slug]=model.split('/');
+      const body=await read('/models/'+encodeURIComponent(author)+'/'+encodeURIComponent(slug)+'/endpoints',credentials,send);
+      routes.push(parseRoute(model,body,maxCompletionTokens,profile,structured,pinnedTags?.[index]));
     }
     return routes;
   }catch{throw new FoundationError(502,'Could not verify the ordinary funded OpenRouter key and supported endpoint prices. No model request was sent.');}
 }
-export async function readOpenRouterRoutes(credentials:unknown,models:PromptModel[],maxCompletionTokens:number,send:typeof fetch=fetch){return readRoutes(credentials,models,maxCompletionTokens,send);}
-export async function readSuggestionRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch){return (await readRoutes(credentials,[model],suggestionOutputTokens,send,true))[0];}
+export async function readOpenRouterRoutes(credentials:unknown,models:PromptModel[],maxCompletionTokens:number,send:typeof fetch=fetch,profile?:OpenRouterRequestProfile,pinnedTags?:string[]){return readRoutes(credentials,models,maxCompletionTokens,send,false,profile,pinnedTags);}
+export async function readSuggestionRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch,profile?:OpenRouterRequestProfile,pinnedTag?:string){return (await readRoutes(credentials,[model],suggestionOutputTokens,send,true,profile,pinnedTag?[pinnedTag]:undefined))[0];}
 export type ExecutionResult={text:string;resolvedModel:string;provider:string;finishReason:string;citations:{url:string;title:string|null}[];promptTokens:number|null;completionTokens:number|null;receivedAt:string};
 export type ExecutionOutcome={cost:string|null;reference:string|null;result:ExecutionResult|null;diagnostic:string|null;pause:boolean;evidence:Record<string,unknown>};
 export function unknownExecution(reference:string|null=null,diagnostic='The provider charge is unresolved. Reconcile this request before spending again.'):ExecutionOutcome{
@@ -99,10 +124,16 @@ export function parseExecutionOutcome(body:unknown,httpStatus:number,headerId:st
     outcome.result={text:message.content,resolvedModel:body.model,provider:body.provider,finishReason:choice.finish_reason,citations:citations(message.annotations),promptTokens:tokenCount(usage.prompt_tokens),completionTokens:tokenCount(usage.completion_tokens),receivedAt:new Date().toISOString()};return outcome;
   }catch{if(outcome.cost!==null)outcome.diagnostic??='The charge was recorded, but the answer metadata was unsupported.';return outcome;}
 }
+export function executionRequestBody(messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,structured=false){
+  validateExecutionPayload(messages,route,maxTokens,structured);
+  const body={...executionBody(messages,route,maxTokens,runId,actor,structured),...(structured?{response_format:{type:'json_schema',json_schema:{name:'suggestion_proposal_v1',strict:true,schema:suggestionSchema}}}:{})};
+  if(route.profile&&(structured&&Buffer.byteLength(JSON.stringify({messages,schema:suggestionSchema}),'utf8')>131_072||Buffer.byteLength(JSON.stringify(body),'utf8')>163_840))throw new FoundationError(413,'The text request exceeds this model profile’s payload limit. Narrow the input.');
+  return body;
+}
 async function requestExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch,structured=false){
   let reference:string|null=null;
   try{
-    const body={...executionBody(messages,route,maxTokens,runId,actor),...(structured?{response_format:{type:'json_schema',json_schema:{name:'suggestion_proposal_v1',strict:true,schema:suggestionSchema}}}:{})};
+    const body=executionRequestBody(messages,route,maxTokens,runId,actor,structured);
     const response=await send(openRouterBase+'/chat/completions',{method:'POST',headers:{...headers(credentials),'content-type':'application/json','x-openrouter-metadata':'enabled'},body:JSON.stringify(body),redirect:'error',credentials:'omit',signal:AbortSignal.timeout(60_000)});
     const header=response.headers.get('x-generation-id');if(header!==null&&!generationId(header)){await response.body?.cancel();return unknownExecution();}
     if(header!==null){reference=header;try{await capture(header);}catch{await response.body?.cancel();throw new Error('Generation receipt was not persisted.');}}

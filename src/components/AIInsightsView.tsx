@@ -12,6 +12,7 @@ export type AIInsightsViewProps = {
   reading: boolean; exporting: boolean;
   error: string; notice: string; filterError: string; dirty: boolean;
   draft: AIInsightsDraft;
+  modelOptions?: {values:string[];complete:boolean};
   promptSearch: string;
   promptOptions: {id: string; label: string}[];
   canPreviousPrompts: boolean; canNextPrompts: boolean;
@@ -165,10 +166,11 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                 <label htmlFor={prefix + 'model'}>Model</label>
                 <select id={prefix + 'model'} value={draft.model} disabled={draftOff} style={controlStyle}
                   onChange={(e) => { if (draftOff) return; onChange('model', e.target.value); }}>
-                  <option value="">All models</option>
-                  <option value="openai/gpt-4o-mini">GPT-4o mini</option>
-                  <option value="openai/gpt-4o">GPT-4o</option>
+                  <option value="">All observed models</option>
+                  {draft.model&&!props.modelOptions?.values.includes(draft.model)&&<option value={draft.model}>{draft.model} — selected, outside these options</option>}
+                  {(props.modelOptions?.values??[]).map(model=><option key={model} value={model}>{model}</option>)}
                 </select>
+                <p className="hint">Models observed in this report’s dates, prompt and tag scope, before the model filter. {props.modelOptions?.complete?'The observed option list is complete.':'Observed options are incomplete or unavailable; a selected model is preserved.'}</p>
               </div>
               <div className="field" style={{ margin: 0 }}>
                 <label htmlFor={prefix + 'prompt'}>Prompt</label>

@@ -4,6 +4,8 @@ import {randomUUID} from 'node:crypto';
 import {suggestionQuoteInput,suggestionAcceptInput,suggestionMessages,suggestionTextKey,suggestionProfiles,suggestionProfile,parseSuggestionProposal,type SuggestionSnapshot} from '../src/server/ai-suggestion-input.ts';
 import {executionInput,executionBody,parseOpenRouterJson} from '../src/server/openrouter-input.ts';
 import {readSuggestionRoute,requestSuggestionExecution,readOpenRouterRoutes,parseExecutionOutcome,reconcileOpenRouter} from '../src/server/openrouter.ts';
+import {requireCatalogModels,refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
+import {openRouterTextProfile} from '../src/lib/openrouter-models.ts';
 
 const model='openai/gpt-4o-mini' as const;
 const input=()=>({requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'benchmark-mini-v1',benchmark:true,fundedCredits:true,maxSpendUsd:'1',topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]});
@@ -11,10 +13,20 @@ const snapshot=():SuggestionSnapshot=>({version:1,project:{id:randomUUID(),name:
 const proposal=()=>({version:1,limitation:'none',prompts:[{text:'Which grinder is easy to clean?',tags:['Maintenance'],rationale:'This helps evaluate the saved topic.',evidenceIds:['profile']}]});
 const endpoint=()=>({data:{id:model,endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens','response_format','structured_outputs'],pricing:{prompt:'0.00000015',completion:'0.0000006',discount:0}}]}});
 
-test('suggestion candidates have permanent model identities without broadening comparison admission',()=>{
+test('suggestion candidates have permanent identities; model syntax alone cannot authorize a quote',async()=>{
  assert.deepEqual(suggestionProfiles.map(p=>[p.id,p.model]),[['benchmark-mini-v1','openai/gpt-4o-mini'],['benchmark-standard-v1','openai/gpt-4o'],['benchmark-nano-v1','openai/gpt-4.1-nano'],['benchmark-4-1-mini-v1','openai/gpt-4.1-mini']]);
  for(const profile of suggestionProfiles){const parsed=suggestionQuoteInput.parse({...input(),profileId:profile.id});assert.equal(suggestionProfile(parsed.profileId).model,profile.model);assert.match(profile.label,/evaluation/);}
- for(const candidate of ['openai/gpt-4.1-nano','openai/gpt-4.1-mini'])assert.equal(executionInput.safeParse({connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),systemText:'',models:[candidate],maxCompletionTokens:16,fundedCredits:true}).success,false);
+ for(const candidate of ['openai/gpt-4.1-nano','openai/gpt-4.1-mini']){
+  assert.equal(executionInput.safeParse({connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),systemText:'',models:[candidate],maxCompletionTokens:16,fundedCredits:true}).success,true);
+  await refreshOpenRouterCatalog(async()=>Response.json({data:[],total_count:0,links:{next:null}}));
+  await assert.rejects(requireCatalogModels([candidate],async()=>{throw Error('Fresh empty catalog cannot authorize an endpoint request.');}),{status:409});
+  await refreshOpenRouterCatalog(async()=>Response.json({data:[{id:candidate,canonical_slug:candidate,name:'Synthetic candidate',context_length:128000,top_provider:{max_completion_tokens:4096},architecture:{input_modalities:['text'],output_modalities:['text']},supported_parameters:['max_tokens'],pricing:{prompt:'1e-7',completion:'4e-7'}}],total_count:1,links:{next:null}}));
+  let paid=0;await assert.rejects(readOpenRouterRoutes({apiKey:'synthetic'},[candidate],16,async(url)=>{
+   const address=String(url);if(address.endsWith('/key'))return Response.json({data:{is_free_tier:false,is_management_key:false}});
+   if(address.endsWith('/endpoints')){const body:any=endpoint();body.data.id=candidate;body.data.endpoints[0].model_id=candidate;body.data.endpoints[0].pricing.overrides=[];return Response.json(body);}
+   paid++;throw Error('No paid request permitted.');
+  },openRouterTextProfile),{status:502});assert.equal(paid,0);
+ }
 });
 test('every suggestion candidate verifies exact capabilities, arithmetic, dispatch and receipt identity',async()=>{
  for(const profile of suggestionProfiles){

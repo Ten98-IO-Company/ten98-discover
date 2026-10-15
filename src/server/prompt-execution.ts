@@ -7,8 +7,10 @@ import {getBoss} from './jobs.ts';
 import {credentialKeys,decryptCredentials} from './credential-vault.ts';
 import {providerTransaction,usd} from './providers.ts';
 import {reserveSpendInTransaction,dispatchSpend,settleSpend,requestHash} from './spending.ts';
-import {executionInput,executionParse,promptModels,type RenderedInput,type RouteSnapshot} from './openrouter-input.ts';
-import {readOpenRouterRoutes,keyFingerprint,executionActor,requestPromptExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
+import {executionInput,executionParse,type RenderedInput,type RouteSnapshot} from './openrouter-input.ts';
+import {readOpenRouterRoutes,keyFingerprint,executionActor,executionRequestBody,requestPromptExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
+import {openRouterTextProfile} from '../lib/openrouter-models.ts';
+import {boundedOpenRouterMetadata,cachedOpenRouterModels} from './openrouter-models.ts';
 
 export const promptExecutionQueue='prompt-execution';
 const writers=['owner','admin','editor'],readers=[...writers,'viewer'];
@@ -69,7 +71,8 @@ export async function getPromptExecutions(projectId:string,userId:string){return
   const connections=await client.query("SELECT id,name,check_status AS \"checkStatus\" FROM provider_connection WHERE workspace_id=$1 AND provider='openrouter' AND revoked_at IS NULL ORDER BY created_at,id",[wid]);
   const budget=(await client.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[wid])).rows[0];
   const comparisons=[];for(const row of (await client.query('SELECT id FROM prompt_comparison WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 20',[projectId])).rows)comparisons.push(await comparisonDto(client,projectId,row.id,userId,role));
-  return {role,models:promptModels,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,comparisons,cache:{available:false},scheduling:{available:false}};
+  const catalog=cachedOpenRouterModels();
+  return boundedOpenRouterMetadata({role,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),catalog,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,comparisons,cache:{available:false},scheduling:{available:false}});
 });}
 export async function getPromptComparison(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>({role,comparison:await comparisonDto(client,projectId,id,userId,role,true)}));}
 export async function quotePromptExecution(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
@@ -79,7 +82,8 @@ export async function quotePromptExecution(projectId:string,userId:string,raw:un
     const messages:RenderedInput=[...(input.systemText?[{role:'system' as const,content:input.systemText}]:[]),{role:'user',content:text}];
     return {messages,revision:row.revision,credentials:credentials(row),name:row.name};
   });
-  const routes=await readOpenRouterRoutes(saved.credentials,input.models,input.maxCompletionTokens,send),fingerprint=keyFingerprint(saved.credentials);
+  const routes=await readOpenRouterRoutes(saved.credentials,input.models,input.maxCompletionTokens,send,openRouterTextProfile),fingerprint=keyFingerprint(saved.credentials);
+  for(const route of routes)executionRequestBody(saved.messages,route,input.maxCompletionTokens,'00000000-0000-4000-8000-000000000000',executionActor(userId));
   return scoped(projectId,userId,writers,async(client,wid,role)=>{
     await connection(client,wid,input.connectionId,saved.revision);await promptVersion(client,projectId,input.promptId,input.versionId);
     const hash=requestHash(JSON.stringify({input,messages:saved.messages,routes}));
@@ -153,7 +157,8 @@ export async function executePromptComparison(id:string,send:typeof fetch=fetch)
     try{
       const saved=await scoped(row.project_id,row.user_id,writers,async(client,wid)=>({credentials:credentials(await connection(client,wid,row.connection_id,row.connection_revision))}));
       if(keyFingerprint(saved.credentials)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
-      const [fresh]=await readOpenRouterRoutes(saved.credentials,[row.route.model],row.input.maxCompletionTokens,send);
+      executionRequestBody(row.messages,row.route,row.input.maxCompletionTokens,row.id,row.request_actor);
+      const [fresh]=await readOpenRouterRoutes(saved.credentials,[row.route.model],row.input.maxCompletionTokens,send,row.route.profile,row.route.profile?[row.route.tag]:undefined);
       if(Object.entries(fresh).some(([key,value])=>row.route[key]!==value))throw new FoundationError(409,'Endpoint prices or capacity changed.');
       await dispatchSpend(row.workspace_id,row.user_id,row.id,async(client)=>{
         const live=(await client.query(runSelect+' WHERE r.id=$1',[row.id])).rows[0];

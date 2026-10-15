@@ -1,13 +1,13 @@
 import {toUSVString} from 'node:util';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
+import {openRouterModelId,openRouterRouteIdentity,openRouterTextProfile,type OpenRouterRequestProfile} from '../lib/openrouter-models.ts';
 
-export const promptModels=['openai/gpt-4o-mini','openai/gpt-4o'] as const;
-export type PromptModel=typeof promptModels[number];
-export type OpenRouterModel=PromptModel|'openai/gpt-4.1-nano'|'openai/gpt-4.1-mini';
+export type PromptModel=string;
+export type OpenRouterModel=string;
 export const executionInput=z.object({connectionId:z.uuid(),promptId:z.uuid(),versionId:z.uuid(),
   systemText:z.string().max(4000).refine(v=>toUSVString(v)===v&&!/[\x00\x0b\x0c]/.test(v)),
-  models:z.array(z.enum(promptModels)).min(1).max(2).refine(v=>new Set(v).size===v.length),
+  models:z.array(z.string().refine(openRouterModelId)).min(1).max(2).refine(v=>new Set(v).size===v.length),
   maxCompletionTokens:z.number().int().min(16).max(4096),fundedCredits:z.literal(true)}).strict();
 export function executionParse<T extends z.ZodType>(schema:T,input:unknown):z.output<T>{const result=schema.safeParse(input);if(!result.success)throw new FoundationError(400,'Check the prompt execution fields and try again.');return result.data;}
 export type ExecutionInput=z.infer<typeof executionInput>;
@@ -48,10 +48,18 @@ export function parseOpenRouterJson(text:string):any{
   });
 }
 export function exactJsonNumber(value:string){return (JSON as NativeJson).rawJSON(decimalText(value));}
-export type RouteSnapshot={model:OpenRouterModel;tag:'openai';providerName:'OpenAI';promptCapacity:number;completionCapacity:number;promptPrice:string;completionPrice:string;requestPrice:string;estimateMicros:string};
-export function executionBody(messages:RenderedInput,route:RouteSnapshot,maxCompletionTokens:number,runId:string,actor:string){
+export type RouteSnapshot={model:OpenRouterModel;tag:string;providerName:string;promptCapacity:number;completionCapacity:number;promptPrice:string;completionPrice:string;requestPrice:string;estimateMicros:string;profile?:OpenRouterRequestProfile;contextLength?:number};
+export function validateExecutionPayload(messages:RenderedInput,route:RouteSnapshot,maxCompletionTokens:number,structured=false){
+ if(!openRouterRouteIdentity(route))throw new FoundationError(409,'The saved model route is unsupported. Prepare a new quote.');
+ if(route.profile===undefined)return; // Exact legacy quotes retain their original request policy.
+ if(!Array.isArray(messages)||messages.length<1||messages.length>2||messages.some((m,i)=>!m||Object.keys(m).length!==2||m.role!==(i===messages.length-1?'user':'system')||typeof m.content!=='string'||toUSVString(m.content)!==m.content||m.content.includes('\0'))||
+  !Number.isInteger(maxCompletionTokens)||maxCompletionTokens<16||maxCompletionTokens>4096||maxCompletionTokens>route.completionCapacity||maxCompletionTokens>=route.contextLength!||
+  Buffer.byteLength(JSON.stringify(messages),'utf8')>(structured?131_072:32_768))throw new FoundationError(413,'The text request exceeds this model profile’s payload or output limits. Narrow the input or choose another model.');
+}
+export function executionBody(messages:RenderedInput,route:RouteSnapshot,maxCompletionTokens:number,runId:string,actor:string,structured=false){
+  validateExecutionPayload(messages,route,maxCompletionTokens,structured);
   return {model:route.model,messages,max_completion_tokens:maxCompletionTokens,stream:false,service_tier:'default',
     provider:{only:[route.tag],order:[route.tag],allow_fallbacks:false,require_parameters:true,
       max_price:{prompt:exactJsonNumber(decimalText(route.promptPrice,true)),completion:exactJsonNumber(decimalText(route.completionPrice,true)),request:exactJsonNumber(route.requestPrice)}},
-    session_id:runId,user:actor};
+    session_id:runId,user:actor,...(route.profile===openRouterTextProfile?{plugins:[{id:'context-compression',enabled:false}]}:{})};
 }
