@@ -116,6 +116,16 @@ try {
   assert.equal(await page.getByLabel('Conversion value',{exact:true}).inputValue(),'signup')
   assert.equal(new URL(page.url()).searchParams.get('attributionQuery'),attributionIntent)
   console.log('PASS navigation: compiled parent loads Attribution with its exact applied conversion/model/dates and preserves them on reload.')
+  const revenueIntent=new URLSearchParams({from:'2024-03-01',to:'2024-03-07',timeZone:'Asia/Dubai',kind:'all',currency:'AED'}).toString()
+  await page.goto(href(a.id,a1,'revenue')+'&'+new URLSearchParams({revenueQuery:revenueIntent}))
+  await page.getByRole('region',{name:'Revenue result',exact:true}).waitFor()
+  assert.equal(await page.getByLabel('Currency',{exact:true}).inputValue(),'AED')
+  assert.equal(new URL(page.url()).searchParams.get('revenueQuery'),revenueIntent)
+  await page.reload()
+  await page.getByRole('region',{name:'Revenue result',exact:true}).waitFor()
+  assert.equal(await page.getByLabel('Time zone',{exact:true}).inputValue(),'Asia/Dubai')
+  assert.equal(new URL(page.url()).searchParams.get('revenueQuery'),revenueIntent)
+  console.log('PASS navigation: compiled parent preserves Revenue dates,timezone,currency and applied scope through project resolution and reload.')
   await page.goto(href(a.id, a2, 'events')); await heading('Recent events')
   await selected(a.id, a2, 'events'); await page.reload(); await heading('Recent events'); await selected(a.id, a2, 'events')
   await page.goto(href(a.id, a2, 'events') + '&invite=synthetic&token=synthetic&returnTo=https%3A%2F%2Fexample.test')
@@ -156,7 +166,7 @@ try {
   console.log('PASS navigation: malformed, foreign and forbidden targets canonicalize before protected panels mount.')
 
   const families = ['Measure', 'Research', 'Connect']
-  const commonSections = ['Analytics', 'Realtime', 'Compare', 'Explore', 'Sessions', 'Attribution', 'Journeys', 'Retention', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'Keywords', 'Rank tracking', 'Google connections', 'Meta ads', 'Meta reports', 'Install tracker', 'Collection and privacy']
+  const commonSections = ['Analytics', 'Realtime', 'Compare', 'Explore', 'Sessions', 'Attribution', 'Journeys', 'Retention', 'Revenue', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'Keywords', 'Rank tracking', 'Google connections', 'Meta ads', 'Meta reports', 'Install tracker', 'Collection and privacy']
   for (const [workspace, projectId, isOwner] of [[a.id, a1, true], [b.id, b1, false]] as const) {
     await page.goto(href(workspace, projectId, 'events')); await heading('Recent events'); await menu()
     const sections = page.getByRole('navigation', { name: 'Project sections', exact: true })

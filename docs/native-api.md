@@ -1,6 +1,6 @@
 # Native bearer API contract
 
-This development increment documents 21 implemented operations: 14 project/team/analytics operations, including Journeys, observed-key Retention and observed Attribution, and seven authored-prompt operations. It does not complete the 81-requirement register, provide MCP transport, expose paid prompt execution, or implement a generic HTTP batch dispatcher.
+This development increment documents 24 implemented operations: 17 project/team/analytics operations, including Journeys, observed-key Retention, observed Attribution and three current-period Revenue readers, and seven authored-prompt operations. It does not complete the 81-requirement register, expose paid prompt execution, or implement a generic HTTP batch dispatcher. The separately documented MCP transport has its own fixed tool inventory.
 
 `GET /api/openapi.json` returns a static OpenAPI 3.1.2 document before configuration, database readiness and installation setup checks. It accepts no query or body, uses relative server `/`, and does not reflect request hosts or credentials. Other methods return 405. There is no hosted documentation renderer, CDN or automatic provider request. The document describes bearer access; browser cookie routes and the separate public tracker are not its inventory.
 
@@ -13,7 +13,7 @@ Send one `Authorization: Bearer <token>` header without cookies or alternate key
 | `projects:read` | List workspace projects |
 | `projects:write` | Create project |
 | `team:read` | Read team; current owner/admin required |
-| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, observed-key Retention, observed Attribution, Explorer, sessions, session details and explicitly linked activity |
+| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, observed-key Retention, observed Attribution, Revenue summary/key list/key activity, Explorer, sessions, session details and explicitly linked activity |
 | `events:write` | Record API observation |
 | `prompts:read` | List/search prompts, read prompt, list text versions |
 | `prompts:write` | Create 1–100 prompts atomically, update, archive, restore |
@@ -61,6 +61,10 @@ The full eligible population is aggregated before the top 100 typed prefixes, wi
 ## Observed-key Retention
 
 `GET /api/projects/{projectId}/retention-report` requires explicit `month` and `timeZone`, plus optional Explorer entry filters and exact saved-cohort revision. It accepts no body, `from`/`to`, grouping or pagination; the encoded query is bounded to 20,000 characters. It returns all local dates and ten exact return offsets inside the same month. These cohorts describe each rotating key's first retained matching date, with unfiltered returns; they are not first-ever users and do not merge explicit identity links. Incomplete assignment suppresses rates, while missing identity/history and known zero remain distinct. Entry, qualification and return scans share a receipt-time fence. The complete JSON is bounded to 512 KiB including a same-snapshot CSV bounded to 256 KiB. Current authorization and per-user/key limits apply. See [Retention](retention-report.md) for timing, coverage and UI contracts.
+
+## Recorded Revenue comparison
+
+Only GET /api/projects/{projectId}/revenue accepts optional compare=prev|yoy; omission is Off. Current input dates remain at most366 local calendar dates, while a derived prior year can contain367. One report snapshot/fence/cutoff covers both periods and returns a prior summary plus five exact changes. Incomplete or ongoing evidence suppresses deltas; percentages require a strictly positive previous value. The complete paired JSON retains the2MiB ceiling. Series, dimensions, initial keys and all sessions/detail/search/paging remain current-period only; those subordinate endpoints reject compare. See [Revenue](revenue.md) for exact money, evidence, authority and UI contracts.
 
 ## Schema coverage and source mapping
 

@@ -4,8 +4,8 @@ import {geographyProjectionSql,geographyFilterSql} from './geography-sql.ts';
 // Shared event population and local-calendar boundaries for analytics reports.
 // PostgreSQL ambiguous/gap midnight behavior is covered by the Explorer fixtures.
 // Parameter slots3/4/5 are from, to and IANA timezone, shared with Explorer.
-export const analyticsCalendarSql = `raw_days AS (
-      SELECT day,day AT TIME ZONE $5 AS nominal FROM generate_series($3::date::timestamp,($4::date+1)::timestamp,interval '1 day') day
+function calendarSql(from:string,to:string){return `raw_days AS (
+      SELECT day,day AT TIME ZONE $5 AS nominal FROM generate_series(${from}::timestamp,(${to}+1)::timestamp,interval '1 day') day
     ), exact_days AS MATERIALIZED (
       SELECT day,nominal,min(candidate) FILTER (WHERE candidate AT TIME ZONE $5=day) AS instant,
         max(candidate) FILTER (WHERE candidate AT TIME ZONE $5=day) AS last_instant
@@ -26,14 +26,15 @@ export const analyticsCalendarSql = `raw_days AS (
       SELECT day,instant AS start,lead(last_instant) OVER(ORDER BY day) AS finish FROM midnights
     ), bounds AS (
       SELECT min(instant) AS start,max(last_instant) AS finish FROM midnights
-    )`;
+    )`;}
+export const analyticsCalendarSql=calendarSql('$3::date','$4::date');
 
-export const analyticsScopeSql = `WITH RECURSIVE target AS MATERIALIZED (
+function scopeSql(calendar:string,from:string,to:string){return `WITH RECURSIVE target AS MATERIALIZED (
       SELECT p.id,p.origin,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
-    ), ${analyticsCalendarSql}, geography_candidates AS MATERIALIZED (
+    ), ${calendar}, geography_candidates AS MATERIALIZED (
       SELECT e.*,g.geography,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN target p ON p.id=e.project_id CROSS JOIN bounds b CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
       WHERE e.received_at>=b.start AND e.received_at<b.finish AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
-        AND (e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date
+        AND (e.received_at AT TIME ZONE $5)::date BETWEEN ${from} AND ${to}
         AND ($6='all' OR ($6='pageviews' AND e.event_name='page_view') OR ($6='custom' AND e.event_name<>'page_view'))
         AND (NOT $7::jsonb ? 'eventName' OR e.event_name=$7::jsonb->>'eventName')
         AND (NOT $7::jsonb ? 'path' OR e.path=$7::jsonb->>'path')
@@ -49,7 +50,10 @@ export const analyticsScopeSql = `WITH RECURSIVE target AS MATERIALIZED (
         AND (NOT $7::jsonb ? 'campaignTerm' OR e.dimensions->'campaign'->>'term'=$7::jsonb->>'campaignTerm')
         AND (NOT $7::jsonb ? 'campaignContent' OR e.dimensions->'campaign'->>'content'=$7::jsonb->>'campaignContent')
         AND ($8::text IS NULL OR CASE WHEN $9='missing' THEN NOT e.properties ? $8 ELSE e.properties->$8=jsonb_build_object('type',$9::text,'value',$10::jsonb) END)
-    ), scope AS MATERIALIZED (SELECT * FROM geography_candidates WHERE ${geographyFilterSql('$7::jsonb')})`;
+    ), scope AS MATERIALIZED (SELECT * FROM geography_candidates WHERE ${geographyFilterSql('$7::jsonb')})`;}
+export const analyticsScopeSql=scopeSql(analyticsCalendarSql,'$3::date','$4::date');
+// Closed Revenue-only expressions; no caller-controlled identifiers or date rebasing.
+export const analyticsRevenuePeriodScopeSql=scopeSql(calendarSql('revenue_period.from_day','revenue_period.to_day'),'revenue_period.from_day','revenue_period.to_day');
 
 export function analyticsScopeValues(projectId:string,userId:string,query:ReturnType<typeof explorerQuery>):unknown[] {
   return [projectId,userId,query.from,query.to,query.timeZone,query.kind,JSON.stringify(query.filters),query.property?.key??null,query.property?.type??null,JSON.stringify(query.property?.value??null)];
