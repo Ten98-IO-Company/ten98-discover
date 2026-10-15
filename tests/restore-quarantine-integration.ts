@@ -27,8 +27,9 @@ globalThis.fetch = async () => { unexpected++; throw new Error('External traffic
 const send: typeof fetch = async (address, options) => {
   assert.equal(options?.redirect, 'error'); assert.equal(options?.credentials, 'omit');
   const path = String(address);
+  if (path === 'https://openrouter.ai/api/v1/models?output_modalities=text&offset=0&limit=500') return Response.json({ data: [{ id: 'openai/gpt-4o-mini', canonical_slug: 'openai/gpt-4o-mini', name: 'openai/gpt-4o-mini', architecture: { input_modalities: ['text'], output_modalities: ['text'] }, context_length: 128000, top_provider: { max_completion_tokens: 16384 }, supported_parameters: ['max_tokens'], pricing: { prompt: '0.00000015', completion: '0.0000006', request: '0' } }], total_count: 1, links: { next: null } });
   if (path === 'https://openrouter.ai/api/v1/key') return Response.json({ data: { is_free_tier: false, is_management_key: false } });
-  if (path === 'https://openrouter.ai/api/v1/models/openai/gpt-4o-mini/endpoints') return Response.json({ data: { id: 'openai/gpt-4o-mini', endpoints: [{
+  if (path === 'https://openrouter.ai/api/v1/models/openai/gpt-4o-mini/endpoints') return Response.json({ data: { id: 'openai/gpt-4o-mini', architecture: { input_modalities: ['text'], output_modalities: ['text'] }, endpoints: [{
     tag: 'openai', provider_name: 'OpenAI', model_id: 'openai/gpt-4o-mini', status: 0, context_length: 128000,
     max_prompt_tokens: null, max_completion_tokens: 16384, supported_parameters: ['max_tokens'],
     pricing: { prompt: '0.00000015', completion: '0.0000006', input_cache_read: '0.000000075', discount: 0 },

@@ -23,7 +23,7 @@ test('suggestion candidates have permanent identities; model syntax alone cannot
   await refreshOpenRouterCatalog(async()=>Response.json({data:[{id:candidate,canonical_slug:candidate,name:'Synthetic candidate',context_length:128000,top_provider:{max_completion_tokens:4096},architecture:{input_modalities:['text'],output_modalities:['text']},supported_parameters:['max_tokens'],pricing:{prompt:'1e-7',completion:'4e-7'}}],total_count:1,links:{next:null}}));
   let paid=0;await assert.rejects(readOpenRouterRoutes({apiKey:'synthetic'},[candidate],16,async(url)=>{
    const address=String(url);if(address.endsWith('/key'))return Response.json({data:{is_free_tier:false,is_management_key:false}});
-   if(address.endsWith('/endpoints')){const body:any=endpoint();body.data.id=candidate;body.data.endpoints[0].model_id=candidate;body.data.endpoints[0].pricing.overrides=[];return Response.json(body);}
+   if(address.endsWith('/endpoints')){const body:any=endpoint();body.data.architecture={input_modalities:['text'],output_modalities:['text']};body.data.id=candidate;body.data.endpoints[0].model_id=candidate;body.data.endpoints[0].pricing.overrides=[];return Response.json(body);}
    paid++;throw Error('No paid request permitted.');
   },openRouterTextProfile),{status:502});assert.equal(paid,0);
  }

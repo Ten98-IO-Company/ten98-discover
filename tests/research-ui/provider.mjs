@@ -37,13 +37,18 @@ export function createSyntheticProviderFetch({allowDispatch=false,promptMode='ok
       assert.equal(init.method,'POST');record('keyword-reconcile');
       return free(readdirSync(receipts).filter(name=>/^keyword-[a-f0-9-]+\.json$/.test(name)).map(name=>JSON.parse(readFileSync(resolve(receipts,name),'utf8'))));
     }
+    if(address===or+'models?output_modalities=text&offset=0&limit=500'){
+      assert.equal(init.method??'GET','GET');record('prompt-catalog');
+      const data=models.map(model=>({id:model,canonical_slug:model,name:model,architecture:{input_modalities:['text'],output_modalities:['text']},context_length:128000,top_provider:{max_completion_tokens:16384},supported_parameters:['max_tokens'],pricing:{prompt:'0.00000015',completion:'0.0000006',request:'0'}}));
+      return Response.json({data,total_count:data.length,links:{next:null}});
+    }
     if(address===or+'key'){
       assert.equal(init.method??'GET','GET');record('prompt-account');return Response.json({data:{is_free_tier:false,is_management_key:false}});
     }
     const model=models.find(model=>address===or+'models/'+model+'/endpoints');
     if(model){
       assert.equal(init.method??'GET','GET');record('prompt-route');
-      return Response.json({data:{id:model,endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens'],pricing:{prompt:'0.00000015',completion:'0.0000006',input_cache_read:'0.000000075',discount:0}}]}});
+      return Response.json({data:{id:model,architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens'],pricing:{prompt:'0.00000015',completion:'0.0000006',input_cache_read:'0.000000075',discount:0}}]}});
     }
     if(address.startsWith(or+'generation?')){
       const url=new URL(address),id=url.searchParams.get('id');
