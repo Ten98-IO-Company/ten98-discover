@@ -94,7 +94,8 @@ export async function runEnvironmentChecks(){
   const chromeRow=all.environment.browsers.find((r:any)=>r.value==='chrome');
   assert.deepEqual(chromeRow,{value:'chrome',pageViews:3,identifiedPageViews:3,visitors:2,visits:2,bounceRate:50,averageVisitSeconds:5});
   assert.equal(all.environment.browsers[0].value,'chrome');assert.equal(all.environment.browsers[1].value,'firefox');
-  assert.equal(all.environment.browsers.find((r:any)=>r.value==='unknown').visitors,null);assert.equal(all.environment.browsers.find((r:any)=>r.value===null).pageViews,2);
+  const unknownRow=all.environment.browsers.find((r:any)=>r.value==='unknown'),missingRow=all.environment.browsers.find((r:any)=>r.value===null);assert.ok(unknownRow);assert.ok(missingRow);
+  assert.equal(unknownRow.visitors,null);assert.equal(missingRow.pageViews,2);
   for(const rows of [all.environment.browsers,all.environment.operatingSystems,all.environment.devices])assert.equal(rows.reduce((n:number,r:any)=>n+r.pageViews,0),7);
   const filtered=await report({browser:'chrome',os:'Windows 10',device:'desktop'});
   assert.deepEqual(filtered.totals,{pageViews:3,customEvents:1});assert.deepEqual(filtered.pages,[{path:'/chrome',pageViews:3}]);assert.deepEqual(filtered.events,[{name:'signup',count:1}]);
