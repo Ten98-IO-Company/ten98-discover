@@ -21,6 +21,9 @@ import ReportsPanel from '../components/ReportsPanel'
 import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
 import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
+import { AccountPreferencesPanel } from '../components/AccountPreferencesPanel'
+import { AccountPresentationContext, requestAccountPreferences } from '../lib/account-presentation'
+import type { AccountPreferencesDto } from '../lib/account-preferences'
 import { ApiKeysPanel } from '../components/ApiKeysPanel'
 import { ProviderPanel } from '../components/ProviderPanel'
 import { RetentionPanel } from '../components/RetentionPanel'
@@ -119,6 +122,10 @@ function App() {
   const [view, updateView] = useState<AppView>('project')
   const [analyticsApplied,setAnalyticsApplied]=useState<{userId:string;projectId:string;from:string;to:string}|null>(null)
   const rememberAnalyticsRange=useCallback((userId:string,projectId:string,range:{from:string;to:string})=>setAnalyticsApplied(previous=>previous?.userId===userId&&previous.projectId===projectId&&previous.from===range.from&&previous.to===range.to?previous:{userId,projectId,...range}),[])
+  const [accountPreferences,setAccountPreferences]=useState<{data:AccountPreferencesDto|null;loading:boolean;error:string}>({data:null,loading:false,error:''})
+  const preferencesRequest=useRef<AbortController|null>(null)
+  const preferencesGeneration=useRef(0)
+  const preferencesEntry=useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const mainRef = useRef<HTMLElement>(null)
   function showView(next: AppView) {
@@ -235,9 +242,44 @@ function App() {
     }
   }
 
+  async function loadAccountPreferences(expectedUserId=currentMe.current?.user.id):Promise<void> {
+    if(!expectedUserId)return
+    const session=sessionGeneration.current,generation=++preferencesGeneration.current,controller=new AbortController()
+    preferencesRequest.current?.abort();preferencesRequest.current=controller
+    setAccountPreferences(previous=>({data:previous.data?.user.id===expectedUserId?previous.data:null,loading:true,error:''}))
+    const current=()=>!controller.signal.aborted&&preferencesRequest.current===controller&&preferencesGeneration.current===generation&&sessionGeneration.current===session&&currentMe.current?.user.id===expectedUserId
+    try {
+      const data=await requestAccountPreferences(controller.signal)
+      if(!current())return
+      if(data.user.id!==expectedUserId){resetSession();return}
+      setAccountPreferences({data,loading:false,error:''})
+      const next={...currentMe.current!,user:{...currentMe.current!.user,name:data.user.name}}
+      currentMe.current=next;setMe(next)
+    }catch(error){
+      if(!current())return
+      if(error instanceof ApiError&&error.status===401){resetSession();return}
+      const denied=error instanceof ApiError&&[403,404].includes(error.status)
+      setAccountPreferences(previous=>({data:!denied&&previous.data?.user.id===expectedUserId?previous.data:null,loading:false,error:errMsg(error)}))
+    }finally{if(current())preferencesRequest.current=null}
+  }
+
+  useEffect(()=>{
+    const entering=view==='preferences'&&!preferencesEntry.current
+    preferencesEntry.current=view==='preferences'
+    if(entering&&phase==='app')void loadAccountPreferences()
+  },[view,phase])
+  useEffect(()=>{
+    document.documentElement.dataset.theme=phase==='app'&&accountPreferences.data!==null&&accountPreferences.data.user.id===me?.user.id?accountPreferences.data.preferences.theme:'light'
+    return()=>{document.documentElement.dataset.theme='light'}
+  },[phase,me?.user.id,accountPreferences.data])
+  useEffect(()=>()=>{preferencesGeneration.current++;preferencesRequest.current?.abort()},[])
+
   function enterApp(m: Me) {
     oidcFactor.current = false
+    if (currentMe.current?.user.id === m.user.id) m.user.name = currentMe.current.user.name
     currentMe.current = m; setMe(m)
+    preferencesEntry.current=intent.current.search.view==='preferences'
+    void loadAccountPreferences(m.user.id)
     applyCallback(m)
     setPhase('app')
     applyNavigation(m)
@@ -290,6 +332,8 @@ function App() {
 
   function resetSession() {
     sessionGeneration.current += 1; bootGeneration.current += 1
+    preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;preferencesEntry.current=false
+    setAccountPreferences({data:null,loading:false,error:''})
     callback.current = null
     oidcFactor.current = false; oidcProof.current = undefined; setOidcProofId(undefined)
     activeWorkspace.current = ''
@@ -409,6 +453,7 @@ function App() {
       const m = await api<Me>('/api/me')
       if (sessionGeneration.current !== session) return
       if (m.user.id !== expectedUser) { resetSession(); return }
+      if (currentMe.current?.user.id === m.user.id) m.user.name = currentMe.current.user.name
       currentMe.current = m; setMe(m)
       if (preferredId && intent.current.generation === navigation && m.workspaces.some(w => w.id === preferredId)) go({ workspace: preferredId, view: 'project' })
       applyNavigation(m)
@@ -491,18 +536,28 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
-  const pageTitles: Record<AppView, string> = {revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageTitles: Record<AppView, string> = {revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
     if(!['project','compare'].includes(view)||search.workspace!==workspaceId||search.project!==project?.id)return target(next);
     const {analyticsCompare,analyticsDimension,...report}=analyticsNavigation(search),applied=analyticsApplied?.userId===me?.user.id&&analyticsApplied?.projectId===project?.id?analyticsApplied:null,to=report.analyticsTo??applied?.to??new Date().toISOString().slice(0,10),from=report.analyticsFrom??applied?.from??new Date(Date.parse(`${to}T00:00:00Z`)-6*864e5).toISOString().slice(0,10);
     return {...target(next),...report,...report.analyticsInvalid?{}:{analyticsFrom:from,analyticsTo:to},...next==='compare'?{...(analyticsCompare?{analyticsCompare}:{}),...(analyticsDimension?{analyticsDimension}:{})}:{}};
   }
-  const pageScope = view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' || view === 'meta-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
+  const pageScope = view === 'preferences' || view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' || view === 'meta-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
   const projectDescriptions: Partial<Record<AppView, string>> = {revenue:'Review recorded sales and refunds in one currency.',attribution: 'Compare recorded sources for your chosen conversion.', journeys: 'See frequent matching steps in retained native visits.', project: 'Understand how people find and use your website.', 'visitor-retention': 'See whether observed visitor keys return on later days.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', 'ai-search': 'Inspect explicitly captured ChatGPT consumer-search answers and their reported queries.', 'ai-insights': 'Review mentions and citations in retained prompt answers using current project context.', google: 'Import Search Console and GA4 reports without changing browser tracking.', sessions: 'Explore retained activity grouped by observed visitor keys. These keys are estimates and can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
+  const presentation={...accountPreferences,reload:()=>loadAccountPreferences(me!.user.id),accept:(data:AccountPreferencesDto)=>{
+    if(sessionGeneration.current!==renderedSession||currentMe.current?.user.id!==me!.user.id||data.user.id!==me!.user.id)return false
+    preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null
+    setAccountPreferences({data,loading:false,error:''})
+    const next={...currentMe.current,user:{...currentMe.current.user,name:data.user.name}};currentMe.current=next;setMe(next)
+    return true
+  },unavailable:(message:string)=>{
+    if(sessionGeneration.current!==renderedSession||currentMe.current?.user.id!==me!.user.id)return
+    preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;setAccountPreferences({data:null,loading:false,error:message})
+  }}
   return (
-    <div className='shell'>
+    <AccountPresentationContext.Provider value={presentation}><div className='shell'>
       <a className='skip-link' href='#main-content' onClick={(event) => { event.preventDefault(); mainRef.current?.focus() }}>Skip to main content</a>
       <aside className='side' aria-label='Application navigation'>
         <div className='brand-row'><p className='brand'><span className='brand-mark' aria-hidden='true'>98</span><span>ten98<span className='brand-product'>monitor</span></span></p>
@@ -577,7 +632,7 @@ function App() {
           <Link className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}>Collection and privacy</Link>
           {['owner','admin'].includes(workspace.role) && <Link className={view === 'domains' ? 'proj active' : 'proj'} aria-current={view === 'domains' ? 'page' : undefined} to='/' search={target('domains')}>Domains</Link>}
         </nav>}
-        <details className='side-foot account-menu' open={view === 'security' || view === 'identity' || view === 'google-app' || view === 'meta-app'}>
+        <details className='side-foot account-menu' open={view === 'preferences' || view === 'security' || view === 'identity' || view === 'google-app' || view === 'meta-app'}>
           <summary className='account-summary' aria-label={`Account: ${me?.user.name || 'Account'}, ${me?.user.email ?? ''}`}>
             <span className='account-summary-text'>
               <span className='hint'>Account</span>
@@ -587,6 +642,7 @@ function App() {
           </summary>
           <div className='account-menu-body'>
           <nav aria-label='Account'>
+            <Link className={view === 'preferences' ? 'proj active' : 'proj'} aria-current={view === 'preferences' ? 'page' : undefined} to='/' search={target('preferences')}>Profile and appearance</Link>
             <Link className={view === 'security' ? 'proj active' : 'proj'} aria-current={view === 'security' ? 'page' : undefined} to='/' search={target('security')}>Account security</Link>
             <Link className={view === 'identity' ? 'proj active' : 'proj'} aria-current={view === 'identity' ? 'page' : undefined} to='/' search={target('identity')}>Identity sign-in</Link>
           </nav>
@@ -621,6 +677,7 @@ function App() {
         </header>}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
+        {view === 'preferences' && me && <AccountPreferencesPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
         {view === 'identity' && me && <>
           <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
@@ -766,7 +823,7 @@ function App() {
 
         </div>
       </main>
-    </div>
+    </div></AccountPresentationContext.Provider>
   )
 }
 

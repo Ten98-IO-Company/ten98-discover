@@ -7,6 +7,7 @@ import { FoundationError, getAuth } from './auth.ts';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { readJson } from './validation.ts';
+import { accountPreferencesDefaults, accountPreferencesDtoSchema, accountPreferencesInputSchema, accountPreferencesMaxRevision, type AccountPreferencesDto } from '../lib/account-preferences.ts';
 
 type Auth = ReturnType<typeof getAuth>;
 const currentPassword = z.string().min(1).max(128);
@@ -190,6 +191,7 @@ export async function applyOidcAccountSecurity(client: PoolClient, request: Requ
 
 export async function handleAccountSecurity(request: Request): Promise<Response | null> {
   const path = new URL(request.url).pathname.replace(/\/$/, '');
+  if (path === '/api/account/preferences') return handleAccountPreferences(request);
   const signIn = path === '/api/auth/sign-in/email';
   const challenge = path === '/api/auth/two-factor/verify-totp' || path === '/api/auth/two-factor/verify-backup-code';
   const status = path === '/api/account/security';
@@ -319,5 +321,50 @@ export async function handleAccountSecurity(request: Request): Promise<Response 
     const data = await response.json();
     await revokeOtherSessions(client, userId, current.session.id);
     return json({ backupCodes: data.backupCodes }, 200, response);
+  });
+}
+
+async function preferencesDto(client:PoolClient,userId:string):Promise<AccountPreferencesDto> {
+  const row=(await client.query(`SELECT u.id,u.name,u.email,p.time_zone,p.locale,p.theme,p.revision,p.updated_at
+    FROM "user" u LEFT JOIN user_preference p ON p.user_id=u.id WHERE u.id=$1`,[userId])).rows[0];
+  if(!row)throw new FoundationError(401,'Sign in to continue.');
+  const result=accountPreferencesDtoSchema.safeParse({version:'account-preferences-v1',user:{id:row.id,name:row.name,email:row.email},preferences:row.revision===null
+    ? {...accountPreferencesDefaults,revision:0,updatedAt:null}
+    : {revision:row.revision,timeZone:row.time_zone,locale:row.locale,theme:row.theme,updatedAt:row.updated_at.toISOString()}});
+  if(!result.success)throw new FoundationError(503,'Saved account preferences are unavailable. Try again.');
+  return result.data;
+}
+
+async function handleAccountPreferences(request:Request):Promise<Response> {
+  if(!['GET','POST'].includes(request.method)){const response=json({error:'Method not allowed.'},405);response.headers.set('allow','GET, POST');return response;}
+  if(new URL(request.url).search)throw new FoundationError(400,'Account preferences do not accept query parameters.');
+  const writing=request.method==='POST';
+  if(writing&&request.headers.get('origin')!==getConfig().appUrl)throw new FoundationError(403,'This action must originate from the application.');
+  if(!writing&&(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0'))throw new FoundationError(400,'Read account preferences without a request body.');
+  const input=writing?parsed(accountPreferencesInputSchema,await readJson(request)):null;
+  const identity=await getAuth().api.getSession({headers:request.headers,query:{disableRefresh:true}});
+  if(!identity)throw new FoundationError(401,'Sign in to continue.');
+  await limit(`account-preferences:${writing?'write':'read'}:${identity.user.id}`,writing?30:120);
+  return transaction(async(client,auth)=>{
+    const binding=(await client.query('SELECT "oidcProviderId" FROM session WHERE id=$1 AND "userId"=$2',[identity.session.id,identity.user.id])).rows[0];
+    const providerId=binding?.oidcProviderId??null;
+    if(providerId){const provider=await client.query('SELECT enabled FROM oidc_provider WHERE id=$1 FOR UPDATE',[providerId]);if(!provider.rows[0]?.enabled)throw new FoundationError(401,'Sign in to continue.');}
+    await client.query('SELECT id FROM "user" WHERE id=$1 FOR UPDATE',[identity.user.id]);
+    // Same provider -> user -> session order as revocation; keep sign-out from racing the save.
+    const locked=(await client.query('SELECT "oidcProviderId" FROM session WHERE id=$1 AND "userId"=$2 AND "expiresAt">clock_timestamp() FOR UPDATE',[identity.session.id,identity.user.id])).rows[0];
+    if(!locked||(locked.oidcProviderId??null)!==providerId)throw new FoundationError(401,'Sign in to continue.');
+    const current=await auth.api.getSession({headers:request.headers,query:{disableRefresh:true}});
+    if(!current||current.user.id!==identity.user.id||current.session.id!==identity.session.id)throw new FoundationError(401,'Sign in to continue.');
+    const before=await preferencesDto(client,current.user.id);
+    if(input===null)return json(before);
+    const previous=before.preferences;
+    if(input.expectedRevision!==previous.revision)throw new FoundationError(409,'Your preferences changed elsewhere. Reload them before saving again.');
+    if(previous.revision>0&&input.name===before.user.name&&input.timeZone===previous.timeZone&&input.locale===previous.locale&&input.theme===previous.theme)return json(before);
+    if(previous.revision===accountPreferencesMaxRevision)throw new FoundationError(409,'The preference revision limit was reached. Contact the installation operator.');
+    const updated=input.name===before.user.name?undefined:await invoke(auth,request,'/update-user',{name:input.name});
+    if(updated&&!updated.ok)throw new FoundationError(503,'Your profile could not be saved. Try again.');
+    await client.query(`INSERT INTO user_preference(user_id,time_zone,locale,theme,revision,updated_at) VALUES($1,$2,$3,$4,1,clock_timestamp())
+      ON CONFLICT(user_id) DO UPDATE SET time_zone=EXCLUDED.time_zone,locale=EXCLUDED.locale,theme=EXCLUDED.theme,revision=user_preference.revision+1,updated_at=clock_timestamp()`,[current.user.id,input.timeZone,input.locale,input.theme]);
+    return json(await preferencesDto(client,current.user.id),200,updated);
   });
 }
