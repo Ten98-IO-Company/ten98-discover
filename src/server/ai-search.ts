@@ -109,9 +109,9 @@ export async function getAiSearch(projectId:string,userId:string,params=new URLS
  });
 }
 export async function getAiSearchRun(projectId:string,userId:string,id:string){parse(z.uuid(),id);return projectGate(projectId,userId,false,async(c,p)=>({role:p.role,run:runDto(p,await runRow(c,p.id,id),userId,true)}));}
-export async function getAiSearchAnalysis(projectId:string,userId:string,params:URLSearchParams):Promise<AiQueryReport>{
- let filters:ReturnType<typeof aiQueryFilters>;try{filters=aiQueryFilters(params);}catch{throw new FoundationError(400,'Check the query analysis filters.');}
- return projectGate(projectId,userId,false,async(c,p)=>{
+/** Internal read leaf: caller holds current authorized W/P locks and owns expiry
+ * latching. No transaction, network, model filtering or report slicing occurs here. */
+export async function readAiSearchAnalysisPopulation(c:PoolClient,p:Project,filters:ReturnType<typeof aiQueryFilters>,materialize=true){
   if(!(await c.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[filters.timeZone])).rowCount)throw new FoundationError(400,'Choose a supported IANA time zone.');
   if(filters.promptId&&!(await c.query('SELECT 1 FROM project_prompt p WHERE p.project_id=$1 AND p.id=$2 AND($3::uuid IS NULL OR EXISTS(SELECT 1 FROM prompt_text_version v WHERE v.project_id=p.project_id AND v.prompt_id=p.id AND v.id=$3))',[p.id,filters.promptId,filters.versionId])).rowCount)throw unavailable();
   const project=(await c.query('SELECT name,origin FROM project WHERE id=$1',[p.id])).rows[0],profile=await contentProfile(c,{...p,...project}),warnings:string[]=[];
@@ -128,13 +128,21 @@ export async function getAiSearchAnalysis(projectId:string,userId:string,params:
   // Count before loading payloads. These are complete-report ceilings, never samples.
   const bounds=(await c.query(`SELECT count(*)::int AS n,COALESCE(sum(bytes),0)::text AS bytes FROM(SELECT CASE WHEN ${expired} THEN 0 ELSE COALESCE(octet_length(q.input::text),0)+COALESCE(octet_length(r.result::text),0)END AS bytes ${population} LIMIT 1001) bounded`,values)).rows[0];
   if(bounds.n>1000||BigInt(bounds.bytes)>10n*1024n*1024n)throw new FoundationError(413,'Narrow the selection. Query analysis exceeds 1000 attempts or 10 MiB of retained evidence.');
-  const stored=(await c.query(`SELECT r.id,q.prompt_id,q.version_id,r.status,to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS requested_at,p.user_tags,q.input_hash,${expired} AS expired,
-   CASE WHEN ${expired} THEN NULL ELSE q.input END AS input,CASE WHEN ${expired} THEN NULL ELSE r.result END AS result,
+  const stored=(await c.query(`SELECT r.id,q.id AS quote_id,q.prompt_id,q.version_id,r.status,to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS requested_at,p.user_tags,q.input_hash,${expired} AS expired,
+   to_char(q.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS quote_created_at,
+   to_char(q.raw_expired_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS raw_expired_at,to_char(q.input_purged_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS input_purged_at,to_char(r.result_purged_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS result_purged_at,
+   CASE WHEN ${expired} OR NOT $9::boolean THEN NULL ELSE q.input END AS input,CASE WHEN ${expired} OR NOT $9::boolean THEN NULL ELSE r.result END AS result,
    CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(r.result::text,'UTF8')),'hex') END AS result_hash,
-   CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(q.input::text,'UTF8')),'hex') END AS input_fingerprint ${population} ORDER BY r.created_at DESC,r.id DESC`,values)).rows;
-  const rows:AiQueryInput[]=stored.map(analysisInput);
+   CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(q.input::text,'UTF8')),'hex') END AS input_fingerprint ${population} ORDER BY r.created_at DESC,r.id DESC`,[...values,materialize])).rows;
+  const rows:AiQueryInput[]|null=materialize?stored.map(analysisInput):null;
   const profileHash=canonicalHash(brand),selectionRevision=canonicalHash({projectId:p.id,filters,range,contextRevision:profile.revision,profileHash,rows:stored.map(r=>({id:r.id,promptId:r.prompt_id,versionId:r.version_id,status:r.status,requestedAt:r.requested_at,tags:r.user_tags,expired:r.expired,inputHash:r.input_hash,inputFingerprint:r.input_fingerprint,resultHash:r.result_hash}))});
-  try{return aiQueryReportSchema.parse(bounded({role:p.role,projectId:p.id,profileId:aiSearchProfileId,asOf,resolvedRange:range,filters,contextRevision:profile.revision,profileHash,selectionRevision,label:'Recomputed from retained captures using current brand context',warnings,brand,...aggregateAiSearchQueries(rows,filters,brand)}));}
+  return {asOf,resolvedRange:range,filters,contextRevision:profile.revision,profileHash,selectionRevision,warnings,brand,rows,receipts:stored.map(({input,result,...receipt})=>receipt)};
+}
+export async function getAiSearchAnalysis(projectId:string,userId:string,params:URLSearchParams):Promise<AiQueryReport>{
+ let filters:ReturnType<typeof aiQueryFilters>;try{filters=aiQueryFilters(params);}catch{throw new FoundationError(400,'Check the query analysis filters.');}
+ return projectGate(projectId,userId,false,async(c,p)=>{
+  const {rows,receipts,...population}=await readAiSearchAnalysisPopulation(c,p,filters);
+  try{return aiQueryReportSchema.parse(bounded({role:p.role,projectId:p.id,profileId:aiSearchProfileId,...population,label:'Recomputed from retained captures using current brand context',...aggregateAiSearchQueries(rows!,filters,population.brand)}));}
   catch(error){if(error instanceof AiQueryCapacityError)throw new FoundationError(413,error.message);if(error instanceof AiQueryDataError||error instanceof z.ZodError)throw new FoundationError(503,'Stored query analysis evidence is inconsistent. Try a narrower selection.');throw error;}
  });
 }
