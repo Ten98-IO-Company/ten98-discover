@@ -1,6 +1,6 @@
 # Native bearer API contract
 
-This development increment documents 18 implemented operations: 11 existing project/team/analytics operations and seven authored-prompt operations. It does not complete the 81-requirement register, provide MCP transport, expose paid prompt execution, or implement a generic HTTP batch dispatcher.
+This development increment documents 19 implemented operations: 12 project/team/analytics operations, including Journeys, and seven authored-prompt operations. It does not complete the 81-requirement register, provide MCP transport, expose paid prompt execution, or implement a generic HTTP batch dispatcher.
 
 `GET /api/openapi.json` returns a static OpenAPI 3.1.2 document before configuration, database readiness and installation setup checks. It accepts no query or body, uses relative server `/`, and does not reflect request hosts or credentials. Other methods return 405. There is no hosted documentation renderer, CDN or automatic provider request. The document describes bearer access; browser cookie routes and the separate public tracker are not its inventory.
 
@@ -13,7 +13,7 @@ Send one `Authorization: Bearer <token>` header without cookies or alternate key
 | `projects:read` | List workspace projects |
 | `projects:write` | Create project |
 | `team:read` | Read team; current owner/admin required |
-| `analytics:read` | Recent events, overview/comparison, realtime, Explorer, sessions, session details and explicitly linked activity |
+| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, Explorer, sessions, session details and explicitly linked activity |
 | `events:write` | Record API observation |
 | `prompts:read` | List/search prompts, read prompt, list text versions |
 | `prompts:write` | Create 1–100 prompts atomically, update, archive, restore |
@@ -50,6 +50,14 @@ Search has a 2048-byte raw UTF-8 ceiling, then trims and normalizes NFC before e
 
 One aggregate SQL statement refreshes the parent overview, both periods when comparing, and the selected `geographyDetail`. Detail identifies its actual period/dates, normalized search, generation time, matching/returned counts and truncation. Unavailable history yields no rows and null counts; retained empty results yield zero counts. Generation time is not an event-time upper bound or a replay token. Coverage and provenance remain in the selected parent period. Calls without `geoDetail` retain their previous response shape; country detail remains its complete bounded parent report. See [geography](analytics-geography.md) for the full contract and returned-row CSV scope.
 
+## Observed Journeys
+
+`GET /api/projects/{projectId}/journeys` uses current workspace membership and `analytics:read`. It reuses the Explorer population date/timezone/kind/exact/property/advanced/cohort filters, without grouping. Optional `steps` is one ASCII digit from 2–7, default 3. Optional `startKind`/`startValue` and `endKind`/`endValue` are atomic pairs: omit both or supply both. `pageview` values are literal pathnames starting with `/`, at most 2048 UTF-16 code units, without query/fragment, NUL or isolated surrogates. `custom` values follow the native 1–64-character ASCII event-name grammar and exclude `page_view`. Values are not trimmed. Start/end constrain the first/last shown step without re-anchoring; incompatible otherwise-valid type/start/end selections yield an empty intersection.
+
+Only the listed parameters are accepted, each once; no body, grouping, cursor, limit or sort. The serialized query ceiling is 65,536 characters, with the inherited Explorer subset still limited to 20,000. The reader rechecks authority after workspace lock admission and at its report statement clock. Existing five-second statement/lock ceilings and 30 requests/user/minute apply alongside the API-key budget; these are not total-request deadlines.
+
+The full eligible population is aggregated before the top 100 typed prefixes, with total/displayed/omitted counts. The unit is an observed native visitor/visit key pair; rotating keys do not identify people or complete sessions. Adjacent equal typed matching observations collapse before the step cap. Edges mean next matching retained observations, not causal transitions or proven exits. `selection.evidenceIncomplete` discloses incomplete selection/history/identity evidence; missing observations can move visits between paths, so path assignments are not guaranteed lower bounds. Retained empty data may yield zero, while unavailable visit/path/ranking values stay null. `asOf` is report/authority time, not an event-time fence. The complete JSON reply is bounded to 12 MiB (12,582,912 UTF-8 bytes); excess returns 503 rather than hidden truncation. See [Journeys](journeys.md) for timing ties, coverage and reference differences.
+
 ## Schema coverage and source mapping
 
 `src/server/openapi.ts` has exact operation paths, permission requirements, prompt wire fields and batch bounds. It intentionally leaves complex analytics, team, project and nested classification responses broad; it is not a complete generated SDK schema. Cross-field rules, Unicode normalization, canonical geography JSON, retention and cursor validation remain authoritative in the implementations. Native unknown/unavailable values must not be converted to zero.
@@ -61,8 +69,9 @@ One aggregate SQL statement refreshes the parent overview, both periods when com
 | `validation.ts`, `native-analytics.ts` | Project input and API observation validation |
 | `analytics.ts`, `analytics-comparison.ts` | Overview filters and paired periods |
 | `realtime.ts`, `explorer-input.ts`, `session-explorer-input.ts` | Fixed live window, exploration and session query rules |
+| `journeys.ts`, `lib/journeys.ts` | Typed observed-visit prefixes, shared population filters and complete-response ceiling |
 
-See [Explorer](explorer.md), [session evidence](session-explorer.md), [tracking](tracking.md) and [prompt execution](prompt-execution.md) for the separate measurement and paid-execution boundaries. Expanded geography search is part of the existing analytics operation, so the inventory remains 18 operations. Journeys is not in this integrated inventory and must be documented when its supported bearer route is integrated. Compatibility APIs and full upstream MCP tool coverage remain required work.
+See [Explorer](explorer.md), [session evidence](session-explorer.md), [tracking](tracking.md) and [prompt execution](prompt-execution.md) for the separate measurement and paid-execution boundaries. Expanded geography search is part of the existing analytics operation; Journeys adds one operation, bringing the inventory to 19. Compatibility APIs and full upstream MCP tool coverage remain required work.
 
 ## Runnable checks
 

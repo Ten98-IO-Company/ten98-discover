@@ -7,19 +7,36 @@ import {promptBatch,promptPatch} from '../src/server/context-input.ts';
 import {explorerQuery} from '../src/server/explorer-input.ts';
 import {analyticsQuery} from '../src/server/analytics.ts';
 import {geographySearch} from '../src/lib/analytics-geography.ts';
+import {journeysQuery} from '../src/server/journeys.ts';
+import {journeysLimits} from '../src/lib/journeys.ts';
 
-test('static OpenAPI exposes exactly the supported 18 native operations with local references',()=>{
+test('static OpenAPI exposes exactly the supported 19 native operations with local references',()=>{
  assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
  const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
   assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
   assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
   const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
  }
- assert.equal(ids.length,18);assert.equal(new Set(ids).size,18);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ assert.equal(ids.length,19);assert.equal(new Set(ids).size,19);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
+ assert.deepEqual(ids.filter(id=>id!=='readJourneys').sort(),prior.sort());assert.equal(ids.filter(id=>id==='readJourneys').length,1);
  const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
  const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
  assert.ok(params.some(x=>x.name==='eventName'));assert.ok(!params.some(x=>x.name==='event'||x.name==='screenWidth'));
  assert.equal(explorerQuery(new URLSearchParams({eventName:'signup'})).filters.eventName,'signup');
+});
+test('Journeys specification reuses population filters with closed typed first/last step pairs',()=>{
+ const operation=nativeOpenApi.paths['/api/projects/{projectId}/journeys'].get,params=operation.parameters as any[],schema=(name:string)=>params.find(x=>x.name===name)?.schema;
+ assert.deepEqual(operation['x-ten98-scopes'],['analytics:read']);assert.equal(Object.hasOwn(operation,'requestBody'),false);
+ const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['groupBy','groupProperty'].includes(x.name));
+ assert.deepEqual(params.filter(x=>!['steps','startKind','startValue','endKind','endValue'].includes(x.name)),inherited);
+ assert.equal(schema('steps').minimum,2);assert.equal(schema('steps').maximum,journeysLimits.steps);assert.equal(schema('steps').default,journeysQuery(new URLSearchParams()).steps);
+ assert.match(operation.description,new RegExp(String(journeysLimits.responseBytes)));
+ for(const prefix of ['start','end'])assert.deepEqual(schema(prefix+'Kind').enum,['pageview','custom']);
+ for(const steps of [schema('steps').minimum,schema('steps').maximum])for(const kind of schema('startKind').enum){const value=kind==='pageview'?'/literal%25':'signup',result=journeysQuery(new URLSearchParams({steps:String(steps),startKind:kind,startValue:value,endKind:kind,endValue:value,kind:'pageviews',timeZone:'Asia/Dubai',browser:'chrome'}));assert.equal(result.steps,steps);assert.deepEqual(result.start,{kind,value});assert.deepEqual(result.end,{kind,value});assert.equal(result.scope.filters.browser,'chrome');assert.equal(result.scope.timeZone,'Asia/Dubai');}
+ const invalid:Record<string,string>[]=[{steps:'1'},{steps:'8'},{steps:'3.0'},{steps:'03'},{startKind:'pageview'},{endValue:'/end'},{startKind:'custom',startValue:'page_view'},{endKind:'pageview',endValue:'/end?query'},{groupBy:'path'},{groupProperty:'plan'},{cursor:'opaque'},{limit:'100'},{sort:'visits'},{compare:'prev'}];
+ for(const value of invalid)assert.throws(()=>journeysQuery(new URLSearchParams(value)));
+ assert.throws(()=>journeysQuery(new URLSearchParams('steps=3&steps=4')));
 });
 test('published batch/patch limits match native strict input and atomic batch semantics',()=>{
  const schemas=nativeOpenApi.components.schemas;assert.equal(schemas.PromptBatch.additionalProperties,false);assert.equal((schemas.PromptBatch.properties.prompts as {maxItems:number}).maxItems,100);
