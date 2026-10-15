@@ -61,7 +61,7 @@ import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,c
 import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
 import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
-import {getContentCoverage,exportContentCoverage} from './ai-content-coverage.ts';
+import {getContentCoverage,exportContentCoverage,getProjectContentCoverage,exportProjectContentCoverage} from './ai-content-coverage.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -579,6 +579,13 @@ export async function handleApi(request: Request): Promise<Response> {
         }
       }
       return json({error:'Method not allowed.'},405);
+    }
+    const projectContentCoverageRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search/content-coverage/project(?:/(export))?$`,'i'));
+    if(projectContentCoverageRoute){
+      if(request.method!=='POST')return json({error:'Method not allowed.'},405);
+      if(url.search)throw new FoundationError(400,'Website-text comparison does not accept URL parameters.');
+      await projectAccess(projectContentCoverageRoute[1],user.id,false);await limit(`ai-search:${user.id}`,30);
+      const input=await readJson(request,8192);return projectContentCoverageRoute[2]?await exportProjectContentCoverage(projectContentCoverageRoute[1],user.id,input,request.signal):json(await getProjectContentCoverage(projectContentCoverageRoute[1],user.id,input,request.signal));
     }
     const contentCoverageRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search/content-coverage(?:/(export))?$`,'i'));
     if(contentCoverageRoute){
