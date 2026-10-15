@@ -40,7 +40,7 @@ export async function inspectGoogleUrls(projectId:string,userId:string,connectio
       const token=await googleAccessToken(client,row,app);
       if(signal.aborted)return skipped(url);
       try{
-        const raw=await googleRequest('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect',token,{inspectionUrl:url,siteUrl:binding!.propertyId,languageCode:input.languageCode},signal);
+        const raw=await googleRequest('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect',token,{inspectionUrl:url,siteUrl:binding!.propertyId,languageCode:input.languageCode},undefined,signal);
         const parsed=googleInspectionResponse.safeParse(raw);
         if(!parsed.success)throw new GoogleRequestError(502);
         return {url,attempted:true as const,result:parsed.data.inspectionResult,error:null};

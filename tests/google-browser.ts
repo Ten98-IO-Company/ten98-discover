@@ -66,7 +66,16 @@ try {
       await page.getByRole('heading', { name: 'Web analytics', exact: true }).waitFor();
       async function navigation() { const toggle = page.getByRole('button', { name: /^(Menu|Close menu)$/ }); if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click(); }
       async function section(name: string) { await navigation(); await page.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click(); }
-      await navigation(); await page.getByText('Workspace settings', { exact: true }).click(); await page.getByRole('link', { name: 'Google app setup', exact: true }).click();
+      async function settings(name: string) {
+        await navigation();
+        const target = page.locator('#app-navigation').getByRole('link', { name, exact: true, includeHidden: true });
+        await target.waitFor({ state: 'attached' });
+        for (const disclosure of await target.locator('xpath=ancestor::details').all()) {
+          if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click();
+        }
+        await target.click();
+      }
+      await settings('Google app setup');
       assert.equal(await page.getByLabel('Client secret', { exact: true }).inputValue(), '');
       assert.equal(await page.getByLabel(/Callback URI/).inputValue(), `${config.appUrl}/api/google/callback`);
       await section('Google reports');
@@ -109,6 +118,11 @@ try {
       await page.setViewportSize({ width: 360, height: 800 });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({ path: 'private/google-browser/mobile.png', fullPage: true });
+      await page.setViewportSize({ width: 320, height: 800 });
+      await page.evaluate(() => { document.documentElement.dir = 'rtl'; document.documentElement.style.zoom = '2'; });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Google forms and the shared header must contain narrow RTL layouts at 200% CSS zoom.');
+      await page.evaluate(() => { document.documentElement.dir = 'ltr'; document.documentElement.style.zoom = ''; });
+      await page.setViewportSize({ width: 360, height: 800 });
       page.once('dialog', (dialog: any) => dialog.accept());
       await connection.getByRole('button', { name: 'Disconnect', exact: true }).click();
       await page.getByText('Disconnected. Google access was not revoked.', { exact: true }).waitFor();
@@ -121,18 +135,17 @@ try {
       await page.goto('about:blank');
       await page.goto(`${config.appUrl}/#google=connected&google-project=${fixture.projectId}&google-workspace=${fixture.workspaceId}`);
       await Promise.race([started, delay(15000).then(() => { throw new Error('Callback project request did not start.'); })]);
-      await navigation();
-      await page.getByRole('link', { name: 'Account security', exact: true }).click();
+      await settings('Account security');
       releaseTarget?.();
       await page.getByRole('heading', { name: 'Account', exact: true }).waitFor();
       await context.unroute(targetPath, holdTarget);
       await delay(150);
       assert.equal(await page.getByRole('heading', { name: 'Google reports', exact: true }).count(), 0, 'Delayed callback project loading must not override newer account navigation.');
-      await navigation();await page.getByRole('button',{name:'Data retention',exact:true}).click();
+      await settings('Data retention');
       await page.getByRole('button',{name:'Preview cleanup',exact:true}).click();
       await page.getByText('0 keyword results eligible.',{exact:true}).waitFor();
       await page.getByText(/finished Google imports eligible/).waitFor();
-      await page.getByText(/used quotes and charge evidence remain as receipts/).waitFor();
+      await page.getByText(/used quote metadata and charge evidence remain as receipts/).waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.screenshot({path:'private/google-browser/retention-mobile.png',fullPage:true});
       await page.setViewportSize({width:1280,height:900});await page.screenshot({path:'private/google-browser/retention-desktop.png',fullPage:true});

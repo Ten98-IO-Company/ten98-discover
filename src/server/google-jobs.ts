@@ -4,9 +4,9 @@ import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
 import { getBoss } from './jobs.ts';
-import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection } from './google.ts';
+import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection, googleAdsConfigured, googleAdsHeaders, googleAdsCustomer } from './google.ts';
 import { GoogleRequestError, googleRequest } from './google-http.ts';
-import { googleImportInput, googleInput, googleReportRequest, googleReports, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
+import { googleImportInput, googleInput, googleReportRequest, googleReports, googleAdsVersion, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
 
 export const googleQueue = 'google-report-import';
 type ImportRow = { id: string; connection_id: string; project_id: string; user_id: string; request_id: string; connection_revision: number; app_revision: number; report: GoogleReport; date_from: string; date_to: string; status: string; pages: number; row_count: number; provider_row_count: number | null; source: Record<string, unknown>; quality: { warnings: string[]; metadata: Record<string, unknown> }; diagnostic: string | null; created_at: Date; completed_at: Date | null; data_expired_at: Date | null };
@@ -18,14 +18,14 @@ export function googleImportDto(row: ImportRow) {
 
 export async function listGoogleConnections(projectId: string, userId: string) {
   return googleProjectTransaction(projectId, userId, false, async (client, _workspaceId, role) => {
-    const app = (await client.query("SELECT revision,enabled,testing FROM google_app WHERE id='instance'")).rows[0];
+    const app = (await client.query("SELECT * FROM google_app WHERE id='instance'")).rows[0];
     const connections = await client.query('SELECT * FROM google_connection WHERE project_id=$1 ORDER BY created_at,id', [projectId]);
     const metadata = [];
     for (const row of connections.rows) {
       const imports = await client.query<ImportRow>(`SELECT ${importFields} FROM google_import i WHERE connection_id=$1 ORDER BY created_at DESC,id DESC LIMIT 20`, [row.id]);
       metadata.push({ ...googleConnectionDto(row, app?.revision), imports: imports.rows.map(googleImportDto) });
     }
-    return { role, app: { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true }, connections: metadata };
+    return { role, app: { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true, adsConfigured: !!app && googleAdsConfigured(app) }, connections: metadata };
   });
 }
 
@@ -41,8 +41,9 @@ export async function enqueueGoogleImport(projectId: string, userId: string, con
     const app = await activeGoogleApp(client);
     if (connection.status !== 'ready' || !connection.property_id || connection.app_revision !== app.revision) throw new FoundationError(409, 'Connect and select an authorized property before importing.');
     if (googleReports[data.report].provider !== connection.provider) throw new FoundationError(400, 'Select a report for this provider.');
+    if (connection.provider === 'ads') googleAdsHeaders(app, connection.login_customer_id ?? undefined);
     if ((await client.query("SELECT 1 FROM google_import WHERE connection_id=$1 AND status IN ('queued','running')", [connectionId])).rowCount) throw new FoundationError(409, 'This connection already has an active import. Wait for it to finish.');
-    const source = { provider: connection.provider, propertyId: connection.property_id, propertyName: connection.property_name, timeZone: connection.time_zone, currencyCode: connection.currency_code };
+    const source = { provider: connection.provider, propertyId: connection.property_id, propertyName: connection.property_name, timeZone: connection.time_zone, currencyCode: connection.currency_code, ...(connection.provider === 'ads' ? { loginCustomerId: connection.login_customer_id, apiVersion: googleAdsVersion, attribution: 'Google Ads conversion settings; not native analytics' } : {}) };
     const id = randomUUID();
     const inserted = (await client.query<ImportRow>(`INSERT INTO google_import AS i(id,connection_id,project_id,user_id,request_id,connection_revision,app_revision,report,date_from,date_to,source)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING ${importFields}`, [id, connectionId, projectId, userId, data.requestId, connection.revision, app.revision, data.report, data.from, data.to, source])).rows[0];
@@ -75,8 +76,9 @@ export async function runGoogleImport(importId: string): Promise<void> {
   try {
     for (;;) {
       await refreshGoogleConnection(initial.project_id, initial.user_id, initial.connection_id);
-      // ponytail: each bounded provider page holds the workspace lock for up to
-      // one 15s request. Split into revocable leases if volume
+      // ponytail: a GSC/GA4 page holds the workspace lock for one bounded 15s
+      // request; Ads uses two independently bounded 15s reads (customer verification
+      // then report). Split into revocable leases if volume
       // makes this brief serialization disruptive; never drop the final recheck.
       const done = await googleProjectTransaction(initial.project_id, initial.user_id, true, async client => {
         const connection = await googleConnection(client, initial.project_id, initial.connection_id);
@@ -86,6 +88,20 @@ export async function runGoogleImport(importId: string): Promise<void> {
         if (row.connection_revision !== connection.revision || row.app_revision !== app.revision || connection.app_revision !== app.revision || connection.status !== 'ready' || !connection.property_id) throw new FoundationError(409, 'Google authorization changed. Reconnect and start a new import.');
         if (row.pages >= 10) throw new Error('Invalid Google import checkpoint.');
         const accessToken = await googleAccessToken(client, connection, app);
+        if (connection.provider === 'ads') {
+          if (row.pages !== 0 || row.row_count !== 0) throw new FoundationError(409, 'The Ads import checkpoint is inconsistent. Start a fresh import.');
+          const customerId = connection.property_id.slice(10), customer = await googleAdsCustomer(accessToken, app, customerId, connection.login_customer_id ?? undefined);
+          if (customer.manager || customer.timeZone !== connection.time_zone || customer.currencyCode !== connection.currency_code) throw new FoundationError(409, 'The Google Ads account settings changed. Add a new source to preserve timezone and currency provenance.');
+          const raw = await googleRequest(`https://googleads.googleapis.com/${googleAdsVersion}/customers/${customerId}/googleAds:search`, accessToken,
+            googleReportRequest(row.report, row.date_from, row.date_to, 0), googleAdsHeaders(app, connection.login_customer_id ?? undefined));
+          const page = normalizeGoogleReport(row.report, raw, row.date_from, row.date_to, customerId), storedPages = Math.max(1, Math.ceil(page.rows.length / 1000));
+          // One bounded provider response is published atomically; its unconsumed
+          // continuation is evidence of a partial import, never a complete report.
+          for (let n = 0; n < storedPages; n++) await client.query('INSERT INTO google_import_page(import_id,page,rows) VALUES($1,$2,$3)', [row.id, n, JSON.stringify(page.rows.slice(n * 1000, (n + 1) * 1000))]);
+          await client.query(`UPDATE google_import SET status=$2,pages=$3,row_count=$4,provider_row_count=$5,quality=$6,diagnostic=NULL,completed_at=now() WHERE id=$1`,
+            [row.id, page.complete ? 'completed' : 'partial', storedPages, page.rows.length, page.rowCount, page.quality]);
+          return true;
+        }
         const endpoint = connection.provider === 'gsc' ? `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(connection.property_id)}/searchAnalytics/query` : `https://analyticsdata.googleapis.com/v1beta/${connection.property_id}:runReport`;
         const raw = await googleRequest(endpoint, accessToken, googleReportRequest(row.report, row.date_from, row.date_to, row.row_count));
         const page = normalizeGoogleReport(row.report, raw, row.date_from, row.date_to);
