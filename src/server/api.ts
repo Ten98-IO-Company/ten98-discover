@@ -3,7 +3,6 @@ import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { z } from 'zod';
 import { getConfig } from './config.ts';
-import {handleMcp} from './mcp.ts';
 import { assertSchema, getDatabase } from './db.ts';
 import { claimInstallation, FoundationError, getAuth } from './auth.ts';
 import { enqueueProbe, reconcileProbes } from './jobs.ts';
@@ -123,7 +122,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const config = getConfig();
     await assertSchema();
-    if(path==='/api/mcp')return await handleMcp(request,config.appUrl,limit);
+    if(path==='/api/mcp')return await (await import('./mcp.ts')).handleMcp(request,config.appUrl,limit);
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
