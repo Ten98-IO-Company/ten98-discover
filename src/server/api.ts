@@ -123,6 +123,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const config = getConfig();
     await assertSchema();
+    if(path==='/api/mcp')return await (await import('./mcp.ts')).handleMcp(request,config.appUrl,limit);
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
