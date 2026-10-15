@@ -1,0 +1,36 @@
+# Native observed Journeys contract
+
+`GET /api/projects/:projectId/journeys` reads retained native visit prefixes. Owners, admins, editors and viewers can read their workspace; API keys need current `analytics:read` in that workspace. It neither changes collection nor calls paid providers.
+
+The route accepts existing Explorer date/timezone/kind/exact/property/advanced/cohort parameters, plus `steps` (2–7, default3) and optional atomic `startKind`/`startValue`, `endKind`/`endValue`. Step kinds are `pageview` (literal pathname) or `custom` (existing native event-name grammar, excluding `page_view`). No caller grouping, cursor, limit, sort or request body is accepted. The whole serialized query is at most65,536 characters; its Explorer subset retains the existing20,000-character bound. Incompatible valid type/start/end filters form an empty intersection rather than silently disappearing.
+
+`src/lib/journeys.ts` defines the browser-safe typed step and response. `src/server/journeys.ts` reuses `explorerQuery`, `analyticsPopulation`, cohort/session-property evidence and the current saved retention watermark. It does not replace the existing local-calendar/DST logic or introduce a fresh retention-policy cutoff. `asOf` is the report/authority instant, not an additional event-receipt bound. Partial/future calendar windows retain existing report semantics.
+
+## Metric and sequence rules
+
+* The unit is an observed native `(visitor_id,visit_id)` pair. Visitor keys rotate monthly and differ between cookieless and consented namespaces. Visits retain the existing hour/context behavior; no new inactivity session or persistent-person identity is inferred.
+* Rows without native browser keys remain in observation coverage but cannot become synthetic visits. API ingestion cannot supply these keys. Explicit identity links are never merged into a Journey.
+* Order matching retained observations by full PostgreSQL `received_at`, then event UUID. Equal-timestamp different-step visit counts are disclosed; UUID tie-breaking does not establish client click order.
+* Collapse adjacent equal typed matching steps before taking the first configured number of runs. Each path retains raw-observation counts per position and its count of visits with further observed steps beyond the displayed cap.
+* Start constrains the first shown step; end constrains the last shown step. They do not re-anchor inside a visit. A short prefix is not a proven exit. Filters, absent tracking, missing identity and retention can omit intervening activity; edges mean **next matching retained observation**.
+* Aggregate the full population before ranking at most100 typed prefixes. Exact total-prefix, matching-visit, displayed-visit and omitted-visit counts make the cap visible. There is no cursor or partial-event sample used to compute totals.
+
+All measurement counts describe observed data, never unique people or complete behavior. `historyComplete:false` and `captureCoverage:'unknown'` are unconditional. “Complete” retention coverage means no clipping by the saved watermark, not proof that every real action was tracked. Pages with matching paths merge across origins unless the existing origin filter narrows scope.
+
+Known empty retained data returns an available empty array and zero counts. All-unkeyed data returns known observation counts but unavailable visit/path/ranking values. Unavailable cohort membership, missing current-property evidence or expired history never renders a zero-flow diagram. Current session-property conditions remain current retained values, not historical event-time values. Geography-qualified results carry actual matching-report-event DB-IP provenance; it does not claim the same build for qualification events.
+
+`selection.evidenceIncomplete` is true when selection is unavailable, retained history is partial, matching observations lack visit keys, or inherited cohort/session-property selection evidence is incomplete. It does not promise lower bounds for paths, prefix counts or first/last-filtered visits: losing the first observation of A→B changes its observed path to B and can increase first=B matches from0 to1. Missing observations can move visits between categories. Existing cohort/session-property evidence flags retain their separate contracts.
+
+## Boundaries and failure behavior
+
+The read uses the existing short workspace SHARE pattern with5-second SQL/lock ceilings, refreshes key/membership authority after waits and checks natural key expiry at the final statement's database clock. Foreign/missing project is404; invalid query/body400; changed cohort revision409; unsupported method405; missing/revoked/expired key401; insufficient key scope403; existing rate limit429; query/result ceiling503. The API handler awaits the promise for shared error mapping. JSON is `no-store`.
+
+At most100×7 steps, each pathname at most2048 UTF-16 code units, are returned. Six JSON bytes per code unit bounds path text at8,601,600 bytes; the fixed12MiB complete-response ceiling also includes bounded query/qualification metadata. Results exceeding the verified ceiling fail503 rather than succeeding with hidden truncation. Existing five-second raw-query ceiling is deliberate; measured rollups can replace raw aggregation if it becomes inadequate. No new dependency, table, cache, worker, replay data or raw network identifiers are introduced.
+
+## Reference and acceptance
+
+Reference flow: Umami3.4.0 commit `ec0ff50388c264ed8ce46f00967e92f7e71476ae`, `JourneysPage`, `Journey`, `useJourneyQuery`, website Journeys GET route and `queries/sql/journeys/getJourney.ts`. The native report follows its steps/start/end/type/column flow. Intentional corrections are typed keys, observed-visit labels, stable timestamp ties, collapse **before** the step cap, explicit top100 coverage and an accessible equivalent table. It is not identical algorithm parity: the reference caps raw observations before collapsing labels and calls its per-visit counts visitors.
+
+Run `node --test tests/journeys.test.ts` for parser/trust boundaries. `tests/journeys-integration.ts` requires an explicitly fresh synthetic55501 database matching `ten98_journeys_<12hex>` plus both test flags; it migrates only an empty fixture. It exercises real SQL ordering, collapse/raw counts,125-prefix ranking,10,005 observations, worst-case escaped strings, inherited filters/cohorts/current-property loss, local dates/retention, non-monotonic path/first-step assignments after retention, read roles, API boundaries and authority changes during actual locks. Synthetic DTO exports are optional private acceptance artifacts.
+
+UI and independent compiled/HTTP acceptance follow backend freeze. Until separately implemented/tested, reference value-search and broad saved-filter/cohort UI affordances remain explicit gaps. This increment does not complete P38 behavioral retention/attribution, other analytics gaps or the full81-feature release.
