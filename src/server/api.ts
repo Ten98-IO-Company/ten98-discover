@@ -15,6 +15,7 @@ import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {projectRealtime} from './realtime.ts';
 import {projectJourneys} from './journeys.ts';
+import {projectRevenue,listRevenueSessions,getRevenueSession}from'./revenue.ts';
 import {projectAttribution} from './attribution.ts';
 import {projectRetentionReport} from './retention-report.ts';
 import { exploreAnalytics } from './explorer.ts';
@@ -128,7 +129,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
       const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
-      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|journeys|attribution|retention-report|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
+      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|journeys|attribution|retention-report|revenue(?:/sessions(?:/[a-f0-9]{64})?)?|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
       const promptApiRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?$`,'i'));
       const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
@@ -756,6 +757,14 @@ export async function handleApi(request: Request): Promise<Response> {
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
         finally { client.release(); }
       }
+    }
+    match=path.match(new RegExp(`^/api/projects/(${id})/revenue(?:/(sessions)(?:/([a-f0-9]{64}))?)?$`,'i'));
+    if(match){
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Revenue accepts query parameters without a request body.');
+      await limit(`revenue:${user.id}`,30);
+      const authority=apiToken?{kind:'api-key' as const,token:apiToken}:{kind:'session' as const,userId:user.id};
+      return json(await(match[3]?getRevenueSession(match[1],match[3],authority,url.searchParams):match[2]?listRevenueSessions(match[1],authority,url.searchParams):projectRevenue(match[1],authority,url.searchParams)));
     }
     match=path.match(new RegExp(`^/api/projects/(${id})/attribution$`,'i'));
     if(match){

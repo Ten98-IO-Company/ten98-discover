@@ -1,6 +1,6 @@
 # Native bearer API contract
 
-This development increment documents 21 implemented operations: 14 project/team/analytics operations, including Journeys, observed-key Retention and observed Attribution, and seven authored-prompt operations. It does not complete the 81-requirement register, provide MCP transport, expose paid prompt execution, or implement a generic HTTP batch dispatcher.
+This development increment documents 24 implemented operations: 17 project/team/analytics operations, including Journeys, observed-key Retention, observed Attribution and three current-period Revenue readers, and seven authored-prompt operations. It does not complete the 81-requirement register, expose paid prompt execution, or implement a generic HTTP batch dispatcher. The separately documented MCP transport has its own fixed tool inventory.
 
 `GET /api/openapi.json` returns a static OpenAPI 3.1.2 document before configuration, database readiness and installation setup checks. It accepts no query or body, uses relative server `/`, and does not reflect request hosts or credentials. Other methods return 405. There is no hosted documentation renderer, CDN or automatic provider request. The document describes bearer access; browser cookie routes and the separate public tracker are not its inventory.
 
@@ -13,7 +13,7 @@ Send one `Authorization: Bearer <token>` header without cookies or alternate key
 | `projects:read` | List workspace projects |
 | `projects:write` | Create project |
 | `team:read` | Read team; current owner/admin required |
-| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, observed-key Retention, observed Attribution, Explorer, sessions, session details and explicitly linked activity |
+| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, observed-key Retention, observed Attribution, Revenue summary/key list/key activity, Explorer, sessions, session details and explicitly linked activity |
 | `events:write` | Record API observation |
 | `prompts:read` | List/search prompts, read prompt, list text versions |
 | `prompts:write` | Create 1–100 prompts atomically, update, archive, restore |

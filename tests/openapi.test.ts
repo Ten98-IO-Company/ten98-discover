@@ -13,17 +13,31 @@ import {retentionReportQuery} from '../src/server/retention-report-input.ts';
 import {retentionLimits} from '../src/lib/retention-report.ts';
 import {attributionQuery} from '../src/server/attribution.ts';
 import {attributionLimits} from '../src/lib/attribution.ts';
+import {revenueQuery} from '../src/server/revenue.ts';
+import {revenueCurrencies,revenueReportLimits} from '../src/lib/revenue.ts';
 
-test('static OpenAPI exposes exactly the supported 21 native operations with local references',()=>{
+test('Revenue inventory matches the three closed native readers and pinned currencies',()=>{
+ const paths=['/api/projects/{projectId}/revenue','/api/projects/{projectId}/revenue/sessions','/api/projects/{projectId}/revenue/sessions/{visitorKey}'] as const;
+ for(const[index,path]of paths.entries()){
+  const op=nativeOpenApi.paths[path].get,params=op.parameters as any[],parameter=(name:string)=>params.find(p=>p.name===name),route=index===0?'report':index===1?'sessions':'detail',key=route==='detail'?'a'.repeat(64):null;
+  assert.deepEqual(op['x-ten98-scopes'],['analytics:read']);assert.equal(Object.hasOwn(op,'requestBody'),false);
+  for(const name of['from','to','timeZone','currency'])assert.equal(parameter(name).required,true);
+  assert.deepEqual(parameter('currency').schema.enum,revenueCurrencies);assert.equal(parameter('pageSize').schema.default,50);assert.match(op.description,new RegExp(String(revenueReportLimits.responseBytes)));
+  for(const currency of['USD','AED','EUR']){const q=new URLSearchParams({from:'2024-03-01',to:'2024-03-07',timeZone:'Asia/Dubai',currency});assert.equal(revenueQuery(q,route,key).currency,currency);for(const[name,value]of[['compare','prev'],['groupBy','event'],['currency','XXX']] as const){const bad=new URLSearchParams(q);bad.set(name,value);assert.throws(()=>revenueQuery(bad,route,key));}}
+  assert.equal(!!parameter('cursor'),route!=='report');assert.equal(!!parameter('search'),route!=='detail');
+ }
+});
+
+test('static OpenAPI exposes exactly the supported 24 native operations with local references',()=>{
  assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
  const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
   assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
   assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
   const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
  }
- assert.equal(ids.length,21);assert.equal(new Set(ids).size,21);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ assert.equal(ids.length,24);assert.equal(new Set(ids).size,24);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
  const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
- assert.deepEqual(ids.filter(id=>!['readJourneys','readRetentionReport','readAttribution'].includes(id)).sort(),prior.sort());for(const name of ['readJourneys','readRetentionReport','readAttribution'])assert.equal(ids.filter(id=>id===name).length,1);
+ assert.deepEqual(ids.filter(id=>!['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession'].includes(id)).sort(),prior.sort());for(const name of ['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession'])assert.equal(ids.filter(id=>id===name).length,1);
  const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
  const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
  assert.ok(params.some(x=>x.name==='eventName'));assert.ok(!params.some(x=>x.name==='event'||x.name==='screenWidth'));
