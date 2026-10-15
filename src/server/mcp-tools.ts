@@ -6,6 +6,9 @@ import {InputError} from './validation.ts';
 import {getDatabase} from './db.ts';
 import {projectAnalytics} from './analytics.ts';
 import {projectRealtime} from './realtime.ts';
+import {projectJourneys} from './journeys.ts';
+import {projectRetentionReport} from './retention-report.ts';
+import {projectAttribution} from './attribution.ts';
 import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
 import {listPrompts,getPrompt,promptVersions,createPrompts,updatePrompt,setPromptArchived} from './prompts.ts';
 import {explorerFilters} from './explorer-input.ts';
@@ -19,6 +22,10 @@ const calendar={from:date,to:date,timeZone:z.string().min(1).max(80)};
 const paging={pageSize:z.string().regex(/^(?:[1-9]|[1-9][0-9]|100)$/).optional(),cursor:z.string().max(2048).optional()};
 const activity=z.strictObject({...calendar,...paging});
 const sessions=z.strictObject({...calendar,...paging,...optionalStrings(explorerFilters,2048),kind:z.enum(['all','pageviews','custom']).optional(),visitorKey:key.optional(),...optionalStrings(['propertyKey','propertyType','propertyValue','predicates','cohortId','cohortRevision'],20000)});
+const population=sessions.omit({pageSize:true,cursor:true,visitorKey:true}).partial({from:true,to:true,timeZone:true});
+const journeys=population.extend({steps:z.enum(['2','3','4','5','6','7']).optional(),startKind:z.enum(['pageview','custom']).optional(),startValue:z.string().max(2048).optional(),endKind:z.enum(['pageview','custom']).optional(),endValue:z.string().max(2048).optional()});
+const retention=population.omit({from:true,to:true,timeZone:true}).extend({month:z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/),timeZone:calendar.timeZone});
+const attribution=population.extend({model:z.enum(['first-click','last-click']).optional(),conversionKind:z.enum(['pageview','custom']),conversionValue:z.string().min(1).max(2048)});
 const promptQuery=z.strictObject({status:z.enum(['active','archived','all']).optional(),q:z.string().max(200).optional(),tag:z.string().max(80).optional(),classification:z.enum(['branded','unbranded','']).optional(),cursor:z.string().max(512).optional()});
 const promptFields={text:z.string().min(1).max(2000),topic:z.string().min(1).max(100).optional(),tags:z.array(z.string().min(1).max(80)).max(20).optional(),enabled:z.boolean().optional()};
 const action={requestId:id,revision:z.number().int().min(1).max(2147483646)};
@@ -32,6 +39,9 @@ export const mcpTools=[
   {name:'ten98_list_sessions',scope:'analytics:read',description:'List retained observed rotating visitor keys, with explicit calendar dates/timezone and scoped paging. Query values use native URL wire strings; predicates/propertyValue are JSON text. No identity means unavailable.',schema:z.strictObject({projectId:id,query:sessions})},
   {name:'ten98_read_session',scope:'analytics:read',description:'Read one observed key and retained activity. Explicit dates/timezone required; cursor pages are current per page. Keys are not persistent people or complete sessions.',schema:prompt.omit({promptId:true}).extend({visitorKey:key,query:activity})},
   {name:'ten98_read_linked_activity',scope:'analytics:read',description:'Read retained explicitly evidenced linked activity for an observed key. No inferred identity joins or complete-history claim.',schema:z.strictObject({projectId:id,visitorKey:key,query:activity})},
+  {name:'ten98_read_journeys',scope:'analytics:read',description:'Read up to 100 observed native visit prefixes after full-population aggregation. Query uses native URL strings; steps is 2–7 (default 3), start/end each require kind and value together. Edges are next matching observations, not causal transitions or proven exits. Missing history/identity stays explicit; the complete MCP reply may refuse a large native report.',schema:z.strictObject({projectId:id,query:journeys.optional()})},
+  {name:'ten98_read_retention',scope:'analytics:read',description:'Read every local date and ten exact return offsets within one explicit month/timeZone, including same-snapshot CSV. Entry filters select first retained matching activity; returns include any activity. Rotating keys are not first-ever people. Incomplete assignment suppresses rates; unknown is not zero.',schema:z.strictObject({projectId:id,query:retention})},
+  {name:'ten98_read_attribution',scope:'analytics:read',description:'Read first-click (default) or last-click observed source credits for an explicit typed conversionKind/conversionValue. Full converted-key totals precede each top20 list. Conversion filters do not narrow the touch pool. Missing/empty sources and incomplete evidence remain explicit; no paid-click or causal inference.',schema:z.strictObject({projectId:id,query:attribution})},
   {name:'ten98_list_prompts',scope:'prompts:read',description:'List/search up to 50 saved authored prompts with a scoped nextCursor. Reads saved data; never executes or schedules a prompt.',schema:z.strictObject({projectId:id,query:promptQuery.optional()})},
   {name:'ten98_read_prompt',scope:'prompts:read',description:'Read one saved prompt and current classification. Never executes or schedules it.',schema:prompt},
   {name:'ten98_list_prompt_versions',scope:'prompts:read',description:'Read up to 50 immutable text versions with a scoped nextCursor.',schema:prompt.extend({query:z.strictObject({cursor:z.string().max(512).optional()}).optional()})},
@@ -74,6 +84,9 @@ export function createNativeMcpServer(token:string,state:McpRequestState,limit:M
         case 'ten98_list_sessions':await limit(`sessions:${principal.userId}`,30);result=await listSessions(args.projectId,authority,query);break;
         case 'ten98_read_session':await limit(`sessions:${principal.userId}`,30);result=await getSessionDetail(args.projectId,args.visitorKey!,authority,query);break;
         case 'ten98_read_linked_activity':await limit(`sessions:${principal.userId}`,30);result=await getLinkedSessionActivity(args.projectId,args.visitorKey!,authority,query);break;
+        case 'ten98_read_journeys':await limit(`journeys:${principal.userId}`,30);result=await projectJourneys(args.projectId,authority,query);break;
+        case 'ten98_read_retention':await limit(`retention-report:${principal.userId}`,30);result=await projectRetentionReport(args.projectId,authority,query);break;
+        case 'ten98_read_attribution':await limit(`attribution:${principal.userId}`,30);result=await projectAttribution(args.projectId,authority,query);break;
         case 'ten98_list_prompts':result=await listPrompts(args.projectId,principal.userId,query,token);break;
         case 'ten98_read_prompt':result=await getPrompt(args.projectId,principal.userId,args.promptId,token);break;
         case 'ten98_list_prompt_versions':result=await promptVersions(args.projectId,principal.userId,args.promptId,query,token);break;
