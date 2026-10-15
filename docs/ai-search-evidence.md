@@ -1,6 +1,6 @@
 # P20 — bounded retained-query evidence leaf
 
-Status: reviewed implementation contract; no implementation acceptance yet. Public source references and synthetic fixtures only.
+Status: bounded leaf and StageA1 adapter implementation; production acceptance remains pending. Public source references and synthetic fixtures only.
 
 ## Deliverable and boundary
 
@@ -10,7 +10,7 @@ Normalize one admitted DataForSEO ChatGPT Live Advanced result, then derive one 
 
 Caller validates endpoint/profile, cardinality, status, task/request identity and financial outcome, then passes **`tasks[0].result[0]`**. This module establishes no completion, charge, search occurrence, provider identity, retention or authority proof.
 
-Owner requires **both associated-answer mentions and separate website-content coverage**. Current crawls retain headers/body hash/word count, not a full body corpus. No answer, query, citation, snippet or heading substitutes for body coverage; no guessed win/miss threshold.
+Owner requires **both associated-answer mentions and separate website-content coverage**. The leaf below does not inspect a corpus. Native site audits now support explicit opt-in retained static body text (`static-dom-body-v1`, migration0032); availability, complete-page bounds and raw/derived retention apply. No answer, query, citation, snippet or heading substitutes for a scoped body check, and a phrase/token match alone cannot establish semantic content coverage. No guessed win/miss threshold.
 
 ## Evidence and reuse
 
@@ -162,6 +162,22 @@ GPT tests use Node builtins, no framework/network or weakened checks.
 8. **Honest axes and future summation:** above three-execution example independently sums derived query/word contributions and answerMentions; asserts4 instances,3 eligible query votes,2 hits and distinct unweighted2answer/1hit population. Every output has body_corpus_not_recorded; source/query/answer brand occurrences do not change it. Test empty cohort is the later service responsibility, not this single-execution API.
 
 Run tests only after the exact draft exists. Pure acceptance does not establish capture, scoped service/export, price/spending, retention, UI, other providers, body-corpus coverage or specified win/miss presentation; those remain P20 gates.
+
+## StageA1 — fixed ChatGPT Live Advanced adapter
+
+`src/lib/ai-search.ts` and `src/server/dataforseo-ai-search.ts` add a pure, closed `dfs-chatgpt-live-advanced-v1` profile and bounded fake-transport adapter. No service, endpoint, quote, worker, database schema, UI or paid operation is enabled by this increment. New request helpers require an explicit injected `send`; the adapter itself grants no permission to spend. Runnable check: `node --test tests/ai-search.test.ts tests/ai-search-evidence.test.ts`.
+
+The immutable internal request contains only profileId/capturedPrompt/locationCode/languageCode. It does not accept a provider URL, model, estimate, credential, tool or payload override. Prompts are nonblank well-formed Unicode, no C0/DEL/C1 controls, at most2000 UTF-16 units including the once-escaped transport representation. Literal `%` becomes `%25`, then `+` becomes `%2B`; no other rewriting or truncation. The task has one keyword, explicit location/language, `force_web_search:true` and a server run-UUID tag. The reported model is an optional bounded consumer-interface label, never a claim of a pinned API model.
+
+The adapter admits the exact fixed Live Advanced endpoint, one own task/result, matching endpoint path/tag/transmitted payload, decoded original result keyword and market. Charge admission is independent: matching final task identity/status and equal microUSD costs can prove a charge even when result shape, echo, field capacity or content fails. Unknown costs/statuses/bindings stay unknown; a known overrun is returned unchanged for later settlement/pause. A malformed query field does not erase a valid answer and missing/empty/invalid query states are preserved by the original leaf. No source, search_results, URL parameter or prose is mined for queries; this stage adds no citation projection. Provider timestamps and model labels remain nullable rather than replaced by local assumptions.
+
+The new free product catalogs are distinct from SERP/Labs. Country projection validates the entire bounded returned location population (≤250,000), then returns≤300 unique country IDs/ISO codes; language rows≤1000 with unique codes. Country/language selections must be returned entries. Account identity delegates to the existing keyed v2 helper; no account login, wallet or price tree is returned. No AI account-price JSON path is invented.
+
+Price evidence is explicitly versioned `dfs-chatgpt-live-published-2026-10-15-v1`, mode `published-tariff`, source [official LLM Scraper tariff](https://dataforseo.com/pricing/ai-optimization/llm-scraper), checked2026-10-15. Its one-result estimate is4000microUSD /0.004000USD. This is a published estimate, **not an account-enforced maximum**. StageA2 must revalidate/show this basis in an explicit quote, enforce the selected per-request and saved connection ceilings, reserve before dispatch, settle actual costs and pause on unknown/overrun. No overall app monetary cap is introduced and no remaining live-test allowance is assumed.
+
+Transport additions are exact AI paths only: Live Advanced, locations, languages and free ai_optimization/id_list. AI POSTs≤32KiB; Live timeout150seconds/complete JSON≤4MiB; location catalog≤64MiB and other AI replies≤4MiB/30seconds. AI requests require identity encoding; nonidentity replies and declared-length mismatches fail closed. Fatal UTF-8, chunk/byte bounds, error/cancel cleanup and redirect rejection apply. Existing non-AI paths, headers, timeouts and request/response ceilings remain unchanged. No retries. Reconciliation admits a unique matching own tag/payload/endpoint and final charge; StageA2 must additionally bind the saved account and dispatch-time window and must never regenerate an answer or renew retention.
+
+Remaining required work: explicit quote/start/cancel/reconcile service; atomic reserve/queue/dispatch/settlement and fresh authority after waits; raw evidence retention; full scoped fan-out/word/brand report; native UI; scoped retained-body evidence; separately quoted semantic assessment with validated source spans; additional provider capability contracts and independent production/live validation. Current OpenRouter executions remain the existing text/no-search profile and cannot be backfilled into recorded fan-out. Neither this adapter nor its test count completes P20 or the81-feature release.
 
 ## Draft protocol
 
