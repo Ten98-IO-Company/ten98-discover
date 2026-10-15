@@ -90,7 +90,13 @@ try{
  const over=await scope('overrun'),oq=await prepare(over),orr=await start(over,oq);modes.set(orr.run.id,{cost:0.008});await executeAiSearch(orr.run.id,send);assert.equal((await row(orr.run.id)).actual_micros,'8000');assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[over.workspace])).rows[0].paused,true);
  const removed=await scope('settlement after removal'),mq=await prepare(removed,'editor'),mr=await start(removed,mq),mh=hold(aiSearchEndpoints.live),mp=observed(executeAiSearch(mr.run.id,send));await entered(mh);await removeMember(removed.workspace,actors.owner.id,actors.editor.id);release(mh);assert.equal((await mp).ok,true);assert.equal((await row(mr.run.id)).actual_micros,'4000');assert.equal((await row(mr.run.id)).charge_status,'settled');await assert.rejects(getAiSearchRun(removed.pid,actors.editor.id,mr.run.id),{status:404});proof.dtos.overrun=await getAiSearchRun(over.pid,actors.owner.id,orr.run.id);group('Known overrun pauses and incurred charge settles after actor removal without access revival');
  proof.phase='passed';
-}catch(error){proof.phase='failed';proof.failure={type:error?.constructor?.name??'Error',message:[passwords,...cookies].some(v=>v&&String(error?.message??error).includes(v))?'Protected diagnostic refused.':String(error?.message??error)};process.exitCode=1;}
+}catch(error){
+ const protectedValues=[passwords,...cookies,config.databaseUrl,config.authSecret,config.bootstrapToken,process.env.CREDENTIAL_KEYS];
+ try{protectedValues.push(...Object.values(JSON.parse(process.env.CREDENTIAL_KEYS??'{}')));}catch{/* Invalid configuration is not echoed. */}
+ const sanitize=value=>{let text=String(value??'');for(const secret of protectedValues)if(typeof secret==='string'&&secret)text=text.replaceAll(secret,'[redacted]');return text.replace(/(?:postgres(?:ql)?|https?):\/\/[^\s"'<>]+/gi,'[url]').slice(0,4096);};
+ proof.phase='failed';proof.failure={type:sanitize(error?.constructor?.name??'Error'),message:sanitize(error?.message??error),stack:sanitize(error?.stack)};process.exitCode=1;
+ console.error('FAIL AI-search boundary '+JSON.stringify({completedGroups:proof.groups.length,failure:proof.failure}));
+}
 finally{
  const cleanup=async(name,work)=>{try{await work();}catch(error){proof.cleanupErrors.push({name,type:error?.constructor?.name??'Error'});proof.phase='failed';process.exitCode=1;}};
  for(const h of holds)release(h);for(const c of lockClients)await cleanup('owned lock',async()=>{try{await c.query('ROLLBACK');}finally{c.release();}});lockClients.clear();
