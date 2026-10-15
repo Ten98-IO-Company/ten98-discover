@@ -247,6 +247,26 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-focus); }
 .big-num { margin: 7px 0 2px; font-size: 30px; font-weight: 600; letter-spacing: -1px; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .snippet { margin: 14px 0; padding: 18px; background: var(--color-surface-subtle); border: 1px solid var(--line); border-radius: 7px; font-family: var(--mono); font-size: var(--text-xs); overflow-x: auto; white-space: pre; }
 .table-wrap { margin-top: 12px; overflow-x: auto; }
+.domains-panel :is(button, input, select, summary) { min-height: var(--control-touch); }
+.domains-panel summary { padding-block: 10px; cursor: pointer; font-weight: 500; }
+.domains-panel :is(p, bdi, td, dd) { overflow-wrap: anywhere; }
+.domains-panel :is(h3, .domain-origin) { margin-block: 0 10px; }
+.domain-facts { margin-block: 12px; }
+.domain-facts > div { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-block: 8px; }
+.domain-facts dt { color: var(--muted); min-inline-size: 150px; }
+.domain-facts dd { margin: 0; }
+.domains-panel .domain-add { margin-block: 12px; }
+.domains-panel .domain-table td { vertical-align: top; }
+.domains-panel .domain-table .row { align-items: flex-start; }
+.domains-panel [tabindex='-1']:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 4px; }
+@media (max-width: 640px) {
+  .domains-panel .domain-table { overflow: visible; }
+  .domains-panel .domain-table :is(table, tbody, tr, td) { display: block; inline-size: 100%; }
+  .domains-panel .domain-table thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+  .domains-panel .domain-table tr { margin-block: 12px; border: 1px solid var(--line); border-radius: 7px; padding: 12px; }
+  .domains-panel .domain-table td { border: 0; padding: 6px 0; }
+  .domains-panel .domain-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--text-xs); margin-block-end: 4px; }
+}
 .prompt-table table { min-width: 900px; }
 .prompt-table th:first-child, .prompt-table td:first-child { min-width: 240px; width: 34%; }
 .prompt-table th:last-child, .prompt-table td:last-child { min-width: 210px; }
