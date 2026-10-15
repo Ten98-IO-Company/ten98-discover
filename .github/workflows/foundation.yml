@@ -97,6 +97,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_ai_suggestions_ci');
             await client.query('CREATE DATABASE ten98_ai_search_ci');
             await client.query('CREATE DATABASE ten98_ai_search_boundaries_ci');
+            await client.query('CREATE DATABASE ten98_analytics_comparison_ci');
             await client.query('CREATE DATABASE ten98_site_api');
             await client.query('CREATE DATABASE ten98_site_retention');
             await client.query('CREATE DATABASE ten98_site_worker_ci');
@@ -157,6 +158,7 @@ jobs:
               ['ten98_ai_suggestions_ci', [['src/server/cli.ts', 'migrate'], ['tests/ai-suggestions-integration.ts']], { TEN98_AI_SUGGESTIONS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_ai_search_ci', [['tests/ai-search-integration.ts']], { TEN98_AI_SEARCH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_ai_search_boundaries_ci', [['tests/ai-search-boundaries-integration.mjs']], { TEN98_AI_SEARCH_BOUNDARIES_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off', APP_URL: 'http://127.0.0.1:3111' }],
+              ['ten98_analytics_comparison_ci', [['src/server/cli.ts', 'migrate'], ['tests/analytics-comparison-integration.ts']], { TEN98_COMPARISON_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_site_api', [['src/server/cli.ts', 'migrate'], ['tests/site-audits-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_site_retention', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-retention-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_site_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/site-audit-worker-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
