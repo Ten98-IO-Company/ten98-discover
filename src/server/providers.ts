@@ -37,11 +37,13 @@ function context(row: Pick<Connection, 'id' | 'workspace_id' | 'provider' | 'rev
 }
 
 // The workspace lock also serializes membership changes, key revocation and budget reservations.
-export async function providerTransaction<T>(workspaceId: string, userId: string, roles: string[], run: (client: PoolClient, role: string) => Promise<T>) {
+export async function providerTransaction<T>(workspaceId: string, userId: string, roles: string[], run: (client: PoolClient, role: string) => Promise<T>, deadline?:'5s') {
+  if(deadline!==undefined&&deadline!=='5s')throw new TypeError('Unsupported provider transaction deadline.');
   z.uuid().parse(workspaceId); z.uuid().parse(userId);
   const client = await getDatabase().pool.connect();
   try {
     await client.query('BEGIN');
+    if(deadline==='5s')await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");
     await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [workspaceId]);
     const access = await client.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, userId]);
     const role = access.rows[0]?.role as string | undefined;

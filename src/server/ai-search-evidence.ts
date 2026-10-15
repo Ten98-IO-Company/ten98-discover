@@ -225,6 +225,8 @@ function checkEvidence(ev:unknown): SearchEvidence {
   return {version:searchEvidenceVersion, answer:checkAnswerField(ev.answer), queries:checkQueriesField(ev.queries)};
 }
 
+export function readSearchEvidence(raw:unknown):SearchEvidence{return checkEvidence(raw);}
+
 export function deriveSearchQueries(input:{
  evidence:SearchEvidence;
  capturedPrompt:string;

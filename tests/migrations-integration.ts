@@ -11,6 +11,7 @@ import { saveAnalysis } from '../src/server/funnels.ts';
 import {saveSavedKeywords} from '../src/server/saved-keywords.ts';
 import {assertProviderAccountIdentityReadable,getProviderAccountIdentityKey} from '../src/server/provider-account-identity.ts';
 import {encryptCredentials} from '../src/server/credential-vault.ts';
+import pg from 'pg';
 
 // This consumes a separate empty local database and retains its synthetic fixtures.
 // It never drops a schema/database or clears existing data.
@@ -71,7 +72,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042']);
   assert.equal(sources.find(m=>m.version==='0029')!.checksum,'8c7559f0e64f899bae4dc36aa9afa521b69624dba7849f28dfc3c1cb730097de','Append0030 without rewriting the published0029 migration.');
   assert.equal(sources.find(m=>m.version==='0030')!.checksum,'87b06aefbfe1b2228bda7fe91a28563265e908b92f07574ad3cb7e5380bbb28e','Append0031 without rewriting the published0030 migration.');
   assert.equal(sources.find(m=>m.version==='0031')!.checksum,'0a5d1fc0ee88c4aad84dbb41b32eb2d80bf0b5d816a907dfabb5a0228925ee65','Append0032 without rewriting published0031.');
@@ -327,7 +328,19 @@ try {
   await pool.query('UPDATE event SET identity_link_evidence_version=1 WHERE project_id=$1',[project]);
   await pool.query("UPDATE project SET identity_event_evidence_started_at='2026-10-03T00:00:00.123456Z' WHERE id=$1",[project]);
   const proven38=await identityRecords(),history38=await history();assert.equal(history38.at(-1)?.version,'0038');
-  stage='upgrade populated0038 proof and settings through0039/0040';runMigrate(0);await assertSchema();
+  stage='upgrade populated0038 proof and settings through0041';
+  const through41=await pool.connect();
+  try{await through41.query('BEGIN');for(const source of sources.filter(source=>source.version>'0038'&&source.version<='0041')){await through41.query(source.sql);await through41.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}await through41.query('COMMIT');}finally{await through41.query('ROLLBACK').catch(()=>{});through41.release();}
+  const history41=await history(),schema41=await schemaSnapshot();assert.equal(history41.at(-1)?.version,'0041');
+  const tables41=(await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename<>'schema_version' ORDER BY tablename")).rows.map(row=>row.tablename);
+  async function rows41(){const snapshot:Record<string,unknown[]>={};for(const table of tables41)snapshot[table]=(await pool.query(`SELECT to_jsonb(t) AS row FROM ${pg.escapeIdentifier(table)} t ORDER BY to_jsonb(t)::text`)).rows.map(row=>row.row);return snapshot;}
+  const data41=await rows41();stage='upgrade actual populated0041 to0042';runMigrate(0);await assertSchema();
+  assert.deepEqual((await history()).slice(0,41),history41,'0042 preserves every published migration checksum.');
+  assert.deepEqual(await rows41(),data41,'0042 preserves every row and field in every prior public table.');
+  const schema42=await schemaSnapshot(),newTables=['ai_search_quote','ai_search_run'];
+  for(const kind of ['columns','constraints','indexes'] as const)assert.deepEqual(schema42[kind].filter(row=>!newTables.includes(row.table_name??row.tablename)),schema41[kind],'0042 preserves all existing columns, constraints and indexes.');
+  for(const table of newTables)assert.equal((await pool.query(`SELECT 1 FROM ${pg.escapeIdentifier(table)}`)).rowCount,0,'0042 creates no quotes, provider charges or jobs.');
+  console.log('PASS actual populated41-to42 preserves all existing tables/rows/checksums/settings/grants and starts with empty AI capture tables');
   const identity40=await identityRecords();
   for(const table of identityTables)assert.deepEqual(identity40[table].map(({collection_basis,...prior})=>prior),proven38[table],'Cookieless migration preserves every existing row, settings, epoch, revision and forward identity proof.');
   assert.ok(identity40.event.every(row=>row.collection_basis===null));assert.ok(identity40.project.every(row=>!(row.analytics_settings as Record<string,unknown>).collectionMode));

@@ -1,0 +1,70 @@
+-- Dedicated consumer-interface evidence. Published tariff admission is an estimate,
+-- not an account-enforced maximum; incurred charges remain in provider_request.
+CREATE TABLE ai_search_quote (
+ id uuid PRIMARY KEY,
+ workspace_id text NOT NULL,
+ project_id text NOT NULL,
+ user_id text NOT NULL REFERENCES "user"(id),
+ request_id uuid NOT NULL,
+ prompt_id uuid NOT NULL,
+ version_id uuid NOT NULL,
+ connection_id uuid NOT NULL,
+ connection_revision integer NOT NULL CHECK(connection_revision>0),
+ account_fingerprint text NOT NULL CHECK(account_fingerprint ~ '^[a-f0-9]{64}$'),
+ account_fingerprint_version integer NOT NULL CHECK(account_fingerprint_version=2),
+ input_hash text NOT NULL CHECK(input_hash ~ '^[a-f0-9]{64}$'),
+ profile_id text NOT NULL CHECK(profile_id='dfs-chatgpt-live-advanced-v1'),
+ price_version text NOT NULL CHECK(length(price_version) BETWEEN 1 AND 160),
+ price_mode text NOT NULL CHECK(price_mode='published-tariff'),
+ price_source text NOT NULL CHECK(price_source='https://dataforseo.com/pricing/ai-optimization/llm-scraper'),
+ price_checked_on date NOT NULL,
+ estimate_micros bigint NOT NULL CHECK(estimate_micros=4000),
+ input jsonb CHECK(input IS NULL OR (jsonb_typeof(input)='object' AND octet_length(input::text)<=32768)),
+ raw_expired_at timestamptz,
+ input_purged_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ expires_at timestamptz NOT NULL,
+ UNIQUE(project_id,request_id),
+ UNIQUE(id,workspace_id,project_id,user_id),
+ FOREIGN KEY(project_id,workspace_id) REFERENCES project(id,workspace_id) ON DELETE CASCADE,
+ FOREIGN KEY(project_id,prompt_id,version_id) REFERENCES prompt_text_version(project_id,prompt_id,id),
+ FOREIGN KEY(connection_id,workspace_id) REFERENCES provider_connection(id,workspace_id),
+ CHECK(expires_at>created_at),
+ CHECK((input IS NOT NULL AND input_purged_at IS NULL) OR (input IS NULL AND input_purged_at IS NOT NULL)),
+ CHECK(input_purged_at IS NULL OR raw_expired_at IS NOT NULL)
+);
+CREATE INDEX ai_search_quote_history_idx ON ai_search_quote(project_id,created_at DESC,id DESC);
+CREATE INDEX ai_search_quote_retention_idx ON ai_search_quote(project_id,created_at,id) WHERE input IS NOT NULL;
+CREATE TABLE ai_search_run (
+ id uuid PRIMARY KEY,
+ quote_id uuid NOT NULL UNIQUE,
+ workspace_id text NOT NULL,
+ project_id text NOT NULL,
+ user_id text NOT NULL,
+ request_id uuid NOT NULL,
+ status text NOT NULL CHECK(status IN('queued','running','completed','failed','uncertain','cancelled','reconciled')),
+ payload_hash text NOT NULL CHECK(payload_hash ~ '^[a-f0-9]{64}$'),
+ lease_owner uuid,
+ lease_expires_at timestamptz,
+ dispatched_at timestamptz,
+ completed_at timestamptz,
+ settled_at timestamptz,
+ result jsonb CHECK(result IS NULL OR (jsonb_typeof(result)='object' AND octet_length(result::text)<=2097152)),
+ financial_evidence jsonb CHECK(financial_evidence IS NULL OR (jsonb_typeof(financial_evidence)='object' AND octet_length(financial_evidence::text)<=16384)),
+ preflight_evidence jsonb CHECK(preflight_evidence IS NULL OR (jsonb_typeof(preflight_evidence)='object' AND octet_length(preflight_evidence::text)<=16384)),
+ diagnostic text CHECK(length(diagnostic)<=1000),
+ result_purged_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(project_id,request_id),
+ FOREIGN KEY(project_id,workspace_id) REFERENCES project(id,workspace_id) ON DELETE CASCADE,
+ FOREIGN KEY(quote_id,workspace_id,project_id,user_id) REFERENCES ai_search_quote(id,workspace_id,project_id,user_id),
+ FOREIGN KEY(id,workspace_id) REFERENCES provider_request(id,workspace_id),
+ CHECK((lease_owner IS NULL)=(lease_expires_at IS NULL)),
+ CHECK(result IS NULL OR result_purged_at IS NULL),
+ CHECK(status<>'running' OR (dispatched_at IS NOT NULL AND lease_owner IS NOT NULL)),
+ CHECK(status<>'queued' OR dispatched_at IS NULL)
+);
+CREATE UNIQUE INDEX ai_search_active_project_idx ON ai_search_run(project_id) WHERE status IN('queued','running','uncertain');
+CREATE INDEX ai_search_run_history_idx ON ai_search_run(project_id,created_at DESC,id DESC);
+CREATE INDEX ai_search_run_pending_idx ON ai_search_run(status,lease_expires_at);
+CREATE INDEX ai_search_run_retention_idx ON ai_search_run(project_id,quote_id,id) WHERE result IS NOT NULL;

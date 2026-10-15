@@ -1,0 +1,11 @@
+# AI search boundary integration test
+
+`tests/ai-search-boundaries-integration.mjs` preserves the eight fake-provider service/HTTP regression groups. It calls actual source functions and native Node HTTP → `handleApi`; provider-shaped replies come only from the fixed in-memory fake. It does not run a real provider request or validate production resource capacity.
+
+Run with Node24, `TEN98_INTEGRATION_TEST=1`, `TEN98_AI_SEARCH_BOUNDARIES_TEST=1`, `ANALYTICS_NETWORK_MODE=off`, `APP_URL=http://127.0.0.1:3111`, and a synthetic credential keyring. Local execution requires an explicitly created empty loopback PostgreSQL database on55501 named `ten98_ai_search_<12hex>`. Hosted CI additionally requires `GITHUB_ACTIONS=true`, `TEN98_ISOLATED_CI_DATABASE=1`, port5432 and the exact empty database `ten98_ai_search_boundaries_ci`. The test creates schema42 itself. Never use a customer database.
+
+Port3111 must be free and assigned to this test alone. Evidence is retained in a newly created `ten98-ai-search-boundaries-*` directory under the system temporary directory, or under an absolute existing `TEN98_AI_SEARCH_BOUNDARIES_OUT` parent. It contains synthetic DTOs and HTTP/lock proof, excludes passwords/cookies, and is not automatically deleted. The final console record identifies the evidence path.
+
+The groups cover four-role HTTP reads, one complete owner HTTP catalog/quote/start/cancel flow, browser-only/cross-scope/byte/method checks, real PostgreSQL membership and role lock waits, five-second503/recovery, predispatch cap/revision/archive/role changes, queue transaction rollback, retention1→90 with an exact unchanged expiry marker and masked GET before cleanup, pending/late-response protection, expired lease fencing/owner reconciliation, overruns and settlement after actor removal. Source preparation and worker/retention actions use direct source calls where specified; the test does not claim every role succeeds on every HTTP write route. Actual application rate limits and byte/deadline limits stay unchanged.
+
+The public entry is independently runnable under the guard above. Its eight groups do not claim exhaustive receipt-window/ambiguity,100-row cleanup, compiled-resource, UI/reporting or production acceptance; those gates remain separate work.

@@ -13,12 +13,13 @@ import {quoteKeywordResearch,executeKeywordResearch,reconcileKeywordResearch} fr
 import {quoteSavedKeywordRefresh,startSavedKeywordRefresh} from '../src/server/saved-keyword-refresh.ts';
 import {saveSavedKeywords} from '../src/server/saved-keywords.ts';
 import {keywordAccountEndpoint,keywordReconcileEndpoint,keywordEndpoints,keywordPayload,type KeywordRequest} from '../src/server/keyword-research-input.ts';
+import {aiSearchProfileId,aiSearchPriceEvidence} from '../src/lib/ai-search.ts';
 
-// Four invocations, each with a different initially empty owned database:
-// TEN98_IDENTITY_TEST_CASE=legacy|deferred|rank|upgrade22 node --env-file=<private env> tests/provider-account-identity-integration.ts
+// Five invocations, each with a different initially empty owned database:
+// TEN98_IDENTITY_TEST_CASE=legacy|deferred|rank|upgrade22|ai_search node --env-file=<private env> tests/provider-account-identity-integration.ts
 // Fixtures are retained; this test never drops a database/schema or clears user data.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
-const scenario=process.env.TEN98_IDENTITY_TEST_CASE;assert.ok(scenario==='legacy'||scenario==='deferred'||scenario==='rank'||scenario==='upgrade22');
+const scenario=process.env.TEN98_IDENTITY_TEST_CASE;assert.ok(scenario==='legacy'||scenario==='deferred'||scenario==='rank'||scenario==='upgrade22'||scenario==='ai_search');
 const config=getConfig(),url=new URL(config.databaseUrl);
 const hostedCi=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&url.pathname===`/ten98_provider_identity_${scenario}_ci`;
 assert.ok(['localhost','127.0.0.1','[::1]'].includes(url.hostname));assert.equal(url.port,hostedCi?'5432':'55501');assert.equal(url.search,'');assert.equal(url.hash,'');
@@ -83,8 +84,22 @@ async function rejectMissingCapsule(){
 
 try{
   assert.equal((await pool.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN('r','p','v','m','S','f') LIMIT 1")).rowCount,0,'Use an initially empty owned database.');
-  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0041');
-  if(scenario==='deferred'||scenario==='rank'){
+  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0042');
+  if(scenario==='ai_search'){
+    stage='AI-only modern reference after fresh install';cli('migrate',0);await assertSchema();
+    const stable=await getProviderAccountIdentityKey(2),f=await fixture(),prompt=randomUUID(),version=randomUUID(),price=aiSearchPriceEvidence(),seed=await pool.connect();
+    try{await seed.query('BEGIN');await seed.query('INSERT INTO project_prompt(id,project_id,current_version_id)VALUES($1,$2,$3)',[prompt,f.project,version]);
+      await seed.query("INSERT INTO prompt_text_version(id,project_id,prompt_id,number,text,lower_text,created_by)VALUES($1,$2,$3,1,'Identity fixture','identity fixture',$4)",[version,f.project,prompt,f.owner]);
+      await seed.query(`INSERT INTO ai_search_quote(id,workspace_id,project_id,user_id,request_id,prompt_id,version_id,connection_id,connection_revision,account_fingerprint,account_fingerprint_version,input_hash,profile_id,price_version,price_mode,price_source,price_checked_on,estimate_micros,input,expires_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,2,$10,$11,$12,$13,$14,$15,4000,'{"fixture":true}',clock_timestamp()+interval '5 minutes')`,[randomUUID(),f.workspace,f.project,f.owner,randomUUID(),prompt,version,f.connection,'a'.repeat(64),'b'.repeat(64),aiSearchProfileId,price.version,price.mode,price.sourceUrl,price.checkedOn]);
+      await seed.query('COMMIT');
+    }finally{await seed.query('ROLLBACK').catch(()=>{});seed.release();}
+    for(const table of ['keyword_quote','saved_keyword_refresh_plan','rank_run','rank_config','provider_request'])assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount,0,'Isolate the AI-only recovery reference.');
+    const before=digest(await capsule());await rejectMissingCapsule();
+    process.env.AUTH_SECRET=randomBytes(32).toString('hex');assert.equal(await getProviderAccountIdentityKey(2),stable);assert.equal(digest(await capsule()),before);
+    assert.equal(accountCalls,0);assert.equal(metadataCalls,0);assert.equal(paid,0);
+    console.log('PASS AI-only reference blocks all three missing-capsule paths and no-op migration never regenerates it; exact restoration survives login-secret rotation');
+  }else if(scenario==='deferred'||scenario==='rank'){
     stage='fresh install without credential vault';noVault();cli('migrate',0);await assertSchema();await assertProviderAccountIdentityReadable();assert.equal(await capsule(),null);
     await assert.rejects(getProviderAccountIdentityKey(2),failed(503));assert.equal(await capsule(),null);assert.equal(accountCalls,0);
     await assert.rejects(readKeywordAccount({login:account,password:'synthetic-never-live'},'overview',send),failed(503));assert.equal(accountCalls,0,'Missing recovery keys must fail before provider account traffic.');assert.equal(await capsule(),null);

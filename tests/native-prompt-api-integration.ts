@@ -25,10 +25,10 @@ export async function runNativePromptApiChecks(){
   for(const name of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[name],undefined);
   const {pool}=getDatabase();
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public'")).rows[0].n,0,'Use a fresh empty database; fixtures are retained.');
-  const sources=await migrationSources(),upgrade=sources.at(-1)!;assert.equal(upgrade.version,'0041');
+  const sources=await migrationSources(),upgrade=sources.find(source=>source.version==='0041')!;assert.equal(upgrade.version,'0041');
   const migration=await pool.connect(),oldUser=randomUUID(),oldWorkspace=randomUUID(),oldKey=randomUUID(),oldToken='t98k_'+randomBytes(32).toString('base64url');
   try{await migration.query('BEGIN');await migration.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');
-   for(const source of sources.slice(0,-1)){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}
+   for(const source of sources.filter(source=>source.version<'0041')){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}
    await initializeProviderAccountIdentity(migration,true);
    await migration.query(`INSERT INTO "user"(id,name,email) VALUES($1,'Prior key issuer',$2)`,[oldUser,oldUser+'@prompt-api.test']);
    await migration.query(`INSERT INTO workspace(id,name) VALUES($1,'Prior workspace')`,[oldWorkspace]);await migration.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[oldWorkspace,oldUser]);
@@ -36,6 +36,11 @@ export async function runNativePromptApiChecks(){
    await migration.query('COMMIT');
    const before=(await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0];
    await migration.query('BEGIN');await migration.query(upgrade.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[upgrade.version,upgrade.checksum]);await migration.query('COMMIT');
+   assert.deepEqual((await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0],before);
+   assert.deepEqual((await authenticateApiKey(oldToken)).scopes,['projects:read','analytics:read']);
+   await migration.query('BEGIN');
+   for(const source of sources.filter(source=>source.version>'0041')){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}
+   await migration.query('COMMIT');
    assert.deepEqual((await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0],before);
    assert.deepEqual((await authenticateApiKey(oldToken)).scopes,['projects:read','analytics:read']);await assertSchema();
    console.log('PASS actual 40-to-41 migration preserves every prior key field and exact grants without retrogrant');
