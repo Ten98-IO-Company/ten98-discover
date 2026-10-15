@@ -1,6 +1,6 @@
 # Native bearer API contract
 
-This development increment documents 19 implemented operations: 12 project/team/analytics operations, including Journeys, and seven authored-prompt operations. It does not complete the 81-requirement register, provide MCP transport, expose paid prompt execution, or implement a generic HTTP batch dispatcher.
+This development increment documents 20 implemented operations: 13 project/team/analytics operations, including Journeys and observed-key Retention, and seven authored-prompt operations. It does not complete the 81-requirement register, provide MCP transport, expose paid prompt execution, or implement a generic HTTP batch dispatcher.
 
 `GET /api/openapi.json` returns a static OpenAPI 3.1.2 document before configuration, database readiness and installation setup checks. It accepts no query or body, uses relative server `/`, and does not reflect request hosts or credentials. Other methods return 405. There is no hosted documentation renderer, CDN or automatic provider request. The document describes bearer access; browser cookie routes and the separate public tracker are not its inventory.
 
@@ -13,7 +13,7 @@ Send one `Authorization: Bearer <token>` header without cookies or alternate key
 | `projects:read` | List workspace projects |
 | `projects:write` | Create project |
 | `team:read` | Read team; current owner/admin required |
-| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, Explorer, sessions, session details and explicitly linked activity |
+| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, observed-key Retention, Explorer, sessions, session details and explicitly linked activity |
 | `events:write` | Record API observation |
 | `prompts:read` | List/search prompts, read prompt, list text versions |
 | `prompts:write` | Create 1–100 prompts atomically, update, archive, restore |
@@ -57,6 +57,10 @@ One aggregate SQL statement refreshes the parent overview, both periods when com
 Only the listed parameters are accepted, each once; no body, grouping, cursor, limit or sort. The serialized query ceiling is 65,536 characters, with the inherited Explorer subset still limited to 20,000. The reader rechecks authority after workspace lock admission and at its report statement clock. Existing five-second statement/lock ceilings and 30 requests/user/minute apply alongside the API-key budget; these are not total-request deadlines.
 
 The full eligible population is aggregated before the top 100 typed prefixes, with total/displayed/omitted counts. The unit is an observed native visitor/visit key pair; rotating keys do not identify people or complete sessions. Adjacent equal typed matching observations collapse before the step cap. Edges mean next matching retained observations, not causal transitions or proven exits. `selection.evidenceIncomplete` discloses incomplete selection/history/identity evidence; missing observations can move visits between paths, so path assignments are not guaranteed lower bounds. Retained empty data may yield zero, while unavailable visit/path/ranking values stay null. `asOf` is report/authority time, not an event-time fence. The complete JSON reply is bounded to 12 MiB (12,582,912 UTF-8 bytes); excess returns 503 rather than hidden truncation. See [Journeys](journeys.md) for timing ties, coverage and reference differences.
+
+## Observed-key Retention
+
+`GET /api/projects/{projectId}/retention-report` requires explicit `month` and `timeZone`, plus optional Explorer entry filters and exact saved-cohort revision. It accepts no body, `from`/`to`, grouping or pagination; the encoded query is bounded to 20,000 characters. It returns all local dates and ten exact return offsets inside the same month. These cohorts describe each rotating key's first retained matching date, with unfiltered returns; they are not first-ever users and do not merge explicit identity links. Incomplete assignment suppresses rates, while missing identity/history and known zero remain distinct. Entry, qualification and return scans share a receipt-time fence. The complete JSON is bounded to 512 KiB including a same-snapshot CSV bounded to 256 KiB. Current authorization and per-user/key limits apply. See [Retention](retention-report.md) for timing, coverage and UI contracts.
 
 ## Schema coverage and source mapping
 

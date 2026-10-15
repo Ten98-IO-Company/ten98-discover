@@ -9,21 +9,35 @@ import {analyticsQuery} from '../src/server/analytics.ts';
 import {geographySearch} from '../src/lib/analytics-geography.ts';
 import {journeysQuery} from '../src/server/journeys.ts';
 import {journeysLimits} from '../src/lib/journeys.ts';
+import {retentionReportQuery} from '../src/server/retention-report-input.ts';
+import {retentionLimits} from '../src/lib/retention-report.ts';
 
-test('static OpenAPI exposes exactly the supported 19 native operations with local references',()=>{
+test('static OpenAPI exposes exactly the supported 20 native operations with local references',()=>{
  assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
  const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
   assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
   assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
   const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
  }
- assert.equal(ids.length,19);assert.equal(new Set(ids).size,19);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ assert.equal(ids.length,20);assert.equal(new Set(ids).size,20);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
  const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
- assert.deepEqual(ids.filter(id=>id!=='readJourneys').sort(),prior.sort());assert.equal(ids.filter(id=>id==='readJourneys').length,1);
+ assert.deepEqual(ids.filter(id=>!['readJourneys','readRetentionReport'].includes(id)).sort(),prior.sort());for(const name of ['readJourneys','readRetentionReport'])assert.equal(ids.filter(id=>id===name).length,1);
  const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
  const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
  assert.ok(params.some(x=>x.name==='eventName'));assert.ok(!params.some(x=>x.name==='event'||x.name==='screenWidth'));
  assert.equal(explorerQuery(new URLSearchParams({eventName:'signup'})).filters.eventName,'signup');
+});
+
+test('retention specification requires month/timezone and preserves closed entry-filter and response bounds',()=>{
+ const operation=nativeOpenApi.paths['/api/projects/{projectId}/retention-report'].get,params=operation.parameters as any[],parameter=(name:string)=>params.find(x=>x.name===name);
+ assert.deepEqual(operation['x-ten98-scopes'],['analytics:read']);assert.equal(Object.hasOwn(operation,'requestBody'),false);for(const name of ['month','timeZone'])assert.equal(parameter(name).required,true);
+ const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['from','to','timeZone','groupBy','groupProperty'].includes(x.name));assert.deepEqual(params.filter(x=>!['month','timeZone'].includes(x.name)),inherited);
+ assert.match(operation.description,new RegExp(String(retentionLimits.json)));assert.match(operation.description,new RegExp(String(retentionLimits.csv)));
+ const monthPattern=new RegExp(parameter('month').schema.pattern);for(const month of ['1970-01','2024-03','9998-12'])assert.equal(monthPattern.test(month),true);for(const month of ['1969-12','9999-01','2024-00','2024-13'])assert.equal(monthPattern.test(month),false);
+ const now=new Date('2026-10-15T08:00:00Z'),valid={month:'2024-03',timeZone:'Asia/Dubai',kind:'custom',path:'/entry',propertyKey:'done',propertyType:'boolean',propertyValue:'false'};
+ const value=retentionReportQuery(new URLSearchParams(valid),now);assert.equal(value.query.month,valid.month);assert.equal(value.query.timeZone,valid.timeZone);assert.equal(value.query.property?.value,false);assert.equal(value.scope.from,'2024-03-01');assert.equal(value.scope.to,'2024-03-31');
+ const invalid:Record<string,string>[]=[{month:''},{timeZone:''},{month:'1969-12'},{month:'9999-01'},{month:'2026-11'},{month:'2024-13'},{from:'2024-03-01'},{to:'2024-03-31'},{groupBy:'path'},{groupProperty:'done'},{cursor:'opaque'},{limit:'10'}];for(const patch of invalid)assert.throws(()=>retentionReportQuery(new URLSearchParams({...valid,...patch}),now));
+ assert.throws(()=>retentionReportQuery(new URLSearchParams(new URLSearchParams(valid)+'&month=2024-03'),now));
 });
 test('Journeys specification reuses population filters with closed typed first/last step pairs',()=>{
  const operation=nativeOpenApi.paths['/api/projects/{projectId}/journeys'].get,params=operation.parameters as any[],schema=(name:string)=>params.find(x=>x.name===name)?.schema;
