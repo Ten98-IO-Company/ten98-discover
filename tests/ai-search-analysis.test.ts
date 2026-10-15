@@ -39,6 +39,12 @@ test('immutable prompt versions, literal queries and exact word votes reuse the 
  const b=row({fan_out_queries:['unavailable','C++ %20 +','c++ %20 +','C++  %20 +','鞋子']});b.versionId=randomUUID();const mixed=aggregate([a,b]);assert.equal(mixed.byPromptVersion.length,2);assert.equal(mixed.totals.queryInstances,6);assert.equal(mixed.topQueries.find(q=>q.key==='鞋子')!.observations,1);assert.ok(mixed.topQueries.some(q=>q.key==='unavailable'));
  assert.throws(()=>aggregate([a,{...a,id:randomUUID(),capturedPrompt:'Contradiction',result:{...a.result!,capturedPrompt:'Contradiction'}}]),AiQueryDataError);
 });
+test('repeated independent captures preserve exact word votes and leave retained evidence unchanged',()=>{
+ const rows=Array.from({length:3},()=>row({markdown:'Other answer',fan_out_queries:['red red boots','red red boots','best shoes reviews']},'best red red shoes')),before=structuredClone(rows),report=aggregate(rows);
+ assert.equal(report.words.cloud.rows.find(w=>w.word==='red')!.count,6);assert.equal(report.words.preserved.rows.find(w=>w.word==='red')!.count,3);assert.equal(report.words.dropped.rows.find(w=>w.word==='red')!.count,3);assert.equal(report.words.denominator,6);
+ assert.equal(report.totals.queryInstances,6);assert.equal(report.totals.uniqueQueries,2);assert.deepEqual(report.totals.averageFanout,{numerator:6,denominator:3,value:2});assert.equal(report.topQueries.find(q=>q.key==='red red boots')!.observations,3);
+ assert.deepEqual(rows,before);assert.deepEqual(aggregate(rows),report);assert.deepEqual(rows,before);
+});
 test('full population counts precede all ranking caps and typed model filters expose excluded coverage',()=>{
  const a=row({markdown:'Acme',fan_out_queries:Array.from({length:30},(_,i)=>'query '+String(i).padStart(2,'0'))}),b=row({markdown:'Other',fan_out_queries:['query 00']});a.result!.reportedModel='not_recorded';
  const r=aggregate([a,b]);assert.equal(r.topQueries.length,25);assert.equal(r.topByRuns.length,20);assert.equal(r.byPromptVersion[0].returned,10);assert.equal(r.totals.uniqueQueries,30);assert.equal(r.totals.queryInstances,31);

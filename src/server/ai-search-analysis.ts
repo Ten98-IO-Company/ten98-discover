@@ -32,17 +32,17 @@ export function aggregateAiSearchQueries(rows:AiQueryInput[],filters:AiQueryFilt
  matchAnswer({text:'',subjects:[brand],citationUrls:[],method:filters.matcher});
  const coverageBeforeModel=coverage(),selected:Observation[]=[];let work=0,instances=0;
  const terms=Math.max(1,1+brand.aliases.length+(filters.matcher==='elmo-substring-v1'?brand.domains.length:0));
+ const maps={cloud:new Map<string,{count:number;isStop:boolean}>(),added:new Map<string,{count:number;isStop:boolean}>(),preserved:new Map<string,{count:number;isStop:boolean}>(),dropped:new Map<string,{count:number;isStop:boolean}>()};let wordEntries=0;
  for(const row of rows){if((row.rawState==='retained')!==(row.result!==null)||row.result&&row.result.capturedPrompt!==row.capturedPrompt)throw new AiQueryDataError('Invalid retained capture state.');addCoverage(coverageBeforeModel,row);
   const model=row.result?.reportedModel??null,filter=filters.reportedModel;if(filter&&(filter.state==='not_recorded'?model!==null:model!==filter.value))continue;
   let derived:SearchDerivation|null=null;
   if(row.result){work+=(row.result.evidence.answer.text?.length??0)*terms;if(work>100_000_000)cap();try{derived=deriveSearchQueries({evidence:row.result.evidence,capturedPrompt:row.result.capturedPrompt,subjects:[brand],method:filters.matcher});}catch(error){if(error instanceof SearchEvidenceError)cap();throw error;}instances+=derived!.queries?.length??0;if(instances>100000)cap();}
+  if(derived?.words){for(const kind of ['cloud','added','preserved','dropped'] as const)for(const word of derived.words[kind]){const old=maps[kind].get(word.word);if(!old){if(++wordEntries>20000)cap();maps[kind].set(word.word,{count:word.count,isStop:word.isStop});}else old.count+=word.count;}derived.words=null;}
   selected.push({row,derived,capture:{runId:row.id,promptId:row.promptId,versionId:row.versionId,requestedAt:row.requestedAt,status:row.status,rawState:row.rawState,reportedModel:model,queryState:derived?.queryState??'raw_unavailable',answerState:derived?.answerState??'raw_unavailable',brandMention:derived?.answerMentions?.[0]?.mentioned??null}});
  }
  const selectedCoverage=coverage();for(const {row}of selected)addCoverage(selectedCoverage,row);
  const allQueries=queries(selected),byPrompt=new Map<string,Observation[]>(),byModel=new Map<string|null,Observation[]>();
  for(const o of selected){const p=o.row.promptId+':'+o.row.versionId;if(!byPrompt.has(p))byPrompt.set(p,[]);byPrompt.get(p)!.push(o);const m=o.row.result?.reportedModel??null;if(!byModel.has(m))byModel.set(m,[]);byModel.get(m)!.push(o);}
- const maps={cloud:new Map<string,{count:number;isStop:boolean}>(),added:new Map<string,{count:number;isStop:boolean}>(),preserved:new Map<string,{count:number;isStop:boolean}>(),dropped:new Map<string,{count:number;isStop:boolean}>()};let wordEntries=0;
- for(const {derived}of selected)if(derived?.words)for(const kind of ['cloud','added','preserved','dropped'] as const)for(const word of derived.words[kind]){const old=maps[kind].get(word.word);if(!old){if(++wordEntries>20000)cap();maps[kind].set(word.word,{count:word.count,isStop:word.isStop});}else old.count+=word.count;}
  const wordRows=(map:typeof maps.cloud)=>{const rows=[...map].map(([word,v])=>({word,...v})).sort((a,b)=>b.count-a.count||lexical(a.word,b.word)).slice(0,60);return {totalDistinct:map.size,returned:rows.length,rows};};
  return {versions:{evidence:searchEvidenceVersion,derivation:queryDerivationVersion,words:queryWordsVersion},coverageBeforeModel,coverage:selectedCoverage,totals:summary(selected),captures:selected.map(o=>o.capture),
   byModel:[...byModel].map(([reportedModel,obs])=>{const c=coverage();for(const o of obs)addCoverage(c,o.row);return {reportedModel,coverage:c,totals:summary(obs)};}).sort((a,b)=>b.totals.queryInstances-a.totals.queryInstances||lexical(a.reportedModel??'',b.reportedModel??'')||Number(a.reportedModel!==null)-Number(b.reportedModel!==null)),

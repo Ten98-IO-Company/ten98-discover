@@ -18,7 +18,7 @@ import {aiSearchProfileId,aiSearchPriceEvidence,aiSearchSnapshotSchema} from '..
 // No provider credential, provider adapter, worker, quote or start operation is used.
 export async function runAiQueryAnalysisChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_AI_QUERY_TEST,'1');assert.equal(process.env.ANALYTICS_NETWORK_MODE,'off');
- const config=getConfig(),url=new URL(config.databaseUrl),origin='http://127.0.0.1:3111';assert.equal(config.appUrl,origin);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55501');assert.match(url.pathname,/^\/ten98_ai_queries_[a-f0-9]{12}$/);assert.equal(url.search,'');assert.equal(url.hash,'');
+ const config=getConfig(),url=new URL(config.databaseUrl),origin='http://127.0.0.1:3111';assert.equal(config.appUrl,origin);assert.equal(url.hostname,'127.0.0.1');const ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&url.pathname==='/ten98_ai_queries_ci';assert.equal(url.port,ci?'5432':'55501');if(!ci)assert.match(url.pathname,/^\/ten98_ai_queries_[a-f0-9]{12}$/);assert.equal(url.search,'');assert.equal(url.hash,'');
  for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[key],undefined);
  const {pool}=getDatabase();assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public'")).rows[0].n,0);
  const oldFetch=globalThis.fetch;let denied=0;globalThis.fetch=async()=>{denied++;throw Error('Provider traffic forbidden.');};
