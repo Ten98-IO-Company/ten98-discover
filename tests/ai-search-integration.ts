@@ -22,7 +22,7 @@ export async function runAiSearchChecks(){
  const original=globalThis.fetch;let outbound=0;globalThis.fetch=async()=>{outbound++;throw Error('External provider traffic forbidden.');};
  const rejected=(e:unknown)=>!!e&&typeof e==='object'&&'status'in e&&e.status===503;
  try{
-  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0042');
+  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0043');
   const migration=await pool.connect();try{await migration.query('BEGIN');await migration.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');for(const source of sources){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}await initializeProviderAccountIdentity(migration);await migration.query('COMMIT');}catch(error){await migration.query('ROLLBACK');throw error;}finally{migration.release();}
   await assertSchema();const capsule=(await pool.query("SELECT provider_account_identity FROM installation WHERE id='instance'")).rows[0].provider_account_identity;assert.notEqual(capsule,null,'The isolated driver must provide a synthetic credential keyring.');
   const originalKey=await getProviderAccountIdentityKey(2),owner=randomUUID(),workspace=randomUUID(),project=randomUUID(),prompt=randomUUID(),version=randomUUID(),connection=randomUUID(),quote=randomUUID(),price=aiSearchPriceEvidence();
@@ -34,7 +34,7 @@ export async function runAiSearchChecks(){
   for(const table of ['keyword_quote','saved_keyword_refresh_plan','rank_run','rank_config'])assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n,0);
   await pool.query("UPDATE installation SET provider_account_identity=NULL WHERE id='instance'");
   try{await assert.rejects(getProviderAccountIdentityKey(2),rejected);await assert.rejects(assertProviderAccountIdentityReadable(),rejected);await assert.rejects(rotateProviderAccountIdentityEncryption(),rejected);assert.equal((await pool.query("SELECT provider_account_identity FROM installation WHERE id='instance'")).rows[0].provider_account_identity,null);}finally{await pool.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[capsule]);}
-  assert.equal(await getProviderAccountIdentityKey(2),originalKey);console.log('PASS schema42 and AI-only immutable recovery binding');
+  assert.equal(await getProviderAccountIdentityKey(2),originalKey);console.log('PASS schema43 current and AI-only immutable recovery binding');
   const checks=await pool.connect();try{
    await checks.query('BEGIN');await checks.query('ALTER TABLE ai_search_quote RENAME TO ai_search_quote_fixture_hidden');await assert.rejects(initializeProviderAccountIdentity(checks),rejected);await checks.query('ROLLBACK');
    await checks.query('BEGIN');const bad=async(sql:string,values:unknown[]=[],code='23514',constraint?:string)=>{await checks.query('SAVEPOINT invalid');await assert.rejects(checks.query(sql,values),e=>!!e&&typeof e==='object'&&'code'in e&&e.code===code&&(!constraint||'constraint'in e&&e.constraint===constraint));await checks.query('ROLLBACK TO SAVEPOINT invalid');};
