@@ -5,8 +5,8 @@ import { environmentCatalog, environmentFields, environmentVersion, isEnvironmen
 import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
 import { useAnnotations } from './AnnotationsPanel';
 import { deriveAnalyticsComparison, type AnalyticsComparison, type AnalyticsComparisonMode } from '../lib/analytics-comparison';
-import {geographyFields,parseGeographyKey,type GeographyFilters,type GeographyReport,type GeoField,type GeographyKey} from '../lib/analytics-geography';
-import {GeographyCard,geographyLabel,geographyLabels,validGeography} from './GeographyCard';
+import {geographyFields,parseGeographyKey,type GeographyFilters,type GeographyReport,type GeoField,type GeographyKey,type GeographyDetail,type GeographyDetailIntent} from '../lib/analytics-geography';
+import {GeographyCard,geographyLabel,geographyLabels,validGeography,validGeographyDetail} from './GeographyCard';
 import './analytics.css';
 
 export type AnalyticsPanelProps = {
@@ -37,6 +37,7 @@ type Analytics = {
   lastReceivedAt: string | null;
   environment?: AnalyticsEnvironment;
   geography?: GeographyReport;
+  geographyDetail?: GeographyDetail;
   comparison?: AnalyticsComparison;
 };
 type Range = { from: string; to: string };
@@ -52,6 +53,7 @@ type View = {
   loading: boolean;
   nonce: number; // lets Apply/Retry refetch an unchanged range
   denied?: boolean;
+  detail?: GeographyDetailIntent;
 };
 
 const DAY_MS = 86_400_000;
@@ -327,14 +329,14 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
     const id = ++reqRef.current;
     const ctrl = new AbortController();
     if(invalid||unavailableRange)return ()=>ctrl.abort();
-    const params=new URLSearchParams({from,to,...filters,...geographyFilters,...mode?{compare:mode}:{}});
+    const detail=view.detail,params=new URLSearchParams({from,to,...filters,...geographyFilters,...mode?{compare:mode}:{},...detail?{geoDetail:detail.field,geoPeriod:detail.period,geoSearch:detail.search}:{}});
     api<Analytics>(
       `/api/projects/${encodeURIComponent(projectId)}/analytics?${params}`,
       { signal: ctrl.signal },
     ).then(
       (data) => {
         if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId || queryRef.current!==queryKey) return;
-        if(!validReport(data,{from,to},filters,MAX_DAYS,geographyFilters)||(mode?!validComparison(data,{from,to},filters,mode,geographyFilters):data.comparison!==undefined)){
+        if(!validReport(data,{from,to},filters,MAX_DAYS,geographyFilters)||(mode?!validComparison(data,{from,to},filters,mode,geographyFilters):data.comparison!==undefined)||(detail?!validGeographyDetail(data.geographyDetail,detail,detail.period==='comparison'?data.comparison!.report:data,data.comparison?.asOf):data.geographyDetail!==undefined)||data.comparison?.report&&'geographyDetail'in data.comparison.report){
           setView(v=>v.key===projectId&&v.queryKey===queryKey?{...v,data:null,loading:false,error:'The analytics response did not match the requested range, filters or measurement evidence. Retry to read a fresh snapshot.'}:v);return;
         }
         setView((v) => (v.key === projectId ? { ...v, data, loading: false, error: null, denied: false } : v));
@@ -361,6 +363,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
   const applyFilter=(field:EnvironmentField,value:string|null)=>navigate({...intent,analyticsFrom:view.range.from,analyticsTo:view.range.to,[analyticsNavigationNames[field]]:value??'not-recorded'});
 
   const applyLocation=(field:GeoField,key:GeographyKey)=>navigate(applyGeographyFilter({...intent,analyticsFrom:view.range.from,analyticsTo:view.range.to},field,key));
+  const loadLocation=(detail:GeographyDetailIntent)=>setView(v=>({...v,detail,loading:true,error:null,nonce:v.nonce+1}));
 
   const retry = () => setView((v) => ({ ...v, data:null, loading: true, error: null, nonce: v.nonce + 1 }));
 
@@ -582,7 +585,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             </>}
             {!invalid&&annotations.panel}
           </section>}
-      {comparisonData&&<><ComparisonSummary data={comparisonData}/><ComparisonChart data={comparisonData}/><section className="card analytics-comparison-notes"><h2>Current period notes</h2><p className="hint">Notes belong to their actual current UTC dates, not the aligned previous days.</p><div className="annotation-dates" tabIndex={0} role="region" aria-label="Current notes by day, scroll for more dates">{comparisonData.daily.map(d=><div className="annotation-date" key={d.date}><span className="hint">{d.date}</span>{annotations.dayButton(d.date)}</div>)}</div>{annotations.panel}</section><ComparisonRankings data={comparisonData}/><GeographyCard data={comparisonData.geography} range={comparisonData.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation} periodLabel="Current period"/><GeographyCard data={(comparisonData.comparison.report as Analytics).geography} range={comparisonData.comparison.report.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation} periodLabel="Previous period"/><EnvironmentCard data={comparisonData} busy={busy} periodLabel="Current period" field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/><EnvironmentCard data={comparisonData.comparison.report} busy={busy} periodLabel="Previous period" field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/></>}
+      {comparisonData&&<><ComparisonSummary data={comparisonData}/><ComparisonChart data={comparisonData}/><section className="card analytics-comparison-notes"><h2>Current period notes</h2><p className="hint">Notes belong to their actual current UTC dates, not the aligned previous days.</p><div className="annotation-dates" tabIndex={0} role="region" aria-label="Current notes by day, scroll for more dates">{comparisonData.daily.map(d=><div className="annotation-date" key={d.date}><span className="hint">{d.date}</span>{annotations.dayButton(d.date)}</div>)}</div>{annotations.panel}</section><ComparisonRankings data={comparisonData}/><GeographyCard key={queryKey+'current'} period="current" detail={data?.geographyDetail} onDetail={loadLocation} data={comparisonData.geography} range={comparisonData.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation} periodLabel="Current period"/><GeographyCard key={queryKey+'comparison'} period="comparison" detail={data?.geographyDetail} onDetail={loadLocation} data={(comparisonData.comparison.report as Analytics).geography} range={comparisonData.comparison.report.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation} periodLabel="Previous period"/><EnvironmentCard data={comparisonData} busy={busy} periodLabel="Current period" field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/><EnvironmentCard data={comparisonData.comparison.report} busy={busy} periodLabel="Previous period" field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/></>}
       {data && !compareView && (
         <>
           <section className="card analytics-breakdown">
@@ -643,7 +646,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             )}
           </section>
 
-          <GeographyCard data={data.geography} range={data.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation}/>
+          <GeographyCard key={queryKey} period="current" detail={data.geographyDetail} onDetail={loadLocation} data={data.geography} range={data.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation}/>
           <EnvironmentCard data={data} busy={busy} field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/>
         </>
       )}

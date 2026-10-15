@@ -44,6 +44,13 @@ export const geographyAggregateCtes=`, geo_values AS MATERIALIZED (SELECT o.*,d.
  ${geographyCoverageCte}`;
 const breakdown=(field:string,limit:number)=>`(SELECT jsonb_build_object('rows',COALESCE(jsonb_agg(row ORDER BY rank) FILTER(WHERE rank<=${limit}),'[]'::jsonb),'limit',${limit},'totalGroups',count(*),'returnedPageViews',COALESCE(sum(pageviews) FILTER(WHERE rank<=${limit}),0),'truncated',count(*)>${limit}) FROM geo_rows WHERE field='${field}')`;
 export function geographyReportSql(filters:string){return `(SELECT jsonb_build_object('version','native-geography-report-v1','filters',${filters},'countries',${breakdown('country',678)},'regions',${breakdown('region',100)},'cities',${breakdown('city',100)},'coverage',${coverageJson},'provenance',${provenanceJson},'method',${methodJson}) FROM geo_coverage)`;}
+/** Search the full grouped population, then serialize only the returned500; summary ranks stay unchanged. */
+export const geographyDetailSql=`CASE WHEN $15::jsonb IS NOT NULL AND q.period=$15::jsonb->>'period' THEN (
+ WITH matching AS MATERIALIZED (SELECT * FROM geo_rows WHERE field=$15::jsonb->>'field' AND strpos(lower(CASE key->>'state'
+  WHEN 'unknown' THEN 'Unknown' WHEN 'not-recorded' THEN 'Not recorded' ELSE concat_ws(' · ',key->>'city',row->>'regionName',key->'region'->>'value',key->>'country') END),lower($15::jsonb->>'search'))>0),
+ returned AS MATERIALIZED (SELECT * FROM matching ORDER BY rank LIMIT 500)
+ SELECT jsonb_build_object('rows',COALESCE((SELECT jsonb_agg(row ORDER BY rank) FROM returned),'[]'::jsonb),
+ 'matchingGroups',count(*),'matchingPageViews',COALESCE(sum(pageviews),0),'returnedPageViews',COALESCE((SELECT sum(pageviews) FROM returned),0),'truncated',count(*)>500) FROM matching) END`;
 export function applyGeographyCoverage(report:GeographyReport,status:'complete'|'partial'|'unavailable'){
  report.coverage.status=status;if(report.coverage.firstRecordedAt!==null)report.coverage.firstRecordedAt=new Date(report.coverage.firstRecordedAt).toISOString();
  if(status==='unavailable'){for(const breakdown of [report.countries,report.regions,report.cities]){breakdown.rows=[];breakdown.totalGroups=null;breakdown.returnedPageViews=null;breakdown.truncated=false;}report.coverage={status,pageViews:null,recordedPageViews:null,notRecordedPageViews:null,knownCountryPageViews:null,knownRegionPageViews:null,knownCityPageViews:null,firstRecordedAt:null};report.provenance={source:'db-ip-city-lite',databaseCount:null,oldestDatabaseBuild:null,newestDatabaseBuild:null};}return report;
