@@ -8,8 +8,10 @@ import {apiKeyScopes,type ApiKeyPrincipal} from '../src/server/api-keys.ts';
 
 const principal:ApiKeyPrincipal={id:randomUUID(),userId:randomUUID(),workspaceId:randomUUID(),role:'owner',scopes:[...apiKeyScopes]};
 test('fixed native catalog, strict bounded schemas and scope separation',()=>{
-  assert.equal(mcpTools.length,13);assert.equal(new Set(mcpTools.map(t=>t.name)).size,13);
-  assert.equal(availableTools({...principal,scopes:['analytics:read']}).length,6);
+  assert.equal(mcpTools.length,16);assert.equal(new Set(mcpTools.map(t=>t.name)).size,16);
+  const original=['ten98_whoami','ten98_read_analytics','ten98_read_realtime','ten98_list_sessions','ten98_read_session','ten98_read_linked_activity','ten98_list_prompts','ten98_read_prompt','ten98_list_prompt_versions','ten98_create_prompts','ten98_update_prompt','ten98_archive_prompt','ten98_restore_prompt'];
+  assert.deepEqual(mcpTools.filter(tool=>original.includes(tool.name)).map(tool=>tool.name),original);
+  assert.equal(availableTools({...principal,scopes:['analytics:read']}).length,9);
   assert.equal(availableTools({...principal,scopes:['prompts:read']}).length,4);
   assert.equal(availableTools({...principal,scopes:['prompts:write']}).length,5);
   assert.deepEqual(availableTools({...principal,scopes:[]}).map(t=>t.name),['ten98_whoami']);
@@ -42,7 +44,7 @@ test('official SDK emits finite modern and legacy catalog responses without sess
       const response=await handler.fetch(new Request('http://127.0.0.1:3111/api/mcp',{method:'POST',headers,body:JSON.stringify(body)}));
       assert.equal(response.status,200);assert.equal(response.headers.has('mcp-session-id'),false);
       const text=await response.text(),wire=JSON.parse(modern?text:text.split('\n').find(line=>line.startsWith('data: {'))!.slice(6));
-      assert.equal(wire.result.tools.length,13);assert.ok(wire.result.tools.every((tool:any)=>tool.annotations.openWorldHint===false));
+      assert.equal(wire.result.tools.length,16);assert.ok(wire.result.tools.every((tool:any)=>tool.annotations.openWorldHint===false));
       assert.ok(wire.result.tools.every((tool:any)=>tool.inputSchema.additionalProperties===false));
     }finally{await handler.close();}
   }
