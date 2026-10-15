@@ -763,7 +763,7 @@ export async function handleApi(request: Request): Promise<Response> {
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
         finally { client.release(); }
       }
-      if (request.method === 'GET' && match[2] === 'analytics') return json(await projectAnalytics(match[1], user.id, url.searchParams));
+      if (request.method === 'GET' && match[2] === 'analytics') return json(await projectAnalytics(match[1], user.id, url.searchParams,principal?.id));
       if (request.method === 'GET' && match[2] === 'explore') {
         await limit(`explore:${user.id}`,30);
         return json(await exploreAnalytics(match[1],user.id,url.searchParams));

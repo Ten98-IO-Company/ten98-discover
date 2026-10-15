@@ -4,6 +4,7 @@ import { FoundationError } from './auth.ts';
 import { retentionCoverage } from './retention.ts';
 import {publicAnalyticsSettings} from './native-analytics.ts';
 import {environmentFields,environmentVersion,isEnvironmentFilter,type EnvironmentFilters,type AnalyticsEnvironment} from '../lib/analytics-environment.ts';
+import {deriveAnalyticsComparison,type AnalyticsComparisonMode,type AnalyticsComparison,type AnalyticsPeriodReport} from '../lib/analytics-comparison.ts';
 
 const dayMs = 86_400_000;
 function dateValue(value: string): Date {
@@ -31,7 +32,8 @@ export function analyticsRange(params: URLSearchParams, now = new Date()) {
 }
 
 export function analyticsQuery(params:URLSearchParams,now=new Date()) {
-  for(const key of params.keys())if(!['from','to',...environmentFields].includes(key)||params.getAll(key).length!==1)throw new InputError(400,'Use each supported analytics filter only once.');
+  for(const key of params.keys())if(!['from','to','compare',...environmentFields].includes(key)||params.getAll(key).length!==1)throw new InputError(400,'Use each supported analytics filter only once.');
+  const compare=params.get('compare');if(compare!==null&&!['prev','yoy'].includes(compare))throw new InputError(400,'Choose previous period or previous year.');
   const dates=new URLSearchParams(),filters:EnvironmentFilters={};
   for(const field of ['from','to'])if(params.has(field))dates.set(field,params.get(field)!);
   for(const field of environmentFields)if(params.has(field)){
@@ -39,20 +41,32 @@ export function analyticsQuery(params:URLSearchParams,now=new Date()) {
     if(!isEnvironmentFilter(field,value))throw new InputError(400,'Choose a supported browser, OS or device filter.');
     filters[field]=value;
   }
-  return {range:analyticsRange(dates,now),filters};
+  return {range:analyticsRange(dates,now),filters,...compare===null?{}:{compare:compare as AnalyticsComparisonMode}};
 }
-export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams) {
-  const {range,filters} = analyticsQuery(params);
+export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string):Promise<AnalyticsPeriodReport&{comparison?:AnalyticsComparison}> {
+  const {range,filters,compare} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
+  if(compare&&!derived)throw new InputError(400,'Choose a later start date so the comparison stays on or after 1970-01-01.');
+  const client=compare?await getDatabase().pool.connect():null;
+  try{
+  if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");}
   // One statement gives totals, buckets and rankings the same database snapshot.
   // ponytail: aggregate the selected range directly; add rollups after measured volume requires them.
-  const { rows } = await getDatabase().pool.query(`
-    WITH target AS MATERIALIZED (
-      SELECT p.analytics_retained_from,p.analytics_settings FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
-    ), observations AS MATERIALIZED (
+  const { rows } = await (client??getDatabase().pool).query(`
+    WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS as_of),
+    key_authority AS MATERIALIZED (SELECT $13::uuid IS NULL OR EXISTS(SELECT 1 FROM api_key k
+      JOIN membership m ON m.workspace_id=k.workspace_id AND m.user_id=k.issuer_user_id JOIN project p ON p.workspace_id=k.workspace_id AND p.id=$1 CROSS JOIN clock c
+      WHERE k.id=$13::uuid AND k.issuer_user_id=$2 AND m.role IN('owner','admin','editor','viewer') AND 'analytics:read'=ANY(k.scopes)
+        AND k.revoked_at IS NULL AND k.expires_at>c.as_of) AS valid),
+    target AS MATERIALIZED (
+      SELECT p.analytics_retained_from,p.analytics_settings FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
+      CROSS JOIN key_authority k WHERE p.id=$1 AND k.valid
+    ), periods AS (SELECT 'current' AS period,$3::timestamptz AS start,$4::timestamptz AS finish,$5::date AS from_day,$6::date AS to_day
+      UNION ALL SELECT 'comparison',$9::timestamptz,$10::timestamptz,$11::date,$12::date WHERE $9::timestamptz IS NOT NULL)
+    SELECT q.period,c.as_of,(SELECT valid FROM key_authority) AS key_valid,r.* FROM periods q CROSS JOIN clock c CROSS JOIN LATERAL (
+    WITH observations AS MATERIALIZED (
       SELECT e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions,e.collection_basis
-      FROM event e JOIN project p ON p.id=e.project_id
-      JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
-      WHERE e.project_id=$1 AND e.received_at >= $3::timestamptz AND e.received_at < $4::timestamptz
+      FROM event e CROSS JOIN target p
+      WHERE e.project_id=$1 AND e.received_at >= q.start AND e.received_at < q.finish
         AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
         AND (NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
         AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
@@ -69,7 +83,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
         count(*) FILTER (WHERE event_name<>'page_view') AS custom
       FROM observations GROUP BY 1
     ), calendar AS (
-      SELECT generate_series($5::date::timestamp,$6::date::timestamp,interval '1 day')::date AS day
+      SELECT generate_series(q.from_day::timestamp,q.to_day::timestamp,interval '1 day')::date AS day
     ), pages AS (
       SELECT path,count(*) AS views FROM observations WHERE event_name='page_view'
       GROUP BY path ORDER BY views DESC,path ASC LIMIT 20
@@ -129,11 +143,31 @@ export async function projectAnalytics(projectId: string, userId: string, params
           'firstRecordedAt',min(received_at) FILTER (WHERE event_name='page_view' AND dimensions->>'environmentVersion'=$8::text)),
         'method',json_build_object('source','bounded-request-user-agent','device','ua-parser-v1-screen-if-enabled','rawUserAgentStored',false)),
       'lastReceivedAt',max(received_at)
-    ) AS report FROM observations`, [projectId, userId, range.start, range.end, range.from, range.to,JSON.stringify(filters),environmentVersion]);
-  if (!rows[0].allowed) throw new FoundationError(404, 'Project not found or unavailable.');
-  const coverage = retentionCoverage(range.start, range.end, rows[0].retained_from);
-  const report = rows[0].report;
-  report.collection.mode=publicAnalyticsSettings(rows[0].analytics_settings).collectionMode;
+    ) AS report FROM observations) r ORDER BY CASE q.period WHEN 'current' THEN 0 ELSE 1 END`,
+    [projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null]);
+  if(apiKeyId&&!rows[0]?.key_valid)throw new FoundationError(401,'The API key is invalid, expired or unavailable.');
+  if(!rows[0]?.allowed)throw new FoundationError(404,'Project not found or unavailable.');
+  const current=formatReport(rows[0],range);
+  let comparison:AnalyticsComparison|undefined;
+  if(compare&&derived){
+    const previous=formatReport(rows[1],derived.range),asOf=(rows[0].as_of as Date).toISOString(),available=current.coverage.status==='complete'&&previous.coverage.status==='complete';
+    const change=(value:number|null,before:number|null)=>{const absolute=available&&value!==null&&before!==null?value-before:null,percent=absolute!==null&&before!==null&&before>0?100*absolute/before:null;return {absolute,percent:percent!==null&&Number.isFinite(percent)?percent:null};};
+    const calendar=(period:{start:string;end:string})=>Date.parse(asOf)<=Date.parse(period.start)?'future' as const:Date.parse(asOf)<Date.parse(period.end)?'partial' as const:'complete' as const;
+    comparison={version:'analytics-comparison-v1',mode:compare,asOf,report:previous,alignment:derived.alignment,calendar:{current:calendar(range),comparison:calendar(derived.range)},change:{
+      pageViews:change(current.totals.pageViews,previous.totals.pageViews),customEvents:change(current.totals.customEvents,previous.totals.customEvents),
+      visitors:change(current.measurement.visitors,previous.measurement.visitors),visits:change(current.measurement.visits,previous.measurement.visits),
+      averageVisitSeconds:change(current.measurement.averageVisitSeconds,previous.measurement.averageVisitSeconds),
+      bounceRate:{percentagePoints:available&&current.measurement.bounceRate!==null&&previous.measurement.bounceRate!==null?current.measurement.bounceRate-previous.measurement.bounceRate:null}}};
+  }
+  if(client)await client.query('COMMIT');return comparison?{...current,comparison}:current;
+  }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if(compare&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Comparison took too long. Choose a shorter date range.');throw error;}
+  finally{client?.release();}
+}
+type RawAnalyticsReport=Omit<AnalyticsPeriodReport,'range'|'coverage'|'daily'>&{daily:{date:string;pageViews:number;customEvents:number}[]};
+function formatReport(row:{retained_from:string|Date|null;analytics_settings:unknown;report:RawAnalyticsReport},range:ReturnType<typeof analyticsRange>):AnalyticsPeriodReport{
+  const coverage = retentionCoverage(range.start, range.end, row.retained_from);
+  const report = row.report;
+  report.collection.mode=publicAnalyticsSettings(row.analytics_settings).collectionMode??'consent-first';
   const environment=report.environment as AnalyticsEnvironment;
   if(environment.coverage.firstRecordedAt!==null)environment.coverage.firstRecordedAt=new Date(environment.coverage.firstRecordedAt).toISOString();
   if (coverage.status === 'unavailable') {
@@ -144,10 +178,10 @@ export async function projectAnalytics(projectId: string, userId: string, params
     environment.browsers=[];environment.operatingSystems=[];environment.devices=[];
     environment.coverage={pageViews:null,recordedPageViews:null,notRecordedPageViews:null,firstRecordedAt:null};
   }
-  report.daily = report.daily.map((day: { date: string; pageViews: number; customEvents: number }) => {
+  const daily = report.daily.map((day) => {
     const start = `${day.date}T00:00:00.000Z`;
-    const status = retentionCoverage(start, new Date(Date.parse(start) + dayMs).toISOString(), rows[0].retained_from).status;
+    const status = retentionCoverage(start, new Date(Date.parse(start) + dayMs).toISOString(), row.retained_from).status;
     return { ...day, ...(status === 'unavailable' ? { pageViews: null, customEvents: null } : {}), coverage: status };
   });
-  return { range: { from: range.from, to: range.to, timeZone: range.timeZone }, ...report, coverage };
+  return { range: { from: range.from, to: range.to, timeZone: range.timeZone }, ...report,daily, coverage };
 }

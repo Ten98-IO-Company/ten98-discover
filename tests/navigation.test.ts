@@ -5,6 +5,31 @@ import {environmentCatalog,environmentFields} from '../src/lib/analytics-environ
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
+test('Compare is a project read view with an optional strict mode and the same applied dates/filters',()=>{
+  const base={workspace,project,view:'compare'} as const,values={analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29',analyticsBrowser:'chrome',analyticsOs:'Mac OS',analyticsDevice:'desktop'};
+  assert.deepEqual(parseNavigation(base),base);
+  assert.equal(projectView('compare'),true);
+  for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('compare',role,false),true);
+  assert.equal(allowedView('compare',undefined,false),false);
+  for(const analyticsCompare of ['prev','yoy'] as const){
+    const search=parseNavigation({...base,...values,analyticsCompare});assert.deepEqual(search,{...base,...values,analyticsCompare});
+    assert.deepEqual(parseNavigation(search),search);assert.equal(canonicalNavigation('?'+new URLSearchParams(search as Record<string,string>),search),true);
+    assert.notEqual(navigationKey(search),navigationKey(parseNavigation({...base,...values})));
+  }
+  assert.notEqual(navigationKey({...base,analyticsCompare:'prev'}),navigationKey({...base,analyticsCompare:'yoy'}));
+  assert.deepEqual(parseNavigation({...base,view:'explore',...values,analyticsCompare:'yoy'}),{workspace,project,view:'explore'});
+});
+
+test('Compare links reject ambiguous mode/scope and never enable comparison in the ordinary overview',()=>{
+  const base={workspace,project,view:'compare'} as const,invalid={...base,analyticsInvalid:'1'};
+  for(const analyticsCompare of ['',null,true,1,'previous','YOY','yoy\n',['prev'],['prev','prev'],{mode:'prev'}])assert.deepEqual(parseNavigation({...base,analyticsCompare}),invalid);
+  for(const patch of [{workspace:undefined},{project:undefined},{project:[project]}])assert.equal(parseNavigation({...base,...patch,analyticsCompare:'prev'}).analyticsInvalid,'1');
+  assert.deepEqual(parseNavigation({...base,analyticsCompare:'yoy',analyticsFrom:'2024-02-28',analyticsTo:'2025-02-28'}),invalid);
+  assert.deepEqual(parseNavigation({...base,view:'project',analyticsCompare:'prev'}),{workspace,project,view:'project',analyticsInvalid:'1'});
+  assert.equal(canonicalNavigation('?'+new URLSearchParams({...base,analyticsCompare:'prev'})+'&analyticsCompare=prev',parseNavigation({...base,analyticsCompare:'prev'})),false);
+  assert.deepEqual(parseNavigation({...base,analyticsCompare:'prev',analyticsPriorFrom:'private'}),invalid);
+});
+
 test('URL navigation accepts only scalar identifiers and known sections, never capabilities', () => {
   assert.deepEqual(parseNavigation({ workspace: workspace.toUpperCase(), project, view: 'events', invite: 'secret', returnTo: 'https://example.test' }), { workspace, project, view: 'events' })
   for (const bad of [[workspace, workspace], { id: workspace }, true, null, workspace + '\n', '__proto__']) {
