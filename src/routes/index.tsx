@@ -47,7 +47,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { analyticsNavigation, auditNavigation, sessionNavigation, retentionNavigation, journeysNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
+import { analyticsNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: App })
@@ -281,7 +281,7 @@ function App() {
     if (requested.project && sameWorkspace && !requestedProject && view !== 'new-project') setAppError('That project is no longer available in this workspace. Choose a current project.')
     activateProject(project?.id ?? '')
     setNavigationPending(false)
-    const resolved: NavigationSearch = { ...(workspaceId ? { workspace: workspaceId } : {}), ...(project ? { project: project.id } : {}), view, ...(requested.project===project?.id && requested.workspace===workspaceId ? view==='sessions'?sessionNavigation(requested):view==='journeys'?journeysNavigation(requested):view==='audits'?auditNavigation(requested):['project','compare'].includes(view)?analyticsNavigation(requested):{} : {}) }
+    const resolved = parseNavigation({ ...(requested.project===project?.id && requested.workspace===workspaceId ? requested : {}), ...(workspaceId ? { workspace: workspaceId } : {}), ...(project ? { project: project.id } : {}), view })
     if (navigationKey(resolved) !== navigationKey(requested) || !canonicalNavigation(window.location.search, resolved)) go(resolved, true)
   }
 

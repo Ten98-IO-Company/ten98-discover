@@ -97,6 +97,15 @@ try {
   }
 
   await auth(owner.email)
+  const retentionIntent = {retentionMonth:'2024-03', retentionTimeZone:'Asia/Dubai', retentionEntry:new URLSearchParams({kind:'all',path:'/entry'}).toString()}
+  await page.goto(href(a.id,a1,'visitor-retention')+'&'+new URLSearchParams(retentionIntent))
+  await heading('Retention')
+  await page.getByText('2024-03 · Asia/Dubai · Exact local-day returns within this month',{exact:true}).waitFor()
+  for(const [key,value] of Object.entries(retentionIntent)) assert.equal(new URL(page.url()).searchParams.get(key),value)
+  await page.reload()
+  await page.getByText('2024-03 · Asia/Dubai · Exact local-day returns within this month',{exact:true}).waitFor()
+  for(const [key,value] of Object.entries(retentionIntent)) assert.equal(new URL(page.url()).searchParams.get(key),value)
+  console.log('PASS navigation: compiled parent preserves Retention month/timezone/entry scope through project resolution and reload.')
   await page.goto(href(a.id, a2, 'events')); await heading('Recent events')
   await selected(a.id, a2, 'events'); await page.reload(); await heading('Recent events'); await selected(a.id, a2, 'events')
   await page.goto(href(a.id, a2, 'events') + '&invite=synthetic&token=synthetic&returnTo=https%3A%2F%2Fexample.test')
@@ -137,12 +146,12 @@ try {
   console.log('PASS navigation: malformed, foreign and forbidden targets canonicalize before protected panels mount.')
 
   const families = ['Measure', 'Research', 'Connect']
-  const commonSections = ['Analytics', 'Explore', 'Sessions', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'Keywords', 'Rank tracking', 'Google connections', 'Meta ads', 'Meta reports', 'Install tracker', 'Collection and privacy']
+  const commonSections = ['Analytics', 'Realtime', 'Compare', 'Explore', 'Sessions', 'Journeys', 'Retention', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'Keywords', 'Rank tracking', 'Google connections', 'Meta ads', 'Meta reports', 'Install tracker', 'Collection and privacy']
   for (const [workspace, projectId, isOwner] of [[a.id, a1, true], [b.id, b1, false]] as const) {
     await page.goto(href(workspace, projectId, 'events')); await heading('Recent events'); await menu()
     const sections = page.getByRole('navigation', { name: 'Project sections', exact: true })
     assert.deepEqual(await sections.locator(':scope > .side-label').allTextContents(), families)
-    const expected = isOwner ? [...commonSections.slice(0, 17), 'Destinations', 'Collection and privacy', 'Domains'] : commonSections
+    const expected = isOwner ? [...commonSections.slice(0, commonSections.indexOf('Collection and privacy')), 'Destinations', 'Collection and privacy', 'Domains'] : commonSections
     assert.deepEqual(await sections.getByRole('link', { includeHidden: true }).allTextContents(), expected)
     assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Recent events'])
     assert.deepEqual(await page.getByRole('navigation', { name: 'Workspace settings', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), isOwner ? ['Manage team', 'ten98 API access', 'AI and search providers', 'Data retention', 'Create workspace'] : ['Data retention', 'Create workspace'])
