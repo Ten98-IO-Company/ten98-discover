@@ -30,8 +30,23 @@ export function revenueUnits(value:string):bigint{
  return BigInt(value.replace('.',''));
 }
 export function revenueDecimal(value:bigint):string{
+ const result=scaledDecimal(value);revenueUnits(result);return result;
+}
+function scaledDecimal(value:bigint):string{
  const negative=value<0n,raw=(negative?-value:value).toString().padStart(5,'0');
- const result=(negative?'-':'')+raw.slice(0,-4)+'.'+raw.slice(-4);revenueUnits(result);return result;
+ return(negative?'-':'')+raw.slice(0,-4)+'.'+raw.slice(-4);
+}
+export type RevenueMoneyChange={absolute:string|null;percent:string|null};
+export type RevenueCountChange={absolute:number|null;percent:string|null};
+function changeUnits(a:bigint,b:bigint):RevenueMoneyChange{
+ const difference=a-b,n=difference<0n?-difference:difference,scaled=n*1000000n;
+ return{absolute:scaledDecimal(difference),percent:b<=0n?null:scaledDecimal((difference<0n?-1n:1n)*(scaled/b+(scaled%b*2n>=b?1n:0n)))};
+}
+export function revenueMoneyChange(current:string|null,previous:string|null):RevenueMoneyChange{return current===null||previous===null?{absolute:null,percent:null}:changeUnits(revenueUnits(current),revenueUnits(previous));}
+export function revenueCountChange(current:number|null,previous:number|null):RevenueCountChange{
+ if(current===null||previous===null)return{absolute:null,percent:null};
+ if(!Number.isSafeInteger(current)||!Number.isSafeInteger(previous)||current<0||previous<0)throw new TypeError('Invalid revenue count.');
+ return{absolute:current-previous,percent:changeUnits(BigInt(current),BigInt(previous)).percent};
 }
 export function revenueAverage(amount:string,denominator:number):string|null{
  if(!Number.isSafeInteger(denominator)||denominator<0)throw new TypeError('Invalid revenue denominator.');if(!denominator)return null;
@@ -67,4 +82,11 @@ export type RevenueResult={version:typeof revenueReportVersion;currencyCatalogVe
  sessions:{search:string;totalRevenueKeys:number|null;matchingSearchKeys:number|null;rows:RevenueSessionRow[]|null};
  detail:{visitorKey:string;summary:RevenueTotals|null;activity:RevenueActivity[]|null}|null;
  paging:{consistency:'current-per-page';limit:number;nextCursor:string|null};retention:{policyHash:string;evidenceHash:string};
- cohort?:import('../server/analytics-population.ts').CohortReport;sessionProperties?:import('../server/analytics-population.ts').SessionPropertyScope;predicateMethod?:ReturnType<typeof import('../server/advanced-predicates.ts').advancedPredicateMethod>};
+ cohort?:import('../server/analytics-population.ts').CohortReport;sessionProperties?:import('../server/analytics-population.ts').SessionPropertyScope;predicateMethod?:ReturnType<typeof import('../server/advanced-predicates.ts').advancedPredicateMethod>;comparison?:RevenueComparison};
+export type RevenueComparisonSummary=Pick<RevenueResult,'asOf'|'eventBefore'|'query'|'range'|'calendar'|'coverage'|'selection'|'identity'|'measurement'|'money'|'retention'|'cohort'|'sessionProperties'|'predicateMethod'>;
+export type RevenueComparison={version:'native-revenue-comparison-v1';mode:'prev'|'yoy';summary:RevenueComparisonSummary;calendar:{current:'complete'|'partial'|'future';comparison:'complete'|'partial'|'future'};periods:{currentDays:number;comparisonDays:number;overlapDays:number};change:{net:RevenueMoneyChange;averageSale:RevenueMoneyChange;keyedNetPerQualifiedKey:RevenueMoneyChange;saleObservations:RevenueCountChange;revenueKeys:RevenueCountChange}};
+export function revenueComparisonChanges(current:RevenueComparisonSummary,previous:RevenueComparisonSummary):RevenueComparison['change']{
+ const complete=[current,previous].every(value=>!value.calendar.provisional&&!value.selection.evidenceIncomplete&&value.coverage.status==='complete'&&value.selection.status==='available');
+ const money=(field:'net'|'averageSale'|'keyedNetPerQualifiedKey')=>revenueMoneyChange(complete?current.money?.[field]??null:null,complete?previous.money?.[field]??null:null);
+ return{net:money('net'),averageSale:money('averageSale'),keyedNetPerQualifiedKey:money('keyedNetPerQualifiedKey'),saleObservations:revenueCountChange(complete?current.money?.saleObservations??null:null,complete?previous.money?.saleObservations??null:null),revenueKeys:revenueCountChange(complete?current.identity.revenueKeys:null,complete?previous.identity.revenueKeys:null)};
+}
