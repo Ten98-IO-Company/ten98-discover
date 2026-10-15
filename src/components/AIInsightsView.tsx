@@ -1,3 +1,5 @@
+import {useState} from 'react';
+import type {InsightCoverage, InsightMetric} from '../server/prompt-insights';
 export type AIInsightsDraft = {
   from: string; to: string; timeZone: string; model: string;
   promptId: string; tag: string;
@@ -18,13 +20,16 @@ export type AIInsightsViewProps = {
   report: null | {
     scopeLabel: string; contextLabel: string; snapshotLabel: string;
     warnings: string[];
+    coverageCounts: Pick<InsightCoverage, 'attempted' | 'eligible'>;
+    brandCitationDomainCount: number; pooledModels: boolean;
     coverage: {label: string; value: string}[];
     metrics: {id: string; name: string; visibility: string;
-      shareOfVoice: string; citations: string; canDrill: boolean}[];
+      shareOfVoice: string; citations: string; canDrill: boolean; counts: InsightMetric}[];
     dailyEntityId: string;
     dailyEntities: {id: string; label: string}[];
     dailyRows: {date: string; attempted: string; eligible: string;
-      visibility: string; shareOfVoice: string; citations: string}[];
+      visibility: string; shareOfVoice: string; citations: string; counts: InsightMetric;
+      coverageCounts: Pick<InsightCoverage, 'attempted' | 'eligible'>}[];
     drilldownLabel: string; rowCountLabel: string;
     executions: {id: string; requestedAt: string; model: string;
       eligibility: string; matches: string}[];
@@ -45,8 +50,33 @@ export type AIInsightsViewProps = {
 
 const controlStyle = { minHeight: 44, maxWidth: '100%' };
 const wrapStyle = { width: '100%', minWidth: 0, maxWidth: '100%', overflowX: 'auto' } as const;
+type TrendMetric = 'visibility' | 'shareOfVoice' | 'citations';
+const metricLabels: Record<TrendMetric, string> = {visibility: 'Mention rate', shareOfVoice: 'Share of tracked mentions', citations: 'Citing-answer rate'};
+function percentage(counts: InsightMetric, metric: TrendMetric): number | null {
+  const denominator = metric === 'visibility' ? counts.eligibleAnswers : metric === 'shareOfVoice' ? counts.shareOfVoiceDenominator : counts.citationDenominator;
+  return denominator === null || denominator <= 0 ? null : 100 * (metric === 'citations' ? counts.citations : counts.mentions) / denominator;
+}
+const percentText = (value: number | null) => value === null ? 'Unavailable' : value.toFixed(1).replace(/\.0$/, '') + '%';
+function focusRegion(id: string) { const region = document.getElementById(id); region?.focus(); region?.scrollIntoView({block: 'nearest'}); }
+
+function DailyTrend({report, metric, prefix}: {report: NonNullable<AIInsightsViewProps['report']>; metric: TrendMetric; prefix: string}) {
+  const points = report.dailyRows.map((row, index) => ({row, value: percentage(row.counts, metric), x: report.dailyRows.length === 1 ? 300 : 4 + index * 592 / (report.dailyRows.length - 1)}));
+  const segments: typeof points[] = []; let segment: typeof points = [];
+  for (const point of points) { if (point.value === null) segment = []; else { if (!segment.length) segments.push(segment); segment.push(point); } }
+  const name = report.dailyEntities.find(entity => entity.id === report.dailyEntityId)?.label ?? 'Selected entity';
+  return <div className="ai-daily-trend">
+    {segments.length ? <><div className="ai-trend-plot" dir="ltr"><div className="ai-trend-y" aria-hidden="true"><span>100%</span><span>50%</span><span>0%</span></div><svg viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-label={`${metricLabels[metric]} for ${name} by requested day. Exact counts are in Daily observations.`} aria-describedby={`${prefix}scope ${prefix}trend-help`}>
+      {[10,90,170].map(y => <line className="ai-trend-grid" key={y} x1="0" x2="600" y1={y} y2={y}/>)}
+      {points.filter(point => point.value === null).map(point => <line className="ai-trend-missing" data-date={point.row.date} key={point.row.date} x1={point.x} x2={point.x} y1="10" y2="170"><title>{point.row.date}: Unavailable</title></line>)}
+      {segments.filter(points => points.length > 1).map((points, index) => <polyline className="ai-trend-line" key={index} points={points.map(point => `${point.x},${170 - point.value! * 1.6}`).join(' ')}/>)}
+      {points.filter(point => point.value !== null).map(point => <circle className="ai-trend-point" data-date={point.row.date} data-rate={point.value} key={point.row.date} cx={point.x} cy={170 - point.value! * 1.6} r="3"><title>{point.row.date}: {percentText(point.value)} · {point.row.coverageCounts.eligible} eligible of {point.row.coverageCounts.attempted} attempted</title></circle>)}
+    </svg></div><div className="ai-trend-axis" dir="ltr"><bdi>{report.dailyRows[0]?.date}</bdi>{report.dailyRows.length > 1 && <bdi>{report.dailyRows.at(-1)?.date}</bdi>}</div></> : <p className="dim">{!report.coverageCounts.attempted ? 'No executions in the applied range.' : !report.coverageCounts.eligible ? 'No eligible retained answers. See Answer coverage below.' : 'Eligible answers are available, but no tracked entity was mentioned on these days.'}</p>}
+    <p className="hint" id={prefix + 'trend-help'}>By requested day in the applied timezone. Dotted columns mark unavailable days; gaps are not filled or carried forward. The numerical table below includes every day.</p>
+  </div>;
+}
 
 export function AIInsightsView(props: AIInsightsViewProps) {
+  const [trendMetric, setTrendMetric] = useState<TrendMetric>('visibility');
   const {
     prefix, role, reading, exporting, error, notice, filterError, dirty,
     draft, promptSearch, promptOptions, canPreviousPrompts, canNextPrompts,
@@ -65,6 +95,8 @@ export function AIInsightsView(props: AIInsightsViewProps) {
   const prevOff = !known || report === null || dirty || busy || !report.canPrevious;
   const nextOff = !known || report === null || dirty || busy || !report.canNext;
   const exportOff = !known || report === null || dirty || busy || !report.canExport;
+  const brand = report?.metrics.find(entity => entity.id === 'brand');
+  const leaders = report ? [...report.metrics].sort((a,b) => b.counts.mentions - a.counts.mentions).slice(0,5) : [];
 
   return (
     <div className="research-panel stack" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
@@ -96,8 +128,11 @@ export function AIInsightsView(props: AIInsightsViewProps) {
 
       {known && report !== null && (
         <div className="stack">
-          <p><strong>{report.scopeLabel}</strong></p>
+          <p id={prefix + 'scope'}><strong>{report.scopeLabel}</strong></p>
           <p className="hint">{report.contextLabel}</p>
+          <p className="hint">Source: OpenRouter API · web search off. Not consumer ChatGPT or search observations. Market and language not recorded.</p>
+          {report.pooledModels && <p className="hint">The All models view pools retained answers. Each model answer counts separately; these rates are not a balanced model comparison.</p>}
+          <p className="hint">{report.snapshotLabel}</p>
           {report.warnings.length > 0 && (
             <ul className="stack">
               {report.warnings.map((w, i) => <li key={i}>{w}</li>)}
@@ -184,12 +219,29 @@ export function AIInsightsView(props: AIInsightsViewProps) {
       )}
       {known && dirty && <p className="hint">Unapplied filter changes. The report below still uses the applied filters.</p>}
 
+      {known && report !== null && brand && <section className="ai-insights-overview stack" aria-labelledby={prefix + 'overview'}>
+        <div className="row between"><h3 id={prefix + 'overview'}><bdi>{brand.name}</bdi> <span className="pill">You</span></h3><button type="button" className="btn" style={controlStyle} disabled={reportOff || !brand.canDrill} onClick={() => { if (!reportOff && brand.canDrill) onDrilldown('mentioned', 'brand'); }}>View brand mentions</button></div>
+        <div className="ai-overview-cards">{(['visibility','shareOfVoice','citations'] as const).map(metric => <section className="card" key={metric} aria-label={metric === 'visibility' ? 'Brand mention rate' : metric === 'shareOfVoice' ? 'Brand share of tracked mentions' : 'Answers citing brand domains'}><h4>{metric === 'visibility' ? 'Brand mention rate' : metric === 'shareOfVoice' ? metricLabels[metric] : 'Answers citing brand domains'}</h4><p className="ai-overview-value">{percentText(percentage(brand.counts,metric))}</p><p className="hint"><bdi dir="ltr">{brand[metric]}</bdi></p><p className="hint">{metric === 'shareOfVoice' ? 'Share of entity-answer matches across the full current tracked set.' : metric === 'citations' ? `Eligible answers with provider citation hits · ${report.brandCitationDomainCount} configured brand citation domains.` : 'Eligible answers mentioning your current brand name or aliases.'}</p></section>)}</div>
+        <p className="hint">{report.coverageCounts.eligible} eligible of {report.coverageCounts.attempted} attempted answers. Mentions and provider citation hits are separate; website-content coverage is not measured here.{report.metrics.length === 1 ? ' Only your brand is configured, so share is not a competitor comparison.' : ''}</p>
+        <section className="card stack" aria-labelledby={prefix + 'trend'}>
+          <div className="row between"><h3 id={prefix + 'trend'}>Daily trend</h3><button type="button" className="btn ghost" style={controlStyle} disabled={reportOff} onClick={() => { if (!reportOff) focusRegion(prefix + 'daily-data'); }}>View exact daily values</button></div>
+          <div className="ai-trend-controls"><div className="field"><label htmlFor={prefix + 'daily-entity'}>Daily entity</label><select id={prefix + 'daily-entity'} value={report.dailyEntityId} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff) onDailyEntity(e.target.value); }}>{report.dailyEntities.map(entity => <option key={entity.id} value={entity.id}>{entity.label}</option>)}</select></div><div className="field"><label htmlFor={prefix + 'trend-metric'}>Trend metric</label><select id={prefix + 'trend-metric'} value={trendMetric} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff && Object.hasOwn(metricLabels,e.target.value)) setTrendMetric(e.target.value as TrendMetric); }}>{Object.entries(metricLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></div></div>
+          <DailyTrend report={report} metric={trendMetric} prefix={prefix}/>
+        </section>
+        <section className="card stack" aria-labelledby={prefix + 'leaderboard'}>
+          <div className="row between"><h3 id={prefix + 'leaderboard'}>Brand and competitors</h3><button type="button" className="btn ghost" style={controlStyle} disabled={reportOff} onClick={() => { if (!reportOff) focusRegion(prefix + 'metrics-data'); }}>View all entity metrics</button></div>
+          <p className="hint">{report.metrics.length > 5 ? `Top 5 of ${report.metrics.length}` : `All ${report.metrics.length}`} current tracked entities, ordered by mentions. Shares use all tracked entity-answer matches, not only this list. This is not market share.</p>
+          {report.coverageCounts.eligible > 0 && !brand.counts.shareOfVoiceDenominator && <p className="dim">No tracked entity was mentioned in the eligible answers.</p>}
+          <ul className="ai-leaderboard">{leaders.map(entity => <li key={entity.id}><div className="ai-leaderboard-heading"><strong><bdi>{entity.name}</bdi> {entity.id === 'brand' && <span className="pill">You</span>}</strong><button type="button" className="btn ghost" style={controlStyle} aria-label={'View mentioned answers for ' + entity.name} disabled={reportOff || !entity.canDrill} onClick={() => { if (!reportOff && entity.canDrill) onDrilldown('mentioned',entity.id); }}>View answers</button></div><p>Mentions: <bdi dir="ltr">{entity.visibility}</bdi></p><div className="ai-leaderboard-share">{percentage(entity.counts,'shareOfVoice') === null ? <span className="hint" aria-hidden="true">—</span> : <meter min="0" max="100" value={percentage(entity.counts,'shareOfVoice')!} aria-hidden="true"/>}<span>Share: <bdi dir="ltr">{entity.shareOfVoice}</bdi></span></div></li>)}</ul>
+        </section>
+      </section>}
+
       {known && report !== null && (
         <div className="card stack">
           <section className="stack">
             <h3 id={prefix + 'metrics'}>Entity metrics</h3>
             <p className="hint" id={prefix + 'metrics-scroll'}>Scroll horizontally to see every column.</p>
-            <div className="table-wrap" role="region" aria-label="Entity metrics" aria-describedby={prefix + 'metrics-scroll'} tabIndex={0} style={wrapStyle}>
+            <div id={prefix + 'metrics-data'} className="table-wrap" role="region" aria-label="Entity metrics" aria-describedby={prefix + 'metrics-scroll'} tabIndex={0} style={wrapStyle}>
               <table style={{ minWidth: 800 }}>
                 <caption>Entity metrics</caption>
                 <thead>
@@ -255,15 +307,8 @@ export function AIInsightsView(props: AIInsightsViewProps) {
 
           <section className="stack">
             <h3 id={prefix + 'daily'}>Daily observations</h3>
-            <div className="field">
-              <label htmlFor={prefix + 'daily-entity'}>Daily entity</label>
-              <select id={prefix + 'daily-entity'} value={report.dailyEntityId} disabled={reportOff} style={controlStyle}
-                onChange={(e) => { if (reportOff) return; onDailyEntity(e.target.value); }}>
-                {report.dailyEntities.map((en) => <option key={en.id} value={en.id}>{en.label}</option>)}
-              </select>
-            </div>
             <p className="hint" id={prefix + 'daily-scroll'}>Scroll horizontally to see every column.</p>
-            <div className="table-wrap" role="region" aria-label="Daily observations" aria-describedby={prefix + 'daily-scroll'} tabIndex={0} style={wrapStyle}>
+            <div id={prefix + 'daily-data'} className="table-wrap" role="region" aria-label="Daily observations" aria-describedby={prefix + 'daily-scroll'} tabIndex={0} style={wrapStyle}>
               <table style={{ minWidth: 900 }}>
                 <caption>Daily observations</caption>
                 <thead>
