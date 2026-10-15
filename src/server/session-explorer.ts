@@ -9,6 +9,7 @@ import {retentionCoverage} from './retention.ts';
 import {advancedPredicateMethod,validateAdvancedRegex} from './advanced-predicates.ts';
 import {analyticsPopulation,cohortCoverage,sessionScope} from './analytics-population.ts';
 import {analyticsCalendarSql} from './analytics-scope.ts';
+import {geographyProjectionSql} from './geography-sql.ts';
 import {sessionListQuery,sessionActivityQuery,sessionCursorScope,encodeSessionCursor,
   linkedActivityQuery,linkedActivityScope,type LinkedActivity,
   type SessionList,type SessionDetail,type SessionReadMeta,type SessionSelection,type SessionRow} from './session-explorer-input.ts';
@@ -68,7 +69,7 @@ export async function getLinkedSessionActivity(projectId:string,visitorKey:strin
       edges AS MATERIALIZED (SELECT l.* FROM analytics_identity_link l JOIN anchor a
         ON l.project_id=a.project_id AND l.identity_version=a.identity_version AND l.key_generation=a.key_generation AND l.identity_token=a.identity_token
         CROSS JOIN context c WHERE l.last_accepted_at>=c.link_cutoff),
-      candidates AS MATERIALIZED (SELECT e.*,COALESCE(e.dimensions->>'origin',c.origin) AS origin FROM event e
+      candidates AS MATERIALIZED (SELECT e.*,${geographyProjectionSql('e')} AS geography,COALESCE(e.dimensions->>'origin',c.origin) AS origin FROM event e
         JOIN edges l ON l.project_id=e.project_id AND l.visitor_key=e.visitor_id CROSS JOIN context c CROSS JOIN bounds b
         WHERE e.source='browser' AND e.received_at>=l.first_accepted_at AND e.received_at>=c.event_cutoff
           AND e.received_at>=b.start AND e.received_at<b.finish AND e.received_at<c.event_before
@@ -97,7 +98,7 @@ export async function getLinkedSessionActivity(projectId:string,visitorKey:strin
           'observedVisitSpanSeconds',(SELECT sum(seconds)::text FROM visit_spans),'meanObservedVisitSpanSeconds',(SELECT avg(seconds)::text FROM visit_spans)) FROM qualified) AS totals,
         COALESCE((SELECT json_agg(json_build_object('id',id,'receivedAt',${stamp('received_at')},'visitorKey',visitor_id,'visitKey',visit_id,
           'kind',CASE WHEN event_name='page_view' THEN 'pageview' ELSE 'custom' END,'eventName',event_name,'path',path,'origin',origin,
-          'properties',properties,'dimensions',dimensions-'distinctId','source','browser','metricVersion',metric_version,'identityEvidenceVersion',1)
+          'properties',properties,'dimensions',(dimensions-'distinctId'-'geography')||CASE WHEN geography IS NOT NULL THEN jsonb_build_object('geography',geography) ELSE '{}'::jsonb END,'source','browser','metricVersion',metric_version,'identityEvidenceVersion',1)
           ORDER BY received_at DESC,id DESC) FROM page_rows),'[]') AS page
       FROM clock LEFT JOIN context c ON true`,[projectId,userId,input.from,input.to,input.timeZone,visitorKey,cursor?.eventBefore??null,
         cursor?.last.at??null,cursor?.last.id??null,input.pageSize+1,currentKey?.id??null]);
@@ -206,7 +207,7 @@ async function readSessions(projectId:string,authority:SessionReadAuthority,para
           (SELECT sum(seconds)::text FROM visit_spans) AS span,(SELECT avg(seconds)::text FROM visit_spans) AS mean_span,
           COALESCE((SELECT json_agg(json_build_object('id',id,'receivedAt',received_at,'cursorAt',${stamp('received_at')},'visitKey',visit_id,
             'kind',CASE WHEN event_name='page_view' THEN 'pageview' ELSE 'custom' END,'eventName',event_name,'path',path,'origin',origin,
-            'properties',properties,'dimensions',dimensions-'distinctId','source',source,'metricVersion',metric_version) ORDER BY received_at DESC,id DESC) FROM page_rows),'[]') AS page,
+            'properties',properties,'dimensions',(dimensions-'distinctId'-'geography')||CASE WHEN geography IS NOT NULL THEN jsonb_build_object('geography',geography) ELSE '{}'::jsonb END,'source',source,'metricVersion',metric_version) ORDER BY received_at DESC,id DESC) FROM page_rows),'[]') AS page,
           COALESCE((SELECT json_agg(json_build_object('key',property_key,'property',property,'updatedAt',updated_at) ORDER BY property_key COLLATE "C") FROM current_properties),'[]') AS properties`}
       FROM session_context c CROSS JOIN session_page b CROSS JOIN report_arguments`,values);
     const row=rows[0];if(currentKey&&!row?.key_valid)throw new FoundationError(401,'The API key is invalid, expired or unavailable.');

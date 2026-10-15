@@ -1,6 +1,8 @@
 import type {PoolClient} from 'pg';
 import {FoundationError} from './auth.ts';
 import type {AdvancedPredicates,AdvancedPropertyPredicate} from './advanced-predicate-input.ts';
+import {geographyFields,type GeoField} from '../lib/analytics-geography.ts';
+import {geographyKeySql} from './geography-sql.ts';
 
 const fields={eventName:'s.event_name',path:'s.path',origin:'s.origin',referrer:"s.dimensions->>'referrerHost'",language:"s.dimensions->>'language'",
   browser:"s.dimensions->>'browser'",os:"s.dimensions->>'os'",device:"s.dimensions->>'device'",
@@ -56,7 +58,12 @@ function propertyValuePredicate(filter:AdvancedPropertyPredicate,bind:Bind,timeZ
 export function advancedPredicateSql(predicates:AdvancedPredicates|undefined,bind:Bind,timeZone:string):string{
   if(!predicates)return 'TRUE';
   const ordinary=predicates.fields.map(filter=>{
-    const column=fields[filter.field];
+    if(geographyFields.includes(filter.field as GeoField)){
+      if(filter.operator==='exists')return '(s.geography IS NOT NULL)';if(filter.operator==='missing')return '(s.geography IS NULL)';
+      if(!('value'in filter)||!['eq','neq'].includes(filter.operator))throw new FoundationError(400,'Unsupported location filter operator.');
+      return `(${geographyKeySql(filter.field as GeoField,'s.geography')}${filter.operator==='eq'?'=':'<>'}${bind(filter.value)}::jsonb)`;
+    }
+    const column=fields[filter.field as keyof typeof fields];
     if(filter.operator==='exists')return `(${column} IS NOT NULL)`;
     if(filter.operator==='missing')return `(${column} IS NULL)`;
     if(!('value' in filter))throw new FoundationError(400,'Unsupported additional field filter.');

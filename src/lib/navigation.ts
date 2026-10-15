@@ -1,6 +1,7 @@
 import { environmentFields, isEnvironmentFilter } from './analytics-environment.ts';
 import {normalizeAuditPageFields,type AuditPageFields} from './site-audit-pages.ts'
 import type {AnalyticsComparisonMode} from './analytics-comparison.ts'
+import {geographyFields,geographyFiltersValid,parseGeographyKey,serializeGeographyKey,type GeoField,type GeographyKey} from './analytics-geography.ts'
 
 export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
@@ -8,8 +9,23 @@ export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visito
 export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
 export const auditCoverages = ['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'] as const
 export type AuditNavigation = {auditRun?:string;auditPage?:string;auditTab?:'pages';auditSeverity?:'critical'|'warning'|'info';auditCode?:string;auditAffectedPage?:string;auditCoverage?:typeof auditCoverages[number];auditResource?:'robots'|'sitemap';auditSearch?:string;auditSearchIn?:'url';auditSort?:Exclude<AuditPageFields['sort'],'url'>;auditOrder?:'desc';auditDirection?:'in';auditInvalid?:'1'}
-export type AnalyticsNavigation = { analyticsFrom?: string; analyticsTo?: string; analyticsBrowser?: string; analyticsOs?: string; analyticsDevice?: string; analyticsCompare?: AnalyticsComparisonMode; analyticsInvalid?: '1' }
+export type AnalyticsNavigation = { analyticsFrom?: string; analyticsTo?: string; analyticsBrowser?: string; analyticsOs?: string; analyticsDevice?: string; analyticsCountry?:string;analyticsRegion?:string;analyticsCity?:string;analyticsCompare?: AnalyticsComparisonMode; analyticsInvalid?: '1' }
 export const analyticsNavigationNames = { browser: 'analyticsBrowser', os: 'analyticsOs', device: 'analyticsDevice' } as const;
+export const geographyNavigationNames={country:'analyticsCountry',region:'analyticsRegion',city:'analyticsCity'} as const;
+
+// A known child supplies its ancestors atomically; sentinel children supply no facts.
+export function applyGeographyFilter(intent:AnalyticsNavigation,field:GeoField,key:GeographyKey):AnalyticsNavigation{
+  const value=serializeGeographyKey(field,key);if(value===null)return intent;
+  const next={...intent,[geographyNavigationNames[field]]:value};
+  if(key.state==='known'){
+    next.analyticsCountry=serializeGeographyKey('country',{state:'known',country:key.country})!;
+    if(field==='city'&&'region'in key)next.analyticsRegion=serializeGeographyKey('region',key.region===null?{state:'unknown'}:{state:'known',country:key.country,region:key.region})!;
+  }
+  const filters=()=>Object.fromEntries(geographyFields.filter(name=>next[geographyNavigationNames[name]]!==undefined).map(name=>[name,next[geographyNavigationNames[name]]!]));
+  if(field==='country')for(const child of ['region','city'] as const){const name=geographyNavigationNames[child];if(next[name]!==undefined&&!geographyFiltersValid({country:value,[child]:next[name]}))delete next[name];}
+  if(field==='region'&&!geographyFiltersValid(filters()))delete next.analyticsCity;
+  return next;
+}
 export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation
 
 export function analyticsDay(value: unknown): number | null {
@@ -19,7 +35,7 @@ export function analyticsDay(value: unknown): number | null {
 }
 
 export function analyticsNavigation(raw: Record<string, unknown>): AnalyticsNavigation {
-  const names = [...Object.values(analyticsNavigationNames), 'analyticsFrom', 'analyticsTo', 'analyticsCompare', 'analyticsInvalid'];
+  const names = [...Object.values(analyticsNavigationNames),...Object.values(geographyNavigationNames), 'analyticsFrom', 'analyticsTo', 'analyticsCompare', 'analyticsInvalid'];
   if (!Object.keys(raw).some(key => key.startsWith('analytics'))) return {};
   const invalid = () => ({ analyticsInvalid: '1' } as const);
   if (raw.analyticsInvalid !== undefined || !navigationId(raw.workspace) || !navigationId(raw.project) || Object.keys(raw).some(key => !['workspace', 'project', 'view', ...names].includes(key))) return invalid();
@@ -40,6 +56,8 @@ export function analyticsNavigation(raw: Record<string, unknown>): AnalyticsNavi
       out[name] = value;
     }
   }
+  for(const field of geographyFields){const name=geographyNavigationNames[field],value=raw[name];if(value!==undefined){if(!parseGeographyKey(field,value))return invalid();out[name]=value as string;}}
+  if(!geographyFiltersValid(Object.fromEntries(geographyFields.filter(field=>out[geographyNavigationNames[field]]!==undefined).map(field=>[field,out[geographyNavigationNames[field]]!]))))return invalid();
   return out;
 }
 
@@ -105,7 +123,8 @@ export function navigationKey(search: NavigationSearch): string {
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
   const params = new URLSearchParams(search)
   const entries = Object.entries(target).filter(([, value]) => value !== undefined)
-  return [...params].length === entries.length && entries.every(([key, value]) => params.getAll(key).length === 1 && params.get(key) === value)
+  // TanStack quotes JSON-looking strings so its parser preserves the string type.
+  return [...params].length === entries.length && entries.every(([key, value]) => params.getAll(key).length === 1 && params.get(key) === ((Object.values(geographyNavigationNames) as string[]).includes(key)?JSON.stringify(value):value))
 }
 
 export function projectView(view: AppView): boolean {

@@ -2,6 +2,41 @@
 
 The application includes the attributed Elmo adaptations recorded below. Statements describing an empty application import ledger refer to the earlier planning/foundation stage.
 
+## Local geography reader and separately supplied data
+
+The optional local geography reader uses exactly [mmdb-lib 3.0.3](https://registry.npmjs.org/mmdb-lib/3.0.3), MIT, without runtime dependencies. Its exact published integrity is in pnpm-lock.yaml. No database is bundled in this repository or application image. Operator-supplied [DB-IP City Lite](https://db-ip.com/db/download/ip-to-city-lite) data is separately licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the application's MIT license does not relicense that data. Results carry the linked “IP location data by DB-IP” attribution. Lite data has reduced accuracy and monthly builds; approximate location is not a verified visitor address.
+
+### mmdb-lib 3.0.3 — MIT
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2026 Dmitry Shirokov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+## Aggregate country-map geometry
+
+`src/lib/country-paths.json` derives coarse aggregate country outlines from Natural Earth 1:110m Admin 0 Countries v5.1.1, immutable source commit [9380cca83db5f9aef52d5e762765100745f84b27](https://github.com/nvkelso/natural-earth-vector/blob/9380cca83db5f9aef52d5e762765100745f84b27/geojson/ne_110m_admin_0_countries.geojson). Natural Earth declares its map data [public domain](https://www.naturalearthdata.com/about/terms-of-use/), not CC0. Original GeoJSON SHA-256: `6866c877d39cba9c357620878839b336d569f8c662d3cfab4cb1dbe2d39c977f`. Derived path asset SHA-256: `4f92b744cbc12cc34d6d3d52f40d2415b2cebcfde2342524c136ab8e00f3281e`.
+
+The native SVG uses a fitted nonpolar Mercator projection, retaining Polygon/MultiPolygon components and the source's polygon hole. Valid ISO_A2_EH supplies the fallback when ISO_A2 is not a two-letter code. Antarctica is omitted, as in the pinned Umami map; unmapped outlines remain neutral. Small or unmapped countries remain in the full country table and explicit unplotted totals. These are aggregate boundaries, with no visitor coordinates, external map tiles or map runtime dependency. Boundary presentation does not assert sovereignty.
+
 ## Search-query analysis adaptation
 
 The bounded helper in `src/server/ai-search-evidence.ts`, specified by `docs/ai-search-evidence.md`, adapts the ASCII tokenizer, 99-word stopword set and word-frequency/change behavior in [`apps/web/src/lib/fanout-analysis.ts`](https://github.com/elmohq/elmo/blob/3c673d0253d01ae030fa41519f62ad7e54f2281b/apps/web/src/lib/fanout-analysis.ts), Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`, for `src/server/ai-search-evidence.ts`. The complete MIT notice below applies (Copyright 2026 Blue Whale Software, LLC). Native query derivation uses immutable prompt text, typed unavailable evidence and explicit eligible-answer denominators. The pure helper is implemented and independently tested; paid capture, persistence, reporting and live-provider acceptance remain separate work.

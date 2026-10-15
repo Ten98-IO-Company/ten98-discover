@@ -6,11 +6,15 @@ import {analyticsPopulation,cohortCoverage,sessionScope,type CohortReport,type S
 export type {CohortReport,SessionPropertyScope} from './analytics-population.ts';
 import {resolveCohort} from './cohorts.ts';
 import {advancedPredicateMethod,validateAdvancedRegex} from './advanced-predicates.ts';
+import {geographyKeySql} from './geography-sql.ts';
+import {geographyFields,parseGeographyKey,serializeGeographyKey,type GeoField,type GeographyProvenance} from '../lib/analytics-geography.ts';
 
 type Totals = {events:number|null;pageViews:number|null;customEvents:number|null;identifiedEvents:number|null;unidentifiedEvents:number|null;visitors:number|null;visits:number|null};
 type Day = {date:string;start:string;end:string;events:number|null;pageViews:number|null;customEvents:number|null;skipped:boolean;coverage:'complete'|'partial'|'unavailable'};
 type Group = {type:string;value:unknown;events:number;identifiedEvents:number;visitors:number|null};
 type Numeric = {samples:number;sum:string|null;average:string|null;min:string|null;max:string|null};
+type ExplorerGeographyProvenance=GeographyProvenance&{scope:'matching-report-events'};
+const usesGeography=(query:ReturnType<typeof explorerQuery>)=>geographyFields.includes(query.groupBy as GeoField)||geographyFields.some(field=>Object.hasOwn(query.filters,field))||!!query.predicates?.fields.some(filter=>geographyFields.includes(filter.field as GeoField));
 export async function exploreAnalytics(projectId:string,userId:string,params:URLSearchParams) {
   const query = explorerQuery(params);
   const client = await getDatabase().pool.connect();
@@ -40,6 +44,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     }
     for(const zone of new Set([query.timeZone,...(qualification?[qualification.timeZone]:[])]))if (!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[zone])).rowCount) throw new FoundationError(400,'The database does not support this timezone.');
     const {ctes,values,population}=analyticsPopulation(projectId,userId,query,qualification,false);
+    const geographyUsed=usesGeography(query)||!!qualification&&usesGeography(qualification);
     // One statement binds membership, retention, buckets and totals to one snapshot.
     // ponytail: bounded raw aggregation; introduce rollups only after measured query limits.
     // PostgreSQL resolves ambiguous wall times to the later offset. Check both
@@ -50,6 +55,9 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
         WHEN 'event' THEN jsonb_build_object('type','string','value',event_name)
         WHEN 'path' THEN jsonb_build_object('type','string','value',path)
         WHEN 'origin' THEN jsonb_build_object('type','string','value',origin)
+        WHEN 'country' THEN jsonb_build_object('type','string','value',${geographyKeySql('country')})
+        WHEN 'region' THEN jsonb_build_object('type','string','value',${geographyKeySql('region')})
+        WHEN 'city' THEN jsonb_build_object('type','string','value',${geographyKeySql('city')})
         WHEN 'property' THEN COALESCE(properties->$12::text,'{"type":"missing","value":null}'::jsonb)
         ELSE CASE WHEN dimension IS NULL THEN '{"type":"missing","value":null}'::jsonb
           ELSE jsonb_build_object('type',jsonb_typeof(dimension),'value',dimension) END END AS label
@@ -76,6 +84,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       ${qualificationSession?`(SELECT json_build_object('identified',count(visitor_id),'unidentified',count(*) FILTER (WHERE visitor_id IS NULL)) FROM qualification_candidates)`:'null'} AS qualification_candidates,
       ${item?`(SELECT json_build_object('start',start,'end',finish,'events',(SELECT count(*) FROM qualification),
         'identified',(SELECT count(visitor_id) FROM qualification),'members',(SELECT count(*) FROM cohort_keys)) FROM qualification_bounds)`:'null'} AS qualification,
+      ${geographyUsed?`(SELECT json_build_object('source','db-ip-city-lite','scope','matching-report-events','databaseCount',count(DISTINCT (geography->'databaseBuild',geography->'databaseSha256')) FILTER(WHERE geography IS NOT NULL),'oldestDatabaseBuild',min((geography->>'databaseBuild')::bigint),'newestDatabaseBuild',max((geography->>'databaseBuild')::bigint)) FROM ${population})`:'null'} AS geography_provenance,
       json_build_object('events',count(*),'pageViews',count(*) FILTER (WHERE event_name='page_view'),
         'customEvents',count(*) FILTER (WHERE event_name<>'page_view'),'identifiedEvents',count(visitor_id),
         'unidentifiedEvents',count(*) FILTER (WHERE visitor_id IS NULL),
@@ -94,6 +103,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       FROM ${population}`,values);
     await client.query('COMMIT');
     const row = rows[0];
+    if(geographyFields.includes(query.groupBy as GeoField))for(const group of row.breakdown.groups)group.value=serializeGeographyKey(query.groupBy as GeoField,group.value);
     if (!row.allowed) throw new FoundationError(404,'Project not found or unavailable.');
     const start = row.start.toISOString(), end = row.finish.toISOString();
     const coverage = retentionCoverage(start,end,row.retained_from);
@@ -111,6 +121,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     const result = {range:{from:query.from,to:query.to,timeZone:query.timeZone,start,end},query,coverage,totals,daily,...(cohort?{cohort}:{}),
       ...(query.predicates?{predicateMethod:advancedPredicateMethod(query.predicates)}:{}),
       ...(sessionProperties?{sessionProperties}:{}),
+      ...(geographyUsed?{geographyProvenance:(coverage.status==='unavailable'||membershipUnavailable?{source:'db-ip-city-lite',scope:'matching-report-events',databaseCount:null,oldestDatabaseBuild:null,newestDatabaseBuild:null}:row.geography_provenance) as ExplorerGeographyProvenance}:{}),
       breakdown:(membershipUnavailable?{groups:[],totalGroups:null,returnedGroupEvents:null,truncated:false}:row.breakdown) as {groups:Group[];totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean},
       properties:(membershipUnavailable?{keys:[],truncated:false}:row.properties) as {keys:string[];truncated:boolean},numeric:query.groupBy === 'property' && coverage.status !== 'unavailable'&&!membershipUnavailable ? row.numeric as Numeric : null};
     return {...result,csv:explorerCsv(result)};
@@ -121,15 +132,17 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
   } finally {client.release();}
 }
 
-function explorerCsv(result:{query:ReturnType<typeof explorerQuery>;range:{start:string;end:string};coverage:ReturnType<typeof retentionCoverage>;totals:Totals;daily:Day[];breakdown:{groups:Group[];totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean};numeric:Numeric|null;cohort?:CohortReport;predicateMethod?:ReturnType<typeof advancedPredicateMethod>;sessionProperties?:SessionPropertyScope}) {
+function explorerCsv(result:{query:ReturnType<typeof explorerQuery>;range:{start:string;end:string};coverage:ReturnType<typeof retentionCoverage>;totals:Totals;daily:Day[];breakdown:{groups:Group[];totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean};numeric:Numeric|null;cohort?:CohortReport;predicateMethod?:ReturnType<typeof advancedPredicateMethod>;sessionProperties?:SessionPropertyScope;geographyProvenance?:ExplorerGeographyProvenance}) {
+  const geoGroup=geographyFields.includes(result.query.groupBy as GeoField),location=(value:unknown)=>{const key=parseGeographyKey(result.query.groupBy as GeoField,value);if(!key)return 'Not recorded';if(key.state!=='known')return key.state==='unknown'?'Unknown':'Not recorded';const country=new Intl.DisplayNames('en-US',{type:'region'}).of(key.country)??key.country,region='region'in key&&key.region?key.region.value:'Unknown region';return 'city'in key?`${key.city} · ${region} · ${country} (${key.country})`:'region'in key?`${region} · ${country} (${key.country})`:`${country} (${key.country})`;};
   const lines:unknown[][] = [['ten98-monitor','Bounded exploration result'],['Scope',JSON.stringify(result.query)],['Start (inclusive)',result.range.start],['End (exclusive)',result.range.end],
     ['Selection','Only instants in the selected local calendar dates; UTC envelopes can overlap at a repeated midnight.'],
     ['Retention coverage',result.coverage.status],['Retained from',result.coverage.retainedFrom ?? 'No retention boundary'],
+    ...(result.geographyProvenance?[['Location source','DB-IP City Lite (CC BY 4.0) — https://db-ip.com/db/lite.php'],['Location provenance scope','Matching report events; qualification dataset builds are not returned'],['Location datasets',result.geographyProvenance.databaseCount],['Oldest location database build (Unix seconds)',result.geographyProvenance.oldestDatabaseBuild],['Newest location database build (Unix seconds)',result.geographyProvenance.newestDatabaseBuild],['Location accuracy','Approximate; stored observations only; no coordinates or raw IP addresses']]:[]),
     ...(result.predicateMethod?[['Predicate method',JSON.stringify(result.predicateMethod)]]:[]),
     ...(result.sessionProperties?[['Current session properties',JSON.stringify(result.sessionProperties)]]:[]),
     ...(result.cohort?[['Cohort',JSON.stringify(result.cohort)]]:[]),[],['Metric','Value'],...Object.entries(result.totals),[],
     ['Groups returned',result.breakdown.groups.length],['Total groups',result.breakdown.totalGroups],['Returned group events',result.breakdown.returnedGroupEvents],['Truncated',result.breakdown.truncated],
-    ['Type','Value','Events','Identified events','Visitors'],...result.breakdown.groups.map(g=>[g.type,g.type === 'null' ? 'null' : g.type === 'missing' ? 'Missing / uncollected' : g.value,g.events,g.identifiedEvents,g.visitors]),[],
+    ['Type',...(geoGroup?['Location','Canonical key']:['Value']),'Events','Identified events','Visitors'],...result.breakdown.groups.map(g=>[g.type,...geoGroup?[location(g.value),g.value]:[g.type === 'null' ? 'null' : g.type === 'missing' ? 'Missing / uncollected' : g.value],g.events,g.identifiedEvents,g.visitors]),[],
     ['Date','Start (inclusive)','End (exclusive)','Skipped local date','Coverage','Events','Page views','Custom events'],...result.daily.map(d=>[d.date,d.start,d.end,d.skipped,d.coverage,d.events,d.pageViews,d.customEvents])];
   if (result.numeric) lines.push([],['Numeric property statistic','Exact decimal value'],...Object.entries(result.numeric));
   return lines.map(line=>line.map(csvCell).join(',')).join('\r\n')+'\r\n';

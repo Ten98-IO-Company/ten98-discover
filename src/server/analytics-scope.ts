@@ -1,4 +1,5 @@
 import type { explorerQuery } from './explorer-input.ts';
+import {geographyProjectionSql,geographyFilterSql} from './geography-sql.ts';
 
 // Shared event population and local-calendar boundaries for analytics reports.
 // PostgreSQL ambiguous/gap midnight behavior is covered by the Explorer fixtures.
@@ -29,8 +30,8 @@ export const analyticsCalendarSql = `raw_days AS (
 
 export const analyticsScopeSql = `WITH RECURSIVE target AS MATERIALIZED (
       SELECT p.id,p.origin,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
-    ), ${analyticsCalendarSql}, scope AS MATERIALIZED (
-      SELECT e.*,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN target p ON p.id=e.project_id CROSS JOIN bounds b
+    ), ${analyticsCalendarSql}, geography_candidates AS MATERIALIZED (
+      SELECT e.*,g.geography,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN target p ON p.id=e.project_id CROSS JOIN bounds b CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
       WHERE e.received_at>=b.start AND e.received_at<b.finish AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
         AND (e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date
         AND ($6='all' OR ($6='pageviews' AND e.event_name='page_view') OR ($6='custom' AND e.event_name<>'page_view'))
@@ -48,7 +49,7 @@ export const analyticsScopeSql = `WITH RECURSIVE target AS MATERIALIZED (
         AND (NOT $7::jsonb ? 'campaignTerm' OR e.dimensions->'campaign'->>'term'=$7::jsonb->>'campaignTerm')
         AND (NOT $7::jsonb ? 'campaignContent' OR e.dimensions->'campaign'->>'content'=$7::jsonb->>'campaignContent')
         AND ($8::text IS NULL OR CASE WHEN $9='missing' THEN NOT e.properties ? $8 ELSE e.properties->$8=jsonb_build_object('type',$9::text,'value',$10::jsonb) END)
-    )`;
+    ), scope AS MATERIALIZED (SELECT * FROM geography_candidates WHERE ${geographyFilterSql('$7::jsonb')})`;
 
 export function analyticsScopeValues(projectId:string,userId:string,query:ReturnType<typeof explorerQuery>):unknown[] {
   return [projectId,userId,query.from,query.to,query.timeZone,query.kind,JSON.stringify(query.filters),query.property?.key??null,query.property?.type??null,JSON.stringify(query.property?.value??null)];

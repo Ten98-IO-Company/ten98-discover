@@ -5,6 +5,8 @@ import { retentionCoverage } from './retention.ts';
 import {publicAnalyticsSettings} from './native-analytics.ts';
 import {environmentFields,environmentVersion,isEnvironmentFilter,type EnvironmentFilters,type AnalyticsEnvironment} from '../lib/analytics-environment.ts';
 import {deriveAnalyticsComparison,type AnalyticsComparisonMode,type AnalyticsComparison,type AnalyticsPeriodReport} from '../lib/analytics-comparison.ts';
+import {geographyFields,geographyFiltersValid,type GeographyFilters} from '../lib/analytics-geography.ts';
+import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geographyReportSql,applyGeographyCoverage} from './geography-sql.ts';
 
 const dayMs = 86_400_000;
 function dateValue(value: string): Date {
@@ -32,19 +34,21 @@ export function analyticsRange(params: URLSearchParams, now = new Date()) {
 }
 
 export function analyticsQuery(params:URLSearchParams,now=new Date()) {
-  for(const key of params.keys())if(!['from','to','compare',...environmentFields].includes(key)||params.getAll(key).length!==1)throw new InputError(400,'Use each supported analytics filter only once.');
+  for(const key of params.keys())if(!['from','to','compare',...environmentFields,...geographyFields].includes(key)||params.getAll(key).length!==1)throw new InputError(400,'Use each supported analytics filter only once.');
   const compare=params.get('compare');if(compare!==null&&!['prev','yoy'].includes(compare))throw new InputError(400,'Choose previous period or previous year.');
-  const dates=new URLSearchParams(),filters:EnvironmentFilters={};
+  const dates=new URLSearchParams(),filters:EnvironmentFilters={},geographyFilters:GeographyFilters={};
   for(const field of ['from','to'])if(params.has(field))dates.set(field,params.get(field)!);
   for(const field of environmentFields)if(params.has(field)){
     const value=params.get(field)!;
     if(!isEnvironmentFilter(field,value))throw new InputError(400,'Choose a supported browser, OS or device filter.');
     filters[field]=value;
   }
-  return {range:analyticsRange(dates,now),filters,...compare===null?{}:{compare:compare as AnalyticsComparisonMode}};
+  for(const field of geographyFields)if(params.has(field))geographyFilters[field]=params.get(field)!;
+  if(!geographyFiltersValid(geographyFilters))throw new InputError(400,'Choose compatible location filters.');
+  return {range:analyticsRange(dates,now),filters,geographyFilters,...compare===null?{}:{compare:compare as AnalyticsComparisonMode}};
 }
 export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string):Promise<AnalyticsPeriodReport&{comparison?:AnalyticsComparison}> {
-  const {range,filters,compare} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
+  const {range,filters,geographyFilters,compare} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
   if(compare&&!derived)throw new InputError(400,'Choose a later start date so the comparison stays on or after 1970-01-01.');
   const client=compare?await getDatabase().pool.connect():null;
   try{
@@ -63,15 +67,15 @@ export async function projectAnalytics(projectId: string, userId: string, params
     ), periods AS (SELECT 'current' AS period,$3::timestamptz AS start,$4::timestamptz AS finish,$5::date AS from_day,$6::date AS to_day
       UNION ALL SELECT 'comparison',$9::timestamptz,$10::timestamptz,$11::date,$12::date WHERE $9::timestamptz IS NOT NULL)
     SELECT q.period,c.as_of,(SELECT valid FROM key_authority) AS key_valid,r.* FROM periods q CROSS JOIN clock c CROSS JOIN LATERAL (
-    WITH observations AS MATERIALIZED (
-      SELECT e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions,e.collection_basis
-      FROM event e CROSS JOIN target p
+    WITH geography_candidates AS MATERIALIZED (
+      SELECT e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions,e.collection_basis,g.geography
+      FROM event e CROSS JOIN target p CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
       WHERE e.project_id=$1 AND e.received_at >= q.start AND e.received_at < q.finish
         AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
         AND (NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
         AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
         AND (NOT $7::jsonb ? 'device' OR CASE WHEN $7::jsonb->>'device'='not-recorded' THEN e.dimensions->>'device' IS NULL ELSE e.dimensions->>'device'=$7::jsonb->>'device' END)
-    ), visits AS (
+    ), observations AS MATERIALIZED (SELECT * FROM geography_candidates WHERE ${geographyFilterSql('$14::jsonb')}), visits AS (
       SELECT visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
         count(*) FILTER (WHERE event_name<>'page_view') AS custom,
         extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
@@ -112,7 +116,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
         json_build_object('value',c.value,'pageViews',c.pageviews,'identifiedPageViews',c.identified,
           'visitors',m.visitors,'visits',m.visits,'bounceRate',m.bounce_rate,'averageVisitSeconds',m.duration) AS row
       FROM environment_counts c LEFT JOIN environment_measurement m ON c.field=m.field AND c.value IS NOT DISTINCT FROM m.value
-    )
+    )${geographyAggregateCtes}
     SELECT (SELECT analytics_retained_from FROM target) AS retained_from,(SELECT analytics_settings FROM target) AS analytics_settings,
       EXISTS(SELECT 1 FROM target) AS allowed,json_build_object(
       'totals',json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
@@ -142,9 +146,9 @@ export async function projectAnalytics(projectId: string, userId: string, params
           'notRecordedPageViews',count(*) FILTER (WHERE event_name='page_view' AND dimensions->>'environmentVersion' IS DISTINCT FROM $8::text),
           'firstRecordedAt',min(received_at) FILTER (WHERE event_name='page_view' AND dimensions->>'environmentVersion'=$8::text)),
         'method',json_build_object('source','bounded-request-user-agent','device','ua-parser-v1-screen-if-enabled','rawUserAgentStored',false)),
-      'lastReceivedAt',max(received_at)
+      'geography',${geographyReportSql('$14::jsonb')},'lastReceivedAt',max(received_at)
     ) AS report FROM observations) r ORDER BY CASE q.period WHEN 'current' THEN 0 ELSE 1 END`,
-    [projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null]);
+    [projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters)]);
   if(apiKeyId&&!rows[0]?.key_valid)throw new FoundationError(401,'The API key is invalid, expired or unavailable.');
   if(!rows[0]?.allowed)throw new FoundationError(404,'Project not found or unavailable.');
   const current=formatReport(rows[0],range);
@@ -167,6 +171,7 @@ type RawAnalyticsReport=Omit<AnalyticsPeriodReport,'range'|'coverage'|'daily'>&{
 function formatReport(row:{retained_from:string|Date|null;analytics_settings:unknown;report:RawAnalyticsReport},range:ReturnType<typeof analyticsRange>):AnalyticsPeriodReport{
   const coverage = retentionCoverage(range.start, range.end, row.retained_from);
   const report = row.report;
+  applyGeographyCoverage(report.geography,coverage.status);
   report.collection.mode=publicAnalyticsSettings(row.analytics_settings).collectionMode??'consent-first';
   const environment=report.environment as AnalyticsEnvironment;
   if(environment.coverage.firstRecordedAt!==null)environment.coverage.firstRecordedAt=new Date(environment.coverage.firstRecordedAt).toISOString();

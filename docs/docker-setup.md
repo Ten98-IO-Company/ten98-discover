@@ -81,6 +81,33 @@ After startup, run `docker compose ps` using the same project and overlay option
 
 Public certificate issuance, ARM execution, production capacity and external-proxy platform imports require separate evidence. A successful local readiness check is not a completed public deployment. The current setup work is tracked in [issue #6](https://github.com/Ten98-IO-Company/ten98-monitor/issues/6).
 
+## Optional local country, region and city database
+
+The base installation does not download or mount a location database. `compose.geo.yaml` adds a read-only database directory and a 1 GiB, no-swap limit **only to web**. Worker and migration services do not load it. This is an optional development profile; combined workload acceptance is recorded separately and is not a general production-capacity guarantee.
+
+Build the selected application version first, using the existing project-specific image name from your saved configuration. The explicit installer accepts only a named release listed on the official DB-IP City Lite page; it verifies the published uncompressed SHA-1, bounded decompression, the actual City Lite reader metadata and a local SHA-256 before replacing `city.mmdb`. It retains a `city.json` provenance receipt. There is no boot download or updater. October 2026 is the example release below; choose the release actually listed when installing.
+
+On Linux/macOS, run from the checkout, replacing `YOUR_PROJECT_NAME` with the existing project name:
+
+```sh
+mkdir -p data/geography
+docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --user "$(id -u):$(id -g)" \
+  --mount "type=bind,source=$PWD/data/geography,target=/geo" \
+  ten98-monitor:YOUR_PROJECT_NAME node scripts/analytics-geo.mjs 2026-10 /geo
+# Continue only after successful verification. Add compose.caddy.yaml before compose.geo.yaml if used.
+docker compose --env-file .env -p YOUR_PROJECT_NAME -f compose.yaml -f compose.geo.yaml config --quiet
+docker compose --env-file .env -p YOUR_PROJECT_NAME -f compose.yaml -f compose.geo.yaml up -d --no-build --force-recreate --wait --wait-timeout 180 web
+```
+
+On native Windows, create `data/geography` with `New-Item -ItemType Directory -Force -Path .\data\geography`, then use the same installer container command without the `--user` option and with `--mount "type=bind,source=$($PWD.Path)\data\geography,target=/geo"`. Run it as one PowerShell line; do not use POSIX backslash continuations. Check `$LASTEXITCODE` before running the complete Compose commands. A host with Node 24 and the checked-out dependencies can instead run `node scripts/analytics-geo.mjs 2026-10`.
+
+The downloaded database is separately CC BY 4.0; the application stays MIT. The data directory is already excluded from Git and Docker build context. Keep the directory readable by the image's nonroot user, and do not put secrets there. The receipt records source, license, build, byte length and hashes; the running reader independently hashes the actual file and does not trust the receipt. A failure between the two atomic renames can leave an older receipt, so use the reader's actual build/hash when checking readiness. No service is restarted by the installer itself.
+
+**Keep `-f compose.geo.yaml` on every subsequent migration, upgrade, restart and diagnostic command**, together with the same base/Caddy files, image, project and private `.env`. The current `scripts/deploy.sh` selects its own base/Caddy files and drops this optional override; use the documented manual upgrade sequence for a geography-enabled installation. Updating the verified file requires restarting web; a running process keeps its original immutable reader.
+
+Collection also needs the project's Location setting and a correctly configured analytics network resolver. Existing projects remain off until explicitly enabled; new project defaults cannot make a missing file or unknown address measurable. Verify the actual visitor-to-proxy chain before enabling an existing public site. Do not widen trusted proxies or trust caller-supplied country/Cloudflare headers to make a map appear populated. Raw addresses and coordinates are not stored; reports show approximate retained observations, unknown values and unrecorded history separately.
+
 ## Back up before upgrading
 
 Use the same Compose project, `.env`, image selection and overlay options for every command. In the examples below, `docker compose` means that exact configuration. The backup directory must be outside the checkout/build context, private, and copied to access-controlled encrypted off-host storage. A local backup alone does not cover host loss.

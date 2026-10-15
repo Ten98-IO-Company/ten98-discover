@@ -1,5 +1,6 @@
 import {useEffect, useId, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
+import type {GeographyReadiness} from '../lib/analytics-geography';
 
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 type NetworkMode = 'off' | 'direct' | 'proxy';
@@ -11,6 +12,7 @@ interface Settings {
   captureReferrer: boolean;
   captureCampaigns: boolean;
   captureScreen: boolean;
+  captureGeography?: boolean;
   excludeBots: boolean;
   linkIdentities?: boolean;
   excludedPaths: string[];
@@ -21,6 +23,7 @@ interface Loaded {
   revision: number;
   role: Role;
   networkMode: NetworkMode;
+  geography?: GeographyReadiness;
 }
 
 interface Props {
@@ -60,6 +63,13 @@ function validatePaths(paths: string[]): string[] {
 }
 
 const bounded = (e: unknown) => errMsg(e).slice(0, 300);
+function locationReadiness(value:unknown):GeographyReadiness|undefined{
+  if(value===undefined)return undefined;
+  const valid=value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null;
+  const db=valid?.database!==null&&typeof valid?.database==='object'&&!Array.isArray(valid.database)?valid.database as Record<string,unknown>:null;
+  if(!valid||!db||Object.keys(valid).length!==2||!['ready','disabled','network-off','database-unavailable'].includes(String(valid.status))||(db.status==='ready'?Object.keys(db).length!==4||!Number.isSafeInteger(db.databaseBuild)||Number(db.databaseBuild)<1||Number(db.databaseBuild)>253402300799||typeof db.databaseSha256!=='string'||!/^[a-f0-9]{64}$/.test(db.databaseSha256)||!Number.isSafeInteger(db.bytes)||Number(db.bytes)<1||Number(db.bytes)>256*1024*1024:db.status!=='unavailable'||Object.keys(db).length!==2||!['not-configured','missing','unreadable','too-large','invalid','lookup-failed'].includes(String(db.reason)))||valid.status==='ready'&&db.status!=='ready')throw new Error('Location setup status could not be verified. Reload settings to read a fresh status.');
+  return value as GeographyReadiness;
+}
 
 const NETWORK_COPY: Record<NetworkMode, string> = {
   off: 'Off: page and event counts remain available, but visitor and visit estimates are unavailable until an operator configures a verified network path. Installing behind a proxy does not verify it on its own.',
@@ -119,7 +129,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
     api<Loaded>(url, {signal: ctrl.signal})
       .then((d) => {
         if (!alive || ctrl.signal.aborted || gen !== genRef.current) return;
-        setData(d);
+        setData({...d,geography:locationReadiness(d.geography)});
         setDraft(d.settings);
         setPathsText(d.settings.excludedPaths.join('\n'));
         setLoading(false);
@@ -185,14 +195,14 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
     setConflict(false);
     setSavedOk(false);
     try {
-      const res = await api<{settings: Settings; revision: number}>(url, {
+      const res = await api<{settings: Settings; revision: number;geography?:GeographyReadiness}>(url, {
         method: 'POST',
         body: {revision: data.revision, settings: current},
         signal: ctrl.signal,
       });
       if (!mountedRef.current || ctrl.signal.aborted || gen !== genRef.current) return;
       // Retain the last confirmed role/networkMode; no refetch after save.
-      setData({settings: res.settings, revision: res.revision, role: data.role, networkMode: data.networkMode});
+      setData({settings: res.settings, revision: res.revision, role: data.role, networkMode: data.networkMode,geography:locationReadiness(res.geography)});
       setDraft(res.settings);
       setPathsText(res.settings.excludedPaths.join('\n'));
       setSavedOk(true);
@@ -365,6 +375,12 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
           />
           Screen dimensions
         </label>
+        <label className="row">
+          <input type="checkbox" style={{width:'auto',flexShrink:0}} checked={draft.captureGeography===true} onChange={e=>set('captureGeography',e.target.checked)}/>
+          Approximate country, region and city
+        </label>
+        <p className="hint">Derives approximate location locally from an accepted connection address. Raw addresses and coordinates are not stored. Existing history is not backfilled, and accepted pageviews remain available when location lookup is unavailable.</p>
+        <p className="hint" role="status">Current location setup: {data.geography?.status==='ready'?'Ready for future accepted events.':data.geography?.status==='disabled'?'Disabled for this project.':data.geography?.status==='network-off'?'An operator must configure a verified network path.':data.geography?.status==='database-unavailable'?'An operator must install the optional local DB-IP City Lite database and restart the web service.':'Setup status was not returned. Reload settings to check.'}{data.geography?.database.status==='ready'?` Database build: ${new Date(data.geography.database.databaseBuild*1000).toISOString().slice(0,10)}.`:''} This describes the current setup, not historical lookup coverage.</p>
         <p className="hint">
           Language is included with accepted events. Third-party vendor SDKs have their own data collection behavior,
           which these settings do not change.

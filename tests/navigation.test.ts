@@ -1,9 +1,35 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { analyticsDay, auditCoverages, auditIssueCodes, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView } from '../src/lib/navigation.ts'
+import { analyticsDay, applyGeographyFilter, geographyNavigationNames, auditCoverages, auditIssueCodes, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView } from '../src/lib/navigation.ts'
+import {geographyFields,serializeGeographyKey} from '../src/lib/analytics-geography.ts'
 import {environmentCatalog,environmentFields} from '../src/lib/analytics-environment.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
+
+test('location filters retain canonical composite identity, report intent and strict scalar scope',()=>{
+  const base={workspace,project,view:'compare'} as const,scope={analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29',analyticsCompare:'yoy' as const,analyticsBrowser:'chrome'};
+  const city={state:'known' as const,country:'US',region:{kind:'code' as const,value:'US-IL'},city:'Springfield'};
+  const chosen=applyGeographyFilter(scope,'city',city),parsed=parseNavigation({...base,...chosen});
+  assert.deepEqual(parsed,{...base,...chosen});assert.deepEqual(parseNavigation(parsed),parsed);
+  const wire=Object.fromEntries(Object.entries(parsed).map(([key,value])=>[key,(Object.values(geographyNavigationNames) as string[]).includes(key)?JSON.stringify(value):value]));
+  assert.equal(canonicalNavigation('?'+new URLSearchParams(wire as Record<string,string>),parsed),true);
+  assert.equal(canonicalNavigation('?'+new URLSearchParams(parsed as Record<string,string>),parsed),false);
+  assert.equal(parsed.analyticsCountry,serializeGeographyKey('country',{state:'known',country:'US'}));
+  assert.equal(parsed.analyticsRegion,serializeGeographyKey('region',{state:'known',country:'US',region:city.region}));
+  for(const field of geographyFields){const name=geographyNavigationNames[field],value=chosen[name]!;for(const invalid of [[value],{value},JSON.stringify(JSON.parse(value),null,1),value.replace('"US"','"us"'),'not-recorded','{"state":"known","country":"US","extra":1}'])assert.equal(parseNavigation({...base,...scope,[name]:invalid}).analyticsInvalid,'1');}
+  assert.deepEqual(parseNavigation({...parsed,view:'explore'}),{workspace,project,view:'explore'});
+  assert.notEqual(navigationKey(parsed),navigationKey({...parsed,analyticsCity:undefined}));
+  const unknown=applyGeographyFilter(chosen,'city',{state:'unknown'});assert.equal(unknown.analyticsCountry,chosen.analyticsCountry);assert.equal(unknown.analyticsRegion,chosen.analyticsRegion);
+  const noRegion=applyGeographyFilter(chosen,'city',{...city,region:null});assert.equal(noRegion.analyticsRegion,'{"state":"unknown"}');
+  assert.deepEqual(applyGeographyFilter(chosen,'country',{state:'known',country:'US'}),chosen);
+  const unknownCountry=applyGeographyFilter(chosen,'country',{state:'unknown'});assert.equal(unknownCountry.analyticsRegion,undefined);assert.equal(unknownCountry.analyticsCity,undefined);
+  const unknownRegion=applyGeographyFilter(chosen,'region',{state:'unknown'});assert.equal(unknownRegion.analyticsCountry,chosen.analyticsCountry);assert.equal(unknownRegion.analyticsCity,undefined);
+  for(const country of [{state:'unknown'},{state:'not-recorded'}])assert.equal(parseNavigation({...base,analyticsCountry:serializeGeographyKey('country',country),analyticsCity:chosen.analyticsCity}).analyticsInvalid,'1');
+  assert.equal(parseNavigation({...base,analyticsRegion:'{"state":"unknown"}',analyticsCity:chosen.analyticsCity}).analyticsInvalid,'1');
+  assert.equal(parseNavigation({...base,analyticsRegion:'{"state":"not-recorded"}',analyticsCity:noRegion.analyticsCity}).analyticsInvalid,'1');
+  assert.equal(parseNavigation({...base,...noRegion}).analyticsInvalid,undefined);
+  for(const key of [{state:'unknown'},{state:'not-recorded'},{state:'known',country:'US',region:{kind:'name',value:'Unknown'},city:'Unknown'}]){const value=serializeGeographyKey('city',key)!;assert.equal(parseNavigation({...base,analyticsCity:value}).analyticsCity,value);}
+});
 
 test('Compare is a project read view with an optional strict mode and the same applied dates/filters',()=>{
   const base={workspace,project,view:'compare'} as const,values={analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29',analyticsBrowser:'chrome',analyticsOs:'Mac OS',analyticsDevice:'desktop'};
