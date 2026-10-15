@@ -118,6 +118,11 @@ try {
       await page.setViewportSize({ width: 360, height: 800 });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({ path: 'private/google-browser/mobile.png', fullPage: true });
+      await page.setViewportSize({ width: 320, height: 800 });
+      await page.evaluate(() => { document.documentElement.dir = 'rtl'; document.documentElement.style.zoom = '2'; });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'Google forms and the shared header must contain narrow RTL layouts at 200% CSS zoom.');
+      await page.evaluate(() => { document.documentElement.dir = 'ltr'; document.documentElement.style.zoom = ''; });
+      await page.setViewportSize({ width: 360, height: 800 });
       page.once('dialog', (dialog: any) => dialog.accept());
       await connection.getByRole('button', { name: 'Disconnect', exact: true }).click();
       await page.getByText('Disconnected. Google access was not revoked.', { exact: true }).waitFor();
