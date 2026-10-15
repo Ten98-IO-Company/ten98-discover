@@ -184,6 +184,14 @@ test('analytics links fail closed for ambiguous scope, unsupported families and 
   assert.deepEqual(parseNavigation({...base,unrelated:'private value'}),base);
 });
 
+test('realtime navigation is a fixed project view without retained report or activity drafts', () => {
+  const base={workspace,project,view:'realtime'} as const;
+  assert.equal(projectView('realtime'),true);assert.equal(allowedView('realtime','viewer',false),true);assert.equal(allowedView('realtime',undefined,false),false);
+  assert.deepEqual(parseNavigation({...base,analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29',analyticsBrowser:'chrome',visitorKey:'a'.repeat(64),from:'2026-10-15',search:'private draft',kind:'custom',cursor:'private cursor'}),base);
+  assert.equal(canonicalNavigation('?'+new URLSearchParams(base),base),true);
+  assert.notEqual(navigationKey(base),navigationKey({...base,view:'project'}));
+});
+
 test('audit Pages query round-trips applied search and ordering while defaults stay omitted', () => {
   const base={workspace,project,view:'audits',auditRun:project} as const;
   const defaults={auditSearch:'  ',auditSearchIn:'url_title_meta',auditSort:'url',auditOrder:'asc'};
