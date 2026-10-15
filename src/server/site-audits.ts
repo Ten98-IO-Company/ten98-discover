@@ -11,6 +11,8 @@ import type {CrawlFacts,CrawlCoverage,CrawlPageInput} from './crawl-analysis.ts'
 import {canonicalHash} from './context-input.ts';
 import {normalizeAuditPageFields} from '../lib/site-audit-pages.ts';
 import {csvCell} from './explorer-input.ts';
+import {contentCoverageLimits,contentPageStates} from '../lib/ai-content-coverage.ts';
+import type {ContentPage,ContentPageState} from './ai-content-coverage.ts';
 
 export const siteAuditQueue='site-audit';
 export const siteAuditLimits=Object.freeze({defaultPages:50,maxPages:1000,maxMinutes:30,requestsPerSecond:1,bodyCapacityBytes:524288000,frontier:10000,edges:100000,sitemapDocuments:20,sitemapDepth:3});
@@ -205,7 +207,7 @@ function titleDto(row:Pick<PageRow,'evidence_recorded'|'title_preview'|'title_le
  const truncated=(row.title_length??0)>512||(row.facts?.titleLength??0)>row.title_preview.length;
  return {status:truncated?'truncated':row.title_preview===''?'empty':'available',text:row.title_preview};
 }
-function bodyDto(row:PageRow,run:AuditRunRow,include:boolean){
+function bodyDto(row:Pick<PageRow,'body_capture_state'|'body_extraction_version'|'body_present'|'body_bytes'|'body_text'|'resource_kind'|'state'>,run:AuditRunRow,include:boolean){
  const captured=row.body_capture_state==='available'||row.body_capture_state==='empty';
  const status=captured?(run.raw_expired_at?'expired':row.body_present?row.body_capture_state:'unavailable'):
   row.body_capture_state==='not_recorded'&&run.config?.retainBodyText===true&&row.resource_kind==='html'?
@@ -275,6 +277,43 @@ export function parseSiteAuditPagesExport(raw:unknown){
  for(const key of ['coverage','resourceKind','search','searchIn','sort','order'] as const)if(input[key]!==null)params.set(key,input[key]);
  const query=parseAuditListQuery(params,'pages');
  return {coverage:query.coverage,resourceKind:query.resourceKind,search:query.search,searchIn:query.searchIn,sort:query.sort,order:query.order,expectedSelectionRevision:input.expectedSelectionRevision};
+}
+/** Internal retained-body leaf. Caller holds the existing authorized W/P/run gate. */
+export async function readAuditCoveragePages(locked:AuditLock,query:ReturnType<typeof parseSiteAuditPagesExport>,materialize=true){
+ const {client,project}=locked,run=requireRun(locked.run);
+ if(run.data_expired_at)return {coverageError:'audit_expired' as const};
+ if(active.includes(run.status)||!run.completed_at)return {coverageError:'audit_active' as const};
+ if(query.resourceKind!=='html')throw new FoundationError(400,'Website-text comparison requires HTML pages.');
+ const {expectedSelectionRevision,...fields}=query,selection=await selectAuditPages(client,run,fields,pageSelectionScope(project.id,run.id,fields));
+ if(selection.pageReadError)return {coverageError:selection.pageReadError};
+ if(selection.selectionRevision!==expectedSelectionRevision)return {coverageError:'selection_changed' as const};
+ const expired=run.raw_expired_at!==null,clocks=(await client.query(`SELECT to_char(completed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "completedAt",to_char(raw_expired_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "rawExpiredAt",to_char(data_expired_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "dataExpiredAt" FROM site_audit_run WHERE id=$1`,[run.id])).rows[0];
+ const metadata=(await client.query(`WITH policy AS MATERIALIZED(SELECT $3::boolean OR r.completed_at<clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' OR r.completed_at<clock_timestamp()-w.derived_history_days*interval '24 hours' AS expired FROM site_audit_run r JOIN workspace w ON w.id=r.workspace_id WHERE r.id=$1)
+  SELECT p.id,p.url,p.resource_kind,p.state,p.fetch_state,p.analysis_coverage,p.body_capture_state,p.body_extraction_version,policy.expired AS policy_expired,
+  to_char(p.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS observed_at,
+  p.facts->>'contentHash' AS content_hash,
+  CASE WHEN policy.expired OR p.body_capture_state NOT IN('available','empty') THEN NULL ELSE octet_length(p.body_text) END AS bytes,
+  CASE WHEN policy.expired OR p.body_capture_state NOT IN('available','empty') THEN NULL ELSE encode(sha256(convert_to(p.body_text,'UTF8')),'hex') END AS body_hash
+  FROM unnest($2::uuid[]) WITH ORDINALITY AS selected(id,position) JOIN site_audit_page p ON p.id=selected.id AND p.run_id=$1 CROSS JOIN policy ORDER BY selected.position`,[run.id,selection.ids,expired])).rows;
+ if(metadata.length!==selection.ids.length)return {coverageError:'selection_changed' as const};
+ if(!expired&&metadata.some(row=>row.policy_expired)){Object.assign(run,(await markSiteAuditReadExpiry(client,project.id,[run.id]))[0]);return {coverageError:'selection_changed' as const};}
+ const pages:ContentPage[]=metadata.map(row=>{
+  const native=bodyDto({...row,body_present:row.body_hash!==null,body_bytes:row.bytes,body_text:null},run,false);
+  let state:ContentPageState=contentPageStates.includes(native.status as ContentPageState)?native.status as ContentPageState:'invalid';
+  if((state==='available'||state==='empty')&&(run.config?.retainBodyText!==true||row.resource_kind!=='html'||row.analysis_coverage!=='analyzed'||row.body_extraction_version!=='static-dom-body-v1'||row.observed_at===null||!Number.isSafeInteger(row.bytes)||row.bytes<0||row.bytes>65536||!row.body_hash||(state==='empty'?row.bytes!==0||row.content_hash!==null:row.bytes===0||row.content_hash!==row.body_hash)))state='invalid';
+  return {id:row.id,url:row.url,observedAt:row.observed_at,state,extractionVersion:row.body_extraction_version,bodySha256:state==='available'||state==='empty'?row.body_hash:null,text:null};
+ });
+ const readable=pages.filter(p=>p.state==='available'||p.state==='empty'),rawBytes=metadata.reduce((sum,row,index)=>sum+(pages[index].state==='available'||pages[index].state==='empty'?row.bytes:0),0);
+ if(readable.length>contentCoverageLimits.readablePages||rawBytes>contentCoverageLimits.rawBytes)return {coverageError:'body_capacity' as const};
+ if(materialize){
+  // Read complete bodies in bounded batches only after the full metadata/byte preflight.
+  for(let offset=0;offset<readable.length;offset+=100){
+   Object.assign(run,(await markSiteAuditReadExpiry(client,project.id,[run.id]))[0]);if(run.raw_expired_at)return {coverageError:'selection_changed' as const};
+   const batch=readable.slice(offset,offset+100),rows=(await client.query<{id:string;body_text:string}>(`SELECT p.id,CASE WHEN r.completed_at<clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' OR r.completed_at<clock_timestamp()-w.derived_history_days*interval '24 hours' THEN NULL ELSE p.body_text END AS body_text FROM site_audit_page p JOIN site_audit_run r ON r.id=p.run_id JOIN workspace w ON w.id=r.workspace_id WHERE p.run_id=$1 AND p.id=ANY($2::uuid[])`,[run.id,batch.map(p=>p.id)])).rows,byId=new Map(rows.map(row=>[row.id,row.body_text]));
+   for(const page of batch){const text=byId.get(page.id);if(typeof text!=='string'||Buffer.byteLength(text)>65536||createHash('sha256').update(text).digest('hex')!==page.bodySha256){Object.assign(run,(await markSiteAuditReadExpiry(client,project.id,[run.id]))[0]);return {coverageError:'selection_changed' as const};}page.text=text;}
+  }
+ }
+ return {pages,selectionRevision:selection.selectionRevision,receipt:{run:{id:run.id,origin:run.origin,domainId:run.domain_id,config:run.config,status:run.status,...clocks,coverage:run.coverage},query:fields,selectionRevision:selection.selectionRevision,metadata}};
 }
 export const siteAuditPagesExportMaxBytes=64*1024*1024;
 // ponytail: one export body per web process, capped at 64 MiB; use an async artifact job if measured demand needs concurrent large exports.
