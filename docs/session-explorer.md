@@ -2,6 +2,8 @@
 
 The read-only session explorer groups matching retained events by the existing project-scoped rotating visitor key. A key is an observation estimate, not a persistent customer. Identify-only properties do not create discoverable traffic. Observed-key detail can open a separate identified-activity subview using only retained explicit event evidence; current properties remain scoped to the original observed key.
 
+List predicates and observed/linked activity use the [native geography contract](analytics-geography.md). Detail rows show validated approximate country, region, city and actual build/hash provenance; malformed or unsupported evidence remains Not recorded. Raw location input is not exposed, and an identified link does not manufacture location for an earlier event.
+
 ## API and authorization
 
 GET /api/projects/:projectId/sessions accepts explicit from, to and timeZone, the existing exact/typed/advanced/current-session/cohort population, an optional exact visitorKey, pageSize (1–100, default25) and cursor. Report grouping keys are rejected. Unknown or repeated parameters fail closed. Saved definitions stage filters; Apply commits the requested population.

@@ -2,9 +2,11 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
-import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
+import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
 import { useAnnotations } from './AnnotationsPanel';
 import { deriveAnalyticsComparison, type AnalyticsComparison, type AnalyticsComparisonMode } from '../lib/analytics-comparison';
+import {geographyFields,parseGeographyKey,type GeographyFilters,type GeographyReport,type GeoField,type GeographyKey} from '../lib/analytics-geography';
+import {GeographyCard,geographyLabel,geographyLabels,validGeography} from './GeographyCard';
 import './analytics.css';
 
 export type AnalyticsPanelProps = {
@@ -34,6 +36,7 @@ type Analytics = {
   events: { name: string; count: number }[];
   lastReceivedAt: string | null;
   environment?: AnalyticsEnvironment;
+  geography?: GeographyReport;
   comparison?: AnalyticsComparison;
 };
 type Range = { from: string; to: string };
@@ -116,17 +119,18 @@ function validEnvironment(value: unknown, filters: EnvironmentFilters, total: nu
   return true;
 }
 
-function validReport(value: unknown, range: Range, filters: EnvironmentFilters, maxDays = MAX_DAYS): value is Analytics {
+function validReport(value: unknown, range: Range, filters: EnvironmentFilters, maxDays = MAX_DAYS, geographyFilters:GeographyFilters={}): value is Analytics {
   if (!record(value) || !record(value.range) || value.range.from !== range.from || value.range.to !== range.to || value.range.timeZone !== 'UTC' || !record(value.coverage) || !['complete','partial','unavailable'].includes(value.coverage.status as string) || value.coverage.retainedFrom !== null && !stamp(value.coverage.retainedFrom) || !record(value.totals) || ![value.totals.pageViews,value.totals.customEvents].every(nullableCount) || !record(value.measurement) || !['identifiedPageViews','unidentifiedPageViews','visitors','visits'].every(k=>nullableCount((value.measurement as Record<string,unknown>)[k])) || !metric(value.measurement.bounceRate,100) || !metric(value.measurement.averageVisitSeconds) || value.lastReceivedAt !== null && !stamp(value.lastReceivedAt)) return false;
   if (!Array.isArray(value.daily) || value.daily.length > maxDays || !value.daily.every(day=>record(day) && typeof day.date==='string' && parseDay(day.date)!==null && day.date>=range.from && day.date<=range.to && ['complete','partial','unavailable'].includes(day.coverage as string) && nullableCount(day.pageViews) && nullableCount(day.customEvents)) || !Array.isArray(value.pages) || value.pages.length>20 || !value.pages.every(row=>record(row) && typeof row.path==='string' && row.path.length<=2048 && count(row.pageViews)) || !Array.isArray(value.events) || value.events.length>20 || !value.events.every(row=>record(row) && typeof row.name==='string' && row.name.length<=320 && count(row.count))) return false;
   if (value.coverage.status==='unavailable' && ([value.totals.pageViews,value.totals.customEvents,...['identifiedPageViews','unidentifiedPageViews','visitors','visits','bounceRate','averageVisitSeconds'].map(k=>(value.measurement as Record<string,unknown>)[k])].some(n=>n!==null) || value.pages.length || value.events.length || value.daily.some(day=>day.pageViews!==null || day.customEvents!==null))) return false;
   if(value.collection!==undefined&&(!record(value.collection)||!['consent-first','cookieless'].includes(value.collection.mode as string)||value.collection.captureCoverage!=='unknown'||!record(value.collection.pageViews)||!['cookieless','consent','unknown'].every(k=>nullableCount((value.collection as {pageViews:Record<string,unknown>}).pageViews[k]))))return false;
+  if(value.geography===undefined?Object.keys(geographyFilters).length>0:!validGeography(value.geography,geographyFilters,value.totals.pageViews as number|null,value.measurement.identifiedPageViews as number|null,value.coverage.status as string))return false;
   return value.environment === undefined ? !Object.keys(filters).length : validEnvironment(value.environment,filters,value.totals.pageViews as number|null,value.measurement.identifiedPageViews as number|null,value.coverage.status==='unavailable');
 }
 
-function validComparison(data: Analytics, range: Range, filters: EnvironmentFilters, mode: AnalyticsComparisonMode): boolean {
+function validComparison(data: Analytics, range: Range, filters: EnvironmentFilters, mode: AnalyticsComparisonMode, geographyFilters:GeographyFilters={}): boolean {
   const value:unknown=data.comparison, derived=deriveAnalyticsComparison(range,mode);
-  if(!derived||!keys(value,['version','mode','asOf','report','change','alignment','calendar'])||value.version!=='analytics-comparison-v1'||value.mode!==mode||!stamp(value.asOf)||new Date(value.asOf).toISOString()!==value.asOf||!validReport(value.report,derived.range,filters,367)||value.report.comparison!==undefined||!keys(value.alignment,['method','currentDays','comparisonDays','slots','overlapDays'])||Object.entries(derived.alignment).some(([key,item])=>(value.alignment as Record<string,unknown>)[key]!==item)||!keys(value.calendar,['current','comparison'])||!keys(value.change,['pageViews','customEvents','visitors','visits','averageVisitSeconds','bounceRate']))return false;
+  if(!derived||!keys(value,['version','mode','asOf','report','change','alignment','calendar'])||value.version!=='analytics-comparison-v1'||value.mode!==mode||!stamp(value.asOf)||new Date(value.asOf).toISOString()!==value.asOf||!validReport(value.report,derived.range,filters,367,geographyFilters)||value.report.comparison!==undefined||!keys(value.alignment,['method','currentDays','comparisonDays','slots','overlapDays'])||Object.entries(derived.alignment).some(([key,item])=>(value.alignment as Record<string,unknown>)[key]!==item)||!keys(value.calendar,['current','comparison'])||!keys(value.change,['pageViews','customEvents','visitors','visits','averageVisitSeconds','bounceRate']))return false;
   const prior=value.report;
   function period(report:Analytics,days:number){
     const start=parseDay(report.range.from)!,end=parseDay(report.range.to)!+DAY_MS,watermark=report.coverage.retainedFrom===null?null:Date.parse(report.coverage.retainedFrom),retention=(from:number,to:number)=>watermark===null||from>=watermark?'complete':to<=watermark?'unavailable':'partial';
@@ -296,11 +300,14 @@ export function AnalyticsPanel(props: AnalyticsPanelProps) {
 function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate, compareView=false, onAppliedRange }: AnalyticsPanelProps) {
   const uid = useId();
   const [localIntent,setLocalIntent]=useState<AnalyticsNavigation>({});
+  const [geographyField,setGeographyField]=useState<GeoField>('country');
   const [environmentField,setEnvironmentField]=useState<EnvironmentField>('browser');
   const intent=search?analyticsNavigation(search):localIntent, queryKey=JSON.stringify(intent),mode=compareView?intent.analyticsCompare??'prev':undefined;
   const filters:EnvironmentFilters={};
   for(const field of environmentFields){const value=intent[analyticsNavigationNames[field]];if(value!==undefined)filters[field]=value;}
-  const filterKey=JSON.stringify(filters), invalid=Boolean(intent.analyticsInvalid);
+  const geographyFilters:GeographyFilters={};
+  for(const field of geographyFields){const value=intent[geographyNavigationNames[field]];if(value!==undefined)geographyFilters[field]=value;}
+  const filterKey=JSON.stringify([filters,geographyFilters]), invalid=Boolean(intent.analyticsInvalid);
   const [view, setView] = useState<View>(() => fresh(projectId,intent));
   // A changed URL or project must never display the previous population.
   if (view.key !== projectId || view.queryKey !== queryKey) setView(fresh(projectId,intent));
@@ -320,14 +327,14 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
     const id = ++reqRef.current;
     const ctrl = new AbortController();
     if(invalid||unavailableRange)return ()=>ctrl.abort();
-    const params=new URLSearchParams({from,to,...filters,...mode?{compare:mode}:{}});
+    const params=new URLSearchParams({from,to,...filters,...geographyFilters,...mode?{compare:mode}:{}});
     api<Analytics>(
       `/api/projects/${encodeURIComponent(projectId)}/analytics?${params}`,
       { signal: ctrl.signal },
     ).then(
       (data) => {
         if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId || queryRef.current!==queryKey) return;
-        if(!validReport(data,{from,to},filters)||(mode?!validComparison(data,{from,to},filters,mode):data.comparison!==undefined)){
+        if(!validReport(data,{from,to},filters,MAX_DAYS,geographyFilters)||(mode?!validComparison(data,{from,to},filters,mode,geographyFilters):data.comparison!==undefined)){
           setView(v=>v.key===projectId&&v.queryKey===queryKey?{...v,data:null,loading:false,error:'The analytics response did not match the requested range, filters or measurement evidence. Retry to read a fresh snapshot.'}:v);return;
         }
         setView((v) => (v.key === projectId ? { ...v, data, loading: false, error: null, denied: false } : v));
@@ -352,6 +359,8 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
     else navigate(next);
   };
   const applyFilter=(field:EnvironmentField,value:string|null)=>navigate({...intent,analyticsFrom:view.range.from,analyticsTo:view.range.to,[analyticsNavigationNames[field]]:value??'not-recorded'});
+
+  const applyLocation=(field:GeoField,key:GeographyKey)=>navigate(applyGeographyFilter({...intent,analyticsFrom:view.range.from,analyticsTo:view.range.to},field,key));
 
   const retry = () => setView((v) => ({ ...v, data:null, loading: true, error: null, nonce: v.nonce + 1 }));
 
@@ -384,7 +393,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
 
   return (
     <div className={'analytics'+(compareView?' analytics-compare':'')} aria-busy={busy}>
-      {invalid&&<div className="alert" role="alert"><p>This analytics link has invalid or ambiguous dates, environment filters or comparison mode. Reset the view to choose a valid range.</p><button type="button" className="btn" onClick={()=>navigate({})}>Reset analytics view</button></div>}
+      {invalid&&<div className="alert" role="alert"><p>This analytics link has invalid or ambiguous dates, environment or location filters, or comparison mode. Reset the view to choose a valid range.</p><button type="button" className="btn" onClick={()=>navigate({})}>Reset analytics view</button></div>}
       <section className="card analytics-toolbar">
         <form onSubmit={applyDraft}>
           <fieldset className="analytics-fieldset" disabled={busy||invalid}>
@@ -442,7 +451,9 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
         {compareView&&<div className="analytics-comparison-mode"><label htmlFor={`${uid}-compare`}>Compare with</label><select id={`${uid}-compare`} value={mode} disabled={busy||invalid} onChange={e=>navigate({...intent,analyticsFrom:from,analyticsTo:to,analyticsCompare:e.target.value as AnalyticsComparisonMode})}><option value="prev">Previous period</option><option value="yoy">Previous year</option></select></div>}
       </section>
       {compareView&&!invalid&&(derived?<section className="card analytics-comparison-ranges" aria-label="Applied comparison periods"><div><strong>Current period</strong><p>{from} to {to} (UTC) · {derived.alignment.currentDays} {derived.alignment.currentDays===1?'day':'days'}</p></div><div><strong>{mode==='yoy'?'Previous year':'Previous period'}</strong><p>{derived.range.from} to {derived.range.to} (UTC) · {derived.alignment.comparisonDays} {derived.alignment.comparisonDays===1?'day':'days'}</p></div>{derived.alignment.currentDays!==derived.alignment.comparisonDays&&<p className="notice">These periods have different day counts because calendar years differ. The chart keeps all {derived.alignment.slots} days and leaves unmatched days unavailable.</p>}{derived.alignment.overlapDays>0&&<p className="notice">The selected periods overlap by {derived.alignment.overlapDays} {derived.alignment.overlapDays===1?'day':'days'}. Some observations can occur in both periods.</p>}</section>:<div className="alert" role="alert"><p>Choose later dates or a different comparison mode so the previous period stays on or after 1970-01-01.</p><button type="button" className="btn" onClick={()=>applyRange(lastDays(7))}>Reset comparison dates</button></div>)}
-      {!invalid&&Object.keys(filters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied environment filters"><strong>{compareView?'Applied to both periods':'Applied to all analytics'}</strong><div className="row">{environmentFields.filter(field=>filters[field]!==undefined).map(field=><button type="button" className="btn" key={field} disabled={busy} aria-label={`Remove ${environmentLabels[field]} filter: ${environmentValue(field,filters[field]!)}`} onClick={()=>{const next={...intent};delete next[analyticsNavigationNames[field]];navigate(next);}}>{environmentLabels[field]}: {environmentValue(field,filters[field]!)} <span aria-hidden="true">×</span></button>)}<button type="button" className="btn ghost" disabled={busy} onClick={()=>navigate({...(intent.analyticsFrom?{analyticsFrom:intent.analyticsFrom,analyticsTo:intent.analyticsTo}:{}),...(intent.analyticsCompare?{analyticsCompare:intent.analyticsCompare}:{})})}>Clear environment filters</button></div><p className="hint">{compareView?'Both period cards, daily comparison and period reports':'Overview, daily activity, top pages, custom events and environment'} use these same required filters.</p></section>}
+      {!invalid&&Object.keys(filters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied environment filters"><strong>{compareView?'Applied to both periods':'Applied to all analytics'}</strong><div className="row">{environmentFields.filter(field=>filters[field]!==undefined).map(field=><button type="button" className="btn" key={field} disabled={busy} aria-label={`Remove ${environmentLabels[field]} filter: ${environmentValue(field,filters[field]!)}`} onClick={()=>{const next={...intent};delete next[analyticsNavigationNames[field]];navigate(next);}}>{environmentLabels[field]}: {environmentValue(field,filters[field]!)} <span aria-hidden="true">×</span></button>)}<button type="button" className="btn ghost" disabled={busy} onClick={()=>navigate({...Object.fromEntries(Object.values(geographyNavigationNames).filter(name=>intent[name]!==undefined).map(name=>[name,intent[name]])),...(intent.analyticsFrom?{analyticsFrom:intent.analyticsFrom,analyticsTo:intent.analyticsTo}:{}),...(intent.analyticsCompare?{analyticsCompare:intent.analyticsCompare}:{})})}>Clear environment filters</button></div><p className="hint">{compareView?'Both period cards, daily comparison and period reports':'Overview, daily activity, top pages, custom events and environment'} use these same required filters.</p></section>}
+
+      {!invalid&&Object.keys(geographyFilters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied location filters"><strong>{compareView?'Applied to both periods':'Applied to all analytics'}</strong><div className="row">{geographyFields.filter(field=>geographyFilters[field]!==undefined).map(field=><button type="button" className="btn" key={field} disabled={busy} onClick={()=>{const next={...intent};delete next[geographyNavigationNames[field]];navigate(next);}}>{geographyLabels[field]}: <bdi>{geographyLabel(parseGeographyKey(field,geographyFilters[field])!)}</bdi> <span aria-hidden="true">×</span></button>)}<button type="button" className="btn ghost" disabled={busy} onClick={()=>{const next={...intent};for(const field of geographyFields)delete next[geographyNavigationNames[field]];navigate(next);}}>Clear location filters</button></div><p className="hint">All cards, daily data and reports use these same exact location filters.</p></section>}
 
       {view.error && (
         <div className="alert" role="alert">
@@ -571,7 +582,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             </>}
             {!invalid&&annotations.panel}
           </section>}
-      {comparisonData&&<><ComparisonSummary data={comparisonData}/><ComparisonChart data={comparisonData}/><section className="card analytics-comparison-notes"><h2>Current period notes</h2><p className="hint">Notes belong to their actual current UTC dates, not the aligned previous days.</p><div className="annotation-dates" tabIndex={0} role="region" aria-label="Current notes by day, scroll for more dates">{comparisonData.daily.map(d=><div className="annotation-date" key={d.date}><span className="hint">{d.date}</span>{annotations.dayButton(d.date)}</div>)}</div>{annotations.panel}</section><ComparisonRankings data={comparisonData}/><EnvironmentCard data={comparisonData} busy={busy} periodLabel="Current period" field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/><EnvironmentCard data={comparisonData.comparison.report} busy={busy} periodLabel="Previous period" field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/></>}
+      {comparisonData&&<><ComparisonSummary data={comparisonData}/><ComparisonChart data={comparisonData}/><section className="card analytics-comparison-notes"><h2>Current period notes</h2><p className="hint">Notes belong to their actual current UTC dates, not the aligned previous days.</p><div className="annotation-dates" tabIndex={0} role="region" aria-label="Current notes by day, scroll for more dates">{comparisonData.daily.map(d=><div className="annotation-date" key={d.date}><span className="hint">{d.date}</span>{annotations.dayButton(d.date)}</div>)}</div>{annotations.panel}</section><ComparisonRankings data={comparisonData}/><GeographyCard data={comparisonData.geography} range={comparisonData.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation} periodLabel="Current period"/><GeographyCard data={(comparisonData.comparison.report as Analytics).geography} range={comparisonData.comparison.report.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation} periodLabel="Previous period"/><EnvironmentCard data={comparisonData} busy={busy} periodLabel="Current period" field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/><EnvironmentCard data={comparisonData.comparison.report} busy={busy} periodLabel="Previous period" field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/></>}
       {data && !compareView && (
         <>
           <section className="card analytics-breakdown">
@@ -632,6 +643,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             )}
           </section>
 
+          <GeographyCard data={data.geography} range={data.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation}/>
           <EnvironmentCard data={data} busy={busy} field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/>
         </>
       )}

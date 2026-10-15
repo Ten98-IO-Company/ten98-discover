@@ -11,17 +11,20 @@ import { eventPath, InputError } from './validation.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import {recordIdentityLink} from './identity-links.ts';
 import {analyticsEnvironment} from './analytics-environment.ts';
+import {collectGeography,geographyReadiness} from './analytics-geography.ts';
+import type {GeographyObservation} from '../lib/analytics-geography.ts';
 
 const settingsInput = z.object({
   enabled: z.boolean(), consentMode: z.enum(['builtin', 'external']),
   collectionMode: z.enum(['consent-first', 'cookieless']).optional(),
-  captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),
+  captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),captureGeography:z.boolean().optional(),
   excludeBots: z.boolean(),linkIdentities:z.boolean().optional(),
   excludedPaths: z.array(z.string().min(1).max(256).regex(/^\/[^?#\u0000-\u001f\u007f]*$(?![\s\S])/).refine(value => { try { decodeURIComponent(value); return toUSVString(value) === value; } catch { return false; } })).max(50),
 }).strict();
 export type AnalyticsSettings = z.infer<typeof settingsInput>;
 type Project = { id: string; origin: string; analytics_settings: AnalyticsSettings; analytics_epoch: string; analytics_revision: number; destination_epoch: string | null };
 export function publicAnalyticsSettings(value: unknown): AnalyticsSettings { const parsed=settingsInput.parse(value); return {...parsed,collectionMode:parsed.collectionMode??'consent-first'}; }
+export function publicTrackingSettings(value:unknown){const s=publicAnalyticsSettings(value);return{enabled:s.enabled,consentMode:s.consentMode,collectionMode:s.collectionMode,captureReferrer:s.captureReferrer,captureCampaigns:s.captureCampaigns,captureScreen:s.captureScreen,excludeBots:s.excludeBots,...s.linkIdentities===undefined?{}:{linkIdentities:s.linkIdentities},excludedPaths:s.excludedPaths};}
 export function analyticsPathExcluded(path: string, prefixes: string[]): boolean {
   if (!prefixes.length) return false;
   try { const decoded = decodeURIComponent(path); return prefixes.some(prefix => decoded.startsWith(decodeURIComponent(prefix))); }
@@ -68,7 +71,7 @@ export async function analyticsSettings(projectId: string, userId: string) {
   const result = await getDatabase().pool.query(`SELECT p.analytics_settings AS settings,p.analytics_revision AS revision,m.role
     FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1`, [projectId, userId]);
   if (!result.rowCount) throw new FoundationError(404, 'Project not found or unavailable.');
-  return { ...result.rows[0],settings:publicAnalyticsSettings(result.rows[0].settings), networkMode: process.env.ANALYTICS_NETWORK_MODE || 'off' };
+  const normalized=publicAnalyticsSettings(result.rows[0].settings),settings={...normalized,captureGeography:normalized.captureGeography??false};return { ...result.rows[0],settings, networkMode: process.env.ANALYTICS_NETWORK_MODE || 'off',geography:geographyReadiness(settings.captureGeography===true) };
 }
 export async function saveAnalyticsSettings(projectId: string, userId: string, raw: unknown) {
   const input = z.object({ revision: z.number().int().positive(), settings: settingsInput }).strict().parse(raw);
@@ -80,12 +83,12 @@ export async function saveAnalyticsSettings(projectId: string, userId: string, r
     if (!['owner','admin'].includes(role.rows[0]?.role)) throw new FoundationError(404, 'Project not found or unavailable.');
     const current=await client.query('SELECT analytics_settings FROM project WHERE id=$1 FOR UPDATE',[projectId]);
     if(!current.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
-    const settings={...input.settings,collectionMode:input.settings.collectionMode??publicAnalyticsSettings(current.rows[0].analytics_settings).collectionMode};
+    const saved=publicAnalyticsSettings(current.rows[0].analytics_settings),settings={...input.settings,collectionMode:input.settings.collectionMode??saved.collectionMode,captureGeography:input.settings.captureGeography??saved.captureGeography??false};
     const result = await client.query(`UPDATE project SET analytics_settings=$3,analytics_revision=analytics_revision+1,analytics_epoch=$4,
       identity_links_started_at=CASE WHEN $5::boolean THEN COALESCE(identity_links_started_at,clock_timestamp()) ELSE identity_links_started_at END
       WHERE id=$1 AND analytics_revision=$2 RETURNING analytics_settings AS settings,analytics_revision AS revision`, [projectId, input.revision, JSON.stringify(settings), randomUUID(),settings.linkIdentities===true]);
     if (!result.rowCount) throw new FoundationError(409, 'Settings changed. Reload before saving.');
-    await client.query('COMMIT'); return result.rows[0];
+    await client.query('COMMIT'); return {...result.rows[0],geography:geographyReadiness(settings.captureGeography===true)};
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
 }
@@ -111,7 +114,7 @@ export async function nativeCollectionPolicy(client:PoolClient,request:Request,s
   const reason=excluded?'collection_disabled' as const:basis===null?'consent_required' as const:null;
   return {project,userAgent,reason,basis};
 }
-async function writeObservation(client: PoolClient, project: Project, input: Observation, source: 'browser' | 'api', identity: ReturnType<typeof analyticsIdentity>, now: Date|string, identityEvidence:1|null,basis:'consent'|'cookieless'|null, environment?: ReturnType<typeof analyticsEnvironment>) {
+async function writeObservation(client: PoolClient, project: Project, input: Observation, source: 'browser' | 'api', identity: ReturnType<typeof analyticsIdentity>, now: Date|string, identityEvidence:1|null,basis:'consent'|'cookieless'|null, environment?: ReturnType<typeof analyticsEnvironment>,geography?:GeographyObservation|null) {
   const settings = publicAnalyticsSettings(project.analytics_settings), properties = normalizeProperties(input.properties === undefined ? {} : input.properties), dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
   // Distinct identifiers participate only in keyed identity derivation, never raw storage.
   delete dimensions.distinctId;
@@ -121,7 +124,7 @@ async function writeObservation(client: PoolClient, project: Project, input: Obs
   const inserted = await client.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,properties,dimensions,source,metric_version,identity_link_evidence_version,collection_basis)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(project_id,id) DO NOTHING RETURNING id`,
     [input.eventId, project.id, input.name, eventPath(input.url), now, identity?.visitor ?? null, identity?.visit ?? null,
-      JSON.stringify(properties), JSON.stringify({ ...dimensions, ...environment, origin: new URL(input.url).origin }), source, identity?.metricVersion ?? 'observations-v2',identityEvidence,basis]);
+      JSON.stringify(properties), JSON.stringify({ ...dimensions, ...environment,...geography?{geography}:{}, origin: new URL(input.url).origin }), source, identity?.metricVersion ?? 'observations-v2',identityEvidence,basis]);
   if (inserted.rowCount && identity) await client.query(`INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,$3,$3)
     ON CONFLICT(project_id,id) DO UPDATE SET first_seen_at=LEAST(analytics_visitor.first_seen_at,excluded.first_seen_at),last_seen_at=GREATEST(analytics_visitor.last_seen_at,excluded.last_seen_at)`, [project.id, identity.visitor, now]);
   return { accepted: true, duplicate: !inserted.rowCount, ...(inserted.rowCount && identity ? { context: identity.context } : {}) };
@@ -145,10 +148,10 @@ export async function collectNative(request: Request, siteKey: string, input: Ob
     // Preserve one database acceptance instant through the event/link fence;
     // Date is used only for monthly key/context derivation, never the fence.
     const now:Date|string=dimensions.distinctId===undefined?new Date():(await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at`)).rows[0].accepted_at;
-    const identity = analyticsIdentity({ projectId: project.id, ip: resolveAnalyticsNetwork(request, peerAddress), userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now:new Date(now),collectionBasis:basis! });
+    const address=resolveAnalyticsNetwork(request,peerAddress),identity = analyticsIdentity({ projectId: project.id, ip: address, userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now:new Date(now),collectionBasis:basis! });
     const eligible=basis==='consent'&&identity!==null&&dimensions.distinctId!==undefined&&project.analytics_settings.linkIdentities===true;
     const environment=analyticsEnvironment(ua, project.analytics_settings.captureScreen ? dimensions.screenWidth : undefined);
-    const response = await writeObservation(client, project, input, 'browser', identity, now,eligible?1:null,basis,environment);
+    const response = await writeObservation(client, project, input, 'browser', identity, now,eligible?1:null,basis,environment,project.analytics_settings.captureGeography===true?collectGeography(address):null);
     if(!response.duplicate&&eligible){
       await recordIdentityLink(client,project.id,identity!.visitor,dimensions.distinctId!,now as string);
       await client.query('UPDATE project SET identity_event_evidence_started_at=$2 WHERE id=$1 AND identity_event_evidence_started_at IS NULL',[project.id,now]);

@@ -15,7 +15,7 @@ test('explorer defaults follow the named calendar; properties retain exact type 
 });
 
 test('explorer rejects ambiguous, oversized, invalid and unbounded queries',()=>{
-  for(const params of ['kind=unknown','groupBy=country','groupProperty=key','groupBy=property','kind=all&kind=custom','timezone=UTC',
+  for(const params of ['kind=unknown','groupBy=continent','groupProperty=key','groupBy=property','kind=all&kind=custom','timezone=UTC',
     'timeZone=GMT+4','timeZone=No/Such_Zone','from=2024-02-30&to=2024-03-01','from=2024-01-01&to=2025-01-01',
     'propertyType=string','propertyKey=a&propertyType=missing&propertyValue=null','propertyKey=a&propertyType=number&propertyValue=%2242%22',
     'propertyKey=a&propertyType=date&propertyValue=%222024-02-30T00%3A00%3A00Z%22',

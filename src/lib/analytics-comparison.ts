@@ -1,5 +1,6 @@
 import {analyticsDay} from './navigation.ts';
 import type {AnalyticsEnvironment} from './analytics-environment.ts';
+import type {GeographyReport} from './analytics-geography.ts';
 
 export type AnalyticsComparisonMode='prev'|'yoy';
 export type AnalyticsCoverage={status:'complete'|'partial'|'unavailable';retainedFrom:string|null};
@@ -7,7 +8,7 @@ export type AnalyticsPeriodReport={range:{from:string;to:string;timeZone:'UTC'};
  collection:{mode:'cookieless'|'consent-first';captureCoverage:'unknown';pageViews:{cookieless:number|null;consent:number|null;unknown:number|null}};
  measurement:{version:string;identifiedPageViews:number|null;unidentifiedPageViews:number|null;visitors:number|null;visits:number|null;bounceRate:number|null;averageVisitSeconds:number|null};
  daily:{date:string;pageViews:number|null;customEvents:number|null;coverage:AnalyticsCoverage['status']}[];pages:{path:string;pageViews:number}[];events:{name:string;count:number}[];
- lastReceivedAt:string|null;environment:AnalyticsEnvironment};
+ lastReceivedAt:string|null;environment:AnalyticsEnvironment;geography:GeographyReport};
 export type AnalyticsComparison={version:'analytics-comparison-v1';mode:AnalyticsComparisonMode;asOf:string;report:AnalyticsPeriodReport;
  change:{pageViews:{absolute:number|null;percent:number|null};customEvents:{absolute:number|null;percent:number|null};visitors:{absolute:number|null;percent:number|null};visits:{absolute:number|null;percent:number|null};averageVisitSeconds:{absolute:number|null;percent:number|null};bounceRate:{percentagePoints:number|null}};
  alignment:{method:'ordinal-calendar-day';currentDays:number;comparisonDays:number;slots:number;overlapDays:number};calendar:{current:'complete'|'partial'|'future';comparison:'complete'|'partial'|'future'}};

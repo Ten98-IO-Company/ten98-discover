@@ -1,0 +1,18 @@
+# Optional, explicitly installed DB-IP City Lite. No download occurs at startup.
+# Include this file on EVERY subsequent Compose upgrade/restart; see docs/docker-setup.md.
+services:
+  web:
+    memswap_limit: 1G
+    environment:
+      ANALYTICS_GEO_DB_FILE: /data/geography/city.mmdb
+    volumes:
+      - type: bind
+        source: ./data/geography
+        target: /data/geography
+        read_only: true
+        bind:
+          create_host_path: false
+    deploy:
+      resources:
+        limits:
+          memory: 1G # optional profile; see the measured workload and limits in the setup guide

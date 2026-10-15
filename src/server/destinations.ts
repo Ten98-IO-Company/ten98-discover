@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
-import {publicAnalyticsSettings, trackingConsentEpoch} from './native-analytics.ts';
+import {publicTrackingSettings, trackingConsentEpoch} from './native-analytics.ts';
 import {collectionOriginAllowed} from './collection-origins.ts';
 
 export const PROVIDERS = ['meta', 'ga4', 'google_ads', 'cloudflare', 'tiktok', 'linkedin', 'microsoft_ads', 'pinterest', 'snapchat', 'x'] as const;
@@ -537,7 +537,7 @@ export async function getPublicDestinations(siteKey: unknown, environment: unkno
     origin: requestedOrigin,
     revisionId: hasActive ? (row.revision_id as string) : null,
     consentEpoch: trackingConsentEpoch(row.analytics_epoch, hasActive ? row.consent_epoch : null),
-    nativeTracking: publicAnalyticsSettings(row.analytics_settings),
+    nativeTracking: publicTrackingSettings(row.analytics_settings),
     validUntil: new Date(Date.now() + 60_000).toISOString(),
     configuration: hasActive ? parseDestinationConfiguration(row.configuration) : {destinations: []},
   };
