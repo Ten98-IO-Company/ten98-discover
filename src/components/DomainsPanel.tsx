@@ -20,16 +20,16 @@ type State = {
 
 type Challenge = {domainId: string; name: string; type: 'TXT'; value: string; expiresAt: string};
 
-type Props = {projectId: string; userId: string; onUnauthorized: () => void};
+type Props = {projectId: string; userId: string; onUnauthorized: () => void; onInstallTracker: () => void};
 
 const ROLE_LABEL: Record<Domain['role'], string> = {
-  canonical: 'Canonical',
-  serving: 'Serving domain',
-  redirect_alias: 'Redirect alias',
+  canonical: 'Project website',
+  serving: 'Website pages',
+  redirect_alias: 'Redirect only',
 };
 
 const STATUS_LABEL: Record<Domain['status'], string> = {
-  unverified: 'Unverified',
+  unverified: 'Not verified',
   pending: 'Proof pending',
   verified: 'Verified',
   expired: 'Expired',
@@ -48,13 +48,14 @@ export function DomainsPanel(props: Props) {
   return <DomainsPanelInner key={`${props.projectId}:${props.userId}`} {...props} />;
 }
 
-function DomainsPanelInner({projectId, onUnauthorized}: Props) {
+function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/domains`;
 
   const [state, setState] = useState<State | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
+  const [refreshRequired, setRefreshRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [proof, setProof] = useState<Challenge | null>(null);
@@ -71,6 +72,23 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
   const onUnauthorizedRef = useRef(onUnauthorized);
   const nameRef = useRef<HTMLTextAreaElement | null>(null);
   const valueRef = useRef<HTMLTextAreaElement | null>(null);
+  const proofRef = useRef<HTMLHeadingElement | null>(null);
+  const addRef = useRef<HTMLDetailsElement | null>(null);
+  const addedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!proof) return;
+    proofRef.current?.focus();
+    proofRef.current?.scrollIntoView({block: 'nearest'});
+  }, [proof]);
+
+  useEffect(() => {
+    if (!addedRef.current) return;
+    const row = document.getElementById(`domain-${addedRef.current}`);
+    row?.focus();
+    row?.scrollIntoView({block: 'nearest'});
+    addedRef.current = null;
+  }, [state]);
 
   useEffect(() => {
     onUnauthorizedRef.current = onUnauthorized;
@@ -95,10 +113,12 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
       const s = await api<State>(base, {signal: ctrl.signal});
       if (!current()) return;
       setDenied(false);
+      setRefreshRequired(false);
       setState(s);
       setError(null);
     } catch (e) {
       if (!current()) return;
+      setRefreshRequired(true);
       handleError(e);
     } finally {
       if (current()) {
@@ -144,7 +164,7 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
   }, []);
 
   async function runMutation(fn: (signal: AbortSignal, current: () => boolean) => Promise<void>, mapError?: (e: unknown) => string | null) {
-    if (lockRef.current || denied || !state) return;
+    if (lockRef.current || denied || !state || refreshRequired) return;
     lockRef.current = true;
     abortRef.current?.abort();
     const ctrl = new AbortController();
@@ -166,17 +186,27 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
             const fresh = await api<State>(base, {signal: ctrl.signal});
             if (!current()) return;
             setState(fresh);
+            setRefreshRequired(false);
             setError(`${message} The list has been refreshed.`);
           } catch (refreshError) {
             if (!current()) return;
             if (refreshError instanceof ApiError && [401, 403, 404].includes(refreshError.status)) handleError(refreshError);
-            else setError(`${message} Refresh failed: ${errMsg(refreshError)}`);
+            else {
+              setRefreshRequired(true);
+              setError(`${message} Refresh failed: ${errMsg(refreshError)}`);
+            }
           }
           return;
         }
         const mapped = mapError ? mapError(e) : null;
         if (mapped) setError(mapped);
-        else handleError(e);
+        else {
+          if (!(e instanceof ApiError) || e.status === 0 || e.status >= 500) {
+            setRefreshRequired(true);
+            replaceProof(null);
+          }
+          handleError(e);
+        }
       }
     } finally {
       if (current()) {
@@ -196,7 +226,8 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
 
   const canonicalOk = state?.project.canonicalVerifiable ?? false;
   const atLimit = state ? state.domains.length >= state.limit : false;
-  const controlsOff = loading || busy;
+  const controlsOff = loading || busy || refreshRequired;
+  const canonical = state?.domains.find(d => d.role === 'canonical');
   const editingDomain = edit && state ? state.domains.find((d) => d.id === edit.id) ?? null : null;
 
   const onAdd = (ev: FormEvent) => {
@@ -217,11 +248,13 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
       if (addRole === 'redirect_alias' && target) body.expectedTargetHost = target;
       const s = await api<State>(base, {method: 'POST', body, signal});
       if (!current()) return;
+      addedRef.current = s.domains.find(row => !state.domains.some(old => old.id === row.id))?.id ?? null;
       setState(s);
       replaceProof(null);
       setAddHost('');
       setAddRole('serving');
       setAddTarget('');
+      if (addRef.current) addRef.current.open = false;
       setNotice(`Added ${hostname}.`);
     });
   };
@@ -334,19 +367,14 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
   };
 
   return (
-    <section className="card" aria-labelledby="domains-panel-title">
+    <section className="card domains-panel" aria-labelledby="domains-panel-title">
       <div className="row between">
         <h2 id="domains-panel-title">Domains and aliases</h2>
-        <button type="button" className="btn ghost" onClick={onRefresh} disabled={controlsOff}>
+        <button type="button" className="btn ghost" onClick={onRefresh} disabled={loading || busy}>
           Refresh
         </button>
       </div>
-      <p className="hint">
-        Verified serving domains can use this project’s snippet at their exact HTTPS origin on port 443. No subdomains,
-        HTTP origins or other ports are included. Redirect aliases never enable collection. Verification is a point-in-time
-        DNS proof; it does not change DNS or discover backlinks. Verified redirect aliases support a manual HTTP check below.
-        The canonical project origin remains allowed.
-      </p>
+      <p className="hint">Keep your project website, additional serving domains and redirect aliases together.</p>
 
       {error && (
         <div className="banner alert" role="alert">
@@ -360,242 +388,38 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
       )}
 
       {loading && !state && !denied && <p className="dim">Loading domains…</p>}
+      {loading && state && <p className="dim" role="status">Refreshing domains. The last loaded settings are shown below.</p>}
+      {refreshRequired && state && <p className="alert" role="status">These are the last loaded settings. Refresh before making further changes.</p>}
       {busy && <p className="dim" role="status">Updating domain settings…</p>}
 
       {state && !denied && (
         <>
-          <div className="field">
-            <div className="row between">
-              <span className="dim">Project origin (fixed)</span>
-              <span className="mono">{state.project.origin}</span>
+          <section className="field domain-website" aria-labelledby="domain-website-title">
+            <h3 id="domain-website-title">Your website</h3>
+            <p className="domain-origin"><bdi dir="ltr">{state.project.origin}</bdi> <span className="pill">Project origin</span></p>
+            <dl className="domain-facts">
+              <div><dt>Collection origin</dt><dd>Origin allowed</dd></div>
+              <div><dt>DNS ownership</dt><dd>{!canonicalOk ? 'Not available for this origin' : canonical ? <>{STATUS_LABEL[canonical.status]}{canonical.status === 'verified' && canonical.verifiedAt ? ` on ${fmt(canonical.verifiedAt)}` : ' — optional for the canonical origin'}</> : 'Not verified — optional for the canonical origin'}</dd></div>
+            </dl>
+            <p className="hint">This allows the exact project origin. Collection settings, privacy choices and browser privacy signals still determine what is recorded.</p>
+            <div className="row">
+              <button type="button" className="btn primary" disabled={controlsOff} onClick={onInstallTracker}>Install tracker</button>
+              {canonical && canonicalOk && canonical.status !== 'verified' && canonical.status !== 'pending' && <button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(canonical)}>Verify DNS ownership</button>}
+              {canonical && canonical.status === 'pending' && <button type="button" className="btn" disabled={controlsOff || !canonical.challengeExpiresAt || Date.parse(canonical.challengeExpiresAt) <= Date.now()} onClick={() => onVerify(canonical)}>Check DNS proof</button>}
             </div>
-            <div className="row between">
-              <span className="dim">Canonical hostname</span>
-              <span className="mono">{state.project.canonicalHost}</span>
-            </div>
+            {canonical && ['pending', 'verified'].includes(canonical.status) && <details className="domain-manage"><summary>Manage DNS ownership</summary><div className="row"><button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(canonical)}>Replace DNS proof</button><button type="button" className="btn ghost" disabled={controlsOff} onClick={() => onRevoke(canonical)}>Revoke proof</button></div></details>}
             {!state.project.canonicalVerifiable && (
               <p className="hint">
-                This origin is local, an IP address, or otherwise ineligible, so the canonical hostname cannot receive
-                a DNS proof. You can still add public domain entries below.
+                DNS ownership verification is unavailable for this local, IP or otherwise ineligible hostname.
+                You can still add public domain entries below.
               </p>
             )}
-          </div>
-
-          <form className="field" onSubmit={onAdd} aria-label="Add a domain">
-            <label htmlFor="dom-add-host">Hostname</label>
-            <input
-              id="dom-add-host"
-              value={addHost}
-              onChange={(e) => setAddHost(e.target.value)}
-              placeholder="old.example.com"
-              required
-              maxLength={1024}
-              autoComplete="off"
-              disabled={controlsOff || atLimit}
-            />
-            <span className="hint">Hostname only — no scheme, path, port, wildcard, or credentials.</span>
-
-            <label htmlFor="dom-add-role">Role</label>
-            <select
-              id="dom-add-role"
-              value={addRole}
-              onChange={(e) => setAddRole(e.target.value === 'redirect_alias' ? 'redirect_alias' : 'serving')}
-              disabled={controlsOff || atLimit}
-            >
-              <option value="serving">Serving domain</option>
-              <option value="redirect_alias">Redirect alias</option>
-            </select>
-
-            {addRole === 'redirect_alias' && (
-              <>
-                <label htmlFor="dom-add-target">Expected target hostname</label>
-                <input
-                  id="dom-add-target"
-                  value={addTarget}
-                  onChange={(e) => setAddTarget(e.target.value)}
-                  placeholder={canonicalOk ? state.project.canonicalHost : 'target.example.com'}
-                  maxLength={1024}
-                  autoComplete="off"
-                  disabled={controlsOff || atLimit}
-                />
-                <span className="hint">
-                  Intended configuration, not a detected redirect.
-                  {canonicalOk ? ' Leave empty to target the canonical hostname.' : ''}
-                </span>
-              </>
-            )}
-
-            <div className="row">
-              <button type="submit" className="btn primary" disabled={controlsOff || atLimit}>
-                Add domain
-              </button>
-              {atLimit && (
-                <span className="hint">Limit reached: {state.limit} domains per project, including the canonical entry.</span>
-              )}
-            </div>
-          </form>
-
-          {state.domains.length === 0 ? (
-            <p className="dim">No domains yet — add one above.</p>
-          ) : (
-            <div className="table-wrap">
-              <table style={{minWidth: 760}}>
-                <thead>
-                  <tr>
-                    <th>Hostname</th>
-                    <th>Role</th>
-                    <th>Expected target</th>
-                    <th>Status</th>
-                    <th>Verification</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {state.domains.map((d) => {
-                    const isCanon = d.role === 'canonical';
-                    const canProve = !(isCanon && !state.project.canonicalVerifiable);
-                    const pendingLive =
-                      d.status === 'pending' && d.challengeExpiresAt !== null && Date.parse(d.challengeExpiresAt) > Date.now();
-                    return (
-                      <tr key={d.id}>
-                        <td>
-                          <span className="mono">{d.hostname}</span>{' '}
-                          {isCanon && <span className="pill">Canonical</span>}
-                          {isCanon && <div className="hint">Fixed by the project origin.</div>}
-                        </td>
-                        <td>{ROLE_LABEL[d.role]}</td>
-                        <td className="mono">{d.expectedTargetHost ?? '—'}</td>
-                        <td style={{whiteSpace: 'nowrap'}}>
-                          <span
-                            className={
-                              d.status === 'verified'
-                                ? 'pill good'
-                                : d.status === 'expired' || d.status === 'revoked'
-                                  ? 'pill bad'
-                                  : 'pill'
-                            }
-                          >
-                            {STATUS_LABEL[d.status]}
-                          </span>
-                        </td>
-                        <td>
-                          {d.status === 'verified' && d.verifiedAt
-                            ? `Control verified on ${fmt(d.verifiedAt)}`
-                            : d.status === 'pending'
-                              ? `Proof expires ${fmt(d.challengeExpiresAt)}`
-                              : d.status === 'expired' && d.challengeExpiresAt
-                                ? `Expired ${fmt(d.challengeExpiresAt)}`
-                                : '—'}
-                        </td>
-                        <td>
-                          <div className="row">
-                            {!isCanon && (
-                              <button
-                                type="button"
-                                className="btn ghost"
-                                disabled={controlsOff}
-                                onClick={() => {
-                                  setEdit({
-                                    id: d.id,
-                                    role: d.role === 'redirect_alias' ? 'redirect_alias' : 'serving',
-                                    target: d.expectedTargetHost ?? '',
-                                  });
-                                  setError(null);
-                                }}
-                              >
-                                Edit
-                              </button>
-                            )}
-                            {canProve && (d.status === 'unverified' || d.status === 'expired' || d.status === 'revoked') && (
-                              <button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(d)}>
-                                Create DNS proof
-                              </button>
-                            )}
-                            {canProve && (d.status === 'pending' || d.status === 'verified') && (
-                              <button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(d)}>
-                                Replace DNS proof
-                              </button>
-                            )}
-                            {canProve && pendingLive && (
-                              <button type="button" className="btn primary" disabled={controlsOff} onClick={() => onVerify(d)}>
-                                Check DNS proof
-                              </button>
-                            )}
-                            {canProve && (d.status === 'pending' || d.status === 'verified') && (
-                              <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => onRevoke(d)}>
-                                Revoke proof
-                              </button>
-                            )}
-                            {!isCanon && (
-                              <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => onRemove(d)}>
-                                Remove
-                              </button>
-                            )}
-                            {d.role==='redirect_alias' && <RedirectChecks key={`${d.id}:${d.expectedTargetHost}:${d.verifiedAt}:${d.status}`} base={`${base}/${d.id}/redirect-checks`} domain={d} parentBusy={controlsOff} onAccessLoss={handleError} />}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="footnote">
-            Expected targets are intended configuration. A manual HTTP check observes only that moment’s redirect chain,
-            never visitor counts, backlinks or JavaScript/meta-refresh navigation. “Control verified” records when a DNS
-            proof matched. Serving eligibility changes require visitors to renew consent.
-            On narrow screens, scroll the table sideways to see actions.
-          </p>
-
-          {edit && editingDomain && (
-            <form className="field" onSubmit={onSaveEdit} aria-label={`Edit ${editingDomain.hostname}`}>
-              <strong>
-                Edit <span className="mono">{editingDomain.hostname}</span>
-              </strong>
-              <span className="hint">The hostname itself cannot be changed.</span>
-              <label htmlFor="dom-edit-role">Role</label>
-              <select
-                id="dom-edit-role"
-                value={edit.role}
-                onChange={(e) => setEdit({...edit, role: e.target.value === 'redirect_alias' ? 'redirect_alias' : 'serving'})}
-                disabled={controlsOff}
-              >
-                <option value="serving">Serving domain</option>
-                <option value="redirect_alias">Redirect alias</option>
-              </select>
-              {edit.role === 'redirect_alias' && (
-                <>
-                  <label htmlFor="dom-edit-target">Expected target hostname</label>
-                  <input
-                    id="dom-edit-target"
-                    value={edit.target}
-                    onChange={(e) => setEdit({...edit, target: e.target.value})}
-                    placeholder={canonicalOk ? state.project.canonicalHost : 'target.example.com'}
-                    maxLength={1024}
-                    autoComplete="off"
-                    disabled={controlsOff}
-                  />
-                  <span className="hint">
-                    Intended configuration, not a detected redirect.
-                    {canonicalOk ? ' Leave empty to target the canonical hostname.' : ''}
-                  </span>
-                </>
-              )}
-              <div className="row">
-                <button type="submit" className="btn primary" disabled={controlsOff}>
-                  Save changes
-                </button>
-                <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => setEdit(null)}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
+            <details><summary>Technical details</summary><p className="hint">The project origin is fixed. DNS ownership is a point-in-time proof and is not required to use the tracker at that exact origin. Verifying it does not change DNS, discover backlinks or confirm that the tracker is installed.</p></details>
+          </section>
 
           {proof && (
             <div className="field" role="region" aria-label="One-time DNS proof">
-              <strong>DNS proof — shown only once</strong>
+              <h3 ref={proofRef} tabIndex={-1}>DNS proof for <bdi dir="ltr">{state.domains.find(d => d.id === proof.domainId)?.hostname}</bdi> — shown only once</h3>
               <p className="hint">
                 Add this exact TXT record at your DNS provider, then choose “Check DNS proof”. Providers differ in
                 whether they expect a relative or a full record name — follow your provider’s format. We never change
@@ -650,6 +474,216 @@ function DomainsPanelInner({projectId, onUnauthorized}: Props) {
               <p className="footnote">Save the record before dismissing — the value cannot be retrieved again.</p>
             </div>
           )}
+
+          <h3>Other domains and redirect aliases</h3>
+          <p className="hint">Verified serving domains can use this project’s snippet at their exact HTTPS origin on port 443. Subdomains and other ports need their own entries. Redirect aliases never enable collection.</p>
+          <details className="domain-add" ref={addRef}>
+            <summary>Add another domain</summary>
+          <form className="field" onSubmit={onAdd} aria-label="Add a domain">
+            <label htmlFor="dom-add-host">Hostname</label>
+            <input
+              id="dom-add-host"
+              value={addHost}
+              onChange={(e) => setAddHost(e.target.value)}
+              placeholder="old.example.com"
+              required
+              maxLength={1024}
+              autoComplete="off"
+              disabled={controlsOff || atLimit}
+            />
+            <span className="hint">Hostname only — no scheme, path, port, wildcard, or credentials.</span>
+
+            <label htmlFor="dom-add-role">Purpose</label>
+            <select
+              id="dom-add-role"
+              value={addRole}
+              onChange={(e) => setAddRole(e.target.value === 'redirect_alias' ? 'redirect_alias' : 'serving')}
+              disabled={controlsOff || atLimit}
+            >
+              <option value="serving">Website pages — use this project’s tracker</option>
+              <option value="redirect_alias">Redirect only — does not enable collection</option>
+            </select>
+            <p className="hint">{addRole === 'serving' ? 'Verify DNS ownership before this additional HTTPS origin can use the tracker.' : 'Record an alias and, after verifying ownership, check its HTTP redirect manually.'}</p>
+
+            {addRole === 'redirect_alias' && (
+              <>
+                <label htmlFor="dom-add-target">Expected target hostname</label>
+                <input
+                  id="dom-add-target"
+                  value={addTarget}
+                  onChange={(e) => setAddTarget(e.target.value)}
+                  placeholder={canonicalOk ? state.project.canonicalHost : 'target.example.com'}
+                  maxLength={1024}
+                  autoComplete="off"
+                  disabled={controlsOff || atLimit}
+                />
+                <span className="hint">
+                  Intended configuration, not a detected redirect.
+                  {canonicalOk ? ' Leave empty to target the canonical hostname.' : ''}
+                </span>
+              </>
+            )}
+
+            <div className="row">
+              <button type="submit" className="btn primary" disabled={controlsOff || atLimit}>
+                Add domain
+              </button>
+              {atLimit && (
+                <span className="hint">Limit reached: {state.limit} domains per project, including the canonical entry.</span>
+              )}
+            </div>
+          </form>
+          </details>
+
+          {state.domains.every(d => d.role === 'canonical') ? (
+            <p className="dim">Your project website is already listed. Add another domain only if you serve pages or keep redirect aliases elsewhere.</p>
+          ) : (
+            <div className="table-wrap domain-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Hostname</th>
+                    <th>Purpose</th>
+                    <th>Collection origin</th>
+                    <th>DNS ownership</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {state.domains.filter(d => d.role !== 'canonical').map((d) => {
+                    const pendingLive =
+                      d.status === 'pending' && d.challengeExpiresAt !== null && Date.parse(d.challengeExpiresAt) > Date.now();
+                    return (
+                      <tr key={d.id} id={`domain-${d.id}`} tabIndex={-1}>
+                        <td data-label="Hostname">
+                          <bdi dir="ltr" className="mono">{d.hostname}</bdi>{' '}
+                        </td>
+                        <td data-label="Purpose">{ROLE_LABEL[d.role]}{d.expectedTargetHost && <p className="hint">Expected target: <bdi dir="ltr">{d.expectedTargetHost}</bdi></p>}</td>
+                        <td data-label="Collection origin">{d.role === 'redirect_alias' ? 'Not allowed by this alias' : d.status === 'verified' ? <><strong>Origin allowed</strong><p className="hint"><bdi dir="ltr">https://{d.hostname}</bdi></p></> : 'Verify ownership first'}</td>
+                        <td data-label="DNS ownership">
+                          <span
+                            className={
+                              d.status === 'verified'
+                                ? 'pill good'
+                                : d.status === 'expired' || d.status === 'revoked'
+                                  ? 'pill bad'
+                                  : 'pill'
+                            }
+                          >
+                            {STATUS_LABEL[d.status]}
+                          </span>
+                          <div className="hint">
+                          {d.status === 'verified' && d.verifiedAt
+                            ? `Control verified on ${fmt(d.verifiedAt)}`
+                            : d.status === 'pending'
+                              ? `Proof expires ${fmt(d.challengeExpiresAt)}`
+                              : d.status === 'expired' && d.challengeExpiresAt
+                                ? `Expired ${fmt(d.challengeExpiresAt)}`
+                                : null}
+                          </div>
+                        </td>
+                        <td data-label="Actions">
+                          <div className="row">
+                              <button
+                                type="button"
+                                className="btn ghost"
+                                disabled={controlsOff}
+                                onClick={() => {
+                                  setEdit({
+                                    id: d.id,
+                                    role: d.role === 'redirect_alias' ? 'redirect_alias' : 'serving',
+                                    target: d.expectedTargetHost ?? '',
+                                  });
+                                  setError(null);
+                                }}
+                              >
+                                Edit
+                              </button>
+                            {(d.status === 'unverified' || d.status === 'expired' || d.status === 'revoked') && (
+                              <button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(d)}>
+                                Create DNS proof
+                              </button>
+                            )}
+                            {(d.status === 'pending' || d.status === 'verified') && (
+                              <button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(d)}>
+                                Replace DNS proof
+                              </button>
+                            )}
+                            {pendingLive && (
+                              <button type="button" className="btn primary" disabled={controlsOff} onClick={() => onVerify(d)}>
+                                Check DNS proof
+                              </button>
+                            )}
+                            {(d.status === 'pending' || d.status === 'verified') && (
+                              <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => onRevoke(d)}>
+                                Revoke proof
+                              </button>
+                            )}
+                              <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => onRemove(d)}>
+                                Remove
+                              </button>
+                            {d.role==='redirect_alias' && <RedirectChecks key={`${d.id}:${d.expectedTargetHost}:${d.verifiedAt}:${d.status}`} base={`${base}/${d.id}/redirect-checks`} domain={d} parentBusy={controlsOff} onAccessLoss={handleError} />}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <details><summary>About ownership and redirect checks</summary><p className="footnote">
+            Expected targets are intended configuration. A manual HTTP check observes only that moment’s redirect chain,
+            never visitor counts, backlinks or JavaScript/meta-refresh navigation. “Control verified” records when a DNS
+            proof matched. Serving eligibility changes require visitors to renew consent.
+          </p></details>
+
+          {edit && editingDomain && (
+            <form className="field" onSubmit={onSaveEdit} aria-label={`Edit ${editingDomain.hostname}`}>
+              <strong>
+                Edit <span className="mono">{editingDomain.hostname}</span>
+              </strong>
+              <span className="hint">The hostname itself cannot be changed.</span>
+              <label htmlFor="dom-edit-role">Purpose</label>
+              <select
+                id="dom-edit-role"
+                value={edit.role}
+                onChange={(e) => setEdit({...edit, role: e.target.value === 'redirect_alias' ? 'redirect_alias' : 'serving'})}
+                disabled={controlsOff}
+              >
+                <option value="serving">Website pages</option>
+                <option value="redirect_alias">Redirect only</option>
+              </select>
+              {edit.role === 'redirect_alias' && (
+                <>
+                  <label htmlFor="dom-edit-target">Expected target hostname</label>
+                  <input
+                    id="dom-edit-target"
+                    value={edit.target}
+                    onChange={(e) => setEdit({...edit, target: e.target.value})}
+                    placeholder={canonicalOk ? state.project.canonicalHost : 'target.example.com'}
+                    maxLength={1024}
+                    autoComplete="off"
+                    disabled={controlsOff}
+                  />
+                  <span className="hint">
+                    Intended configuration, not a detected redirect.
+                    {canonicalOk ? ' Leave empty to target the canonical hostname.' : ''}
+                  </span>
+                </>
+              )}
+              <div className="row">
+                <button type="submit" className="btn primary" disabled={controlsOff}>
+                  Save changes
+                </button>
+                <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => setEdit(null)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+
+
         </>
       )}
     </section>
