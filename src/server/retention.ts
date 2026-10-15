@@ -8,6 +8,7 @@ import { expireGoogleImportPages } from './google-retention.ts';
 import { expirePromptResults } from './prompt-execution-retention.ts';
 import {expireAiSuggestions} from './ai-suggestion-worker.ts';
 import {expireAiSearch,latchAiSearchExpiry,previewAiSearchRetention} from './ai-search.ts';
+import {expireContentSupport,latchContentSupportExpiry,previewContentSupportRetention} from './ai-content-support.ts';
 import { expireDomainRedirectEvidence } from './domain-redirects.ts';
 import { expireKeywordResults } from './keyword-retention.ts';
 import { expireRankData, previewRankRetention } from './rank-retention.ts';
@@ -80,6 +81,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     const rawEvidenceCutoff=new Date(asOf.getTime()-input.settings.rawProviderEvidenceDays*86_400_000);
     let promptEstimate: {status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,atLeast:false};
     let aiSearchEstimate:{status:'available'|'unavailable';results:number|null;inputs:number|null;protected:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,protected:null,atLeast:false};
+    let contentSupportEstimate:{status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,atLeast:false};
     let redirectEstimate:{status:'available'|'unavailable';checks:number|null;atLeast:boolean}={status:'unavailable',checks:null,atLeast:false};
     let auditEstimate: { status: 'available' | 'unavailable'; rawRuns: number | null; rawPages: number | null; rawEdges: number | null; derivedRuns: number | null; derivedPages: number | null; atLeast: boolean } =
       { status: 'unavailable', rawRuns: null, rawPages: null, rawEdges: null, derivedRuns: null, derivedPages: null, atLeast: false };
@@ -131,12 +133,13 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       rankEstimate = await previewRankRetention(client, workspaceId, { rawCutoff: rawEvidenceCutoff, derivedCutoff });
       aiSearchEstimate=await previewAiSearchRetention(client,workspaceId,new Date(asOf.getTime()-Math.min(current.rows[0].raw_provider_evidence_days,input.settings.rawProviderEvidenceDays)*86_400_000));
       auditEstimate = await previewSiteAuditRetention(client, workspaceId, { rawCutoff: rawEvidenceCutoff, derivedCutoff });
+      contentSupportEstimate=await previewContentSupportRetention(client,workspaceId,input.settings.rawProviderEvidenceDays,input.settings.derivedHistoryDays);
     } catch (error) {
       await client.query('ROLLBACK TO SAVEPOINT estimate');
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, metaEstimate, metaInventoryEstimate, keywordEstimate, savedKeywordEstimate, promptEstimate, aiSearchEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, metaEstimate, metaInventoryEstimate, keywordEstimate, savedKeywordEstimate, promptEstimate, aiSearchEstimate, contentSupportEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
@@ -151,7 +154,7 @@ export async function saveRetention(workspaceId: string, userId: string, raw: un
     await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [workspaceId]);
     await requireOwner(client, workspaceId, userId);
     if (preview.workspaceId !== workspaceId || preview.userId !== userId) throw new FoundationError(400, 'Preview these settings again before saving.');
-    const { rows } = await client.query('SELECT retention_revision AS revision,raw_analytics_days,raw_provider_evidence_days,clock_timestamp() AS now FROM workspace WHERE id=$1', [workspaceId]);
+    const { rows } = await client.query('SELECT retention_revision AS revision,raw_analytics_days,raw_provider_evidence_days,derived_history_days,clock_timestamp() AS now FROM workspace WHERE id=$1', [workspaceId]);
     const age = (rows[0].now as Date).getTime() - preview.issuedAt;
     if (rows[0].revision !== preview.revision || age < 0 || age > 300_000) throw new FoundationError(409, 'Retention changed or the preview expired. Reload and preview again.');
     const s = preview.settings;
@@ -166,6 +169,9 @@ export async function saveRetention(workspaceId: string, userId: string, raw: un
     await latchSessionPropertyRetention(client,projects.rows.map(p=>p.id),new Date(saveNow.getTime()-Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays)*86_400_000),saveNow);
     await latchIdentityLinkRetention(client,projects.rows.map(p=>p.id),saveClock.link_cutoff,saveClock.link_as_of);
     await latchAiSearchExpiry(client,projects.rows.map(p=>p.id),saveClock.ai_search_cutoff);
+    // Atomic old/new minimum latching precedes commit. A timeout rolls back the
+    // complete policy change; physical deletion remains bounded per worker tick.
+    await latchContentSupportExpiry(client,projects.rows.map(p=>p.id),{rawDays:Math.min(rows[0].raw_provider_evidence_days,s.rawProviderEvidenceDays),derivedDays:Math.min(rows[0].derived_history_days,s.derivedHistoryDays)});
     await client.query('COMMIT');
     return await getRetention(workspaceId, userId);
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); if(['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'Retention is busy. Reload and preview again.');throw error; }
@@ -227,10 +233,11 @@ export async function runRetentionBatch(projectId?: string) {
     const prompts=await expirePromptResults(client,selected!,state.raw_evidence_cutoff);
     const suggestions=await expireAiSuggestions(client,selected!,state.raw_evidence_cutoff);
     const aiSearch=await expireAiSearch(client,selected!,state.raw_evidence_cutoff);
+    const contentSupport=await expireContentSupport(client,selected!);
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
     const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
     const ranks = await expireRankData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
-    const complete = !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
+    const complete = !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
@@ -239,6 +246,7 @@ export async function runRetentionBatch(projectId?: string) {
     return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
       expiredSuggestionResults:suggestions.expiredSuggestionResults,expiredSuggestionInputs:suggestions.expiredSuggestionInputs,
       expiredAiSearchResults:aiSearch.expiredAiSearchResults,expiredAiSearchInputs:aiSearch.expiredAiSearchInputs,expiredAiSearchQuotes:aiSearch.expiredAiSearchQuotes,
+      expiredContentSupportInputs:contentSupport.expiredContentSupportInputs,expiredContentSupportResults:contentSupport.expiredContentSupportResults,
       expiredSessionProperties:profiles.expiredProperties,expiredIdentifyReceipts:profiles.expiredReceipts,
       expiredIdentityLinks:links.expiredIdentityLinks,
       expiredRankRuns: ranks.expiredRankRuns, expiredRankTasks: ranks.expiredRankTasks, clearedRankEvidence: ranks.clearedRankEvidence, expiredRankKeywordMetrics: ranks.expiredRankKeywordMetrics,
