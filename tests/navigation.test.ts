@@ -4,8 +4,23 @@ import { analyticsDay, applyGeographyFilter, geographyNavigationNames, auditCove
 import {geographyFields,serializeGeographyKey} from '../src/lib/analytics-geography.ts'
 import {environmentCatalog,environmentFields} from '../src/lib/analytics-environment.ts'
 import {defaultParseSearch,defaultStringifySearch} from '@tanstack/react-router'
+import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
+
+test('AI search preserves exact nested analysis/capture scope through the installed router without leaking to sibling views',()=>{
+ const intent=readAISearchIntent()!,base={workspace,project,view:'ai-search'} as const;
+ for(const value of [intent,{...intent,tab:'words' as const,filters:{...intent.filters,lookback:'all' as const,promptId:project,versionId:workspace,tag:'true',reportedModel:{state:'reported' as const,value:'null'}}},{...intent,section:'captures' as const,captureId:workspace},{...intent,section:'captures' as const,create:true,filters:{...intent.filters,promptId:project,versionId:workspace}}]){
+  const target={...base,aiSearchQuery:aiSearchIntentQuery(value)},wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.deepEqual(readAISearchIntent(target.aiSearchQuery),value);assert.equal(canonicalNavigation(wire,target),true);assert.notEqual(navigationKey(target),navigationKey(base));assert.deepEqual(parseNavigation({...target,view:'prompts'}),{workspace,project,view:'prompts'});assert.equal(canonicalNavigation(wire+'&aiSearchQuery=x',target),false);
+ }
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('ai-search',role,false),true);assert.equal(allowedView('ai-search',undefined,false),false);assert.equal(projectView('ai-search'),true);
+});
+test('AI search rejects malformed, duplicated and contradictory nested intent instead of broadening it',()=>{
+ const base={workspace,project,view:'ai-search'} as const;
+ for(const aiSearchQuery of [null,{},[],true,1,'','x'.repeat(6145),'section=analysis&captureId='+project,'section=captures&captureId='+project+'&create=1','section=captures&create=true','section=other','tab=top&promptId='+project,'versionId='+project,'lookback=all&lookback=all','timeZone=Bad','tag=','reportedModel=null','reportedModel='+encodeURIComponent('{"value":"x","state":"reported"}'),'query=raw','lookback=all\0','\ud800'])assert.equal(parseNavigation({...base,aiSearchQuery}).aiSearchInvalid,'1',String(aiSearchQuery));
+ for(const patch of [{workspace:undefined},{project:undefined},{from:'2026-01-01'},{aiSearchInvalid:'1'}])assert.equal(parseNavigation({...base,...patch}).aiSearchInvalid,'1');
+ assert.deepEqual(readAISearchIntent('lookback=all&timeZone=US%2FEastern')?.filters.timeZone,'America/New_York');
+});
 
 test('canonical wire values agree with the installed router for revisions, invalid flags and JSON-looking strings',()=>{
  const cases=[

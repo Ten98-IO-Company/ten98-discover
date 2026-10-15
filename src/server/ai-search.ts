@@ -5,14 +5,17 @@ import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
 import {getBoss} from './jobs.ts';
 import {decryptCredentials} from './credential-vault.ts';
-import {canonicalHash,parse} from './context-input.ts';
-import {contentReceipt,contentCursor,readContentCursor} from './project-context.ts';
+import {canonicalHash,contextHost,parse} from './context-input.ts';
+import {contentReceipt,contentCursor,readContentCursor,contentProfile} from './project-context.ts';
 import {moneyInput,usd,usdMicros} from './providers.ts';
 import {reserveSpendInTransaction,dispatchSpend,settleSpend} from './spending.ts';
 import {getProviderAccountIdentityKey} from './provider-account-identity.ts';
 import {dataforseoJson} from './dataforseo-transport.ts';
 import {parseAiSearchAccount,parseAiSearchCountries,parseAiSearchLanguages,assertAiSearchMarket,requestAiSearch,parseAiSearchReconciliation,type AiSearchOutcome,type AiSearchCapturedResult} from './dataforseo-ai-search.ts';
 import {readSearchEvidence} from './ai-search-evidence.ts';
+import {matchAnswer,type MentionSubject} from './answer-mentions.ts';
+import {aggregateAiSearchQueries,AiQueryCapacityError,AiQueryDataError,type AiQueryInput} from './ai-search-analysis.ts';
+import {aiQueryFilters,aiQueryRange,aiQueryReportSchema,type AiQueryReport} from '../lib/ai-search-analysis.ts';
 import {aiSearchActionInput,aiSearchEndpoints,aiSearchPayload,aiSearchPriceEvidence,aiSearchProfileId,aiSearchQuoteInput,aiSearchReconcileInput,aiSearchRefreshInput,aiSearchRequestSchema,aiSearchSnapshotSchema,aiSearchStartInput,type AiSearchQuoteDto,type AiSearchRunDto,type AiSearchSnapshot} from '../lib/ai-search.ts';
 
 export const aiSearchQueue='ai-search';
@@ -81,6 +84,41 @@ export async function getAiSearch(projectId:string,userId:string,params=new URLS
  });
 }
 export async function getAiSearchRun(projectId:string,userId:string,id:string){parse(z.uuid(),id);return projectGate(projectId,userId,false,async(c,p)=>({role:p.role,run:runDto(p,await runRow(c,p.id,id),userId,true)}));}
+export async function getAiSearchAnalysis(projectId:string,userId:string,params:URLSearchParams):Promise<AiQueryReport>{
+ let filters:ReturnType<typeof aiQueryFilters>;try{filters=aiQueryFilters(params);}catch{throw new FoundationError(400,'Check the query analysis filters.');}
+ return projectGate(projectId,userId,false,async(c,p)=>{
+  if(!(await c.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[filters.timeZone])).rowCount)throw new FoundationError(400,'Choose a supported IANA time zone.');
+  if(filters.promptId&&!(await c.query('SELECT 1 FROM project_prompt p WHERE p.project_id=$1 AND p.id=$2 AND($3::uuid IS NULL OR EXISTS(SELECT 1 FROM prompt_text_version v WHERE v.project_id=p.project_id AND v.prompt_id=p.id AND v.id=$3))',[p.id,filters.promptId,filters.versionId])).rowCount)throw unavailable();
+  const project=(await c.query('SELECT name,origin FROM project WHERE id=$1',[p.id])).rows[0],profile=await contentProfile(c,{...p,...project}),warnings:string[]=[];
+  let origin:string[]=[];try{origin=[contextHost(new URL(project.origin).hostname)];}catch{warnings.push('The project origin is not a public brand domain. Brand name and aliases still apply.');}
+  const brand:MentionSubject&{id:'brand'}={id:'brand',name:profile.name,aliases:profile.aliases,domains:[...new Set([...origin,...profile.citationDomains])]};
+  try{matchAnswer({text:'',subjects:[brand],citationUrls:[],method:filters.matcher});}catch{throw new FoundationError(409,'Current brand identity cannot be analyzed. Review its name, aliases and domains.');}
+  const asOf=(await c.query('SELECT clock_timestamp() AS at')).rows[0].at.toISOString() as string,range=aiQueryRange(filters,new Date(asOf));
+  const values=[p.id,range.from,range.to,range.timeZone,filters.promptId,filters.versionId,filters.tag,asOf];
+  const expired=`(q.raw_expired_at IS NOT NULL OR q.input_purged_at IS NOT NULL OR r.result_purged_at IS NOT NULL OR q.created_at<$8::timestamptz-w.raw_provider_evidence_days*interval '24 hours')`;
+  const population=`FROM ai_search_run r JOIN ai_search_quote q ON q.id=r.quote_id AND q.project_id=r.project_id JOIN workspace w ON w.id=r.workspace_id JOIN project_prompt p ON p.id=q.prompt_id AND p.project_id=r.project_id
+   WHERE r.project_id=$1 AND($2::date IS NULL OR r.created_at>=($2::date::timestamp AT TIME ZONE 'UTC')-interval '2 days') AND r.created_at<(($3::date+1)::timestamp AT TIME ZONE 'UTC')+interval '2 days'
+   AND($2::date IS NULL OR(r.created_at AT TIME ZONE $4)::date>=$2::date) AND(r.created_at AT TIME ZONE $4)::date<=$3::date
+   AND($5::uuid IS NULL OR q.prompt_id=$5) AND($6::uuid IS NULL OR q.version_id=$6) AND($7::text IS NULL OR p.user_tags?$7)`;
+  // Count before loading payloads. These are complete-report ceilings, never samples.
+  const bounds=(await c.query(`SELECT count(*)::int AS n,COALESCE(sum(bytes),0)::text AS bytes FROM(SELECT CASE WHEN ${expired} THEN 0 ELSE COALESCE(octet_length(q.input::text),0)+COALESCE(octet_length(r.result::text),0)END AS bytes ${population} LIMIT 1001) bounded`,values)).rows[0];
+  if(bounds.n>1000||BigInt(bounds.bytes)>10n*1024n*1024n)throw new FoundationError(413,'Narrow the selection. Query analysis exceeds 1000 attempts or 10 MiB of retained evidence.');
+  const stored=(await c.query(`SELECT r.id,q.prompt_id,q.version_id,r.status,to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS requested_at,p.user_tags,q.input_hash,${expired} AS expired,
+   CASE WHEN ${expired} THEN NULL ELSE q.input END AS input,CASE WHEN ${expired} THEN NULL ELSE r.result END AS result,
+   CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(r.result::text,'UTF8')),'hex') END AS result_hash,
+   CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(q.input::text,'UTF8')),'hex') END AS input_fingerprint ${population} ORDER BY r.created_at DESC,r.id DESC`,values)).rows;
+  const rows:AiQueryInput[]=stored.map(row=>{
+   let rawState:AiQueryInput['rawState']=row.expired?'expired':'not_recorded',result:AiSearchCapturedResult|null=null,capturedPrompt:string|null=null;
+   if(!row.expired)try{const input=snapshot(row.input,row.input_hash);if(input.promptId!==row.prompt_id||input.versionId!==row.version_id)throw new Error();capturedPrompt=input.request.capturedPrompt;
+    if(row.result!==null){result=readResult(row.result);if(result.capturedPrompt!==capturedPrompt||result.locationCode!==input.request.locationCode||result.languageCode!==input.request.languageCode)throw new Error();rawState='retained';}
+   }catch{rawState='invalid';result=null;capturedPrompt=null;}
+   return {id:row.id,promptId:row.prompt_id,versionId:row.version_id,requestedAt:row.requested_at,status:row.status,rawState,capturedPrompt,result};
+  });
+  const profileHash=canonicalHash(brand),selectionRevision=canonicalHash({projectId:p.id,filters,range,contextRevision:profile.revision,profileHash,rows:stored.map(r=>({id:r.id,promptId:r.prompt_id,versionId:r.version_id,status:r.status,requestedAt:r.requested_at,tags:r.user_tags,expired:r.expired,inputHash:r.input_hash,inputFingerprint:r.input_fingerprint,resultHash:r.result_hash}))});
+  try{return aiQueryReportSchema.parse(bounded({role:p.role,projectId:p.id,profileId:aiSearchProfileId,asOf,resolvedRange:range,filters,contextRevision:profile.revision,profileHash,selectionRevision,label:'Recomputed from retained captures using current brand context',warnings,brand,...aggregateAiSearchQueries(rows,filters,brand)}));}
+  catch(error){if(error instanceof AiQueryCapacityError)throw new FoundationError(413,error.message);if(error instanceof AiQueryDataError||error instanceof z.ZodError)throw new FoundationError(503,'Stored query analysis evidence is inconsistent. Try a narrower selection.');throw error;}
+ });
+}
 export async function refreshAiSearchCatalog(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
  const input=parse(aiSearchRefreshInput,raw),saved=await projectGate(projectId,userId,true,async(c,p)=>connection(c,p.workspace_id,input.connectionId)),catalog=await preflight(projectId,saved,send);
  return projectGate(projectId,userId,true,async(c,p)=>{await connection(c,p.workspace_id,input.connectionId,saved.revision);return {role:p.role,profileId:aiSearchProfileId,price:aiSearchPriceEvidence(),catalog:{connectionId:input.connectionId,connectionRevision:saved.revision,countries:catalog.countries,languages:catalog.languages,revision:catalog.revision,observedAt:catalog.preparedAt}};});

@@ -59,7 +59,7 @@ import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAud
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
 import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
 import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
-import {getAiSearch,getAiSearchRun,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
+import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -563,6 +563,12 @@ export async function handleApi(request: Request): Promise<Response> {
         }
       }
       return json({error:'Method not allowed.'},405);
+    }
+    const aiAnalysisRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search/analysis$`,'i'));
+    if(aiAnalysisRoute){
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')!=='0')throw new FoundationError(400,'Search capture reads do not accept a body.');
+      await limit(`ai-search:${user.id}`,30);return json(await getAiSearchAnalysis(aiAnalysisRoute[1],user.id,url.searchParams));
     }
     const aiSearchRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search(?:/(catalog/refresh|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
     if(aiSearchRoute){

@@ -96,13 +96,14 @@ function fmtDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-export function PromptsPanel(props: {workspaceId: string; projectId: string; userId: string; onUnauthorized: () => void}) {
+type Props={workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void;onAISearch?:(promptId:string,versionId:string|null,capture:boolean)=>void};
+export function PromptsPanel(props: Props) {
   // Keyed on projectId + userId: switching either remounts everything, so no
   // stale items, drafts, errors or pagination can leak across contexts.
   return <PromptsPanelInner key={props.projectId + ':' + props.userId} {...props} />;
 }
 
-function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {workspaceId: string; projectId: string; userId: string; onUnauthorized: () => void}) {
+function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAISearch}: Props) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/prompts`;
 
   const [execution, setExecution] = useState<{generation: number; entry: ExecutionEntry} | null>(null);
@@ -870,6 +871,9 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
                     <div className="row">
                       {canEdit && !p.archivedAt && <button id={`pl-run-${p.id}`} type="button" className="btn ghost"
                         onClick={() => openExecution({kind: 'configure', promptId: p.id, versionId: p.currentVersionId, authoredText: p.text}, `pl-run-${p.id}`)} disabled={busy}>Review a run</button>}
+                      <small>Model answers via OpenRouter</small>
+                      {onAISearch&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>onAISearch(p.id,null,false)}>View web queries</button>}
+                      {onAISearch&&canEdit&&!p.archivedAt&&<button type="button" className="btn ghost" disabled={busy||!!retryAttempt} onClick={()=>onAISearch(p.id,p.currentVersionId,true)}>Capture AI search</button>}
                       <button type="button" className="btn ghost" onClick={() => onVersions(p)} disabled={busy}>
                         View versions
                       </button>
@@ -941,6 +945,8 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized}: {wo
                   </div>
                   {canEdit && !versionsFor.archivedAt && <button id={`pl-version-run-${v.id}`} type="button" className="btn ghost"
                     onClick={() => openExecution({kind: 'configure', promptId: versionsFor.id, versionId: v.id, authoredText: v.text}, `pl-version-run-${v.id}`)} disabled={busy}>Review this version</button>}
+                  {onAISearch&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>onAISearch(versionsFor.id,v.id,false)}>View this version’s web queries</button>}
+                  {onAISearch&&canEdit&&!versionsFor.archivedAt&&<button type="button" className="btn ghost" disabled={busy||!!retryAttempt} onClick={()=>onAISearch(versionsFor.id,v.id,true)}>Capture this saved version</button>}
                 </li>
               ))}
             </ol>
