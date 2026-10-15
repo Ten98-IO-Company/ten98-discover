@@ -69,6 +69,31 @@ function readResult(raw:unknown):AiSearchCapturedResult{
  aiSearchRequestSchema.parse({profileId:value.profileId,capturedPrompt:value.capturedPrompt,locationCode:value.locationCode,languageCode:value.languageCode});
  return {...value,evidence:readSearchEvidence(value.evidence)};
 }
+function analysisInput(row:any):AiQueryInput{
+ let rawState:AiQueryInput['rawState']=row.expired?'expired':'not_recorded',result:AiSearchCapturedResult|null=null,capturedPrompt:string|null=null;
+ if(!row.expired)try{const input=snapshot(row.input,row.input_hash);if(input.promptId!==row.prompt_id||input.versionId!==row.version_id)throw new Error();capturedPrompt=input.request.capturedPrompt;
+  if(row.result!==null){result=readResult(row.result);if(result.capturedPrompt!==capturedPrompt||result.locationCode!==input.request.locationCode||result.languageCode!==input.request.languageCode)throw new Error();rawState='retained';}
+ }catch{rawState='invalid';result=null;capturedPrompt=null;}
+ return {id:row.id,promptId:row.prompt_id,versionId:row.version_id,requestedAt:row.requested_at,status:row.status,rawState,capturedPrompt,result};
+}
+/** Internal read leaf: caller already holds authorized workspace/project locks. */
+export async function readAiSearchCoverageSource(c:PoolClient,projectId:string,captureId:string,materialize=true){
+ const ref=(await c.query('SELECT quote_id FROM ai_search_run WHERE project_id=$1 AND id=$2',[projectId,captureId])).rows[0];if(!ref)throw unavailable();
+ await latchAiSearchExpiry(c,[projectId],undefined,[ref.quote_id]);
+ const expired="(q.raw_expired_at IS NOT NULL OR q.input_purged_at IS NOT NULL OR r.result_purged_at IS NOT NULL OR q.created_at<clock_timestamp()-(SELECT raw_provider_evidence_days FROM workspace WHERE id=q.workspace_id)*interval '24 hours')";
+ const bounds=(await c.query(`SELECT CASE WHEN ${expired} THEN 0 ELSE COALESCE(octet_length(q.input::text),0)+COALESCE(octet_length(r.result::text),0) END AS bytes
+  FROM ai_search_run r JOIN ai_search_quote q ON q.id=r.quote_id AND q.project_id=r.project_id WHERE r.id=$1 AND r.project_id=$2`,[captureId,projectId])).rows[0];
+ if(!bounds)throw unavailable();if(BigInt(bounds.bytes)>10n*1024n*1024n)return {coverageError:'source_capacity' as const};
+ const row=(await c.query(`SELECT r.id,q.id AS quote_id,q.prompt_id,q.version_id,r.status,to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS requested_at,
+  to_char(q.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS captured_at,q.input_hash,${expired} AS expired,
+  CASE WHEN ${expired} OR NOT $3::boolean THEN NULL ELSE q.input END AS input,CASE WHEN ${expired} OR NOT $3::boolean THEN NULL ELSE r.result END AS result,
+  CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(q.input::text,'UTF8')),'hex') END AS input_fingerprint,
+  CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(r.result::text,'UTF8')),'hex') END AS result_hash,
+  to_char(q.raw_expired_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS raw_expired_at,to_char(q.input_purged_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS input_purged_at,to_char(r.result_purged_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS result_purged_at
+  FROM ai_search_run r JOIN ai_search_quote q ON q.id=r.quote_id AND q.project_id=r.project_id WHERE r.id=$1 AND r.project_id=$2`,[captureId,projectId,materialize])).rows[0];
+ if(!row)throw unavailable();
+ const {input,result,...receipt}=row;return {source:materialize?analysisInput(row):null,receipt};
+}
 function runDto(p:Project,row:any,userId:string,detail:boolean):AiSearchRunDto{
  let result:AiSearchCapturedResult|null=null,state:AiSearchRunDto['rawState']=row.raw_expired_at||row.input_purged_at||row.result_purged_at?'expired':'not_recorded';
  if(state!=='expired'&&row.result!==null)try{result=readResult(row.result);state='retained';}catch{state='invalid';}
@@ -107,13 +132,7 @@ export async function getAiSearchAnalysis(projectId:string,userId:string,params:
    CASE WHEN ${expired} THEN NULL ELSE q.input END AS input,CASE WHEN ${expired} THEN NULL ELSE r.result END AS result,
    CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(r.result::text,'UTF8')),'hex') END AS result_hash,
    CASE WHEN ${expired} THEN NULL ELSE encode(sha256(convert_to(q.input::text,'UTF8')),'hex') END AS input_fingerprint ${population} ORDER BY r.created_at DESC,r.id DESC`,values)).rows;
-  const rows:AiQueryInput[]=stored.map(row=>{
-   let rawState:AiQueryInput['rawState']=row.expired?'expired':'not_recorded',result:AiSearchCapturedResult|null=null,capturedPrompt:string|null=null;
-   if(!row.expired)try{const input=snapshot(row.input,row.input_hash);if(input.promptId!==row.prompt_id||input.versionId!==row.version_id)throw new Error();capturedPrompt=input.request.capturedPrompt;
-    if(row.result!==null){result=readResult(row.result);if(result.capturedPrompt!==capturedPrompt||result.locationCode!==input.request.locationCode||result.languageCode!==input.request.languageCode)throw new Error();rawState='retained';}
-   }catch{rawState='invalid';result=null;capturedPrompt=null;}
-   return {id:row.id,promptId:row.prompt_id,versionId:row.version_id,requestedAt:row.requested_at,status:row.status,rawState,capturedPrompt,result};
-  });
+  const rows:AiQueryInput[]=stored.map(analysisInput);
   const profileHash=canonicalHash(brand),selectionRevision=canonicalHash({projectId:p.id,filters,range,contextRevision:profile.revision,profileHash,rows:stored.map(r=>({id:r.id,promptId:r.prompt_id,versionId:r.version_id,status:r.status,requestedAt:r.requested_at,tags:r.user_tags,expired:r.expired,inputHash:r.input_hash,inputFingerprint:r.input_fingerprint,resultHash:r.result_hash}))});
   try{return aiQueryReportSchema.parse(bounded({role:p.role,projectId:p.id,profileId:aiSearchProfileId,asOf,resolvedRange:range,filters,contextRevision:profile.revision,profileHash,selectionRevision,label:'Recomputed from retained captures using current brand context',warnings,brand,...aggregateAiSearchQueries(rows,filters,brand)}));}
   catch(error){if(error instanceof AiQueryCapacityError)throw new FoundationError(413,error.message);if(error instanceof AiQueryDataError||error instanceof z.ZodError)throw new FoundationError(503,'Stored query analysis evidence is inconsistent. Try a narrower selection.');throw error;}
@@ -151,8 +170,8 @@ export async function cancelAiSearch(projectId:string,userId:string,id:string,ra
  });
 }
 
-export async function latchAiSearchExpiry(c:PoolClient,projectIds:string[],cutoff?:Date|string){
- if(!projectIds.length)return;await c.query(`UPDATE ai_search_quote q SET raw_expired_at=COALESCE(q.raw_expired_at,clock_timestamp()) FROM workspace w WHERE q.workspace_id=w.id AND q.project_id=ANY($1::text[]) AND q.raw_expired_at IS NULL AND q.created_at<GREATEST($2::timestamptz,clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours')`,[projectIds,cutoff??null]);
+export async function latchAiSearchExpiry(c:PoolClient,projectIds:string[],cutoff?:Date|string,quoteIds?:string[]){
+ if(!projectIds.length)return;await c.query(`UPDATE ai_search_quote q SET raw_expired_at=COALESCE(q.raw_expired_at,clock_timestamp()) FROM workspace w WHERE q.workspace_id=w.id AND q.project_id=ANY($1::text[]) AND($3::uuid[] IS NULL OR q.id=ANY($3::uuid[])) AND q.raw_expired_at IS NULL AND q.created_at<GREATEST($2::timestamptz,clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours')`,[projectIds,cutoff??null,quoteIds??null]);
 }
 async function cancelReserved(c:PoolClient,row:any,message:string){if(row.status!=='queued'||!['reserved','cancelled'].includes(row.charge_status))return;await c.query("UPDATE provider_request SET status='cancelled',updated_at=clock_timestamp()WHERE id=$1 AND status='reserved'",[row.id]);await c.query("UPDATE ai_search_run SET status='cancelled',lease_owner=NULL,lease_expires_at=NULL,completed_at=COALESCE(completed_at,clock_timestamp()),diagnostic=$2 WHERE id=$1",[row.id,message]);}
 

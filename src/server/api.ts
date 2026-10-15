@@ -61,6 +61,7 @@ import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,c
 import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
 import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
+import {getContentCoverage,exportContentCoverage} from './ai-content-coverage.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -579,6 +580,13 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
+    const contentCoverageRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search/content-coverage(?:/(export))?$`,'i'));
+    if(contentCoverageRoute){
+      if(request.method!=='POST')return json({error:'Method not allowed.'},405);
+      if(url.search)throw new FoundationError(400,'Website-text comparison does not accept URL parameters.');
+      await projectAccess(contentCoverageRoute[1],user.id,false);await limit(`ai-search:${user.id}`,30);
+      const input=await readJson(request,4096);return contentCoverageRoute[2]?await exportContentCoverage(contentCoverageRoute[1],user.id,input,request.signal):json(await getContentCoverage(contentCoverageRoute[1],user.id,input,request.signal));
+    }
     const aiAnalysisRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search/analysis$`,'i'));
     if(aiAnalysisRoute){
       if(request.method!=='GET')return json({error:'Method not allowed.'},405);
@@ -888,7 +896,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     return json({ error: 'Route unavailable.' }, 404);
   } catch (error) {
-    if(error instanceof FoundationError&&['AI_SEARCH_BUSY','AI_SEARCH_DEADLINE'].includes((error as FoundationError&{code?:string}).code??''))return json({error:error.message},error.status,{...cors,'retry-after':'5'});
+    if(error instanceof FoundationError&&['AI_SEARCH_BUSY','AI_SEARCH_DEADLINE','CONTENT_COVERAGE_BUSY'].includes((error as FoundationError&{code?:string}).code??''))return json({error:error.message},error.status,{...cors,'retry-after':'5'});
     if (error instanceof FoundationError || error instanceof InputError) return json({ error: error.message }, error.status, cors);
     if (error instanceof z.ZodError) return json({ error: 'Check the submitted fields and try again.' }, 400, cors);
     const code = (error as { code?: string })?.code;
