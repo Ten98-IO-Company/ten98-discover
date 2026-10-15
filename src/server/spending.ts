@@ -54,7 +54,7 @@ export async function reserveSpendInTransaction(client: PoolClient, workspaceId:
   return { id, status: 'reserved' as const, created: true };
 }
 
-export async function dispatchSpend(workspaceId: string, userId: string, requestId: string, prepare?: (client: PoolClient, row: LedgerRow) => Promise<void>) {
+export async function dispatchSpend(workspaceId: string, userId: string, requestId: string, prepare?: (client: PoolClient, row: LedgerRow) => Promise<void>, deadline?:'5s') {
   z.uuid().parse(requestId);
   return providerTransaction(workspaceId, userId, ['owner','admin','editor'], async client => {
     const row = (await client.query<LedgerRow>('SELECT * FROM provider_request WHERE id=$1 AND workspace_id=$2 FOR UPDATE', [requestId, workspaceId])).rows[0];
@@ -67,7 +67,7 @@ export async function dispatchSpend(workspaceId: string, userId: string, request
     // Persist dispatch BEFORE the network call. An interrupted dispatch must never be replayed automatically.
     await client.query("UPDATE provider_request SET status='dispatched',budget_month=$2::date,updated_at=now() WHERE id=$1", [requestId, month]);
     return row;
-  });
+  },deadline);
 }
 
 // Requires an open transaction so job results and charges commit together. Worker settlement is independent

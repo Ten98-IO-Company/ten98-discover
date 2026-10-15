@@ -19,14 +19,20 @@ function open(envelope:unknown):Payload {
   } catch {return unavailable();}
 }
 async function quoteState(client:Pick<PoolClient,'query'>) {
+  const relation=(await client.query(`SELECT to_regclass('public.ai_search_quote') IS NOT NULL AS present,
+    EXISTS(SELECT 1 FROM schema_version WHERE version='0042') AS applied`)).rows[0];
+  if(!relation||(relation.applied&&!relation.present))unavailable();
+  // Historical migration fixtures legitimately run before0042. An applied but
+  // missing relation is corruption, never permission to regenerate a fingerprint.
+  const ai=relation.present?' OR EXISTS(SELECT 1 FROM ai_search_quote)':'';
   return (await client.query(`SELECT
     EXISTS(SELECT 1 FROM keyword_quote) OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan)
       OR EXISTS(SELECT 1 FROM rank_run)
-      OR EXISTS(SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL) AS present,
+      OR EXISTS(SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL)${ai} AS present,
     EXISTS(SELECT 1 FROM keyword_quote WHERE account_fingerprint_version=2)
       OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan WHERE account_fingerprint_version=2)
       OR EXISTS(SELECT 1 FROM rank_run)
-      OR EXISTS(SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL) AS modern`)).rows[0] as {present:boolean;modern:boolean};
+      OR EXISTS(SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL)${ai} AS modern`)).rows[0] as {present:boolean;modern:boolean};
 }
 
 // Only the explicit 0022 migration may capture the current login secret for
@@ -35,8 +41,8 @@ async function quoteState(client:Pick<PoolClient,'query'>) {
 export async function initializeProviderAccountIdentity(client:PoolClient,allowLegacyCapture=false):Promise<Payload|null> {
   const row=(await client.query("SELECT provider_account_identity FROM installation WHERE id='instance' FOR UPDATE")).rows[0];
   if(!row)unavailable();
-  if(row.provider_account_identity!==null)return open(row.provider_account_identity);
   const quotes=await quoteState(client);
+  if(row.provider_account_identity!==null)return open(row.provider_account_identity);
   if(quotes.modern||(quotes.present&&!allowLegacyCapture))unavailable();
   if(!credentialKeys()){if(quotes.present)unavailable();return null;}
   const value:Payload={version:1,legacyV1:getConfig().authSecret,stableV2:randomBytes(32).toString('base64')};
@@ -61,14 +67,11 @@ export async function getProviderAccountIdentityKey(version:1|2):Promise<string>
 
 export async function assertProviderAccountIdentityReadable():Promise<void> {
   const {pool}=getDatabase();
-  const row=(await pool.query(`SELECT provider_account_identity,
-    EXISTS(SELECT 1 FROM keyword_quote) OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan)
-      OR EXISTS(SELECT 1 FROM rank_run)
-      OR EXISTS(SELECT 1 FROM rank_config WHERE approval_account_fingerprint IS NOT NULL) AS present
-    FROM installation WHERE id='instance'`)).rows[0];
+  const row=(await pool.query("SELECT provider_account_identity FROM installation WHERE id='instance'")).rows[0];
   if(!row)unavailable();
+  const quotes=await quoteState(pool);
   if(row.provider_account_identity!==null){open(row.provider_account_identity);return;}
-  if(row.present)unavailable();
+  if(quotes.present)unavailable();
 }
 
 export async function rotateProviderAccountIdentityEncryption():Promise<void> {
@@ -77,10 +80,11 @@ export async function rotateProviderAccountIdentityEncryption():Promise<void> {
     await client.query('BEGIN');
     const row=(await client.query("SELECT provider_account_identity FROM installation WHERE id='instance' FOR UPDATE")).rows[0];
     if(!row)unavailable();
+    const quotes=await quoteState(client);
     if(row.provider_account_identity!==null){
       const value=open(row.provider_account_identity);
       await client.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[encryptCredentials(value,context)]);
-    }else if((await quoteState(client)).present)unavailable();
+    }else if(quotes.present)unavailable();
     await client.query('COMMIT');
   }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
 }
