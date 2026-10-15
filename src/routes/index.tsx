@@ -6,6 +6,7 @@ import { AnalyticsPanel } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
 import { SessionExplorerPanel } from '../components/SessionExplorerPanel'
 import { JourneysPanel } from '../components/JourneysPanel'
+import { RetentionReportPanel } from '../components/RetentionReportPanel'
 import { ExplorerPanel } from '../components/ExplorerPanel'
 import { AnalyticsSettingsPanel } from '../components/AnalyticsSettingsPanel'
 import { DomainsPanel } from '../components/DomainsPanel'
@@ -46,7 +47,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { analyticsNavigation, auditNavigation, sessionNavigation, journeysNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
+import { analyticsNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: App })
@@ -280,7 +281,7 @@ function App() {
     if (requested.project && sameWorkspace && !requestedProject && view !== 'new-project') setAppError('That project is no longer available in this workspace. Choose a current project.')
     activateProject(project?.id ?? '')
     setNavigationPending(false)
-    const resolved: NavigationSearch = { ...(workspaceId ? { workspace: workspaceId } : {}), ...(project ? { project: project.id } : {}), view, ...(requested.project===project?.id && requested.workspace===workspaceId ? view==='sessions'?sessionNavigation(requested):view==='journeys'?journeysNavigation(requested):view==='audits'?auditNavigation(requested):['project','compare'].includes(view)?analyticsNavigation(requested):{} : {}) }
+    const resolved = parseNavigation({ ...(requested.project===project?.id && requested.workspace===workspaceId ? requested : {}), ...(workspaceId ? { workspace: workspaceId } : {}), ...(project ? { project: project.id } : {}), view })
     if (navigationKey(resolved) !== navigationKey(requested) || !canonicalNavigation(window.location.search, resolved)) go(resolved, true)
   }
 
@@ -487,7 +488,7 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
-  const pageTitles: Record<AppView, string> = {journeys: 'Journeys', project: 'Web analytics', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', context: 'Project context', prompts: 'Prompt library', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageTitles: Record<AppView, string> = {journeys: 'Journeys', project: 'Web analytics', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
     if(!['project','compare'].includes(view)||search.workspace!==workspaceId||search.project!==project?.id)return target(next);
@@ -495,7 +496,7 @@ function App() {
     return {...target(next),...report,...report.analyticsInvalid?{}:{analyticsFrom:from,analyticsTo:to},...next==='compare'&&analyticsCompare?{analyticsCompare}:{}};
   }
   const pageScope = view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' || view === 'meta-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
-  const projectDescriptions: Partial<Record<AppView, string>> = {journeys: 'See frequent matching steps in retained native visits.', project: 'Understand how people find and use your website.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', 'ai-insights': 'Review mentions and citations in retained prompt answers using current project context.', google: 'Import Search Console and GA4 reports without changing browser tracking.', sessions: 'Explore retained activity grouped by observed visitor keys. These keys are estimates and can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
+  const projectDescriptions: Partial<Record<AppView, string>> = {journeys: 'See frequent matching steps in retained native visits.', project: 'Understand how people find and use your website.', 'visitor-retention': 'See whether observed visitor keys return on later days.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', 'ai-insights': 'Review mentions and citations in retained prompt answers using current project context.', google: 'Import Search Console and GA4 reports without changing browser tracking.', sessions: 'Explore retained activity grouped by observed visitor keys. These keys are estimates and can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
   return (
     <div className='shell'>
@@ -549,6 +550,7 @@ function App() {
           <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={target('explore')}>Explore</Link>
           <Link className={view === 'sessions' ? 'proj active' : 'proj'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}>Sessions</Link>
           <Link className={view === 'journeys' ? 'proj active' : 'proj'} aria-current={view === 'journeys' ? 'page' : undefined} to='/' search={target('journeys')}>Journeys</Link>
+          <Link className={view === 'visitor-retention' ? 'proj active' : 'proj'} aria-current={view === 'visitor-retention' ? 'page' : undefined} to='/' search={target('visitor-retention')}>Retention</Link>
           <Link className={view === 'conversions' ? 'proj active' : 'proj'} aria-current={view === 'conversions' ? 'page' : undefined} to='/' search={target('conversions')}>Conversions</Link>
           <Link className={view === 'events' ? 'proj active' : 'proj'} aria-current={view === 'events' ? 'page' : undefined} to='/' search={target('events')}>Recent events</Link>
           <Link className={view === 'reports' ? 'proj active' : 'proj'} aria-current={view === 'reports' ? 'page' : undefined} to='/' search={target('reports')}>Reports</Link>
@@ -665,6 +667,7 @@ function App() {
         )}
         {view === 'sessions' && workspace && project !== null && <SessionExplorerPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('sessions'),...value})} onUnauthorized={unauthorized}/> }
         {view === 'journeys' && workspace && project !== null && <JourneysPanel projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('journeys'),...value})} onUnauthorized={unauthorized}/> }
+        {view === 'visitor-retention' && workspace && project !== null && <RetentionReportPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} search={{...target('visitor-retention'),...retentionNavigation(search)}} onNavigate={(value,replace)=>go({...target('visitor-retention'),...value},replace)} onUnauthorized={unauthorized} onOpenExplore={()=>go(target('explore'))}/>}
         {view === 'events' && workspace && project !== null && (
             <section className='card events-panel' aria-labelledby='ev-h' aria-busy={eventsBusy}>
               <div className='row between events-toolbar'>
