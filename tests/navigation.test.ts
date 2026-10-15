@@ -295,3 +295,12 @@ test('audit Pages query fails closed for repeated, malformed, unknown and unscop
   assert.deepEqual(parseNavigation({...base,auditSearch:'safe',project:[project]}),{workspace,view:'audits',auditInvalid:'1'});
   assert.deepEqual(parseNavigation({...base,auditSearch:'safe',workspace:undefined}),{view:'audits',auditInvalid:'1'});
 });
+
+test('Attribution keeps a scalar nested applied scope only in its own project read view',()=>{
+ const base={workspace,project,view:'attribution'} as const,attributionQuery=new URLSearchParams({from:'2026-10-01',to:'2026-10-10',timeZone:'UTC',model:'first-click',conversionKind:'pageview',conversionValue:'/"true"'}).toString(),value={...base,attributionQuery};
+ assert.deepEqual(parseNavigation(value),value);assert.deepEqual(parseNavigation(value),parseNavigation(parseNavigation(value)));assert.equal(canonicalNavigation('?'+new URLSearchParams(value),value),true);assert.notEqual(navigationKey(value),navigationKey(base));assert.equal(projectView('attribution'),true);
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('attribution',role,false),true);assert.equal(allowedView('attribution',undefined,false),false);
+ for(const bad of [null,1,true,{},[attributionQuery],'',attributionQuery+'\0','x'.repeat(65537)])assert.equal(parseNavigation({...base,attributionQuery:bad}).attributionInvalid,'1');
+ for(const patch of [{workspace:undefined},{project:undefined},{from:'2026-01-01'}])assert.equal(parseNavigation({...value,...patch}).attributionInvalid,'1');
+ assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});assert.deepEqual(parseNavigation({...value,view:'explore'}),{workspace,project,view:'explore'});
+});
