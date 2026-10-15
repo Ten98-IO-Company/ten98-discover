@@ -48,6 +48,13 @@ export function geographyKey(field:GeoField,value:GeographyObservation|null):Geo
  return value.city===null?{state:'unknown'}:{state:'known',country:value.country,region:identity,city:value.city};
 }
 export type GeographyRow={key:GeographyKey;regionName:string|null;pageViews:number;identifiedPageViews:number;visitors:number|null;visits:number|null;bounceRate:number|null;averageVisitSeconds:number|null};
+export type GeographyDetailIntent={field:'region'|'city';period:'current'|'comparison';search:string};
+export type GeographyDetail=GeographyDetailIntent&{version:'native-geography-detail-v1';range:{from:string;to:string};generatedAt:string;limit:500;rows:GeographyRow[];matchingGroups:number|null;matchingPageViews:number|null;returnedPageViews:number|null;truncated:boolean};
+/** Literal search, with the same normalized scalar/byte ceiling as recorded names. */
+export function geographySearch(value:unknown):string|null{
+ if(typeof value!=='string'||encoder.encode(value).length>2048||/[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/u.test(value))return null;
+ const text=value.trim().normalize('NFC');return text===''?'':geographyName(text);
+}
 export type GeographyBreakdown={rows:GeographyRow[];limit:100|678;totalGroups:number|null;returnedPageViews:number|null;truncated:boolean};
 export type GeographyCoverage={status:'complete'|'partial'|'unavailable';pageViews:number|null;recordedPageViews:number|null;notRecordedPageViews:number|null;knownCountryPageViews:number|null;knownRegionPageViews:number|null;knownCityPageViews:number|null;firstRecordedAt:string|null};
 export type GeographyProvenance={source:'db-ip-city-lite';databaseCount:number|null;oldestDatabaseBuild:number|null;newestDatabaseBuild:number|null};

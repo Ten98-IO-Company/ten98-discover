@@ -4,7 +4,7 @@ import {explorerQuery} from '../src/server/explorer-input.ts';
 import {parseAdvancedPredicates} from '../src/server/advanced-predicate-input.ts';
 import {parseCohortDefinition} from '../src/server/cohort-input.ts';
 import {parseSegmentDefinition} from '../src/server/segment-input.ts';
-import {serializeGeographyKey} from '../src/lib/analytics-geography.ts';
+import {serializeGeographyKey,geographySearch} from '../src/lib/analytics-geography.ts';
 test('location exact and advanced filters share closed keys and preserve saved qualification restrictions',()=>{
  const country=serializeGeographyKey('country',{state:'known',country:'US'})!,city=serializeGeographyKey('city',{state:'known',country:'US',region:null,city:'Café'})!;
  assert.deepEqual(analyticsQuery(new URLSearchParams({country,city})).geographyFilters,{country,city});assert.equal(explorerQuery(new URLSearchParams({country,city,groupBy:'city'})).filters.city,city);
@@ -15,4 +15,14 @@ test('location exact and advanced filters share closed keys and preserve saved q
  assert.equal(new URLSearchParams(parseSegmentDefinition({schemaVersion:1,name:'Location',query:new URLSearchParams({country}).toString()}).query).get('country'),country);
  assert.equal(new URLSearchParams(parseCohortDefinition({schemaVersion:1,name:'Location',query:new URLSearchParams({from:'2024-01-01',to:'2024-01-01',timeZone:'UTC',path:'/',city}).toString()}).query).get('city'),city);
  assert.throws(()=>parseCohortDefinition({schemaVersion:1,name:'Location',query:new URLSearchParams({from:'2024-01-01',to:'2024-01-01',timeZone:'UTC',city}).toString()}));
+});
+test('expanded location intent is closed, normalized, bounded and absent from ordinary queries',()=>{
+ const query=(value:Record<string,string>)=>analyticsQuery(new URLSearchParams(value));
+ assert.deepEqual(query({geoDetail:'city'}).detail,{field:'city',period:'current',search:''});
+ assert.deepEqual(query({geoDetail:'region',geoPeriod:'comparison',compare:'yoy',geoSearch:'  Cafe\u0301%_  '}).detail,{field:'region',period:'comparison',search:'Café%_'});
+ assert.equal(Object.hasOwn(query({}),'detail'),false);
+ const invalid:Record<string,string>[]=[{geoSearch:'x'},{geoPeriod:'current'},{geoDetail:'country'},{geoDetail:'city',geoPeriod:'comparison'},{geoDetail:'city',geoPeriod:'previous'},{geoDetail:'city',geoSearch:'x'.repeat(129)},{geoDetail:'city',geoSearch:'x\u0000'},{geoDetail:'city',offset:'500'}];for(const value of invalid)assert.throws(()=>query(value));
+ for(const key of ['geoDetail','geoSearch','geoPeriod']){const params=new URLSearchParams({geoDetail:'city'});params.append(key,key==='geoDetail'?'city':'');params.append(key,'');assert.throws(()=>analyticsQuery(params));}
+ assert.equal(geographySearch('😀'.repeat(128)),'😀'.repeat(128));assert.equal(geographySearch('😀'.repeat(129)),null);assert.equal(geographySearch('\ud800'),null);assert.equal(geographySearch(' '.repeat(2049)),null);
+ assert.throws(()=>query({from:'2024-01-01',to:'2025-01-01',geoDetail:'city'}));
 });

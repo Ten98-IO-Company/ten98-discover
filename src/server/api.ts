@@ -707,7 +707,11 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     let match = path.match(new RegExp(`^/api/workspaces/(${id})/(team|rename|invitations)$`, 'i'));
     if (match) {
-      if (request.method === 'GET' && match[2] === 'team') return json(await getTeam(match[1], user.id));
+      if (request.method === 'GET' && match[2] === 'team') {
+        const result = await getTeam(match[1], user.id);
+        if (apiToken) await authorizeApiKey(apiToken, match[1], 'team:read');
+        return json(result);
+      }
       if (request.method === 'POST') {
         await limit(`team:${user.id}`, 60);
         if (match[2] === 'rename') return json(await renameWorkspace(match[1], user.id, await readJson(request)));
@@ -730,6 +734,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'GET') {
         await workspaceAccess(match[1], user.id);
         const { rows } = await getDatabase().pool.query(`SELECT p.id,p.name,p.origin,p.public_key AS "publicKey",p.analytics_retained_from AS "retainedFrom",(SELECT count(*) FROM event e WHERE e.project_id=p.id AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)) AS "eventCount",(SELECT max(received_at) FROM event e WHERE e.project_id=p.id AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)) AS "lastEventAt" FROM project p WHERE p.workspace_id=$1 ORDER BY p.created_at DESC`, [match[1]]);
+        if (apiToken) await authorizeApiKey(apiToken, match[1], 'projects:read');
         return json({ projects: rows.map(row => ({ ...row, eventCount: Number(row.eventCount) })) });
       }
       if (request.method === 'POST') {
@@ -780,7 +785,9 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'GET' && match[2] === 'analytics') return json(await projectAnalytics(match[1], user.id, url.searchParams,principal?.id));
       if (request.method === 'GET' && match[2] === 'explore') {
         await limit(`explore:${user.id}`,30);
-        return json(await exploreAnalytics(match[1],user.id,url.searchParams));
+        const result = await exploreAnalytics(match[1],user.id,url.searchParams);
+        if (apiToken) await authorizeApiKey(apiToken, target.workspace_id, 'analytics:read');
+        return json(result);
       }
       if (request.method === 'GET' && match[2] === 'events') {
         const { rows } = await getDatabase().pool.query(`WITH retained AS MATERIALIZED (
@@ -789,6 +796,7 @@ export async function handleApi(request: Request): Promise<Response> {
         ), recent AS (SELECT id,event_name AS "eventName",path,origin,received_at AS "receivedAt" FROM retained ORDER BY received_at DESC,id DESC LIMIT 50)
         SELECT (SELECT analytics_retained_from FROM project WHERE id=$1) AS "retainedFrom",(SELECT count(*) FROM retained) AS total,
           COALESCE((SELECT json_agg(recent ORDER BY "receivedAt" DESC,id DESC) FROM recent),'[]'::json) AS events`, [match[1]]);
+        if (apiToken) await authorizeApiKey(apiToken, target.workspace_id, 'analytics:read');
         return json({ ...rows[0], total: Number(rows[0].total) });
       }
       if (request.method === 'GET' && match[2] === 'jobs') {
