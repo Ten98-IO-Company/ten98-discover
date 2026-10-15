@@ -21,11 +21,12 @@ function destination(provider: string, name = 'purchase') {
 const purchase = () => ({ name: 'purchase', eventId: randomUUID(), url: 'https://site.example/shop?private=hidden#secret',
   properties: { value: '49.95', currency: 'USD', transactionId: 'order-1', itemId: 'item-1' } });
 
-async function fixture(destinations: unknown[], settings: { saved?: boolean; privacy?: boolean; dnt?: string; failStorage?: boolean; pageAge?: number; consentMode?: 'builtin' | 'external' } = {}) {
+async function fixture(destinations: unknown[], settings: { saved?: boolean; privacy?: boolean; dnt?: string; failStorage?: boolean; pageAge?: number; consentMode?: 'builtin' | 'external'; pageUrl?: string; windowOrigin?: string; nullLocation?: boolean } = {}) {
   let now = Date.now(), nextTimer = 1, fetchFail = false, failStorage = !!settings.failStorage;
   const storage = new Map<string, string>(), actions: string[] = [], scripts: any[] = [], calls: any[][] = [], requests: any[] = [];
   const listeners: Record<string, Function> = {}, timers = new Map<number, { at: number; callback: Function; interval?: number }>();
-  let config: any = { schemaVersion: 2, siteKey, environment: 'live', origin: 'https://site.example', revisionId: revision,
+  const pageUrl = new URL(settings.pageUrl ?? 'https://site.example/shop'), storageCalls: string[] = [];
+  let config: any = { schemaVersion: 2, siteKey, environment: 'live', origin: pageUrl.origin, revisionId: revision,
     consentEpoch: epoch, configuration: { destinations }, nativeTracking: { enabled: true, consentMode: settings.consentMode ?? 'external',
       captureReferrer: false, captureCampaigns: false, captureScreen: false, excludeBots: true, excludedPaths: [] } };
   const storageKey = `ten98:consent:v1:https://monitor.example:${siteKey}:live`;
@@ -42,14 +43,14 @@ async function fixture(destinations: unknown[], settings: { saved?: boolean; pri
     querySelectorAll: () => scripts, body: element('body'), activeElement: { focus() {} },
     head: { appendChild(script: any) { if (script.tag === 'script') scripts.push(script); return script; } } };
   Object.defineProperty(document, 'cookie', { get() { throw new Error('Cookie access forbidden'); } });
-  const context: any = { document, navigator: { globalPrivacyControl: !!settings.privacy, doNotTrack: settings.dnt },
-    location: { origin: 'https://site.example', pathname: '/shop', reload() { actions.push('reload'); }, replace(url: string) { actions.push(url); } },
+  const context: any = { document, navigator: { globalPrivacyControl: !!settings.privacy, doNotTrack: settings.dnt }, origin: settings.windowOrigin ?? pageUrl.origin,
+    location: { protocol: pageUrl.protocol, origin: settings.nullLocation ? 'null' : pageUrl.origin, pathname: pageUrl.pathname, href: pageUrl.href, reload() { actions.push('reload'); }, replace(url: string) { actions.push(url); } },
     Date: Clock, URL, Intl, AbortController, crypto: { randomUUID }, performance: { timeOrigin: now - (settings.pageAge || 0) },
     setTimeout: (fn: Function, delay: number) => timer(fn, delay), clearTimeout: (id: number) => timers.delete(id),
     setInterval: (fn: Function, delay: number) => timer(fn, delay, delay),
-    localStorage: { getItem: (key: string) => storage.get(key) ?? null,
-      setItem(key: string, value: string) { actions.push('save'); if (failStorage) throw new Error('Storage blocked'); storage.set(key, value); },
-      removeItem(key: string) { actions.push('remove'); if (failStorage) throw new Error('Storage blocked'); storage.delete(key); } },
+    localStorage: { getItem: (key: string) => { storageCalls.push('read'); return storage.get(key) ?? null; },
+      setItem(key: string, value: string) { storageCalls.push('write'); actions.push('save'); if (failStorage) throw new Error('Storage blocked'); storage.set(key, value); },
+      removeItem(key: string) { storageCalls.push('remove'); actions.push('remove'); if (failStorage) throw new Error('Storage blocked'); storage.delete(key); } },
     addEventListener: (name: string, fn: Function) => { listeners[name] = fn; },
     CustomEvent: class { type: string; detail: unknown; constructor(type: string, options: any) { this.type = type; this.detail = options.detail; } },
     dispatchEvent: (event: any) => { listeners[event.type]?.(event); },
@@ -60,6 +61,7 @@ async function fixture(destinations: unknown[], settings: { saved?: boolean; pri
   const local = (value: unknown) => vm.runInContext(`JSON.parse(${JSON.stringify(JSON.stringify(value))})`, context);
   const site = local({ endpoint: 'https://monitor.example/api/collect', siteKey, environment: 'live' });
   context.__ten98FoundationHub = { sites: [site], api: { track() {} } }; context.ten98 = context.__ten98FoundationHub.api;
+  const initialGlobals = Object.keys(context).sort(), initialHubKeys = Object.keys(context.__ten98FoundationHub).sort(), initialApiKeys = Object.keys(context.ten98).sort();
   const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
   vm.runInContext(source, context); await drain();
   function event(value: unknown) { context.__ten98FoundationHub.destinationEvent(site, local(value)); }
@@ -87,10 +89,32 @@ async function fixture(destinations: unknown[], settings: { saved?: boolean; pri
     }
     now = end; await drain();
   }
-  return { context, site, local, storage, storageKey, actions, scripts, calls, requests, event, grant, status, load, tick, drain,
+  return { context, site, local, storage, storageCalls, timers, listeners, initialGlobals, initialHubKeys, initialApiKeys, storageKey, actions, scripts, calls, requests, event, grant, status, load, tick, drain,
     fetchFailure: () => { fetchFail = true; }, storageFailure: () => { failStorage = true; }, changeConfig: (value: any) => { config = value; }, config: () => config, clock: () => now,
     storageEvent: (value: unknown) => listeners.storage({ key: storageKey, newValue: JSON.stringify(value) }), rerun: () => vm.runInContext(source, context) };
 }
+
+test('standalone coordinator does nothing on non-HTTP or opaque documents even with an existing hub', async () => {
+  for (const settings of [{pageUrl: 'file:///C:/preview/index.html'}, {pageUrl: 'data:text/html,preview'}, {pageUrl: 'about:blank'},
+    {pageUrl: 'blob:https://site.example/preview'}, {pageUrl: 'ftp://site.example/preview'}, {windowOrigin: 'null'}, {nullLocation: true}]) {
+    const f = await fixture([destination('meta')], settings), hub = f.context.__ten98FoundationHub, api = f.context.ten98;
+    f.rerun(); await f.tick(90000);
+    assert.equal(f.context.__ten98FoundationHub, hub); assert.equal(f.context.ten98, api);
+    assert.deepEqual(Object.keys(f.context).sort(), f.initialGlobals, JSON.stringify(settings));
+    assert.deepEqual(Object.keys(hub).sort(), f.initialHubKeys); assert.deepEqual(Object.keys(api).sort(), f.initialApiKeys);
+    assert.deepEqual(Object.keys(f.listeners), []); assert.equal(f.timers.size, 0); assert.equal(f.requests.length, 0);
+    assert.equal(f.scripts.length, 0); assert.equal(f.calls.length, 0); assert.equal(f.storage.size, 0);
+    assert.deepEqual(f.storageCalls, []); assert.deepEqual(f.actions, []);
+  }
+});
+
+test('standalone coordinator still starts on HTTPS and registered HTTP localhost origins', async () => {
+  for (const pageUrl of ['https://site.example/shop', 'http://localhost:4173/shop', 'http://127.0.0.1:4173/shop']) {
+    const f = await fixture([], {pageUrl});
+    assert.equal(f.requests.length, 1); assert.equal(f.requests[0].url, 'https://monitor.example/api/tracking-config');
+    assert.equal(f.status().ready, true); await f.tick(30000); assert.equal(f.requests.length, 2);
+  }
+});
 
 test('unknown consent discards history, grant requires acknowledgement, and duplicate installation is inert', async () => {
   const f = await fixture([destination('meta')]);

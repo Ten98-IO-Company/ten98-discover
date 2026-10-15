@@ -1,5 +1,7 @@
 (function () {
   'use strict';
+  // Also guard standalone loading by an older tracker or a manual script tag.
+  if (!['http:', 'https:'].includes(location.protocol) || location.origin === 'null' || window.origin === 'null') return;
   var hub = window.__ten98FoundationHub;
   if (!hub || !hub.api || window.ten98 !== hub.api || hub.destinationInit) return;
   var DAY = 86400000, started = typeof performance !== 'undefined' && Number.isFinite(performance.timeOrigin) ? performance.timeOrigin : Date.now(), sites = [], owners = Object.create(null);
