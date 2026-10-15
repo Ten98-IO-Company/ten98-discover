@@ -62,6 +62,8 @@ import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
 import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
 import {getContentCoverage,exportContentCoverage,getProjectContentCoverage,exportProjectContentCoverage} from './ai-content-coverage.ts';
+import {getContentSupport,getContentSupportRun,quoteContentSupport,startContentSupport,cancelContentSupport,exportContentSupport} from './ai-content-support.ts';
+import {reconcileContentSupport} from './ai-content-support-worker.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -577,6 +579,26 @@ export async function handleApi(request: Request): Promise<Response> {
           if(action==='quote'&&!keywordAction){await limit(`rank-quote:${user.id}`,10);return json(await quoteRankCheck(projectId,user.id,target,input));}
           if(action==='keywords'&&keywordAction)return json(await changeRankKeywords(projectId,user.id,target,keywordAction as 'add'|'remove'|'pin',input));
         }
+      }
+      return json({error:'Method not allowed.'},405);
+    }
+    const contentSupportRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-content-support(?:/(quote|runs)(?:/(${id})(?:/(cancel|reconcile|export))?)?)?$`,'i'));
+    if(contentSupportRoute){
+      const [,projectId,action,runId,operation]=contentSupportRoute;
+      await projectAccess(projectId,user.id,false);await limit(`ai-content-support:${user.id}`,30);
+      if(request.method==='GET'){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'This read does not accept a body.');
+        if(!action||action==='runs'&&!runId)return json(await getContentSupport(projectId,user.id,url.searchParams));
+        if(url.search)throw new FoundationError(400,'This assessment detail does not accept query parameters.');
+        if(action==='runs'&&runId&&!operation)return json(await getContentSupportRun(projectId,user.id,runId));
+      }else if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'This assessment action does not accept query parameters.');
+        if(operation==='export'&&runId)return await exportContentSupport(projectId,user.id,runId,await readJson(request,2048),request.signal);
+        await limit(`ai-content-support-write:${user.id}`,10);
+        if(action==='quote'&&!runId)return json(await quoteContentSupport(projectId,user.id,await readJson(request,32768)));
+        if(action==='runs'&&!runId)return json(await startContentSupport(projectId,user.id,await readJson(request,2048)),202);
+        if(action==='runs'&&runId&&operation==='cancel')return json(await cancelContentSupport(projectId,user.id,runId,await readJson(request,2048)));
+        if(action==='runs'&&runId&&operation==='reconcile'){await limit(`ai-content-support-reconcile:${projectId}`,3);return json(await reconcileContentSupport(projectId,user.id,runId,await readJson(request,2048)));}
       }
       return json({error:'Method not allowed.'},405);
     }

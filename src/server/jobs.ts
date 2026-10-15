@@ -11,6 +11,8 @@ import {promptExecutionQueue,executePromptComparison,reconcilePromptExecutionJob
 import {suggestionQueue} from './ai-suggestions.ts';
 import {executeAiSuggestion,reconcileAiSuggestionJobs} from './ai-suggestion-worker.ts';
 import {aiSearchQueue,executeAiSearch,reconcileAiSearchJobs} from './ai-search.ts';
+import {contentSupportQueue} from './ai-content-support.ts';
+import {executeContentSupport,reconcileContentSupportJobs} from './ai-content-support-worker.ts';
 import {domainRedirectQueue,executeDomainRedirectCheck,reconcileDomainRedirectChecks} from './domain-redirects.ts';
 import {siteAuditQueue} from './site-audits.ts';
 import {rankQueue} from './rank-execution.ts';
@@ -49,6 +51,7 @@ export function getBoss(): Promise<PgBoss> {
         await boss.createQueue(promptExecutionQueue);
         await boss.createQueue(suggestionQueue);
         await boss.createQueue(aiSearchQueue);
+        await boss.createQueue(contentSupportQueue);
         await boss.createQueue(domainRedirectQueue);
         await boss.createQueue(siteAuditQueue);
         await boss.createQueue(rankQueue);
@@ -134,6 +137,7 @@ async function heartbeat() {
   await reconcilePromptExecutionJobs();
   await reconcileAiSuggestionJobs();
   await reconcileAiSearchJobs();
+  await reconcileContentSupportJobs();
   await reconcileDomainRedirectChecks();
   await reconcileSiteAudits();
   // ponytail: one worker health row covers the single-worker Compose profile; use instance IDs before scaling workers.
@@ -152,6 +156,7 @@ export function startWorker(): Promise<void> {
       await reconcilePromptExecutionJobs();
       await reconcileAiSuggestionJobs();
       await reconcileAiSearchJobs();
+      await reconcileContentSupportJobs();
       await reconcileDomainRedirectChecks();
       await reconcileMetaImports();
       await reconcileMetaInventories();
@@ -184,6 +189,7 @@ export function startWorker(): Promise<void> {
       await boss.work<{comparisonId:string}>(promptExecutionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executePromptComparison(job.data?.comparisonId);});
       await boss.work<{runId:string}>(suggestionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSuggestion(job.data?.runId);});
       await boss.work<{runId:string}>(aiSearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSearch(job.data?.runId);});
+      await boss.work<{runId:string}>(contentSupportQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeContentSupport(job.data?.runId);});
       await boss.work<{checkId:string}>(domainRedirectQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainRedirectCheck(job.data?.checkId);});
       await startSiteAuditWorker(boss);
       workerStarted = true;
