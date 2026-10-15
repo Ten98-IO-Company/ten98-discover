@@ -1,4 +1,4 @@
-import {analyticsCalendarSql,analyticsScopeSql,analyticsScopeValues} from './analytics-scope.ts';
+import {analyticsCalendarSql,analyticsScopeSql,analyticsScopeValues,analyticsRevenuePeriodScopeSql} from './analytics-scope.ts';
 import {advancedPredicateSql,advancedPredicateMethod,sessionPredicateSql} from './advanced-predicates.ts';
 import {retentionCoverage} from './retention.ts';
 import type {explorerQuery} from './explorer-input.ts';
@@ -49,7 +49,7 @@ const qualificationSql=analyticsScopeSql.replace(/\$(\d+)\b/g,(_,slot)=>`$${Numb
 const qualificationCalendarSql=analyticsCalendarSql.replace(/\$(\d+)\b/g,(_,slot)=>`$${Number(slot)+12}`);
 export type AnalyticsPopulation={ctes:string;values:unknown[];population:'scope'|'report_scope'|'filtered_report';sessionAware:boolean;
   reportCandidates:'report_candidates'|null;qualificationCandidates:'qualification_candidates'|null};
-export function analyticsPopulation(projectId:string,userId:string,report:Query,qualification:Query|null,includeCurrentProperties:boolean,eventBefore?:string|null):AnalyticsPopulation{
+export function analyticsPopulation(projectId:string,userId:string,report:Query,qualification:Query|null,includeCurrentProperties:boolean,eventBefore?:string|null,mode?:'revenue-comparison'):AnalyticsPopulation{
   const reportSession=!!report.predicates?.sessionProperties?.length,qualificationSession=!!qualification?.predicates?.sessionProperties?.length;
   const paged=eventBefore!==undefined,sessionAware=includeCurrentProperties||reportSession||qualificationSession||paged;
   const values=[...analyticsScopeValues(projectId,userId,report),report.groupBy,report.groupProperty,...(qualification?analyticsScopeValues(projectId,userId,qualification):[])];
@@ -58,7 +58,7 @@ export function analyticsPopulation(projectId:string,userId:string,report:Query,
   const reportSessionPredicate=sessionPredicateSql(report.predicates?.sessionProperties,bind,report.timeZone),qualificationSessionPredicate=sessionPredicateSql(qualification?.predicates?.sessionProperties,bind,qualification?.timeZone??report.timeZone);
   const pageSql=paged?`, session_page AS MATERIALIZED (SELECT COALESCE(${bind(eventBefore)}::timestamptz,as_of) AS event_before FROM session_clock)`:'';
   if(paged){reportPredicate+=` AND s.received_at<(SELECT event_before FROM session_page)`;qualificationPredicate+=` AND s.received_at<(SELECT event_before FROM session_page)`;}
-  const sessionSql=sessionAware?`, session_clock AS MATERIALIZED (SELECT ${includeCurrentProperties||paged?'clock_timestamp()':"date_trunc('milliseconds',clock_timestamp())"} AS as_of),
+  const sessionSql=sessionAware?`, session_clock AS MATERIALIZED (SELECT ${mode==='revenue-comparison'?'revenue_snapshot.as_of':includeCurrentProperties||paged?'clock_timestamp()':"date_trunc('milliseconds',clock_timestamp())"} AS as_of${mode==='revenue-comparison'?' FROM revenue_snapshot':''}),
     session_cutoff AS MATERIALIZED (SELECT p.id,c.as_of,GREATEST(p.session_properties_retained_from,c.as_of-w.raw_analytics_days*interval '24 hours') AS cutoff,
       p.session_properties_evidence_lost_at AS lost_at,p.analytics_retained_from AS event_watermark,w.retention_revision AS policy_revision,w.raw_analytics_days AS raw_days
       FROM project p JOIN target t ON t.id=p.id JOIN workspace w ON w.id=p.workspace_id CROSS JOIN session_clock c),
@@ -73,6 +73,6 @@ export function analyticsPopulation(projectId:string,userId:string,report:Query,
   const advancedSql=reportSession?`, report_candidates AS MATERIALIZED (SELECT s.* FROM ${basePopulation} s WHERE ${reportPredicate}),
     filtered_report AS MATERIALIZED (SELECT s.* FROM report_candidates s WHERE ${reportSessionPredicate})`:
     report.predicates||paged?`, filtered_report AS MATERIALIZED (SELECT s.* FROM ${basePopulation} s WHERE ${reportPredicate})`:'';
-  return {ctes:`${analyticsScopeSql}, report_arguments AS MATERIALIZED (SELECT $11::text AS group_by,$12::text AS group_property)${sessionSql}${pageSql}${cohortSql}${advancedSql}`,
+  return {ctes:`${mode==='revenue-comparison'?analyticsRevenuePeriodScopeSql:analyticsScopeSql}, report_arguments AS MATERIALIZED (SELECT $11::text AS group_by,$12::text AS group_property)${sessionSql}${pageSql}${cohortSql}${advancedSql}`,
     values,population,sessionAware,reportCandidates:reportSession?'report_candidates':null,qualificationCandidates:qualificationSession?'qualification_candidates':null};
 }
