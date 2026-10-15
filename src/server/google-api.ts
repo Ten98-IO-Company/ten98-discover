@@ -4,6 +4,7 @@ import { getDatabase } from './db.ts';
 import { disconnectGoogle, getGoogleApp, googleCallback, googleSignedIn, listGoogleProperties, saveGoogleApp, selectGoogleProperty, startGoogleConnect } from './google.ts';
 import { enqueueGoogleImport, listGoogleConnections, readGoogleImport } from './google-jobs.ts';
 import { readJson } from './validation.ts';
+import { inspectGoogleUrls } from './google-inspection.ts';
 
 function json(value: unknown, status = 200, additional?: HeadersInit) { return Response.json(value, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...additional } }); }
 async function limit(key: string, maximum: number) {
@@ -27,6 +28,14 @@ export async function handleGoogle(request: Request): Promise<Response | null> {
   if (operation === 'connect' && request.method === 'POST') {
     const { cookie, ...body } = await startGoogleConnect(projectId, session, await readJson(request));
     return json(body, 200, { 'set-cookie': cookie });
+  }
+  const inspection = operation.match(/^connections\/([0-9a-f-]{36})\/inspect$/i);
+  if (inspection && request.method === 'POST') {
+    if (url.search) throw new FoundationError(400, 'URL inspection does not accept query parameters.');
+    const result = await inspectGoogleUrls(projectId, session.user.id, inspection[1], await readJson(request, 65_536), request.signal);
+    const current = await googleSignedIn(request);
+    if (current.user.id !== session.user.id || current.session.id !== session.session.id) throw new FoundationError(401, 'Sign in to continue.');
+    return json(result);
   }
   const connection = operation.match(/^connections\/([0-9a-f-]{36})\/(properties|select|disconnect|imports)$/i);
   if (connection && request.method === 'POST') {

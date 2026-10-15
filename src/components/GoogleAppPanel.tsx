@@ -7,6 +7,7 @@ interface AppDto {
   configured: boolean;
   enabled: boolean;
   testing: boolean;
+  adsConfigured: boolean;
   vaultConfigured: boolean;
   redirectUri: string;
   operator: boolean;
@@ -26,6 +27,8 @@ function AppInner({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [pending, setPending] = useState(false);
   const [clientId, setClientId] = useState('');
   const [secret, setSecret] = useState('');
+  const [adsToken, setAdsToken] = useState('');
+  const [clearAdsToken, setClearAdsToken] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [testing, setTesting] = useState(false);
   const lock = useRef(false);
@@ -43,10 +46,11 @@ function AppInner({ onUnauthorized }: { onUnauthorized: () => void }) {
     setEnabled(r.enabled);
     setTesting(r.testing);
     setSecret('');
+    setAdsToken(''); setClearAdsToken(false);
   };
   const terminal = (e: unknown) => {
     if (!(e instanceof ApiError) || ![401, 403, 404].includes(e.status)) return false;
-    setDto(null); setClientId(''); setSecret(''); setEnabled(false); setTesting(false); setNotice(''); setErr(errMsg(e));
+    setDto(null); setClientId(''); setSecret(''); setAdsToken(''); setClearAdsToken(false); setEnabled(false); setTesting(false); setNotice(''); setErr(errMsg(e));
     if (e.status === 401) onUnauthorized();
     return true;
   };
@@ -77,8 +81,10 @@ function AppInner({ onUnauthorized }: { onUnauthorized: () => void }) {
     const controller = new AbortController();
     active.current?.abort(); active.current = controller;
     const sentSecret = secret;
+    const sentAdsToken = adsToken;
     setSecret(''); // cleared immediately on submission; never retained for retry
-    const body = { revision: dto.revision, clientId: clientId.trim(), clientSecret: sentSecret, enabled, testing };
+    setAdsToken(''); setClearAdsToken(false);
+    const body = { revision: dto.revision, clientId: clientId.trim(), clientSecret: sentSecret, enabled, testing, ...(sentAdsToken ? { adsDeveloperToken: sentAdsToken } : {}), ...(clearAdsToken ? { clearAdsDeveloperToken: true } : {}) };
     try {
       const r = await api<AppDto>('/api/google/app', { method: 'POST', body, signal: controller.signal });
       if (!alive(serial, controller)) return;
@@ -136,7 +142,7 @@ function AppInner({ onUnauthorized }: { onUnauthorized: () => void }) {
       </div>
       <ul className="hint">
         <li>Create a Google web OAuth client in Google Cloud.</li>
-        <li>Enable the Search Console API, the Analytics Data API, and the Analytics Admin API.</li>
+        <li>Enable the Search Console API, the Analytics Data API, and the Analytics Admin API. For Ads imports, also enable the Google Ads API and obtain a developer token.</li>
         <li>Add the exact callback URI above as an authorized redirect URI.</li>
         <li>Configure the consent screen and add test users.</li>
       </ul>
@@ -153,6 +159,12 @@ function AppInner({ onUnauthorized }: { onUnauthorized: () => void }) {
           <input id="g-client-secret" type="password" autoComplete="new-password" maxLength={4096} value={secret} onChange={e => setSecret(e.target.value)} required />
         </div>
         <p className="hint">The secret is sent once and cleared immediately; enter it again for every change. It is never shown or retried automatically.</p>
+        <div className="field">
+          <label htmlFor="g-ads-token">Google Ads developer token (optional)</label>
+          <input id="g-ads-token" type="password" autoComplete="new-password" maxLength={4096} disabled={clearAdsToken} value={adsToken} onChange={e => setAdsToken(e.target.value)} />
+        </div>
+        <p className="hint">Ads token: {dto.adsConfigured ? 'saved' : 'not configured'}. Leave blank to keep the saved token. It is encrypted, sent once and never shown again. Google controls token access levels and quotas; this does not authorize an ad campaign or change its budget.</p>
+        {dto.adsConfigured && <label className="row" style={{ minHeight: 44 }}><input type="checkbox" checked={clearAdsToken} onChange={e=>{setClearAdsToken(e.target.checked);setAdsToken('');}}/>Remove the saved Ads developer token</label>}
         {dto.configured && <p className="hint">Every save, including changing these flags, requires existing sources to reconnect and cancels pending connections. Imported snapshots remain available.</p>}
         <label className="row" style={{ minHeight: 44 }}>
           <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
@@ -165,7 +177,7 @@ function AppInner({ onUnauthorized }: { onUnauthorized: () => void }) {
         <button type="submit" className="btn primary" style={BTN} disabled={pending}>{dto.configured ? 'Save Google app settings' : 'Create Google app settings'}</button>
         </fieldset>
       </form>
-      <button type="button" className="btn ghost" style={BTN} disabled={pending} onClick={() => { setSecret(''); setTick(t => t + 1); }}>Reload settings</button>
+      <button type="button" className="btn ghost" style={BTN} disabled={pending} onClick={() => { setSecret(''); setAdsToken(''); setClearAdsToken(false); setTick(t => t + 1); }}>Reload settings</button>
       {notice !== '' && <p role="status" className="hint">{notice}</p>}
       {err !== '' && <p role="alert" className="alert">{err}</p>}
     </div>

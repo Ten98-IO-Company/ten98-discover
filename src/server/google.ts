@@ -7,10 +7,10 @@ import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { credentialKeys, decryptCredentials, encryptCredentials } from './credential-vault.ts';
 import { isInstanceOperator, requireInstanceOperator } from './instance-operators.ts';
-import { googleInput, googleScopes, safeGoogleString, type GoogleProvider } from './google-reports.ts';
+import { googleInput, googleScopes, googleAdsCustomerId, googleAdsVersion, safeGoogleString, type GoogleProvider } from './google-reports.ts';
 import { googleRequest, GoogleRequestError } from './google-http.ts';
 
-export type GoogleConnection = { id: string; project_id: string; workspace_id: string; provider: GoogleProvider; name: string; revision: number; app_revision: number; encrypted_tokens: unknown; scopes: string[]; status: string; property_id: string | null; property_name: string | null; time_zone: string | null; currency_code: string | null; updated_at: Date };
+export type GoogleConnection = { id: string; project_id: string; workspace_id: string; provider: GoogleProvider; name: string; revision: number; app_revision: number; encrypted_tokens: unknown; scopes: string[]; status: string; property_id: string | null; property_name: string | null; time_zone: string | null; currency_code: string | null; login_customer_id: string | null; updated_at: Date };
 type App = { revision: number; client_id: string; encrypted_secret: unknown; enabled: boolean; testing: boolean };
 type Session = NonNullable<Awaited<ReturnType<ReturnType<typeof getAuth>['api']['getSession']>>>;
 const token = safeGoogleString(4096).min(1).regex(/^[^\s]+$/);
@@ -29,7 +29,7 @@ function providerInput<T extends z.ZodType>(schema: T, value: unknown): z.output
 function absent(): never { throw new FoundationError(404, 'Google report source not found or unavailable.'); }
 export function googleConnectionDto(row: GoogleConnection, revision?: number) {
   return { id: row.id, name: row.name, provider: row.provider, revision: row.revision, status: revision !== undefined && row.status !== 'disconnected' && row.app_revision !== revision ? 'reconnect' : row.status,
-    propertyId: row.property_id, propertyName: row.property_name, timeZone: row.time_zone, currencyCode: row.currency_code, scopes: row.scopes, updatedAt: row.updated_at, imports: [] };
+    propertyId: row.property_id, propertyName: row.property_name, timeZone: row.time_zone, currencyCode: row.currency_code, ...(row.provider === 'ads' ? { loginCustomerId: row.login_customer_id } : {}), scopes: row.scopes, updatedAt: row.updated_at, imports: [] };
 }
 
 export async function googleProjectTransaction<T>(projectId: string, userId: string, owner: boolean, action: (client: PoolClient, workspaceId: string, role: string) => Promise<T>): Promise<T> {
@@ -59,26 +59,41 @@ export async function activeGoogleApp(client: PoolClient): Promise<App> {
   if (!app?.enabled) throw new FoundationError(409, 'Ask the instance operator to enable the Google reporting application.');
   return app;
 }
-function appSecret(app: App): string {
-  const parsed = z.object({ clientSecret: token }).safeParse(decryptCredentials(app.encrypted_secret, appContext(app.revision)));
+function appCredentials(app: App) {
+  const parsed = z.object({ clientSecret: token, adsDeveloperToken: token.optional() }).safeParse(decryptCredentials(app.encrypted_secret, appContext(app.revision)));
   if (!parsed.success) throw new FoundationError(503, 'Google app credentials cannot be opened. Ask the operator to restore the keyring.');
-  return parsed.data.clientSecret;
+  return parsed.data;
 }
-async function exchange(app: App, params: Record<string, string>) {
-  const raw = await googleRequest('https://oauth2.googleapis.com/token', undefined, new URLSearchParams({ client_id: app.client_id, client_secret: appSecret(app), ...params }));
+function appSecret(app: App): string { return appCredentials(app).clientSecret; }
+export function googleAdsConfigured(app: App): boolean { try { return !!appCredentials(app).adsDeveloperToken; } catch { return false; } }
+export function googleAdsHeaders(app: App, loginCustomerId?: string) {
+  const developerToken = appCredentials(app).adsDeveloperToken;
+  if (!developerToken) throw new FoundationError(409, 'Ask the instance operator to configure a Google Ads developer token.');
+  return { developerToken, ...(loginCustomerId ? { loginCustomerId: googleInput(googleAdsCustomerId, loginCustomerId) } : {}) };
+}
+export async function googleAdsCustomer(accessToken: string, app: App, customerId: string, loginCustomerId?: string) {
+  googleInput(googleAdsCustomerId, customerId);
+  const raw = await googleRequest(`https://googleads.googleapis.com/${googleAdsVersion}/customers/${customerId}/googleAds:search`, accessToken,
+    { query: 'SELECT customer.id, customer.descriptive_name, customer.manager, customer.time_zone, customer.currency_code FROM customer LIMIT 1' }, googleAdsHeaders(app, loginCustomerId));
+  const result = providerInput(z.object({ results: z.array(z.object({ customer: z.object({ id: googleAdsCustomerId, descriptiveName: safeGoogleString(512).optional(), manager: z.boolean().default(false), timeZone: safeGoogleString(120).min(1), currencyCode: z.string().regex(/^[A-Z]{3}$/) }) })).length(1) }), raw).results[0].customer;
+  if (result.id !== customerId) throw new FoundationError(502, 'Google returned a different Ads customer.');
+  return result;
+}
+async function exchange(app: App, params: Record<string, string>, signal?: AbortSignal) {
+  const raw = await googleRequest('https://oauth2.googleapis.com/token', undefined, new URLSearchParams({ client_id: app.client_id, client_secret: appSecret(app), ...params }), undefined, signal);
   const data = responseTokens.safeParse(raw);
   if (!data.success) throw new FoundationError(502, 'Google did not return a usable grant. Connect again and grant read access.');
   return data.data;
 }
 
 /** Must run under the workspace/connection lock. Refresh never touches dashboard credentials. */
-export async function googleAccessToken(client: PoolClient, row: GoogleConnection, app: App, refresh = false): Promise<string> {
+export async function googleAccessToken(client: PoolClient, row: GoogleConnection, app: App, refresh = false, signal?: AbortSignal): Promise<string> {
   if (row.status === 'disconnected' || row.status === 'reconnect' || row.app_revision !== app.revision) throw new FoundationError(409, 'Reconnect this Google report source.');
   const stored = tokensInput.safeParse(decryptCredentials(row.encrypted_tokens, googleConnectionContext(row)));
   if (!stored.success) throw new FoundationError(503, 'Google report credentials cannot be opened.');
   if (stored.data.expiresAt > Date.now() + (refresh ? 30_000 : 0)) return stored.data.accessToken;
   if (!refresh) throw new FoundationError(409, 'Google access expired before this request. Retry the operation.');
-  const refreshed = await exchange(app, { grant_type: 'refresh_token', refresh_token: stored.data.refreshToken });
+  const refreshed = await exchange(app, { grant_type: 'refresh_token', refresh_token: stored.data.refreshToken }, signal);
   if (refreshed.scope !== undefined && !refreshed.scope.split(/\s+/).includes(googleScopes[row.provider])) throw new FoundationError(409, 'Reconnect this Google report source and grant the required read access.');
   const encrypted = encryptCredentials({ accessToken: refreshed.access_token, refreshToken: refreshed.refresh_token ?? stored.data.refreshToken, expiresAt: Date.now() + refreshed.expires_in * 1000 }, googleConnectionContext(row));
   await client.query('UPDATE google_connection SET encrypted_tokens=$2,updated_at=now() WHERE id=$1', [row.id, encrypted]);
@@ -87,10 +102,11 @@ export async function googleAccessToken(client: PoolClient, row: GoogleConnectio
 
 // A rotated refresh token must commit before a later API/page failure can roll
 // back. The subsequent operation takes the same locks and rereads all authority.
-export async function refreshGoogleConnection(projectId: string, userId: string, connectionId: string) {
+export async function refreshGoogleConnection(projectId: string, userId: string, connectionId: string, signal?: AbortSignal, expected?: {revision:number;appRevision:number;propertyId:string}) {
   const failure = await googleProjectTransaction(projectId, userId, true, async client => {
     const row = await googleConnection(client, projectId, connectionId), app = await activeGoogleApp(client);
-    try { await googleAccessToken(client, row, app, true); }
+    if (expected && (row.revision !== expected.revision || app.revision !== expected.appRevision || row.property_id !== expected.propertyId)) throw new FoundationError(409, 'The Google source changed. Refresh status before trying again.');
+    try { await googleAccessToken(client, row, app, true, signal); }
     catch (error) {
       if (!(error instanceof GoogleRequestError) || !error.reauthorize) throw error;
       await client.query("UPDATE google_connection SET status='reconnect',updated_at=now() WHERE id=$1", [row.id]);
@@ -103,10 +119,10 @@ export async function refreshGoogleConnection(projectId: string, userId: string,
 export async function getGoogleApp(userId: string) {
   const [operator, result] = await Promise.all([isInstanceOperator(userId), getDatabase().pool.query<App>("SELECT * FROM google_app WHERE id='instance'")]);
   const app = result.rows[0];
-  return { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true, vaultConfigured: !!credentialKeys(), redirectUri: redirectUri(), operator, revision: app?.revision ?? 0, ...(operator && app ? { clientId: app.client_id } : {}) };
+  return { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true, adsConfigured: !!app && googleAdsConfigured(app), vaultConfigured: !!credentialKeys(), redirectUri: redirectUri(), operator, revision: app?.revision ?? 0, ...(operator && app ? { clientId: app.client_id } : {}) };
 }
 export async function saveGoogleApp(userId: string, value: unknown) {
-  const data = googleInput(z.object({ revision: z.number().int().nonnegative(), clientId: safeGoogleString(512).regex(/^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$(?![\s\S])/), clientSecret: token, enabled: z.boolean(), testing: z.boolean() }).strict(), value);
+  const data = googleInput(z.object({ revision: z.number().int().nonnegative(), clientId: safeGoogleString(512).regex(/^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$(?![\s\S])/), clientSecret: token, enabled: z.boolean(), testing: z.boolean(), adsDeveloperToken: token.regex(/^[A-Za-z0-9_-]+$/).optional(), clearAdsDeveloperToken: z.boolean().optional() }).strict().refine(v=>!(v.clearAdsDeveloperToken && v.adsDeveloperToken)), value);
   const client = await getDatabase().pool.connect();
   try {
     await client.query('BEGIN'); await requireInstanceOperator(client, userId);
@@ -114,9 +130,10 @@ export async function saveGoogleApp(userId: string, value: unknown) {
     const previous = (await client.query<App>("SELECT * FROM google_app WHERE id='instance' FOR UPDATE")).rows[0];
     if ((previous?.revision ?? 0) !== data.revision) throw new FoundationError(409, 'Google app settings changed. Reload before saving.');
     const revision = data.revision + 1;
+    const developerToken = data.clearAdsDeveloperToken ? undefined : data.adsDeveloperToken ?? (previous ? appCredentials(previous).adsDeveloperToken : undefined);
     await client.query(`INSERT INTO google_app(id,revision,client_id,encrypted_secret,enabled,testing) VALUES('instance',$1,$2,$3,$4,$5)
       ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,client_id=excluded.client_id,encrypted_secret=excluded.encrypted_secret,enabled=excluded.enabled,testing=excluded.testing,updated_at=now()`,
-    [revision, data.clientId, encryptCredentials({ clientSecret: data.clientSecret }, appContext(revision)), data.enabled, data.testing]);
+    [revision, data.clientId, encryptCredentials({ clientSecret: data.clientSecret, ...(developerToken ? { adsDeveloperToken: developerToken } : {}) }, appContext(revision)), data.enabled, data.testing]);
     await client.query('DELETE FROM google_oauth_flow');
     await client.query('COMMIT');
   } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
@@ -129,9 +146,10 @@ function bindingCookie(id: string, value: string, maxAge: number) {
   return `${cookieName(id)}=${value}; Path=/api/google/callback; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${getConfig().appUrl.startsWith('https:') ? '; Secure' : ''}`;
 }
 export async function startGoogleConnect(projectId: string, session: Session, value: unknown) {
-  const data = googleInput(z.object({ provider: z.enum(['gsc', 'ga4']), name: safeGoogleString(120).trim().min(1), connectionId: z.uuid().optional() }).strict(), value);
+  const data = googleInput(z.object({ provider: z.enum(['gsc', 'ga4', 'ads']), name: safeGoogleString(120).trim().min(1), connectionId: z.uuid().optional() }).strict(), value);
   return googleProjectTransaction(projectId, session.user.id, true, async (client, workspaceId) => {
     const app = await activeGoogleApp(client);
+    if (data.provider === 'ads') googleAdsHeaders(app);
     let previous: GoogleConnection | undefined;
     if (data.connectionId) {
       previous = await googleConnection(client, projectId, data.connectionId);
@@ -196,10 +214,28 @@ export async function googleCallback(request: Request): Promise<Response> {
 }
 
 export async function listGoogleProperties(projectId: string, userId: string, connectionId: string, value: unknown) {
-  const data = googleInput(z.object({ pageToken: safeGoogleString(4096).min(1).optional() }).strict(), value);
+  const data = googleInput(z.object({ pageToken: safeGoogleString(4096).min(1).optional(), managerCustomerId: googleAdsCustomerId.optional() }).strict(), value);
   await refreshGoogleConnection(projectId, userId, connectionId);
   return googleProjectTransaction(projectId, userId, true, async client => {
     const row = await googleConnection(client, projectId, connectionId), app = await activeGoogleApp(client), accessToken = await googleAccessToken(client, row, app);
+    if (row.provider === 'ads') {
+      if (data.pageToken) throw new FoundationError(400, 'Ads account discovery is bounded. Select a directly accessible manager to narrow the account list.');
+      if (!data.managerCustomerId) {
+        const raw = await googleRequest(`https://googleads.googleapis.com/${googleAdsVersion}/customers:listAccessibleCustomers`, accessToken, undefined, googleAdsHeaders(app));
+        const response = providerInput(z.object({ resourceNames: z.array(z.string().regex(/^customers\/[1-9]\d{9}$/)).max(10000).default([]) }), raw);
+        if (new Set(response.resourceNames).size !== response.resourceNames.length) throw new FoundationError(502, 'Google repeated an accessible account.');
+        return { properties: response.resourceNames.map(id => ({ id, name: id, loginCustomerId: null })), nextPageToken: null };
+      }
+      const manager = await googleAdsCustomer(accessToken, app, data.managerCustomerId);
+      if (!manager.manager) throw new FoundationError(400, 'This account is not an Ads manager. Select it directly instead.');
+      const raw = await googleRequest(`https://googleads.googleapis.com/${googleAdsVersion}/customers/${manager.id}/googleAds:search`, accessToken,
+        { query: 'SELECT customer_client.id, customer_client.descriptive_name FROM customer_client WHERE customer_client.manager = FALSE ORDER BY customer_client.id', searchSettings: { returnTotalResultsCount: true } }, googleAdsHeaders(app, manager.id));
+      const response = providerInput(z.object({ results: z.array(z.object({ customerClient: z.object({ id: googleAdsCustomerId, descriptiveName: safeGoogleString(512).optional() }) })).max(10000).default([]), nextPageToken: safeGoogleString(4096).optional() }), raw);
+      if (response.nextPageToken) throw new FoundationError(409, 'This manager has more accounts than the bounded discovery can show. Choose a directly accessible sub-manager.');
+      if (new Set(response.results.map(r=>r.customerClient.id)).size !== response.results.length) throw new FoundationError(502, 'Google repeated an Ads client account.');
+      return { properties: response.results.map(({customerClient:c}) => ({ id: `customers/${c.id}`, name: c.descriptiveName || c.id, loginCustomerId: manager.id })), nextPageToken: null };
+    }
+    if (data.managerCustomerId) throw new FoundationError(400, 'Manager selection applies only to Google Ads.');
     if (row.provider === 'gsc') {
       if (data.pageToken) throw new FoundationError(400, 'Search Console property discovery has no next page.');
       const raw = await googleRequest('https://www.googleapis.com/webmasters/v3/sites', accessToken);
@@ -214,17 +250,23 @@ export async function listGoogleProperties(projectId: string, userId: string, co
 }
 
 export async function selectGoogleProperty(projectId: string, userId: string, connectionId: string, value: unknown) {
-  const data = googleInput(z.object({ propertyId: safeGoogleString(2048).min(1) }).strict(), value);
+  const data = googleInput(z.object({ propertyId: safeGoogleString(2048).min(1), loginCustomerId: googleAdsCustomerId.optional() }).strict(), value);
   await refreshGoogleConnection(projectId, userId, connectionId);
   return googleProjectTransaction(projectId, userId, true, async client => {
     const row = await googleConnection(client, projectId, connectionId);
     if (row.property_id) {
-      if (row.property_id !== data.propertyId) throw new FoundationError(409, 'This source already has a property. Add another connection for a different property.');
+      if (row.property_id !== data.propertyId || (row.login_customer_id ?? undefined) !== data.loginCustomerId) throw new FoundationError(409, 'This source already has a property. Add another connection for a different property.');
       return { connection: googleConnectionDto(row) };
     }
     const app = await activeGoogleApp(client), accessToken = await googleAccessToken(client, row, app);
     let name = data.propertyId, timeZone = 'America/Los_Angeles', currency: string | null = null;
-    if (row.provider === 'gsc') {
+    if (row.provider !== 'ads' && data.loginCustomerId) throw new FoundationError(400, 'Manager selection applies only to Google Ads.');
+    if (row.provider === 'ads') {
+      googleInput(z.string().regex(/^customers\/[1-9]\d{9}$/), data.propertyId);
+      const customer = await googleAdsCustomer(accessToken, app, data.propertyId.slice(10), data.loginCustomerId);
+      if (customer.manager) throw new FoundationError(400, 'Choose an advertising customer, not a manager account. Load its client accounts first.');
+      name = customer.descriptiveName || data.propertyId; timeZone = customer.timeZone; currency = customer.currencyCode;
+    } else if (row.provider === 'gsc') {
       const raw = await googleRequest(`https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(data.propertyId)}`, accessToken);
       const property = providerInput(z.object({ siteUrl: safeGoogleString(2048), permissionLevel: z.enum(['siteOwner', 'siteFullUser', 'siteRestrictedUser']) }), raw);
       if (property.siteUrl !== data.propertyId) throw new FoundationError(409, 'Google property access could not be confirmed.');
@@ -235,7 +277,7 @@ export async function selectGoogleProperty(projectId: string, userId: string, co
       if (property.name !== data.propertyId) throw new FoundationError(409, 'Google property access could not be confirmed.');
       name = property.displayName; timeZone = property.timeZone; currency = property.currencyCode;
     }
-    const result = await client.query<GoogleConnection>("UPDATE google_connection SET property_id=$2,property_name=$3,time_zone=$4,currency_code=$5,status='ready',updated_at=now() WHERE id=$1 RETURNING *", [row.id, data.propertyId, name, timeZone, currency]);
+    const result = await client.query<GoogleConnection>("UPDATE google_connection SET property_id=$2,property_name=$3,time_zone=$4,currency_code=$5,login_customer_id=$6,status='ready',updated_at=now() WHERE id=$1 RETURNING *", [row.id, data.propertyId, name, timeZone, currency, data.loginCustomerId ?? null]);
     return { connection: googleConnectionDto(result.rows[0]) };
   });
 }
@@ -280,7 +322,7 @@ export async function rotateGoogleCredentials() {
     // writers without changing app enablement or making any provider request.
     await client.query('LOCK google_app,google_connection,google_oauth_flow IN EXCLUSIVE MODE');
     const app = (await client.query<App>("SELECT * FROM google_app WHERE id='instance'")).rows[0];
-    if (app) await client.query("UPDATE google_app SET encrypted_secret=$1 WHERE id='instance'", [encryptCredentials({ clientSecret: appSecret(app) }, appContext(app.revision))]);
+    if (app) await client.query("UPDATE google_app SET encrypted_secret=$1 WHERE id='instance'", [encryptCredentials(appCredentials(app), appContext(app.revision))]);
     for (const row of (await client.query<GoogleConnection>('SELECT * FROM google_connection WHERE encrypted_tokens IS NOT NULL')).rows) {
       const context = googleConnectionContext(row);
       await client.query('UPDATE google_connection SET encrypted_tokens=$2 WHERE id=$1', [row.id, encryptCredentials(decryptCredentials(row.encrypted_tokens, context), context)]);
