@@ -18,6 +18,15 @@ test('visitor retention navigation rejects unknown, partial, future and nonscala
   assert.deepEqual(parseNavigation(invalid),invalid);assert.equal(canonicalNavigation('?'+new URLSearchParams(base)+'&retentionMonth=2024-03',base),false);assert.deepEqual(parseNavigation({...base,project:undefined}),{workspace,view:'visitor-retention',retentionInvalid:'1'});
 });
 
+test('Journeys keeps a scalar nested applied scope only in its own project read view',()=>{
+ const base={workspace,project,view:'journeys'} as const,journeyQuery=new URLSearchParams({from:'2026-10-01',to:'2026-10-10',timeZone:'UTC',steps:'3',startKind:'pageview',startValue:'/"true"'}).toString(),value={...base,journeyQuery};
+ assert.deepEqual(parseNavigation(value),value);assert.deepEqual(parseNavigation(value),parseNavigation(parseNavigation(value)));assert.equal(canonicalNavigation('?'+new URLSearchParams(value),value),true);assert.notEqual(navigationKey(value),navigationKey(base));assert.equal(projectView('journeys'),true);
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('journeys',role,false),true);assert.equal(allowedView('journeys',undefined,false),false);
+ for(const bad of [null,1,true,{},[journeyQuery],'',journeyQuery+'\0','x'.repeat(65537)])assert.equal(parseNavigation({...base,journeyQuery:bad}).journeyInvalid,'1');
+ for(const patch of [{workspace:undefined},{project:undefined},{from:'2026-01-01'}])assert.equal(parseNavigation({...value,...patch}).journeyInvalid,'1');
+ assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});assert.deepEqual(parseNavigation({...value,view:'explore'}),{workspace,project,view:'explore'});
+});
+
 test('location filters retain canonical composite identity, report intent and strict scalar scope',()=>{
   const base={workspace,project,view:'compare'} as const,scope={analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29',analyticsCompare:'yoy' as const,analyticsBrowser:'chrome'};
   const city={state:'known' as const,country:'US',region:{kind:'code' as const,value:'US-IL'},city:'Springfield'};

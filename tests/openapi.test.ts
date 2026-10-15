@@ -1,0 +1,85 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {randomUUID} from 'node:crypto';
+import {nativeOpenApi} from '../src/server/openapi.ts';
+import {handleApi} from '../src/server/api.ts';
+import {promptBatch,promptPatch} from '../src/server/context-input.ts';
+import {explorerQuery} from '../src/server/explorer-input.ts';
+import {analyticsQuery} from '../src/server/analytics.ts';
+import {geographySearch} from '../src/lib/analytics-geography.ts';
+import {journeysQuery} from '../src/server/journeys.ts';
+import {journeysLimits} from '../src/lib/journeys.ts';
+import {retentionReportQuery} from '../src/server/retention-report-input.ts';
+import {retentionLimits} from '../src/lib/retention-report.ts';
+
+test('static OpenAPI exposes exactly the supported 20 native operations with local references',()=>{
+ assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
+ const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
+  assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
+  assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
+  const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
+ }
+ assert.equal(ids.length,20);assert.equal(new Set(ids).size,20);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
+ assert.deepEqual(ids.filter(id=>!['readJourneys','readRetentionReport'].includes(id)).sort(),prior.sort());for(const name of ['readJourneys','readRetentionReport'])assert.equal(ids.filter(id=>id===name).length,1);
+ const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
+ const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
+ assert.ok(params.some(x=>x.name==='eventName'));assert.ok(!params.some(x=>x.name==='event'||x.name==='screenWidth'));
+ assert.equal(explorerQuery(new URLSearchParams({eventName:'signup'})).filters.eventName,'signup');
+});
+
+test('retention specification requires month/timezone and preserves closed entry-filter and response bounds',()=>{
+ const operation=nativeOpenApi.paths['/api/projects/{projectId}/retention-report'].get,params=operation.parameters as any[],parameter=(name:string)=>params.find(x=>x.name===name);
+ assert.deepEqual(operation['x-ten98-scopes'],['analytics:read']);assert.equal(Object.hasOwn(operation,'requestBody'),false);for(const name of ['month','timeZone'])assert.equal(parameter(name).required,true);
+ const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['from','to','timeZone','groupBy','groupProperty'].includes(x.name));assert.deepEqual(params.filter(x=>!['month','timeZone'].includes(x.name)),inherited);
+ assert.match(operation.description,new RegExp(String(retentionLimits.json)));assert.match(operation.description,new RegExp(String(retentionLimits.csv)));
+ const monthPattern=new RegExp(parameter('month').schema.pattern);for(const month of ['1970-01','2024-03','9998-12'])assert.equal(monthPattern.test(month),true);for(const month of ['1969-12','9999-01','2024-00','2024-13'])assert.equal(monthPattern.test(month),false);
+ const now=new Date('2026-10-15T08:00:00Z'),valid={month:'2024-03',timeZone:'Asia/Dubai',kind:'custom',path:'/entry',propertyKey:'done',propertyType:'boolean',propertyValue:'false'};
+ const value=retentionReportQuery(new URLSearchParams(valid),now);assert.equal(value.query.month,valid.month);assert.equal(value.query.timeZone,valid.timeZone);assert.equal(value.query.property?.value,false);assert.equal(value.scope.from,'2024-03-01');assert.equal(value.scope.to,'2024-03-31');
+ const invalid:Record<string,string>[]=[{month:''},{timeZone:''},{month:'1969-12'},{month:'9999-01'},{month:'2026-11'},{month:'2024-13'},{from:'2024-03-01'},{to:'2024-03-31'},{groupBy:'path'},{groupProperty:'done'},{cursor:'opaque'},{limit:'10'}];for(const patch of invalid)assert.throws(()=>retentionReportQuery(new URLSearchParams({...valid,...patch}),now));
+ assert.throws(()=>retentionReportQuery(new URLSearchParams(new URLSearchParams(valid)+'&month=2024-03'),now));
+});
+test('Journeys specification reuses population filters with closed typed first/last step pairs',()=>{
+ const operation=nativeOpenApi.paths['/api/projects/{projectId}/journeys'].get,params=operation.parameters as any[],schema=(name:string)=>params.find(x=>x.name===name)?.schema;
+ assert.deepEqual(operation['x-ten98-scopes'],['analytics:read']);assert.equal(Object.hasOwn(operation,'requestBody'),false);
+ const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['groupBy','groupProperty'].includes(x.name));
+ assert.deepEqual(params.filter(x=>!['steps','startKind','startValue','endKind','endValue'].includes(x.name)),inherited);
+ assert.equal(schema('steps').minimum,2);assert.equal(schema('steps').maximum,journeysLimits.steps);assert.equal(schema('steps').default,journeysQuery(new URLSearchParams()).steps);
+ assert.match(operation.description,new RegExp(String(journeysLimits.responseBytes)));
+ for(const prefix of ['start','end'])assert.deepEqual(schema(prefix+'Kind').enum,['pageview','custom']);
+ for(const steps of [schema('steps').minimum,schema('steps').maximum])for(const kind of schema('startKind').enum){const value=kind==='pageview'?'/literal%25':'signup',result=journeysQuery(new URLSearchParams({steps:String(steps),startKind:kind,startValue:value,endKind:kind,endValue:value,kind:'pageviews',timeZone:'Asia/Dubai',browser:'chrome'}));assert.equal(result.steps,steps);assert.deepEqual(result.start,{kind,value});assert.deepEqual(result.end,{kind,value});assert.equal(result.scope.filters.browser,'chrome');assert.equal(result.scope.timeZone,'Asia/Dubai');}
+ const invalid:Record<string,string>[]=[{steps:'1'},{steps:'8'},{steps:'3.0'},{steps:'03'},{startKind:'pageview'},{endValue:'/end'},{startKind:'custom',startValue:'page_view'},{endKind:'pageview',endValue:'/end?query'},{groupBy:'path'},{groupProperty:'plan'},{cursor:'opaque'},{limit:'100'},{sort:'visits'},{compare:'prev'}];
+ for(const value of invalid)assert.throws(()=>journeysQuery(new URLSearchParams(value)));
+ assert.throws(()=>journeysQuery(new URLSearchParams('steps=3&steps=4')));
+});
+test('published batch/patch limits match native strict input and atomic batch semantics',()=>{
+ const schemas=nativeOpenApi.components.schemas;assert.equal(schemas.PromptBatch.additionalProperties,false);assert.equal((schemas.PromptBatch.properties.prompts as {maxItems:number}).maxItems,100);
+ const input={requestId:randomUUID(),prompts:Array.from({length:100},(_,i)=>({text:'  Prompt '+i+'  '}))};assert.equal(promptBatch.parse(input).prompts[0].text,'Prompt 0');
+ assert.equal(promptBatch.safeParse({...input,prompts:[...input.prompts,{text:'101'}]}).success,false);assert.equal(promptBatch.safeParse({...input,execute:true}).success,false);
+ assert.equal(promptPatch.safeParse({requestId:randomUUID(),revision:1}).success,false);assert.equal(promptPatch.safeParse({requestId:randomUUID(),revision:1,enabled:false}).success,true);
+});
+test('published location detail choices match the native parser and preserve normalized search bounds',()=>{
+ const params=nativeOpenApi.paths['/api/projects/{projectId}/analytics'].get.parameters as any[];
+ const schema=(name:string)=>params.find(x=>x.name===name)?.schema;
+ assert.deepEqual(schema('geoDetail').enum,['region','city']);assert.deepEqual(schema('geoPeriod').enum,['current','comparison']);assert.equal(schema('geoPeriod').default,'current');assert.equal(schema('geoSearch').default,'');assert.equal(schema('geoSearch').maxLength,2048);
+ for(const field of schema('geoDetail').enum)for(const period of schema('geoPeriod').enum){
+  const result=analyticsQuery(new URLSearchParams({from:'2025-01-01',to:'2026-01-01',geoDetail:field,geoPeriod:period,compare:'yoy',geoSearch:'  Cafe\u0301%_  '}));
+  assert.deepEqual(result.detail,{field,period,search:'Café%_'});
+ }
+ assert.deepEqual(analyticsQuery(new URLSearchParams({geoDetail:'city'})).detail,{field:'city',period:schema('geoPeriod').default,search:schema('geoSearch').default});
+ assert.equal(Object.hasOwn(analyticsQuery(new URLSearchParams()),'detail'),false);
+ const detail=(geoSearch:string)=>analyticsQuery(new URLSearchParams({geoDetail:'region',geoSearch})).detail;
+ assert.equal(detail(' '.repeat(1920)+'x'.repeat(128))?.search,'x'.repeat(128));assert.equal(detail('😀'.repeat(128))?.search,'😀'.repeat(128));
+ for(const value of [' '.repeat(1921)+'x'.repeat(128),'x'.repeat(129),'x\u0000'])assert.throws(()=>detail(value));
+ assert.equal(geographySearch('\ud800'),null); // URLSearchParams replaces lone surrogates before the query parser sees them.
+ const invalid:Record<string,string>[]=[{geoSearch:'x'},{geoPeriod:'current'},{geoDetail:'country'},{geoDetail:'city',geoPeriod:'comparison'},{geoDetail:'city',geoPeriod:'previous'},{geoDetail:'city',offset:'500'}];
+ for(const value of invalid)assert.throws(()=>analyticsQuery(new URLSearchParams(value)));
+ for(const name of ['geoDetail','geoPeriod','geoSearch']){const query=new URLSearchParams({geoDetail:'city'});query.append(name,name==='geoDetail'?'city':'');query.append(name,'');assert.throws(()=>analyticsQuery(query));}
+});
+test('specification bypasses invalid configuration and database/setup, with no reflected host or credentials',async()=>{
+ const previous=process.env.APP_URL;process.env.APP_URL='not a URL';
+ try{const response=await handleApi(new Request('https://untrusted.example/api/openapi.json',{headers:{authorization:'Bearer private-sentinel'}}));assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');const body=await response.json();assert.deepEqual(body,nativeOpenApi);assert.equal(JSON.stringify(body).includes('untrusted.example'),false);assert.equal(JSON.stringify(body).includes('private-sentinel'),false);
+ for(const request of [new Request('https://untrusted.example/api/openapi.json?x=1'),new Request('https://untrusted.example/api/openapi.json',{headers:{'content-length':'1'}})])assert.equal((await handleApi(request)).status,400);
+ assert.equal((await handleApi(new Request('https://untrusted.example/api/openapi.json',{method:'POST',body:'{}'}))).status,405);
+ }finally{if(previous===undefined)delete process.env.APP_URL;else process.env.APP_URL=previous;}
+});

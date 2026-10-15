@@ -14,6 +14,7 @@ import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {projectRealtime} from './realtime.ts';
+import {projectJourneys} from './journeys.ts';
 import {projectRetentionReport} from './retention-report.ts';
 import { exploreAnalytics } from './explorer.ts';
 import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
@@ -60,6 +61,8 @@ import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
 import {getPromptCitationSpecializations,exportPromptCitationSpecializations} from './prompt-citation-specializations.ts';
+
+import {nativeOpenApi} from './openapi.ts';
 
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
@@ -112,14 +115,26 @@ export async function handleApi(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/$/, '');
     if (path === '/api/health/live' && request.method === 'GET') return json({ status: 'alive' });
+    if(path==='/api/openapi.json') {
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405,{allow:'GET'});
+      if(url.search||request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')return json({error:'Use the specification URL without parameters or a body.'},400);
+      return json(nativeOpenApi);
+    }
     const config = getConfig();
     await assertSchema();
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
       const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
-      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|retention-report|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
-      if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
+      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|journeys|retention-report|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
+      const promptApiRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?$`,'i'));
+      const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
+      const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
+      if(promptApiRoute&&(promptRead||promptWrite)) {
+        const target=await getDatabase().pool.query('SELECT workspace_id FROM project WHERE id=$1 AND workspace_id=$2',[promptApiRoute[1],principal.workspaceId]);
+        if(!target.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
+        await authorizeApiKey(apiToken!,target.rows[0].workspace_id,promptWrite?'prompts:write':'prompts:read');
+      } else if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
         await authorizeApiKey(apiToken!, workspaceRoute[1], workspaceRoute[2] === 'team' ? 'team:read' : request.method === 'GET' ? 'projects:read' : 'projects:write');
       } else if (projectRoute && (request.method === 'GET' || (request.method === 'POST' && projectRoute[2] === 'events'))) {
         const target = await getDatabase().pool.query('SELECT workspace_id FROM project WHERE id=$1 AND workspace_id=$2', [projectRoute[1], principal.workspaceId]);
@@ -609,14 +624,14 @@ export async function handleApi(request: Request): Promise<Response> {
     if(promptRoute) {
       await limit(`project-content:${user.id}`,120);
       const pid=promptRoute[1],promptId=promptRoute[3],action=promptRoute[4];
-      if(request.method==='GET'&&!promptRoute[2]) return json(await listPrompts(pid,user.id,url.searchParams));
-      if(request.method==='GET'&&promptId&&!action&&!url.search) return json(await getPrompt(pid,user.id,promptId));
-      if(request.method==='GET'&&action==='versions') return json(await promptVersions(pid,user.id,promptId,url.searchParams));
+      if(request.method==='GET'&&!promptRoute[2]) return json(await listPrompts(pid,user.id,url.searchParams,apiToken??undefined));
+      if(request.method==='GET'&&promptId&&!action&&!url.search) return json(await getPrompt(pid,user.id,promptId,apiToken??undefined));
+      if(request.method==='GET'&&action==='versions') return json(await promptVersions(pid,user.id,promptId,url.searchParams,apiToken??undefined));
       if(request.method==='POST'&&!url.search) {
         const input=await readJson(request,262144);
-        if(promptRoute[2]==='bulk') return json(await createPrompts(pid,user.id,input),201);
-        if(action==='update') return json(await updatePrompt(pid,user.id,promptId,input));
-        if(action==='archive'||action==='restore') return json(await setPromptArchived(pid,user.id,promptId,action==='archive',input));
+        if(promptRoute[2]==='bulk') return json(await createPrompts(pid,user.id,input,apiToken??undefined),201);
+        if(action==='update') return json(await updatePrompt(pid,user.id,promptId,input,apiToken??undefined));
+        if(action==='archive'||action==='restore') return json(await setPromptArchived(pid,user.id,promptId,action==='archive',input,apiToken??undefined));
       }
       return json({error:'Method or parameters not allowed.'},405);
     }
@@ -694,7 +709,11 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     let match = path.match(new RegExp(`^/api/workspaces/(${id})/(team|rename|invitations)$`, 'i'));
     if (match) {
-      if (request.method === 'GET' && match[2] === 'team') return json(await getTeam(match[1], user.id));
+      if (request.method === 'GET' && match[2] === 'team') {
+        const result = await getTeam(match[1], user.id);
+        if (apiToken) await authorizeApiKey(apiToken, match[1], 'team:read');
+        return json(result);
+      }
       if (request.method === 'POST') {
         await limit(`team:${user.id}`, 60);
         if (match[2] === 'rename') return json(await renameWorkspace(match[1], user.id, await readJson(request)));
@@ -717,6 +736,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'GET') {
         await workspaceAccess(match[1], user.id);
         const { rows } = await getDatabase().pool.query(`SELECT p.id,p.name,p.origin,p.public_key AS "publicKey",p.analytics_retained_from AS "retainedFrom",(SELECT count(*) FROM event e WHERE e.project_id=p.id AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)) AS "eventCount",(SELECT max(received_at) FROM event e WHERE e.project_id=p.id AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)) AS "lastEventAt" FROM project p WHERE p.workspace_id=$1 ORDER BY p.created_at DESC`, [match[1]]);
+        if (apiToken) await authorizeApiKey(apiToken, match[1], 'projects:read');
         return json({ projects: rows.map(row => ({ ...row, eventCount: Number(row.eventCount) })) });
       }
       if (request.method === 'POST') {
@@ -734,6 +754,13 @@ export async function handleApi(request: Request): Promise<Response> {
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
         finally { client.release(); }
       }
+    }
+    match=path.match(new RegExp(`^/api/projects/(${id})/journeys$`,'i'));
+    if(match){
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Journeys accepts query parameters without a request body.');
+      await limit(`journeys:${user.id}`,30);
+      return json(await projectJourneys(match[1],apiToken?{kind:'api-key',token:apiToken}:{kind:'session',userId:user.id},url.searchParams));
     }
     match=path.match(new RegExp(`^/api/projects/(${id})/retention-report$`,'i'));
     if(match){
@@ -774,7 +801,9 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'GET' && match[2] === 'analytics') return json(await projectAnalytics(match[1], user.id, url.searchParams,principal?.id));
       if (request.method === 'GET' && match[2] === 'explore') {
         await limit(`explore:${user.id}`,30);
-        return json(await exploreAnalytics(match[1],user.id,url.searchParams));
+        const result = await exploreAnalytics(match[1],user.id,url.searchParams);
+        if (apiToken) await authorizeApiKey(apiToken, target.workspace_id, 'analytics:read');
+        return json(result);
       }
       if (request.method === 'GET' && match[2] === 'events') {
         const { rows } = await getDatabase().pool.query(`WITH retained AS MATERIALIZED (
@@ -783,6 +812,7 @@ export async function handleApi(request: Request): Promise<Response> {
         ), recent AS (SELECT id,event_name AS "eventName",path,origin,received_at AS "receivedAt" FROM retained ORDER BY received_at DESC,id DESC LIMIT 50)
         SELECT (SELECT analytics_retained_from FROM project WHERE id=$1) AS "retainedFrom",(SELECT count(*) FROM retained) AS total,
           COALESCE((SELECT json_agg(recent ORDER BY "receivedAt" DESC,id DESC) FROM recent),'[]'::json) AS events`, [match[1]]);
+        if (apiToken) await authorizeApiKey(apiToken, target.workspace_id, 'analytics:read');
         return json({ ...rows[0], total: Number(rows[0].total) });
       }
       if (request.method === 'GET' && match[2] === 'jobs') {

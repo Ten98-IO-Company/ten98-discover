@@ -140,8 +140,10 @@ Choose **API keys** as a workspace owner or administrator. Select only the requi
 | `analytics:read` | `GET /api/projects/:projectId/analytics`, `GET /api/projects/:projectId/events` |
 | `events:write` | `POST /api/projects/:projectId/events` with `{eventId,name,url,properties?,dimensions?}`; server observations never claim browser identity |
 | `team:read` | `GET /api/workspaces/:workspaceId/team` |
+| `prompts:read` | List/search/read authored prompts and their text versions |
+| `prompts:write` | Atomic 1–100 prompt creation, update, archive and restore |
 
-Send exactly one `Authorization: Bearer <token>` header without cookies or alternate API-key headers. Tokens cannot manage authentication, credentials, budgets or other keys. Removing membership deletes its keys; rejoining does not revive them. OpenAPI, batch endpoints, compatibility access and complete MCP coverage remain outstanding.
+Send exactly one `Authorization: Bearer <token>` header without cookies or alternate API-key headers. Tokens cannot manage authentication, credentials, budgets or other keys. Removing membership deletes its keys; rejoining does not revive them. The [native API contract](native-api.md) documents the public static OpenAPI document, complete supported bearer inventory and existing atomic prompt batch. Compatibility access and complete MCP coverage remain outstanding.
 
 Choose **AI and search providers** as a workspace owner. A saved connection starts **untested**. **Run check** contacts only the provider's documented read-only account endpoint: [OpenRouter current key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key) or [DataForSEO user data](https://docs.dataforseo.com/v3/appendix-user-data/). Acceptance of credentials does not prove paid endpoint permissions or sufficient credit. Diagnostics never display the provider's response body or submitted credentials.
 
