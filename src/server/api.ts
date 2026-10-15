@@ -14,6 +14,7 @@ import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {projectRealtime} from './realtime.ts';
+import {projectJourneys} from './journeys.ts';
 import { exploreAnalytics } from './explorer.ts';
 import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
 import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
@@ -124,8 +125,262 @@ export async function handleApi(request: Request): Promise<Response> {
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
       const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
-      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
-      const promptApiRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?$`,'i'));
+      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|journeys|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)import { createHash, randomUUID } from 'node:crypto';
+import { access } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { z } from 'zod';
+import { getConfig } from './config.ts';
+import { assertSchema, getDatabase } from './db.ts';
+import { claimInstallation, FoundationError, getAuth } from './auth.ts';
+import { enqueueProbe, reconcileProbes } from './jobs.ts';
+import { eventInput, InputError, projectInput, readJson } from './validation.ts';
+import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
+import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
+import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
+import { extractAnalyticsPeer } from './analytics-network.ts';
+import { collectionOriginAllowed } from './collection-origins.ts';
+import { projectAnalytics } from './analytics.ts';
+import {projectRealtime} from './realtime.ts';
+import {projectJourneys} from './journeys.ts';
+import { exploreAnalytics } from './explorer.ts';
+import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
+import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
+import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
+import {listCohorts,getCohort,saveCohort,deleteCohort} from './cohorts.ts';
+import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
+import { getRetention, previewRetention, saveRetention } from './retention.ts';
+import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
+import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
+import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation } from './teams.ts';
+import { handleAccountSecurity } from './account-security.ts';
+import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey } from './api-keys.ts';
+import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider, saveProviderLimit } from './providers.ts';
+import { assertOidcCredentialsReadable, handleOidc } from './oidc.ts';
+import { isInstanceOperator } from './instance-operators.ts';
+import { handleReports } from './reports.ts';
+import { handleGoogle } from './google-api.ts';
+import {handleMeta} from './meta-api.ts';
+import {assertMetaCredentialsReadable} from './meta-auth.ts';
+import { assertGoogleCredentialsReadable } from './google.ts';
+import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
+import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
+import {listRankTrackers,getRankTracker,getRankCatalog,searchRankLocations,createRankTracker,updateRankTracker,archiveRankTracker,changeRankKeywords} from './rank-tracking.ts';
+import {getRankRun,quoteRankCheck,startRankCheck} from './rank-execution.ts';
+import {cancelRankRun} from './rank-worker.ts';
+import {reconcileRankCheck} from './rank-reconciliation.ts';
+import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from './rank-history.ts';
+import {getRankSchedule,previewRankSchedule,approveRankSchedule,disableRankSchedule} from './rank-scheduling.ts';
+import {getRankDistribution} from './rank-distribution.ts';
+import {getRankMatrix,exportRankMatrix} from './rank-matrix.ts';
+import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from './saved-keywords.ts';
+import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from './saved-keyword-refresh.ts';
+import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
+import { getDomainRedirectChecks, startDomainRedirectCheck } from './domain-redirects.ts';
+import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
+
+import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,exportSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
+
+import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
+import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
+import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
+import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
+import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
+import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
+import {getPromptCitationSpecializations,exportPromptCitationSpecializations} from './prompt-citation-specializations.ts';
+
+import {nativeOpenApi} from './openapi.ts';
+
+const id = '[0-9a-f-]{36}';
+function json(body: unknown, status = 200, additional?: HeadersInit) {
+  const headers = new Headers({ 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+  const extra = new Headers(additional);
+  for (const [key, value] of extra) if (key !== 'set-cookie') headers.set(key, value);
+  for (const value of extra.getSetCookie()) headers.append('set-cookie', value);
+  return Response.json(body, { status, headers });
+}
+
+async function limit(key: string, maximum: number) {
+  const { rows } = await getDatabase().pool.query(
+    `WITH expired AS (DELETE FROM request_limit WHERE minute < floor(extract(epoch FROM now()) / 60) - 60)
+     INSERT INTO request_limit(key,minute,count) VALUES ($1,floor(extract(epoch FROM now()) / 60),1)
+     ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING count`, [key, maximum],
+  );
+  if (rows[0].count > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
+}
+
+async function signedIn(request: Request) {
+  const session = await getAuth().api.getSession({ headers: request.headers });
+  if (!session) throw new FoundationError(401, 'Sign in to continue.');
+  return session.user;
+}
+
+async function workspaceAccess(workspaceId: string, userId: string, write = false) {
+  const { rows } = await getDatabase().pool.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, userId]);
+  if (!rows[0] || (write && !['owner', 'admin', 'editor'].includes(rows[0].role))) throw new FoundationError(404, 'Workspace not found or unavailable.');
+}
+
+async function projectAccess(projectId: string, userId: string, write = false) {
+  const { rows } = await getDatabase().pool.query(
+    `SELECT p.*,m.role FROM project p JOIN membership m ON m.workspace_id=p.workspace_id
+     WHERE p.id=$1 AND m.user_id=$2`, [projectId, userId],
+  );
+  if (!rows[0] || (write && !['owner', 'admin', 'editor'].includes(rows[0].role))) throw new FoundationError(404, 'Project not found or unavailable.');
+  return rows[0];
+}
+
+function authRequest(request: Request, body?: string) {
+  const headers = new Headers(request.headers);
+  // The initial recipe has no trusted proxy identity configuration.
+  for (const header of ['x-forwarded-for', 'x-real-ip', 'forwarded', 'cf-connecting-ip', 'true-client-ip']) headers.delete(header);
+  return new Request(request.url, { method: request.method, headers, ...(body === undefined ? {} : { body }) });
+}
+
+export async function handleApi(request: Request): Promise<Response> {
+  let cors: Record<string, string> = {};
+  try {
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/\/$/, '');
+    if (path === '/api/health/live' && request.method === 'GET') return json({ status: 'alive' });
+    if(path==='/api/openapi.json') {
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405,{allow:'GET'});
+      if(url.search||request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')return json({error:'Use the specification URL without parameters or a body.'},400);
+      return json(nativeOpenApi);
+    }
+    const config = getConfig();
+    await assertSchema();
+    const apiToken = parseApiKeyHeaders(request.headers);
+    const principal = apiToken ? await authenticateApiKey(apiToken) : null;
+    if (principal) {
+      const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
+, 'i'));
+      const promptApiRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?import { createHash, randomUUID } from 'node:crypto';
+import { access } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { z } from 'zod';
+import { getConfig } from './config.ts';
+import { assertSchema, getDatabase } from './db.ts';
+import { claimInstallation, FoundationError, getAuth } from './auth.ts';
+import { enqueueProbe, reconcileProbes } from './jobs.ts';
+import { eventInput, InputError, projectInput, readJson } from './validation.ts';
+import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
+import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
+import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
+import { extractAnalyticsPeer } from './analytics-network.ts';
+import { collectionOriginAllowed } from './collection-origins.ts';
+import { projectAnalytics } from './analytics.ts';
+import {projectRealtime} from './realtime.ts';
+import {projectJourneys} from './journeys.ts';
+import { exploreAnalytics } from './explorer.ts';
+import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
+import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
+import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
+import {listCohorts,getCohort,saveCohort,deleteCohort} from './cohorts.ts';
+import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
+import { getRetention, previewRetention, saveRetention } from './retention.ts';
+import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
+import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
+import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation } from './teams.ts';
+import { handleAccountSecurity } from './account-security.ts';
+import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey } from './api-keys.ts';
+import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider, saveProviderLimit } from './providers.ts';
+import { assertOidcCredentialsReadable, handleOidc } from './oidc.ts';
+import { isInstanceOperator } from './instance-operators.ts';
+import { handleReports } from './reports.ts';
+import { handleGoogle } from './google-api.ts';
+import {handleMeta} from './meta-api.ts';
+import {assertMetaCredentialsReadable} from './meta-auth.ts';
+import { assertGoogleCredentialsReadable } from './google.ts';
+import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
+import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
+import {listRankTrackers,getRankTracker,getRankCatalog,searchRankLocations,createRankTracker,updateRankTracker,archiveRankTracker,changeRankKeywords} from './rank-tracking.ts';
+import {getRankRun,quoteRankCheck,startRankCheck} from './rank-execution.ts';
+import {cancelRankRun} from './rank-worker.ts';
+import {reconcileRankCheck} from './rank-reconciliation.ts';
+import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from './rank-history.ts';
+import {getRankSchedule,previewRankSchedule,approveRankSchedule,disableRankSchedule} from './rank-scheduling.ts';
+import {getRankDistribution} from './rank-distribution.ts';
+import {getRankMatrix,exportRankMatrix} from './rank-matrix.ts';
+import {listSavedKeywords,listSavedKeywordTags,saveSavedKeywords,changeSavedKeywordTags,removeSavedKeywords,updateSavedKeywordTag,deleteSavedKeywordTag,exportSavedKeywords} from './saved-keywords.ts';
+import {quoteSavedKeywordRefresh,startSavedKeywordRefresh,listSavedKeywordRefreshes,getSavedKeywordRefresh,cancelSavedKeywordRefresh,reconcileSavedKeywordRefresh} from './saved-keyword-refresh.ts';
+import { addDomain, getDomains, issueDomainChallenge, removeDomain, revokeDomain, updateDomain, verifyDomain } from './domains.ts';
+import { getDomainRedirectChecks, startDomainRedirectCheck } from './domain-redirects.ts';
+import { getDestinations, getPublicDestinations, previewDestinations, publishDestinations, rollbackDestinations, saveDestinationsDraft } from './destinations.ts';
+
+import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,exportSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
+
+import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
+import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
+import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
+import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
+import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
+import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
+import {getPromptCitationSpecializations,exportPromptCitationSpecializations} from './prompt-citation-specializations.ts';
+
+import {nativeOpenApi} from './openapi.ts';
+
+const id = '[0-9a-f-]{36}';
+function json(body: unknown, status = 200, additional?: HeadersInit) {
+  const headers = new Headers({ 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+  const extra = new Headers(additional);
+  for (const [key, value] of extra) if (key !== 'set-cookie') headers.set(key, value);
+  for (const value of extra.getSetCookie()) headers.append('set-cookie', value);
+  return Response.json(body, { status, headers });
+}
+
+async function limit(key: string, maximum: number) {
+  const { rows } = await getDatabase().pool.query(
+    `WITH expired AS (DELETE FROM request_limit WHERE minute < floor(extract(epoch FROM now()) / 60) - 60)
+     INSERT INTO request_limit(key,minute,count) VALUES ($1,floor(extract(epoch FROM now()) / 60),1)
+     ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING count`, [key, maximum],
+  );
+  if (rows[0].count > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
+}
+
+async function signedIn(request: Request) {
+  const session = await getAuth().api.getSession({ headers: request.headers });
+  if (!session) throw new FoundationError(401, 'Sign in to continue.');
+  return session.user;
+}
+
+async function workspaceAccess(workspaceId: string, userId: string, write = false) {
+  const { rows } = await getDatabase().pool.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, userId]);
+  if (!rows[0] || (write && !['owner', 'admin', 'editor'].includes(rows[0].role))) throw new FoundationError(404, 'Workspace not found or unavailable.');
+}
+
+async function projectAccess(projectId: string, userId: string, write = false) {
+  const { rows } = await getDatabase().pool.query(
+    `SELECT p.*,m.role FROM project p JOIN membership m ON m.workspace_id=p.workspace_id
+     WHERE p.id=$1 AND m.user_id=$2`, [projectId, userId],
+  );
+  if (!rows[0] || (write && !['owner', 'admin', 'editor'].includes(rows[0].role))) throw new FoundationError(404, 'Project not found or unavailable.');
+  return rows[0];
+}
+
+function authRequest(request: Request, body?: string) {
+  const headers = new Headers(request.headers);
+  // The initial recipe has no trusted proxy identity configuration.
+  for (const header of ['x-forwarded-for', 'x-real-ip', 'forwarded', 'cf-connecting-ip', 'true-client-ip']) headers.delete(header);
+  return new Request(request.url, { method: request.method, headers, ...(body === undefined ? {} : { body }) });
+}
+
+export async function handleApi(request: Request): Promise<Response> {
+  let cors: Record<string, string> = {};
+  try {
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/\/$/, '');
+    if (path === '/api/health/live' && request.method === 'GET') return json({ status: 'alive' });
+    if(path==='/api/openapi.json') {
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405,{allow:'GET'});
+      if(url.search||request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')return json({error:'Use the specification URL without parameters or a body.'},400);
+      return json(nativeOpenApi);
+    }
+    const config = getConfig();
+    await assertSchema();
+    const apiToken = parseApiKeyHeaders(request.headers);
+    const principal = apiToken ? await authenticateApiKey(apiToken) : null;
+    if (principal) {
+      const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
+,'i'));
       const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
       if(promptApiRoute&&(promptRead||promptWrite)) {
@@ -752,6 +1007,13 @@ export async function handleApi(request: Request): Promise<Response> {
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
         finally { client.release(); }
       }
+    }
+    match=path.match(new RegExp(`^/api/projects/(${id})/journeys$`,'i'));
+    if(match){
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Journeys accepts query parameters without a request body.');
+      await limit(`journeys:${user.id}`,30);
+      return json(await projectJourneys(match[1],apiToken?{kind:'api-key',token:apiToken}:{kind:'session',userId:user.id},url.searchParams));
     }
     match=path.match(new RegExp(`^/api/projects/(${id})/realtime$`,'i'));
     if(match){
