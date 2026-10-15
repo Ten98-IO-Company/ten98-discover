@@ -4,6 +4,7 @@ import type {AnalyticsComparisonMode} from './analytics-comparison.ts'
 import {geographyFields,geographyFiltersValid,parseGeographyKey,serializeGeographyKey,type GeoField,type GeographyKey} from './analytics-geography.ts'
 import {journeysLimits} from './journeys.ts'
 import {attributionLimits} from './attribution.ts'
+import {analyticsDimensions,type AnalyticsDimension} from './analytics-dimensions.ts'
 
 export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
@@ -20,7 +21,7 @@ export type JourneysNavigation={journeyQuery?:string;journeyInvalid?:'1'};
 export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
 export const auditCoverages = ['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'] as const
 export type AuditNavigation = {auditRun?:string;auditPage?:string;auditTab?:'pages';auditSeverity?:'critical'|'warning'|'info';auditCode?:string;auditAffectedPage?:string;auditCoverage?:typeof auditCoverages[number];auditResource?:'robots'|'sitemap';auditSearch?:string;auditSearchIn?:'url';auditSort?:Exclude<AuditPageFields['sort'],'url'>;auditOrder?:'desc';auditDirection?:'in';auditInvalid?:'1'}
-export type AnalyticsNavigation = { analyticsFrom?: string; analyticsTo?: string; analyticsBrowser?: string; analyticsOs?: string; analyticsDevice?: string; analyticsCountry?:string;analyticsRegion?:string;analyticsCity?:string;analyticsCompare?: AnalyticsComparisonMode; analyticsInvalid?: '1' }
+export type AnalyticsNavigation = { analyticsFrom?: string; analyticsTo?: string; analyticsBrowser?: string; analyticsOs?: string; analyticsDevice?: string; analyticsCountry?:string;analyticsRegion?:string;analyticsCity?:string;analyticsCompare?: AnalyticsComparisonMode;analyticsDimension?:AnalyticsDimension;analyticsSelection?:string; analyticsInvalid?: '1' }
 export const analyticsNavigationNames = { browser: 'analyticsBrowser', os: 'analyticsOs', device: 'analyticsDevice' } as const;
 export const geographyNavigationNames={country:'analyticsCountry',region:'analyticsRegion',city:'analyticsCity'} as const;
 
@@ -69,11 +70,14 @@ export function analyticsDay(value: unknown): number | null {
 }
 
 export function analyticsNavigation(raw: Record<string, unknown>): AnalyticsNavigation {
-  const names = [...Object.values(analyticsNavigationNames),...Object.values(geographyNavigationNames), 'analyticsFrom', 'analyticsTo', 'analyticsCompare', 'analyticsInvalid'];
+  const names = [...Object.values(analyticsNavigationNames),...Object.values(geographyNavigationNames), 'analyticsFrom', 'analyticsTo', 'analyticsCompare', 'analyticsDimension','analyticsSelection','analyticsInvalid'];
   if (!Object.keys(raw).some(key => key.startsWith('analytics'))) return {};
   const invalid = () => ({ analyticsInvalid: '1' } as const);
   if (raw.analyticsInvalid !== undefined || !navigationId(raw.workspace) || !navigationId(raw.project) || Object.keys(raw).some(key => !['workspace', 'project', 'view', ...names].includes(key))) return invalid();
   const out: AnalyticsNavigation = {};
+  if(raw.analyticsDimension!==undefined){if(raw.view!=='compare'||!analyticsDimensions.includes(raw.analyticsDimension as AnalyticsDimension))return invalid();out.analyticsDimension=raw.analyticsDimension as AnalyticsDimension;}
+  // The panel verifies the closed nested predicates before any analytics read.
+  if(raw.analyticsSelection!==undefined){if(typeof raw.analyticsSelection!=='string'||!raw.analyticsSelection.length||raw.analyticsSelection.length>20000||raw.analyticsSelection.includes('\0')||new TextDecoder().decode(new TextEncoder().encode(raw.analyticsSelection))!==raw.analyticsSelection)return invalid();out.analyticsSelection=raw.analyticsSelection;}
   if (raw.analyticsCompare !== undefined) {
     if (raw.view !== 'compare' || typeof raw.analyticsCompare !== 'string' || !['prev','yoy'].includes(raw.analyticsCompare)) return invalid();
     out.analyticsCompare = raw.analyticsCompare as AnalyticsComparisonMode;

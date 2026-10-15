@@ -1,6 +1,7 @@
 import {analyticsDay} from './navigation.ts';
 import type {AnalyticsEnvironment} from './analytics-environment.ts';
-import type {GeographyReport} from './analytics-geography.ts';
+import type {GeographyReport,GeographyDetail} from './analytics-geography.ts';
+import type {AnalyticsDimensionComparison} from './analytics-dimensions.ts';
 
 export type AnalyticsComparisonMode='prev'|'yoy';
 export type AnalyticsCoverage={status:'complete'|'partial'|'unavailable';retainedFrom:string|null};
@@ -12,6 +13,7 @@ export type AnalyticsPeriodReport={range:{from:string;to:string;timeZone:'UTC'};
 export type AnalyticsComparison={version:'analytics-comparison-v1';mode:AnalyticsComparisonMode;asOf:string;report:AnalyticsPeriodReport;
  change:{pageViews:{absolute:number|null;percent:number|null};customEvents:{absolute:number|null;percent:number|null};visitors:{absolute:number|null;percent:number|null};visits:{absolute:number|null;percent:number|null};averageVisitSeconds:{absolute:number|null;percent:number|null};bounceRate:{percentagePoints:number|null}};
  alignment:{method:'ordinal-calendar-day';currentDays:number;comparisonDays:number;slots:number;overlapDays:number};calendar:{current:'complete'|'partial'|'future';comparison:'complete'|'partial'|'future'}};
+export type AnalyticsReport=AnalyticsPeriodReport&{comparison?:AnalyticsComparison;geographyDetail?:GeographyDetail;dimensionComparison?:AnalyticsDimensionComparison;selection?:string};
 const dayMs=86400000,minimum=Date.UTC(1970,0,1);
 
 /** Shift inclusive calendar endpoints, then rebuild half-open bounds; public current ranges still cap at366. */

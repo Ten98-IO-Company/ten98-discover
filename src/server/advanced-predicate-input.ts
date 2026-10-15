@@ -1,3 +1,4 @@
+import {analyticsFieldLimit} from '../lib/analytics-dimensions.ts';
 import {types} from 'node:util';
 import {z} from 'zod';
 import {normalizeProperties,type PropertyPrimitive} from './analytics-input.ts';
@@ -58,7 +59,7 @@ function fieldPredicate(raw:unknown):AdvancedFieldPredicate{
   }
   if(!textOperators.includes(operator))bad();
   if(geographyFields.includes(field as GeoField)){if(!['eq','neq'].includes(operator)||!parseGeographyKey(field as GeoField,input.value))bad();return{field,operator:operator as Equality,value:input.value as string};}
-  const value=literal(input.value,['path','origin'].includes(field)?2048:320,operator==='eq'||operator==='neq');
+  const value=literal(input.value,analyticsFieldLimit(field),operator==='eq'||operator==='neq');
   if(field==='origin'&&(operator==='eq'||operator==='neq')){
     try{const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.origin!==value)bad();}catch{bad();}
   }

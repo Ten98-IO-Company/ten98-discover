@@ -70,3 +70,5 @@ test('advanced Explorer size includes resolved report defaults without mutating 
   const original=params.toString();assert.doesNotThrow(()=>explorerQuery(params,now));assert.equal(params.toString(),original);assert.equal(params.has('kind'),false);
   params.set('language','a'.repeat(padding+1));assert.ok(params.toString().length<20000);assert.throws(()=>explorerQuery(params,now),{status:400});
 });
+
+test('exact referrer filters preserve the accepted2048-character normalizer bound',()=>{assert.equal(explorerQuery(new URLSearchParams({referrer:'a'.repeat(2048)})).filters.referrer.length,2048);assert.throws(()=>explorerQuery(new URLSearchParams({referrer:'a'.repeat(2049)})),{status:400});});

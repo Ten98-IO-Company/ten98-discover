@@ -264,6 +264,23 @@
 .analytics-comparison-activity .table-wrap table { min-inline-size: 46rem; }
 .analytics-comparison-ranking th { font-weight: 400; }
 .analytics-comparison-ranking .table-wrap { max-width: 100%; }
+.analytics-dimension-pair { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-4); direction: ltr; }
+.analytics-dimension-pair > section { min-width: 0; }
+[dir="rtl"] .analytics-dimension-pair > section { direction: rtl; }
+.analytics-dimension-pair table { min-width: 24rem; }
+.analytics-dimension-label { border: 0; background: none; color: var(--ink); text-align: start; min-height: 44px; padding: 8px 0; cursor: pointer; overflow-wrap: anywhere; font: inherit; }
+.analytics-dimension-label:not(:disabled):hover { text-decoration: underline; }
+.analytics-dimension-label:disabled { cursor: default; }
+.analytics-dimension-change { min-width: 8rem; font-variant-numeric: tabular-nums; }
+.analytics-selection, .analytics-dimension-selector { grid-column: 1 / -1; min-width: 0; }
+.analytics-selection summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+.analytics-selection fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.analytics-selection-row { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 12px; }
+.analytics-selection-row > div { flex: 1 1 12rem; min-width: 0; }
+.analytics-selection label, .analytics-dimension-selector label { display: block; margin-bottom: 6px; }
+.analytics-selection input, .analytics-selection select, .analytics-dimension-selector select { width: 100%; min-width: 0; min-height: 44px; }
+.analytics-selection .btn { min-height: 44px; }
+@media (max-width:768px) { .analytics-dimension-pair { grid-template-columns: minmax(0,1fr); } }
 
 @media (max-width:768px) {
   .analytics-comparison-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }

@@ -4,9 +4,14 @@ import { FoundationError } from './auth.ts';
 import { retentionCoverage } from './retention.ts';
 import {publicAnalyticsSettings} from './native-analytics.ts';
 import {environmentFields,environmentVersion,isEnvironmentFilter,type EnvironmentFilters,type AnalyticsEnvironment} from '../lib/analytics-environment.ts';
-import {deriveAnalyticsComparison,type AnalyticsComparisonMode,type AnalyticsComparison,type AnalyticsPeriodReport} from '../lib/analytics-comparison.ts';
+import {deriveAnalyticsComparison,type AnalyticsComparisonMode,type AnalyticsComparison,type AnalyticsPeriodReport,type AnalyticsReport} from '../lib/analytics-comparison.ts';
 import {geographyFields,geographyFiltersValid,geographySearch,type GeographyFilters,type GeographyDetailIntent,type GeographyDetail} from '../lib/analytics-geography.ts';
-import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geographyReportSql,geographyDetailSql,applyGeographyCoverage} from './geography-sql.ts';
+import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geographyReportSql,geographyDetailSql,geographyKeyOrderSql,applyGeographyCoverage} from './geography-sql.ts';
+import {analyticsDimensions,analyticsSelectionFields,type AnalyticsDimension,type AnalyticsDimensionComparison,type AnalyticsDimensionMetrics,type AnalyticsDimensionRow} from '../lib/analytics-dimensions.ts';
+import {parseAdvancedPredicates,type AdvancedPredicates} from './advanced-predicate-input.ts';
+import {advancedPredicateSql} from './advanced-predicates.ts';
+import {analyticsDimensionValueSql} from './analytics-dimensions.ts';
+import {serializeGeographyKey,type GeoField} from '../lib/analytics-geography.ts';
 
 const dayMs = 86_400_000;
 function dateValue(value: string): Date {
@@ -34,8 +39,21 @@ export function analyticsRange(params: URLSearchParams, now = new Date()) {
 }
 
 export function analyticsQuery(params:URLSearchParams,now=new Date()) {
-  for(const key of params.keys())if(!['from','to','compare','geoDetail','geoSearch','geoPeriod',...environmentFields,...geographyFields].includes(key)||params.getAll(key).length!==1)throw new InputError(400,'Use each supported analytics filter only once.');
+  if((params.has('dimension')||params.has('selection'))&&params.toString().length>20000)throw new InputError(400,'The analytics query is too large.');
+  for(const key of params.keys())if(!['from','to','compare','dimension','selection','geoDetail','geoSearch','geoPeriod',...environmentFields,...geographyFields].includes(key)||params.getAll(key).length!==1)throw new InputError(400,'Use each supported analytics filter only once.');
   const compare=params.get('compare');if(compare!==null&&!['prev','yoy'].includes(compare))throw new InputError(400,'Choose previous period or previous year.');
+  const dimension=params.get('dimension');if(dimension!==null&&(!compare||!analyticsDimensions.includes(dimension as AnalyticsDimension)))throw new InputError(400,'Choose a supported comparison dimension and comparison period.');
+  let selection:AdvancedPredicates|undefined,selectionQuery:string|undefined;
+  if(params.has('selection')){
+    const selected=new URLSearchParams(params.get('selection')!);for(const key of selected.keys())if(![...analyticsSelectionFields,'predicates'].includes(key as never)||selected.getAll(key).length!==1)throw new InputError(400,'Use each supported selection filter only once.');
+    let raw:unknown;try{raw=selected.has('predicates')?JSON.parse(selected.get('predicates')!):{version:1,match:'all',fields:[],properties:[]};}catch{throw new InputError(400,'Check the selection filters.');}
+    const fields=analyticsSelectionFields.filter(field=>selected.has(field)).map(field=>({field,operator:'eq',value:selected.get(field)!}));
+    if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&Array.isArray((raw as AdvancedPredicates).fields))raw={...raw,fields:[...(raw as AdvancedPredicates).fields,...fields]};
+    selection=parseAdvancedPredicates(raw);
+    if(selection.match!=='all'||selection.properties.length||selection.sessionProperties?.length||selection.fields.some(f=>!analyticsSelectionFields.includes(f.field as never)||!['eq','exists','missing'].includes(f.operator))||new Set(selection.fields.map(f=>f.field)).size!==selection.fields.length)throw new InputError(400,'Use matching literal, recorded or missing selection fields.');
+    selectionQuery=new URLSearchParams({predicates:JSON.stringify(selection)}).toString();
+    const canonical=new URLSearchParams(params);canonical.set('selection',selectionQuery);if(canonical.toString().length>20000)throw new InputError(400,'The analytics query is too large.');
+  }
   let detail:GeographyDetailIntent|undefined;
   if(params.has('geoDetail')){
     const field=params.get('geoDetail'),period=params.get('geoPeriod')??'current',search=geographySearch(params.get('geoSearch')??'');
@@ -51,14 +69,23 @@ export function analyticsQuery(params:URLSearchParams,now=new Date()) {
   }
   for(const field of geographyFields)if(params.has(field))geographyFilters[field]=params.get(field)!;
   if(!geographyFiltersValid(geographyFilters))throw new InputError(400,'Choose compatible location filters.');
-  return {range:analyticsRange(dates,now),filters,geographyFilters,...compare===null?{}:{compare:compare as AnalyticsComparisonMode},...detail?{detail}:{}};
+  return {range:analyticsRange(dates,now),filters,geographyFilters,...compare===null?{}:{compare:compare as AnalyticsComparisonMode},...detail?{detail}:{},...dimension===null?{}:{dimension:dimension as AnalyticsDimension},...selection?{selection,selectionQuery}:{}};
 }
-export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string):Promise<AnalyticsPeriodReport&{comparison?:AnalyticsComparison;geographyDetail?:GeographyDetail}> {
-  const {range,filters,geographyFilters,compare,detail} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
+export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string):Promise<AnalyticsReport> {
+  const {range,filters,geographyFilters,compare,detail,dimension,selection,selectionQuery} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
   if(compare&&!derived)throw new InputError(400,'Choose a later start date so the comparison stays on or after 1970-01-01.');
-  const client=compare||detail?await getDatabase().pool.connect():null;
+  const client=compare||detail||selection?await getDatabase().pool.connect():null;
+  const values:unknown[]=[projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters),detail?JSON.stringify(detail):null,dimension??null];
+  const predicate=advancedPredicateSql(selection,value=>{values.push(value);return '$'+values.length;},'UTC');
   try{
   if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");}
+  if(client&&(dimension||selection)){
+    const hint=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id;
+    if(!hint)throw new FoundationError(404,'Project not found or unavailable.');
+    // Publication gate shared with native report reads. The aggregation clock and
+    // current key/membership checks run only after this possible authority wait.
+    await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[hint]);
+  }
   // One statement gives totals, buckets and rankings the same database snapshot.
   // ponytail: aggregate the selected range directly; add rollups after measured volume requires them.
   const { rows } = await (client??getDatabase().pool).query(`
@@ -68,20 +95,37 @@ export async function projectAnalytics(projectId: string, userId: string, params
       WHERE k.id=$13::uuid AND k.issuer_user_id=$2 AND m.role IN('owner','admin','editor','viewer') AND 'analytics:read'=ANY(k.scopes)
         AND k.revoked_at IS NULL AND k.expires_at>c.as_of) AS valid),
     target AS MATERIALIZED (
-      SELECT p.analytics_retained_from,p.analytics_settings FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
+      SELECT p.analytics_retained_from,p.analytics_settings,p.origin FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
       CROSS JOIN key_authority k WHERE p.id=$1 AND k.valid
     ), periods AS (SELECT 'current' AS period,$3::timestamptz AS start,$4::timestamptz AS finish,$5::date AS from_day,$6::date AS to_day
-      UNION ALL SELECT 'comparison',$9::timestamptz,$10::timestamptz,$11::date,$12::date WHERE $9::timestamptz IS NOT NULL)
-    SELECT q.period,c.as_of,(SELECT valid FROM key_authority) AS key_valid,r.* FROM periods q CROSS JOIN clock c CROSS JOIN LATERAL (
-    WITH geography_candidates AS MATERIALIZED (
-      SELECT e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions,e.collection_basis,g.geography
-      FROM event e CROSS JOIN target p CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
+      UNION ALL SELECT 'comparison',$9::timestamptz,$10::timestamptz,$11::date,$12::date WHERE $9::timestamptz IS NOT NULL),
+    geography_candidates AS MATERIALIZED (
+      SELECT q.period,e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions,e.collection_basis,g.geography,COALESCE(e.dimensions->>'origin',p.origin) AS origin
+      FROM periods q CROSS JOIN event e CROSS JOIN target p CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
       WHERE e.project_id=$1 AND e.received_at >= q.start AND e.received_at < q.finish
         AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
         AND (NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
         AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
         AND (NOT $7::jsonb ? 'device' OR CASE WHEN $7::jsonb->>'device'='not-recorded' THEN e.dimensions->>'device' IS NULL ELSE e.dimensions->>'device'=$7::jsonb->>'device' END)
-    ), observations AS MATERIALIZED (SELECT * FROM geography_candidates WHERE ${geographyFilterSql('$14::jsonb')}), visits AS (
+    ), all_observations AS MATERIALIZED (SELECT * FROM geography_candidates s WHERE ${geographyFilterSql('$14::jsonb')} AND (${predicate})),
+    dimension_labeled AS MATERIALIZED (SELECT s.*,d.value AS label FROM all_observations s CROSS JOIN LATERAL (SELECT ${analyticsDimensionValueSql('$16::text','s')} AS value) d
+      WHERE $16::text IS NOT NULL AND (CASE WHEN $16='event' THEN event_name<>'page_view' ELSE true END)),
+    dimension_visits AS (SELECT period,label,visitor_id,visit_id,count(*) FILTER(WHERE event_name='page_view') AS pageviews,count(*) FILTER(WHERE event_name<>'page_view') AS custom,
+      extract(epoch FROM max(received_at) FILTER(WHERE event_name='page_view')-min(received_at) FILTER(WHERE event_name='page_view')) AS duration
+      FROM dimension_labeled WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL GROUP BY period,label,visitor_id,visit_id HAVING count(*) FILTER(WHERE event_name='page_view')>0),
+    dimension_measurement AS (SELECT period,label,count(DISTINCT visitor_id) AS visitors,count(*) AS visits,100.0*count(*) FILTER(WHERE pageviews=1 AND custom=0)/NULLIF(count(*),0) AS bounce,avg(duration) AS duration FROM dimension_visits GROUP BY period,label),
+    dimension_counts AS (SELECT period,label,count(*) FILTER(WHERE event_name='page_view') AS pageviews,count(*) FILTER(WHERE event_name<>'page_view') AS custom,count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NOT NULL) AS identified
+      FROM dimension_labeled GROUP BY period,label HAVING CASE WHEN $16='event' THEN count(*) FILTER(WHERE event_name<>'page_view')>0 ELSE count(*) FILTER(WHERE event_name='page_view')>0 END),
+    dimension_groups AS MATERIALIZED (SELECT a.*,m.visitors,m.visits,m.bounce,m.duration FROM dimension_counts a LEFT JOIN dimension_measurement m ON a.period=m.period AND a.label IS NOT DISTINCT FROM m.label),
+    dimension_ranked AS (SELECT *,row_number() OVER(PARTITION BY period ORDER BY CASE WHEN $16='event' THEN custom ELSE visitors END DESC NULLS LAST,pageviews DESC,(CASE WHEN $16 IN ('country','region','city') THEN ${geographyKeyOrderSql('label')} ELSE label::text END) COLLATE "C" ASC NULLS FIRST) AS rank FROM dimension_groups)
+    SELECT q.period,c.as_of,(SELECT valid FROM key_authority) AS key_valid,
+      EXISTS(SELECT 1 FROM dimension_labeled WHERE $16 NOT IN ('country','region','city') AND label IS NOT NULL AND jsonb_typeof(label)<>'string') AS dimension_invalid,
+      (SELECT count(*) FROM dimension_groups WHERE period=q.period) AS dimension_groups,
+      COALESCE((SELECT json_agg(json_build_object('value',a.label,'pageViews',a.pageviews,'customEvents',a.custom,'identifiedPageViews',a.identified,'visitors',a.visitors,'visits',a.visits,'bounceRate',a.bounce,'averageVisitSeconds',a.duration,
+        'counterpart',CASE WHEN b.period IS NULL THEN NULL ELSE json_build_object('pageViews',b.pageviews,'customEvents',b.custom,'identifiedPageViews',b.identified,'visitors',b.visitors,'visits',b.visits,'bounceRate',b.bounce,'averageVisitSeconds',b.duration) END) ORDER BY a.rank)
+        FROM dimension_ranked a LEFT JOIN dimension_groups b ON b.period<>a.period AND b.label IS NOT DISTINCT FROM a.label WHERE a.period=q.period AND a.rank<=20),'[]'::json) AS dimension_rows,r.*
+    FROM periods q CROSS JOIN clock c CROSS JOIN LATERAL (
+    WITH observations AS MATERIALIZED (SELECT * FROM all_observations WHERE period=q.period), visits AS (
       SELECT visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
         count(*) FILTER (WHERE event_name<>'page_view') AS custom,
         extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
@@ -154,9 +198,10 @@ export async function projectAnalytics(projectId: string, userId: string, params
         'method',json_build_object('source','bounded-request-user-agent','device','ua-parser-v1-screen-if-enabled','rawUserAgentStored',false)),
       'geography',${geographyReportSql('$14::jsonb')},'lastReceivedAt',max(received_at)
     ) AS report FROM observations) r ORDER BY CASE q.period WHEN 'current' THEN 0 ELSE 1 END`,
-    [projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters),detail?JSON.stringify(detail):null]);
+    values);
   if(apiKeyId&&!rows[0]?.key_valid)throw new FoundationError(401,'The API key is invalid, expired or unavailable.');
   if(!rows[0]?.allowed)throw new FoundationError(404,'Project not found or unavailable.');
+  if(rows[0].dimension_invalid)throw new FoundationError(503,'Stored dimension data cannot be reported safely. Choose another dimension or more filters.');
   const current=formatReport(rows[0],range);
   let comparison:AnalyticsComparison|undefined;
   if(compare&&derived){
@@ -174,8 +219,29 @@ export async function projectAnalytics(projectId: string, userId: string, params
     const selected=detail.period==='comparison'?comparison!.report:current,raw=rows[detail.period==='comparison'?1:0].geography_detail;
     geographyDetail={version:'native-geography-detail-v1',...detail,range:{from:selected.range.from,to:selected.range.to},generatedAt:(rows[0].as_of as Date).toISOString(),limit:500,...raw,...selected.coverage.status==='unavailable'?{rows:[],matchingGroups:null,matchingPageViews:null,returnedPageViews:null,truncated:false}:{}};
   }
-  if(client)await client.query('COMMIT');return {...current,...comparison?{comparison}:{},...geographyDetail?{geographyDetail}:{}};
-  }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if((compare||detail)&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,detail?'Location search took too long. Choose a shorter date range.':'Comparison took too long. Choose a shorter date range.');throw error;}
+  let dimensionComparison:AnalyticsDimensionComparison|undefined;
+  if(dimension&&comparison){
+    const period=(index:number,report:AnalyticsPeriodReport,other:AnalyticsPeriodReport)=>{
+      const available=report.coverage.status!=='unavailable',comparable=report.coverage.status==='complete'&&other.coverage.status==='complete';
+      const entries:AnalyticsDimensionRow[]=available?rows[index].dimension_rows.map((raw:AnalyticsDimensionMetrics&{value:unknown;counterpart:AnalyticsDimensionMetrics|null})=>{
+        const {value,counterpart:before,...metrics}=raw;
+        const key=geographyFields.includes(dimension as GeoField)?{type:'string' as const,value:serializeGeographyKey(dimension as GeoField,value)!}:value===null?{type:'missing' as const,value:null}:{type:'string' as const,value:value as string};
+        const keyed=dimension!=='event'&&(other.measurement.identifiedPageViews??0)>0,zero:AnalyticsDimensionMetrics={pageViews:0,customEvents:0,identifiedPageViews:0,visitors:keyed?0:null,visits:keyed?0:null,bounceRate:null,averageVisitSeconds:null};
+        const counterpart=other.coverage.status==='unavailable'?{pageViews:null,customEvents:null,identifiedPageViews:null,visitors:null,visits:null,bounceRate:null,averageVisitSeconds:null,present:null}:{...(before??zero),present:before!==null};
+        // An absent category establishes zero retained events, not an identity estimate.
+        const here=dimension==='event'?metrics.customEvents:metrics.visitors,there=dimension==='event'?counterpart.customEvents:counterpart.visitors;
+        const a=index===0?here:there,b=index===0?there:here;
+        const absolute=comparable&&a!==null&&b!==null?a-b:null,percent=absolute!==null&&b!==null&&b>0?100*absolute/b:null;
+        return {...metrics,key,counterpart,change:{absolute,percent}};
+      }):[];
+      return {range:report.range,coverage:report.coverage,identityCoverage:{identifiedPageViews:report.measurement.identifiedPageViews,unidentifiedPageViews:report.measurement.unidentifiedPageViews},totalGroups:available?Number(rows[index].dimension_groups):null,returnedGroups:entries.length,returnedPageViews:available?entries.reduce((n,row)=>n+row.pageViews,0):null,truncated:available&&Number(rows[index].dimension_groups)>20,rows:entries};
+    };
+    dimensionComparison={version:'native-dimension-comparison-v1',field:dimension,metric:dimension==='event'?'custom-events':'estimated-visitors',selection:selectionQuery??null,current:period(0,current,comparison.report),previous:period(1,comparison.report,current),method:{population:'matching-retained-events',ranking:'visitors-pageviews-key-or-custom-events-key',missing:'explorer-typed-key',identity:'project-month-observed-key',changes:'complete-retention-current-minus-previous-previous-denominator'}};
+  }
+  const result={...current,...comparison?{comparison}:{},...geographyDetail?{geographyDetail}:{},...dimensionComparison?{dimensionComparison}:{},...selectionQuery?{selection:selectionQuery}:{}};
+  if((dimension||selection)&&Buffer.byteLength(JSON.stringify(result),'utf8')>2*1024*1024)throw new FoundationError(503,'This comparison is too large. Choose a shorter date range or more filters.');
+  if(client)await client.query('COMMIT');return result;
+  }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if((compare||detail||selection)&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,detail?'Location search took too long. Choose a shorter date range.':'Comparison took too long. Choose a shorter date range.');throw error;}
   finally{client?.release();}
 }
 type RawAnalyticsReport=Omit<AnalyticsPeriodReport,'range'|'coverage'|'daily'>&{daily:{date:string;pageViews:number;customEvents:number}[]};
