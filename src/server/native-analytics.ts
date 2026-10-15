@@ -13,6 +13,7 @@ import {recordIdentityLink} from './identity-links.ts';
 import {analyticsEnvironment} from './analytics-environment.ts';
 import {collectGeography,geographyReadiness} from './analytics-geography.ts';
 import type {GeographyObservation} from '../lib/analytics-geography.ts';
+import {normalizeRevenueProperties} from '../lib/revenue.ts';
 
 const settingsInput = z.object({
   enabled: z.boolean(), consentMode: z.enum(['builtin', 'external']),
@@ -115,7 +116,9 @@ export async function nativeCollectionPolicy(client:PoolClient,request:Request,s
   return {project,userAgent,reason,basis};
 }
 async function writeObservation(client: PoolClient, project: Project, input: Observation, source: 'browser' | 'api', identity: ReturnType<typeof analyticsIdentity>, now: Date|string, identityEvidence:1|null,basis:'consent'|'cookieless'|null, environment?: ReturnType<typeof analyticsEnvironment>,geography?:GeographyObservation|null) {
-  const settings = publicAnalyticsSettings(project.analytics_settings), properties = normalizeProperties(input.properties === undefined ? {} : input.properties), dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
+  const settings = publicAnalyticsSettings(project.analytics_settings), dimensions = normalizeDimensions(input.dimensions === undefined ? {} : input.dimensions);
+  let properties=normalizeProperties(input.properties === undefined ? {} : input.properties);
+  try{properties=normalizeRevenueProperties(input.name,properties);}catch{throw new InputError(400,'Invalid native revenue event.');}
   // Distinct identifiers participate only in keyed identity derivation, never raw storage.
   delete dimensions.distinctId;
   if (!settings.captureReferrer) delete dimensions.referrerHost;

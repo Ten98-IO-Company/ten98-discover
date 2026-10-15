@@ -296,6 +296,19 @@ test('audit Pages query fails closed for repeated, malformed, unknown and unscop
   assert.deepEqual(parseNavigation({...base,auditSearch:'safe',workspace:undefined}),{view:'audits',auditInvalid:'1'});
 });
 
+
+test('Revenue keeps its closed scalar applied query and detail key in one project read view',()=>{
+ const base={workspace,project,view:'revenue'} as const,revenueQuery=new URLSearchParams({from:'2026-10-10',to:'2026-10-12',timeZone:'UTC',currency:'USD'}).toString(),value={...base,revenueQuery,revenueKey:'a'.repeat(64)};assert.deepEqual(parseNavigation(value),value);assert.deepEqual(parseNavigation(parseNavigation(value)),value);assert.equal(canonicalNavigation('?'+new URLSearchParams(value),value),true);assert.notEqual(navigationKey(value),navigationKey({...base,revenueQuery}));assert.equal(projectView('revenue'),true);for(const role of['owner','admin','editor','viewer'])assert.equal(allowedView('revenue',role,false),true);
+ for(const patch of[{revenueQuery:[revenueQuery]},{revenueQuery:''},{revenueKey:'A'.repeat(64)},{revenueKey:'a'.repeat(63)},{revenueQuery:undefined},{project:undefined},{workspace:undefined},{currency:'USD'}])assert.equal(parseNavigation({...value,...patch}).revenueInvalid,'1');assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});
+});
+
+
+test('Revenue detail keys round-trip the installed native router JSON string serializer',async()=>{
+ const{defaultStringifySearch,defaultParseSearch}=await import('@tanstack/react-router');
+ const base={workspace,project,view:'revenue',revenueQuery:new URLSearchParams({from:'2026-10-10',to:'2026-10-12',timeZone:'UTC',currency:'USD'}).toString()} as const;
+ for(const revenueKey of['1'.repeat(64),'1'+'0'.repeat(60)+'e10','0'.repeat(64)]){const value={...base,revenueKey},wire=defaultStringifySearch(value);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),value);assert.equal(canonicalNavigation(wire,value),true);}
+});
+
 test('Attribution keeps a scalar nested applied scope only in its own project read view',()=>{
  const base={workspace,project,view:'attribution'} as const,attributionQuery=new URLSearchParams({from:'2026-10-01',to:'2026-10-10',timeZone:'UTC',model:'first-click',conversionKind:'pageview',conversionValue:'/"true"'}).toString(),value={...base,attributionQuery};
  assert.deepEqual(parseNavigation(value),value);assert.deepEqual(parseNavigation(value),parseNavigation(parseNavigation(value)));assert.equal(canonicalNavigation('?'+new URLSearchParams(value),value),true);assert.notEqual(navigationKey(value),navigationKey(base));assert.equal(projectView('attribution'),true);
