@@ -34,7 +34,7 @@ export async function runAiSearchChecks(){
   for(const table of ['keyword_quote','saved_keyword_refresh_plan','rank_run','rank_config'])assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n,0);
   await pool.query("UPDATE installation SET provider_account_identity=NULL WHERE id='instance'");
   try{await assert.rejects(getProviderAccountIdentityKey(2),rejected);await assert.rejects(assertProviderAccountIdentityReadable(),rejected);await assert.rejects(rotateProviderAccountIdentityEncryption(),rejected);assert.equal((await pool.query("SELECT provider_account_identity FROM installation WHERE id='instance'")).rows[0].provider_account_identity,null);}finally{await pool.query("UPDATE installation SET provider_account_identity=$1 WHERE id='instance'",[capsule]);}
-  assert.equal(await getProviderAccountIdentityKey(2),originalKey);console.log('PASS schema43 current and AI-only immutable recovery binding');
+  assert.equal(await getProviderAccountIdentityKey(2),originalKey);console.log('PASS current schema and AI-only immutable recovery binding');
   const checks=await pool.connect();try{
    await checks.query('BEGIN');await checks.query('ALTER TABLE ai_search_quote RENAME TO ai_search_quote_fixture_hidden');await assert.rejects(initializeProviderAccountIdentity(checks),rejected);await checks.query('ROLLBACK');
    await checks.query('BEGIN');const bad=async(sql:string,values:unknown[]=[],code='23514',constraint?:string)=>{await checks.query('SAVEPOINT invalid');await assert.rejects(checks.query(sql,values),e=>!!e&&typeof e==='object'&&'code'in e&&e.code===code&&(!constraint||'constraint'in e&&e.constraint===constraint));await checks.query('ROLLBACK TO SAVEPOINT invalid');};

@@ -33,7 +33,7 @@ button { touch-action: manipulation; }
 :focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; border-radius: 4px; }
 .shell { display: grid; grid-template-columns: var(--sidebar-width) minmax(0,1fr); min-height: 100vh; }
 .side { --control-md: var(--control-touch); display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; height: 100dvh; min-inline-size: 0; overflow-y: auto; background: var(--color-surface-subtle); border-inline-end: 1px solid var(--line); padding: var(--space-4); }
-.brand-row { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
+.brand-row { display: flex; flex-wrap: wrap; flex-shrink: 0; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
 .brand { display: flex; gap: 10px; align-items: center; margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.6px; line-height: 1.15; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: var(--color-on-accent); background: var(--blue); font-size: 17px; letter-spacing: -1px; }
 .brand-product { display: block; color: var(--muted); font-size: var(--text-xs); letter-spacing: 1.4px; font-weight: 500; margin-top: 3px; }
@@ -117,7 +117,7 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .banner { background: var(--amber-tint); border: 1px solid var(--color-warning); }
 .alert { background: var(--red-tint); border: 1px solid var(--color-danger); color: var(--danger); }
 .notice { background: var(--blue-tint); border: 1px solid var(--color-accent); color: var(--blue); }
-.google-reports .stack { display: grid; gap: 14px; }
+.google-reports .stack { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
 .research-panel { min-width: 0; overflow-wrap: anywhere; }
 .research-panel .stack { display: grid; gap: 14px; min-width: 0; }
 .research-panel .stack > p, .research-panel .stack > h3 { margin: 0; }
@@ -197,7 +197,9 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .conversion-bar span { display: block; height: 100%; background: var(--blue); }
 .conversion-witness { padding: 14px 0; border-top: 1px solid var(--line); }
 .conversion-witness li { margin-bottom: 12px; }
+.google-reports { --control-md: var(--control-touch); }
 .google-reports .field, .google-reports .stack > p { margin: 0; }
+.google-reports .field { min-inline-size: 0; }
 .google-connect > summary { min-height: var(--control-touch); padding: 9px 0; cursor: pointer; font-weight: 600; }
 .google-connect[open] > summary { margin-bottom: 14px; }
 .google-connection h2 { margin: 0; }
