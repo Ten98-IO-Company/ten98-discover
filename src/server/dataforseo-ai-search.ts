@@ -3,6 +3,7 @@ import {dataforseoJson,type DataforseoResponse} from './dataforseo-transport.ts'
 import {providerMicros,microUsd,validText} from './keyword-research-input.ts';
 import {parseKeywordAccount} from './dataforseo-keywords.ts';
 import {normalizeDfsChatgptSearchEvidence,type SearchEvidence} from './ai-search-evidence.ts';
+import {canonicalHash} from './context-input.ts';
 
 const own=(o:Record<string,unknown>,key:string)=>Object.hasOwn(o,key);
 const object=(v:unknown):v is Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -92,9 +93,46 @@ export async function requestAiSearch(credentials:unknown,raw:unknown,id:string,
  try{return parseAiSearchOutcome(await dataforseoJson(aiSearchEndpoints.live,credentials,'POST',[payload],send),request,id);}
  catch{return unknown(null,'transport_unverified');}
 }
-export function parseAiSearchReconciliation(response:DataforseoResponse,raw:unknown,id:string){
+export type AiSearchReceiptBinding={profileId:typeof aiSearchProfileId;runId:string;payloadHash:string;dispatchedAt:string;asOf:string;providerTaskId?:string|null};
+const stamp=(time:number)=>new Date(time).toISOString().slice(0,19).replace('T',' ')+' +00:00';
+function receiptBinding(raw:unknown):AiSearchReceiptBinding{
+ if(!object(raw)||Object.keys(raw).some(k=>!['profileId','runId','payloadHash','dispatchedAt','asOf','providerTaskId'].includes(k))||
+  !['profileId','runId','payloadHash','dispatchedAt','asOf'].every(k=>own(raw,k))||raw.profileId!==aiSearchProfileId||!uuid(raw.runId)||
+  typeof raw.payloadHash!=='string'||!/^[a-f0-9]{64}$(?![\s\S])/.test(raw.payloadHash)||typeof raw.dispatchedAt!=='string'||typeof raw.asOf!=='string'||
+  ![raw.dispatchedAt,raw.asOf].every(s=>{const n=new Date(s);return Number.isFinite(n.getTime())&&n.toISOString()===s;})||
+  own(raw,'providerTaskId')&&raw.providerTaskId!==null&&!uuid(raw.providerTaskId))invalid();
+ const age=new Date(raw.asOf).getTime()-new Date(raw.dispatchedAt).getTime();
+ // An early clipped page cannot rule out a later duplicate within the dispatch
+ // window. Wait for the whole150s paid transport window before proving a charge.
+ if(age<150_000||age>28*86400000)invalid();return raw as AiSearchReceiptBinding;
+}
+function receiptPayload(metadata:unknown,id:string){
+ if(!object(metadata)||!own(metadata,'keyword')||typeof metadata.keyword!=='string')invalid();
+ // Reverse only this profile's escapes, not URI decoding: literal%20 must stay
+ // literal%20. Canonical forward round-trip rejects alternate/added wire fields.
+ const request=aiSearchRequestSchema.parse({profileId:aiSearchProfileId,capturedPrompt:metadata.keyword.replaceAll('%2B','+').replaceAll('%25','%'),locationCode:metadata.location_code,languageCode:metadata.language_code});
+ if(!matchesPayload(metadata,request,id))invalid();return aiSearchPayload(request,id);
+}
+function chargeRow(row:unknown){
+ if(!object(row)||!own(row,'id')||!uuid(row.id)||!own(row,'status')||typeof row.status!=='string'||!/^\d{5}$(?![\s\S])/.test(row.status)||!finalTaskStatuses.has(Number(row.status))||!own(row,'cost'))invalid();
+ return {providerTaskId:row.id,costUsd:microUsd(providerMicros(row.cost)),statusCode:Number(row.status)};
+}
+export function parseAiSearchReconciliation(response:DataforseoResponse,raw:unknown,id?:string){
+ if(id===undefined){
+  const binding=receiptBinding(raw),at=new Date(binding.dispatchedAt).getTime(),rows=resultRows(response,aiSearchEndpoints.reconciliation,1000);
+  if(rows.length===1000)invalid();const {task}=envelope(response,aiSearchEndpoints.reconciliation),data=task.data;
+  if(!object(data)||Object.keys(data).some(k=>!['api','function','datetime_from','datetime_to','limit','offset','sort','include_metadata'].includes(k))||
+   !['datetime_from','datetime_to','limit','offset','sort','include_metadata'].every(k=>own(data,k))||
+   own(data,'api')&&data.api!=='ai_optimization'||own(data,'function')&&data.function!=='id_list'||
+   data.datetime_from!==stamp(at-60_000)||data.datetime_to!==stamp(at+150_000)||data.limit!==1000||data.offset!==0||data.sort!=='asc'||data.include_metadata!==true)invalid();
+  const tag='ten98:ai-search:'+binding.runId;
+  // Count every same-tag row, including contradictory metadata, before matching.
+  const matches=rows.filter(row=>object(row)&&own(row,'metadata')&&object(row.metadata)&&own(row.metadata,'tag')&&row.metadata.tag===tag);
+  if(matches.length!==1)invalid();const row=matches[0];if(!object(row)||!own(row,'url')||row.url!==pathFor(aiSearchEndpoints.live).join('/')||!own(row,'datetime_posted'))invalid();
+  const posted=observedAt(row.datetime_posted);if(posted===null||new Date(posted).getTime()<at-60_000||new Date(posted).getTime()>at+150_000||canonicalHash(receiptPayload(row.metadata,binding.runId))!==binding.payloadHash)invalid();
+  const charge=chargeRow(row);if(binding.providerTaskId!=null&&charge.providerTaskId!==binding.providerTaskId)invalid();return charge;
+ }
  const request=aiSearchRequestSchema.parse(raw);aiSearchPayload(request,id);const rows=resultRows(response,aiSearchEndpoints.reconciliation,1000);if(rows.length===1000)invalid();
  const matches=rows.filter(row=>object(row)&&own(row,'url')&&row.url===pathFor(aiSearchEndpoints.live).join('/')&&own(row,'metadata')&&matchesPayload(row.metadata,request,id));
- if(matches.length!==1)invalid();const row=matches[0];if(!object(row)||!own(row,'id')||!uuid(row.id)||!own(row,'status')||typeof row.status!=='string'||!/^\d{5}$(?![\s\S])/.test(row.status)||!finalTaskStatuses.has(Number(row.status))||!own(row,'cost'))invalid();
- return {providerTaskId:row.id,costUsd:microUsd(providerMicros(row.cost)),statusCode:Number(row.status)};
+ if(matches.length!==1)invalid();return chargeRow(matches[0]);
 }

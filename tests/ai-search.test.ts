@@ -4,7 +4,13 @@ import {randomUUID} from 'node:crypto';
 import {aiSearchProfileId,aiSearchEndpoints,aiSearchPayload,aiSearchPriceEvidence,aiSearchRequestSchema} from '../src/lib/ai-search.ts';
 import {parseAiSearchCountries,parseAiSearchLanguages,assertAiSearchMarket,parseAiSearchAccount,parseAiSearchOutcome,requestAiSearch,parseAiSearchReconciliation} from '../src/server/dataforseo-ai-search.ts';
 import {dataforseoJson} from '../src/server/dataforseo-transport.ts';
-import {deriveSearchQueries,normalizeDfsChatgptSearchEvidence} from '../src/server/ai-search-evidence.ts';
+import {deriveSearchQueries,normalizeDfsChatgptSearchEvidence,readSearchEvidence} from '../src/server/ai-search-evidence.ts';
+import {canonicalHash} from '../src/server/context-input.ts';
+import {initializeProviderAccountIdentity} from '../src/server/provider-account-identity.ts';
+import {providerTransaction} from '../src/server/providers.ts';
+import {dispatchSpend} from '../src/server/spending.ts';
+import {getDatabase,closeDatabase} from '../src/server/db.ts';
+import type {PoolClient} from 'pg';
 
 const id=randomUUID(),reference=randomUUID(),request={profileId:aiSearchProfileId,capturedPrompt:'Best C++ %20 shoes',locationCode:2840,languageCode:'en'},now=new Date('2026-10-15T09:00:00Z');
 const credentials={login:'synthetic@example.invalid',password:'synthetic-only'};
@@ -133,4 +139,45 @@ test('catalog limits and free-envelope failures are closed rather than silently 
  const countries=Array.from({length:301},(_,i)=>({location_code:i+1,location_name:'Country '+i,location_type:'Country',country_iso_code:String.fromCharCode(65+Math.floor(i/26),65+i%26)}));assert.throws(()=>parseAiSearchCountries(free(aiSearchEndpoints.locations,countries)));
  const sparse=new Array(250001);assert.throws(()=>parseAiSearchCountries(free(aiSearchEndpoints.locations,sparse)));
  for(const change of ['tasks','cost','path','count']){const raw=free(aiSearchEndpoints.languages,[languages[0]]) as any;if(change==='tasks')raw.body.tasks_count=2;if(change==='cost')raw.body.tasks[0].cost=0.004;if(change==='path')raw.body.tasks[0].path.push('unexpected');if(change==='count')raw.body.tasks[0].result_count=2;assert.throws(()=>parseAiSearchLanguages(raw));}
+});
+test('retained receipt proves charge after raw prompt purge only with complete exact dispatch-window evidence',()=>{
+ const binding={profileId:aiSearchProfileId,runId:id,payloadHash:canonicalHash(aiSearchPayload(request,id)),dispatchedAt:'2026-10-15T08:57:00.000Z',asOf:'2026-10-15T09:00:00.000Z',providerTaskId:reference};
+ const row={id:reference,status:'20000',cost:0.004,url:path(aiSearchEndpoints.live).join('/'),metadata:aiSearchPayload(request,id),datetime_posted:'2026-10-15 08:57:00 +00:00'};
+ function page(rows:unknown[]=[row]){const raw=free(aiSearchEndpoints.reconciliation,rows) as any;raw.body.tasks[0].data={api:'ai_optimization',function:'id_list',datetime_from:'2026-10-15 08:56:00 +00:00',datetime_to:'2026-10-15 08:59:30 +00:00',limit:1000,offset:0,sort:'asc',include_metadata:true};return raw;}
+ const parse=parseAiSearchReconciliation as unknown as (response:unknown,binding:unknown)=>unknown;
+ assert.deepEqual(parse(page(),binding),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
+ for(const patch of [{profileId:'other'},{payloadHash:'0'.repeat(64)},{providerTaskId:randomUUID()},{asOf:'2026-10-15T08:59:29.999Z'},{dispatchedAt:'2026-09-01T08:57:00.000Z'},{rawPrompt:request.capturedPrompt}])assert.throws(()=>parse(page(),{...binding,...patch}));
+ for(const rows of [[row,row],[{...row,metadata:{...row.metadata,max_output_tokens:100000}}],[row,{...row,metadata:{...row.metadata,keyword:'different'}}],[{...row,datetime_posted:'2026-10-15 08:55:59 +00:00'}],[{...row,datetime_posted:'2026-10-15 08:59:31 +00:00'}],[{...row,datetime_posted:'2026-02-30 08:57:00 +00:00'}]])assert.throws(()=>parse(page(rows),binding));
+ for(const patch of [{offset:1000},{limit:1},{include_metadata:false},{datetime_to:'2026-10-15 08:59:00 +00:00'},{priority:2}]){const raw=page();Object.assign(raw.body.tasks[0].data,patch);assert.throws(()=>parse(raw,binding));}
+ const defaults=page();Object.assign(defaults.body.tasks[0].result[0].metadata,{api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',device:'desktop',os:'windows'});assert.deepEqual(parse(defaults,binding),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
+ assert.equal(Object.hasOwn(parse(page(),binding) as object,'metadata'),false);assert.equal(Object.hasOwn(binding,'capturedPrompt'),false);
+});
+test('AI-only account recovery fails closed and historical pre42 checks never query an absent relation',async()=>{
+ async function check(relation:{present:boolean;applied:boolean},aiOnly:boolean){
+  const statements:string[]=[];
+  const client={query:async(sql:string)=>{statements.push(sql);if(sql.includes('FROM installation'))return {rows:[{provider_account_identity:null}]};if(sql.includes('to_regclass'))return {rows:[relation]};if(sql.startsWith('SELECT\n'))return {rows:[{present:aiOnly?sql.includes('FROM ai_search_quote'):true,modern:aiOnly?sql.includes('FROM ai_search_quote'):true}]};throw Error('Unexpected write or statement');}} as unknown as PoolClient;
+  await assert.rejects(initializeProviderAccountIdentity(client),e=>!!e&&typeof e==='object'&&'status'in e&&e.status===503);
+  assert.equal(statements.some(s=>s.startsWith('UPDATE')),false);return statements;
+ }
+ const modern=await check({present:true,applied:true},true);assert.equal(modern.some(s=>s.includes('OR EXISTS(SELECT 1 FROM ai_search_quote)')),true);
+ const historical=await check({present:false,applied:false},false);assert.equal(historical.some(s=>s.includes('FROM ai_search_quote')),false);
+ const corrupt=await check({present:false,applied:true},true);assert.equal(corrupt.length,2);assert.equal(corrupt.some(s=>s.includes('FROM ai_search_quote')),false);
+});
+test('provider deadlines are explicit only and precede the first workspace lock without changing defaults',async()=>{
+ const names=['APP_URL','DATABASE_URL','AUTH_SECRET','BOOTSTRAP_TOKEN','ANALYTICS_NETWORK_MODE'] as const,saved=Object.fromEntries(names.map(k=>[k,process.env[k]]));
+ Object.assign(process.env,{APP_URL:'http://localhost:3099',DATABASE_URL:'postgres://127.0.0.1:55501/ten98_ai_search_unit',AUTH_SECRET:'a'.repeat(64),BOOTSTRAP_TOKEN:'b'.repeat(64),ANALYTICS_NETWORK_MODE:'off'});
+ const pool=getDatabase().pool,connect=pool.connect,workspace=randomUUID(),user=randomUUID(),request=randomUUID();let statements:string[]=[];
+ const client={release(){},query:async(sql:string)=>{statements.push(sql);if(sql.includes('SELECT role FROM membership'))return{rows:[{role:'editor'}]};if(sql.includes('SELECT * FROM provider_request'))return{rows:[{id:request,workspace_id:workspace,user_id:user,status:'reserved',connection_id:randomUUID(),connection_revision:1,estimate_micros:'4000'}]};if(sql.includes('SELECT paused'))return{rows:[{paused:false,month:'2026-10-01'}]};if(sql.includes('SELECT monthly_limit_micros'))return{rows:[{monthly_limit_micros:'1000000',revoked_at:null,revision:1}]};if(sql.includes('AS connection'))return{rows:[{connection:'0',uncertain:0}]};return{rows:[]};}};
+ pool.connect=(async()=>client) as unknown as typeof pool.connect;
+ try{
+  await providerTransaction(workspace,user,['editor'],async()=>{});assert.deepEqual(statements,['BEGIN','SELECT id FROM workspace WHERE id=$1 FOR UPDATE','SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2','COMMIT']);
+  statements=[];await dispatchSpend(workspace,user,request,async()=>{statements.push('PREPARE');},'5s');assert.equal(statements[0],'BEGIN');assert.equal(statements[1],"SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");assert.equal(statements[2],'SELECT id FROM workspace WHERE id=$1 FOR UPDATE');assert.ok(statements.indexOf('PREPARE')>2);assert.equal(statements.at(-1),'COMMIT');
+  statements=[];await dispatchSpend(workspace,user,request);assert.equal(statements.some(s=>s.startsWith('SET LOCAL')),false);
+ }finally{pool.connect=connect;await closeDatabase();for(const name of names)if(saved[name]===undefined)delete process.env[name];else process.env[name]=saved[name];}
+});
+test('closed retained evidence reads independently of the separate word derivation ceiling',()=>{
+ const word=(n:number)=>'a'+Array.from({length:4},(_,i)=>String.fromCharCode(97+Math.floor(n/26**i)%26)).join(''),words=Array.from({length:30000},(_,i)=>word(i));
+ const evidence=normalizeDfsChatgptSearchEvidence({markdown:'Synthetic answer',fan_out_queries:Array.from({length:100},(_,i)=>words.slice(i*300,(i+1)*300).join(' '))});
+ assert.deepEqual(readSearchEvidence(evidence),evidence);assert.throws(()=>deriveSearchQueries({evidence,capturedPrompt:'Synthetic immutable prompt',subjects:[],method:'unicode-boundary-v1'}));
+ assert.throws(()=>readSearchEvidence({...evidence,extra:true}));assert.throws(()=>readSearchEvidence({...evidence,queries:{state:'reported',values:[4]}}));
 });

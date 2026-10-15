@@ -58,6 +58,7 @@ import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAud
 import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
 import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
 import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
+import {getAiSearch,getAiSearchRun,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -562,6 +563,26 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
+    const aiSearchRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search(?:/(catalog/refresh|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
+    if(aiSearchRoute){
+      const[,projectId,action,runId,runAction]=aiSearchRoute;
+      await projectAccess(projectId,user.id,request.method!=='GET');await limit(`ai-search:${user.id}`,30);
+      if(request.method==='GET'){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')!=='0')throw new FoundationError(400,'Search capture reads do not accept a body.');
+        if(!action)return json(await getAiSearch(projectId,user.id,url.searchParams));
+        if(action==='runs'&&runId&&!runAction){if(url.search)throw new FoundationError(400,'This capture does not accept query parameters.');return json(await getAiSearchRun(projectId,user.id,runId));}
+      }
+      if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'Search capture actions do not accept query parameters.');
+        await limit(`ai-search-write:${user.id}`,10);const input=await readJson(request,4096);
+        if(action==='catalog/refresh'&&!runId){await limit(`ai-search-catalog:${projectId}`,3);return json(await refreshAiSearchCatalog(projectId,user.id,input));}
+        if(action==='quote'&&!runId)return json(await quoteAiSearch(projectId,user.id,input));
+        if(action==='runs'&&!runId){const result=await startAiSearch(projectId,user.id,input);return json(result,result.replayed?200:202);}
+        if(action==='runs'&&runId&&runAction==='cancel')return json(await cancelAiSearch(projectId,user.id,runId,input));
+        if(action==='runs'&&runId&&runAction==='reconcile'){await limit(`ai-search-reconcile:${projectId}`,3);return json(await reconcileAiSearch(projectId,user.id,runId,input));}
+      }
+      return json({error:'Method not allowed.'},405);
+    }
     const keywordRoute=path.match(new RegExp(`^/api/projects/(${id})/keyword-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
     if(keywordRoute){
       const [,projectId,action,runId,runAction]=keywordRoute;
@@ -837,6 +858,7 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     return json({ error: 'Route unavailable.' }, 404);
   } catch (error) {
+    if(error instanceof FoundationError&&['AI_SEARCH_BUSY','AI_SEARCH_DEADLINE'].includes((error as FoundationError&{code?:string}).code??''))return json({error:error.message},error.status,{...cors,'retry-after':'5'});
     if (error instanceof FoundationError || error instanceof InputError) return json({ error: error.message }, error.status, cors);
     if (error instanceof z.ZodError) return json({ error: 'Check the submitted fields and try again.' }, 400, cors);
     const code = (error as { code?: string })?.code;
