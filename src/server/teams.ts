@@ -162,6 +162,28 @@ export async function changeRole(workspaceId: string, userId: string, targetUser
   });
 }
 
+/** Promote an existing member and demote this owner in the same workspace transaction. */
+export async function transferOwnership(workspaceId: string, userId: string, input: unknown) {
+  parse(idInput, workspaceId); parse(idInput, userId);
+  const { targetUserId, confirmationEmail } = parse(z.object({ targetUserId: idInput, confirmationEmail: emailInput }).strict(), input);
+  if (targetUserId === userId) throw new FoundationError(400, 'Choose another existing workspace member.');
+  return transaction(async (client) => {
+    await lockWorkspace(client, workspaceId);
+    if (await managerRole(client, workspaceId, userId) !== 'owner') throw new FoundationError(403, 'Only a current owner can transfer ownership.');
+    const target = await client.query<{ email: string }>(
+      'SELECT u.email FROM membership m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 AND m.user_id=$2', [workspaceId, targetUserId],
+    );
+    if (!target.rows[0]) throw new FoundationError(404, 'Member not found or unavailable.');
+    if (target.rows[0].email.toLowerCase() !== confirmationEmail) throw new FoundationError(409, 'The confirmation email does not match this member. Refresh the team and check the email.');
+    const changed = await client.query(
+      "UPDATE membership SET role=CASE WHEN user_id=$2 THEN 'owner' ELSE 'admin' END WHERE workspace_id=$1 AND user_id IN ($2,$3)", [workspaceId, targetUserId, userId],
+    );
+    if (changed.rowCount !== 2) throw new FoundationError(409, 'Team membership changed. Refresh the team before trying again.');
+    await client.query("DELETE FROM workspace_invitation WHERE workspace_id=$1 AND inviter_id=$2 AND role='admin'", [workspaceId, userId]);
+    return { ok: true, role: 'admin' as const, ownerUserId: targetUserId };
+  });
+}
+
 export async function removeMember(workspaceId: string, userId: string, targetUserId: string): Promise<void> {
   parse(idInput, workspaceId); parse(idInput, userId); parse(idInput, targetUserId);
   await transaction(async (client) => {

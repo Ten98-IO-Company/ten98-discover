@@ -27,7 +27,7 @@ import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from '
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
-import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation } from './teams.ts';
+import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider, saveProviderLimit } from './providers.ts';
@@ -62,6 +62,8 @@ import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
 import {getAiSearch,getAiSearchRun,getAiSearchAnalysis,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,cancelAiSearch,reconcileAiSearch} from './ai-search.ts';
 import {getContentCoverage,exportContentCoverage,getProjectContentCoverage,exportProjectContentCoverage} from './ai-content-coverage.ts';
+import {getContentSupport,getContentSupportRun,quoteContentSupport,startContentSupport,cancelContentSupport,exportContentSupport} from './ai-content-support.ts';
+import {reconcileContentSupport} from './ai-content-support-worker.ts';
 import {getPromptInsights,exportPromptInsights} from './prompt-insights.ts';
 import {getPromptInsightsComparison,exportPromptInsightsComparison} from './prompt-insights-comparison.ts';
 import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
@@ -580,6 +582,26 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
+    const contentSupportRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-content-support(?:/(quote|runs)(?:/(${id})(?:/(cancel|reconcile|export))?)?)?$`,'i'));
+    if(contentSupportRoute){
+      const [,projectId,action,runId,operation]=contentSupportRoute;
+      await projectAccess(projectId,user.id,false);await limit(`ai-content-support:${user.id}`,30);
+      if(request.method==='GET'){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'This read does not accept a body.');
+        if(!action||action==='runs'&&!runId)return json(await getContentSupport(projectId,user.id,url.searchParams));
+        if(url.search)throw new FoundationError(400,'This assessment detail does not accept query parameters.');
+        if(action==='runs'&&runId&&!operation)return json(await getContentSupportRun(projectId,user.id,runId));
+      }else if(request.method==='POST'){
+        if(url.search)throw new FoundationError(400,'This assessment action does not accept query parameters.');
+        if(operation==='export'&&runId)return await exportContentSupport(projectId,user.id,runId,await readJson(request,2048),request.signal);
+        await limit(`ai-content-support-write:${user.id}`,10);
+        if(action==='quote'&&!runId)return json(await quoteContentSupport(projectId,user.id,await readJson(request,32768)));
+        if(action==='runs'&&!runId)return json(await startContentSupport(projectId,user.id,await readJson(request,2048)),202);
+        if(action==='runs'&&runId&&operation==='cancel')return json(await cancelContentSupport(projectId,user.id,runId,await readJson(request,2048)));
+        if(action==='runs'&&runId&&operation==='reconcile'){await limit(`ai-content-support-reconcile:${projectId}`,3);return json(await reconcileContentSupport(projectId,user.id,runId,await readJson(request,2048)));}
+      }
+      return json({error:'Method not allowed.'},405);
+    }
     const projectContentCoverageRoute=path.match(new RegExp(`^/api/projects/(${id})/ai-search/content-coverage/project(?:/(export))?$`,'i'));
     if(projectContentCoverageRoute){
       if(request.method!=='POST')return json({error:'Method not allowed.'},405);
@@ -767,7 +789,7 @@ export async function handleApi(request: Request): Promise<Response> {
       const { rows } = await getDatabase().pool.query('SELECT w.id,w.name,m.role FROM workspace w JOIN membership m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.created_at,w.id', [user.id]);
       return json({ user: { id: user.id, name: user.name, email: user.email }, instanceOperator: await isInstanceOperator(user.id), workspaces: rows });
     }
-    let match = path.match(new RegExp(`^/api/workspaces/(${id})/(team|rename|invitations)$`, 'i'));
+    let match = path.match(new RegExp(`^/api/workspaces/(${id})/(team|rename|invitations|transfer-ownership)$`, 'i'));
     if (match) {
       if (request.method === 'GET' && match[2] === 'team') {
         const result = await getTeam(match[1], user.id);
@@ -776,6 +798,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       if (request.method === 'POST') {
         await limit(`team:${user.id}`, 60);
+        if (match[2] === 'transfer-ownership') return json(await transferOwnership(match[1], user.id, await readJson(request)));
         if (match[2] === 'rename') return json(await renameWorkspace(match[1], user.id, await readJson(request)));
         if (match[2] === 'invitations') {
           const result = await inviteMember(match[1], user.id, await readJson(request));

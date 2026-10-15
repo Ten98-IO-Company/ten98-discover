@@ -32,6 +32,17 @@ const promptRead='Prompt library only. Each query parameter is allowed once. No 
 const promptWrite='Atomic authored change only; does not execute a prompt. Strict JSON body, maximum 262144 UTF-8 bytes. Reuse requestId only for the same normalized request. Replays return current prompt DTOs, not an immutable historical response. Current key authority is checked after lock admission and before commit; expired writes roll back. Per-statement and lock waits are each bounded to 5 seconds, not a total-request deadline.';
 export const nativeOpenApi={
  openapi:'3.1.2',info:{title:'ten98-monitor native API',version:'0.0.0-foundation',description:'Implemented bearer operations only; incomplete V1 inventory. Browser-only, public tracker and paid provider operations are not exposed by this document. Nested responses intentionally use broad schemas; consult technical contracts.'},servers:[{url:'/'}],
+ // Browser inventory is deliberately separate from the bearer paths/scopes.
+ 'x-ten98-browser-operations':{
+  '/api/projects/{projectId}/ai-content-support':{get:{summary:'Current-member setup and retained history',query:'Optional single cursor; no body',response:'ai-content-support-list-v1'}},
+  '/api/projects/{projectId}/ai-content-support/quote':{post:{summary:'Owner evaluation quote; no inference',body:'contentSupportQuoteInputSchema in src/lib/ai-content-support.ts',bodyMaxBytes:32768,response:'ai-content-support-quote-v1'}},
+  '/api/projects/{projectId}/ai-content-support/runs':{get:{summary:'Current-member retained history',query:'Optional single cursor; no body'},post:{summary:'One owner-authorized reservation and retryLimit0 job',body:{quoteId:uuid,requestId:uuid},bodyMaxBytes:2048,response:'ai-content-support-run-v1',status:202}},
+  '/api/projects/{projectId}/ai-content-support/runs/{runId}':{get:{summary:'Current-member retained result and immutable charge identity',query:'None',response:'ai-content-support-run-v1'}},
+  '/api/projects/{projectId}/ai-content-support/runs/{runId}/cancel':{post:{summary:'Owner cancellation before dispatch only',body:{requestId:uuid},bodyMaxBytes:2048}},
+  '/api/projects/{projectId}/ai-content-support/runs/{runId}/reconcile':{post:{summary:'Owner metadata-only recovery of original generation and key; no resend',body:{requestId:uuid},bodyMaxBytes:2048}},
+  '/api/projects/{projectId}/ai-content-support/runs/{runId}/export':{post:{summary:'Current-member fresh CSV with four current receipt checks',body:'contentSupportExportInputSchema in src/lib/ai-content-support.ts',bodyMaxBytes:2048,responseMaxBytes:2097152}},
+  authority:'Native browser session; POST Origin must equal APP_URL. No paid API-key scope. Mixed cookie/Bearer400, bare Bearer403. Strict fields; no client evidence bodies, credentials or estimates. Owner-only evaluation is temporary, not a subscription entitlement. See docs/ai-insights.md.',
+ },
  paths:{
   '/api/workspaces/{workspaceId}/projects':{get:operation('listProjects','projects:read','List accessible workspace projects',w),post:operation('createProject','projects:write','Create a project',w,'ProjectInput','201',broad,'Maximum 8192 body bytes. This operation has no request receipt; a retry can create another project.')},
   '/api/workspaces/{workspaceId}/team':{get:operation('readTeam','team:read','Read workspace team',w,undefined,'200',broad,'Current owner/admin authority required.')},

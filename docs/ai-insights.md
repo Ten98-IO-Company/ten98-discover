@@ -183,3 +183,60 @@ explicit DST and exact microsecond-boundary checks cover this distinction.
 
 The receipt controller also remembers expiry learned from a run summary before
 loading its detail, so a later stale response cannot redisplay a known-expired answer.
+
+## Closed-corpus semantic content support (C3)
+
+The browser-only `/api/projects/:projectId/ai-content-support` family separates
+model judgments from brand mentions and the free literal website-text check.
+There is no paid entitlement. The current writer gate is owner-only evaluation;
+all current member roles can read retained results and request a fresh export.
+Model quality remains unverified, including when every citation has valid provenance.
+
+`GET /` and `GET /runs` return setup/history with one optional cursor;
+`GET /runs/:runId` returns the current retained detail. `POST /quote` accepts the
+strict `contentSupportQuoteInputSchema` (32 KiB whole body): explicit connection,
+model, funded-credit/evaluation acknowledgments, positive `maxSpendUsd`, an exact
+capture or current applied project selection, both query/corpus receipts, 1–5
+query IDs and 1–20 selected page IDs. It accepts no text bodies, costs, keys or
+provider-routing overrides. The server materializes only those complete bodies,
+at most64 KiB; messages+schema128 KiB, wire request160 KiB and output2048 tokens.
+The complete project population is checked before selecting IDs, including keys
+outside presentation cuts. Quotes do not send an inference.
+
+`POST /runs` takes only `{quoteId,requestId}` and atomically reserves the verified
+ceiling, creates one run and queues one job with retryLimit0. The quote lasts five
+minutes, measured by native SQL time after waits. Current owner/source receipts,
+original source clocks, key identity, connection revision, exact model/provider
+route and conservative prices are rechecked before dispatch. The editable
+connection monthly cap, master pause and any uncertain workspace charge apply;
+there is no additional app-wide cap. `POST /runs/:runId/cancel` takes `requestId`
+and cancels only unsent work. A dispatched request is never automatically retried.
+
+The existing provider transport persists an actual generation header before body
+parsing. Known charges settle even when output is refused, incomplete, too large,
+invalid, or current authority changed. An unknown charge stays `actualUsd:null`,
+marks the run uncertain and pauses further spending. `POST /runs/:runId/reconcile`
+with a stable `requestId` reads only the original generation metadata, requiring
+the original key/model/provider/session/actor/time identity. It can reconcile after
+source purge, never recreates text and leaves spending paused for owner review.
+
+Inputs/results inherit the earliest original query-quote and audit completion
+retention clocks; a new quote/response does not renew them. Policy shortening
+atomically latches every due copy under the old/new minimum before commit. Expiry
+is irreversible after extension; physical cleanup is at most100 inputs and100
+results per project tick. Source deletion/revocation or changed receipts mask
+content while financial hashes, route and generation identity remain recoverable.
+
+`POST /runs/:runId/export` takes the actual payload/result/query/corpus hashes.
+It rechecks current membership/source twice around CSV generation. The complete
+CSV is at most2 MiB, uses existing formula-safe escaping and exposes only selected
+query judgments and exact cited spans, never full page bodies. Hash and row-count
+headers accompany the exact content length; responses are no-store. Browser POSTs
+require the configured application Origin. Bare API keys cannot invoke this
+purpose; mixed cookie+Bearer is400 and bare Bearer is403. Request IDs replay only
+identical normalized actor/body operations, returning current safe DTOs.
+
+Backend code is not release acceptance: native fake-provider financial/security
+tests, broader writer admission, UI, held-out multilingual quality evaluation and
+compiled/resource/regression gates are separate required checks. No live API
+allowance is implied by this implementation or by a successful synthetic test.

@@ -79,21 +79,21 @@ export async function googleAdsCustomer(accessToken: string, app: App, customerI
   if (result.id !== customerId) throw new FoundationError(502, 'Google returned a different Ads customer.');
   return result;
 }
-async function exchange(app: App, params: Record<string, string>) {
-  const raw = await googleRequest('https://oauth2.googleapis.com/token', undefined, new URLSearchParams({ client_id: app.client_id, client_secret: appSecret(app), ...params }));
+async function exchange(app: App, params: Record<string, string>, signal?: AbortSignal) {
+  const raw = await googleRequest('https://oauth2.googleapis.com/token', undefined, new URLSearchParams({ client_id: app.client_id, client_secret: appSecret(app), ...params }), undefined, signal);
   const data = responseTokens.safeParse(raw);
   if (!data.success) throw new FoundationError(502, 'Google did not return a usable grant. Connect again and grant read access.');
   return data.data;
 }
 
 /** Must run under the workspace/connection lock. Refresh never touches dashboard credentials. */
-export async function googleAccessToken(client: PoolClient, row: GoogleConnection, app: App, refresh = false): Promise<string> {
+export async function googleAccessToken(client: PoolClient, row: GoogleConnection, app: App, refresh = false, signal?: AbortSignal): Promise<string> {
   if (row.status === 'disconnected' || row.status === 'reconnect' || row.app_revision !== app.revision) throw new FoundationError(409, 'Reconnect this Google report source.');
   const stored = tokensInput.safeParse(decryptCredentials(row.encrypted_tokens, googleConnectionContext(row)));
   if (!stored.success) throw new FoundationError(503, 'Google report credentials cannot be opened.');
   if (stored.data.expiresAt > Date.now() + (refresh ? 30_000 : 0)) return stored.data.accessToken;
   if (!refresh) throw new FoundationError(409, 'Google access expired before this request. Retry the operation.');
-  const refreshed = await exchange(app, { grant_type: 'refresh_token', refresh_token: stored.data.refreshToken });
+  const refreshed = await exchange(app, { grant_type: 'refresh_token', refresh_token: stored.data.refreshToken }, signal);
   if (refreshed.scope !== undefined && !refreshed.scope.split(/\s+/).includes(googleScopes[row.provider])) throw new FoundationError(409, 'Reconnect this Google report source and grant the required read access.');
   const encrypted = encryptCredentials({ accessToken: refreshed.access_token, refreshToken: refreshed.refresh_token ?? stored.data.refreshToken, expiresAt: Date.now() + refreshed.expires_in * 1000 }, googleConnectionContext(row));
   await client.query('UPDATE google_connection SET encrypted_tokens=$2,updated_at=now() WHERE id=$1', [row.id, encrypted]);
@@ -102,10 +102,11 @@ export async function googleAccessToken(client: PoolClient, row: GoogleConnectio
 
 // A rotated refresh token must commit before a later API/page failure can roll
 // back. The subsequent operation takes the same locks and rereads all authority.
-export async function refreshGoogleConnection(projectId: string, userId: string, connectionId: string) {
+export async function refreshGoogleConnection(projectId: string, userId: string, connectionId: string, signal?: AbortSignal, expected?: {revision:number;appRevision:number;propertyId:string}) {
   const failure = await googleProjectTransaction(projectId, userId, true, async client => {
     const row = await googleConnection(client, projectId, connectionId), app = await activeGoogleApp(client);
-    try { await googleAccessToken(client, row, app, true); }
+    if (expected && (row.revision !== expected.revision || app.revision !== expected.appRevision || row.property_id !== expected.propertyId)) throw new FoundationError(409, 'The Google source changed. Refresh status before trying again.');
+    try { await googleAccessToken(client, row, app, true, signal); }
     catch (error) {
       if (!(error instanceof GoogleRequestError) || !error.reauthorize) throw error;
       await client.query("UPDATE google_connection SET status='reconnect',updated_at=now() WHERE id=$1", [row.id]);

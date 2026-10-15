@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {revenueCalendarPresets,revenueCalendarRange} from '../src/lib/revenue-calendar.ts';
+import {revenueCalendarPresets,revenueCalendarRange,adjacentRevenueCalendarRange} from '../src/lib/revenue-calendar.ts';
 import {deriveAnalyticsComparison} from '../src/lib/analytics-comparison.ts';
 
 test('calendar presets have truthful inclusive counts and whole current periods',()=>{
@@ -44,4 +44,26 @@ test('calendar presets leave previous-period/year derivation and trusted prior36
   assert.ok(deriveAnalyticsComparison(range,'prev'));assert.ok(deriveAnalyticsComparison(range,'yoy'));
   const leap=deriveAnalyticsComparison({from:'2025-02-28',to:'2026-02-28'},'yoy')!;assert.equal(leap.alignment.comparisonDays,367);
   assert.equal(deriveAnalyticsComparison(revenueCalendarRange('today','UTC',new Date('1970-01-01T12:00Z'))!,'prev'),null);
+});
+
+test('adjacent periods preserve whole months through unequal months and leap years',()=>{
+  const move=(from:string,to:string,direction:-1|1)=>adjacentRevenueCalendarRange({from,to,timeZone:'America/New_York'},direction,true);
+  assert.deepEqual(move('2024-03-01','2024-03-31',-1),{from:'2024-02-01',to:'2024-02-29'});
+  assert.deepEqual(move('2024-02-01','2024-02-29',1),{from:'2024-03-01',to:'2024-03-31'});
+  assert.deepEqual(move('2024-01-01','2024-12-31',1),{from:'2025-01-01',to:'2025-12-31'});
+  assert.deepEqual(move('2025-01-01','2025-12-31',-1),{from:'2024-01-01',to:'2024-12-31'});
+  assert.deepEqual(move('2025-05-01','2025-10-31',-1),{from:'2024-11-01',to:'2025-04-30'});
+  for(const[preset]of revenueCalendarPresets){const original=revenueCalendarRange(preset,'UTC',new Date('2024-03-15T12:00Z'))!;for(const direction of[-1,1]as const){const months=preset==='month'||preset==='year'||preset.endsWith('months'),changed=adjacentRevenueCalendarRange({...original,timeZone:'UTC'},direction,months)!;assert.ok(changed);assert.deepEqual(adjacentRevenueCalendarRange({...changed,timeZone:'UTC'},direction===-1?1:-1,months),original,preset);}}
+});
+
+test('adjacent custom dates use local calendar tokens and refuse malformed or out-of-bound ranges',()=>{
+  const move=(from:string,to:string,direction:-1|1,timeZone='America/New_York')=>adjacentRevenueCalendarRange({from,to,timeZone},direction);
+  assert.deepEqual(move('2026-03-07','2026-03-09',1),{from:'2026-03-10',to:'2026-03-12'});
+  assert.deepEqual(move('2026-11-01','2026-11-01',-1),{from:'2026-10-31',to:'2026-10-31'});
+  assert.deepEqual(move('2011-12-29','2011-12-31',1,'Pacific/Apia'),{from:'2012-01-01',to:'2012-01-03'});
+  const custom={from:'2023-01-04',to:'2023-01-31',timeZone:'UTC'},february=adjacentRevenueCalendarRange(custom,1)!;assert.deepEqual(february,{from:'2023-02-01',to:'2023-02-28'});assert.deepEqual(adjacentRevenueCalendarRange({...february,timeZone:'UTC'},-1),{from:custom.from,to:custom.to});
+  assert.equal(adjacentRevenueCalendarRange(custom,1,true),null);
+  for(const[from,to,zone]of[['2024-02-30','2024-03-01','UTC'],['2024-03-02','2024-03-01','UTC'],['2023-01-01','2024-01-02','UTC'],['2024-01-01','2024-01-02','No/Such_Zone'],['2024-01-01','2024-01-02','']])assert.equal(move(from,to,1,zone),null);
+  assert.equal(move('1970-01-01','1970-01-01',-1),null);assert.equal(move('9998-12-01','9998-12-31',1),null);
+  assert.equal(adjacentRevenueCalendarRange({from:'2024-01-01',to:'2024-01-02',timeZone:'UTC'},0 as -1),null);
 });

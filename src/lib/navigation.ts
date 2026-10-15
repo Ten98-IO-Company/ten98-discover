@@ -10,7 +10,7 @@ import {analyticsDimensions,type AnalyticsDimension} from './analytics-dimension
 export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
-export type RevenueNavigation={revenueQuery?:string;revenueKey?:string;revenueInvalid?:'1'};
+export type RevenueNavigation={revenueQuery?:string;revenueKey?:string;revenueCalendar?:'months';revenueInvalid?:'1'};
 export type AISearchNavigation={aiSearchQuery?:string;aiSearchInvalid?:'1'};
 export type AISearchIntent={section:'analysis'|'captures';tab:'prompts'|'top'|'words';filters:AiQueryFilters;captureId:string|null;create:boolean};
 export function readAISearchIntent(query?:string):AISearchIntent|null{
@@ -33,10 +33,10 @@ export function aiSearchNavigation(raw:Record<string,unknown>):AISearchNavigatio
  return raw.aiSearchQuery===undefined?{}:{aiSearchQuery:raw.aiSearchQuery as string};
 }
 export function revenueNavigation(raw:Record<string,unknown>):RevenueNavigation{
- if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.revenueInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','revenueQuery','revenueKey','revenueInvalid'].includes(key)))return{revenueInvalid:'1'};
- const query=raw.revenueQuery,key=raw.revenueKey;if(query===undefined)return key===undefined?{}:{revenueInvalid:'1'};
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.revenueInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','revenueQuery','revenueKey','revenueCalendar','revenueInvalid'].includes(key))||raw.revenueCalendar!==undefined&&raw.revenueCalendar!=='months')return{revenueInvalid:'1'};
+ const query=raw.revenueQuery,key=raw.revenueKey;if(query===undefined)return key===undefined&&raw.revenueCalendar===undefined?{}:{revenueInvalid:'1'};
  if(typeof query!=='string'||!query.length||query.length>65536||/[\u0000\ud800-\udfff]/u.test(query)||key!==undefined&&(typeof key!=='string'||key.length!==64||!/^[a-f0-9]{64}$/.test(key)))return{revenueInvalid:'1'};
- return{revenueQuery:query,...key!==undefined?{revenueKey:key as string}:{}};
+ return{revenueQuery:query,...key!==undefined?{revenueKey:key as string}:{},...raw.revenueCalendar==='months'?{revenueCalendar:'months' as const}:{}};
 }
 export type AttributionNavigation={attributionQuery?:string;attributionInvalid?:'1'};
 export type JourneysNavigation={journeyQuery?:string;journeyInvalid?:'1'};
