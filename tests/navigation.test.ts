@@ -7,6 +7,16 @@ import {defaultParseSearch,defaultStringifySearch} from '@tanstack/react-router'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
+test('canonical wire values agree with the installed router for revisions, invalid flags and JSON-looking strings',()=>{
+ const cases=[
+  {workspace,project,view:'sessions',from:'2026-10-01',to:'2026-10-14',timeZone:'UTC',segmentId:workspace,segmentRevision:'2',cohortId:project,cohortRevision:'3'},
+  {workspace,project,view:'sessions',sessionInvalid:'1'},
+  {workspace,project,view:'journeys',journeyInvalid:'1'},
+  {workspace,project,view:'events'},
+  ...['ordinary text','true','false','null','42','[1,2]','{"name":"value"}','"quoted"'].map(auditSearch=>({workspace,project,view:'audits',auditRun:project,auditSearch})),
+ ];
+ for(const input of cases){const target=parseNavigation(input),wire=defaultStringifySearch(target),parsed=parseNavigation(defaultParseSearch(wire));assert.deepEqual(parsed,target);assert.equal(canonicalNavigation(wire,parsed),true,wire);const entries=Object.entries(target),[key,value]=entries.at(-1)!;assert.equal(canonicalNavigation(wire+'&'+new URLSearchParams({[key]:value}),parsed),false,'duplicate scalar');const wrong=new URLSearchParams(wire);wrong.set(key,'mismatched');assert.equal(canonicalNavigation('?'+wrong,parsed),false,'mismatched scalar');if(wire!==('?'+new URLSearchParams(target as Record<string,string>)))assert.equal(canonicalNavigation('?'+new URLSearchParams(target as Record<string,string>),parsed),false,'JSON-looking strings require router quoting');}
+});
 test('visitor retention keeps an explicit applied month and nested typed entry scope separate from Data retention',()=>{
   const base={workspace,project,view:'visitor-retention'} as const,entry=new URLSearchParams({kind:'custom',path:'/café %_\\',propertyKey:'done',propertyType:'boolean',propertyValue:'false',city:serializeGeographyKey('city',{state:'known',country:'US',region:{kind:'code',value:'US-IL'},city:'Springfield'})!}).toString(),applied={...base,retentionMonth:'2024-03',retentionTimeZone:'UTC',retentionEntry:entry};
   assert.deepEqual(parseNavigation(base),base);assert.deepEqual(parseNavigation(applied),applied);assert.equal(canonicalNavigation('?'+new URLSearchParams(applied),applied),true);assert.deepEqual(parseNavigation(Object.fromEntries(new URLSearchParams(new URLSearchParams(applied).toString()))),applied);
@@ -17,16 +27,6 @@ test('visitor retention navigation rejects unknown, partial, future and nonscala
   const base={workspace,project,view:'visitor-retention',retentionMonth:'2024-03',retentionTimeZone:'UTC',retentionEntry:'kind=all'} as const,invalid={workspace,project,view:'visitor-retention',retentionInvalid:'1'};
   for(const patch of [{retentionMonth:undefined},{retentionTimeZone:undefined},{retentionMonth:'2024-13'},{retentionMonth:'1969-12'},{retentionMonth:'9999-01'},{retentionTimeZone:'Bad'},{retentionTimeZone:['UTC']},{retentionMonth:['2024-03','2024-03']},{retentionEntry:{kind:'all'}},{retentionEntry:'x'.repeat(20001)},{retentionEntry:'\ud800'},{retentionEntry:'x\0y'},{compare:'prev'},{from:'2024-03-01'},{retentionDraft:'private'}])assert.deepEqual(parseNavigation({...base,...patch}),invalid);
   assert.deepEqual(parseNavigation(invalid),invalid);assert.equal(canonicalNavigation('?'+new URLSearchParams(base)+'&retentionMonth=2024-03',base),false);assert.deepEqual(parseNavigation({...base,project:undefined}),{workspace,view:'visitor-retention',retentionInvalid:'1'});
-});
-test('canonical wire values agree with the installed router for revisions, invalid flags and JSON-looking strings',()=>{
- const cases=[
-  {workspace,project,view:'sessions',from:'2026-10-01',to:'2026-10-14',timeZone:'UTC',segmentId:workspace,segmentRevision:'2',cohortId:project,cohortRevision:'3'},
-  {workspace,project,view:'sessions',sessionInvalid:'1'},
-  {workspace,project,view:'journeys',journeyInvalid:'1'},
-  {workspace,project,view:'events'},
-  ...['ordinary text','true','false','null','42','[1,2]','{"name":"value"}','"quoted"'].map(auditSearch=>({workspace,project,view:'audits',auditRun:project,auditSearch})),
- ];
- for(const input of cases){const target=parseNavigation(input),wire=defaultStringifySearch(target),parsed=parseNavigation(defaultParseSearch(wire));assert.deepEqual(parsed,target);assert.equal(canonicalNavigation(wire,parsed),true,wire);const entries=Object.entries(target),[key,value]=entries.at(-1)!;assert.equal(canonicalNavigation(wire+'&'+new URLSearchParams({[key]:value}),parsed),false,'duplicate scalar');const wrong=new URLSearchParams(wire);wrong.set(key,'mismatched');assert.equal(canonicalNavigation('?'+wrong,parsed),false,'mismatched scalar');if(wire!==('?'+new URLSearchParams(target as Record<string,string>)))assert.equal(canonicalNavigation('?'+new URLSearchParams(target as Record<string,string>),parsed),false,'JSON-looking strings require router quoting');}
 });
 
 test('Journeys keeps a scalar nested applied scope only in its own project read view',()=>{
