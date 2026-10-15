@@ -5,7 +5,7 @@ import { FoundationError } from '../src/server/auth.ts';
 import { handleApi } from '../src/server/api.ts';
 import { getConfig } from '../src/server/config.ts';
 import { getDatabase } from '../src/server/db.ts';
-import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation } from '../src/server/teams.ts';
+import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation, transferOwnership } from '../src/server/teams.ts';
 
 type Options = { baseUrl: string; appUrl: string; ownerCookie: string; ownerId: string; workspaceId: string };
 async function rejects(promise: Promise<unknown>, status: number, message: string) {
@@ -261,4 +261,58 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   const ownersRemaining = await pool.query("SELECT count(*)::int AS count FROM membership WHERE workspace_id=$1 AND role='owner'", [secondary.workspace.id]);
   assert.equal(ownersRemaining.rows[0].count, 1);
   console.log('PASS last-owner protection under concurrent mutation');
+
+  const transfer = await createWorkspace(options.ownerId, { name: 'Ownership transfer checks' });
+  const transferId = transfer.workspace.id;
+  const confirmation = (target: {id: string; email: string}) => ({ targetUserId: target.id, confirmationEmail: target.email });
+  await rejects(transferOwnership(transferId, options.ownerId, confirmation(admin)), 404, 'A recipient must already belong to this workspace.');
+  await rejects(transferOwnership(transferId, options.ownerId, confirmation(ownerIdentity)), 400, 'Self-transfer is refused.');
+  await rejects(transferOwnership(transferId, options.ownerId, { ...confirmation(admin), role: 'owner' }), 400, 'Transfer cannot accept injected fields.');
+  for (const [person, role] of [[admin, 'admin'], [viewer, 'viewer']] as const) {
+    const invitation = await inviteMember(transferId, options.ownerId, {email: person.email, role});
+    await acceptInvitation({token: invitation.token}, person);
+  }
+  const beforeTransfer = (await getTeam(transferId, options.ownerId)).members;
+  await rejects(transferOwnership(transferId, admin.id, confirmation(viewer)), 403, 'An administrator cannot transfer ownership.');
+  await rejects(transferOwnership(transferId, viewer.id, confirmation(admin)), 404, 'A viewer cannot transfer ownership.');
+  await rejects(transferOwnership(transferId, options.ownerId, { ...confirmation(viewer), confirmationEmail: email() }), 409, 'A mismatched confirmation must change no roles.');
+  assert.deepEqual((await getTeam(transferId, options.ownerId)).members, beforeTransfer);
+  const withdrawn = await inviteMember(transferId, options.ownerId, {email: email(), role: 'admin'});
+  const allowed = await inviteMember(transferId, options.ownerId, {email: email(), role: 'editor'});
+  const transferRace = await Promise.allSettled([
+    transferOwnership(transferId, options.ownerId, confirmation(admin)),
+    transferOwnership(transferId, options.ownerId, confirmation(viewer)),
+  ]);
+  assert.equal(transferRace.filter(result => result.status === 'fulfilled').length, 1, 'Only one concurrent transfer can use the original owner authority.');
+  const refusedTransfer = transferRace.find(result => result.status === 'rejected');
+  assert.ok(refusedTransfer?.status === 'rejected' && refusedTransfer.reason instanceof FoundationError && refusedTransfer.reason.status === 403);
+  const updated = await getTeam(transferId, options.ownerId);
+  assert.equal(updated.role, 'admin');
+  assert.equal(updated.members.filter(member => member.role === 'owner').length, 1);
+  const winner = updated.members.find(member => member.role === 'owner')!;
+  assert.ok(winner.userId === admin.id || winner.userId === viewer.id);
+  const unchanged = beforeTransfer.find(member => member.userId !== options.ownerId && member.userId !== winner.userId)!;
+  assert.deepEqual(updated.members.find(member => member.userId === unchanged.userId), unchanged);
+  await rejects(inspectInvitation({token: withdrawn.token}), 410, 'Former-owner admin grants are revoked atomically.');
+  assert.equal((await inspectInvitation({token: allowed.token})).role, 'editor', 'Still-permitted administrator grants remain valid.');
+  await rejects(transferOwnership(transferId, options.ownerId, confirmation(admin)), 403, 'A completed transfer cannot be replayed with stale owner authority.');
+  await transferOwnership(transferId, winner.userId, confirmation(ownerIdentity));
+  assert.equal((await getTeam(transferId, options.ownerId)).role, 'owner');
+  console.log('PASS atomic ownership transfer, confirmation, tenant isolation and concurrent stale authority');
+
+  const transferHttp = await http('/api/workspaces', 201, { name: 'HTTP ownership transfer' }, options.ownerCookie);
+  const transferHttpId = transferHttp.body.workspace.id as string;
+  const transferInvite = await http(`/api/workspaces/${transferHttpId}/invitations`, 201, { email: apiEmail, role: 'viewer' }, options.ownerCookie);
+  const transferToken = new URLSearchParams(new URL(transferInvite.body.inviteUrl).hash.slice(1)).get('invite');
+  await http('/api/invitations/accept', 200, {token: transferToken}, joined.cookie);
+  const transferPath = `/api/workspaces/${transferHttpId}/transfer-ownership`, transferBody = {targetUserId: apiMemberId, confirmationEmail: apiEmail};
+  await http(transferPath, 401, transferBody);
+  await http(transferPath, 403, transferBody, options.ownerCookie, 'https://untrusted.integration.test');
+  await http(transferPath, 409, {...transferBody, confirmationEmail: email()}, options.ownerCookie);
+  const transferred = await http(transferPath, 200, transferBody, options.ownerCookie);
+  assert.deepEqual(transferred.body, {ok: true, role: 'admin', ownerUserId: apiMemberId});
+  assert.equal((await http(`/api/workspaces/${transferHttpId}/team`, 200, undefined, joined.cookie)).body.role, 'owner');
+  assert.equal((await http(`/api/workspaces/${transferHttpId}/team`, 200, undefined, options.ownerCookie)).body.role, 'admin');
+  await http(transferPath, 403, transferBody, options.ownerCookie);
+  console.log('PASS native HTTP ownership transfer, origin refusal and immediate role refresh');
 }
