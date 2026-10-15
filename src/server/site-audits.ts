@@ -283,16 +283,19 @@ type ExportPageRow=Pick<PageRow,'id'|'url'|'resource_kind'|'state'|'discovered_s
 const pageExportColumns=['recordType','version','projectId','runId','ruleVersion','asOf','selectionRevision','appliedQuery','matchingRetainedCount','rawEvidenceStatus','dataStatus','auditStatus','coverage','pageId','url','resourceKind','pageState','httpStatus','titlePreview','titlePreviewStatus','h1','wordCount','imagesTotal','imagesMissingAlt','responseTimeMs','discoveredStart','discoveredLink','discoveredSitemap','linkDepth','sitemapDepth','fetchState','analysisCoverage','observedAt'];
 function exportAborted(signal?:AbortSignal){if(signal?.aborted)throw new FoundationError(499,'Audit export cancelled.');}
 /** The database transaction ends before the native response can wait for a reader. */
-function pagesCsvResponse(body:Buffer,rowCount:number,selectionRevision:string,asOf:string,release:()=>void,signal?:AbortSignal){
- let bytes:Buffer|null=body,offset=0,controller:ReadableStreamDefaultController<Uint8Array>|null=null;
- body=Buffer.alloc(0);
- const finish=()=>{bytes=null;controller=null;signal?.removeEventListener('abort',abort);release();};
+function pagesCsvResponse(parts:Buffer[],length:number,rowCount:number,selectionRevision:string,asOf:string,release:()=>void,signal?:AbortSignal){
+ let index=0,offset=0,remaining=length,controller:ReadableStreamDefaultController<Uint8Array>|null=null;
+ const finish=()=>{parts.length=0;remaining=0;controller=null;signal?.removeEventListener('abort',abort);release();};
  const abort=()=>{const current=controller;finish();current?.error(new FoundationError(499,'Audit export cancelled.'));};
  try{
-  const length=bytes.length;
   const stream=new ReadableStream<Uint8Array>({
    start(value){controller=value;signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();},
-   pull(value){try{if(!bytes)return;const end=Math.min(offset+64*1024,bytes.length);value.enqueue(Buffer.from(bytes.subarray(offset,end)));offset=end;if(end===bytes.length){value.close();finish();}}catch(error){finish();value.error(error);}},
+   pull(value){try{
+    if(!remaining){value.close();finish();return;}
+    const chunk=Buffer.allocUnsafeSlow(Math.min(64*1024,remaining));let written=0;
+    while(written<chunk.length){const part=parts[index],take=Math.min(chunk.length-written,part.length-offset);part.copy(chunk,written,offset,offset+take);written+=take;offset+=take;if(offset===part.length){parts[index]=Buffer.alloc(0);index++;offset=0;}}
+    remaining-=written;value.enqueue(chunk);if(!remaining){value.close();finish();}
+   }catch(error){finish();value.error(error);}},
    cancel(){finish();},
   },{highWaterMark:0});
   return new Response(stream,{headers:{'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="audit-pages.csv"','content-length':String(length),'x-export-row-count':String(rowCount),'x-export-revision':selectionRevision,'x-export-as-of':asOf,'cache-control':'no-store, no-transform','x-content-type-options':'nosniff'}});
@@ -334,12 +337,12 @@ export async function exportSiteAuditPages(projectId:string,userId:string,runId:
    if(!wasRawExpired&&run.raw_expired_at)return {pageReadError:'selection_changed' as const};
    const current=await selectAuditPages(client,run,query,scope);if(current.pageReadError)return current;
    if(current.selectionRevision!==selection.selectionRevision)return {pageReadError:'selection_changed' as const};
-   exportAborted(signal);const body=Buffer.concat(parts,size);parts.length=0;
-   return {body,rowCount:count,selectionRevision:selection.selectionRevision,asOf};
+   exportAborted(signal);
+   return {parts,size,rowCount:count,selectionRevision:selection.selectionRevision,asOf};
   });
   if(result.pageReadError)throw pageReadFailure(result.pageReadError);
   if(result.exportError)throw new FoundationError(410,'Audit page data expired under this workspace’s retention policy.');
-  exportAborted(signal);const response=pagesCsvResponse(result.body,result.rowCount,result.selectionRevision,result.asOf,release,signal);transferred=true;return response;
+  exportAborted(signal);const response=pagesCsvResponse(result.parts,result.size,result.rowCount,result.selectionRevision,result.asOf,release,signal);transferred=true;return response;
  }finally{if(!transferred)release();}
 }
 export async function getSiteAuditPage(projectId:string,userId:string,runId:string,pageId:string){
