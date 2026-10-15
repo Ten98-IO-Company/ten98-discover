@@ -324,6 +324,14 @@ test('Revenue detail keys round-trip the installed native router JSON string ser
  for(const revenueKey of['1'.repeat(64),'1'+'0'.repeat(60)+'e10','0'.repeat(64)]){const value={...base,revenueKey},wire=defaultStringifySearch(value);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),value);assert.equal(canonicalNavigation(wire,value),true);}
 });
 
+test('Revenue calendar step is closed UI metadata, retained with query/detail and rejected without a query',async()=>{
+ const {defaultStringifySearch,defaultParseSearch}=await import('@tanstack/react-router');
+ const base={workspace,project,view:'revenue',revenueQuery:'from=2024-02-01&to=2024-02-29&timeZone=UTC&currency=USD'}as const,value={...base,revenueCalendar:'months' as const,revenueKey:'a'.repeat(64)},wire=defaultStringifySearch(value);
+ assert.deepEqual(parseNavigation(defaultParseSearch(wire)),value);assert.equal(canonicalNavigation(wire,value),true);assert.notEqual(navigationKey(value),navigationKey({...base,revenueKey:value.revenueKey}));
+ for(const bad of['days','month','',null,1,true,['months'],{unit:'months'}])assert.equal(parseNavigation({...value,revenueCalendar:bad}).revenueInvalid,'1');
+ assert.equal(parseNavigation({...value,revenueQuery:undefined,revenueKey:undefined}).revenueInvalid,'1');assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});
+});
+
 test('Attribution keeps a scalar nested applied scope only in its own project read view',()=>{
  const base={workspace,project,view:'attribution'} as const,attributionQuery=new URLSearchParams({from:'2026-10-01',to:'2026-10-10',timeZone:'UTC',model:'first-click',conversionKind:'pageview',conversionValue:'/"true"'}).toString(),value={...base,attributionQuery};
  assert.deepEqual(parseNavigation(value),value);assert.deepEqual(parseNavigation(value),parseNavigation(parseNavigation(value)));assert.equal(canonicalNavigation('?'+new URLSearchParams(value),value),true);assert.notEqual(navigationKey(value),navigationKey(base));assert.equal(projectView('attribution'),true);

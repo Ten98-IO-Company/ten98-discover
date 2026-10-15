@@ -27,3 +27,20 @@ export function revenueCalendarRange(preset:string,timeZone:string,now=new Date(
     return validated.sessionInvalid?null:range;
   } catch {return null;}
 }
+
+export function revenueCalendarMonthCount(range:{from:string;to:string;timeZone:string}):number|null {
+  if(sessionNavigation({from:range.from,to:range.to,timeZone:range.timeZone}).sessionInvalid)return null;
+  const from=new Date(range.from+'T00:00:00Z'),to=new Date(range.to+'T00:00:00Z');
+  return from.getUTCDate()===1&&new Date(to.getTime()+864e5).getUTCDate()===1?(to.getUTCFullYear()-from.getUTCFullYear())*12+to.getUTCMonth()-from.getUTCMonth()+1:null;
+}
+
+/** Explicit month intent stays whole; day intent never changes when it lands on a month. */
+export function adjacentRevenueCalendarRange(range:{from:string;to:string;timeZone:string},direction:-1|1,wholeMonths=false):{from:string;to:string}|null {
+  if(![-1,1].includes(direction)||sessionNavigation(range).sessionInvalid)return null;
+  const start=analyticsDay(range.from),last=analyticsDay(range.to);if(start===null||last===null)return null;
+  const from=new Date(start),to=new Date(last);
+  if(wholeMonths){const months=revenueCalendarMonthCount(range);if(months===null)return null;from.setUTCMonth(from.getUTCMonth()+months*direction);to.setUTCFullYear(from.getUTCFullYear(),from.getUTCMonth()+months,0);}
+  else{const days=(last-start)/864e5+1;from.setUTCDate(from.getUTCDate()+days*direction);to.setUTCDate(to.getUTCDate()+days*direction);}
+  const result={from:from.toISOString().slice(0,10),to:to.toISOString().slice(0,10)};
+  return sessionNavigation({...result,timeZone:range.timeZone}).sessionInvalid?null:result;
+}
