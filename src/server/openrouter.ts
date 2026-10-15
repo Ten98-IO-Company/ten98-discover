@@ -5,6 +5,7 @@ import {FoundationError} from './auth.ts';
 import {usd} from './providers.ts';
 import {decimal,decimalSumMicros,decimalText,ExactCost,parseOpenRouterJson,executionBody,type PromptModel,type OpenRouterModel,type RouteSnapshot,type RenderedInput} from './openrouter-input.ts';
 import {suggestionSchema,suggestionOutputTokens} from './ai-suggestion-input.ts';
+import {contentSupportPurpose,contentSupportSchema,contentSupportLimits} from './ai-content-support-input.ts';
 import {legacyOpenRouterModels,openRouterModelId,openRouterProviderName,openRouterProviderTag,openRouterTextProfile,type OpenRouterRequestProfile} from '../lib/openrouter-models.ts';
 import {requireCatalogModels} from './openrouter-models.ts';
 import {validateExecutionPayload} from './openrouter-input.ts';
@@ -86,6 +87,7 @@ async function readRoutes(credentials:unknown,models:OpenRouterModel[],maxComple
 }
 export async function readOpenRouterRoutes(credentials:unknown,models:PromptModel[],maxCompletionTokens:number,send:typeof fetch=fetch,profile?:OpenRouterRequestProfile,pinnedTags?:string[]){return readRoutes(credentials,models,maxCompletionTokens,send,false,profile,pinnedTags);}
 export async function readSuggestionRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch,profile?:OpenRouterRequestProfile,pinnedTag?:string){return (await readRoutes(credentials,[model],suggestionOutputTokens,send,true,profile,pinnedTag?[pinnedTag]:undefined))[0];}
+export async function readContentSupportRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch,pinnedTag?:string){return (await readRoutes(credentials,[model],contentSupportLimits.outputTokens,send,true,openRouterTextProfile,pinnedTag?[pinnedTag]:undefined))[0];}
 export type ExecutionResult={text:string;resolvedModel:string;provider:string;finishReason:string;citations:{url:string;title:string|null}[];promptTokens:number|null;completionTokens:number|null;receivedAt:string};
 export type ExecutionOutcome={cost:string|null;reference:string|null;result:ExecutionResult|null;diagnostic:string|null;pause:boolean;evidence:Record<string,unknown>};
 export function unknownExecution(reference:string|null=null,diagnostic='The provider charge is unresolved. Reconcile this request before spending again.'):ExecutionOutcome{
@@ -124,13 +126,16 @@ export function parseExecutionOutcome(body:unknown,httpStatus:number,headerId:st
     outcome.result={text:message.content,resolvedModel:body.model,provider:body.provider,finishReason:choice.finish_reason,citations:citations(message.annotations),promptTokens:tokenCount(usage.prompt_tokens),completionTokens:tokenCount(usage.completion_tokens),receivedAt:new Date().toISOString()};return outcome;
   }catch{if(outcome.cost!==null)outcome.diagnostic??='The charge was recorded, but the answer metadata was unsupported.';return outcome;}
 }
-export function executionRequestBody(messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,structured=false){
-  validateExecutionPayload(messages,route,maxTokens,structured);
-  const body={...executionBody(messages,route,maxTokens,runId,actor,structured),...(structured?{response_format:{type:'json_schema',json_schema:{name:'suggestion_proposal_v1',strict:true,schema:suggestionSchema}}}:{})};
-  if(route.profile&&(structured&&Buffer.byteLength(JSON.stringify({messages,schema:suggestionSchema}),'utf8')>131_072||Buffer.byteLength(JSON.stringify(body),'utf8')>163_840))throw new FoundationError(413,'The text request exceeds this model profile’s payload limit. Narrow the input.');
+type StructuredPurpose=boolean|typeof contentSupportPurpose;
+export function executionRequestBody(messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,structured:StructuredPurpose=false){
+  if(structured===contentSupportPurpose&&(route.profile!==openRouterTextProfile||maxTokens!==contentSupportLimits.outputTokens))throw new FoundationError(409,'Prepare a current website-content-support route with its fixed output limit.');
+  validateExecutionPayload(messages,route,maxTokens,!!structured);
+  const schema=structured===contentSupportPurpose?contentSupportSchema:suggestionSchema,name=structured===contentSupportPurpose?'website_content_support_v1':'suggestion_proposal_v1';
+  const body={...executionBody(messages,route,maxTokens,runId,actor,!!structured),...(structured?{response_format:{type:'json_schema',json_schema:{name,strict:true,schema}}}:{})};
+  if(route.profile&&(structured&&Buffer.byteLength(JSON.stringify({messages,schema}),'utf8')>131_072||Buffer.byteLength(JSON.stringify(body),'utf8')>163_840))throw new FoundationError(413,'The text request exceeds this model profile’s payload limit. Narrow the input.');
   return body;
 }
-async function requestExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch,structured=false){
+async function requestExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch,structured:StructuredPurpose=false){
   let reference:string|null=null;
   try{
     const body=executionRequestBody(messages,route,maxTokens,runId,actor,structured);
@@ -142,6 +147,7 @@ async function requestExecution(credentials:unknown,messages:RenderedInput,route
 }
 export async function requestPromptExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,maxTokens:number,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch=fetch){return requestExecution(credentials,messages,route,maxTokens,runId,actor,dispatchedAt,capture,send);}
 export async function requestSuggestionExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch=fetch){return requestExecution(credentials,messages,route,suggestionOutputTokens,runId,actor,dispatchedAt,capture,send,true);}
+export async function requestContentSupportExecution(credentials:unknown,messages:RenderedInput,route:RouteSnapshot,runId:string,actor:string,dispatchedAt:Date,capture:(id:string)=>Promise<void>,send:typeof fetch=fetch){return requestExecution(credentials,messages,route,contentSupportLimits.outputTokens,runId,actor,dispatchedAt,capture,send,contentSupportPurpose);}
 export async function reconcileOpenRouter(credentials:unknown,id:string,route:RouteSnapshot,dispatchedAt:Date,runId:string,actor:string,send:typeof fetch=fetch):Promise<ExecutionOutcome>{
   if(!generationId(id))throw new FoundationError(409,'No provider generation receipt is available. The charge cannot be inferred.');
   try{
