@@ -135,7 +135,11 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
   const params = new URLSearchParams(search)
   const entries = Object.entries(target).filter(([, value]) => value !== undefined)
   // TanStack quotes JSON-looking strings so its parser preserves the string type.
-  return [...params].length === entries.length && entries.every(([key, value]) => params.getAll(key).length === 1 && params.get(key) === ((Object.values(geographyNavigationNames) as string[]).includes(key)?JSON.stringify(value):value))
+  return [...params].length === entries.length && entries.every(([key, value]) => {
+    let wire=value
+    try { JSON.parse(value); wire=JSON.stringify(value) } catch {}
+    return params.getAll(key).length===1 && params.get(key)===wire
+  })
 }
 
 export function projectView(view: AppView): boolean {
