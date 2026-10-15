@@ -2,10 +2,11 @@ import {useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type FormEvent} 
 import {z} from 'zod';
 import {ApiError,errMsg} from '../lib/api';
 import {journeyStepSchema,journeysLimits,journeysMethod,type JourneyStep,type JourneysResult} from '../lib/journeys';
-import {journeysNavigation,sessionNavigation,type NavigationSearch,type JourneysNavigation} from '../lib/navigation';
+import {canonicalNavigation,journeysNavigation,sessionNavigation,type NavigationSearch,type JourneysNavigation} from '../lib/navigation';
 import {geographyFields,type GeoField} from '../lib/analytics-geography';
 import {GeographyAttribution} from './GeographyAttribution';
 import {initialDraft,buildParams,savedPredicates,buildAdvanced,validAdvancedResult,validSessionSelection,validCohort,qualificationDraft,preciseDate,ExactFilterControls,AdvancedControls,AdvancedSummary,SessionStatus,patchLocationFilters,TIMEZONES,FILTERS,KINDS,fieldValueLabel,record,type Draft,type FilterRow,type CohortRef} from './ExplorerFilters';
+import {useLocation} from '@tanstack/react-router';
 import './journeys.css';
 
 type JourneyDraft={scope:Draft;steps:string;startKind:''|'pageview'|'custom';startValue:string;endKind:''|'pageview'|'custom';endValue:string;cohort:CohortRef|null};
@@ -85,23 +86,27 @@ const reasons={event_history_unavailable:'This date range is no longer retained.
 type Props={projectId:string;userId:string;search:NavigationSearch;onNavigate:(value:JourneysNavigation)=>void;onUnauthorized:()=>void};
 export function JourneysPanel(props:Props){return <JourneysInner key={`${props.userId}:${props.projectId}`} {...props}/>;}
 function JourneysInner({projectId,search,onNavigate,onUnauthorized}:Props){
- const uid=useId(),nav=journeysNavigation(search),navKey=JSON.stringify(nav),initial=nav.journeyInvalid?null:draftFrom(nav.journeyQuery);
+ const uid=useId(),location=useLocation(),entryKey=location.state.__TSR_key,nav=journeysNavigation(search),navKey=JSON.stringify(nav),initial=nav.journeyInvalid?null:draftFrom(nav.journeyQuery);
+ const pendingEntry=useRef<string|undefined|null>(null);if(pendingEntry.current!==null&&pendingEntry.current!==entryKey)pendingEntry.current=null;
+ const routeReady=canonicalNavigation(location.searchStr,search)&&pendingEntry.current!==entryKey,routeScope=`${entryKey}:${navKey}:${routeReady}`,currentRoute=useRef(routeScope);currentRoute.current=routeScope;
  const [draft,setDraft]=useState<JourneyDraft>(()=>initial??draftFrom(undefined)!),[applied,setApplied]=useState<string|null>(()=>{if(!initial)return null;const built=paramsFrom(initial);return'qs'in built?built.qs:null;}),[result,setResult]=useState<JourneysResult|null>(null),[error,setError]=useState(''),[formError,setFormError]=useState(''),[busy,setBusy]=useState(false),[attempt,setAttempt]=useState(0),[table,setTable]=useState(false),[selected,setSelected]=useState<{position:number;step:JourneyStep}|null>(null);
- const generation=useRef(0),request=useRef<AbortController|null>(null),heading=useRef<HTMLHeadingElement>(null),ownNav=useRef(''),unauthorized=useRef(onUnauthorized),canvas=useRef<HTMLDivElement>(null);unauthorized.current=onUnauthorized;
+ const [appliedNavigation,setAppliedNavigation]=useState(navKey);
+ const acceptedRoute=useRef(''),generation=useRef(0),request=useRef<AbortController|null>(null),heading=useRef<HTMLHeadingElement>(null),ownNav=useRef(''),unauthorized=useRef(onUnauthorized),canvas=useRef<HTMLDivElement>(null);unauthorized.current=onUnauthorized;
  const [hovered,setHovered]=useState<{position:number;step:JourneyStep}|null>(null),[lines,setLines]=useState<{key:string;d:string;count:number}[]>([]);
  const built=paramsFrom(draft),unapplied='error'in built||built.qs!==applied;
- useEffect(()=>{if(navKey===ownNav.current){ownNav.current='';return;}ownNav.current='';request.current?.abort();generation.current++;setResult(null);setError('');setFormError('');setSelected(null);const value=nav.journeyInvalid?null:draftFrom(nav.journeyQuery);if(!value){setApplied(null);setError('This journey link has an invalid scope. Reset the report to choose valid dates and filters.');return;}setDraft(value);const built=paramsFrom(value);setApplied('qs'in built?built.qs:null);},[navKey]);
+ useEffect(()=>{if(navKey===ownNav.current){ownNav.current='';return;}ownNav.current='';request.current?.abort();generation.current++;setResult(null);setError('');setFormError('');setSelected(null);setAppliedNavigation(navKey);const value=nav.journeyInvalid?null:draftFrom(nav.journeyQuery);if(!value){setApplied(null);setError('This journey link has an invalid scope. Reset the report to choose valid dates and filters.');return;}setDraft(value);const built=paramsFrom(value);setApplied('qs'in built?built.qs:null);},[navKey]);
  useEffect(()=>{
-  request.current?.abort();if(!applied){setBusy(false);return;}const controller=new AbortController(),token=++generation.current;request.current=controller;setBusy(true);setError('');
-  void fetchResult(`/api/projects/${encodeURIComponent(projectId)}/journeys?${applied}`,controller.signal).then(data=>{if(controller.signal.aborted||token!==generation.current)return;setResult(readJourneysResult(data,applied,projectId));setSelected(null);}).catch(e=>{if(controller.signal.aborted||token!==generation.current)return;if(e instanceof ApiError&&[401,403,404].includes(e.status)){setResult(null);setSelected(null);setDraft(draftFrom(undefined)!);setApplied(null);if(e.status===401)unauthorized.current();}else if(!(e instanceof ApiError)||![0,409,503].includes(e.status))setResult(null);setError(errMsg(e));}).finally(()=>{if(token===generation.current&&!controller.signal.aborted)setBusy(false);});
+  request.current?.abort();if(!routeReady||appliedNavigation!==navKey||!applied){setBusy(false);return;}const controller=new AbortController(),token=++generation.current;request.current=controller;setBusy(true);setError('');
+  void fetchResult(`/api/projects/${encodeURIComponent(projectId)}/journeys?${applied}`,controller.signal).then(data=>{if(controller.signal.aborted||token!==generation.current||routeScope!==currentRoute.current)return;const value=readJourneysResult(data,applied,projectId);acceptedRoute.current=routeScope;setResult(value);setSelected(null);}).catch(e=>{if(controller.signal.aborted||token!==generation.current||routeScope!==currentRoute.current)return;if(e instanceof ApiError&&[401,403,404].includes(e.status)){setResult(null);setSelected(null);setDraft(draftFrom(undefined)!);setApplied(null);if(e.status===401)unauthorized.current();}else if(!(e instanceof ApiError)||![0,409,503].includes(e.status))setResult(null);setError(errMsg(e));}).finally(()=>{if(token===generation.current&&!controller.signal.aborted)setBusy(false);});
   return()=>controller.abort();
- },[applied,attempt,projectId]);
+ },[routeScope,appliedNavigation,applied,attempt,projectId]);
  useEffect(()=>()=>{generation.current++;request.current?.abort();},[]);
  const patch=(value:Partial<JourneyDraft>)=>{request.current?.abort();generation.current++;setBusy(false);setDraft(old=>({...old,...value}));setFormError('');};
  const patchScope=(value:Partial<Draft>)=>patch({scope:{...draft.scope,...value}});
  const patchFilter=(key:string,value:Partial<FilterRow>)=>patchScope({filters:patchLocationFilters(draft.scope.filters,key,value)});
- function apply(event:FormEvent){event.preventDefault();const next=paramsFrom(draft);if('error'in next){setFormError(next.error);document.getElementById(`${uid}-from`)?.focus();return;}setFormError('');setResult(null);setSelected(null);setApplied(next.qs);setAttempt(n=>n+1);ownNav.current=JSON.stringify({journeyQuery:next.qs});onNavigate({journeyQuery:next.qs});}
- function reset(){request.current?.abort();generation.current++;const next=draftFrom(undefined)!;setDraft(next);setResult(null);setSelected(null);setError('');setFormError('');const built=paramsFrom(next);setApplied('qs'in built?built.qs:null);setAttempt(n=>n+1);ownNav.current='{}';onNavigate({});heading.current?.focus();}
+ function apply(event:FormEvent){event.preventDefault();const next=paramsFrom(draft);if('error'in next){setFormError(next.error);document.getElementById(`${uid}-from`)?.focus();return;}setFormError('');setResult(null);setSelected(null);setApplied(next.qs);setAttempt(n=>n+1);ownNav.current=JSON.stringify({journeyQuery:next.qs});setAppliedNavigation(ownNav.current);if(ownNav.current!==navKey){pendingEntry.current=entryKey;onNavigate({journeyQuery:next.qs});}}
+ function reset(){request.current?.abort();generation.current++;const next=draftFrom(undefined)!;setDraft(next);setResult(null);setSelected(null);setError('');setFormError('');const built=paramsFrom(next);setApplied('qs'in built?built.qs:null);setAttempt(n=>n+1);ownNav.current='{}';setAppliedNavigation('{}');if(navKey!=='{}'){pendingEntry.current=entryKey;onNavigate({});}heading.current?.focus();}
+ const resultVisible=routeReady&&appliedNavigation===navKey&&acceptedRoute.current===routeScope;
  const paths=result?.paths??[],visible=useMemo(()=>selected?(result?.paths??[]).filter(path=>same(path.items[selected.position],selected.step)):(result?.paths??[]),[result,selected]);
  const emphasized=useMemo(()=>selected&&hovered?visible.filter(path=>same(path.items[hovered.position],hovered.step)):visible,[visible,selected,hovered]);
  const columns=useMemo(()=>Array.from({length:result?.query.steps??3},(_,position)=>{const nodes=new Map<string,{step:JourneyStep;visits:number}>();for(const path of result?.paths??[]){const step=path.items[position];if(step){const key=JSON.stringify(step),node=nodes.get(key);if(node)node.visits+=path.observedVisits;else nodes.set(key,{step,visits:path.observedVisits});}}return[...nodes.values()].sort((a,b)=>b.visits-a.visits||label(a.step).localeCompare(label(b.step)));}),[result]);
@@ -123,8 +128,8 @@ function JourneysInner({projectId,search,onNavigate,onUnauthorized}:Props){
    <div className="row"><button className="btn primary" type="submit">Apply</button><button className="btn" type="button" onClick={reset}>Reset report</button></div>{formError&&<p role="alert">{formError}</p>}{unapplied&&<p className="hint" role="status">Unapplied changes. Results still use the last applied scope.</p>}
   </form>
   <div className="row between"><p role="status">{busy?'Loading observed journeys…':result?`Last confirmed ${new Date(result.asOf).toLocaleString()}`:'No verified result loaded.'}</p><button className="btn" type="button" disabled={busy||!applied||unapplied} onClick={()=>setAttempt(n=>n+1)}>Refresh applied report</button></div>
-  {error&&<p role="alert">{error}{result?' Showing the last confirmed result for its applied scope.':''}</p>}
-  {result&&<section className="card stack" aria-label="Journey result">
+  {error&&<p role="alert">{error}{resultVisible&&result?' Showing the last confirmed result for its applied scope.':''}</p>}
+  {resultVisible&&result&&<section className="card stack" aria-label="Journey result">
    <p>{result.range.from} to {result.range.to} · {result.range.timeZone} · retention coverage {result.coverage.status}</p>
    {result.selection.evidenceIncomplete&&<p className="banner">Incomplete evidence: history, qualification or visit keys are missing. Missing steps can move visits between paths and change which visits match first or last steps.</p>}
    {result.selection.status==='unavailable'?<p className="banner" role="status">{reasons[result.selection.reason!]} Visit paths are unavailable, not zero.</p>:<>
