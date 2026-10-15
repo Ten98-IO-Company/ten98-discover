@@ -2,23 +2,42 @@ import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
+import {authorizeApiKey} from './api-keys.ts';
 import {getDatabase} from './db.ts';
 import {canonicalHash,contextHost,contextPatch,parse,sectionKeys,type CitationPublisherCategory} from './context-input.ts';
 
 export type ContentProject={id:string;name:string;origin:string;role:'owner'|'admin'|'editor'|'viewer'};
-export async function withContentProject<T>(projectId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,project:ContentProject)=>Promise<T>):Promise<T> {
+export async function withContentProject<T>(projectId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,project:ContentProject)=>Promise<T>,promptApiToken?:string):Promise<T> {
   const pid=parse(z.uuid(),projectId),uid=parse(z.uuid(),userId),client=await getDatabase().pool.connect();
   try {
-    await client.query(write?'BEGIN':'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    if(write) {
+    // Prompt bearer calls opt into fresh statement snapshots. Other content callers keep their existing gate.
+    await client.query(promptApiToken!==undefined?'BEGIN ISOLATION LEVEL READ COMMITTED':write?'BEGIN':'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    let promptWorkspace:string|undefined;
+    if(promptApiToken!==undefined) {
+      await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");
+      const target=await client.query<{id:string}>(`SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR ${write?'UPDATE':'SHARE'} OF w`,[pid]);
+      promptWorkspace=target.rows[0]?.id;
+      if(!promptWorkspace)throw new FoundationError(404,'Project not found or unavailable.');
+      const authority=await authorizeApiKey(promptApiToken,promptWorkspace,write?'prompts:write':'prompts:read',client);
+      if(authority.userId!==uid)throw new FoundationError(404,'Project not found or unavailable.');
+    } else if(write) {
       await client.query('SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR UPDATE OF w',[pid]);
     }
     const found=await client.query<ContentProject>(`SELECT p.id,p.name,p.origin,m.role FROM project p JOIN membership m ON m.workspace_id=p.workspace_id
       WHERE p.id=$1 AND m.user_id=$2 ${write?'FOR UPDATE OF p':''}`,[pid,uid]);
     const project=found.rows[0];
     if(!project||(write&&!['owner','admin','editor'].includes(project.role))) throw new FoundationError(404,'Project not found or unavailable.');
-    const result=await work(client,project);await client.query('COMMIT');return result;
-  } catch(error) {await client.query('ROLLBACK').catch(()=>{});throw error;} finally {client.release();}
+    const result=await work(client,project);
+    if(promptApiToken!==undefined) {
+      const authority=await authorizeApiKey(promptApiToken,promptWorkspace!,write?'prompts:write':'prompts:read',client);
+      if(authority.userId!==uid)throw new FoundationError(404,'Project not found or unavailable.');
+    }
+    await client.query('COMMIT');return result;
+  } catch(error) {
+    await client.query('ROLLBACK').catch(()=>{});
+    if(promptApiToken!==undefined&&['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'The prompt operation is busy. Retry the same request ID for a write.');
+    throw error;
+  } finally {client.release();}
 }
 
 // Receipts contain only result identifiers, not copies of authored text or credentials.

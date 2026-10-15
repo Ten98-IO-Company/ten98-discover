@@ -37,7 +37,7 @@ function filters(params:URLSearchParams) {
   return {status:parse(z.enum(['active','archived','all']),params.get('status')??'active'),q:parse(text(200),params.get('q')??''),tag:parse(text(80),params.get('tag')??'').toLowerCase(),
     classification:parse(z.enum(['branded','unbranded','']),params.get('classification')??'')};
 }
-export async function listPrompts(projectId:unknown,userId:unknown,params:URLSearchParams) {
+export async function listPrompts(projectId:unknown,userId:unknown,params:URLSearchParams,promptApiToken?:string) {
   const input=filters(params);
   return withContentProject(projectId,userId,false,async(client,project)=>{
     const profile=await contentProfile(client,project),scope={projectId:project.id,list:'prompts',...input},cursor=readContentCursor(params.get('cursor'),scope);
@@ -53,13 +53,13 @@ export async function listPrompts(projectId:unknown,userId:unknown,params:URLSea
       [project.id,input.status,input.q.toLowerCase(),input.tag,cursor?.at??null,cursor?.id??null,input.classification,terms]);
     const items=rows.slice(0,50).map(row=>dto(row,project,profile));
     return {role:project.role,items,nextCursor:rows.length>50?contentCursor({id:rows[49].id,createdAt:rows[49].created_at},scope):null,execution:{available:true,schedulingAvailable:false,nextRunAt:null}};
-  });
+  },promptApiToken);
 }
-export async function getPrompt(projectId:unknown,userId:unknown,promptId:unknown) {
+export async function getPrompt(projectId:unknown,userId:unknown,promptId:unknown,promptApiToken?:string) {
   const id=parse(z.uuid(),promptId);
-  return withContentProject(projectId,userId,false,async(client,project)=>({prompt:dto(await promptRow(client,project.id,id),project,await contentProfile(client,project))}));
+  return withContentProject(projectId,userId,false,async(client,project)=>({prompt:dto(await promptRow(client,project.id,id),project,await contentProfile(client,project))}),promptApiToken);
 }
-export async function createPrompts(projectId:unknown,userId:unknown,raw:unknown) {
+export async function createPrompts(projectId:unknown,userId:unknown,raw:unknown,promptApiToken?:string) {
   const input=parse(promptBatch,raw),uid=parse(z.uuid(),userId);
   if(new Set(input.prompts.map(row=>row.text)).size!==input.prompts.length) throw new FoundationError(400,'The batch repeats exact prompt text. Remove duplicate lines before saving.');
   return withContentProject(projectId,uid,true,async(client,project)=>{
@@ -75,9 +75,9 @@ export async function createPrompts(projectId:unknown,userId:unknown,raw:unknown
     await receipt.save({ids});
     const items=[];for(const id of ids) items.push(dto(await promptRow(client,project.id,id),project,profile));
     return {items,replayed:false};
-  });
+  },promptApiToken);
 }
-export async function updatePrompt(projectId:unknown,userId:unknown,promptId:unknown,raw:unknown) {
+export async function updatePrompt(projectId:unknown,userId:unknown,promptId:unknown,raw:unknown,promptApiToken?:string) {
   const input=parse(promptPatch,raw),uid=parse(z.uuid(),userId),id=parse(z.uuid(),promptId);
   return withContentProject(projectId,uid,true,async(client,project)=>{
     const receipt=await contentReceipt(client,project.id,input.requestId,`prompt.update:${id}`,input),profile=await contentProfile(client,project);
@@ -94,9 +94,9 @@ export async function updatePrompt(projectId:unknown,userId:unknown,promptId:unk
     await client.query(`UPDATE project_prompt SET current_version_id=$3,topic=COALESCE($4,topic),enabled=COALESCE($5,enabled),user_tags=COALESCE($6,user_tags),revision=revision+1,updated_at=clock_timestamp() WHERE project_id=$1 AND id=$2`,
       [project.id,id,versionId,input.topic??null,input.enabled??null,input.tags===undefined?null:JSON.stringify(input.tags)]);
     await receipt.save({id});row=await promptRow(client,project.id,id);return {prompt:dto(row,project,profile),replayed:false};
-  });
+  },promptApiToken);
 }
-export async function setPromptArchived(projectId:unknown,userId:unknown,promptId:unknown,archive:boolean,raw:unknown) {
+export async function setPromptArchived(projectId:unknown,userId:unknown,promptId:unknown,archive:boolean,raw:unknown,promptApiToken?:string) {
   const input=parse(promptAction,raw),uid=parse(z.uuid(),userId),id=parse(z.uuid(),promptId);
   return withContentProject(projectId,uid,true,async(client,project)=>{
     const receipt=await contentReceipt(client,project.id,input.requestId,`prompt.${archive?'archive':'restore'}:${id}`,input),profile=await contentProfile(client,project);
@@ -106,9 +106,9 @@ export async function setPromptArchived(projectId:unknown,userId:unknown,promptI
     if(!archive) await assertUniqueText(client,project.id,row.text,id);
     await client.query(`UPDATE project_prompt SET archived_at=${archive?'COALESCE(archived_at,clock_timestamp())':'NULL'},revision=revision+1,updated_at=clock_timestamp() WHERE project_id=$1 AND id=$2`,[project.id,id]);
     await receipt.save({id});row=await promptRow(client,project.id,id);return {prompt:dto(row,project,profile),replayed:false};
-  });
+  },promptApiToken);
 }
-export async function promptVersions(projectId:unknown,userId:unknown,promptId:unknown,params:URLSearchParams) {
+export async function promptVersions(projectId:unknown,userId:unknown,promptId:unknown,params:URLSearchParams,promptApiToken?:string) {
   const id=parse(z.uuid(),promptId);
   if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1) throw new FoundationError(400,'Use one version page cursor.');
   return withContentProject(projectId,userId,false,async(client,project)=>{
@@ -123,5 +123,5 @@ export async function promptVersions(projectId:unknown,userId:unknown,promptId:u
     const {rows}=await client.query(`SELECT id,number,text,created_at AS "createdAt",created_by AS "createdBy" FROM prompt_text_version
       WHERE project_id=$1 AND prompt_id=$2 AND ($3::integer IS NULL OR number<$3) ORDER BY number DESC LIMIT 51`,[project.id,id,beforeNumber]);
     return {versions:rows.slice(0,50),nextCursor:rows.length>50?contentCursor(rows[49],scope):null};
-  });
+  },promptApiToken);
 }

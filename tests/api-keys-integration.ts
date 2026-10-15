@@ -56,7 +56,7 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
   const memberId = randomUUID();
   await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [memberId, 'API-key member', `${randomUUID()}@keys.integration.test`]);
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'admin')", [workspaceId, memberId]);
-  const memberKey = await createApiKey(workspaceId, memberId, { name: 'Role changes', scopes: [...apiKeyScopes] });
+  const memberKey = await createApiKey(workspaceId, memberId, { name: 'Role changes', scopes: ['projects:read', 'projects:write', 'analytics:read', 'events:write', 'team:read'] });
   await changeRole(workspaceId, options.ownerId, memberId, { role: 'editor' });
   assert.deepEqual((await authenticateApiKey(memberKey.token)).scopes, ['projects:read', 'projects:write', 'analytics:read', 'events:write']);
   await rejects(authorizeApiKey(memberKey.token, workspaceId, 'team:read'), 403, 'Demotion must remove team access immediately.');
