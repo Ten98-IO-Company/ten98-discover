@@ -87,7 +87,7 @@ export async function runMcpChecks(){
     assert.equal((await http('/api/mcp',{authorization:'Bearer '+all.token},undefined,'POST',Buffer.from([0xc3,0x28]))).status,400);
     assert.equal((await http('/api/mcp',{authorization:'Bearer '+all.token},undefined,'POST',Buffer.alloc(262145,0x20))).status,413);
     assert.equal((await http('/api/mcp',{authorization:'Bearer '+all.token,'content-type':'text/plain'},{})).status,415);
-    for(const method of ['GET','DELETE','OPTIONS'])assert.equal((await http('/api/mcp',{},undefined,method)).status,405);
+    for(const method of ['GET','PUT','PATCH','DELETE','OPTIONS'])assert.equal((await http('/api/mcp',{},undefined,method)).status,405);
     assert.equal((await http('/api/mcp?token=forbidden',{},{})).status,400);
     for(const [name,args]of [['ten98_read_realtime',{projectId:project,query:{}}],['ten98_read_analytics',{projectId:project,query:{from:'2025-02-30',to:'2025-03-01'}}],['ten98_list_sessions',{projectId:project,query:{...calendar,groupBy:'country'}}],['ten98_create_prompts',{projectId:project,requestId:randomUUID(),prompts:[{text:'x',execute:true}]}]]as const){const denied=await call(name,args);assert.ok(denied.status===400||denied.wire.result?.structuredContent?.error?.status===400);}
     console.log('PASS scoped discovery, tenant boundaries, Origin/auth rejection, protocol metadata and strict native input limits');
