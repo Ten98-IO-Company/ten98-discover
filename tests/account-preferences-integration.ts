@@ -129,6 +129,7 @@ export async function runAccountPreferencesChecks(verifyOriginalRows:()=>Promise
     await checked(api('/api/account/preferences',pendingActor),401);await save(pendingActor,body(await read(factorActor),{name:'Incomplete factor overwrite'}),401);assert.deepEqual(await ownRows(factorActor.id),factorBefore);
     await pass('an incomplete two-factor sign-in cannot read or change account preferences');
     assert.equal(groups.length,7);assert.equal((await pool.query('SELECT count(*)::int AS n FROM user_preference')).rows[0].n,5);
+    const discovery=await checked(api('/api/auth/oidc/providers'));assert.deepEqual(await discovery.json(),{providers:[]});
   } catch(error){primaryFailure=error;} finally {
     async function cleanup(run:()=>Promise<unknown>){try{await run();}catch(error){cleanupErrors.push(error);}}
     if(constraintAdded)await cleanup(()=>pool.query(`ALTER TABLE user_preference DROP CONSTRAINT ${constraint}`));
