@@ -10,7 +10,8 @@ import {reserveSpend,dispatchSpend,settleSpend,requestHash} from './spending.ts'
 import {withKeywordProject,keywordConnection,keywordCredentials,refreshKeywordMarkets} from './keyword-research.ts';
 import {readKeywordAccount} from './dataforseo-keywords.ts';
 import {microUsd,type KeywordMarket} from './keyword-research-input.ts';
-import {parseDomainRequest,type DomainRequest} from './domain-research-input.ts';
+import {parseDomainRequest,domainEndpointName,type DomainRequest,type DomainReportResult,type DomainOrganicMetrics} from './domain-research-input.ts';
+import {csvCell} from './explorer-input.ts';
 import {requestDomainResearch,reconcileDomainCharge,type DomainOutcome} from './dataforseo-domains.ts';
 
 export const domainResearchQueue='domain-research';
@@ -34,6 +35,22 @@ export async function getDomainResearch(projectId:string,userId:string){return w
  return bounded({role,vaultConfigured:credentialKeys()!==null,spendingPaused:paused,connections,catalog,runs});
 });}
 export async function getDomainResearchRun(projectId:string,userId:string,id:string){parse(z.uuid(),id);return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>bounded({role,run:dto(await runRow(client,projectId,id),userId,role)}));}
+export function domainReportCsv(result:DomainReportResult){
+ const distribution=['Position 1','Positions 2–3','Positions 4–10','Positions 11–20','Positions 21–30','Positions 31–40','Positions 41–50','Positions 51–60','Positions 61–70','Positions 71–80','Positions 81–90','Positions 91–100'];
+ const metricHeaders=['Ranking keywords','Estimated monthly organic traffic','Estimated equivalent ads value (USD)',...distribution];
+ const values=(m:DomainOrganicMetrics)=>[m.rankedKeywords,m.estimatedTraffic,m.estimatedAdsValueUsd,...m.rankDistribution];
+ const lines:unknown[][]=[['Report',result.report??'ranked_keywords'],['Target',result.target],['Scope',result.scope],['Location code',result.locationCode],['Language code',result.languageCode],['Source',result.source],['Retrieved at',result.retrievedAt],['Returned',result.returnedCount],['Provider total',result.totalCount],['Partial',result.limited],['Metric meaning','Provider estimates, not measured visits. Equivalent ads value is not the research charge.']];
+ if(result.report==='overview_v1')lines.push(metricHeaders,...result.rows.map(values));
+ else if(result.report==='pages_v1')lines.push(['Page URL',...metricHeaders],...result.rows.map(r=>[r.url,...values(r.organic)]));
+ else if(result.report==='competitors_v1')lines.push(['Competitor domain','Shared ranking keywords','Competitor average position on shared keywords',...metricHeaders.map(h=>'Competitor full domain: '+h),...metricHeaders.map(h=>'Target on shared keywords: '+h)],...result.rows.map(r=>[r.domain,r.sharedKeywords,r.averagePosition,...values(r.fullDomain),...values(r.targetOverlap)]));
+ else lines.push(['Keyword','Absolute position','Search volume','Estimated traffic','CPC (USD)','Difficulty','Ranking URL','Metrics updated at'],...result.rows.map(r=>[r.keyword,r.position,r.searchVolume,r.estimatedTraffic,r.cpcUsd,r.keywordDifficulty,r.url,r.metricsUpdatedAt]));
+ const csv=lines.map(line=>line.map(csvCell).join(',')).join('\r\n')+'\r\n';
+ if(Buffer.byteLength(csv,'utf8')>2097152)throw new FoundationError(413,'The complete CSV exceeds 2 MiB.');return csv;
+}
+export async function exportDomainResearchRun(projectId:string,userId:string,id:string){parse(z.uuid(),id);return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>{
+ const row=await runRow(client,projectId,id);if(row.result_expired||!row.result)throw new FoundationError(409,'This report has no currently retained rows to export. Reload its receipt.');
+ const result=row.result as DomainReportResult;return bounded({role,run:ack(row,userId,role),csv:domainReportCsv(result),rowCount:result.returnedCount});
+});}
 async function getDomainResearchAck(projectId:string,userId:string,id:string){return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>bounded({role,run:ack(await runRow(client,projectId,id),userId,role)}));}
 export const refreshDomainResearchMarkets=refreshKeywordMarkets;
 export async function quoteDomainResearch(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
@@ -43,7 +60,7 @@ export async function quoteDomainResearch(projectId:string,userId:string,raw:unk
   if(!catalog||(catalog.markets as KeywordMarket[]).every(m=>m.locationCode!==request.locationCode||m.languageCode!==request.languageCode))throw new FoundationError(409,'Refresh markets and choose a supported location and language before preparing a quote.');
   const conn=await keywordConnection(client,wid,request.connectionId);return {revision:conn.revision,name:conn.name,credentials:keywordCredentials(conn)};
  });
- const price=await readKeywordAccount(saved.credentials,'ranked_keywords',send),estimate=price.perTask+price.perItem*BigInt(request.limit);
+ const price=await readKeywordAccount(saved.credentials,domainEndpointName(request),send),estimate=price.perTask+price.perItem*BigInt(request.limit);
  if(estimate<1n||estimate>1000000000000n)throw new FoundationError(502,'The provider price is outside supported budget limits.');
  return withKeywordProject(projectId,userId,writers,async(client,wid,role)=>{
   await keywordConnection(client,wid,request.connectionId,saved.revision);
@@ -59,7 +76,7 @@ export async function startDomainResearch(projectId:string,userId:string,raw:unk
  const {quoteId,requestKey}=parse(z.object({quoteId:z.uuid(),requestKey:z.uuid()}).strict(),raw);
  const saved=await withKeywordProject(projectId,userId,writers,async(client,wid)=>{const q=(await client.query('SELECT * FROM domain_research_quote WHERE id=$1 AND project_id=$2 AND user_id=$3',[quoteId,projectId,userId])).rows[0];if(!q)throw new FoundationError(404,'Quote not found or unavailable.');return {quote:q,wid};});
  const boss=await getBoss();
- const reserved=await reserveSpend(saved.wid,userId,{connectionId:saved.quote.connection_id,requestKey,operation:'domain.ranked_keywords',inputHash:requestHash(JSON.stringify({projectId,quoteId,request:saved.quote.request})),estimateUsd:usd(saved.quote.estimate_micros)},async(client,id)=>{
+ const reserved=await reserveSpend(saved.wid,userId,{connectionId:saved.quote.connection_id,requestKey,operation:'domain.'+domainEndpointName(parseDomainRequest(saved.quote.request)),inputHash:requestHash(JSON.stringify({projectId,quoteId,request:saved.quote.request})),estimateUsd:usd(saved.quote.estimate_micros)},async(client,id)=>{
   await client.query('SELECT id FROM project WHERE id=$1 AND workspace_id=$2 FOR UPDATE',[projectId,saved.wid]);
   const q=(await client.query('SELECT * FROM domain_research_quote WHERE id=$1 AND workspace_id=$2 AND project_id=$3 AND user_id=$4 AND expires_at>clock_timestamp() FOR UPDATE',[quoteId,saved.wid,projectId,userId])).rows[0];
   if(!q)throw new FoundationError(409,'The quote expired. Prepare a new quote before starting.');
@@ -101,12 +118,13 @@ export async function executeDomainResearch(id:string,send:typeof fetch=fetch){
  let secret:unknown,request:DomainRequest;
  try{
   const saved=await withKeywordProject(initial.project_id,initial.user_id,writers,async(client,wid)=>{const row=await runRow(client,initial.project_id,id);if(row.status!=='queued'||row.charge_status!=='reserved')throw new FoundationError(409,'Research is no longer queued.');return keywordCredentials(await keywordConnection(client,wid,row.connection_id,row.connection_revision));});
-  const account=await readKeywordAccount(saved,undefined,send);
+  const account=await readKeywordAccount(saved,domainEndpointName(parseDomainRequest(initial.request)),send);
   await dispatchSpend(initial.workspace_id,initial.user_id,id,async(client,ledger)=>{
    if(!(await client.query('SELECT id FROM project WHERE id=$1 AND workspace_id=$2 FOR UPDATE',[initial.project_id,initial.workspace_id])).rowCount)throw new FoundationError(404,'Project unavailable.');
    const row=await runRow(client,initial.project_id,id);
    if(row.status!=='queued'||row.account_fingerprint!==account.fingerprint||!(await client.query('SELECT 1 FROM domain_research_quote WHERE id=$1 AND expires_at>clock_timestamp()',[row.quote_id])).rowCount)throw new FoundationError(409,'Research authorization expired or changed.');
    secret=keywordCredentials(await keywordConnection(client,initial.workspace_id,ledger.connection_id,ledger.connection_revision));request=parseDomainRequest(row.request);
+   if(account.perTask+account.perItem*BigInt(request.limit)>BigInt(row.estimate_micros))throw new FoundationError(409,'The current provider price exceeds this quote. Prepare a new quote.');
    await client.query("UPDATE domain_research_run SET status='running',dispatched_at=clock_timestamp() WHERE id=$1",[id]);
   });
  }catch(e){if(e instanceof FoundationError){await cancelUndispatched(id);return;}throw e;}
