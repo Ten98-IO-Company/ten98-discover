@@ -187,6 +187,11 @@ try {
         assert.equal(imported.length, 20); assert.deepEqual(new Set(imported.map((item: any) => item.id)), new Set(evictionIds)); assert.ok(imported.every((item: any) => item.status === 'failed'));
         await connection.getByRole('region', { name: /^Snapshot:/ }).waitFor({ state: 'detached' });
         assert.equal(await connection.getByRole('table').count(), 0, 'A successful overview that omits the loaded receipt clears its rows and whole result.');
+        assert.equal(await connection.getByText('20 unsuccessful imports. Open Import history for details.', { exact: true }).isVisible(), true, 'Historical failures have one compact notice above results.');
+        assert.equal(await connection.getByRole('status').filter({ hasText: 'Synthetic failed receipt for overview eviction regression.' }).count(), 0, 'Repeated historical diagnostics do not crowd the results.');
+        await connection.getByText('Import history', { exact: true }).click();
+        assert.equal(await connection.getByText('Synthetic failed receipt for overview eviction regression.', { exact: true }).count(), 20, 'Every original diagnostic stays available in history.');
+        await connection.getByText('Import history', { exact: true }).click();
         assert.equal(await connection.locator('.google-snapshot').count(), 0, 'Old quality and pagination leave with the unverified result.');
         assert.equal(await connection.getByRole('button', { name: 'Load more rows', exact: true }).count(), 0);
         assert.equal(await connection.getByText(/Report data expired/).count(), 0, 'Missing from the bounded overview does not prove expiry.');
