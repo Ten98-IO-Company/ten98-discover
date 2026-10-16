@@ -58,7 +58,7 @@ import { getDestinations, getPublicDestinations, previewDestinations, publishDes
 import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,exportSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
 
 import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
-import {getPromptTrackers,createPromptTracker,approvePromptTracker,pausePromptTracker,runPromptTrackerNow} from './prompt-recurring.ts';
+import {getPromptTrackers,getPromptTracker,createPromptTracker,approvePromptTracker,pausePromptTracker,runPromptTrackerNow,setPromptTrackerArchived} from './prompt-recurring.ts';
 import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
 import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
@@ -441,18 +441,20 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
-    const trackerRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-trackers(?:/(${id})/(approve|pause|run))?$`,'i'));
+    const trackerRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-trackers(?:/(${id})(?:/(approve|pause|run|archive|restore))?)?$`,'i'));
     if(trackerRoute){
       const [,projectId,trackerId,action]=trackerRoute;
-      if(/[?#]/.test(request.url))throw new FoundationError(400,'Prompt tracker actions do not accept query parameters or fragments.');
+      if(request.url.includes('#')||((request.method!=='GET'||trackerId)&&request.url.includes('?')))throw new FoundationError(400,'Only the tracker collection accepts its supported filters.');
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`prompt-tracker-read:${user.id}`,120);
-      if(request.method==='GET'&&!trackerId)return json(await getPromptTrackers(projectId,user.id));
+      if(request.method==='GET'&&!trackerId)return json(await getPromptTrackers(projectId,user.id,url.searchParams));
+      if(request.method==='GET'&&trackerId&&!action)return json(await getPromptTracker(projectId,user.id,trackerId));
       if(request.method==='POST'){
         await limit(`prompt-tracker-write:${user.id}`,10);const input=await readJson(request,8192);
         if(!trackerId)return json(await createPromptTracker(projectId,user.id,input));
         if(action==='approve')return json(await approvePromptTracker(projectId,user.id,trackerId,input));
         if(action==='pause')return json(await pausePromptTracker(projectId,user.id,trackerId,input));
         if(action==='run')return json(await runPromptTrackerNow(projectId,user.id,trackerId,input),202);
+        if(action==='archive'||action==='restore')return json(await setPromptTrackerArchived(projectId,user.id,trackerId,action==='archive',input));
       }
       return json({error:'Method not allowed.'},405);
     }
