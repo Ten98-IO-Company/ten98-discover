@@ -288,6 +288,17 @@ test('properties are native-only unless they meet each vendor contract; dimensio
   assert.equal(JSON.stringify(enabled.payloads).includes('secret'), false);
 });
 
+test('an SPA page_view after pushState carries the landing referrer origin only; the referrer path and the private query/hash never leak', async () => {
+  // P27 open question: docs/analytics-measurement.md:43 fixes hostname-only capture but does not say whether an SPA page_view should
+  // repeat the landing document's referrer, carry the previous in-app page or carry nothing. document.referrer is unchanged by
+  // pushState, so the tracker repeats its origin; this pins that privacy-safe behaviour (origin only, never a path) until decided.
+  const e = makeEnv({ settings: { captureReferrer: true } }); await e.start();
+  e.history.pushState({}, '', '/next?private=1#secret'); await e.drain();
+  assert.equal(e.payloads.length, 2); assert.equal(e.payloads[1].name, 'page_view'); assert.equal(e.payloads[1].url, 'https://site.example/next');
+  assert.deepEqual(e.payloads[1].dimensions, { language: 'en-GB', referrer: 'https://referrer.example' });
+  assert.doesNotMatch(JSON.stringify(e.payloads), /\/path|secret|hidden|fragment|private/);
+});
+
 test('encoded and Unicode excluded prefixes cannot bypass native privacy; malformed paths fail closed', async () => {
   for (const path of ['/private', '/%70rivate/orders', '/private%2Forders', '/秘密/orders', '/%E7%A7%98%E5%AF%86/orders', '/bad%ZZ']) {
     const e = makeEnv({ settings: { excludedPaths: ['/private', '/秘密'] } }); e.location.pathname = path; await e.start();

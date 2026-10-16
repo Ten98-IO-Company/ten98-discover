@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CANONICAL_EVENTS,
   catalog,
   parseDestinationConfiguration,
   parseDestinationEvent,
   previewConfiguration,
+  type CanonicalEvent,
 } from '../src/server/destinations.ts';
 
 const ASSETS: Record<string, string> = {
@@ -117,6 +119,22 @@ test('structure limits, uniqueness and strict objects', () => {
   assert400(() => parseDestinationConfiguration(configOf(destination('meta', {mappings: [{event: 'page_view', secret: 'x'}]}))));
   assert400(() => parseDestinationConfiguration({destinations: 'nope'}));
   assert.equal(parseDestinationConfiguration(configOf()).destinations.length, 0);
+});
+
+test('public configuration served by /api/tracking-config admits only public identifiers for every provider', () => {
+  // getPublicDestinations serves this parse verbatim (src/server/destinations.ts:542), so every admitted field is public: refuse
+  // credential-shaped fields on every provider and pin the field set, so a credential or server-side key cannot be admitted unnoticed.
+  for (const c of catalog) for (const key of ['accessToken', 'serverKey']) assert400(() => parseDestinationConfiguration(configOf(destination(c.provider, {[key]: 'live-secret-value'}))));
+  const target: Record<string, (event: CanonicalEvent) => string> = {google_ads: e => `label_${e}`, linkedin: e => String(CANONICAL_EVENTS.indexOf(e) + 1), x: e => `tw-pixel123-${e.replace(/_/g, '')}`};
+  const mappings = (provider: string, events: {event: CanonicalEvent}[]) => events.map(({event}) => ({event, ...(target[provider] ? {target: target[provider](event)} : {})}));
+  const served = parseDestinationConfiguration(configOf(...catalog.map(c => destination(c.provider, {mappings: mappings(c.provider, c.events)}))));
+  assert.deepEqual(Object.keys(served), ['destinations']);
+  for (const {provider, events} of catalog) {
+    const d = served.destinations.find(x => x.provider === provider)!;
+    assert.deepEqual(Object.keys(d).sort(), ['assetId', 'enabled', 'mappings', 'owner', 'ownershipConfirmed', 'provider'], provider);
+    assert.equal(d.assetId, ASSETS[provider]);
+    assert.deepEqual(d.mappings, mappings(provider, events), provider);
+  }
 });
 
 test('asset id formats are strict and whitespace-free', () => {

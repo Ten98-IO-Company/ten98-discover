@@ -165,6 +165,17 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   assert.equal((await signIn(challenged)).twoFactorRedirect, true);
   await expect('/api/me', challenged, 401);
   await expect('/api/account/security', challenged, 401);
+  // The pending factor is a challenge, not a session: workspace and website reads stay closed, before and after a wrong code.
+  const project = (await pool.query('SELECT id FROM project WHERE workspace_id=$1 ORDER BY created_at LIMIT 1', [options.workspaceId])).rows[0]?.id as string | undefined;
+  assert.ok(project, 'Foundation test must leave a website in the owner workspace.');
+  assert.deepEqual([...challenged.cookies.keys()], ['better-auth.two_factor'], 'The password step must leave only the two_factor cookie.');
+  const pendingReads = [`/api/workspaces/${options.workspaceId}/projects`, `/api/projects/${project}/events`, `/api/projects/${project}/realtime`];
+  const closed = async () => { for (const path of pendingReads) assert.deepEqual(Object.keys(await expect(path, challenged, 401)), ['error'], `A pending second factor must not read ${path}.`); };
+  await closed();
+  const pendingCookie = challenged.cookies.get('better-auth.two_factor');
+  await expect('/api/auth/two-factor/verify-totp', challenged, 401, { code: wrongCode });
+  assert.equal(challenged.cookies.get('better-auth.two_factor'), pendingCookie, 'A wrong code must leave the same pending cookie, still without a session.');
+  await closed();
   await expect('/api/auth/two-factor/verify-totp', challenged, 400, { code: enrollmentCode, trustDevice: true });
   await expect('/api/auth/two-factor/verify-backup-code', challenged, 400, { code: enrollment.backupCodes[0], disableSession: true });
   await expect('/api/auth/two-factor/verify-totp', challenged, 409, { code: enrollmentCode });
@@ -172,6 +183,8 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   const completed = await expect('/api/auth/two-factor/verify-backup-code', challenged, 200, { code: enrollment.backupCodes[0] });
   assert.ok(!('token' in completed) && !('session' in completed));
   await expect('/api/me', challenged, 200);
+  for (const path of pendingReads) await expect(path, challenged, 200);
+  console.log('PASS pending second-factor cookie alone reads no workspace or website data, before and after a wrong code');
   await expect('/api/auth/two-factor/verify-backup-code', consumedChallenge, 401, { code: enrollment.backupCodes[1] });
   const reused = browser();
   await signIn(reused);

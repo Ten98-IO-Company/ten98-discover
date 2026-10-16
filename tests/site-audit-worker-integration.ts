@@ -86,6 +86,17 @@ export async function runSiteAuditWorkerChecks(){
   assert.equal((await pool.query("SELECT count(*) AS n FROM site_audit_edge WHERE run_id=$1 AND target_url LIKE '%secret%'",[graph.id])).rows[0].n,'0');
   console.log('PASS cross-origin robots keeps original policy scope, query/private/external exclusions and conservative duplicate/broken/orphan findings');
 
+  // Finalization owns its static-graph-v1 rows: a second pass over the same drained run must replace them, never duplicate them.
+  const issues=async(id:string)=>(await pool.query('SELECT id,issue_key,rule_version,code,severity,page_id,target_page_id,details,related_page_ids FROM site_audit_issue WHERE run_id=$1 ORDER BY issue_key',[id])).rows;
+  const once=await issues(graph.id),beforeAgain=requests.length;assert.ok(once.some(i=>i.rule_version==='static-graph-v1'));
+  await pool.query("UPDATE site_audit_run SET status='queued',completed_at=NULL WHERE id=$1",[graph.id]);
+  await execute(graph);const twice=await issues(graph.id),again=await read(graph.id);
+  assert.equal(requests.length,beforeAgain,'Re-finalizing a drained frontier sends nothing.');
+  assert.equal(again.status,'partial');assert.equal(again.stop_reason,null);assert.deepEqual(again.summary,saved.summary);assert.deepEqual(again.coverage,saved.coverage);
+  assert.deepEqual(twice.map(({id:_id,...row})=>row),once.map(({id:_id,...row})=>row));
+  assert.deepEqual(twice.filter(i=>i.rule_version==='static-html-v1').map(i=>i.id),once.filter(i=>i.rule_version==='static-html-v1').map(i=>i.id));
+  console.log('PASS repeated finalization replaces static-graph-v1 findings without duplicates and republishes an identical summary');
+
   route=()=>({status:404,headers:['Cf-Mitigated','challenge']});
   const blocked=await start(),beforeBlocked=requests.length;await execute(blocked);saved=await read(blocked.id);
   assert.equal(saved.status,'failed');assert.equal(saved.robots_state,'unavailable');assert.equal(requests.length-beforeBlocked,1);assert.equal(saved.summary,null);
