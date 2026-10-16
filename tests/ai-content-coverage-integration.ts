@@ -24,7 +24,7 @@ import {listSiteAudits,getSiteAuditPage} from '../src/server/site-audits.ts';
 // fresh owned database. No listener, crawler, worker, provider adapter or key.
 export async function runContentCoverageChecks(verifyOriginalRows:()=>Promise<void>=async()=>{}){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_CONTENT_COVERAGE_TEST,'1');assert.equal(process.env.ANALYTICS_NETWORK_MODE,'off');
- const config=getConfig(),db=new URL(config.databaseUrl),origin='http://127.0.0.1:3111';assert.equal(config.appUrl,origin);assert.equal(db.hostname,'127.0.0.1');assert.equal(db.port,'55501');assert.match(db.pathname,/^\/ten98_content_coverage_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');
+ const config=getConfig(),db=new URL(config.databaseUrl),origin='http://127.0.0.1:3111';assert.equal(config.appUrl,origin);assert.equal(db.hostname,'127.0.0.1');const ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&db.pathname==='/ten98_content_coverage_ci';assert.equal(db.port,ci?'5432':'55501');if(!ci)assert.match(db.pathname,/^\/ten98_content_coverage_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');
  for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[key],undefined);
  const {pool}=getDatabase();assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public'")).rows[0].n,0);
  const oldFetch=globalThis.fetch;let outbound=0;globalThis.fetch=async()=>{outbound++;throw Error('No external operation is permitted.');};

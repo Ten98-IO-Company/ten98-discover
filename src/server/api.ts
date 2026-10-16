@@ -1074,15 +1074,19 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'GET' && match[2] === 'analytics') return json(await projectAnalytics(match[1], user.id, url.searchParams,principal?.id));
       if (request.method === 'GET' && match[2] === 'explore') {
         await limit(`explore:${user.id}`,30);
-        const result = await exploreAnalytics(match[1],user.id,url.searchParams);
+        let result;try{result=await exploreAnalytics(match[1],user.id,url.searchParams);}
+        catch(error){if(apiToken)await authorizeApiKey(apiToken,target.workspace_id,'analytics:read');throw error;} // Stale key authority outranks the report's own refusal.
         if (apiToken) await authorizeApiKey(apiToken, target.workspace_id, 'analytics:read');
         return json(result);
       }
       if (request.method === 'GET' && match[2] === 'events') {
         const client=await getDatabase().pool.connect();
         try{
+        // Wait behind an in-flight reset or team write on the shared publication gate, then release it before reading: a gate held through
+        // the read would block key revocation and membership writes for its duration, and the fresh authority check below must observe them.
+        await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL lock_timeout='5s'");
+        await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[target.workspace_id]);await client.query('COMMIT');
         await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");
-        await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[target.workspace_id]);
         await client.query('SELECT id FROM project WHERE id=$1 FOR SHARE',[match[1]]);
         if(!(await client.query('SELECT 1 FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1 AND p.workspace_id=$3',[match[1],user.id,target.workspace_id])).rowCount)throw new FoundationError(404,'Project not found or unavailable.');
         if(apiToken)await authorizeApiKey(apiToken,target.workspace_id,'analytics:read',client);

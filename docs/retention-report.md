@@ -42,7 +42,7 @@ The JSON envelope is bounded at512KiB and its CSV at256KiB UTF8. Oversize respon
 node --test tests/retention-report.test.ts
 ```
 
-The opt-in integration runner requires `TEN98_INTEGRATION_TEST=1`, `TEN98_RETENTION_REPORT_TEST=1`, `ANALYTICS_NETWORK_MODE=off`, a newly created empty `ten98_retention_report_<12hex>` database on127.0.0.1:55501, and private in-memory synthetic configuration. It refuses other databases and creates the existing migrations only in that empty fixture. It retains fixtures and optionally saves synthetic SQL DTOs under the checkout's private directory. Do not run against existing/local-preview/production data.
+The opt-in integration runner requires `TEN98_INTEGRATION_TEST=1`, `TEN98_RETENTION_REPORT_TEST=1`, `ANALYTICS_NETWORK_MODE=off`, a newly created empty `ten98_retention_report_<12hex>` database on127.0.0.1:55501 (or the workflow's isolated `ten98_retention_report_ci` database), and private in-memory synthetic configuration. It refuses other databases and creates the existing migrations only in that empty fixture. It retains fixtures and optionally saves synthetic SQL DTOs under the checkout's private directory. Do not run against existing/local-preview/production data.
 
 ```sh
 node tests/retention-report-integration.ts
