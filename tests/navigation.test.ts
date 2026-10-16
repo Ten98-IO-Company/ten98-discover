@@ -350,3 +350,15 @@ test('comparison dimension namespace and selection shape remain scope-bound',()=
  for(const view of ['explore','sessions','realtime'])assert.equal(parseNavigation({...base,view,analyticsDimension:'path',analyticsSelection:selection}).analyticsSelection,undefined);
  const value=parseNavigation({...base,analyticsDimension:'path',analyticsSelection:selection});assert.equal(canonicalNavigation('?'+new URLSearchParams({...base,analyticsDimension:'path',analyticsSelection:selection})+'&analyticsSelection=x',value),false);
 });
+
+
+test('personal profile preferences are role-independent and preserve only native navigation scope',()=>{
+  for(const role of [undefined,'owner','admin','editor','viewer'])assert.equal(allowedView('preferences',role,false),true);
+  assert.equal(projectView('preferences'),false);
+  for(const target of [{view:'preferences' as const},{workspace,project,view:'preferences' as const}]){
+    const wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);
+    assert.equal(canonicalNavigation(wire+'&view=security',target),false);
+  }
+  assert.deepEqual(parseNavigation({workspace,project,view:'preferences',revenueQuery:'currency=USD',analyticsFrom:'2026-01-01',locale:'ar-SA',theme:'dark',userId:workspace}),{workspace,project,view:'preferences'});
+  assert.notEqual(navigationKey({view:'preferences'}),navigationKey({view:'security'}));
+});
