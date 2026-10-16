@@ -76,7 +76,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042', '0043', '0044', '0045', '0046', '0047', '0048']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042', '0043', '0044', '0045', '0046', '0047', '0048', '0049']);
   assert.equal(sources.find(m=>m.version==='0029')!.checksum,'8c7559f0e64f899bae4dc36aa9afa521b69624dba7849f28dfc3c1cb730097de','Append0030 without rewriting the published0029 migration.');
   assert.equal(sources.find(m=>m.version==='0030')!.checksum,'87b06aefbfe1b2228bda7fe91a28563265e908b92f07574ad3cb7e5380bbb28e','Append0031 without rewriting the published0030 migration.');
   assert.equal(sources.find(m=>m.version==='0031')!.checksum,'0a5d1fc0ee88c4aad84dbb41b32eb2d80bf0b5d816a907dfabb5a0228925ee65','Append0032 without rewriting published0031.');
@@ -466,7 +466,8 @@ try {
   for(const row of profileRows)assert.equal(row.definition_key,row.expected);assert.equal(profileRows.find(r=>r.id===metaIds[0]).definition_key,profileRows.find(r=>r.id===metaIds[1]).definition_key,'Account label changes do not change measurement profile.');assert.equal(profileRows.find(r=>r.id===metaIds[2]).definition_key,null,'Already deleted legacy profile stays explicitly unknown.');
   const history47=await history(),data47=await rows45(),identity47=await identityRecords();
   assert.deepEqual(history47,sources.filter(source=>source.version<='0047').map(({version,checksum})=>({version,checksum})));
-  stage='actual current CLI upgrade populated0047 to0048';assert.match(runMigrate(0),/Database migrations applied: 0048\./);await assertSchema();
+  stage='native registered SQL upgrade populated0047 to0048';const domainMigration=sources.find(m=>m.version==='0048')!,domainClient=await pool.connect();
+  try{await domainClient.query('BEGIN');await domainClient.query(domainMigration.sql);await domainClient.query('INSERT INTO schema_version VALUES($1,$2)',[domainMigration.version,domainMigration.checksum]);await domainClient.query('COMMIT');}finally{await domainClient.query('ROLLBACK').catch(()=>{});domainClient.release();}await assert.rejects(assertSchema(),{code:'SCHEMA_MISMATCH'});
   assert.deepEqual((await history()).slice(0,47),history47,'0048 preserves every001–047 migration checksum.');
   assert.deepEqual(await rows45(),data47,'0048 preserves every existing47 row and field, including financial receipts, provider identity and preferences.');assert.deepEqual(await identityRecords(),identity47);
   const new48Tables=['domain_research_quote','domain_research_run'],schema48=await schemaSnapshot();
@@ -476,7 +477,14 @@ try {
   assert.deepEqual((await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename<>'schema_version' ORDER BY tablename")).rows.map(row=>row.tablename),[...tables45,...new48Tables].sort());
   for(const table of new48Tables)assert.equal((await pool.query(`SELECT 1 FROM ${pg.escapeIdentifier(table)}`)).rowCount,0,'Migration48 creates no research, quote or paid work.');
   assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'0048 starts no queue.');
-  console.log('PASS actual CLI47-to48 preserves all47 rows/schema/checksums/identity/finance and adds only two empty Domain SEO tables');
+  console.log('PASS native registered SQL47-to48 preserves all47 rows/schema/checksums/identity/finance and adds only two empty Domain SEO tables');
+  const history48=await history(),data48=await rows45(),identity48=await identityRecords(),domain48=(await pool.query('SELECT to_jsonb(r) AS row FROM domain_research_run r ORDER BY id')).rows;
+  stage='actual current CLI upgrade populated0048 to0049';assert.match(runMigrate(0),/Database migrations applied: 0049\./);await assertSchema();
+  assert.deepEqual((await history()).slice(0,48),history48,'0049 preserves every published001–048 checksum.');assert.deepEqual(await rows45(),data48,'0049 preserves every prior row, financial receipt and Google page.');assert.deepEqual(await identityRecords(),identity48);assert.deepEqual((await pool.query('SELECT to_jsonb(r) AS row FROM domain_research_run r ORDER BY id')).rows,domain48);
+  const schema49=await schemaSnapshot();assert.deepEqual(schema49.columns,schema48.columns);assert.deepEqual(schema49.indexes,schema48.indexes);assert.deepEqual(schema49.constraints.filter(row=>!reportCheck(row)),schema48.constraints.filter(row=>!reportCheck(row)));
+  const check48=schema48.constraints.find(reportCheck),check49=schema49.constraints.find(reportCheck);assert.ok(check48&&check49);assert.deepEqual(check49,{...check48,definition:check48.definition.replace("'ga4_key_events'::text","'ga4_key_events'::text, 'ga4_organic_landing'::text, 'ga4_organic_daily'::text, 'ga4_organic_weekly'::text")},'0049 changes only three fixed organic report identifiers.');
+  assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42);for(const table of new48Tables)assert.equal((await pool.query(`SELECT 1 FROM ${pg.escapeIdentifier(table)}`)).rowCount,0);
+  console.log('PASS actual CLI48-to49 preserves all48 rows/schema/checksums/identity/finance and broadens only three fixed organic report IDs');
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = await records();
@@ -494,7 +502,7 @@ try {
     assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount, 0, 'Upgrade must not grant instance authority or record an implicit grant.');
   }
   const upgradedSchema = await schemaSnapshot();
-  stage='actual current CLI schema0048 no-op';assert.match(runMigrate(0),/Database migrations already applied; all checksums verified\./);
+  stage='actual current CLI schema0049 no-op';assert.match(runMigrate(0),/Database migrations already applied; all checksums verified\./);
   assert.deepEqual(await identityRecords(),identity40,'Repeat migration cannot backfill basis or change existing identity evidence.');
   assert.deepEqual(await history(), upgradedHistory);
   assert.deepEqual(await schemaSnapshot(), upgradedSchema);
@@ -511,13 +519,13 @@ try {
   assert.equal((await pool.query("SELECT 1 FROM meta_campaign_inventory WHERE status IN ('queued','reading')")).rowCount,1,'Only the prior captured inventory remains active; migration creates no work.');
   assert.deepEqual((await pool.query('SELECT to_jsonb(s) AS data FROM analytics_segment s ORDER BY id')).rows.map(r=>r.data),retained33,'No-op migration preserves the exact authored schema33 filter.');
   assert.deepEqual((await pool.query('SELECT to_jsonb(a) AS data FROM analytics_annotation a ORDER BY id')).rows.map(r=>r.data),retained34,'No-op migration preserves the exact authored schema34 note.');
-  assert.deepEqual(await rows42(),data42,'No-op48 migration preserves every42 field and retained/purged quote payload exactly.');
-  assert.deepEqual(await rows44(),data44,'Actual48 no-op preserves the complete post44 rows, including NULL login managers.');
-  for(const table of new43Tables)assert.equal((await pool.query(`SELECT 1 FROM ${pg.escapeIdentifier(table)}`)).rowCount,0,'No-op48 migration creates no semantic work.');
-  assert.equal((await pool.query('SELECT 1 FROM user_preference')).rowCount,0,'Actual48 no-op creates no preference rows.');assert.deepEqual(await rows44(),data44,'Actual48 no-op preserves every prior44 row and financial identity.');assert.deepEqual(await schemaSnapshot(),schema48,'Actual48 no-op preserves the complete48 schema.');assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'Actual48 no-op starts no queue.');
-  assert.deepEqual(await rows45(),data45,'Actual48 no-op preserves every45 row and field.');assert.deepEqual(await identityRecords(),identity45);
-  assert.deepEqual(migrationCliExits,[1,1,1,1,0,0],'Four rejected CLI migrations, one actual47-to48 upgrade and one48 no-op are the entire bounded CLI workload.');
-  console.log('PASS actual CLI48 no-op preserves all48 checksums/schema, all prior47 rows/finance and the empty personal preference table');
+  assert.deepEqual(await rows42(),data42,'No-op49 migration preserves every42 field and retained/purged quote payload exactly.');
+  assert.deepEqual(await rows44(),data44,'Actual49 no-op preserves the complete post44 rows, including NULL login managers.');
+  for(const table of new43Tables)assert.equal((await pool.query(`SELECT 1 FROM ${pg.escapeIdentifier(table)}`)).rowCount,0,'No-op49 migration creates no semantic work.');
+  assert.equal((await pool.query('SELECT 1 FROM user_preference')).rowCount,0,'Actual49 no-op creates no preference rows.');assert.deepEqual(await rows44(),data44,'Actual49 no-op preserves every prior44 row and financial identity.');assert.deepEqual(await schemaSnapshot(),schema49,'Actual49 no-op preserves the complete49 schema.');assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'Actual49 no-op starts no queue.');
+  assert.deepEqual(await rows45(),data45,'Actual49 no-op preserves every45 row and field.');assert.deepEqual(await identityRecords(),identity45);
+  assert.deepEqual(migrationCliExits,[1,1,1,1,0,0],'Four rejected CLI migrations, one actual48-to49 upgrade and one49 no-op are the entire bounded CLI workload.');
+  console.log('PASS actual CLI49 no-op preserves all49 checksums/schema, all prior47 rows/finance and the empty personal preference table');
   console.log('PASS prior0022 feature evidence,0023 rank and0026–28 Meta receipts/pages survive0035; profile and active evidenced cooldown backfills preserve all prior fields and are idempotent; no implicit paid work');
   console.log('PASS actual0029 authored context survives0035 unchanged with empty citation defaults, empty suggestion tables, preserved checksums and idempotent repeat migration');
   console.log('PASS original owner, credentials, sessions, workspace, project and event preserved; no operator grants; repeat migration is idempotent');
