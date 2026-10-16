@@ -10,6 +10,9 @@ import { dispatchSpend, reserveSpend } from '../src/server/spending.ts';
 import { executeKeywordResearch } from '../src/server/keyword-research.ts';
 import { createPrompts } from '../src/server/prompts.ts';
 import { executePromptComparison, quotePromptExecution, startPromptExecution } from '../src/server/prompt-execution.ts';
+import {analyticsSettings,saveAnalyticsSettings,trackingConsentEpoch} from '../src/server/native-analytics.ts';
+import {beginSessionReplay,uploadSessionReplay} from '../src/server/session-replay.ts';
+import {defaultReplaySettings} from '../src/lib/session-replay.ts';
 
 // A fresh migrated synthetic database only. No server, worker or real provider starts.
 assert.equal(process.env.TEN98_INTEGRATION_TEST, '1');
@@ -45,7 +48,12 @@ try {
     await pool.query('INSERT INTO workspace(id,name) VALUES($1,\'Restore fixture\')', [id]);
     await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')", [id, owner]);
   }
-  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Restore fixture','https://restore.integration.test',$3,'infinity')", [project, workspace, randomUUID()]);
+  const replayKey=randomUUID(),replayOrigin='https://restore.integration.test';
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Restore fixture','https://restore.integration.test',$3,'infinity')", [project, workspace, replayKey]);
+  const replaySettings=await analyticsSettings(project,owner);await saveAnalyticsSettings(project,owner,{revision:replaySettings.revision,settings:{...replaySettings.settings,replay:{...defaultReplaySettings,enabled:true,sampleRate:1}}});
+  const replayEpoch=(await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[project])).rows[0].analytics_epoch,replayConsent={analytics:true as const,replay:true as const,epoch:trackingConsentEpoch(replayEpoch,null)},replayRequest=new Request(replayOrigin,{headers:{origin:replayOrigin,'user-agent':'Restore acceptance browser'}}),recording=await beginSessionReplay(replayRequest,{siteKey:replayKey,requestId:randomUUID(),url:replayOrigin+'/',consent:replayConsent});assert.ok(recording.token);
+  const disabledReplayProject=randomUUID();await pool.query(`INSERT INTO project(id,workspace_id,name,origin,public_key,analytics_settings,retention_next_run_at)SELECT $1,workspace_id,'Disabled restored replay','https://disabled-restore.integration.test',$2,jsonb_set(analytics_settings,'{replay,enabled}','false'::jsonb),'infinity' FROM project WHERE id=$3`,[disabledReplayProject,randomUUID(),project]);
+  const disabledReplayEpoch=(await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[disabledReplayProject])).rows[0].analytics_epoch;
   const connection = (await saveProvider(workspace, owner, { name: 'Synthetic only', provider: 'openrouter', credentials: { apiKey: 'synthetic-never-live' }, monthlyLimitUsd: '10' })).connection.id;
   await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1", [connection]);
   await saveBudget(workspace, owner, { monthlyLimitUsd: '10', paused: false });
@@ -79,6 +87,7 @@ try {
   await pool.query("CREATE FUNCTION restore_fixture_reject() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic quarantine failure'; END $$");
   await pool.query('CREATE TRIGGER restore_fixture_reject BEFORE UPDATE ON rank_config FOR EACH ROW EXECUTE FUNCTION restore_fixture_reject()');
   await assert.rejects(quarantineRestoredSpending());
+  assert.equal((await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[project])).rows[0].analytics_epoch,replayEpoch);assert.equal((await analyticsSettings(project,owner)).settings.replay!.enabled,true);
   assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1', [workspace])).rows[0].paused, false);
   assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1', [reserved.id])).rows[0].status, 'reserved');
   assert.equal((await pool.query('SELECT 1 FROM workspace_budget WHERE workspace_id=$1', [other])).rowCount, 0);
@@ -94,6 +103,11 @@ try {
   assert.equal(standing.schedule_enabled, false); assert.equal(standing.next_due_at, null); assert.ok(standing.approval_id); assert.equal(standing.approval_account_fingerprint, 'd'.repeat(64));
   assert.deepEqual(await quarantineRestoredSpending(), { pausedBudgets: 0, cancelledReservations: 0, disabledSchedules: 0 });
   console.log('PASS quarantine pauses all workspaces, cancels only reserved work, disables standing schedules and preserves charge/credential evidence idempotently');
+  const afterRestore=await analyticsSettings(project,owner);assert.equal(afterRestore.settings.replay!.enabled,false);assert.notEqual((await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[project])).rows[0].analytics_epoch,replayEpoch);assert.notEqual((await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[disabledReplayProject])).rows[0].analytics_epoch,disabledReplayEpoch);
+  const oldUpload={siteKey:replayKey,url:replayOrigin+'/',consent:replayConsent,token:recording.token!,sequence:0,final:true,data:Buffer.from('[]').toString('base64url')};await assert.rejects(uploadSessionReplay(replayRequest,oldUpload),{status:403});
+  await saveAnalyticsSettings(project,owner,{revision:afterRestore.revision,settings:{...afterRestore.settings,replay:{...afterRestore.settings.replay!,enabled:true}}});await assert.rejects(beginSessionReplay(replayRequest,{siteKey:replayKey,requestId:randomUUID(),url:replayOrigin+'/',consent:replayConsent}),{status:403});
+  const renewedEpoch=(await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[project])).rows[0].analytics_epoch,renewedConsent={...replayConsent,epoch:trackingConsentEpoch(renewedEpoch,null)};await assert.rejects(uploadSessionReplay(replayRequest,{...oldUpload,consent:renewedConsent}),{status:409});assert.equal((await beginSessionReplay(replayRequest,{siteKey:replayKey,requestId:randomUUID(),url:replayOrigin+'/',consent:renewedConsent})).accepted,true);assert.equal((await pool.query('SELECT count(*)::int AS n FROM session_recording WHERE id=$1',[recording.recordingId])).rows[0].n,1);
+  console.log('PASS restore disables enabled and disabled replay configurations, revokes old capabilities and requires fresh explicit consent without deleting history');
 
   await saveBudget(workspace, owner, { monthlyLimitUsd: '10', paused: false });
   await assert.rejects(dispatchSpend(workspace, owner, reserved.id), { status: 409 });

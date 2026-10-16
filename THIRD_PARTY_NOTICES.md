@@ -1187,3 +1187,9 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## Optional browser session replay: rrweb2.1.7 — MIT
+
+`public/replay.js` embeds the unmodified published rrweb2.1.7 UMD browser build and its style sheet inside an application-owned private scope. Upstream commit: a9cb69272522e677522f9a2f2eb8ac43fbf9efcb. Archive SHA-256:13680f81b1df0f7bae04a27e5b373de2b0deb39db1506049d53448c21428ba26. Unmodified UMD SHA-256:a35df0b0bed5ae358683e0a82aa8c1a354bb229f60469e4d269fb3e8b2c77058.
+
+The bundled runtime also includes base64-arraybuffer1.0.2, mitt3.0.1 and @xstate/fsm1.6.5, all MIT. Complete upstream and dependency copyright notices and license texts are retained in `public/vendor/rrweb-LICENSE.txt`. The application's recorder/player adapters remain MIT. No remote CDN or additional Node runtime dependency is required.

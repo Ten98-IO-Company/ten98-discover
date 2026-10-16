@@ -23,6 +23,9 @@ export async function quarantineRestoredSpending() {
       approval_connection_revision=NULL,approval_key_fingerprint=NULL,approval_models_hash=NULL,approved_at=NULL,
       revision=LEAST(revision+1,2147483646),last_status='Restored installation: review a fresh quote and explicitly approve again.',updated_at=clock_timestamp()
       WHERE enabled OR approval_id IS NOT NULL OR next_due_at IS NOT NULL`);
+    // Replay grants are browser-held capabilities: restoring the same signing key must not revive them.
+    await client.query(`UPDATE project SET analytics_settings=jsonb_set(analytics_settings,'{replay,enabled}','false'::jsonb),
+      analytics_epoch=gen_random_uuid(),analytics_revision=LEAST(analytics_revision::bigint+1,2147483647)::integer WHERE analytics_settings?'replay'`);
     await client.query('COMMIT');
     return { pausedBudgets: budgets.rowCount ?? 0, cancelledReservations: cancelled.rowCount ?? 0, disabledSchedules: (schedules.rowCount??0)+(promptSchedules.rowCount??0) };
   } catch (error) {

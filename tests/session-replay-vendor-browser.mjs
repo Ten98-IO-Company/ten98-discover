@@ -1,0 +1,250 @@
+// TEN98_REPLAY_VENDOR_SMOKE=1 PLAYWRIGHT_MODULE=/absolute/playwright/index.mjs node tests/session-replay-vendor-browser.mjs
+// Eight actual vendor/DOM groups and four explicitly synthetic adapter/CSSOM groups.
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {resolve,dirname} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {createHash,randomBytes} from 'node:crypto';
+export async function runSessionReplayVendorBrowser() {
+
+assert.equal(process.env.TEN98_REPLAY_VENDOR_SMOKE,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
+const {createServer}=await import('vite');
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),out=resolve(root,'private/session-replay-vendor/browser-'+randomBytes(6).toString('hex'));
+const {readReplayChunk,reassembleReplay,replayLimits}=await import(pathToFileURL(resolve(root,'src/lib/session-replay.ts')).href);
+mkdirSync(out,{recursive:true});const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
+const assets=['public/tracker.js','public/destinations.js','public/replay.js','public/vendor/rrweb-LICENSE.txt','src/lib/session-replay.ts','tests/session-replay-vendor-browser.mjs'];
+const pins=()=>Object.fromEntries(assets.map(file=>[file,hash(resolve(root,file))])),before=pins();
+assert.equal(before['public/replay.js'],'0f749af78d41972ded5f3a8a1e88b75904f2084447f32f2abe1a0b4e8cab7507');
+const site='55000000-0000-4000-8000-000000000001',secondSite='55000000-0000-4000-8000-000000000002',epoch='55000000-0000-4000-8000-000000000003';
+const recording='55000000-0000-4000-8000-000000000004',nonce='ten98-replay-real-vendor-smoke',path='/replay-vendor/record',playerPath='/replay-vendor/player';
+const token='c3ludGhldGljLXJlcGxheS1jYXBhYmlsaXR5.'+'a'.repeat(64);
+const denied={analytics:false,advertising:false,adUserData:false,adPersonalization:false};
+const settings={enabled:true,sampleRate:1,maskLevel:'strict',maxDurationMs:300000,blockSelector:'#private-zone'};
+const markers=[
+ 'basic analytics never loads a recorder or records DOM',
+ 'analytics permission alone never grants replay',
+ 'explicit refusal never loads a recorder or records DOM',
+ 'explicit replay not sampled never loads the vendor',
+ 'real rrweb snapshots, inputs, CSS mutations and fragments are masked; withdrawal stops capture',
+ 'one document recorder owns capture while the second site retains analytics only',
+ 'actual rrweb plays captured data through isolated native controls and viewport changes',
+ 'actual rrweb hostile-input lane cannot execute scripts, submit forms, read app parent or load protected resources'
+];
+const started=Date.now();
+const evidence={phase:'starting',stages:[],qualification:'Actual unmodified rrweb asset/DOM/MessagePort. Only config, Begin decisions and ingress ACKs are synthetic. Hostile player events are explicitly synthetic. Four separate synthetic adapter/CSSOM groups do not execute rrweb. No database/authenticated UI/compiled app/BFcache proof.',sourceBefore:before,groups:[],contexts:[],external:[],unexpected:[],pageErrors:[],screenshots:[],cleanup:[]};
+const save=()=>writeFileSync(resolve(out,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');save();
+let server,browser,context,origin,capturedEvents=[],pendingAssetChecks=[];
+const wait=async(check,label,ms=15000)=>{const end=Date.now()+ms;while(!check()){assert.ok(Date.now()<end,label);await new Promise(resolve=>setTimeout(resolve,25));}};
+const stage=(name,status)=>{assert.ok(evidence.stages.length<64);evidence.stages.push({name,status,elapsedMs:Date.now()-started});save();};
+const evaluated=async(name,work)=>{stage(name,'started');let timer;try{const result=await Promise.race([work(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Browser evaluation exceeded 8000 ms: '+name)),8000);})]);stage(name,'completed');return result;}catch(error){stage(name,'failed');throw error;}finally{clearTimeout(timer);}};
+const pass=name=>{evidence.groups.push(name);save();console.log('PASS '+name);};
+const unexpectedWorker=()=>{evidence.unexpected.push({kind:'service-worker'});save();};
+function config(mode,key){return{schemaVersion:3,siteKey:key,environment:'live',origin,revisionId:null,consentEpoch:epoch,validUntil:new Date(Date.now()+60000).toISOString(),configuration:{destinations:[]},nativeTracking:{enabled:true,consentMode:'external',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:false,excludedPaths:[],linkIdentities:false,capturePerformance:false,collectionMode:mode==='basic'?'cookieless':'consent-first',replay:{...settings,sampleRate:mode==='not-sampled'?0:1}}};}
+function recordHtml(mode){return `<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Actual replay recorder fixture</title><link rel="icon" href="/favicon.ico"><style nonce="${nonce}">body{margin:0;font:18px sans-serif}main{padding:16px}button,input{min-height:44px;font:inherit}#changing-box{width:91px;height:40px;background:green}.large{height:1px;overflow:hidden}</style><body><main><h1>synthetic-private-visible</h1><p id="changing-text">synthetic-private-initial</p><label>Private input<input id="private-input" value="synthetic-private-input"></label><label>Private password<input type="password" value="synthetic-private-password"></label><section id="private-zone"><span id="blocked-child-marker">synthetic-blocked-private</span></section><a id="private-link" href="/safe?synthetic-private-query=1#synthetic-private-fragment">A safe destination</a><div id="changing-box"></div><div class="large">${'x'.repeat(300000)}</div><button id="analytics">Analytics only</button><button id="agree">Agree to replay</button><button id="refuse">Refuse tracking</button><button id="withdraw">Withdraw replay</button><button id="second">Agree second site</button><button id="mutate">Make real DOM changes</button><output id="choice"></output></main><script>window.untrustedCspProbeRan=true;</script><script nonce="${nonce}">
+window.trustedCspBoot=true;window.smokeActions=[];window.lastMutationFinished=false;
+const denied=${JSON.stringify(denied)},site=${JSON.stringify(site)},other=${JSON.stringify(secondSite)};
+function consent(value,key){const result=window.ten98.consent(value,{siteKey:key,environment:'live',collectorOrigin:location.origin,acknowledgeReload:true});document.querySelector('#choice').textContent=JSON.stringify(result);window.smokeActions.push({kind:'choice',ok:result.ok});}
+document.querySelector('#analytics').onclick=()=>consent({...denied,analytics:true},site);
+document.querySelector('#agree').onclick=()=>consent({...denied,analytics:true,replay:true},site);
+document.querySelector('#refuse').onclick=()=>consent(denied,site);
+document.querySelector('#withdraw').onclick=()=>consent({...denied,analytics:true,replay:false},site);
+document.querySelector('#second').onclick=()=>consent({...denied,analytics:true,replay:true},other);
+document.querySelector('#mutate').onclick=async event=>{window.smokeActions.push({kind:'mutation',trusted:event.isTrusted});document.querySelector('#changing-box').style.width='173px';document.querySelector('#changing-text').textContent='synthetic-private-changed';const style=document.createElement('style');style.nonce=${JSON.stringify(nonce)};style.textContent='.generated::before {content:"synthetic-private-style";color:red}';document.head.append(style);style.sheet.insertRule('.added::before {content:"synthetic-private-added";color:blue}',0);style.sheet.cssRules[0].style.setProperty('content','"synthetic-private-set"');style.firstChild.textContent='.text::before {content:"synthetic-private-style-text";color:green}';const adopted=new CSSStyleSheet();adopted.replaceSync('.adopted::before {content:"synthetic-private-adopted";color:red}');document.adoptedStyleSheets=[...document.adoptedStyleSheets,adopted];adopted.replaceSync('.replaced::before {content:"synthetic-private-replace-sync";color:blue}');await adopted.replace('.replaced::before {content:"synthetic-private-replace";color:green}');window.lastMutationFinished=true;};
+</script><script nonce="${nonce}" referrerpolicy="no-referrer" data-site-key="${site}" data-environment="live" src="/tracker.js"></script>${mode==='owner'?`<script nonce="${nonce}" referrerpolicy="no-referrer" data-site-key="${secondSite}" data-environment="live" src="/tracker.js"></script>`:''}</body></html>`;}
+function playerHtml(){
+ const frameHtml=`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; worker-src 'none'; frame-src about:; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><div id="replay-root"></div><script nonce="${nonce}" data-ten98-replay="player" referrerpolicy="no-referrer" src="${origin}/replay.js"></script>`;
+ return `<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Actual isolated replay fixture</title><link rel="icon" href="/favicon.ico"><style nonce="${nonce}">body{margin:0;font:18px sans-serif}main{padding:12px;min-width:0}button,select,input{min-height:44px;font:inherit}iframe{width:100%;height:500px;border:0}#controls{display:flex;flex-wrap:wrap;gap:8px}</style><body><main data-host-secret="synthetic-app-secret"><h1>Actual isolated rrweb playback</h1><div id="controls"><button id="play" disabled>Play replay</button><button id="pause" disabled>Pause replay</button><label>Playback speed<select id="speed" aria-label="Playback speed"><option>0.5</option><option selected>1</option><option>1.5</option><option>2</option></select></label><label>Playback position<input id="seek" type="range" min="0" max="1" value="0"></label><output id="time">0</output></div><div id="frame-host"></div></main><script nonce="${nonce}">
+window.playerMessages=[];window.playerCommands=[];window.playerPort=null;window.playerDuration=0;window.playerTime=0;
+function send(value,event){window.playerCommands.push({type:value.type,trusted:event.isTrusted});window.playerPort.postMessage(value);}
+document.querySelector('#play').onclick=event=>send({type:'play',offset:window.playerTime},event);
+document.querySelector('#pause').onclick=event=>send({type:'pause',offset:window.playerTime},event);
+document.querySelector('#speed').onchange=event=>send({type:'speed',value:Number(event.target.value)},event);
+document.querySelector('#seek').oninput=event=>{window.playerTime=Number(event.target.value);send({type:'pause',offset:window.playerTime},event);};
+window.mountActualReplay=events=>{const frame=document.createElement('iframe');frame.title='Actual isolated session replay';frame.sandbox='allow-scripts allow-same-origin';frame.referrerPolicy='no-referrer';frame.tabIndex=-1;frame.src='data:text/html;charset=utf-8,'+encodeURIComponent(${JSON.stringify(frameHtml).replaceAll('<','\\u003c')});frame.onload=()=>{const channel=new MessageChannel();window.playerPort=channel.port1;channel.port1.onmessage=event=>{const message=event.data;window.playerMessages.push(message);if(message.type==='ready'){window.playerDuration=message.duration;document.querySelector('#seek').max=String(message.duration);document.querySelector('#play').disabled=false;document.querySelector('#pause').disabled=false;}if(message.type==='tick'){window.playerTime=message.time;document.querySelector('#time').textContent=String(message.time);}if(message.type==='ended')window.playerTime=window.playerDuration;};channel.port1.start();frame.contentWindow.postMessage({type:'ten98-replay-init',protocol:1,events},'*',[channel.port2]);};document.querySelector('#frame-host').replaceChildren(frame);};
+</script></body></html>`;}
+async function fresh(mode){
+ if(context)await context.close();
+ pendingAssetChecks=[];const record={mode,requests:[],begins:0,chunks:[],basicBodies:0,contextClosed:false,csp:[],failures:[],assetResponses:[],assetErrors:[]},memory={chunks:[],begin:null};evidence.contexts.push(record);save();
+ context=await browser.newContext({viewport:{width:1000,height:800},locale:'en-US'});context.setDefaultTimeout(8000);context.on('serviceworker',unexpectedWorker);
+ await context.addInitScript(()=>{window.replaySmokeAudit={scripts:[],violations:[]};document.addEventListener('securitypolicyviolation',event=>{let path=event.blockedURI;try{const url=new URL(path);path=url.origin+url.pathname;}catch{}window.replaySmokeAudit.violations.push({directive:event.effectiveDirective,blocked:path});});new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node instanceof HTMLScriptElement&&node.src)window.replaySmokeAudit.scripts.push({path:new URL(node.src).pathname,nonce:node.nonce,referrerPolicy:node.referrerPolicy,mode:node.getAttribute('data-ten98-replay')});}).observe(document,{childList:true,subtree:true});});
+ await context.route('**/*',async route=>{
+  const request=route.request(),url=new URL(request.url());
+  if(url.origin!==origin){evidence.external.push({method:request.method(),origin:url.origin,path:url.pathname});save();return route.abort();}
+  const entry={method:request.method(),path:url.pathname,hasQuery:!!url.search};record.requests.push(entry);assert.ok(record.requests.length<=60);assert.ok(evidence.contexts.reduce((n,r)=>n+r.requests.length,0)<=240);save();
+  if(url.pathname==='/api/tracking-config'){
+   const body=JSON.parse(request.postData());assert.deepEqual(Object.keys(body).sort(),['environment','siteKey']);assert.ok([site,...(mode==='owner'?[secondSite]:[])].includes(body.siteKey));assert.equal(body.environment,'live');assert.equal(request.method(),'POST');const headers=await request.allHeaders();assert.equal(headers.cookie,undefined);assert.equal(headers.referer,undefined);return route.fulfill({status:200,contentType:'application/json',headers:{'cache-control':'no-store'},body:JSON.stringify(config(mode,body.siteKey))});
+  }
+  if(url.pathname==='/api/collect'){
+   const body=JSON.parse(request.postData());assert.equal(body.name,'page_view');assert.ok([site,secondSite].includes(body.siteKey));assert.equal(body.url,origin+path);assert.ok(!JSON.stringify(body).includes('synthetic-private'));assert.ok(request.postDataBuffer().length<=16384);record.basicBodies++;save();return route.fulfill({status:202,contentType:'application/json',body:'{"accepted":true}'});
+  }
+  if(url.pathname==='/api/replay/begin'){
+   assert.equal(request.method(),'POST');assert.equal(url.search,'');const body=JSON.parse(request.postData());assert.deepEqual(Object.keys(body).sort(),['consent','requestId','siteKey','url']);assert.equal(body.siteKey,site);assert.equal(body.url,origin+path);assert.deepEqual(body.consent,{analytics:true,replay:true,epoch});assert.match(body.requestId,/^[a-f0-9-]{36}$/i);const headers=await request.allHeaders();assert.equal(headers.cookie,undefined);assert.equal(headers.referer,undefined);record.begins++;assert.equal(record.begins,1);const current=config(mode,site).nativeTracking.replay,now=Date.now();memory.begin={accepted:mode!=='not-sampled',reason:mode==='not-sampled'?'not_sampled':null,recordingId:recording,token:mode==='not-sampled'?null:token,createdAt:new Date(now).toISOString(),deadlineAt:new Date(now+current.maxDurationMs).toISOString(),uploadUntil:new Date(now+current.maxDurationMs+60000).toISOString(),settings:current,limits:replayLimits};save();return route.fulfill({status:202,contentType:'application/json',body:JSON.stringify(memory.begin)});
+  }
+  if(url.pathname==='/api/replay/chunks'){
+   assert.ok(['enabled','owner'].includes(mode));assert.equal(request.method(),'POST');assert.equal(url.search,'');const bytes=request.postDataBuffer();assert.ok(bytes&&bytes.length<=351000);const body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));assert.deepEqual(Object.keys(body).sort(),['consent','data','final','sequence','siteKey','token','url']);assert.equal(body.siteKey,site);assert.equal(body.url,origin+path);assert.equal(body.token,token);assert.deepEqual(body.consent,{analytics:true,replay:true,epoch});assert.equal(typeof body.final,'boolean');assert.equal(body.final,false,'Withdrawal does not invent final completeness');assert.equal(body.sequence,memory.chunks.length);const headers=await request.allHeaders();assert.equal(headers.cookie,undefined);assert.equal(headers.referer,undefined);const chunk=readReplayChunk(body.data),sha256=createHash('sha256').update(body.sequence+':'+body.final+':').update(chunk.bytes).digest('hex');memory.chunks.push({sequence:body.sequence,parts:chunk.parts,bytes:chunk.bytes.length});record.chunks.push({sequence:body.sequence,bytes:chunk.bytes.length,parts:chunk.parts.length,fragments:chunk.parts.filter(p=>p.type==='fragment').length,sha256,final:body.final});assert.ok(record.chunks.length<=32);assert.ok(record.chunks.reduce((n,c)=>n+c.bytes,0)<=8388608);save();return route.fulfill({status:202,contentType:'application/json',body:JSON.stringify({accepted:true,duplicate:false,recordingId:recording,sequence:body.sequence,sha256,complete:false})});
+  }
+  if(request.method()==='GET'&&[path,playerPath,'/tracker.js','/destinations.js','/replay.js'].includes(url.pathname)){if(url.pathname==='/destinations.js')assert.equal(url.search,'?v=3');else if(url.pathname!==path)assert.equal(url.search,'');return route.continue();}
+  if(request.method()==='GET'&&url.pathname==='/favicon.ico')return route.fulfill({status:204,body:''});
+  evidence.unexpected.push(entry);save();return route.abort();
+ });
+ const page=await context.newPage();page.on('response',response=>{if(new URL(response.url()).pathname==='/replay.js')pendingAssetChecks.push(response.body().then(bytes=>{const sha256=createHash('sha256').update(bytes).digest('hex');assert.equal(response.status(),200);assert.equal(sha256,before['public/replay.js']);record.assetResponses.push({sha256,bytes:bytes.length});}).catch(error=>record.assetErrors.push(error.message)));});page.on('pageerror',error=>{evidence.pageErrors.push({mode,message:error.message});save();});page.on('requestfailed',request=>{let url;try{url=new URL(request.url());}catch{return;}record.failures.push({path:url.pathname,error:request.failure()?.errorText??''});save();});
+ await page.goto(origin+(mode.startsWith('player')?playerPath:path+'?synthetic-private-query=1#synthetic-private-fragment'),{waitUntil:'load'});
+ if(!mode.startsWith('player')){await page.waitForFunction(({site})=>window.ten98?.destinationStatus?.({siteKey:site,environment:'live',collectorOrigin:location.origin}).ready,{site});if(mode==='owner')await page.waitForFunction(({site})=>window.ten98?.destinationStatus?.({siteKey:site,environment:'live',collectorOrigin:location.origin}).ready,{site:secondSite});assert.deepEqual(await page.evaluate(()=>[window.trustedCspBoot===true,window.untrustedCspProbeRan===true,typeof window.rrweb]),[true,false,'undefined']);}
+ return{page,record,memory};
+}
+async function closeContext(page,record){
+ await Promise.all(pendingAssetChecks);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(record.assetErrors,[]);assert.equal(record.assetResponses.length,['enabled','owner','player-captured','player-hostile'].includes(record.mode)?1:0);
+ record.csp=await page.evaluate(()=>window.replaySmokeAudit);if(!record.mode.startsWith('player')){assert.equal(record.csp.violations.filter(v=>v.directive==='script-src-elem'&&v.blocked==='inline').length,1);for(const script of record.csp.scripts.filter(s=>['/tracker.js','/destinations.js','/replay.js'].includes(s.path))){assert.equal(script.nonce,nonce);assert.equal(script.referrerPolicy,'no-referrer');}assert.equal(record.requests.filter(r=>r.path==='/replay.js').length,['enabled','owner'].includes(record.mode)?1:0);}
+ await context.close();context=null;record.contextClosed=true;save();
+}
+function assembled(memory){return reassembleReplay(memory.chunks.flatMap(chunk=>chunk.parts));}
+function nodes(value){const found=[],pending=[value];while(pending.length){const next=pending.pop();if(!next||typeof next!=='object')continue;found.push(next);for(const child of Object.values(next))pending.push(child);}return found;}
+async function mount(page,events){
+ const mode=evidence.contexts.at(-1).mode;stage(mode+':mount','started');
+ await evaluated(mode+':mount-init',()=>page.evaluate(events=>window.mountActualReplay(events),events));
+ await page.waitForFunction(()=>window.playerMessages.some(m=>m.type==='ready'||m.type==='error'));
+ const messages=await evaluated(mode+':ready-messages',()=>page.evaluate(()=>window.playerMessages));assert.equal(messages[0]?.type,'ready');assert.ok(messages[0].duration>0);
+ const locator=page.locator('iframe[title="Actual isolated session replay"]');assert.equal(await locator.getAttribute('srcdoc'),null);assert.match(await locator.getAttribute('src'),/^data:text\/html;charset=utf-8,/);assert.equal(await locator.getAttribute('sandbox'),'allow-scripts allow-same-origin');
+ const frame=await locator.elementHandle(),outer=await frame.contentFrame();await wait(()=>outer.childFrames().length===1,'Actual rrweb creates one sandboxed inner document');const inner=outer.childFrames()[0];
+ for(const [name,isolated] of [['outer',outer],['inner',inner]]){assert.equal(await evaluated(mode+':'+name+'-origin',()=>isolated.evaluate(()=>window.origin)),'null');assert.equal(await evaluated(mode+':'+name+'-top-denial',()=>isolated.evaluate(()=>{try{void top.document;return false;}catch{return true;}})),true);}
+ assert.equal(await evaluated(mode+':inner-document',()=>outer.evaluate(()=>!!document.querySelector('iframe').contentDocument)),true,'rrweb shares its opaque origin with its inner document, never the application');assert.equal(await evaluated(mode+':no-vendor-global',()=>outer.evaluate(()=>typeof window.rrweb)),'undefined');assert.equal(await outer.locator('iframe').getAttribute('sandbox'),'allow-same-origin');stage(mode+':mount','completed');return{outer,inner};
+}
+try{
+ server=await createServer({configFile:false,root,cacheDir:out+'/vite-cache',appType:'custom',optimizeDeps:{noDiscovery:true,include:[]},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
+ server.middlewares.use((req,res,next)=>{const url=new URL(req.url??'/','http://127.0.0.1');if(![path,playerPath].includes(url.pathname))return next();const mode=evidence.contexts.at(-1)?.mode??'basic';res.setHeader('content-type','text/html; charset=utf-8');res.setHeader('cache-control','no-store');res.setHeader('content-security-policy',`default-src 'none'; script-src 'nonce-${nonce}'; style-src ${url.pathname===playerPath?"'unsafe-inline'":"'nonce-"+nonce+"'"}; connect-src 'self'; worker-src 'none'; img-src 'self' data: blob:; frame-src 'self' data: about:; base-uri 'none'; object-src 'none'; form-action 'none'`);res.end(url.pathname===path?recordHtml(mode):playerHtml());});
+ await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
+ const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+ for(const [mode,button,index]of [['basic',null,0],['analytics-only','Analytics only',1],['refused','Refuse tracking',2],['not-sampled','Agree to replay',3]]){
+  const {page,record}=await fresh(mode);if(button)await page.getByRole('button',{name:button,exact:true}).click();await new Promise(resolve=>setTimeout(resolve,2200));assert.equal(record.begins,mode==='not-sampled'?1:0);assert.equal(record.chunks.length,0);assert.equal(await page.evaluate(()=>typeof window.__ten98FoundationHub.startReplayRecorder),'undefined');assert.equal(record.requests.filter(r=>r.path==='/replay.js').length,0);if(mode==='basic'||mode==='analytics-only')assert.ok(record.basicBodies>0);else if(mode==='refused')assert.equal(record.basicBodies,0);const storage=await page.evaluate(()=>Object.entries(sessionStorage).filter(([key])=>key.startsWith('ten98:replay:')).map(([,value])=>JSON.parse(value)));if(mode==='not-sampled'){assert.equal(storage.length,1);assert.equal(storage[0].terminal,true);assert.equal(storage[0].reply.accepted,false);}else assert.deepEqual(storage,[]);await closeContext(page,record);pass(markers[index]);
+ }
+ {
+  const {page,record,memory}=await fresh('enabled');await page.getByRole('button',{name:'Agree to replay',exact:true}).click();await page.waitForFunction(()=>window.__ten98FoundationHub?.replayOwner?.started===true);await page.getByLabel('Private input',{exact:true}).fill('synthetic-private-entered');await page.getByRole('button',{name:'Make real DOM changes',exact:true}).click();await page.waitForFunction(()=>window.lastMutationFinished===true);assert.equal(await page.evaluate(()=>window.smokeActions.find(a=>a.kind==='mutation')?.trusted),true);await new Promise(resolve=>setTimeout(resolve,400));await page.setViewportSize({width:320,height:720});
+  await wait(()=>{const result=assembled(memory);return result.complete&&result.events.some(e=>e.type===3&&e.data.source===4&&e.data.width===320)&&result.events.some(e=>e.type===3&&e.data.source===5)&&result.events.some(e=>e.type===3&&e.data.source===15)&&result.events.some(e=>e.type===3&&e.data.source===8&&typeof e.data.replaceSync==='string')&&result.events.some(e=>e.type===3&&e.data.source===8&&typeof e.data.replace==='string');},'Actual recorded snapshot, input, viewport and stylesheet events must reach validated chunks');
+  capturedEvents=assembled(memory).events;const lastTimestamp=capturedEvents.at(-1).timestamp,viewport=capturedEvents.filter(e=>e.type===3&&e.data.source===4).at(-1),endpoint={offset:lastTimestamp-capturedEvents[0].timestamp,viewportOffset:viewport.timestamp-capturedEvents[0].timestamp,width:viewport.data.width,height:viewport.data.height,eventsAtEnd:capturedEvents.filter(e=>e.timestamp===lastTimestamp).length};assert.deepEqual([endpoint.width,endpoint.height],[320,720]);assert.equal(endpoint.viewportOffset,endpoint.offset,'Actual recorded resize is at the endpoint exercised by End');assert.ok(endpoint.eventsAtEnd>0);record.actual={endpoint};save();assert.deepEqual(assembled(memory).missingFragments,[]);assert.ok(record.chunks.some(c=>c.fragments>0),'Actual large DOM snapshot must use native fragment protocol');const encoded=JSON.stringify(capturedEvents);assert.doesNotMatch(encoded,/synthetic-private|synthetic-blocked-private|blocked-child-marker|synthetic-private-query|synthetic-private-fragment/);assert.ok(nodes(capturedEvents).some(n=>n.attributes?.id==='changing-box'));assert.ok(capturedEvents.some(e=>e.type===3&&e.data.source===0&&JSON.stringify(e.data.attributes??[]).includes('173px')),'Actual CSS style mutation survives sanitization');assert.ok(capturedEvents.filter(e=>e.type===4).every(e=>e.data.href===origin+path));const stored=await page.evaluate(()=>Object.entries(sessionStorage).filter(([key])=>key.startsWith('ten98:replay:')).map(([,value])=>value));assert.equal(stored.length,1);assert.doesNotMatch(stored.join(''),/textContent|childNodes|synthetic-private/);
+  await page.getByRole('button',{name:'Withdraw replay',exact:true}).click();await page.waitForFunction(()=>window.__ten98FoundationHub.replayOwner===null);const count=record.chunks.length;await page.getByRole('button',{name:'Make real DOM changes',exact:true}).click();await new Promise(resolve=>setTimeout(resolve,2300));assert.equal(record.chunks.length,count);assert.equal(await page.evaluate(()=>Object.keys(sessionStorage).some(key=>key.startsWith('ten98:replay:'))),false);record.actual={endpoint,events:capturedEvents.length,types:[...new Set(capturedEvents.map(e=>e.type))],sources:[...new Set(capturedEvents.filter(e=>e.type===3).map(e=>e.data.source))],fragmented:true,withdrawalQuietMs:2300};await closeContext(page,record);pass(markers[4]);
+ }
+ {
+  const {page,record,memory}=await fresh('owner');await page.getByRole('button',{name:'Agree to replay',exact:true}).click();await page.waitForFunction(()=>window.__ten98FoundationHub?.replayOwner?.started===true);await page.getByRole('button',{name:'Agree second site',exact:true}).click();await wait(()=>assembled(memory).complete,'Owner produces an actual snapshot');assert.equal(record.begins,1);assert.equal(record.requests.filter(r=>r.path==='/replay.js').length,1);assert.ok(record.basicBodies>=2);assert.equal(await page.evaluate(({secondSite})=>window.__ten98FoundationHub.replayStates.find(s=>s.siteKey===secondSite)?.replayOwnerSkipped===true,{secondSite}),true);await page.getByRole('button',{name:'Withdraw replay',exact:true}).click();const count=record.chunks.length;await new Promise(resolve=>setTimeout(resolve,2300));assert.equal(record.chunks.length,count);assert.equal(record.begins,1);await closeContext(page,record);pass(markers[5]);
+ }
+ {
+  const {page,record}=await fresh('player-captured'),{outer,inner}=await mount(page,capturedEvents);assert.equal(await page.evaluate(()=>window.playerDuration),capturedEvents.at(-1).timestamp-capturedEvents[0].timestamp);await page.getByRole('button',{name:'Play replay',exact:true}).click();await page.waitForFunction(()=>window.playerMessages.some(m=>m.type==='tick'&&m.playing&&m.time>0));await page.getByRole('button',{name:'Pause replay',exact:true}).click();await page.waitForFunction(()=>window.playerMessages.at(-1)?.type==='tick'&&window.playerMessages.at(-1)?.playing===false);await page.getByLabel('Playback speed',{exact:true}).focus();await page.keyboard.press('End');await page.keyboard.press('Tab');assert.equal(await page.getByLabel('Playback speed',{exact:true}).inputValue(),'2');await page.getByLabel('Playback position',{exact:true}).focus();await page.keyboard.press('End');await page.waitForFunction(()=>window.playerMessages.some(m=>m.type==='tick'&&m.time===window.playerDuration&&!m.playing));assert.ok((await inner.locator('#changing-box').getAttribute('style')).includes('173px'));assert.equal(await outer.locator('iframe').getAttribute('width'),'320');assert.equal(await outer.locator('iframe').getAttribute('height'),'720');assert.equal(await inner.locator('#private-input').inputValue(),'***');assert.equal(await inner.locator('#blocked-child-marker').count(),0);assert.doesNotMatch(await inner.locator('body').innerText(),/synthetic-private/);assert.ok((await page.evaluate(()=>window.playerCommands)).every(c=>c.trusted));await page.setViewportSize({width:320,height:720});await outer.waitForFunction(()=>{const iframe=document.querySelector('iframe');return Math.abs(new DOMMatrix(getComputedStyle(iframe.parentElement).transform).a-Math.min(1,innerWidth/Number(iframe.width)))<1e-6;});await page.screenshot({path:resolve(out,'captured-player-320.png'),fullPage:true});evidence.screenshots.push({path:'captured-player-320.png',sha256:hash(resolve(out,'captured-player-320.png'))});record.actual={capturedEvents:capturedEvents.length,duration:await page.evaluate(()=>window.playerDuration),commands:await page.evaluate(()=>window.playerCommands),viewport:[320,720],parentAccessDenied:await outer.evaluate(()=>{try{void parent.document;return false;}catch{return true;}})};assert.equal(record.actual.parentAccessDenied,true);await page.evaluate(()=>window.playerPort.postMessage({type:'destroy'}));await closeContext(page,record);pass(markers[6]);
+ }
+ {
+  const {page,record}=await fresh('player-hostile');let id=1;const element=(tagName,attributes={},childNodes=[])=>({type:2,tagName,attributes,childNodes,id:id++}),text=textContent=>({type:3,textContent,id:id++});const hostile=element('html',{},[element('head',{},[element('style',{},[text(`@import url("${origin}/api/replay-smoke/style");body{background-image:url("https://replay-external.invalid/image")}`)])]),element('body',{},[element('script',{src:origin+'/api/replay-smoke/script'},[text('top.replayEscaped=true')]),element('img',{id:'same-app-image',src:origin+'/api/replay-smoke/image',onerror:'top.replayEscaped=true'}),element('img',{src:'https://replay-external.invalid/image'}),element('iframe',{src:origin+'/api/replay-smoke/frame'}),element('form',{id:'blocked-form',action:origin+'/api/replay-smoke/form',method:'post'},[element('input',{name:'synthetic',value:'synthetic-only'})]),element('button',{id:'hostile-button',onclick:'top.replayEscaped=true'},[text('Synthetic hostile control')])])]);const events=[{type:4,timestamp:1,data:{href:origin+path,width:1000,height:800}},{type:2,timestamp:2,data:{node:{type:0,id:id++,childNodes:[hostile]},initialOffset:{top:0,left:0}}},{type:3,timestamp:1000,data:{source:4,width:320,height:720}}];const {outer,inner}=await mount(page,events);
+  await evaluated('player-hostile:snapshot',()=>inner.locator('#blocked-form').waitFor({state:'attached'}));
+  // The inner document intentionally disables scripts. Keep callbacks/timers in
+  // the outer realm while invoking the target's fetch and its inherited CSP.
+  const probe=targetName=>evaluated('player-hostile:'+targetName+'-probe',()=>outer.evaluate(async({origin,targetName})=>{const target=targetName==='inner'?document.querySelector('iframe').contentWindow:window,doc=target.document,violations=[];const listener=event=>violations.push({directive:event.effectiveDirective,blocked:event.blockedURI});doc.addEventListener('securitypolicyviolation',listener);let parentDenied=false,fetchBlocked=false;try{void target.top.document;}catch{parentDenied=true;}try{await target.fetch(origin+'/api/replay-smoke/connect');}catch{fetchBlocked=true;}await new Promise(resolve=>setTimeout(resolve,50));doc.removeEventListener('securitypolicyviolation',listener);return{origin:target.origin,parentDenied,fetchBlocked,violations};},{origin,targetName}));const outerProbe=await probe('outer'),innerProbe=await probe('inner');for(const item of [outerProbe,innerProbe]){assert.equal(item.origin,'null');assert.equal(item.parentDenied,true);assert.equal(item.fetchBlocked,true);assert.ok(item.violations.some(v=>v.directive==='connect-src'&&v.blocked===origin+'/api/replay-smoke/connect'));}await evaluated('player-hostile:form-submit',()=>inner.locator('#blocked-form').evaluate(form=>HTMLFormElement.prototype.submit.call(form)));stage('player-hostile:form-observation','started');await new Promise(resolve=>setTimeout(resolve,250));stage('player-hostile:form-observation','completed');assert.equal(await page.evaluate(()=>window.replayEscaped===true),false);assert.equal(await outer.evaluate(()=>window.replayEscaped===true),false);assert.equal(await inner.evaluate(()=>window.replayEscaped===true),false);assert.equal(record.requests.filter(r=>r.path.startsWith('/api/')).length,0);assert.equal(await inner.locator('#same-app-image').evaluate(image=>image.naturalWidth),0);assert.equal(await outer.evaluate(()=>document.querySelector('script[src]')?.nonce.length>0),true);record.actual={syntheticHostileEvents:events.length,outerProbe,innerProbe,sameAppApiRequests:0,externalRequests:0};await page.screenshot({path:resolve(out,'hostile-player-contained.png'),fullPage:true});evidence.screenshots.push({path:'hostile-player-contained.png',sha256:hash(resolve(out,'hostile-player-contained.png'))});await page.evaluate(()=>window.playerPort.postMessage({type:'destroy'}));await closeContext(page,record);pass(markers[7]);
+ }
+ {
+  // These four checks intentionally replace only the adapter's core seam. They
+  // are separate from the eight actual shipped-recorder/player groups above.
+  const record={mode:'synthetic-adapter',requests:[],contextClosed:false};evidence.contexts.push(record);
+  context=await browser.newContext({viewport:{width:1000,height:800}});context.setDefaultTimeout(8000);context.on('serviceworker',unexpectedWorker);
+  await context.route('**/*',async route=>{const url=new URL(route.request().url());evidence.unexpected.push({method:route.request().method(),path:url.pathname,mode:'synthetic-adapter'});save();await route.abort();});
+  const page=await context.newPage();page.on('pageerror',error=>{evidence.pageErrors.push({mode:'synthetic-adapter',message:error.message});save();});
+  const asset=readFileSync(resolve(root,'public/replay.js'),'utf8'),start=asset.indexOf('// App adapter appended inside the private CommonJS closure around pinned rrweb.');
+  assert.ok(start>0);assert.equal(asset.indexOf('// App adapter appended',start+1),-1);const end=asset.lastIndexOf('\n})();');assert.ok(end>start);
+  await checkReplayAdapter(page,asset.slice(start,end),pass);
+  await context.close();context=null;record.contextClosed=true;
+ }
+ assert.equal(evidence.groups.length,12);assert.equal(evidence.contexts.length,9);assert.equal(evidence.screenshots.length,2);assert.deepEqual(evidence.external,[]);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(evidence.pageErrors,[]);evidence.phase='passed';
+}catch(error){evidence.phase='failed';evidence.failure={name:error.name,message:error.message};throw error;}
+finally{
+ const close=async(stage,work)=>{try{await work();}catch(error){evidence.cleanup.push({stage,message:error.message});evidence.phase='failed';}};
+ if(context)await close('owned-context',()=>context.close());if(browser)await close('owned-browser',()=>browser.close());if(server)await close('owned-vite',()=>server.close());evidence.browserClosed=!!browser&&!browser.isConnected();evidence.serverClosed=!!server&&!server.httpServer?.listening;try{evidence.sourceAfter=pins();assert.deepEqual(evidence.sourceAfter,before);}catch(error){evidence.cleanup.push({stage:'source-invariance',message:error.message});evidence.phase='failed';}save();console.log(JSON.stringify({phase:evidence.phase,evidence:resolve(out,'evidence.json'),groups:evidence.groups.length,contexts:evidence.contexts.length}));
+}
+assert.equal(evidence.phase,'passed');assert.deepEqual(evidence.cleanup,[]);return{evidence,path:resolve(out,'evidence.json')};
+}
+async function checkReplayAdapter(page, source, pass) {
+  const result=await page.evaluate(source=>{
+    const captured=[],fixture={starts:0,stops:0,options:null,initial:null};
+    const style=document.createElement('style');style.textContent='.fixture {color:red}';document.head.append(style);
+    function record(options){fixture.starts++;fixture.options=options;if(fixture.initial)options.emit(fixture.initial);return()=>{fixture.stops++;};}
+    record.mirror={getNode:id=>id===7?style.firstChild:null};
+    window.__replayAdapterFixture={record};window.__ten98FoundationHub={};
+    const script=document.createElement('script');script.dataset.ten98Replay='record';
+    script.textContent='(function(module){'+source+'})({exports:window.__replayAdapterFixture});';document.head.append(script);
+    const start=window.__ten98FoundationHub.startReplayRecorder,stop=start({maskLevel:'strict'},event=>captured.push(event));
+    const emit=data=>fixture.options.emit({type:3,timestamp:1,data});
+    emit({source:0,attributes:[{id:1,attributes:{style:{width:'10px',height:['20px','important'],display:false,content:'"synthetic-private"','background-image':'url("https://synthetic.test/a)private?token=value")'}}}]});
+    const diff=captured.at(-1).data.attributes[0].attributes.style;
+    emit({source:0,attributes:[{id:1,attributes:{style:'co\\6etent:"synthetic-private"; color:red; background-image:url("https://synthetic.test/a)private?token=value"); --private:"synthetic-private"; --asset:u\\72l("https://synthetic.test/private")'}}]});
+    const inline=captured.at(-1).data.attributes[0].attributes.style;
+    const css='.fixture::before { content:"synthetic-private";color:red;background-image:url("https://synthetic.test/a)private?token=value") }';
+    emit({source:8,id:1,adds:[{rule:css,index:0}]});const added=captured.at(-1);
+    emit({source:15,id:1,styleIds:[1],styles:[{styleId:1,rules:[{rule:'@media screen {'+css+'}',index:0}]}]});const adopted=captured.at(-1);
+    emit({source:8,id:1,replace:css});const replaced=captured.at(-1);
+    emit({source:8,id:1,replaceSync:css});const replacedSync=captured.at(-1);
+    emit({source:13,id:1,index:[0],set:{property:'content',value:'"synthetic-private"',priority:''}});const set=captured.at(-1);
+    emit({source:0,texts:[{id:7,value:css},{id:8,value:'synthetic-private'}]});const texts=captured.at(-1);
+    fixture.options.emit({type:2,timestamp:1,data:{node:{type:2,tagName:'style',attributes:{_cssText:css},childNodes:[{type:3,textContent:css}]},initialOffset:{left:0,top:0}}});const snapshot=captured.at(-1);
+    const simultaneous=start({maskLevel:'strict'},()=>{})===null&&fixture.starts===1;
+    stop();const second=start({maskLevel:'moderate'},event=>captured.push(event));
+    stop();const oldStopCannotRelease=start({maskLevel:'strict'},()=>{})===null&&fixture.starts===2;
+    emit({source:13,id:1,index:[0],set:{property:'content',value:'"synthetic-visible"',priority:''}});const moderate=captured.at(-1);
+    second();const invalidSelector=start({maskLevel:'strict',blockSelector:'['},()=>{})===null;
+    const afterInvalid=start({maskLevel:'strict'},()=>{});const selectorReleased=typeof afterInvalid==='function';afterInvalid();
+    fixture.initial={type:3,timestamp:1,data:{source:0,attributes:[{id:1,attributes:{style:{width:[3]}}}]}};
+    let reentrantRefused=false;
+    const failed=start({maskLevel:'strict'},event=>{if(event===null)reentrantRefused=start({maskLevel:'strict'},()=>{})===null;});
+    fixture.initial=null;const recovered=start({maskLevel:'strict'},()=>{});const startupReleased=typeof recovered==='function';recovered();
+    return {diff,inline,added,adopted,replaced,replacedSync,set,texts,snapshot,moderate,simultaneous,oldStopCannotRelease,invalidSelector,selectorReleased,failed:failed===null,reentrantRefused,startupReleased,starts:fixture.starts,stops:fixture.stops};
+  },source);
+  assert.equal(result.diff.width,'10px');assert.deepEqual(result.diff.height,['20px','important']);assert.equal(result.diff.display,false);assert.equal(result.diff.content,'""');
+  assert.match(result.inline,/color:\s*red/);assert.match(result.texts.data.texts[0].value,/color:\s*red/);assert.equal(result.texts.data.texts[1].value,'*****************');
+  pass('SYNTHETIC adapter native CSSOM preserves normal style diffs and masks text');
+  for(const name of ['diff','inline','added','adopted','replaced','replacedSync','set','texts','snapshot'])assert.doesNotMatch(JSON.stringify(result[name]),/synthetic-private|synthetic\.test|private\?token=value/);
+  assert.equal(result.set.data.set.value,'""');assert.equal(result.moderate.data.set.value,'"synthetic-visible"');
+  pass('SYNTHETIC adapter CSSOM strips private CSS content and URLs in all pinned event shapes');
+  for(const name of ['simultaneous','oldStopCannotRelease','invalidSelector','selectorReleased','failed','reentrantRefused','startupReleased'])assert.equal(result[name],true,name);
+  assert.equal(result.starts,result.stops);
+  pass('SYNTHETIC adapter singleton, old stop, invalid selector and startup failure preserve recorder ownership');
+  for(const dimensions of [{type:4,width:1,height:1},{type:4,width:20001,height:1},{type:3,width:1,height:0}]) {
+    const reply=await page.evaluate(async({source,dimensions})=>{
+      const frame=document.createElement('iframe');frame.sandbox='allow-scripts allow-same-origin';
+      const html='<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-ten98-adapter-seam\'; style-src \'unsafe-inline\'; img-src data: blob:; connect-src \'none\'; worker-src \'none\'; frame-src about:; font-src \'none\'; media-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'"><script nonce="ten98-adapter-seam" data-ten98-replay="player">(function(module){'+source+'})({exports:{Replayer:function(){return {iframe:document.createElement("iframe"),wrapper:document.createElement("div"),disableInteract:function(){},pause:function(){},destroy:function(){},on:function(){},getMetaData:function(){return {totalTime:1}},getCurrentTime:function(){return 0}}}}});</script>';
+      frame.src='data:text/html;charset=utf-8,'+encodeURIComponent(html);
+      const loaded=new Promise(resolve=>frame.addEventListener('load',resolve,{once:true}));document.body.append(frame);await loaded;
+      const channel=new MessageChannel();
+      try{return await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Adapter reply timeout.')),5000);channel.port1.onmessage=event=>{clearTimeout(timer);resolve(event.data);};channel.port1.start();
+        const events=[{type:4,timestamp:1,data:{href:'https://synthetic.test/',width:1,height:1}},{type:2,timestamp:2,data:{node:{type:0,childNodes:[]},initialOffset:{left:0,top:0}}}];
+        if(dimensions.type===4)Object.assign(events[0].data,{width:dimensions.width,height:dimensions.height});else events.push({type:3,timestamp:3,data:{source:4,width:dimensions.width,height:dimensions.height}});
+        frame.contentWindow.postMessage({type:'ten98-replay-init',protocol:1,events},'*',[channel.port2]);
+      });}finally{channel.port1.close();frame.remove();}
+    },{source,dimensions});
+    assert.deepEqual(reply,dimensions.type===4&&dimensions.width===1?{type:'ready',duration:1}:{type:'error',message:'This recording could not be played safely.'});
+  }
+  // This core seam deliberately models rrweb's strict < seek boundary; it is not real rrweb proof.
+  await page.evaluate(async source=>{
+    const frame=document.createElement('iframe');frame.name='inclusive-seek-fixture';frame.sandbox='allow-scripts allow-same-origin';
+    const core=function(events){
+      const handlers={},iframe=document.createElement('iframe'),wrapper=document.createElement('div'),state={offset:0,applied:[]};wrapper.append(iframe);document.body.append(wrapper);window.syntheticSeek=state;
+      return {iframe,wrapper,disableInteract(){},destroy(){},on(name,handler){handlers[name]=handler;},getMetaData(){return{totalTime:events.at(-1).timestamp-events[0].timestamp};},getCurrentTime(){return state.offset;},play(offset){state.offset=offset;},pause(offset){
+        state.offset=offset;state.applied=events.flatMap((event,index)=>event.timestamp<events[0].timestamp+offset?[index]:[]);
+        const viewport=state.applied.map(index=>events[index]).filter(event=>event.type===4||event.type===3&&event.data.source===4).at(-1);
+        if(viewport){iframe.width=String(viewport.data.width);iframe.height=String(viewport.data.height);handlers.resize?.();}
+      }};
+    };
+    const html='<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-ten98-adapter-seam\'; style-src \'unsafe-inline\'; img-src data: blob:; connect-src \'none\'; worker-src \'none\'; frame-src about:; font-src \'none\'; media-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'"><script nonce="ten98-adapter-seam" data-ten98-replay="player">(function(module){'+source+'})({exports:{Replayer:'+core.toString()+'}});</script>';
+    frame.src='data:text/html;charset=utf-8,'+encodeURIComponent(html);const loaded=new Promise(resolve=>frame.addEventListener('load',resolve,{once:true}));document.body.append(frame);await loaded;
+    const channel=new MessageChannel();window.syntheticSeekMessages=[];window.syntheticSeekPort=channel.port1;channel.port1.onmessage=event=>window.syntheticSeekMessages.push(event.data);channel.port1.start();
+    frame.contentWindow.postMessage({type:'ten98-replay-init',protocol:1,events:[{type:4,timestamp:100,data:{href:'https://synthetic.test/',width:1000,height:800}},{type:2,timestamp:100,data:{node:{type:0,childNodes:[]},initialOffset:{left:0,top:0}}},{type:3,timestamp:110,data:{source:4,width:320,height:720}},{type:3,timestamp:110,data:{source:0,attributes:[]}}]},'*',[channel.port2]);
+  },source);
+  try{
+    await page.waitForFunction(()=>window.syntheticSeekMessages.some(message=>message.type==='ready'||message.type==='error'));
+    assert.deepEqual(await page.evaluate(()=>window.syntheticSeekMessages[0]),{type:'ready',duration:10});
+    const frame=page.frame({name:'inclusive-seek-fixture'});assert.ok(frame);
+    assert.deepEqual(await frame.evaluate(()=>window.syntheticSeek),{offset:1,applied:[0,1]});
+    await page.evaluate(()=>window.syntheticSeekPort.postMessage({type:'pause',offset:9.5}));await page.waitForFunction(()=>window.syntheticSeekMessages.some(message=>message.type==='tick'&&message.time===9.5&&!message.playing));
+    assert.deepEqual(await frame.evaluate(()=>window.syntheticSeek),{offset:10,applied:[0,1]});
+    await page.evaluate(()=>window.syntheticSeekPort.postMessage({type:'pause',offset:10}));await page.waitForFunction(()=>window.syntheticSeekMessages.some(message=>message.type==='tick'&&message.time===10&&!message.playing));
+    assert.deepEqual(await frame.evaluate(()=>window.syntheticSeek),{offset:11,applied:[0,1,2,3]});
+    const viewport=await frame.evaluate(()=>{const iframe=document.querySelector('iframe');return{width:iframe.width,height:iframe.height,scale:new DOMMatrix(getComputedStyle(iframe.parentElement).transform).a,expectedScale:Math.min(1,innerWidth/320)};});
+    assert.equal(viewport.width,'320');assert.equal(viewport.height,'720');assert.ok(Math.abs(viewport.scale-viewport.expectedScale)<1e-6);
+  }finally{await page.evaluate(()=>{window.syntheticSeekPort.postMessage({type:'destroy'});window.syntheticSeekPort.close();document.querySelector('iframe[name="inclusive-seek-fixture"]').remove();});}
+  pass('SYNTHETIC adapter player accepts bounded dimensions and refuses invalid metadata before core construction');
+  return {groups:4,qualification:'Synthetic adapter seam and native CSSOM only; actual rrweb recorder/player proof is separate.'};
+}
+
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))await runSessionReplayVendorBrowser();

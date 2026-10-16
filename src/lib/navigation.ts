@@ -7,7 +7,7 @@ import {journeysLimits} from './journeys.ts'
 import {attributionLimits} from './attribution.ts'
 import {analyticsDimensions,type AnalyticsDimension} from './analytics-dimensions.ts'
 
-export const views = ['project', 'realtime', 'performance', 'compare', 'campaigns', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'realtime', 'performance', 'replays', 'compare', 'campaigns', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export type RevenueNavigation={revenueQuery?:string;revenueKey?:string;revenueCalendar?:'months';revenueInvalid?:'1'};
@@ -41,6 +41,13 @@ export function revenueNavigation(raw:Record<string,unknown>):RevenueNavigation{
 export type AttributionNavigation={attributionQuery?:string;attributionInvalid?:'1'};
 export type ExplorerNavigation={exploreQuery?:string;exploreInvalid?:'1'};
 export type PerformanceNavigation={performanceQuery?:string;performanceInvalid?:'1'};
+export type ReplayNavigation={replayQuery?:string;replayInvalid?:'1'};
+export function replayNavigation(raw:Record<string,unknown>):ReplayNavigation{
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.replayInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','replayQuery','replayInvalid'].includes(key)))return{replayInvalid:'1'};
+ if(raw.replayQuery===undefined)return{};
+ const query=raw.replayQuery;if(typeof query!=='string'||!query.length||query.length>4096||/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(query))return{replayInvalid:'1'};
+ try{decodeURIComponent(query.replace(/\+/g,' '));return{replayQuery:query};}catch{return{replayInvalid:'1'};}
+}
 export function performanceNavigation(raw:Record<string,unknown>):PerformanceNavigation{
  if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.performanceInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','performanceQuery','performanceInvalid'].includes(key)))return{performanceInvalid:'1'};
  if(raw.performanceQuery===undefined)return{};
@@ -82,7 +89,7 @@ export function retentionNavigation(raw:Record<string,unknown>):RetentionNavigat
   if(typeof month!=='string'||!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||month<'1970-01'||month>'9998-12'||typeof zone!=='string'||zone.length>80||!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(zone)||entry!==undefined&&(typeof entry!=='string'||entry.length>20000||entry.includes('\0')||new TextDecoder().decode(new TextEncoder().encode(entry))!==entry))return invalid();
   try{const format=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit'}),parts=format.formatToParts(new Date()),current=['year','month'].map(key=>parts.find(part=>part.type===key)!.value).join('-');if(month>current)return invalid();return {retentionMonth:month,retentionTimeZone:format.resolvedOptions().timeZone,...entry!==undefined?{retentionEntry:entry as string}:{}};}catch{return invalid();}
 }
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & ExplorerNavigation & PerformanceNavigation
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation
 
 // The panel verifies the closed nested scope with the existing Explorer controls
 // before fetching; this boundary keeps its URL value scalar and project-scoped.
@@ -190,6 +197,7 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     ...(view==='attribution'?attributionNavigation(raw):{}),
     ...(view==='explore'?explorerNavigation(raw):{}),
     ...(view==='performance'?performanceNavigation(raw):{}),
+    ...(view==='replays'?replayNavigation(raw):{}),
     ...(view==='audits'?auditNavigation(raw):{}),
     ...(['project','compare'].includes(view)?analyticsNavigation(raw):{}),
     ...(view==='visitor-retention'?retentionNavigation(raw):{}),
@@ -204,7 +212,7 @@ export function resolveNavigation(requested:NavigationSearch,workspace:string|un
 }
 
 export function navigationKey(search: NavigationSearch): string {
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='replays'?':'+JSON.stringify(replayNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
@@ -219,7 +227,7 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
 }
 
 export function projectView(view: AppView): boolean {
-  return ['project', 'realtime', 'performance', 'compare', 'campaigns', 'visitor-retention', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'meta', 'meta-reports', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'].includes(view)
+  return ['project', 'realtime', 'performance', 'replays', 'compare', 'campaigns', 'visitor-retention', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'meta', 'meta-reports', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'].includes(view)
 }
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {

@@ -74,6 +74,8 @@ import {getPromptCitations,exportPromptCitations} from './prompt-citations.ts';
 import {getPromptCitationSpecializations,exportPromptCitationSpecializations} from './prompt-citation-specializations.ts';
 
 import {nativeOpenApi} from './openapi.ts';
+import {beginSessionReplay,uploadSessionReplay,listSessionReplays,getSessionReplay} from './session-replay.ts';
+import {replayBegin,replayUpload} from '../lib/session-replay.ts';
 
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
@@ -168,7 +170,7 @@ export async function handleApi(request: Request): Promise<Response> {
       const { rows } = await getDatabase().pool.query("SELECT claimed FROM installation WHERE id='instance'");
       return json({ configured: rows[0]?.claimed === true, appUrl: config.appUrl });
     }
-    if (path === '/api/collect' || path === '/api/tracking-config') {
+    if (path === '/api/collect' || path === '/api/tracking-config' || path === '/api/replay/begin' || path === '/api/replay/chunks') {
       const origin = request.headers.get('origin');
       if (!origin) throw new FoundationError(403, 'A configured website origin is required.');
       await limit('collector:global', 6000);
@@ -176,6 +178,12 @@ export async function handleApi(request: Request): Promise<Response> {
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405, cors);
+      if(path==='/api/replay/begin'||path==='/api/replay/chunks'){
+        if(url.search)throw new FoundationError(400,'Replay collection has no query parameters.');
+        const raw=await readJson(request,path.endsWith('/begin')?8192:360448),input=path.endsWith('/begin')?replayBegin.parse(raw):replayUpload.parse(raw);
+        await limit(`replay:${input.siteKey}`,3000);
+        return json(path.endsWith('/begin')?await beginSessionReplay(request,input):await uploadSessionReplay(request,input),202,cors);
+      }
       if (path === '/api/tracking-config') {
         const input = z.object({ siteKey: z.uuid(), environment: z.enum(['live', 'test']) }).strict().parse(await readJson(request));
         await limit(`tracking-config:${input.siteKey}`, 600);
@@ -275,6 +283,13 @@ export async function handleApi(request: Request): Promise<Response> {
         return json(action==='delete'?await deleteAnnotation(pid,user.id,target,body):await saveAnnotation(pid,user.id,body,target));
       }
       return json({error:'Method not allowed.'},405);
+    }
+    const replayRoute=path.match(new RegExp('^/api/projects/('+id+')/replays(?:/('+id+')(?:/(chunks))?)?$','i'));
+    if(replayRoute){
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Replay reads do not accept a body.');
+      await limit('replays:'+user.id,60);
+      return json(replayRoute[2]?await getSessionReplay(replayRoute[1],user.id,replayRoute[2],url.searchParams,!!replayRoute[3]):await listSessionReplays(replayRoute[1],user.id,url.searchParams));
     }
     const cohortRoute=path.match(new RegExp('^/api/projects/('+id+')/cohorts(?:/('+id+')(?:/(update|delete))?)?$','i'));
     if(cohortRoute){
