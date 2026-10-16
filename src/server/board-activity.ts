@@ -1,8 +1,10 @@
 import type {PoolClient} from 'pg';
-import type {BoardActivityResult,BoardDimensionResult} from '../lib/boards.ts';
+import type {BoardActivityResult,BoardDimensionResult,BoardSummaryResult} from '../lib/boards.ts';
 import {revenueChannelRules} from '../lib/revenue.ts';
 import {FoundationError} from './auth.ts';
 import {analyticsPopulation} from './analytics-population.ts';
+import {analyticsSummarySql,hideAnalyticsSummary} from './analytics.ts';
+import {analyticsCustomVisitsSql} from './analytics-dimensions.ts';
 import type {explorerQuery} from './explorer-input.ts';
 import {retentionCoverage} from './retention.ts';
 
@@ -98,4 +100,24 @@ export async function boardDimension(client:PoolClient,projectId:string,userId:s
   breakdown:{rows,totalGroups:unavailable?null:number(row.groups),returnedUnits:unavailable?null:returned,omittedUnits:unavailable?null:row.totals.units-returned,limit,truncated:!unavailable&&Number(row.groups)>rows.length}};
  const pending:unknown[]=[result];while(pending.length){const value=pending.pop();if(typeof value==='number'&&(!Number.isSafeInteger(value)||value<0))throw new FoundationError(503,'The dimension result exceeds safe count limits.');if(value&&typeof value==='object')pending.push(...Object.values(value));}
  return result;
+}
+// Same selected-pageview arithmetic and whole-window custom-event suppression as Analytics.
+export async function boardSummary(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>):Promise<BoardSummaryResult>{
+ if(query.cohort||query.predicates)throw new FoundationError(400,'Board summaries support exact field and typed event-property filters.');
+ if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[query.timeZone])).rowCount)throw new FoundationError(400,'The database does not support this timezone.');
+ const {ctes,values,population}=analyticsPopulation(projectId,userId,{...query,kind:'all'},null,false);
+ const row=(await client.query<{allowed:boolean;retained_from:string|null;start:Date;finish:Date;summary:Pick<BoardSummaryResult,'totals'|'measurement'>}>(`${ctes},
+  custom_visits AS MATERIALIZED(${analyticsCustomVisitsSql('(SELECT start FROM bounds)','(SELECT finish FROM bounds)',"(e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date")}),
+  observations AS MATERIALIZED(SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM ${population} s LEFT JOIN custom_visits c USING(visitor_id,visit_id)),${analyticsSummarySql.visits}
+  SELECT EXISTS(SELECT 1 FROM target)AS allowed,(SELECT analytics_retained_from::text FROM target)AS retained_from,
+   (SELECT start FROM bounds)AS start,(SELECT finish FROM bounds)AS finish,
+   json_build_object('totals',${analyticsSummarySql.totals},'measurement',${analyticsSummarySql.measurement})AS summary FROM observations`,values)).rows[0];
+ if(!row.allowed)throw new FoundationError(404,'Project not found or unavailable.');
+ const start=row.start.toISOString(),end=row.finish.toISOString(),coverage=retentionCoverage(start,end,row.retained_from);
+ if(coverage.status==='unavailable')hideAnalyticsSummary(row.summary);
+ const {totals,measurement}=row.summary;
+ for(const value of [totals.pageViews,totals.customEvents,measurement.identifiedPageViews,measurement.unidentifiedPageViews,measurement.visitors,measurement.visits])if(value!==null&&(!Number.isSafeInteger(value)||value<0))throw new FoundationError(503,'The summary exceeds safe count limits. Narrow its dates or filters.');
+ for(const value of [measurement.bounceRate,measurement.averageVisitSeconds])if(value!==null&&(!Number.isFinite(value)||value<0))throw new FoundationError(503,'The summary measurement cannot be reported safely.');
+ return{version:'native-board-summary-v1',projectId,scope,range:{from:query.from,to:query.to,timeZone:query.timeZone,start,end},coverage,
+  method:{population:'selected-retained-observations',visits:'project-visitor-visit-pair',customSuppression:'whole-window-retained-custom-events',duration:'selected-pageview-span',historyComplete:false},totals,measurement};
 }

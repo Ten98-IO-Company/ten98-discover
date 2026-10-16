@@ -124,6 +124,10 @@ async function report(c:PoolClient,asset:Asset,query:ReturnType<typeof trackedRe
   ...sections.includes('breakdown')?{breakdown:{dimension:query.dimension,metric:'requests' as const,rows:groups,totalGroups:unavailable?null:Number(row.groups),limit:query.limit,returnedRequests:unavailable?null:returned,omittedRequests:unavailable?null:row.summary.requests-returned,truncated:!unavailable&&Number(row.groups)>groups.length}}:{}};
  const pending:unknown[]=[result];while(pending.length){const v=pending.pop();if(typeof v==='number'&&(!Number.isSafeInteger(v)||v<0))throw new FoundationError(503,'The result exceeds safe count limits.');if(v&&typeof v==='object')pending.push(...Object.values(v));}return bounded(result);
 }
+export async function readTrackedAssetBoardReport(client:PoolClient,workspaceId:string,assetId:string,kind:'link'|'pixel',raw:string,sections:readonly typeof trackedShareSections[number][]):Promise<TrackedAssetReport>{
+ // The trusted board caller already holds its current workspace membership and board revision gate.
+ const asset=await assetRow(client,workspaceId,assetId);if(!asset||asset.kind!==kind)throw missing();return report(client,asset,trackedReportQuery(raw),sections);
+}
 export async function readTrackedAssetReport(wid:unknown,uid:unknown,id:unknown,raw:string){const aid=parse(trackedUuid,id),query=trackedReportQuery(raw);return workspace(wid,uid,false,false,async(c,w,_,role)=>{const asset=await assetRow(c,w,aid);if(!asset)throw missing();return{workspaceId:w,role,report:await report(c,asset,query)};});}
 export async function readTrackedAssetShare(token:string){
  if(!/^[A-Za-z0-9_-]{43}$(?![\s\S])/.test(token)||Buffer.from(token,'base64url').toString('base64url')!==token)throw missing();const client=await getDatabase().pool.connect();

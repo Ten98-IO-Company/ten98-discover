@@ -6,7 +6,7 @@ import {analyticsPopulation,cohortCoverage,sessionScope,type CohortReport,type S
 export type {CohortReport,SessionPropertyScope} from './analytics-population.ts';
 import {resolveCohort} from './cohorts.ts';
 import {advancedPredicateMethod,validateAdvancedRegex} from './advanced-predicates.ts';
-import {analyticsDimensionValueSql} from './analytics-dimensions.ts';
+import {analyticsDimensionValueSql,analyticsCustomVisitsSql} from './analytics-dimensions.ts';
 import {geographyFields,parseGeographyKey,serializeGeographyKey,type GeoField,type GeographyProvenance} from '../lib/analytics-geography.ts';
 import {canonicalHash} from './context-input.ts';
 import {propertyWeekdays,type PropertyDateSummary,type PropertyNumberStats} from '../lib/property-visuals.ts';
@@ -60,10 +60,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     // Umami counts page views within each tuple/visitor/visit, but custom events
     // suppress bounces across the authorized date range before report filters.
     const groupingSql=fields?`tuple_custom_visits AS MATERIALIZED (
-      SELECT DISTINCT e.visitor_id,e.visit_id FROM event e JOIN target t ON t.id=e.project_id CROSS JOIN bounds b
-      WHERE e.received_at>=b.start AND e.received_at<b.finish AND (e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date
-        AND (t.analytics_retained_from IS NULL OR e.received_at>=t.analytics_retained_from)
-        AND e.event_name<>'page_view' AND e.visitor_id IS NOT NULL AND e.visit_id IS NOT NULL
+      ${analyticsCustomVisitsSql('(SELECT start FROM bounds)','(SELECT finish FROM bounds)',"(e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date")}
     ), tuple_visits AS (
       SELECT label::text COLLATE "C" AS label,visitor_id,visit_id,count(*) AS pageviews,
         extract(epoch FROM max(received_at)-min(received_at)) AS duration

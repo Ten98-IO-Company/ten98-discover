@@ -2,20 +2,19 @@ import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {boardDefinition,boardLimits,boardRevision,boardPreviewInput,type BoardPreviewInput,type BoardDefinition,type BoardCard,type BoardEntity,type BoardItem,type BoardRole,type BoardAck,type BoardWriteResult} from '../lib/boards.ts';
-import {analyticsSelectionFields} from '../lib/analytics-dimensions.ts';
-import {environmentFields} from '../lib/analytics-environment.ts';
-import {geographyFields} from '../lib/analytics-geography.ts';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
 import {canonicalHash,cleanText,parse} from './context-input.ts';
 import {contentCursor,readContentCursor} from './project-context.ts';
 import {explorerFilters,explorerQuery} from './explorer-input.ts';
 import {exploreAnalytics} from './explorer.ts';
-import {projectAnalytics} from './analytics.ts';
+
 import {projectRealtime} from './realtime.ts';
 import {projectRevenue} from './revenue.ts';
 import {runAnalysis} from './funnels.ts';
-import {boardActivity,boardDimension} from './board-activity.ts';
+import {boardActivity,boardDimension,boardSummary} from './board-activity.ts';
+import {readTrackedAssetBoardReport,trackedReportQuery} from './tracked-assets.ts';
+import {trackedAssetDimensions,type TrackedAssetReport} from '../lib/tracked-assets.ts';
 
 const uuid=z.uuid().transform(v=>v.toLowerCase()),request={requestId:uuid};
 const missing=()=>new FoundationError(404,'Board or workspace not found or unavailable.');
@@ -62,8 +61,8 @@ const entity=(definition:BoardDefinition,card:BoardCard):BoardEntity|null=>card.
 async function validateReferences(client:PoolClient,wid:string,definition:BoardDefinition,old?:BoardDefinition){
  const prior=new Set(old?[old.defaultEntity,...cards(old).map(card=>entity(old,card))].map(ref=>canonicalHash(ref)):[]);
  for(const ref of [definition.defaultEntity,...cards(definition).map(card=>entity(definition,card))]){
-  if(!ref||ref.kind!=='website')continue;
-  if(!(await client.query('SELECT 1 FROM project WHERE workspace_id=$1 AND id=$2',[wid,ref.id])).rowCount&&!prior.has(canonicalHash(ref)))throw new FoundationError(404,'A selected website is not in this workspace or is unavailable.');
+  if(!ref)continue;
+  const exists=ref.kind==='website'?await client.query('SELECT 1 FROM project WHERE workspace_id=$1 AND id=$2',[wid,ref.id]):await client.query('SELECT 1 FROM tracked_asset WHERE workspace_id=$1 AND id=$2 AND kind=$3',[wid,ref.id,ref.kind]);if(!exists.rowCount&&!prior.has(canonicalHash(ref)))throw new FoundationError(404,'A selected entity is not in this workspace or is unavailable.');
  }
  for(const card of cards(definition))if(card.type==='Goal'||card.type==='Funnel'){
   const ref=entity(definition,card)!;
@@ -120,17 +119,22 @@ export async function deleteBoard(workspaceId:unknown,userId:unknown,boardId:unk
 }
 
 const metricField={path:'path',referrer:'referrer',country:'country',region:'region',city:'city',browser:'browser',os:'os',device:'device',language:'language',utmSource:'campaignSource',utmMedium:'campaignMedium',utmCampaign:'campaignName',utmContent:'campaignContent',utmTerm:'campaignTerm',event:'event'} as const;
-type NativeCardData={source:'analytics';data:Awaited<ReturnType<typeof projectAnalytics>>}|{source:'explorer';data:Omit<Awaited<ReturnType<typeof exploreAnalytics>>,'csv'>}|{source:'realtime';data:Awaited<ReturnType<typeof projectRealtime>>}|{source:'revenue';data:Awaited<ReturnType<typeof projectRevenue>>}|{source:'analysis';data:Awaited<ReturnType<typeof runAnalysis>>}|{source:'activity';data:Awaited<ReturnType<typeof boardActivity>>}|{source:'dimensions';data:Awaited<ReturnType<typeof boardDimension>>}|{source:'text';data:{text:string}};
+type NativeCardData={source:'analytics';data:Awaited<ReturnType<typeof boardSummary>>}|{source:'explorer';data:Omit<Awaited<ReturnType<typeof exploreAnalytics>>,'csv'>}|{source:'realtime';data:Awaited<ReturnType<typeof projectRealtime>>}|{source:'revenue';data:Awaited<ReturnType<typeof projectRevenue>>}|{source:'analysis';data:Awaited<ReturnType<typeof runAnalysis>>}|{source:'activity';data:Awaited<ReturnType<typeof boardActivity>>}|{source:'dimensions';data:Awaited<ReturnType<typeof boardDimension>>}|{source:'text';data:{text:string}}|{source:'tracked-asset';data:TrackedAssetReport};
 type CardBase={workspaceId:string;boardId:string;boardRevision:number;cardId:string;cardType:BoardCard['type'];entity:BoardEntity|null;role:BoardRole;scope:string;effectiveWindow:'historical'|'fixed-live'|'none'};
 type CardOutcome={status:'ready'}&NativeCardData|{status:'unsupported';reason:'entity_dependency'|'scope'|'not_collected'|'reader_unavailable';message:string};
 export type BoardCardResult=CardBase&CardOutcome;
 type PreviewBase=Omit<CardBase,'boardId'|'boardRevision'>&{previewId:string;request:BoardPreviewInput};
 export type BoardPreviewResult=PreviewBase&CardOutcome;
-type CardBinding={retained:string|null;policy:number}|null;
+type CardBinding={kind:'website';retained:string|null;policy:number}|{kind:'link'|'pixel';retained:string|null;policy:number;revision:number}|null;
 async function readCardBinding(client:PoolClient,wid:string,ref:BoardEntity|null):Promise<CardBinding>{
- if(ref?.kind!=='website')return null;
- const binding=(await client.query<{retained:string|null;policy:number}>('SELECT p.analytics_retained_from::text AS retained,w.retention_revision AS policy FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.workspace_id=$1 AND p.id=$2',[wid,ref.id])).rows[0];
- if(!binding)throw new FoundationError(404,'The card website is unavailable.');return binding;
+ if(!ref)return null;
+ if(ref.kind==='website'){const binding=(await client.query<{retained:string|null;policy:number}>('SELECT p.analytics_retained_from::text AS retained,w.retention_revision AS policy FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.workspace_id=$1 AND p.id=$2',[wid,ref.id])).rows[0];if(!binding)throw new FoundationError(404,'The card website is unavailable.');return{kind:'website',...binding};}
+ const binding=(await client.query<{retained:string|null;policy:number;revision:number}>('SELECT a.retained_from::text AS retained,w.retention_revision AS policy,a.revision FROM tracked_asset a JOIN workspace w ON w.id=a.workspace_id WHERE a.workspace_id=$1 AND a.id=$2 AND a.kind=$3 FOR SHARE OF a',[wid,ref.id,ref.kind])).rows[0];if(!binding)throw new FoundationError(404,'The card tracked asset is unavailable.');return{kind:ref.kind,...binding};
+}
+export function boardAssetQuery(card:BoardCard,scope:ReturnType<typeof boardScope>){
+ if(!['WebsiteMetricsBar','WebsiteChart','MetricsTable','WorldMap'].includes(card.type)||card.type==='MetricsTable'&&!(trackedAssetDimensions as readonly string[]).includes(card.dimension)||scope.query.property||Object.keys(scope.query.filters).some(key=>!(trackedAssetDimensions as readonly string[]).includes(key)))return null;
+ const query=new URLSearchParams(scope.params);query.set('dimension',card.type==='WorldMap'?'country':card.type==='MetricsTable'?card.dimension:'referrer');query.set('limit',card.type==='WorldMap'?'100':card.type==='MetricsTable'?String(card.limit):'10');
+ try{return trackedReportQuery(query.toString());}catch(error){if(error instanceof Error&&'status'in error&&error.status===400)return null;throw error;}
 }
 type CardAdmission<T>={base:T;card:BoardCard;ref:BoardEntity|null;scope:ReturnType<typeof boardScope>;uid:string;wid:string;live:boolean;binding:CardBinding};
 export async function previewBoardCard(workspaceId:unknown,userId:unknown,raw:unknown):Promise<BoardPreviewResult>{
@@ -158,15 +162,19 @@ async function dispatchBoardCard<T extends Omit<CardBase,'boardId'|'boardRevisio
  const{base,card,ref,scope,uid,wid,live}=admitted;
  const unsupported=(reason:'entity_dependency'|'scope'|'not_collected'|'reader_unavailable',message:string):T&CardOutcome=>({...base,status:'unsupported',reason,message});
  if(card.type==='TextBlock')return{...base,status:'ready',source:'text',data:{text:card.text}};
- if(!ref)throw missing();if(ref.kind!=='website')return unsupported('entity_dependency','Link and pixel entities require the native P44 data integration. No website report was substituted.');
- const current=async(client:PoolClient)=>{await savedCurrent?.(client);const binding=await readCardBinding(client,wid,ref);if(binding?.retained!==admitted.binding?.retained||binding?.policy!==admitted.binding?.policy)throw new FoundationError(409,'Retention changed while this card was loading. Reload its result.');};
+ if(!ref)throw missing();
+ const current=async(client:PoolClient)=>{await savedCurrent?.(client);const binding=await readCardBinding(client,wid,ref);if(canonicalHash(binding)!==canonicalHash(admitted.binding))throw new FoundationError(409,'Retention changed while this card was loading. Reload its result.');};
+  if(ref.kind!=='website'){
+   const kind=ref.kind,query=boardAssetQuery(card,scope);if(!query)return withBoardWorkspace(wid,uid,false,async(client,_wid,_uid,role):Promise<T&CardOutcome>=>{await current(client);return{...unsupported('scope','This tracked asset card supports dates, timezone and native referrer, browser, operating-system, device and location filters only. No website, event or property scope was substituted.'),role};});
+   return withBoardWorkspace(wid,uid,false,async(client,_wid,_uid,role):Promise<T&CardOutcome>=>{await current(client);const data=await readTrackedAssetBoardReport(client,wid,ref.id,kind,query.scope,[card.type==='WebsiteMetricsBar'?'summary':card.type==='WebsiteChart'?'trend':'breakdown']);return{...base,role,status:'ready',source:'tracked-asset',data};});
+  }
   const report=new URLSearchParams(scope.params),{query}=scope;
   let value:NativeCardData;
   if(live){if(Object.keys(query.filters).length||query.property)return unsupported('scope','Live cards use the native fixed30-minute window and do not support board filters.');value={source:'realtime',data:await projectRealtime(ref.id,{kind:'session',userId:uid},new URLSearchParams())};}
   else if(card.type==='WebsiteMetricsBar'){
-   if(query.timeZone!=='UTC'||query.property||Object.keys(query.filters).some(k=>![...analyticsSelectionFields,...environmentFields,...geographyFields].includes(k as never)))return unsupported('scope','Website summary currently supports UTC dates and native literal selection, environment and location filters; this applied scope is not supported.');
-   const selection=new URLSearchParams(),native=new URLSearchParams({from:query.from,to:query.to});for(const [key,val]of Object.entries(query.filters)){if((analyticsSelectionFields as readonly string[]).includes(key))selection.set(key,val);else native.set(key,val);}if(selection.size)native.set('selection',selection.toString());value={source:'analytics',data:await projectAnalytics(ref.id,uid,native)};
-  }else if(card.type==='Goal'||card.type==='Funnel'){report.set('revision',String(card.analysisRevision));value={source:'analysis',data:await runAnalysis(ref.id,uid,card.type==='Goal'?'goal':'funnel',card.analysisId,report)};}
+   const client=await getDatabase().pool.connect();try{await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");value={source:'analytics',data:await boardSummary(client,ref.id,uid,scope.scope,query)};await client.query('COMMIT');}catch(error){await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'The summary is busy. Narrow its dates or retry the read.');throw error;}finally{client.release();}
+  }
+  else if(card.type==='Goal'||card.type==='Funnel'){report.set('revision',String(card.analysisRevision));value={source:'analysis',data:await runAnalysis(ref.id,uid,card.type==='Goal'?'goal':'funnel',card.analysisId,report)};}
   else if(card.type==='RevenueMetricsBar'||card.type==='RevenueChart'||card.type==='RevenueMetricsTable'){report.set('currency',card.currency);value={source:'revenue',data:await projectRevenue(ref.id,{kind:'session',userId:uid},report)};}
   else if(card.type==='WebsiteChart'||card.type==='WeeklyTraffic'||card.type==='EventsChart')return withBoardWorkspace(wid,uid,false,async(client,_wid,_uid,role):Promise<T&CardOutcome>=>{await current(client);return{...base,role,status:'ready',source:'activity',data:await boardActivity(client,ref.id,uid,scope.scope,query,card.type==='WebsiteChart'?'visitors':card.type==='WeeklyTraffic'?'weekly':'events',card.type==='EventsChart'?card.limit:10)};});
   else{
