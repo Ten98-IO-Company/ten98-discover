@@ -17756,10 +17756,18 @@ if (mode === 'record') {
     var root=doc.scrollingElement;
     return root===doc.documentElement&&doc.compatMode==='CSS1Compat'&&!!doc.body&&root.clientWidth===g.viewportWidth&&root.clientHeight===g.viewportHeight&&view.getComputedStyle(root).direction===g.direction&&[root,doc.body].every(function(node){var s=view.getComputedStyle(node);return s.writingMode==='horizontal-tb'&&['transform','perspective','rotate','scale','translate'].every(function(key){return s[key]==='none';});});
   }
+  var markerCss='all:initial!important;position:absolute!important;left:0!important;top:0!important;width:1px!important;height:1px!important;display:block!important;margin:0!important;padding:0!important;border:0!important;box-sizing:border-box!important;visibility:hidden!important;pointer-events:none!important;transform:none!important;zoom:1!important;';
+  // Recorded clientX/Y count from the recording's top-level viewport origin. Inside the replay frame a classic scrollbar drawn on the left (RTL) is part of client space, so measure where that origin lands instead of assuming client (0,0).
+  // The probe spans the frame's initial containing block, which must be exactly the recorded viewport; a gutter reserved behind hidden scrollbars narrows that block while clientWidth still matches, and no origin can repair such a frame.
+  function heatmapOrigin(doc,view,g){
+    var probe=doc.createElement('div');probe.style.cssText=markerCss.replace('absolute','fixed').replace('width:1px','width:auto').replace('height:1px','height:auto')+'right:0!important;bottom:0!important;';doc.scrollingElement.appendChild(probe);var r=probe.getBoundingClientRect();probe.remove();
+    return[r.left,r.top,r.width,r.height].every(Number.isFinite)&&r.width===g.viewportWidth&&r.height===g.viewportHeight?{x:r.left,y:r.top}:null;
+  }
+  // Returns the measured viewport origin once the reconstructed extent is exact, or false.
   function preserveHeatmapExtent(doc,view,g){
-    var root=doc.scrollingElement;
-    if(root.scrollWidth>g.pageWidth||root.scrollHeight>g.pageHeight)return false;
-    if(root.scrollWidth===g.pageWidth&&root.scrollHeight===g.pageHeight)return true;
+    var root=doc.scrollingElement,origin=heatmapOrigin(doc,view,g);
+    if(!origin||root.scrollWidth>g.pageWidth||root.scrollHeight>g.pageHeight)return false;
+    if(root.scrollWidth===g.pageWidth&&root.scrollHeight===g.pageHeight)return origin;
     // ponytail: cap restoration calibration/resize observation at 20k nodes; unsupported CSS fails closed instead of continuous layout reconciliation.
     var nodes=Array.from(doc.querySelectorAll('*')),marker=null,resize=null,mutations=null,active=true;
     if(nodes.length>20000||nodes.some(function(node){return!!node.shadowRoot;}))return false;
@@ -17769,15 +17777,16 @@ if (mode === 'record') {
     try{
       var natural=layout();
       marker=doc.createElement('div');marker.setAttribute('aria-hidden','true');marker.setAttribute('data-ten98-heatmap-extent','');
-      marker.style.cssText='all:initial!important;position:absolute!important;left:0!important;top:0!important;width:1px!important;height:1px!important;display:block!important;margin:0!important;padding:0!important;border:0!important;box-sizing:border-box!important;visibility:hidden!important;pointer-events:none!important;transform:none!important;zoom:1!important;';
+      marker.style.cssText=markerCss;
       root.appendChild(marker);if(layout()!==natural)throw Error('Layout changed.');
       function box(){var r=marker.getBoundingClientRect();return{left:r.left+view.scrollX,top:r.top+view.scrollY,width:r.width,height:r.height};}
       var zero=box();marker.style.setProperty('left','1px','important');var x=box();marker.style.setProperty('left','0px','important');marker.style.setProperty('top','1px','important');var y=box(),dx=x.left-zero.left,dy=y.top-zero.top;
       if(![zero.left,zero.top,zero.width,zero.height,dx,dy].every(Number.isFinite)||dx<=0||dy<=0||x.top!==zero.top||y.left!==zero.left||zero.width!==dx||zero.height!==dy)throw Error('Unmeasurable axes.');
       var left=g.direction==='rtl'?g.viewportWidth-g.pageWidth:g.pageWidth-1,top=g.pageHeight-1;
-      marker.style.setProperty('left',String((left-zero.left)/dx)+'px','important');marker.style.setProperty('top',String((top-zero.top)/dy)+'px','important');marker.style.setProperty('width',String(1/dx)+'px','important');marker.style.setProperty('height',String(1/dy)+'px','important');
+      // The target is relative to the initial containing block, like the recorded plane; zero only tells where that block sits in replay client space.
+      marker.style.setProperty('left',String(left/dx)+'px','important');marker.style.setProperty('top',String(top/dy)+'px','important');marker.style.setProperty('width',String(1/dx)+'px','important');marker.style.setProperty('height',String(1/dy)+'px','important');
       var placed=box();
-      if(placed.left!==left||placed.top!==top||placed.width!==1||placed.height!==1||layout()!==natural||!heatmapRootSupported(doc,view,g)||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight)throw Error('Inexact extent.');
+      if(placed.left-zero.left!==left||placed.top-zero.top!==top||placed.width!==1||placed.height!==1||layout()!==natural||!heatmapRootSupported(doc,view,g)||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight)throw Error('Inexact extent.');
       var sizes=new Map(nodes.map(function(node){return[node,JSON.stringify(size(node))];})),bodySize=sizes.get(doc.body);
       heatmapExtent={release:release,check:function(){return active&&marker.parentNode===root&&JSON.stringify(size(doc.body))===bodySize;}};
       resize=new ResizeObserver(function(entries){if(!active)return;for(var entry of entries)if(JSON.stringify(size(entry.target))!==sizes.get(entry.target)){fail();return;}});
@@ -17785,19 +17794,20 @@ if (mode === 'record') {
       // rrweb Finish repeats the existing paused root class; only that exact no-op write is harmless.
       mutations=new MutationObserver(function(records){if(!active)return;for(var record of records)if(record.type!=='attributes'||record.target!==root||record.attributeName!=='class'||record.oldValue!==root.getAttribute('class')){fail();return;}});
       mutations.observe(root,{subtree:true,attributes:true,attributeOldValue:true,childList:true,characterData:true});
-      addEventListener('pagehide',destroy,{once:true});addEventListener('unload',destroy,{once:true});return true;
+      addEventListener('pagehide',destroy,{once:true});addEventListener('unload',destroy,{once:true});return origin;
     }catch(_){release();return false;}
   }
   function prepareHeatmap(){
     if(!player||!heatmap)return;
-    var g=heatmap.geometry,doc=player.iframe.contentDocument,view=player.iframe.contentWindow,root=doc&&doc.scrollingElement;
-    if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&(!heatmapRootSupported(doc,view,g)||!preserveHeatmapExtent(doc,view,g))){fail();return;}
+    var g=heatmap.geometry,doc=player.iframe.contentDocument,view=player.iframe.contentWindow,root=doc&&doc.scrollingElement,origin=null;
+    if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&(!heatmapRootSupported(doc,view,g)||!(origin=preserveHeatmapExtent(doc,view,g)))){fail();return;}
     if(!doc||!view||!root||!doc.body||player.getMirror().getId(doc)===-1||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight||root.clientWidth!==g.viewportWidth||root.clientHeight!==g.viewportHeight||view.getComputedStyle(root).direction!==g.direction){
       if(++heatmapAttempts<120){heatmapFrame=requestAnimationFrame(prepareHeatmap);return;}fail();return;
     }
     player.wrapper.style.position='relative';var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.setAttribute('viewBox','0 0 '+g.viewportWidth+' '+g.viewportHeight);svg.setAttribute('width',String(g.viewportWidth));svg.setAttribute('height',String(g.viewportHeight));
-    svg.style.cssText='position:absolute;left:0;top:0;pointer-events:none;z-index:2147483647;direction:ltr';svg.setAttribute('aria-hidden','true');player.wrapper.appendChild(svg);
+    // Anchor the plane at the frame's viewport origin: past the iframe's own border and the measured in-frame scrollbar offset.
+    var frame=player.iframe;svg.style.cssText='position:absolute;left:'+(frame.offsetLeft+frame.clientLeft+origin.x)+'px;top:'+(frame.offsetTop+frame.clientTop+origin.y)+'px;pointer-events:none;z-index:2147483647;direction:ltr';svg.setAttribute('aria-hidden','true');player.wrapper.appendChild(svg);
     function paint(){
       if(!player)return;
       if(!heatmapRootSupported(doc,view,g)||heatmapExtent&&!heatmapExtent.check()||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight||root.clientWidth!==g.viewportWidth||root.clientHeight!==g.viewportHeight||view.getComputedStyle(root).direction!==g.direction){fail();return;}

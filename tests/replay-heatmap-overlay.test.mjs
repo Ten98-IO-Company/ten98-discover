@@ -20,7 +20,7 @@ test('historical overlay position commands repaint actual native offsets before 
  ];
  for(const shape of cases)for(const mode of ['click','scroll','replay']){
   const geometry={basis:'document-css-v1',...shape},maxX=shape.pageWidth-shape.viewportWidth,maxY=shape.pageHeight-shape.viewportHeight;
-  const root={scrollWidth:shape.pageWidth,scrollHeight:shape.pageHeight,clientWidth:shape.viewportWidth,clientHeight:shape.viewportHeight};
+  const root={scrollWidth:shape.pageWidth,scrollHeight:shape.pageHeight,clientWidth:shape.viewportWidth,clientHeight:shape.viewportHeight,appendChild(){}};
   const docListeners={},windowListeners={},frames=[],messages=[],observers=[],replayerListeners={};
   let destroyed=0,scrollCalls=0;
   const element=tag=>({tag,style:{},attributes:{},children:[],setAttribute(k,v){this.attributes[k]=v;},appendChild(child){this.children.push(child);},replaceChildren(){this.children=[];}});
@@ -30,8 +30,8 @@ test('historical overlay position commands repaint actual native offsets before 
    this.scrollX=Math.max(minimum,Math.min(maximum,x));this.scrollY=Math.max(0,Math.min(maxY,y));scrollCalls++;
    // Deliberately no scroll callback: native offsets advance before that later notification.
   }};
-  const innerDoc={scrollingElement:root,documentElement:root,compatMode:'CSS1Compat',body:{},addEventListener:(type,fn)=>{docListeners[type]=fn;}};
-  const iframe={width:String(shape.viewportWidth),height:String(shape.viewportHeight),contentDocument:innerDoc,contentWindow:view,addEventListener(){}};
+  const innerDoc={scrollingElement:root,documentElement:root,compatMode:'CSS1Compat',body:{},addEventListener:(type,fn)=>{docListeners[type]=fn;},createElement:()=>({style:{},getBoundingClientRect:()=>({left:0,top:0,width:shape.viewportWidth,height:shape.viewportHeight}),remove(){}})};
+  const iframe={width:String(shape.viewportWidth),height:String(shape.viewportHeight),offsetLeft:0,offsetTop:0,clientLeft:2,clientTop:2,contentDocument:innerDoc,contentWindow:view,addEventListener(){}};
   class Replayer{
    constructor(){this.iframe=iframe;this.wrapper=wrapper;}
    disableInteract(){} enableInteract(){} pause(){} getMirror(){return{getId:()=>1};} on(type,listener){replayerListeners[type]=listener;} getMetaData(){return{totalTime:1};} destroy(){destroyed++;}
@@ -54,7 +54,7 @@ test('historical overlay position commands repaint actual native offsets before 
   replayerListeners.finish();assert.deepEqual(messages,[],'Static end-seek completion must not precede geometry readiness.');
   assert.equal(frames.length,1);frames.shift()();
   assert.deepEqual(messages,[{type:'ready',duration:1}]);replayerListeners.finish();assert.deepEqual(messages,[{type:'ready',duration:1}],'Static preview must not emit playback-ended after readiness either.');assert.equal(observers.length,1);
-  const svg=wrapper.children[0];
+  const svg=wrapper.children[0];assert.match(svg.style.cssText,/^position:absolute;left:2px;top:2px;/,'The plane starts at the frame viewport origin, past the iframe border.');
   const check=()=>{
    const left=view.scrollX+(shape.direction==='rtl'?maxX:0),top=view.scrollY;
    if(mode==='click'){
@@ -94,8 +94,9 @@ test('historical overlay position commands repaint actual native offsets before 
 test('numeric extent preservation calibrates without fixture IDs and releases on natural drift or teardown',()=>{
  const asset=readFileSync(resolve('public/replay.js'),'utf8'),start=asset.indexOf('// App adapter appended inside the private CommonJS closure around pinned rrweb.'),source=asset.slice(start,asset.lastIndexOf('\n})();'));
  assert.ok(start>0);
- function scene({direction='rtl',zoom=1,fault='',exact=false,mirror=true,replay=false,metaWidth=1440,metaHeight=900}={}){
-  const geometry={basis:'document-css-v1',direction,pageWidth:exact?2400*zoom:(zoom===2?5085:2542),pageHeight:exact?3000*zoom:3200*zoom,viewportWidth:1440,viewportHeight:900};
+ function scene({direction='rtl',zoom=1,fault='',exact=false,mirror=true,replay=false,metaWidth=1440,metaHeight=900,gutter=0,classic=false}={}){
+  // classic: a real scrollbar occupies the gutter, so the recorded viewport and the client box are both narrower; otherwise the gutter is reserved behind hidden scrollbars and only the initial containing block shrinks.
+  const client=classic?1440-gutter:1440,geometry={basis:'document-css-v1',direction,pageWidth:exact?2400*zoom:(zoom===2?5085:2542),pageHeight:exact?3000*zoom:3200*zoom,viewportWidth:client,viewportHeight:900};
   let naturalWidth=2400*zoom,naturalHeight=3000*zoom,destroyed=0;if(fault==='oversized')naturalWidth=geometry.pageWidth+1;
   const frames=[],messages=[],observers=[],mutations=[],markers=[],listeners={},docListeners={},events={};
   const css=()=>({direction,writingMode:'horizontal-tb',scrollbarWidth:'none',transform:'none',perspective:'none',rotate:'none',scale:'none',translate:'none',animationName:'none',transitionDuration:'0s'});
@@ -104,18 +105,18 @@ test('numeric extent preservation calibrates without fixture IDs and releases on
   const node=(kind)=>({kind,attributes:{},children:[],getAttribute(name){return this.attributes[name]??null;},setAttribute(name,value){this.attributes[name]=value;},appendChild(child){child.parentNode=this;this.children.push(child);return child;},remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(child=>child!==this);this.parentNode=null;const index=markers.indexOf(this);if(index>=0)markers.splice(index,1);}});
   const root=node('root'),body=node('body'),plane=node('natural-plane'),target=node('natural-target'),fixed=node('fixed');if(fault==='shadow-root')plane.shadowRoot={};
   root.attributes.class='rrweb-paused';root.appendChild(body);body.appendChild(plane);plane.appendChild(target);body.appendChild(fixed);
-  root.getBoundingClientRect=()=>rect(-view.scrollX,-view.scrollY,1440,naturalHeight);
-  body.getBoundingClientRect=()=>rect(-view.scrollX,-view.scrollY,1440,900);
-  plane.getBoundingClientRect=()=>rect((direction==='rtl'?1440-naturalWidth:0)-view.scrollX+(fault==='selector-shift'&&markers.length?1:0),-view.scrollY,naturalWidth,naturalHeight);
-  target.getBoundingClientRect=()=>rect((direction==='rtl'?1440-112*zoom:naturalWidth-112*zoom)-view.scrollX,naturalHeight-112*zoom-view.scrollY,64*zoom,64*zoom);
-  fixed.getBoundingClientRect=()=>rect(8*zoom,8*zoom,100*zoom,44*zoom);
-  for(const n of[root,body,plane,target,fixed])Object.defineProperties(n,{clientWidth:{get:()=>n===root?1440:n.getBoundingClientRect().width/zoom},clientHeight:{get:()=>n===root?900:n.getBoundingClientRect().height/zoom},scrollWidth:{get:()=>n===root?Math.max(naturalWidth,...markers.map(m=>{const r=m.getBoundingClientRect();return direction==='rtl'?1440-(r.left+view.scrollX):r.right+view.scrollX;})):n===body?naturalWidth/zoom:n.getBoundingClientRect().width/zoom},scrollHeight:{get:()=>n===root?Math.max(naturalHeight,...markers.map(m=>{const r=m.getBoundingClientRect();return r.bottom+view.scrollY;})):n===body?naturalHeight/zoom:n.getBoundingClientRect().height/zoom}});
+  root.getBoundingClientRect=()=>rect(gutter-view.scrollX,-view.scrollY,1440,naturalHeight);
+  body.getBoundingClientRect=()=>rect(gutter-view.scrollX,-view.scrollY,1440,900);
+  plane.getBoundingClientRect=()=>rect(gutter+(direction==='rtl'?1440-naturalWidth:0)-view.scrollX+(fault==='selector-shift'&&markers.length?1:0),-view.scrollY,naturalWidth,naturalHeight);
+  target.getBoundingClientRect=()=>rect(gutter+(direction==='rtl'?1440-112*zoom:naturalWidth-112*zoom)-view.scrollX,naturalHeight-112*zoom-view.scrollY,64*zoom,64*zoom);
+  fixed.getBoundingClientRect=()=>rect(gutter+8*zoom,8*zoom,100*zoom,44*zoom);
+  for(const n of[root,body,plane,target,fixed])Object.defineProperties(n,{clientWidth:{get:()=>n===root?client:n.getBoundingClientRect().width/zoom},clientHeight:{get:()=>n===root?900:n.getBoundingClientRect().height/zoom},scrollWidth:{get:()=>n===root?Math.max(naturalWidth,...markers.map(m=>{const r=m.getBoundingClientRect();return direction==='rtl'?gutter+client-(r.left+view.scrollX):r.right+view.scrollX-gutter;})):n===body?naturalWidth/zoom:n.getBoundingClientRect().width/zoom},scrollHeight:{get:()=>n===root?Math.max(naturalHeight,...markers.map(m=>{const r=m.getBoundingClientRect();return r.bottom+view.scrollY;})):n===body?naturalHeight/zoom:n.getBoundingClientRect().height/zoom}});
   const innerDoc={scrollingElement:root,documentElement:root,compatMode:fault==='quirks'?'BackCompat':'CSS1Compat',body,querySelectorAll:()=>fault==='node-cap'?Array.from({length:20001},()=>root):[root,body,plane,target,fixed],addEventListener:(name,fn)=>{docListeners[name]=fn;},createElement(){
    const m=node('marker'),properties={};m.style={setProperty(name,value){properties[name]=value;},set cssText(value){for(const part of value.split(';')){const index=part.indexOf(':');if(index>=0)properties[part.slice(0,index)]=part.slice(index+1).replace('!important','');}}};
-   m.getBoundingClientRect=()=>{const left=parseFloat(properties.left||'0')*zoom,top=parseFloat(properties.top||'0')*zoom,width=parseFloat(properties.width||'1')*zoom,height=parseFloat(properties.height||'1')*zoom;return rect(left-view.scrollX,top-view.scrollY+(fault==='axes'?left/4:0),width,height);};markers.push(m);return m;
+   m.getBoundingClientRect=()=>{const left=parseFloat(properties.left||'0')*zoom,top=parseFloat(properties.top||'0')*zoom,width=properties.width==='auto'?1440-gutter:parseFloat(properties.width||'1')*zoom,height=properties.height==='auto'?900:parseFloat(properties.height||'1')*zoom,scrolled=properties.position==='fixed'?0:1;return rect(gutter+left-scrolled*view.scrollX,top-scrolled*view.scrollY+(fault==='axes'?left/4:0),width,height);};markers.push(m);return m;
   }};
   const element=tag=>({tag,style:{},children:[],attributes:{},setAttribute(k,v){this.attributes[k]=v;},appendChild(child){this.children.push(child);return child;},replaceChildren(){this.children=[];}});
-  const wrapper=element('wrapper'),iframe={width:String(metaWidth),height:String(metaHeight),contentDocument:innerDoc,contentWindow:view,addEventListener(){}};
+  const wrapper=element('wrapper'),iframe={width:String(metaWidth),height:String(metaHeight),offsetLeft:0,offsetTop:0,clientLeft:2,clientTop:2,contentDocument:innerDoc,contentWindow:view,addEventListener(){}};
   class Replayer{constructor(){this.iframe=iframe;this.wrapper=wrapper;}disableInteract(){}enableInteract(){}pause(){}getMirror(){return{getId:()=>mirror?1:-1};}getMetaData(){return{totalTime:1};}on(name,fn){events[name]=fn;}destroy(){destroyed++;}}
   const parent={},port={postMessage:value=>messages.push(JSON.parse(JSON.stringify(value))),start(){},close(){}},outerDoc={currentScript:{getAttribute:()=> 'player'},body:{style:{}},createElementNS:(_ns,tag)=>element(tag)};
   const context={module:{exports:{Replayer}},document:outerDoc,window:{parent},parent,innerWidth:1440,innerHeight:900,TextEncoder,addEventListener:(name,fn)=>{listeners[name]=fn;},removeEventListener:(name,fn)=>{if(listeners[name]===fn)delete listeners[name];},requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},cancelAnimationFrame(){},clearInterval(){},setInterval(){return 1;},ResizeObserver:class{constructor(callback){this.callback=callback;this.targets=[];observers.push(this);}observe(n){this.targets.push(n);}disconnect(){this.disconnected=true;}},MutationObserver:class{constructor(callback){this.callback=callback;mutations.push(this);}observe(_root,options){this.options=options;}disconnect(){this.disconnected=true;}}};
@@ -126,6 +127,7 @@ test('numeric extent preservation calibrates without fixture IDs and releases on
  for(const direction of['ltr','rtl'])for(const zoom of[1,2]){
   const h=scene({direction,zoom}),before=h.naturalRect(h.target);h.frames.shift()();
   assert.deepEqual(h.messages,[{type:'ready',duration:1}]);assert.equal(h.markers.length,1);assert.equal(h.root.scrollWidth,h.geometry.pageWidth);assert.equal(h.root.scrollHeight,h.geometry.pageHeight);assert.deepEqual(h.naturalRect(h.target),before,'The empty extent must not move existing content.');
+  assert.match(h.wrapper.children[0].style.cssText,/^position:absolute;left:2px;top:2px;/);
   const marker=h.markers[0],r=marker.getBoundingClientRect();assert.equal(r.left+h.view.scrollX,direction==='rtl'?1440-h.geometry.pageWidth:h.geometry.pageWidth-1);assert.equal(r.top+h.view.scrollY,h.geometry.pageHeight-1);assert.equal(r.width,1);assert.equal(r.height,1);assert.equal(marker.children.length,0);assert.equal(marker.attributes['aria-hidden'],'true');
   assert.equal(h.mutations[0].options.attributeOldValue,true);h.mutations[0].callback([{type:'attributes',target:h.root,attributeName:'class',oldValue:'rrweb-paused'}]);assert.equal(h.destroyed(),0,'Delayed rrweb Finish may repeat the same paused root class without changing layout.');
   if(direction==='rtl'&&zoom===1){h.shrink();assert.equal(h.root.scrollHeight,h.geometry.pageHeight,'The marker would mask natural shrink without its mutation guard.');h.mutations[0].callback([{type:'attributes',target:h.plane,attributeName:'style',oldValue:''}]);}
@@ -152,6 +154,16 @@ test('numeric extent preservation calibrates without fixture IDs and releases on
  for(const metadata of[{metaWidth:1439},{metaHeight:899},{metaWidth:0},{metaWidth:20001},{metaWidth:1455.5}]){
   const h=scene({exact:true,...metadata});h.frames.shift()?.();assert.equal(h.messages.at(-1).type,'error','Narrower, nonpositive, over-limit or noninteger Meta cannot admit a background.');assert.equal(h.markers.length,0);
  }
+ // A classic scrollbar drawn on the left of the replay frame shifts the whole document 15 client px and narrows the client box like the recording did; the recorded top-level viewport had no such offset.
+ for(const direction of['ltr','rtl'])for(const exact of[false,true]){
+  const h=scene({direction,exact,gutter:15,classic:true}),before=h.naturalRect(h.target);h.frames.shift()();
+  assert.deepEqual(h.messages,[{type:'ready',duration:1}],direction+' gutter');assert.equal(h.markers.length,exact?0:1);assert.equal(h.root.scrollWidth,h.geometry.pageWidth);assert.equal(h.root.scrollHeight,h.geometry.pageHeight);assert.deepEqual(h.naturalRect(h.target),before);
+  if(!exact){const r=h.markers[0].getBoundingClientRect();assert.equal(r.left+h.view.scrollX,15+(direction==='rtl'?h.geometry.viewportWidth-h.geometry.pageWidth:h.geometry.pageWidth-1));assert.equal(r.top+h.view.scrollY,h.geometry.pageHeight-1);}
+  assert.match(h.wrapper.children[0].style.cssText,/^position:absolute;left:17px;top:2px;/,'The plane follows the measured in-frame viewport origin, not client (0,0).');
+  h.port.onmessage({data:{type:'destroy'}});assert.equal(h.markers.length,0);
+ }
+ // A gutter reserved behind hidden scrollbars narrows the initial containing block while clientWidth still reads the recorded 1440: no origin can repair that frame, so it fails closed.
+ for(const direction of['ltr','rtl'])for(const exact of[false,true]){const h=scene({direction,exact,gutter:15});h.frames.shift()();assert.equal(h.messages.at(-1).type,'error',direction+' reserved gutter');assert.equal(h.markers.length,0);assert.equal(h.destroyed(),1);}
  const waiting=scene({mirror:false});for(let i=0;i<120&&waiting.frames.length;i++)waiting.frames.shift()();assert.equal(waiting.messages.at(-1).type,'error');assert.equal(waiting.markers.length,0,'A transient document outside the rebuilt rrweb mirror must never receive an extent.');
  const ordinary=scene({replay:true,fault:'root-transform'});assert.deepEqual(ordinary.messages,[{type:'ready',duration:1}]);assert.equal(ordinary.frames.length,0);assert.equal(ordinary.markers.length,0);ordinary.port.onmessage({data:{type:'destroy'}});
 });
