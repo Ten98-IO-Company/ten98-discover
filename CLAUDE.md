@@ -67,6 +67,50 @@ Still open from the list below: the full register audit (item6).
 
 P30's concrete gap: the tracker/normalizer currently collect five UTM values; Paid Ads attribution is unavailable. Pinned Umami stores six bounded raw click IDs (gclid,fbclid,msclkid,ttclid,li_fat_id,twclid), while its Paid Ads UI classifies their presence in that order. Raw values versus minimized presence remains an unresolved implementation decision; do not silently claim parity for a different contract. Preserve captureCampaigns, cookieless/DNT/GPC/refusal, no identity coupling, historical unknowns and current selected-touch semantics.
 
+## Audit 2026-10-17 and what comes next
+
+Full evidence: [implementation audit](docs/audit-2026-10-17.md). Counts over the 81 rows: implemented 22, partial 53, missing 5, needs-owner-decision 1. Item6 of the list below is therefore reframed from "resume the audit" to the increments and decisions here.
+
+### Owner decisions needed before the affected rows can be finished
+
+- **D1 (P30)** Paid-ads click identifiers: should the tracker/normalizer store the six raw click IDs that pinned Umami stores (gclid, fbclid, msclkid, ttclid, li_fat_id, twclid), only their minimized presence, or keep the five utm_* keys and declare Paid Ads unavailable? (CLAUDE.md P30 paragraph; docs/attribution.md:34; public/tracker.js:470; src/server/analytics-input.ts:222)
+  Options: (a) Store the six bounded raw values like Umami and build the Paid Ads classification in that order; (b) store only a presence/order classification (minimized, no raw IDs); (c) keep current five-UTM contract and mark the Paid Ads channel permanently unavailable in docs/attribution.md.
+- **D2 (P13, P12, P25, P26, P61)** Provider adapter set: does OpenRouter routing count as the direct OpenAI/Anthropic/Mistral adapters, and which scraping providers (SearchAPI, Olostep, Bright Data, Oxylabs, Cloro) and which additional DataForSEO AI endpoints (Gemini, LLM Responses, Google AI Mode) are V1-required? (src/server/providers.ts:21 admits only openrouter|dataforseo; docs/prompt-execution.md:98,119,128)
+  Options: (a) OpenRouter is the sole LLM transport (text-only, web_search still refused) and DataForSEO ChatGPT is the sole consumer-surface scraper; register rows P13/P19/P24 are relabelled accordingly; (b) add direct OpenAI/Anthropic/Mistral adapters behind the existing provider vault/ledger plus a named subset of scraping providers; (c) OpenRouter web-search mode is admitted as the 'web-search mode' label instead of new scrapers.
+- **D3 (P25)** Authorized execution window: may a four-model comparison run under a longer job budget than the current worker job budget? (docs/prompt-execution.md:50 'A decision on a longer authorized execution window is pending; this source increment is not evidence that four worst-case calls finish within the existing job budget.')
+  Options: (a) Raise the per-job budget for prompt-execution children only; (b) keep the budget and cap max output tokens/models per quote so worst case fits; (c) split each model into its own job with the existing budget (already one child per model) and document that siblings may finish later.
+- **D4 (P49)** Domain rating: keep an Ahrefs key-based connector in V1 or accept the DataForSEO 0-100 rank as the only rating? (docs/backlink-research.md:26 'the current free API contract requires an APIv3 key and carries the Domain Rating license. No keyless fallback or computed substitute is implemented.'; src/server/domain-research.ts:43)
+  Options: (a) Add an owner-supplied Ahrefs APIv3 key as a third provider kind with the license notice; (b) drop Ahrefs from the P49 acceptance and label the DataForSEO rank explicitly in UI/CSV (already done in CSV).
+- **D5 (P47)** Local keyword metrics: implement the Google Ads keyword-planner/local-volume path (paid DataForSEO Ads endpoints or Google Ads API via the existing OAuth app) or accept national Labs metrics labelled as non-local? (docs/rank-tracking.md:45 'a national substitute is not local parity. These paths and their paid actions remain required implementation work.')
+  Options: (a) Add DataForSEO Google Ads keyword endpoints (paid, quoted like Labs) for local volume/CPC and the blended path; (b) use the Google Ads API through the existing google_connection OAuth (needs developer token); (c) V1 ships Labs overview/ideas/suggestions/related only, with 'local' explicitly unavailable.
+- **D6 (P02)** Project transfer and invitation delivery: must V1 move a website between workspaces and send invitation emails automatically, or does manual link sharing remain acceptable? (docs/foundation.md:124 records manual link sharing; src/server/email.ts exists with SMTP/Cloudflare adapters; no transfer route in src/server)
+  Options: (a) Implement transferProject (actor owner of both workspaces) and send invitations through src/server/email.ts when EMAIL_TRANSPORT is configured; (b) keep manual link sharing and drop transfer from the P02 acceptance.
+- **D7 (P03)** Identity provider mapping: implement OIDC claim/group to workspace-membership mapping and Umami token-SSO compatibility, or drop them from V1? (docs/foundation.md:181 'workspace-enforced policies/group mapping still require implementation'; no sso/token route in src/server)
+  Options: (a) Per-provider claim rules (claim path, value to workspace+role) evaluated at callback with existing invitation/acceptance code; (b) drop group mapping and Umami token-SSO, keep manual invitations; (c) group mapping only, no Umami token compatibility.
+- **D8 (P08)** Website-assisted onboarding: should V1 analyze a site URL (fetched through the existing crawl-network boundary, summarized by a paid OpenRouter call) to propose brand/persona/competitor/keyword configuration, or remain manual context authoring plus prompt suggestions? (src/server/ai-suggestions.ts covers prompts only; no onboard/persona code)
+  Options: (a) One quoted paid 'site analysis' job producing an editable draft (brand name/aliases, competitors, key pages, personas) accepted with the P09 CAS flow; (b) manual authoring stays, P08 is relabelled to prompt suggestions only.
+- **D9 (P56, P53)** Rendered audits, Lighthouse and protected-site credentials: which rendering adapter (local headless Chromium in Docker as a new dependency, Cloudflare Browser Rendering, or none) and whether crawl credentials (basic auth/cookie header) are in V1? (src/server/site-audits.ts:21 admits mode 'static' only; src/components/SiteAuditPanel.tsx:392; docs/site-audits.md:67; AGENTS.md requires provenance review for new dependencies)
+  Options: (a) Playwright/Chromium worker image profile (new dependency, provenance review) for rendered mode + Lighthouse; (b) Cloudflare Browser Rendering adapter (external account); (c) V1 stays static-only and the register rows are relabelled; credentials can be added independently as an encrypted per-audit header via credential-vault.
+- **D10 (P76, P74, P77)** Which of the six non-Google/Meta platforms (TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat, X) and Cloudflare need V1 reporting imports with OAuth/refresh/quota handling, given only Google and Meta connectors exist? (docs/tracking.md:125; grep of src/server finds adapters only in destinations.ts)
+  Options: (a) All six plus Cloudflare, each following the Meta import worker pattern (meta-imports.ts/meta-import-worker.ts); (b) a named subset ranked by owner usage; (c) browser-tag adapters only, imports deferred past V1 with P76/P77 relabelled.
+
+### Ordered increments that need no owner decision or paid access (highest value first)
+
+1. Wire every authored native lane into foundation.yml (P38, P39, P32, P57, P80, P06, P11, P05, P20, P30 (dimension lanes), P63, P81)
+2. Add the missing named checks (test-only increment) (P55, P27, P04, P71, P73, P74, P02, P65)
+3. Register inventory script and stale-doc reconciliation (P69, P03, P28, P07, P42, P43, P44, P49, P52, P80)
+4. MCP and bearer coverage for existing read services (P06, P09, P35, P57, P58, P63, P05)
+5. Workspace-level two-factor enforcement (P04, P07)
+6. Website (project analytics) public share (P45, P02)
+7. Project transfer between workspaces (P02)
+8. IP exclusion list plus overview top-referrers card (P31, P32, P23)
+9. Tag diagnostics ingestion and dashboard status (P78, P77, P75, P81, P72)
+10. Keyword research Labs expansion with SERP provenance (P47, P48)
+11. GSC dimensions, GA4 health and joint search-opportunity report (P57, P58, P38)
+12. Scheduled DataForSEO ChatGPT captures with market (P12, P26, P17, P20)
+
+Increments1 and2 are test and CI wiring only;3 adds a build-time register map;4 to9 are bounded product work on existing services;10 to12 extend paid flows through the existing quote/ledger pattern with contained transports in tests.
+
 ## Run and preserve the boundaries
 
 Stack: TypeScript7, React19, TanStack Start/Router, Vite8, Nitro Node server, Node24, PostgreSQL18 and pg-boss. Keep the lockfile and existing dependencies.
