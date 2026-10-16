@@ -128,8 +128,8 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       savedKeywordEstimate = { status: 'available', metrics: Math.min(savedKeywords.rows.length, 10000), atLeast: savedKeywords.rows.length > 10000 };
       const prompts=await client.query('SELECT id FROM prompt_execution WHERE workspace_id=$1 AND result IS NOT NULL AND completed_at<$2 LIMIT 10001',[workspaceId,rawEvidenceCutoff]);
       const promptInputs=await client.query(`SELECT q.id FROM prompt_execution_quote q JOIN prompt_comparison c ON c.quote_id=q.id
-       WHERE q.workspace_id=$1 AND q.input_purged_at IS NULL AND EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id)
-        AND NOT EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id
+       WHERE q.workspace_id=$1 AND q.input_purged_at IS NULL AND EXISTS(SELECT 1 FROM prompt_comparison_item i WHERE i.comparison_id=c.id)
+        AND NOT EXISTS(SELECT 1 FROM prompt_comparison_item i JOIN prompt_execution r ON r.id=i.execution_id WHERE i.comparison_id=c.id
           AND (r.status IN('queued','running') OR r.completed_at IS NULL OR r.completed_at>=$2)) LIMIT 10001`,[workspaceId,rawEvidenceCutoff]);
       promptEstimate={status:'available',results:Math.min(prompts.rows.length,10000),inputs:Math.min(promptInputs.rows.length,10000),atLeast:prompts.rows.length>10000||promptInputs.rows.length>10000};
       const redirects=await client.query("SELECT id FROM domain_redirect_check WHERE workspace_id=$1 AND status='completed' AND observation IS NOT NULL AND completed_at<$2 LIMIT 10001",[workspaceId,rawEvidenceCutoff]);

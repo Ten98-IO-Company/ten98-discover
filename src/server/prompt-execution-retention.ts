@@ -14,8 +14,8 @@ export async function expirePromptResults(client:PoolClient,projectId:string,cut
  const inputs=await client.query(`WITH candidates AS (
    SELECT q.id FROM prompt_execution_quote q JOIN prompt_comparison c ON c.quote_id=q.id
    WHERE q.project_id=$1 AND q.input_purged_at IS NULL
-    AND EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id)
-    AND NOT EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id
+    AND EXISTS(SELECT 1 FROM prompt_comparison_item i WHERE i.comparison_id=c.id)
+    AND NOT EXISTS(SELECT 1 FROM prompt_comparison_item i JOIN prompt_execution r ON r.id=i.execution_id WHERE i.comparison_id=c.id
       AND (r.status IN('queued','running') OR r.completed_at IS NULL OR r.completed_at>=$2))
    ORDER BY q.created_at,q.id LIMIT 100 FOR UPDATE OF q
  ) UPDATE prompt_execution_quote q SET input=NULL,messages=NULL,input_purged_at=clock_timestamp()
@@ -24,8 +24,8 @@ export async function expirePromptResults(client:PoolClient,projectId:string,cut
    EXISTS(SELECT 1 FROM prompt_execution WHERE project_id=$1 AND result IS NOT NULL AND completed_at<$2)
    OR EXISTS(SELECT 1 FROM prompt_execution_quote q JOIN prompt_comparison c ON c.quote_id=q.id
      WHERE q.project_id=$1 AND q.input_purged_at IS NULL
-      AND EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id)
-      AND NOT EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id
+      AND EXISTS(SELECT 1 FROM prompt_comparison_item i WHERE i.comparison_id=c.id)
+      AND NOT EXISTS(SELECT 1 FROM prompt_comparison_item i JOIN prompt_execution r ON r.id=i.execution_id WHERE i.comparison_id=c.id
         AND (r.status IN('queued','running') OR r.completed_at IS NULL OR r.completed_at>=$2)))
    OR EXISTS(SELECT 1 FROM prompt_execution_quote q WHERE q.project_id=$1 AND q.expires_at<clock_timestamp()-interval '24 hours'
      AND NOT EXISTS(SELECT 1 FROM prompt_comparison c WHERE c.quote_id=q.id)) AS pending`,[projectId,cutoff]);
