@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {z} from 'zod';
-import {boardDefinition,boardLimits,boardRevision,type BoardDefinition,type BoardCard,type BoardEntity,type BoardItem,type BoardRole,type BoardAck,type BoardWriteResult} from '../lib/boards.ts';
+import {boardDefinition,boardLimits,boardRevision,boardPreviewInput,type BoardPreviewInput,type BoardDefinition,type BoardCard,type BoardEntity,type BoardItem,type BoardRole,type BoardAck,type BoardWriteResult} from '../lib/boards.ts';
 import {analyticsSelectionFields} from '../lib/analytics-dimensions.ts';
 import {environmentFields} from '../lib/analytics-environment.ts';
 import {geographyFields} from '../lib/analytics-geography.ts';
@@ -15,7 +15,7 @@ import {projectAnalytics} from './analytics.ts';
 import {projectRealtime} from './realtime.ts';
 import {projectRevenue} from './revenue.ts';
 import {runAnalysis} from './funnels.ts';
-import {boardActivity} from './board-activity.ts';
+import {boardActivity,boardDimension} from './board-activity.ts';
 
 const uuid=z.uuid().transform(v=>v.toLowerCase()),request={requestId:uuid};
 const missing=()=>new FoundationError(404,'Board or workspace not found or unavailable.');
@@ -41,6 +41,10 @@ export function parseBoardDefinition(raw:unknown):BoardDefinition{
  const definition=parse(boardDefinition,raw),scope=boardScope(definition.scope).scope,result={...definition,scope};
  if(Buffer.byteLength(JSON.stringify(result))>boardLimits.bodyBytes)throw new FoundationError(413,'The board configuration is too large.');return result;
 }
+export function parseBoardPreview(raw:unknown):BoardPreviewInput{
+ const input=parse(boardPreviewInput,raw),result=parse(boardPreviewInput,{...input,scope:boardScope(input.scope).scope});
+ if(Buffer.byteLength(JSON.stringify(result))>boardLimits.previewBodyBytes)throw new FoundationError(413,'The card preview is too large. Shorten its text or filters.');return result;
+}
 function bounded<T>(result:T):T{if(Buffer.byteLength(JSON.stringify(result))>boardLimits.responseBytes)throw new FoundationError(503,'The board result is too large. Narrow the dates or filters.');return result;}
 async function withBoardWorkspace<T>(workspaceId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,wid:string,uid:string,role:BoardRole)=>Promise<T>):Promise<T>{
  const wid=parse(uuid,workspaceId),uid=parse(uuid,userId),client=await getDatabase().pool.connect();
@@ -56,14 +60,14 @@ async function withBoardWorkspace<T>(workspaceId:unknown,userId:unknown,write:bo
 const cards=(definition:BoardDefinition)=>definition.rows.flatMap(row=>row.cards.filter((card):card is BoardCard=>card!==null));
 const entity=(definition:BoardDefinition,card:BoardCard):BoardEntity|null=>card.type==='TextBlock'?null:card.entity??definition.defaultEntity;
 async function validateReferences(client:PoolClient,wid:string,definition:BoardDefinition,old?:BoardDefinition){
- const prior=new Set(old?[old.defaultEntity,...cards(old).map(card=>entity(old,card))].map(ref=>JSON.stringify(ref)):[]);
+ const prior=new Set(old?[old.defaultEntity,...cards(old).map(card=>entity(old,card))].map(ref=>canonicalHash(ref)):[]);
  for(const ref of [definition.defaultEntity,...cards(definition).map(card=>entity(definition,card))]){
   if(!ref||ref.kind!=='website')continue;
-  if(!(await client.query('SELECT 1 FROM project WHERE workspace_id=$1 AND id=$2',[wid,ref.id])).rowCount&&!prior.has(JSON.stringify(ref)))throw new FoundationError(404,'A selected website is not in this workspace or is unavailable.');
+  if(!(await client.query('SELECT 1 FROM project WHERE workspace_id=$1 AND id=$2',[wid,ref.id])).rowCount&&!prior.has(canonicalHash(ref)))throw new FoundationError(404,'A selected website is not in this workspace or is unavailable.');
  }
  for(const card of cards(definition))if(card.type==='Goal'||card.type==='Funnel'){
   const ref=entity(definition,card)!;
-  if(old&&cards(old).some(previous=>(previous.type==='Goal'||previous.type==='Funnel')&&previous.type===card.type&&previous.analysisId===card.analysisId&&previous.analysisRevision===card.analysisRevision&&JSON.stringify(entity(old,previous))===JSON.stringify(ref)))continue;
+  if(old&&cards(old).some(previous=>(previous.type==='Goal'||previous.type==='Funnel')&&previous.type===card.type&&previous.analysisId===card.analysisId&&previous.analysisRevision===card.analysisRevision&&canonicalHash(entity(old,previous))===canonicalHash(ref)))continue;
   if(!(await client.query('SELECT 1 FROM analytics_definition d JOIN project p ON p.id=d.project_id WHERE p.workspace_id=$1 AND d.project_id=$2 AND d.id=$3 AND d.kind=$4 AND d.revision=$5',[wid,ref.id,card.analysisId,card.type==='Goal'?'goal':'funnel',card.analysisRevision])).rowCount)throw new FoundationError(409,'Choose the current saved goal or funnel in the selected website.');
  }
 }
@@ -116,9 +120,27 @@ export async function deleteBoard(workspaceId:unknown,userId:unknown,boardId:unk
 }
 
 const metricField={path:'path',referrer:'referrer',country:'country',region:'region',city:'city',browser:'browser',os:'os',device:'device',language:'language',utmSource:'campaignSource',utmMedium:'campaignMedium',utmCampaign:'campaignName',utmContent:'campaignContent',utmTerm:'campaignTerm',event:'event'} as const;
-type NativeCardData={source:'analytics';data:Awaited<ReturnType<typeof projectAnalytics>>}|{source:'explorer';data:Omit<Awaited<ReturnType<typeof exploreAnalytics>>,'csv'>}|{source:'realtime';data:Awaited<ReturnType<typeof projectRealtime>>}|{source:'revenue';data:Awaited<ReturnType<typeof projectRevenue>>}|{source:'analysis';data:Awaited<ReturnType<typeof runAnalysis>>}|{source:'activity';data:Awaited<ReturnType<typeof boardActivity>>}|{source:'text';data:{text:string}};
+type NativeCardData={source:'analytics';data:Awaited<ReturnType<typeof projectAnalytics>>}|{source:'explorer';data:Omit<Awaited<ReturnType<typeof exploreAnalytics>>,'csv'>}|{source:'realtime';data:Awaited<ReturnType<typeof projectRealtime>>}|{source:'revenue';data:Awaited<ReturnType<typeof projectRevenue>>}|{source:'analysis';data:Awaited<ReturnType<typeof runAnalysis>>}|{source:'activity';data:Awaited<ReturnType<typeof boardActivity>>}|{source:'dimensions';data:Awaited<ReturnType<typeof boardDimension>>}|{source:'text';data:{text:string}};
 type CardBase={workspaceId:string;boardId:string;boardRevision:number;cardId:string;cardType:BoardCard['type'];entity:BoardEntity|null;role:BoardRole;scope:string;effectiveWindow:'historical'|'fixed-live'|'none'};
-export type BoardCardResult=CardBase&({status:'ready'}&NativeCardData|{status:'unsupported';reason:'entity_dependency'|'scope'|'not_collected'|'reader_unavailable';message:string});
+type CardOutcome={status:'ready'}&NativeCardData|{status:'unsupported';reason:'entity_dependency'|'scope'|'not_collected'|'reader_unavailable';message:string};
+export type BoardCardResult=CardBase&CardOutcome;
+type PreviewBase=Omit<CardBase,'boardId'|'boardRevision'>&{previewId:string;request:BoardPreviewInput};
+export type BoardPreviewResult=PreviewBase&CardOutcome;
+type CardBinding={retained:string|null;policy:number}|null;
+async function readCardBinding(client:PoolClient,wid:string,ref:BoardEntity|null):Promise<CardBinding>{
+ if(ref?.kind!=='website')return null;
+ const binding=(await client.query<{retained:string|null;policy:number}>('SELECT p.analytics_retained_from::text AS retained,w.retention_revision AS policy FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.workspace_id=$1 AND p.id=$2',[wid,ref.id])).rows[0];
+ if(!binding)throw new FoundationError(404,'The card website is unavailable.');return binding;
+}
+type CardAdmission<T>={base:T;card:BoardCard;ref:BoardEntity|null;scope:ReturnType<typeof boardScope>;uid:string;wid:string;live:boolean;binding:CardBinding};
+export async function previewBoardCard(workspaceId:unknown,userId:unknown,raw:unknown):Promise<BoardPreviewResult>{
+ const input=parseBoardPreview(raw),admitted=await withBoardWorkspace(workspaceId,userId,false,async(client,wid,uid,role)=>{
+  const card=input.card,ref=card.type==='TextBlock'?null:card.entity??input.defaultEntity,scope=boardScope(input.scope),live=card.type.startsWith('Realtime');
+  const base:PreviewBase={workspaceId:wid,previewId:input.previewId,request:input,cardId:card.id,cardType:card.type,entity:ref,role,scope:scope.scope,effectiveWindow:card.type==='TextBlock'?'none':live?'fixed-live':'historical'};
+  return{base,card,ref,scope,uid,wid,live,binding:await readCardBinding(client,wid,ref)};
+ });
+ return bounded(await dispatchBoardCard(admitted));
+}
 export async function readBoardCard(workspaceId:unknown,userId:unknown,boardId:unknown,cardId:unknown,rawQuery:string):Promise<BoardCardResult>{
  const id=parse(uuid,boardId),cid=parse(uuid,cardId),params=boardParams(rawQuery);
  if([...params.keys()].some(k=>!['revision','scope'].includes(k))||[...params.keys()].some(k=>params.getAll(k).length!==1)||! /^[1-9][0-9]{0,9}$/.test(params.get('revision')??''))throw new FoundationError(400,'Choose the saved board revision and one optional applied scope.');
@@ -127,15 +149,17 @@ export async function readBoardCard(workspaceId:unknown,userId:unknown,boardId:u
   const row=await find(client,wid,id);if(!row)throw missing();if(row.revision!==revision)throw conflict();const card=cards(row.definition).find(c=>c.id===cid);if(!card)throw missing();
   const ref=entity(row.definition,card),scope=override??boardScope(row.definition.scope),live=card.type.startsWith('Realtime');
   const base:CardBase={workspaceId:wid,boardId:id,boardRevision:revision,cardId:cid,cardType:card.type,entity:ref,role,scope:scope.scope,effectiveWindow:card.type==='TextBlock'?'none':live?'fixed-live':'historical'};
-  const binding=ref?.kind==='website'?(await client.query<{retained:string|null;policy:number}>('SELECT p.analytics_retained_from::text AS retained,w.retention_revision AS policy FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.workspace_id=$1 AND p.id=$2',[wid,ref.id])).rows[0]:null;
-  if(ref?.kind==='website'&&!binding)throw new FoundationError(404,'The card website is unavailable.');
+  const binding=await readCardBinding(client,wid,ref);
   return{base,card,ref,scope,uid,wid,live,binding};
  });
+ return bounded(await dispatchBoardCard(admitted,async client=>{const row=await find(client,admitted.wid,id);if(!row)throw missing();if(row.revision!==revision)throw conflict();}));
+}
+async function dispatchBoardCard<T extends Omit<CardBase,'boardId'|'boardRevision'>>(admitted:CardAdmission<T>,savedCurrent?:(client:PoolClient)=>Promise<void>):Promise<T&CardOutcome>{
  const{base,card,ref,scope,uid,wid,live}=admitted;
- const unsupported=(reason:'entity_dependency'|'scope'|'not_collected'|'reader_unavailable',message:string):BoardCardResult=>({...base,status:'unsupported',reason,message});
+ const unsupported=(reason:'entity_dependency'|'scope'|'not_collected'|'reader_unavailable',message:string):T&CardOutcome=>({...base,status:'unsupported',reason,message});
  if(card.type==='TextBlock')return{...base,status:'ready',source:'text',data:{text:card.text}};
  if(!ref)throw missing();if(ref.kind!=='website')return unsupported('entity_dependency','Link and pixel entities require the native P44 data integration. No website report was substituted.');
- const current=async(client:PoolClient)=>{const row=await find(client,wid,id);if(!row)throw missing();if(row.revision!==revision)throw conflict();const binding=(await client.query<{retained:string|null;policy:number}>('SELECT p.analytics_retained_from::text AS retained,w.retention_revision AS policy FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.workspace_id=$1 AND p.id=$2',[wid,ref.id])).rows[0];if(!binding)throw new FoundationError(404,'The card website is unavailable.');if(binding.retained!==admitted.binding?.retained||binding.policy!==admitted.binding?.policy)throw new FoundationError(409,'Retention changed while this card was loading. Reload its result.');};
+ const current=async(client:PoolClient)=>{await savedCurrent?.(client);const binding=await readCardBinding(client,wid,ref);if(binding?.retained!==admitted.binding?.retained||binding?.policy!==admitted.binding?.policy)throw new FoundationError(409,'Retention changed while this card was loading. Reload its result.');};
   const report=new URLSearchParams(scope.params),{query}=scope;
   let value:NativeCardData;
   if(live){if(Object.keys(query.filters).length||query.property)return unsupported('scope','Live cards use the native fixed30-minute window and do not support board filters.');value={source:'realtime',data:await projectRealtime(ref.id,{kind:'session',userId:uid},new URLSearchParams())};}
@@ -144,12 +168,12 @@ export async function readBoardCard(workspaceId:unknown,userId:unknown,boardId:u
    const selection=new URLSearchParams(),native=new URLSearchParams({from:query.from,to:query.to});for(const [key,val]of Object.entries(query.filters)){if((analyticsSelectionFields as readonly string[]).includes(key))selection.set(key,val);else native.set(key,val);}if(selection.size)native.set('selection',selection.toString());value={source:'analytics',data:await projectAnalytics(ref.id,uid,native)};
   }else if(card.type==='Goal'||card.type==='Funnel'){report.set('revision',String(card.analysisRevision));value={source:'analysis',data:await runAnalysis(ref.id,uid,card.type==='Goal'?'goal':'funnel',card.analysisId,report)};}
   else if(card.type==='RevenueMetricsBar'||card.type==='RevenueChart'||card.type==='RevenueMetricsTable'){report.set('currency',card.currency);value={source:'revenue',data:await projectRevenue(ref.id,{kind:'session',userId:uid},report)};}
-  else if(card.type==='WebsiteChart'||card.type==='WeeklyTraffic'||card.type==='EventsChart')return withBoardWorkspace(wid,uid,false,async(client,_wid,_uid,role):Promise<BoardCardResult>=>{await current(client);return{...base,role,status:'ready',source:'activity',data:await boardActivity(client,ref.id,uid,scope.scope,query,card.type==='WebsiteChart'?'visitors':card.type==='WeeklyTraffic'?'weekly':'events',card.type==='EventsChart'?card.limit:10)};});
+  else if(card.type==='WebsiteChart'||card.type==='WeeklyTraffic'||card.type==='EventsChart')return withBoardWorkspace(wid,uid,false,async(client,_wid,_uid,role):Promise<T&CardOutcome>=>{await current(client);return{...base,role,status:'ready',source:'activity',data:await boardActivity(client,ref.id,uid,scope.scope,query,card.type==='WebsiteChart'?'visitors':card.type==='WeeklyTraffic'?'weekly':'events',card.type==='EventsChart'?card.limit:10)};});
   else{
    report.set('kind',card.type==='EventsMetricsBar'||card.type==='MetricsTable'&&card.dimension==='event'?'custom':'pageviews');
    if(card.type==='MetricsTable'){
     if(['fullPath','query','title'].includes(card.dimension))return unsupported('not_collected','Full URLs, query strings and page titles are not collected by the current native analytics privacy contract.');
-    if(['entry','exit','channel','hostname'].includes(card.dimension))return unsupported('reader_unavailable','This dimension needs its native aggregation; no path or origin value was substituted.');
+    if(card.dimension==='entry'||card.dimension==='exit'||card.dimension==='channel'||card.dimension==='hostname'){const dimension=card.dimension;return withBoardWorkspace(wid,uid,false,async(client,_wid,_uid,role):Promise<T&CardOutcome>=>{await current(client);return{...base,role,status:'ready',source:'dimensions',data:await boardDimension(client,ref.id,uid,scope.scope,query,dimension,card.limit)};});}
     if(card.dimension==='screen')report.set('fields',JSON.stringify(['screenWidth','screenHeight']));else report.set('groupBy',metricField[card.dimension as keyof typeof metricField]);
    }else report.set('groupBy',card.type==='UTM'?card.parameter:card.type==='WorldMap'?'country':'event');
    // A card snapshot has its configured row bound; do not attach the original wider Explorer CSV.
@@ -159,5 +183,5 @@ export async function readBoardCard(workspaceId:unknown,userId:unknown,boardId:u
    value={source:'explorer',data};
   }
   // Existing readers own their connection/authorization. Recheck publication without borrowing two pool clients.
-  return withBoardWorkspace(wid,uid,false,async(client,_wid,_uid,role):Promise<BoardCardResult>=>{await current(client);return{...base,role,status:'ready',...value};});
+  return withBoardWorkspace(wid,uid,false,async(client,_wid,_uid,role):Promise<T&CardOutcome>=>{await current(client);return{...base,role,status:'ready',...value};});
 }

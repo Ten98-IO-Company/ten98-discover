@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {boardCard,boardCardTypes,boardDefinition,boardMetricFields,type BoardCard,type BoardDefinition} from '../src/lib/boards.ts';
-import {boardParams,boardScope,parseBoardDefinition} from '../src/server/boards.ts';
+import {boardCard,boardCardTypes,boardDefinition,boardMetricFields,boardPreviewInput,boardLimits,type BoardCard,type BoardDefinition} from '../src/lib/boards.ts';
+import {boardParams,boardScope,parseBoardDefinition,parseBoardPreview} from '../src/server/boards.ts';
 import {nativeOpenApi} from '../src/server/openapi.ts';
 
 const scope='from=2026-01-01&to=2026-01-02&timeZone=UTC';
@@ -28,6 +28,22 @@ test('applied native scope canonicalizes without losing exact empty, percent, ty
  assert.equal(boardScope(scope+'&path=%25').query.filters.path,'%');assert.equal(boardScope(scope+'&path=%EF%BF%BD').query.filters.path,'�');assert.throws(()=>boardParams('scope='+encodeURIComponent(scope+'&path=%ED%A0%80')).get('scope')&&boardScope(boardParams('scope='+encodeURIComponent(scope+'&path=%ED%A0%80')).get('scope')!));
 });
 test('board endpoints are browser-only and preserve existing bearer operation inventory',()=>{
- const inventory=nativeOpenApi['x-ten98-browser-operations'];const paths=Object.keys(inventory).filter(p=>p.includes('/boards'));assert.equal(paths.length,6);for(const path of paths)assert.equal(Object.hasOwn(nativeOpenApi.paths,path),false);
+ const inventory=nativeOpenApi['x-ten98-browser-operations'];const paths=Object.keys(inventory).filter(p=>p.includes('/boards'));assert.equal(paths.length,7);for(const path of paths)assert.equal(Object.hasOwn(nativeOpenApi.paths,path),false);
  assert.equal(inventory['/api/workspaces/{workspaceId}/boards'].post.bodyMaxBytes,196608);assert.match(inventory['/api/workspaces/{workspaceId}/boards/{boardId}/cards/{cardId}'].get.query,/Unsupported/);
+});
+
+test('optional design preserves legacy JSON and real bounded canonical unsaved preview identity',()=>{
+ const legacy=definition();assert.deepEqual(parseBoardDefinition(legacy),legacy);
+ for(const type of boardCardTypes){const value={...card(type),title:'Campaign view 🐎',description:'<b>Literal description</b>'};assert.deepEqual(boardCard.parse(value),value);}
+ const designed={...legacy,rows:[{...legacy.rows[0],cards:[{...card('TextBlock'),title:'Notes',description:'Literal <script>text</script>'},null],widths:[30,70]}]};assert.deepEqual(parseBoardDefinition(designed),designed);
+ for(const widths of [[100],[0,100],[1,98],[50,50,0],[50.5,49.5],[101,-1]])assert.equal(boardDefinition.safeParse({...designed,rows:[{...designed.rows[0],widths}]}).success,false);
+ for(const bad of [{title:''},{title:' padded '},{title:'x'.repeat(121)},{description:'x'.repeat(1001)},{title:'\u0000'},{description:'\ud800'}])assert.equal(boardCard.safeParse({...card('TextBlock'),...bad}).success,false);
+ const request={previewId:randomUUID(),card:card('WebsiteChart'),defaultEntity:legacy.defaultEntity,scope},parsed=parseBoardPreview(request);assert.deepEqual(parsed,request);assert.equal('boardId'in parsed,false);assert.equal('revision'in parsed,false);
+ for(const bad of [{...request,boardId:randomUUID()},{...request,previewId:'bad'},{...request,defaultEntity:null},{...request,card:{...card('UTM'),entity:{kind:'link',id:randomUUID()}}},{...request,scope:scope+'&path=%ED%A0%80'}])assert.throws(()=>parseBoardPreview(bad));
+ const linkPreview={...request,card:{...request.card,entity:{kind:'link' as const,id:randomUUID()}}};assert.deepEqual(parseBoardPreview(linkPreview),linkPreview);
+ assert.equal(boardPreviewInput.safeParse({...request,card:card('TextBlock'),defaultEntity:null}).success,true);
+ const largeScope=new URLSearchParams({from:'2026-01-01',to:'2026-01-02',timeZone:'UTC',path:'\u0001'.repeat(2048),referrer:'\u0001'.repeat(2048),campaignSource:'',propertyKey:'v',propertyType:'string',propertyValue:JSON.stringify('\u0001'.repeat(910))});
+ const remaining=20000-largeScope.toString().length;assert.ok(remaining>=0&&remaining<=320);largeScope.set('campaignSource','x'.repeat(remaining));const canonical=boardScope(largeScope.toString()).scope;assert.equal(canonical.length,20000);
+ const largest={previewId:randomUUID(),card:{...card('TextBlock'),title:'\u0001'.repeat(120),description:'\u0001'.repeat(1000),text:'\u0001'.repeat(4000)},defaultEntity:legacy.defaultEntity,scope:canonical};const bytes=Buffer.byteLength(JSON.stringify(largest));assert.ok(bytes>32768&&bytes<=boardLimits.previewBodyBytes);assert.deepEqual(parseBoardPreview(largest),largest);assert.equal(boardLimits.previewBodyBytes,51200);
+ assert.equal(nativeOpenApi['x-ten98-browser-operations']['/api/workspaces/{workspaceId}/boards/preview'].post.bodyMaxBytes,boardLimits.previewBodyBytes);
 });

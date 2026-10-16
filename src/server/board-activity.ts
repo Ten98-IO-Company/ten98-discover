@@ -1,5 +1,6 @@
 import type {PoolClient} from 'pg';
-import type {BoardActivityResult} from '../lib/boards.ts';
+import type {BoardActivityResult,BoardDimensionResult} from '../lib/boards.ts';
+import {revenueChannelRules} from '../lib/revenue.ts';
 import {FoundationError} from './auth.ts';
 import {analyticsPopulation} from './analytics-population.ts';
 import type {explorerQuery} from './explorer-input.ts';
@@ -42,5 +43,59 @@ export async function boardActivity(client:PoolClient,projectId:string,userId:st
   eventNames:profile==='events'?{total:unavailable?null:Number(row.total_names),returned:series.length,omitted:unavailable?null:Number(row.total_names)-series.length,otherEvents:unavailable?null:Number(row.other_events),otherDaily:row.other_daily.map((day:{date:string;events:number})=>({...day,events:byDay.get(day.date)==='unavailable'?null:day.events}))}:null};
  // Fail instead of emitting rounded bigint counts or an oversized response.
  const pending:unknown[]=[result];while(pending.length){const value=pending.pop();if(typeof value==='number'&&(!Number.isSafeInteger(value)||value<0))throw new FoundationError(503,'The board activity result is too large. Narrow its dates or filters.');if(value&&typeof value==='object')pending.push(...Object.values(value));}
+ return result;
+}
+
+// The existing workspace gate owns current authority/policy and the 5s SQL timeout.
+// Filters qualify visits; boundaries use every retained pageview in the requested window.
+// ponytail: scan complete qualified visits, not the bounded journey reader; partition only if measured SQL cost requires it.
+export async function boardDimension(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>,dimension:BoardDimensionResult['dimension'],limit:number):Promise<BoardDimensionResult>{
+ if(query.cohort||query.predicates)throw new FoundationError(400,'Board dimensions support exact field and typed event-property filters.');
+ if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[query.timeZone])).rowCount)throw new FoundationError(400,'The database does not support this timezone.');
+ const {ctes,values,population}=analyticsPopulation(projectId,userId,{...query,kind:'pageviews'},null,false),boundary=dimension==='entry'||dimension==='exit';
+ values.push(limit);const take='$'+values.length;
+ const channel="CASE "+revenueChannelRules.map(([name,tokens])=>"WHEN lower(s.dimensions->'campaign'->>'medium')=ANY(ARRAY["+tokens.map(token=>"'"+token+"'").join(',')+"])THEN '"+name+"'").join(' ')+" WHEN NULLIF(s.dimensions->'campaign'->>'medium','')IS NOT NULL OR NULLIF(s.dimensions->'campaign'->>'source','')IS NOT NULL THEN 'other_tagged' WHEN NULLIF(s.dimensions->>'referrerHost','')IS NOT NULL THEN 'referrer_only' ELSE 'not_recorded' END";
+ const key=dimension==='hostname'?`substring(s.dimensions->>'origin' from '^https?://(\\[[0-9a-f:.]+\\]|[a-z0-9.-]+)(?::[0-9]{1,5})?$')`:channel;
+ const row=(await client.query(`${ctes}, qualified_visits AS MATERIALIZED(
+   SELECT DISTINCT visitor_id,visit_id FROM ${population} WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL
+  )${boundary?`, retained_visit_pages AS MATERIALIZED(
+   SELECT e.* FROM event e JOIN target t ON t.id=e.project_id JOIN qualified_visits q USING(visitor_id,visit_id)
+    WHERE e.event_name='page_view' AND(t.analytics_retained_from IS NULL OR e.received_at>=t.analytics_retained_from)
+  ), window_visit_pages AS MATERIALIZED(
+   SELECT e.* FROM retained_visit_pages e CROSS JOIN bounds b WHERE e.received_at>=b.start AND e.received_at<b.finish AND(e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date
+  ), visit_order AS MATERIALIZED(
+   SELECT e.*,row_number()OVER(PARTITION BY visitor_id,visit_id ORDER BY received_at,id) AS first_rank,
+    row_number()OVER(PARTITION BY visitor_id,visit_id ORDER BY received_at DESC,id DESC) AS last_rank,
+    count(*)OVER(PARTITION BY visitor_id,visit_id,received_at) AS tied FROM window_visit_pages e
+  ), boundary_evidence AS MATERIALIZED(
+   SELECT q.visitor_id,q.visit_id,bool_or(e.received_at<b.start OR e.received_at>=b.finish) AS clipped
+    FROM qualified_visits q JOIN retained_visit_pages e USING(visitor_id,visit_id) CROSS JOIN bounds b GROUP BY q.visitor_id,q.visit_id
+  ), units AS MATERIALIZED(
+   SELECT path AS key,id,visitor_id FROM visit_order WHERE ${dimension==='entry'?'first_rank':'last_rank'}=1
+  )`:`, units AS MATERIALIZED(SELECT ${key} AS key,s.id,s.visitor_id FROM ${population} s)`},
+  grouped AS MATERIALIZED(SELECT key,count(*) AS units,count(visitor_id) AS identified,
+   CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END AS visitors FROM units GROUP BY key),
+  ranked AS(SELECT * FROM grouped ORDER BY units DESC,key COLLATE "C" NULLS FIRST LIMIT ${take})
+  SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT analytics_retained_from FROM target) AS retained_from,
+   (SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,
+   (SELECT json_build_object('units',count(*),'identifiedUnits',count(visitor_id),'unidentifiedUnits',count(*)FILTER(WHERE visitor_id IS NULL),
+    'estimatedVisitors',CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END) FROM units) AS totals,
+   (SELECT count(*) FROM ${population}) AS matching,(SELECT count(*) FROM ${population} WHERE visitor_id IS NULL) AS anonymous,
+   (SELECT count(*) FROM qualified_visits) AS visits,
+   ${boundary?"(SELECT count(*) FROM window_visit_pages)":"NULL::bigint"} AS retained_pages,
+   ${boundary?"(SELECT count(*) FROM boundary_evidence WHERE clipped)":"NULL::bigint"} AS clipped,
+   ${boundary?"(SELECT count(*) FROM visit_order WHERE "+(dimension==='entry'?'first_rank':'last_rank')+"=1 AND tied>1)":"NULL::bigint"} AS ties,
+   (SELECT count(*) FROM grouped) AS groups,
+   (SELECT COALESCE(json_agg(json_build_object('key',key,'units',units,'identifiedUnits',identified,'estimatedVisitors',visitors)ORDER BY units DESC,key COLLATE "C" NULLS FIRST),'[]'::json)FROM ranked) AS rows
+  `,values)).rows[0];
+ if(!row.allowed)throw new FoundationError(404,'Project not found or unavailable.');
+ const start=row.start.toISOString(),end=row.finish.toISOString(),coverage=retentionCoverage(start,end,row.retained_from),unavailable=coverage.status==='unavailable',number=(value:unknown)=>value===null?null:Number(value);
+ const rows:BoardDimensionResult['breakdown']['rows']=unavailable?[]:row.rows,returned=rows.reduce((sum,item)=>sum+item.units,0);
+ const result:BoardDimensionResult={version:'native-board-dimension-v1',projectId,scope,dimension,range:{from:query.from,to:query.to,timeZone:query.timeZone,start,end},coverage,query:{filters:query.filters,property:query.property?.type==='missing'?{key:query.property.key,type:'missing'}:query.property},
+  method:{metric:boundary?'observed-visits':'pageviews',identity:'rotating-project-key-hour-visit',boundaries:'whole-window-retained-pageviews',hostname:'recorded-origin-only',channel:'recorded-channel-tags-v1',historyComplete:false,visitorCountsAdditive:false},
+  totals:unavailable?{units:null,identifiedUnits:null,unidentifiedUnits:null,estimatedVisitors:null}:row.totals,
+  evidence:{matchingPageviews:unavailable?null:number(row.matching),anonymousPageviews:unavailable?null:number(row.anonymous),qualifiedVisits:unavailable?null:number(row.visits),retainedVisitPageviews:unavailable?null:number(row.retained_pages),windowClippedVisits:unavailable?null:number(row.clipped),orderingTieVisits:unavailable?null:number(row.ties),retentionClippedVisits:null},
+  breakdown:{rows,totalGroups:unavailable?null:number(row.groups),returnedUnits:unavailable?null:returned,omittedUnits:unavailable?null:row.totals.units-returned,limit,truncated:!unavailable&&Number(row.groups)>rows.length}};
+ const pending:unknown[]=[result];while(pending.length){const value=pending.pop();if(typeof value==='number'&&(!Number.isSafeInteger(value)||value<0))throw new FoundationError(503,'The dimension result exceeds safe count limits.');if(value&&typeof value==='object')pending.push(...Object.values(value));}
  return result;
 }

@@ -24,7 +24,7 @@ import { exploreAnalytics } from './explorer.ts';
 import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
 import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
 import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
-import {listBoards,getBoard,saveBoard,cloneBoard,deleteBoard,readBoardCard} from './boards.ts';
+import {listBoards,getBoard,saveBoard,cloneBoard,deleteBoard,readBoardCard,previewBoardCard} from './boards.ts';
 import {boardLimits} from '../lib/boards.ts';
 import {listCohorts,getCohort,saveCohort,deleteCohort} from './cohorts.ts';
 import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
@@ -270,6 +270,13 @@ export async function handleApi(request: Request): Promise<Response> {
       return json({ error: 'Authentication route unavailable.' }, 404);
     }
     const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
+    const boardPreviewRoute=path.match(new RegExp('^/api/workspaces/('+id+')/boards/preview$','i'));
+    if(boardPreviewRoute){
+      if(request.method!=='POST')return json({error:'Method not allowed.'},405);
+      if(url.search)throw new FoundationError(400,'Card previews do not accept query parameters.');
+      await limit('boards:'+user.id+':read',120);
+      return json(await previewBoardCard(boardPreviewRoute[1],user.id,await readJson(request,boardLimits.previewBodyBytes)));
+    }
     const boardRoute=path.match(new RegExp('^/api/workspaces/('+id+')/boards(?:/('+id+')(?:/(update|clone|delete)|/cards/('+id+'))?)?$','i'));
     if(boardRoute){
       const[,workspaceId,boardId,action,cardId]=boardRoute;

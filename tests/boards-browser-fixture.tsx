@@ -7,7 +7,15 @@ import {parseNavigation} from '../src/lib/navigation';
 import '../src/styles.css';
 
 type Scope={workspaceId:string;userId:string;query:string;readOwner:string;readEnabled:boolean;mode?:'boards'|'revenue'};
-declare global{interface Window{boardsScope?:Scope;boardsFixture:{set:(value:Partial<Scope>)=>void}}}
+type DecodedGateState={path:string;status:number;nativeBodyComplete:true;released:boolean;signalAborted:boolean};
+declare global{interface Window{boardsScope?:Scope;boardsDecodedGate?:'card'|'analyses';boardsReadGate?:{state:()=>DecodedGateState|null;release:()=>void};boardsFixture:{set:(value:Partial<Scope>)=>void}}}
+// Explicit synthetic seam: finish the native HTTP body, then defer only its decoded response.
+// Releasing it ignores subsequent transport abort; this proves callback ownership, not browser abort delivery or pre-passive timing.
+if(window.boardsDecodedGate){
+ const nativeFetch=window.fetch.bind(window);let claimed=false,state:DecodedGateState|null=null,release:(()=>void)|null=null;
+ window.boardsReadGate={state:()=>state,release:()=>{if(!release)throw Error('No decoded board response is held.');const settle=release;release=null;settle();}};
+ window.fetch=async(input,init)=>{const response=await nativeFetch(input,init),path=new URL(input instanceof Request?input.url:String(input),location.href).pathname,matches=window.boardsDecodedGate==='card'?/\/boards\/[^/]+\/cards\/[^/]+$/.test(path):/\/(?:goals|funnels)$/.test(path);if(claimed||!matches||(init?.method??'GET')!=='GET')return response;claimed=true;const body=await response.arrayBuffer();state={path,status:response.status,nativeBodyComplete:true,released:false,signalAborted:false};return new Promise<Response>(resolve=>{release=()=>{state!.released=true;state!.signalAborted=init?.signal?.aborted??false;resolve(new Response(body,{status:response.status,headers:response.headers}));};});};
+}
 const initial:Scope={workspaceId:'61000000-0000-4000-8000-000000000001',userId:'61000000-0000-4000-8000-000000000002',query:'',readOwner:'entry-0',readEnabled:true};
 function Fixture(){
  const [scope,setScope]=React.useState(()=>window.boardsScope??initial),[callbacks,setCallbacks]=React.useState(0),[signedOut,setSignedOut]=React.useState(false),[shown,setShown]=React.useState(true),entry=React.useRef(0);

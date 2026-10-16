@@ -46,12 +46,12 @@ const matchValue=(v:unknown)=>record(v)&&['path','event'].includes(String(v.type
 const date=(v:string)=>new Date(v).toLocaleString();
 const number=(v:number|null)=>v===null?'Unavailable':v.toLocaleString();
 const percent=(v:number|null)=>v===null?'Unavailable':new Intl.NumberFormat(undefined,{style:'percent',maximumFractionDigits:1}).format(v);
-function validItem(v:unknown,projectId:string,kind:AnalysisKind):v is AnalysisItem{
+export function validItem(v:unknown,projectId:string,kind:AnalysisKind):v is AnalysisItem{
   if(!record(v)||typeof v.id!=='string'||v.projectId!==projectId||!Number.isInteger(v.revision)||(v.revision as number)<1||typeof v.createdAt!=='string'||typeof v.updatedAt!=='string'||!record(v.definition))return false;
   const d=v.definition;if(d.kind!==kind||typeof d.name!=='string'||typeof d.description!=='string')return false;
   return kind==='goal'?matchValue(d.condition):Number.isInteger(d.windowMinutes)&&Array.isArray(d.steps)&&d.steps.length>=2&&d.steps.length<=8&&d.steps.every(s=>matchValue(s)&&record(s)&&typeof s.pageViewsOnly==='boolean'&&Array.isArray(s.properties)&&s.properties.every(p=>record(p)&&typeof p.key==='string'&&['missing','eq','neq','contains','not_contains'].includes(String(p.operator))&&(p.operator==='missing'||propTypes.includes(String(p.type))&&'value'in p)));
 }
-function matchLabel(m:MatchDraft,goal=false,pageViewsOnly=false){return `${m.type==='event'?'Custom event':goal||pageViewsOnly?'Viewed page':'Activity at path'} · ${m.match==='exact'?'equals':m.match==='prefix'?'starts with':m.match==='suffix'?'ends with':'contains'} ${m.value}`;}
+export function matchLabel(m:MatchDraft,goal=false,pageViewsOnly=false){return `${m.type==='event'?'Custom event':goal||pageViewsOnly?'Viewed page':'Activity at path'} · ${m.match==='exact'?'equals':m.match==='prefix'?'starts with':m.match==='suffix'?'ends with':'contains'} ${m.value}`;}
 
 export function ConversionsPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
 function Panel({projectId,onUnauthorized}:Props){
