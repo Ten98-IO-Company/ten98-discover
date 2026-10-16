@@ -40,7 +40,7 @@ import {assertMetaCredentialsReadable} from './meta-auth.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
 import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
 import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
-import {getDomainResearch,getDomainResearchRun,refreshDomainResearchMarkets,quoteDomainResearch,startDomainResearch,cancelDomainResearch,reconcileDomainResearch} from './domain-research.ts';
+import {getDomainResearch,getDomainResearchRun,exportDomainResearchRun,refreshDomainResearchMarkets,quoteDomainResearch,startDomainResearch,cancelDomainResearch,reconcileDomainResearch} from './domain-research.ts';
 import {listRankTrackers,getRankTracker,getRankCatalog,searchRankLocations,createRankTracker,updateRankTracker,archiveRankTracker,changeRankKeywords} from './rank-tracking.ts';
 import {getRankRun,quoteRankCheck,startRankCheck} from './rank-execution.ts';
 import {cancelRankRun} from './rank-worker.ts';
@@ -647,13 +647,14 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
-    const domainResearchRoute=path.match(new RegExp(`^/api/projects/(${id})/domain-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
+    const domainResearchRoute=path.match(new RegExp(`^/api/projects/(${id})/domain-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile|export))?)?)?$`,'i'));
     if(domainResearchRoute){
       const [,projectId,action,runId,runAction]=domainResearchRoute;
       if(url.search)throw new FoundationError(400,'Domain research does not accept query parameters.');
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`domain-research:${user.id}`,120);
       if(request.method==='GET'&&!action)return json(await getDomainResearch(projectId,user.id));
       if(request.method==='GET'&&action==='runs'&&runId&&!runAction)return json(await getDomainResearchRun(projectId,user.id,runId));
+      if(request.method==='GET'&&action==='runs'&&runId&&runAction==='export')return json(await exportDomainResearchRun(projectId,user.id,runId));
       if(request.method==='POST'){
         await limit(`domain-research-write:${user.id}`,10);const input=await readJson(request,8192);
         if(!runId&&action==='catalog')return json(await refreshDomainResearchMarkets(projectId,user.id,input));

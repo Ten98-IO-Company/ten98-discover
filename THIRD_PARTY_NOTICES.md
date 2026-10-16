@@ -1,6 +1,34 @@
 # Upstream provenance and reuse gate
 
-The application includes the attributed Elmo adaptations recorded below. Statements describing an empty application import ledger refer to the earlier planning/foundation stage.
+The application includes the attributed Elmo and OpenSEO adaptations recorded below. Statements describing an empty application import ledger refer to the earlier planning/foundation stage.
+
+## OpenSEO domain scope filters
+
+`src/server/domain-research-input.ts` adapts the hostname/path LIKE-filter pattern from OpenSEO0.1.12, commit `89e5a00717cdf049b7c2b4e29646edb3a7d4995b`, [researchScopeFilters.ts](https://github.com/every-app/open-seo/blob/89e5a00717cdf049b7c2b4e29646edb3a7d4995b/src/server/lib/dataforseo/researchScopeFilters.ts). The bounded fixed profiles add query-string variants, independent returned-URL checks and native quote/job accounting; no upstream cache, billing system, branding or dataset is copied. The source retains MIT copyright2026 Ben Senescu.
+
+```text
+MIT License
+
+Copyright (c) 2026 Ben Senescu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## Transactional SMTP transport
 

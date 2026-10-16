@@ -6,7 +6,8 @@ import { getDatabase } from './db.ts';
 import { getBoss } from './jobs.ts';
 import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection, googleAdsConfigured, googleAdsHeaders, googleAdsCustomer } from './google.ts';
 import { GoogleRequestError, googleRequest } from './google-http.ts';
-import { googleImportInput, googleInput, googleReportRequest, googleReports, googleAdsVersion, ga4InventoryReports, googleCompatibilityRequest, normalizeGoogleCompatibility, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
+import { googleImportInput, googleInput, googleReportRequest, googleReports, googleAdsVersion, ga4InventoryReports, ga4OrganicReports, isOrganicOverview, organicPreviousRange, validateOrganicDates, googleCompatibilityRequest, normalizeGoogleCompatibility, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
+import { readOrganicOverview } from '../lib/google-report-display.ts';
 
 export const googleQueue = 'google-report-import';
 type ImportRow = { id: string; connection_id: string; project_id: string; user_id: string; request_id: string; connection_revision: number; app_revision: number; report: GoogleReport; date_from: string; date_to: string; status: string; pages: number; row_count: number; provider_row_count: number | null; source: Record<string, unknown>; quality: { warnings: string[]; metadata: Record<string, unknown> }; diagnostic: string | null; created_at: Date; completed_at: Date | null; data_expired_at: Date | null };
@@ -41,6 +42,7 @@ export async function enqueueGoogleImport(projectId: string, userId: string, con
     const app = await activeGoogleApp(client);
     if (connection.status !== 'ready' || !connection.property_id || connection.app_revision !== app.revision) throw new FoundationError(409, 'Connect and select an authorized property before importing.');
     if (googleReports[data.report].provider !== connection.provider) throw new FoundationError(400, 'Select a report for this provider.');
+    if (ga4OrganicReports.includes(data.report)) validateOrganicDates(data.from, data.to, connection.time_zone);
     if (connection.provider === 'ads') googleAdsHeaders(app, connection.login_customer_id ?? undefined);
     if ((await client.query("SELECT 1 FROM google_import WHERE connection_id=$1 AND status IN ('queued','running')", [connectionId])).rowCount) throw new FoundationError(409, 'This connection already has an active import. Wait for it to finish.');
     const source = { provider: connection.provider, propertyId: connection.property_id, propertyName: connection.property_name, timeZone: connection.time_zone, currencyCode: connection.currency_code, ...(connection.provider === 'ads' ? { loginCustomerId: connection.login_customer_id, apiVersion: googleAdsVersion, attribution: 'Google Ads conversion settings; not native analytics' } : {}) };
@@ -63,9 +65,19 @@ export async function readGoogleImport(projectId: string, userId: string, import
     // A running/failed snapshot is not a successful zero-row report. Only finished
     // complete or explicitly partial snapshots expose persisted observations.
     const readable = !row.data_expired_at && (row.status === 'completed' || row.status === 'partial');
+    const overview = isOrganicOverview(row.report), limit = overview ? 366 : 50;
+    if (overview && offset !== 0) throw new FoundationError(400, 'Organic overviews are returned as one complete snapshot.');
     const page = readable ? await client.query<{ row: ReportRow }>(`SELECT item.value AS row FROM google_import_page p CROSS JOIN LATERAL jsonb_array_elements(p.rows) WITH ORDINALITY AS item(value,n)
-      WHERE import_id=$1 ORDER BY p.page,item.n LIMIT 51 OFFSET $2`, [row.id, offset]) : { rows: [] };
-    return { import: googleImportDto(row), source: row.source, dimensions: definition.dimensions, metrics: definition.metrics, rows: page.rows.slice(0, 50).map(item => item.row), quality: row.quality, nextOffset: page.rows.length > 50 ? offset + 50 : null };
+      WHERE import_id=$1 ORDER BY p.page,item.n LIMIT $3 OFFSET $2`, [row.id, offset, limit + 1]) : { rows: [] };
+    // Overview aggregates are observations too: an unfinished/expired report exposes none of its stages.
+    const quality = overview && !readable ? { warnings: [], metadata: {} } : row.quality;
+    if (overview && readable) {
+      const observations = readOrganicOverview(quality.metadata.organic, row.date_from, row.date_to, row.report === 'ga4_organic_weekly');
+      if (row.status !== 'completed' || row.pages !== 3 || page.rows.length !== row.row_count || !observations || observations.trend.rowCount !== row.row_count) throw new FoundationError(503, 'The complete organic overview is unavailable. Import a fresh snapshot.');
+    }
+    const result = { import: googleImportDto(row), source: row.source, dimensions: definition.dimensions, metrics: definition.metrics, rows: page.rows.slice(0, limit).map(item => item.row), quality, nextOffset: page.rows.length > limit ? offset + limit : null };
+    if (ga4OrganicReports.includes(row.report) && Buffer.byteLength(JSON.stringify(result), 'utf8') > 2097152) throw new FoundationError(503, 'The complete organic report is too large. Choose a smaller date range.');
+    return result;
   });
 }
 
@@ -78,7 +90,9 @@ export async function runGoogleImport(importId: string): Promise<void> {
       await refreshGoogleConnection(initial.project_id, initial.user_id, initial.connection_id);
       // ponytail: a GSC/legacy GA4 page holds the workspace lock for one bounded 15s
       // request; detailed GA4 first-page attempts and Ads use two independently
-      // bounded reads (compatibility/customer verification, then report). Split into revocable leases if volume
+      // bounded reads (compatibility/customer verification, then report). Organic
+      // overview stages each commit separately; current/trend have compatibility
+      // plus report, previous has one report. No lock spans all three stages. Split into revocable leases if volume
       // makes this brief serialization disruptive; never drop the final recheck.
       const done = await googleProjectTransaction(initial.project_id, initial.user_id, true, async client => {
         const connection = await googleConnection(client, initial.project_id, initial.connection_id);
@@ -87,6 +101,7 @@ export async function runGoogleImport(importId: string): Promise<void> {
         const app = await activeGoogleApp(client);
         if (row.connection_revision !== connection.revision || row.app_revision !== app.revision || connection.app_revision !== app.revision || connection.status !== 'ready' || !connection.property_id) throw new FoundationError(409, 'Google authorization changed. Reconnect and start a new import.');
         if (row.pages >= 10) throw new Error('Invalid Google import checkpoint.');
+        if (ga4OrganicReports.includes(row.report)) validateOrganicDates(row.date_from, row.date_to, connection.time_zone);
         const accessToken = await googleAccessToken(client, connection, app);
         if (connection.provider === 'ads') {
           if (row.pages !== 0 || row.row_count !== 0) throw new FoundationError(409, 'The Ads import checkpoint is inconsistent. Start a fresh import.');
@@ -103,7 +118,31 @@ export async function runGoogleImport(importId: string): Promise<void> {
           return true;
         }
         const endpoint = connection.provider === 'gsc' ? `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(connection.property_id)}/searchAnalytics/query` : `https://analyticsdata.googleapis.com/v1beta/${connection.property_id}:runReport`;
-        if (connection.provider === 'ga4' && ga4InventoryReports.includes(row.report) && row.pages === 0) {
+        if (isOrganicOverview(row.report)) {
+          const stage = (['current', 'previous', 'trend'] as const)[row.pages];
+          if (!stage) throw new FoundationError(409, 'The organic overview checkpoint is inconsistent. Start a new import.');
+          const range = stage === 'previous' ? organicPreviousRange(row.date_from, row.date_to) : { from: row.date_from, to: row.date_to };
+          // Two distinct field configurations: range aggregates and trend. The prior range reuses the committed aggregate compatibility check.
+          if (stage !== 'previous') {
+            const compatibility = await googleRequest(`https://analyticsdata.googleapis.com/v1beta/${connection.property_id}:checkCompatibility`, accessToken, googleCompatibilityRequest(row.report, row.date_from, row.date_to, stage));
+            normalizeGoogleCompatibility(row.report, compatibility, stage);
+          }
+          const raw = await googleRequest(endpoint, accessToken, googleReportRequest(row.report, row.date_from, row.date_to, 0, stage));
+          const page = normalizeGoogleReport(row.report, raw, range.from, range.to, undefined, stage);
+          if (page.quality.metadata.timeZone && page.quality.metadata.timeZone !== connection.time_zone) throw new FoundationError(409, 'The Google property timezone changed. Add a new source.');
+          if (page.quality.metadata.currencyCode && page.quality.metadata.currencyCode !== connection.currency_code) throw new FoundationError(409, 'The Google property currency changed. Add a new source.');
+          const prior = row.quality.metadata.organic as Record<string, unknown> | undefined;
+          if (row.pages && (!prior || !Object.hasOwn(prior, 'current')) || row.pages === 2 && !Object.hasOwn(prior!, 'previous')) throw new FoundationError(409, 'The organic overview checkpoint is incomplete. Start a new import.');
+          const observation = { from: range.from, to: range.to, values: stage === 'trend' ? null : page.rows[0]?.metrics ?? null, rowCount: page.rowCount, quality: page.quality, reportRequests: 1, compatibilityRequests: stage === 'previous' ? 0 : 1 };
+          const organic = { ...prior, [stage]: observation, complete: stage === 'trend', interval: row.report === 'ga4_organic_daily' ? 'daily' : 'weekly' };
+          const quality = { warnings: [...new Set([...row.quality.warnings, ...page.quality.warnings])], metadata: { organic } };
+          if (Buffer.byteLength(JSON.stringify(quality), 'utf8') > 131072) throw new FoundationError(502, 'Google returned too much overview metadata.');
+          if (stage === 'trend' && !readOrganicOverview(organic, row.date_from, row.date_to, row.report === 'ga4_organic_weekly')) throw new FoundationError(502, 'The complete organic overview metadata could not be verified.');
+          await client.query('INSERT INTO google_import_page(import_id,page,rows) VALUES($1,$2,$3)', [row.id, row.pages, JSON.stringify(stage === 'trend' ? page.rows : [])]);
+          await client.query(`UPDATE google_import SET status=$2,pages=$3,row_count=$4,provider_row_count=$4,quality=$5,diagnostic=NULL,completed_at=CASE WHEN $2='completed' THEN clock_timestamp() ELSE NULL END WHERE id=$1`, [row.id, stage === 'trend' ? 'completed' : 'running', row.pages + 1, stage === 'trend' ? page.rows.length : 0, quality]);
+          return stage === 'trend';
+        }
+        if (connection.provider === 'ga4' && (ga4InventoryReports.includes(row.report) || ga4OrganicReports.includes(row.report)) && row.pages === 0) {
           const compatibility = await googleRequest(`https://analyticsdata.googleapis.com/v1beta/${connection.property_id}:checkCompatibility`, accessToken, googleCompatibilityRequest(row.report, row.date_from, row.date_to));
           normalizeGoogleCompatibility(row.report, compatibility);
         }

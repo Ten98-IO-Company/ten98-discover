@@ -2,7 +2,7 @@ import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
-import { AnalyticsPanel } from '../components/AnalyticsPanel'
+import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
 import { SessionExplorerPanel } from '../components/SessionExplorerPanel'
 import { JourneysPanel } from '../components/JourneysPanel'
@@ -11,6 +11,7 @@ import { AISearchPanel } from '../components/AISearchPanel'
 import { AttributionPanel } from '../components/AttributionPanel'
 import { RetentionReportPanel } from '../components/RetentionReportPanel'
 import { ExplorerPanel } from '../components/ExplorerPanel'
+import { UtmPanel } from '../components/UtmPanel'
 import { AnalyticsSettingsPanel } from '../components/AnalyticsSettingsPanel'
 import { DomainsPanel } from '../components/DomainsPanel'
 import { ContextPanel } from '../components/ContextPanel'
@@ -55,7 +56,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, projectView as isProjectView } from '../lib/navigation'
+import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: App })
@@ -566,12 +567,18 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
-  const pageTitles: Record<AppView, string> = {revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageTitles: Record<AppView, string> = {revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
     if(!['project','compare'].includes(view)||search.workspace!==workspaceId||search.project!==project?.id)return target(next);
     const {analyticsCompare,analyticsDimension,...report}=analyticsNavigation(search),applied=analyticsApplied?.userId===me?.user.id&&analyticsApplied?.projectId===project?.id?analyticsApplied:null,to=report.analyticsTo??applied?.to??new Date().toISOString().slice(0,10),from=report.analyticsFrom??applied?.from??new Date(Date.parse(`${to}T00:00:00Z`)-6*864e5).toISOString().slice(0,10);
     return {...target(next),...report,...report.analyticsInvalid?{}:{analyticsFrom:from,analyticsTo:to},...next==='compare'?{...(analyticsCompare?{analyticsCompare}:{}),...(analyticsDimension?{analyticsDimension}:{})}:{}};
+  }
+  const exploreTarget=():NavigationSearch=>{
+    if(view==='explore'&&search.workspace===workspaceId&&search.project===project?.id)return {...target('explore'),...explorerNavigation(search)};
+    if(!['project','compare'].includes(view)||search.workspace!==workspaceId||search.project!==project?.id)return target('explore');
+    const query=analyticsExplorerQuery(analyticsTarget('project'));
+    return {...target('explore'),...(query===null?{exploreInvalid:'1' as const}:{exploreQuery:query})};
   }
   const pageScope = view === 'preferences' || view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' || view === 'meta-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
   const projectDescriptions: Partial<Record<AppView, string>> = {revenue:'Review recorded sales and refunds in one currency.',attribution: 'Compare recorded sources for your chosen conversion.', journeys: 'See frequent matching steps in retained native visits.', project: 'Understand how people find and use your website.', 'visitor-retention': 'See whether observed visitor keys return on later days.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', 'ai-search': 'Inspect explicitly captured ChatGPT consumer-search answers and their reported queries.', 'ai-insights': 'Review mentions and citations in retained prompt answers using current project context.', google: 'Import Search Console, GA4 and Google Ads reports without changing browser tracking.', sessions: 'Explore retained activity grouped by observed visitor keys. These keys are estimates and can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', 'domain-seo':'Find organic keywords a domain or URL ranks for in one market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
@@ -635,7 +642,8 @@ function App() {
           <Link className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={analyticsTarget('project')}>Analytics</Link>
           <Link className={view === 'realtime' ? 'proj active' : 'proj'} aria-current={view === 'realtime' ? 'page' : undefined} to='/' search={target('realtime')}>Realtime</Link>
           <Link className={view === 'compare' ? 'proj active' : 'proj'} aria-current={view === 'compare' ? 'page' : undefined} to='/' search={analyticsTarget('compare')}>Compare</Link>
-          <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={target('explore')}>Explore</Link>
+          <Link className={view === 'campaigns' ? 'proj active' : 'proj'} aria-current={view === 'campaigns' ? 'page' : undefined} to='/' search={target('campaigns')}>UTM campaigns</Link>
+          <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={exploreTarget()}>Explore</Link>
           <Link className={view === 'sessions' ? 'proj active' : 'proj'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}>Sessions</Link>
           <Link className={view === 'attribution' ? 'proj active' : 'proj'} aria-current={view === 'attribution' ? 'page' : undefined} to='/' search={target('attribution')}>Attribution</Link>
           <Link className={view === 'journeys' ? 'proj active' : 'proj'} aria-current={view === 'journeys' ? 'page' : undefined} to='/' search={target('journeys')}>Journeys</Link>
@@ -655,7 +663,6 @@ function App() {
           <Link className={view === 'domain-seo' ? 'proj active' : 'proj'} aria-current={view === 'domain-seo' ? 'page' : undefined} to='/' search={target('domain-seo')}>Domain SEO</Link>
           <Link className={view === 'ranks' ? 'proj active' : 'proj'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}>Rank tracking</Link>
           <p className='side-label section-label'>Connect</p>
-          <Link className={view === 'google' ? 'proj active' : 'proj'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}>Google connections</Link>
           <Link className={view === 'meta' ? 'proj active' : 'proj'} aria-current={view === 'meta' ? 'page' : undefined} to='/' search={target('meta')}>Meta ads</Link>
           <Link className={view === 'meta-reports' ? 'proj active' : 'proj'} aria-current={view === 'meta-reports' ? 'page' : undefined} to='/' search={target('meta-reports')}>Meta reports</Link>
           <Link className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}>Install tracker</Link>
@@ -663,6 +670,7 @@ function App() {
           <Link className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}>Collection and privacy</Link>
           {['owner','admin'].includes(workspace.role) && <Link className={view === 'domains' ? 'proj active' : 'proj'} aria-current={view === 'domains' ? 'page' : undefined} to='/' search={target('domains')}>Domains</Link>}
         </nav>}
+        </div>
         <details className='side-foot account-menu' open={view === 'preferences' || view === 'security' || view === 'identity' || view === 'google-app' || view === 'meta-app'}>
           <summary className='account-summary' aria-label={`Account: ${me?.user.name || 'Account'}, ${me?.user.email ?? ''}`}>
             <span className='account-summary-text'>
@@ -688,7 +696,6 @@ function App() {
             </div>
           </div>
         </details>
-        </div>
       </aside>
       <main className='main' id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
         <header className='app-bar'><div className='breadcrumbs'><span>{pageScope}</span>{project && projectView && <><span aria-hidden='true'>/</span><strong>{project.name}</strong></>}</div><span className='preview-badge'>Development preview</span></header>
@@ -718,7 +725,8 @@ function App() {
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'campaigns' && project && me && <UtmPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} search={search} onNavigate={value=>go({...target('explore'),...value})} onUnauthorized={unauthorized} />}
         {view === 'compare' && project && me && <AnalyticsPanel projectId={project.id} userId={me.user.id} compareView onAppliedRange={rememberAnalyticsRange} search={{...target('compare'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('compare'),...value})} onUnauthorized={unauthorized} />}
         {view === 'realtime' && project && me && <RealtimePanel projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenSession={value=>go({...target('sessions'),...value})}/>}
         {view === 'conversions' && project && me && <ConversionsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
