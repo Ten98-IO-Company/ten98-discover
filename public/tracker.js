@@ -31,7 +31,7 @@
     backgroundHash(new TextEncoder().encode(JSON.stringify({type:event.type,timestamp:event.timestamp,data:event.data})),function(value){ref.hash=value;if(value)void heatmapBackgroundPump(h);});
     if(event.type===4){c.backgroundMeta={ref:ref,href:event.data.href,width:event.data.width,height:event.data.height,timestamp:event.timestamp};return ref;}
     var meta=c.backgroundMeta,fact=heatmapGeometry(),offset=performance.now()-h.start;
-    if(!meta||meta.href!==h.url||meta.timestamp>event.timestamp||!fact||meta.width!==fact.geometry.viewportWidth||meta.height!==fact.geometry.viewportHeight||!Number.isFinite(offset)||offset<0||offset>300000)return ref;
+    if(!meta||meta.href!==h.url||meta.timestamp>event.timestamp||!fact||![meta.width,meta.height].every(function(value){return Number.isInteger(value)&&value>=1&&value<=heatmapLimits.viewport;})||meta.width!==window.innerWidth||meta.height!==window.innerHeight||meta.width<fact.geometry.viewportWidth||meta.height<fact.geometry.viewportHeight||!Number.isFinite(offset)||offset<0||offset>300000)return ref;
     var plane=JSON.stringify(fact.geometry);
     if(h.backgroundPlans.length>=256||h.backgroundPlans.some(function(p){return p.plane===plane;}))return ref;
     var plan={requestId:uuid(),replay:c,meta:meta.ref,snapshot:ref,geometry:fact.geometry,plane:plane,geometryKey:null,offset:offset,sent:false};
@@ -85,7 +85,8 @@
     var w=root.scrollWidth,h=root.scrollHeight,vw=root.clientWidth,vh=root.clientHeight,sx=window.scrollX,sy=window.scrollY;
     if (![w,h,vw,vh,sx,sy].every(Number.isFinite) || w<1 || h<1 || w>10000000 || h>10000000 || vw<1 || vh<1 || vw>20000 || vh>20000 || w<vw || h<vh || sy<0 || sy>h-vh) return null;
     var left=sx+(style.direction==='rtl'?w-vw:0);
-    if (left<0 || left>w-vw) return null;
+    // Retain the measured Edge RTL root-zoom endpoint, including its physical one-pixel offset.
+    if (left<0 || left>w-vw && !(style.direction==='rtl' && sx>0 && sx<=1)) return null;
     return {geometry:{basis:'document-css-v1',direction:style.direction,pageWidth:w,pageHeight:h,viewportWidth:vw,viewportHeight:vh},scrollX:sx,scrollY:sy,left:left};
   }
   async function heatmapRequest(c,path,body) {

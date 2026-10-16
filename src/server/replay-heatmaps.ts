@@ -109,7 +109,7 @@ export async function associateHeatmapBackground(request:Request,raw:unknown){
   const meta=await readReplayReference(client,recording.id,input.meta),snapshot=await readReplayReference(client,recording.id,input.snapshot);
   if(meta.event.type!==4||snapshot.event.type!==2||meta.event.data.href!==input.url||meta.event.timestamp>snapshot.event.timestamp||
    snapshot.event.timestamp<Number(recording.first_event_timestamp)||snapshot.event.timestamp-Number(recording.first_event_timestamp)>recording.settings.maxDurationMs||
-   meta.event.data.width!==plane.viewportWidth||meta.event.data.height!==plane.viewportHeight)throw changed();
+   Number(meta.event.data.width)<plane.viewportWidth||Number(meta.event.data.height)<plane.viewportHeight)throw changed();
   const sequences=[...new Set([...meta.sequences,...snapshot.sequences])].sort((a,b)=>a-b),payloadHash=hash(input),observedAt=new Date(snapshot.event.timestamp);
   // One immutable sample per capture/layout, bounded by the existing256 actual batch geometries.
   const inserted=await client.query(`INSERT INTO heatmap_background(project_id,capture_id,geometry_key,request_id,request_hash,batch_request_id,recording_id,geometry,heatmap_offset_ms,replay_offset_ms,meta,snapshot,sequences,observed_at,accepted_at)

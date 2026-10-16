@@ -12,7 +12,7 @@ const denied={analytics:false,advertising:false,adUserData:false,adPersonalizati
 // native Edge calibration is evidence for the coordinate formula, not this VM.
 type Handler=(event:any)=>void;
 type Post={url:string;body:string;input:any;options:any};
-function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknown;privacy?:boolean;direction?:'ltr'|'rtl';sampled?:boolean;replay?:boolean}={}){
+function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknown;privacy?:boolean;direction?:'ltr'|'rtl';sampled?:boolean;replay?:boolean;viewport?:{width:number;height:number}}={}){
   const windows=new Map<string,Set<Handler>>(),documents=new Map<string,Set<Handler>>(),timers=new Map<number,{fn:()=>void;delay:number;interval:boolean}>(),storage=new Map<string,string>(),scripts:any[]=[],posts:Post[]=[];
   let replayEmit:((v:unknown)=>void)|undefined,takeSnapshots=0;const replayStorage=new Map<string,string>(),recordingId=randomUUID();let time=0,wall=Date.parse('2026-10-16T00:00:00.000Z'),timerId=0,configEpoch=epoch;
   class Clock extends Date{constructor(value?:string|number){super(value===undefined?wall:value);}static now(){return wall;}}
@@ -29,7 +29,7 @@ function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknow
   const flags={begin:null as null|((post:Post)=>Promise<Response>|Response),batch:null as null|((post:Post)=>Promise<Response>|Response),config:null as null|Record<string,unknown>,replayHold:false,replayHeld:[] as Array<()=>void>,background:null as null|((post:Post)=>Promise<Response>|Response)};
   const settings:Record<string,unknown>={...options.replay?{replay:{enabled:true,sampleRate:1,maskLevel:'strict',maxDurationMs:300000,blockSelector:''}}:{},enabled:true,collectionMode:options.mode??'consent-first',consentMode:'external',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:['/private'],...(options.heatmap===undefined?{heatmap:{enabled:true,sampleRate:options.sampled===false?0:1}}:{heatmap:options.heatmap})};
   const sandbox:any={document,location,history,origin:page,URL,Intl,Date:Clock,AbortController,TextEncoder,TextDecoder,ReadableStream,crypto:{randomUUID,getRandomValues:webcrypto.getRandomValues.bind(webcrypto),...options.replay?{subtle:{async digest(_name:string,data:Uint8Array){return Uint8Array.from(createHash('sha256').update(data).digest()).buffer;}}}:{}},
-    navigator:{globalPrivacyControl:!!options.privacy,language:'en'},performance:{timeOrigin:wall,now:()=>time},scrollX:options.direction==='rtl'?-880:0,scrollY:0,
+    navigator:{globalPrivacyControl:!!options.privacy,language:'en'},performance:{timeOrigin:wall,now:()=>time},get innerWidth(){return options.viewport?.width??root.clientWidth;},get innerHeight(){return options.viewport?.height??root.clientHeight;},scrollX:options.direction==='rtl'?-880:0,scrollY:0,
     visualViewport:{scale:1,offsetLeft:0,offsetTop:0},getComputedStyle:(element:unknown)=>{assert.equal(element,root);return style;},console:{warn(){}},
     setTimeout(fn:()=>void,delay:number){timers.set(++timerId,{fn,delay,interval:false});return timerId;},clearTimeout:(id:number)=>timers.delete(id),
     setInterval(fn:()=>void,delay:number){timers.set(++timerId,{fn,delay,interval:true});return timerId;},clearInterval:(id:number)=>timers.delete(id),
@@ -74,9 +74,9 @@ function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknow
     backgrounds:()=>posts.filter(p=>p.url.endsWith('/api/heatmaps/backgrounds')),
     replayChunks:()=>posts.filter(p=>p.url.endsWith('/api/replay/chunks')),
     takeSnapshots:()=>takeSnapshots,
-    async loadReplay(snapshotText='***'){
+    async loadReplay(snapshotText='***',metadata?:{width:number;height:number}){
       assert.equal(options.replay,true);const script=scripts.find(s=>s.src?.endsWith('/replay.js'));assert.ok(script);
-      const emit=()=>{assert.ok(replayEmit);replayEmit(local({type:4,timestamp:wall,data:{href:page+location.pathname,width:root.clientWidth,height:root.clientHeight}}));replayEmit(local({type:2,timestamp:wall+1,data:{node:{type:0,id:1,childNodes:[{type:3,id:2,textContent:snapshotText}]},initialOffset:{left:0,top:0}}}));};
+      const emit=()=>{assert.ok(replayEmit);replayEmit(local({type:4,timestamp:wall,data:{href:page+location.pathname,width:metadata?.width??sandbox.innerWidth,height:metadata?.height??sandbox.innerHeight}}));replayEmit(local({type:2,timestamp:wall+1,data:{node:{type:0,id:1,childNodes:[{type:3,id:2,textContent:snapshotText}]},initialOffset:{left:0,top:0}}}));};
       sandbox.__ten98FoundationHub.startReplayRecorder=Object.assign((_settings:unknown,callback:(v:unknown)=>void)=>{replayEmit=callback;emit();return()=>{};},{protocolVersion:1});
       sandbox.__ten98FoundationHub.takeReplaySnapshot=Object.assign(()=>{takeSnapshots++;emit();return true;},{protocolVersion:1});script.onload();await drain();
     },
@@ -108,6 +108,31 @@ test('native rendered CSS coordinates retain RTL scroll and per-event scroll whi
     const before=e.batches().length;await e.click(20,20,{isTrusted:false});await e.scroll(e.sandbox.scrollX,200,{});await e.pulse();assert.equal(e.batches().length,before);
   }
   for(const invalid of ['vertical','pinch','overscroll']){const e=environment();await e.run();await e.grant();if(invalid==='vertical')e.style.writingMode='vertical-rl';else if(invalid==='pinch')e.sandbox.visualViewport.scale=2;else e.sandbox.scrollY=-1;await e.click();await e.pulse();assert.equal(e.batches().length,0);assert.equal(e.state().heatmapCapture.active,false);}
+});
+
+test('observed RTL positive one-pixel endpoint retains physical coordinates and raw facts across shared capture callers',async()=>{
+  for(const scrollX of [.25,1]){
+    const e=environment({direction:'rtl',replay:true});
+    Object.assign(e.root,{scrollWidth:5085,scrollHeight:6000,clientWidth:1440,clientHeight:900});e.style.zoom='2';e.sandbox.scrollX=scrollX;
+    await e.run();await e.grant({...analytics,replay:true});
+    assert.equal(e.begin().length,1,'The shared startup geometry check must admit the measured native endpoint.');
+    assert.equal(e.state().heatmapCapture.active,true);await e.loadReplay();
+    await e.scroll(scrollX,5100);await e.click(1279,740);await e.pulse();await e.drain();
+    const batches=e.batches().map(post=>heatmapBatch.parse(post.input));assert.equal(batches.length,1);
+    const geometry={basis:'document-css-v1' as const,direction:'rtl' as const,pageWidth:5085,pageHeight:6000,viewportWidth:1440,viewportHeight:900};
+    assert.deepEqual(batches[0].geometry,geometry);
+    assert.deepEqual(batches[0].observations.map(point=>[point.kind,point.scrollX,point.scrollY]),[['scroll',scrollX,5100],['click',scrollX,5100]]);
+    const point=batches[0].observations.find(point=>point.kind==='click');assert.ok(point?.kind==='click');
+    assert.deepEqual([point.x,point.y,point.clientX,point.clientY],[4924+scrollX,5840,1279,740],'Keep the physical client-plus-native-offset formula; do not clamp the point.');
+    assert.equal(e.backgrounds().length,1,'The shared FullSnapshot geometry check must still associate the exact acknowledged plane.');
+    assert.deepEqual(e.backgrounds()[0].input.geometry,geometry);
+    assert.equal(e.takeSnapshots(),0,'The existing actual adapter checkout already supplied this geometry.');
+    await e.click(1440,740);await e.pulse();assert.equal(e.batches().length,1,'A physical point beyond pageWidth remains rejected.');assert.equal(e.state().heatmapCapture.active,true);
+  }
+  for(const {direction,scrollX}of[{direction:'rtl' as const,scrollX:1.001},{direction:'rtl' as const,scrollX:-880.001},{direction:'ltr' as const,scrollX:-.001},{direction:'rtl' as const,scrollX:NaN}]){
+    const e=environment({direction});await e.run();await e.grant();await e.scroll(scrollX,0);await e.click();await e.pulse();
+    assert.equal(e.state().heatmapCapture.active,false);assert.equal(e.batches().length,0,'The narrow native RTL endpoint exception must not admit other out-of-range positions.');
+  }
 });
 
 test('uploads are bounded to twenty points and one in-flight request; unknown acknowledgments retry the exact body once then stop',async()=>{
@@ -154,4 +179,24 @@ test('fragment links wait for every chunk ACK; withdrawal and optional associati
  await e.releaseReplay();for(let i=0;i<8;i++)await e.drain();assert.equal(e.backgrounds().length,1);assert.equal(e.backgrounds()[0].input.snapshot.kind,'fragment');assert.ok(e.replayChunks().length>=5);
  const revoked=environment({replay:true});await revoked.run();await revoked.grant({...analytics,replay:true});revoked.flags.replayHold=true;await revoked.loadReplay();await revoked.click();await revoked.pulse();await revoked.grant(analytics);await revoked.releaseReplay();assert.equal(revoked.backgrounds().length,0,'A late accepted replay response after withdrawal cannot create an association');
  const optional=environment({replay:true});await optional.run();await optional.grant({...analytics,replay:true});await optional.loadReplay();optional.flags.background=()=>optional.response({accepted:true,duplicate:false,requestId:randomUUID()});await optional.click();await optional.pulse();await optional.drain();assert.equal(optional.backgrounds().length,2,'Optional association retries at most the same request twice');assert.equal(optional.backgrounds()[0].body,optional.backgrounds()[1].body);assert.equal(optional.state().heatmapCapture.active,true);await optional.click();await optional.pulse();assert.equal(optional.batches().length,2,'Numeric collection survives optional association uncertainty');
+});
+
+test('backgrounds retain native Meta inner dimensions independently from client geometry and reject stale or impossible window facts',async()=>{
+ for(const setup of [
+  {viewport:{width:1440,height:900},metadata:undefined},
+  {viewport:{width:1440,height:900},metadata:{width:1439,height:900}},
+  {viewport:{width:1440,height:900},metadata:{width:1440,height:899}},
+  {viewport:{width:20001,height:900},metadata:{width:20001,height:900}},
+  {viewport:{width:1440.5,height:900},metadata:{width:1440.5,height:900}},
+ ]){
+  const e=environment({replay:true,viewport:setup.viewport});e.root.clientWidth=1425;e.root.clientHeight=885;e.root.scrollWidth=2400;
+  await e.run();await e.grant({...analytics,replay:true});await e.loadReplay('***',setup.metadata);await e.click();await e.pulse();await e.drain();
+  assert.equal(e.batches().length,1);assert.equal(e.state().heatmapCapture.active,true,'An unsupported optional background cannot stop numeric collection.');
+  if(setup.metadata){assert.equal(e.backgrounds().length,0,'Meta must be a bounded integer pair exactly matching the live native window.');continue;}
+  assert.equal(e.backgrounds().length,1);const background=e.backgrounds()[0].input;
+  assert.equal(background.geometry.viewportWidth,1425);assert.equal(background.geometry.viewportHeight,885);
+  const meta=e.replayChunks().flatMap(p=>JSON.parse(Buffer.from(p.input.data,'base64url').toString('utf8'))).find(p=>p.type===4);
+  assert.deepEqual(meta.data,{href:page+'/start',width:1440,height:900});
+  assert.equal(background.meta.eventSha256,createHash('sha256').update(JSON.stringify(meta)).digest('hex'),'The raw recorded Meta and its locator hash are never rewritten to client dimensions.');
+ }
 });

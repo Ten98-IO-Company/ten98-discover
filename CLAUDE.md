@@ -49,8 +49,9 @@ Environment: Node 24.19.0, pnpm 11.19.0, Playwright 1.62.1 with headless Microso
 | Migrations CLI lane | Full lane passed, including the actual CLI60-to-61 upgrade and the61 no-op. |
 | CI wiring | `ten98_analytics_reset_ci` and `ten98_project_delete_ci` lanes added to the foundation workflow. |
 | Compiled-App deletion | `tests/project-delete-compiled-browser.mjs` drove the real built server on a fresh migrated database in headless Edge: owner claim, two websites, deletion from Collection and privacy, router/selector/reload/404/stale-link checks, eight steps passed with no page errors. |
+| Heatmap composition | `codex/heatmap-background` merged by three-way composition: its newer replay overlay script, tracker, heatmap panel and VM tests were adopted; the handoff's SQL-clock Begin seams, shared coverage helper, migration registry through61 and migration lane were kept; the one-line gutter-tolerant Meta check and the thirteenth native group were carried over. Typecheck,900 offline tests, the overlay unit test, heatmap native13/13 (three consecutive runs), session-replay, boards, tracked-assets, web-performance, reset, delete and migration lanes, and the heatmap browser harness all pass. One latent flake was fixed in the fixture only: saved-replay page anchors were ordered by random UUID, so the exact-name search occasionally targeted the unsaved recording. |
 
-Still open from the list below: RTL classic-scrollbar heatmap calibration and heatmap composition (item4), export composition (item5), and the full register audit (item6).
+Still open from the list below: RTL classic-scrollbar heatmap calibration (item4; the branch composition itself is done), export composition (item5), and the full register audit (item6).
 
 ## Immediate work
 

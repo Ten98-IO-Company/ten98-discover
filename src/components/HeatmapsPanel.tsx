@@ -111,7 +111,7 @@ function HistoricalBackground({projectId,query,owner,readEnabled,overlay,onRole,
     }
     const meta=await locate(reference.meta),snapshot=await locate(reference.snapshot);if(!current())return;if(signal.aborted)throw Error('Historical sample load timed out.');
     if(query.origin===undefined||query.path===undefined||meta.type!==4||snapshot.type!==2||meta.timestamp>snapshot.timestamp||meta.data.href!==query.origin+query.path||
-     meta.data.width!==overlay.geometry.viewportWidth||meta.data.height!==overlay.geometry.viewportHeight||new Date(snapshot.timestamp).toISOString()!==reference.observedAt)throw invalid();
+     Number(meta.data.width)<overlay.geometry.viewportWidth||Number(meta.data.height)<overlay.geometry.viewportHeight||new Date(snapshot.timestamp).toISOString()!==reference.observedAt)throw invalid();
     if(role!==null)onRole(role);setPreview({events:[meta,snapshot],duration:snapshot.timestamp-meta.timestamp,at:reference.observedAt});setMessage('');return;
    }
    throw invalid();
