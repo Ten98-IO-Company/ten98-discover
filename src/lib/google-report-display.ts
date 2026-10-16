@@ -78,6 +78,14 @@ export function googleDecimalPlain(value: unknown): string | null {
   const plain = point <= 0 ? '0.' + '0'.repeat(-point) + digits : point >= digits.length ? digits + '0'.repeat(point - digits.length) : digits.slice(0, point) + '.' + digits.slice(point);
   return (negative ? '-' : '') + plain.replace(/^0+(?=\d)/, '');
 }
+/** Compare exact expanded decimals; Number can round above-one rates or underflow negatives. */
+export function googleGa4MetricInRange(field: string, value: unknown): boolean {
+  if (value === null) return true;
+  const plain = googleDecimalPlain(value); if (plain === null) return false;
+  if (field === 'purchaseRevenue' || field === 'itemRevenue') return true;
+  if (plain.startsWith('-') && /[1-9]/.test(plain)) return false;
+  return !['engagementRate','sessionKeyEventRate'].includes(field) || /^(?:-?0(?:\.\d+)?|1(?:\.0+)?)$/.test(plain);
+}
 export function googleOrganicChange(current: unknown, previous: unknown) {
   const a = googleDecimalPlain(current), b = googleDecimalPlain(previous); if (a === null || b === null) return { absolute: null, percent: null };
   const scale = Math.max(a.split('.')[1]?.length ?? 0, b.split('.')[1]?.length ?? 0), units = (s: string) => BigInt(s.replace('.', '')) * 10n ** BigInt(scale - (s.split('.')[1]?.length ?? 0));
@@ -106,7 +114,7 @@ export function readOrganicOverview(value: unknown, from: string, to: string, we
   const count = (v: unknown) => Number.isSafeInteger(v) && Number(v) >= 0;
   for (const stage of ['current','previous','trend'] as const) {
     const part = value[stage]; if (!record(part) || !keys(part, ['from','to','values','rowCount','quality','reportRequests','compatibilityRequests']) || part.from !== (stage === 'previous' ? previousFrom : from) || part.to !== (stage === 'previous' ? previousTo : to) || part.reportRequests !== 1 || part.compatibilityRequests !== (stage === 'previous' ? 0 : 1) || !Number.isInteger(part.rowCount) || part.rowCount < 0 || part.rowCount > (stage === 'trend' ? weekly ? 54 : days : 1)) return null;
-    if (stage === 'trend' ? part.values !== null : part.rowCount === 0 ? part.values !== null : !record(part.values) || !keys(part.values, organicOverviewMetrics) || !Object.entries(part.values).every(([key,v]) => v === null || googleDecimalPlain(v) !== null && (key === 'purchaseRevenue' || Number(v) >= 0 && (key !== 'engagementRate' || Number(v) <= 1)))) return null;
+    if (stage === 'trend' ? part.values !== null : part.rowCount === 0 ? part.values !== null : !record(part.values) || !keys(part.values, organicOverviewMetrics) || !Object.entries(part.values).every(([key,v]) => googleGa4MetricInRange(key,v))) return null;
     if (!record(part.quality) || !keys(part.quality, ['warnings','metadata']) || !Array.isArray(part.quality.warnings) || part.quality.warnings.length > 30 || !part.quality.warnings.every((v: unknown) => typeof v === 'string' && v.length <= 2048) || !record(part.quality.metadata)) return null;
     if (Object.keys(part.quality.metadata).some(key => !['timeZone','currencyCode','emptyReason','dataLossFromOtherRow','subjectToThresholding','samplingMetadatas','schemaRestrictionResponse','dataTruncationReasons','quota'].includes(key))) return null;
     const m = part.quality.metadata;

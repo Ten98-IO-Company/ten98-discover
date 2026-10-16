@@ -80,8 +80,8 @@ test('restricted audience/search values remain unavailable and numeric rates/cou
   for(const report of reports){
     const raw:any=reply(report),first=profiles[report].metrics[0];raw.metadata.schemaRestrictionResponse={activeMetricRestrictions:[{metricName:first,restrictedMetricTypes:['USER_DATA']}]};
     const normalized=normalizeGoogleReport(report,raw,from,to);assert.equal(normalized.rows[0].metrics[first],null);assert.match(normalized.quality.warnings.join(' '),/unavailable/);
-    raw.metadata.schemaRestrictionResponse=undefined;raw.rows[0].metricValues[0].value='-1';assert.throws(()=>normalizeGoogleReport(report,raw,from,to),{status:502});
-    const rate=profiles[report].metrics.findIndex(name=>name==='engagementRate');if(rate>=0){const bad=reply(report);bad.rows[0].metricValues[rate].value='1.00001';assert.throws(()=>normalizeGoogleReport(report,bad,from,to),{status:502});}
+    raw.metadata.schemaRestrictionResponse=undefined;for(const value of ['-1','-1e-400']){raw.rows[0].metricValues[0].value=value;assert.throws(()=>normalizeGoogleReport(report,raw,from,to),{status:502});}
+    const rate=profiles[report].metrics.findIndex(name=>name==='engagementRate');if(rate>=0)for(const value of ['1.00001','1.0000000000000001']){const bad=reply(report);bad.rows[0].metricValues[rate].value=value;assert.throws(()=>normalizeGoogleReport(report,bad,from,to),{status:502});}
   }
 });
 

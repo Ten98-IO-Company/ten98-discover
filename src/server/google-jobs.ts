@@ -88,7 +88,8 @@ export async function runGoogleImport(importId: string): Promise<void> {
   if (!initial || !['queued', 'running'].includes(initial.status)) return;
   try {
     for (;;) {
-      await refreshGoogleConnection(initial.project_id, initial.user_id, initial.connection_id);
+      // Reject obsolete work before opening or refreshing a replacement grant.
+      await refreshGoogleConnection(initial.project_id, initial.user_id, initial.connection_id, undefined, { revision: initial.connection_revision, appRevision: initial.app_revision, propertyId: typeof initial.source.propertyId === 'string' ? initial.source.propertyId : '' });
       // ponytail: a GSC/legacy GA4 page holds the workspace lock for one bounded 15s
       // request; detailed GA4 first-page attempts and Ads use two independently
       // bounded reads (compatibility/customer verification, then report). Organic

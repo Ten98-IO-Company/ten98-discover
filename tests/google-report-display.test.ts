@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {googleAdsColumnLabel,googleAdsCost,googleGa4ColumnLabel,googleGa4MetricValue,googleDecimalPlain,googleLastCompletedDay,googleCalendarWeek,googleOrganicCalendar,googleOrganicChange,googleOrganicChangeValue,organicOverviewMetrics,readOrganicOverview} from '../src/lib/google-report-display.ts';
+import {googleAdsColumnLabel,googleAdsCost,googleGa4ColumnLabel,googleGa4MetricValue,googleGa4MetricInRange,googleDecimalPlain,googleLastCompletedDay,googleCalendarWeek,googleOrganicCalendar,googleOrganicChange,googleOrganicChangeValue,organicOverviewMetrics,readOrganicOverview} from '../src/lib/google-report-display.ts';
 
 test('completed-day bounds use the property calendar across UTC offsets, DST, leap days and year changes',()=>{
   for(const[zone,now,expected]of [
@@ -69,6 +69,17 @@ test('Organic complete-stage decoder refuses mixed dates, unknown metadata and i
   const observation={from:'2024-03-01',to:'2024-03-02',values:Object.fromEntries(organicOverviewMetrics.map(name=>[name,'0'])),rowCount:1,quality:{warnings:[],metadata:{timeZone:'America/New_York',currencyCode:'AED'}},reportRequests:1,compatibilityRequests:1};
   const full={complete:true,interval:'daily',current:observation,previous:{...structuredClone(observation),from:'2024-02-28',to:'2024-02-29',compatibilityRequests:0},trend:{...structuredClone(observation),values:null,rowCount:2}};
   assert.ok(readOrganicOverview(full,'2024-03-01','2024-03-02',false));
+  for(const[field,value]of [['activeUsers','-1e-400'],['engagementRate','1.0000000000000001']]){const bad=structuredClone(full);bad.current.values[field]=value;assert.equal(readOrganicOverview(bad,'2024-03-01','2024-03-02',false),null);}
   for(const mutate of [(v:any)=>v.complete=false,(v:any)=>delete v.previous,(v:any)=>v.previous.from='2024-02-27',(v:any)=>v.current.values.activeUsers='1e9999',(v:any)=>v.trend.rowCount=367,(v:any)=>v.current.quality.metadata.secret='unselected',(v:any)=>v.previous.compatibilityRequests=1,(v:any)=>v.current.rowCount=0]){const bad=structuredClone(full);mutate(bad);assert.equal(readOrganicOverview(bad,'2024-03-01','2024-03-02',false),null);}
   full.current={...observation,values:null as any,rowCount:0};assert.ok(readOrganicOverview(full,'2024-03-01','2024-03-02',false));
+});
+
+test('GA4 exact metric bounds reject rounded above-one rates and underflowed negatives without losing signed revenue or zero',()=>{
+  for(const field of ['activeUsers','itemsViewed','keyEvents','engagementRate','sessionKeyEventRate']){
+    for(const value of [null,'0','-0','-0.000e-400','0.25','1e-400','1.0000000000000000'])assert.equal(googleGa4MetricInRange(field,value),true);
+    for(const value of ['-1e-400','-0.0000000000000000001','NaN','1e401',undefined])assert.equal(googleGa4MetricInRange(field,value),false);
+  }
+  for(const field of ['engagementRate','sessionKeyEventRate'])for(const value of ['1.0000000000000001','10000000000000001e-16','2'])assert.equal(googleGa4MetricInRange(field,value),false);
+  assert.equal(googleGa4MetricInRange('activeUsers','9007199254740993'),true);
+  for(const field of ['purchaseRevenue','itemRevenue'])for(const value of [null,'-1e-400','-9007199254740993.1250','0'])assert.equal(googleGa4MetricInRange(field,value),true);
 });

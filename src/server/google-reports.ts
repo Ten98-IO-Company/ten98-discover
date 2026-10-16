@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { toUSVString } from 'node:util';
 import { FoundationError } from './auth.ts';
-import { ga4CommerceReports, isGa4CommerceReport, googleCalendarWeek, googleDecimalPlain, googleLastCompletedDay } from '../lib/google-report-display.ts';
+import { ga4CommerceReports, isGa4CommerceReport, googleCalendarWeek, googleGa4MetricInRange, googleLastCompletedDay } from '../lib/google-report-display.ts';
 
 export const googleScopes = { gsc: 'https://www.googleapis.com/auth/webmasters.readonly', ga4: 'https://www.googleapis.com/auth/analytics.readonly', ads: 'https://www.googleapis.com/auth/adwords' } as const;
 export const googleAdsVersion = 'v26';
@@ -202,7 +202,7 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
       });
       rowCount = data.rowCount ?? rows.length;
       if (organic) {
-        for (const row of rows) for (const [name, value] of Object.entries(row.metrics)) if (value !== null && (googleDecimalPlain(value) === null || name !== 'purchaseRevenue' && (Number(value) < 0 || (name === 'engagementRate' || name === 'sessionKeyEventRate') && Number(value) > 1))) malformed();
+        for (const row of rows) for (const [name, value] of Object.entries(row.metrics)) if (!googleGa4MetricInRange(name, value)) malformed();
         if (rows.length && (!data.metadata?.timeZone || rows.some(row => row.metrics.purchaseRevenue !== null) && !data.metadata.currencyCode)) malformed();
         if (overview && (rowCount !== rows.length || rows.length > (aggregate ? 1 : report === 'ga4_organic_daily' ? 366 : 54))) malformed();
         if (aggregate && !rows.length && !headerlessEmpty && rowCount !== 0) malformed();
@@ -211,7 +211,7 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
       if (report === 'ga4_key_events' && rows.some(row => row.dimensions.isKeyEvent !== 'true')) malformed();
       if (ga4InventoryReports.includes(report) && rows.length && (!data.metadata?.timeZone || rows.some(row => row.metrics.totalRevenue !== null) && !data.metadata.currencyCode)) malformed();
       if (isGa4CommerceReport(report)) {
-        for (const row of rows) for (const [name, value] of Object.entries(row.metrics)) if (value !== null && (googleDecimalPlain(value) === null || !['itemRevenue', 'purchaseRevenue'].includes(name) && (Number(value) < 0 || name === 'engagementRate' && Number(value) > 1))) malformed();
+        for (const row of rows) for (const [name, value] of Object.entries(row.metrics)) if (!googleGa4MetricInRange(name, value)) malformed();
         if (rows.length && (!data.metadata?.timeZone || rows.some(row => ['itemRevenue', 'purchaseRevenue'].some(name => Object.hasOwn(row.metrics, name) && row.metrics[name] !== null)) && !data.metadata.currencyCode)) malformed();
         if (report === 'ga4_site_search' && rows.some(row => row.dimensions.searchTerm === '(not set)')) malformed();
       }

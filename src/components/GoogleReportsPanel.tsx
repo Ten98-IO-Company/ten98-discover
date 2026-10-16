@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
-import { googleAdsColumnLabel, googleAdsCost, googleGa4ColumnLabel, googleGa4MetricValue, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
+import { googleAdsColumnLabel, googleAdsCost, googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
 
@@ -112,7 +112,7 @@ async function organicSnapshot(path: string, imp: ImportDto, conn: Connection, o
     if (!overview && readable && (offset + value.rows.length > receipt.rowCount || value.nextOffset !== (offset + value.rows.length < receipt.rowCount ? offset + 50 : null) || commerce && value.rows.length !== Math.min(50, receipt.rowCount - offset))) throw Error(`${sentenceName} pagination could not be verified.`);
     const seen = new Set<string>(),calendarKeys=overview&&readable?new Set(googleOrganicCalendar(imp.from,imp.to,imp.report==='ga4_organic_weekly').map(bucket=>bucket.key)):null;
     for (const row of value.rows) {
-      if (!sameKeys(row, ['dimensions','metrics']) || !sameKeys(row.dimensions, dimensions) || !sameKeys(row.metrics, metrics) || !Object.values(row.dimensions).every(v => typeof v === 'string' && v.length <= 4096 && !v.includes('\0') && new TextDecoder().decode(new TextEncoder().encode(v)) === v) || !Object.entries(row.metrics).every(([key,v]) => v === null || googleDecimalPlain(v) !== null && (['purchaseRevenue','itemRevenue'].includes(key) || Number(v) >= 0 && (!['engagementRate','sessionKeyEventRate'].includes(key) || Number(v) <= 1)))) throw Error(`${sentenceName} row values could not be verified.`);
+      if (!sameKeys(row, ['dimensions','metrics']) || !sameKeys(row.dimensions, dimensions) || !sameKeys(row.metrics, metrics) || !Object.values(row.dimensions).every(v => typeof v === 'string' && v.length <= 4096 && !v.includes('\0') && new TextDecoder().decode(new TextEncoder().encode(v)) === v) || !Object.entries(row.metrics).every(([key,v]) => googleGa4MetricInRange(key,v))) throw Error(`${sentenceName} row values could not be verified.`);
       if (commerce && imp.report === 'ga4_site_search' && row.dimensions.searchTerm === '(not set)') throw Error('The GA4 site search response includes an excluded missing term.');
       if (calendarKeys&&!calendarKeys.has(row.dimensions[dimensions[0]])) throw Error('Organic calendar labels could not be verified.');
       const key = JSON.stringify(dimensions.map(name => row.dimensions[name])); if (seen.has(key)) throw Error(`${sentenceName} rows were repeated.`); seen.add(key);
