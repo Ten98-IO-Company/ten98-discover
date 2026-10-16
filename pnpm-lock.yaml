@@ -29,6 +29,9 @@ importers:
       mmdb-lib:
         specifier: 3.0.3
         version: 3.0.3
+      nodemailer:
+        specifier: 10.1.1
+        version: 10.1.1
       parse5:
         specifier: 8.0.1
         version: 8.0.1
@@ -1132,6 +1135,10 @@ packages:
 
   ocache@0.3.0:
     resolution: {integrity: sha512-RS/9P0zeBb0gDJmadGERLH8lZNXK7xbufTDhclkXGvFGTsj0G4M5/cLk+mizcERH29mLXNnocfB5wjcK70wGJg==}
+
+  nodemailer@10.1.1:
+    resolution: {integrity: sha512-pbqZRoeYUO+1E8TJ/11WeY4D2EVujj1hsYjz3qff/vUFDtGnmi7p3iqzTFslYOfQ6PnjVcWxx/CIUSHCSrO/QA==}
+    engines: {node: '>=20.0.0'}
 
   parse5@8.0.1:
     resolution: {integrity: sha512-z1e/HMG90obSGeidlli3hj7cbocou0/wa5HacvI3ASx34PecNjNQeaHNo5WIZpWofN9kgkqV1q5YvXe3F0FoPw==}
@@ -2278,6 +2285,8 @@ snapshots:
   non-error@0.1.0: {}
 
   ocache@0.3.0: {}
+
+  nodemailer@10.1.1: {}
 
   parse5@8.0.1:
     dependencies:

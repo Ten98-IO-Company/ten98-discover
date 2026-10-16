@@ -91,10 +91,12 @@ jobs:
             await client.query('CREATE DATABASE ten98_context');
             await client.query('CREATE DATABASE ten98_paid');
             await client.query('CREATE DATABASE ten98_account_preferences_ci');
+            await client.query('CREATE DATABASE ten98_password_recovery_ci');
             await client.query('CREATE DATABASE ten98_prompt_recurring_ci');
             await client.query('CREATE DATABASE ten98_google_ads_ci');
             await client.query('CREATE DATABASE ten98_google_ga4_ci');
             await client.query('CREATE DATABASE ten98_domain_research_ci');
+            await client.query('CREATE DATABASE ten98_backlink_research_ci');
             await client.query('CREATE DATABASE ten98_explorer_ci');
             await client.query('CREATE DATABASE ten98_gsc_inspection_ci');
             await client.query('CREATE DATABASE ten98_prompt_insights_ci');
@@ -160,9 +162,11 @@ jobs:
               ['ten98_context', [['src/server/cli.ts', 'migrate'], ['tests/project-context-integration.ts']]],
               ['ten98_paid', [['src/server/cli.ts', 'migrate'], ['tests/keyword-research-integration.ts'], ['tests/prompt-execution-integration.ts'], ['tests/google-retention-integration.ts']]],
               ['ten98_account_preferences_ci', [['tests/account-preferences-integration.ts']], { TEN98_ACCOUNT_PREFERENCES_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_password_recovery_ci', [['src/server/cli.ts', 'migrate'], ['--experimental-test-module-mocks', '--test', 'tests/password-recovery-integration.ts']], { TEN98_PASSWORD_RECOVERY_INTEGRATION: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_prompt_recurring_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-recurring-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_google_ads_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-ads-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_domain_research_ci', [['src/server/cli.ts', 'migrate'], ['tests/domain-research-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_backlink_research_ci', [['src/server/cli.ts', 'migrate'], ['tests/backlink-research-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_google_ga4_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-ga4-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_explorer_ci', [['src/server/cli.ts', 'migrate'], ['tests/explorer-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_gsc_inspection_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-inspection-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],

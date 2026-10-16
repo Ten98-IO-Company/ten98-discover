@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
@@ -10,7 +10,7 @@ import { RevenuePanel } from '../components/RevenuePanel'
 import { AISearchPanel } from '../components/AISearchPanel'
 import { AttributionPanel } from '../components/AttributionPanel'
 import { RetentionReportPanel } from '../components/RetentionReportPanel'
-import { ExplorerPanel } from '../components/ExplorerPanel'
+import { ExplorerPanel, explorerAnalyticsNavigation, readExplorerReturn } from '../components/ExplorerPanel'
 import { UtmPanel } from '../components/UtmPanel'
 import { AnalyticsSettingsPanel } from '../components/AnalyticsSettingsPanel'
 import { DomainsPanel } from '../components/DomainsPanel'
@@ -22,6 +22,7 @@ import ReportsPanel from '../components/ReportsPanel'
 import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
 import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
+import { PasswordRecoveryPanel, type PasswordRecovery } from '../components/PasswordRecoveryPanel'
 import { AccountPreferencesPanel } from '../components/AccountPreferencesPanel'
 import { AccountPresentationContext, requestAccountPreferences } from '../lib/account-presentation'
 import type { AccountPreferencesDto } from '../lib/account-preferences'
@@ -55,7 +56,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
+import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: App })
@@ -95,6 +96,7 @@ function App() {
   const search = Route.useSearch()
   const navigate = Route.useNavigate()
   const router = useRouter()
+  const routeLocation = useLocation()
   const intent = useRef({ search, generation: 0 })
   const sessionGeneration = useRef(0)
   const bootGeneration = useRef(0)
@@ -103,7 +105,9 @@ function App() {
   const projectsRequest = useRef<{ workspace: string; controller: AbortController } | null>(null)
   const callback = useRef<{ value: CallbackIntent; generation: number } | null>(null)
   const [navigationPending, setNavigationPending] = useState(true)
-  const [phase, setPhase] = useState<'loading' | 'error' | 'setup' | 'signin' | 'factor' | 'app'>('loading')
+  const [phase, setPhase] = useState<'loading' | 'error' | 'setup' | 'signin' | 'factor' | 'recovery' | 'app'>('loading')
+  const recoveryRef = useRef<PasswordRecovery | null>(null), recoveryGeneration = useRef(0)
+  const [recovery, setRecovery] = useState<{ value: PasswordRecovery; generation: number } | null>(null)
   const [pageError, setPageError] = useState('')
   const [status, setStatus] = useState<Status | null>(null)
   const [me, setMe] = useState<Me | null>(null)
@@ -122,8 +126,8 @@ function App() {
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
   const [view, updateView] = useState<AppView>('project')
-  const [analyticsApplied,setAnalyticsApplied]=useState<{userId:string;projectId:string;from:string;to:string}|null>(null)
-  const rememberAnalyticsRange=useCallback((userId:string,projectId:string,range:{from:string;to:string})=>setAnalyticsApplied(previous=>previous?.userId===userId&&previous.projectId===projectId&&previous.from===range.from&&previous.to===range.to?previous:{userId,projectId,...range}),[])
+  const [analyticsApplied,setAnalyticsApplied]=useState<{userId:string;projectId:string;from:string;to:string;explorerEntry?:string}|null>(null)
+  const rememberAnalyticsRange=useCallback((userId:string,projectId:string,range:{from:string;to:string},explorerEntry?:string)=>setAnalyticsApplied(previous=>previous?.userId===userId&&previous.projectId===projectId&&previous.from===range.from&&previous.to===range.to&&previous.explorerEntry===explorerEntry?previous:{userId,projectId,...range,explorerEntry}),[])
   const [accountPreferences,setAccountPreferences]=useState<{data:AccountPreferencesDto|null;loading:boolean;error:string}>({data:null,loading:false,error:''})
   const preferencesRequest=useRef<AbortController|null>(null)
   const preferencesGeneration=useRef(0)
@@ -185,8 +189,19 @@ function App() {
     })
     let alive = true
     async function captureInvitation() {
+      const reset = parsePasswordResetFragment(window.location.hash)
+      if (reset !== null) {
+        beginRecovery({ kind: 'reset', token: reset.token })
+        setInviteToken(''); setInviteSigningIn(false)
+        // Scrub before boot or any API call; the capability remains only in this component's memory.
+        await navigate({ search: intent.current.search, hash: '', replace: true })
+        return
+      }
       const value = parseCallback(window.location.hash)
       if (!value) return
+      const wasRecovery = recoveryRef.current !== null
+      if (wasRecovery) resetSession()
+      const session = sessionGeneration.current
       const generation = intent.current.generation
       callback.current = { value, generation }
       oidcProof.current = undefined; setOidcProofId(undefined); oidcFactor.current = false
@@ -201,12 +216,15 @@ function App() {
       else if (value.kind === 'invalid' || value.kind === 'identity-error') setAuthNotice({ kind: 'error', message: 'The return link is invalid or ambiguous. Start the connection again, or reopen the original invitation.' })
       // Capabilities live only in memory. Let the router own its history entry.
       await navigate({ search: intent.current.search, hash: '', replace: true })
-      if (alive && currentMe.current) applyCallback(currentMe.current)
+      if (!alive || sessionGeneration.current !== session || recoveryRef.current !== null) return
+      if (currentMe.current) applyCallback(currentMe.current)
+      else if (wasRecovery) { setPhase('loading'); void boot() }
     }
     const capture = () => { void captureInvitation() }
     window.addEventListener('hashchange', capture)
     const ac = new AbortController()
-    void captureInvitation().then(() => { if (alive) void boot(ac.signal) })
+    const initialSession = sessionGeneration.current
+    void captureInvitation().then(() => { if (alive && sessionGeneration.current === initialSession && recoveryRef.current === null) void boot(ac.signal) })
     return () => { alive = false; ac.abort(); projectsRequest.current?.controller.abort(); unsubscribe(); window.removeEventListener('hashchange', capture) }
   }, [])
 
@@ -334,6 +352,7 @@ function App() {
 
   function resetSession() {
     sessionGeneration.current += 1; bootGeneration.current += 1
+    recoveryGeneration.current += 1; recoveryRef.current = null; setRecovery(null)
     preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;preferencesEntry.current=false
     setAccountPreferences({data:null,loading:false,error:''})
     callback.current = null
@@ -345,6 +364,13 @@ function App() {
     currentMe.current = null; loadedProjects.current = null
     setMe(null); setProjects(null); setWorkspaceId(''); setNavigationPending(true)
     setPhase('signin')
+  }
+
+  function beginRecovery(value: PasswordRecovery, email?: string) {
+    resetSession()
+    recoveryRef.current = value; setRecovery({ value, generation: recoveryGeneration.current })
+    if (email !== undefined) setSignInEmail(email)
+    setAuthNotice(null); setPhase('recovery')
   }
 
   function guardAuth(e: unknown): boolean {
@@ -509,6 +535,9 @@ function App() {
   const renderedSession = sessionGeneration.current, renderedIntent = intent.current.generation
   const unauthorized = () => { if (sessionGeneration.current === renderedSession) resetSession() }
 
+  if (phase === 'recovery') return recovery ? <PasswordRecoveryPanel key={recovery.generation} value={recovery.value} initialEmail={signInEmail}
+    onRequest={() => { if (sessionGeneration.current === renderedSession) beginRecovery({ kind: 'request' }) }} onSignIn={changed => { if (sessionGeneration.current !== renderedSession) return; resetSession(); if (changed) setAuthNotice({ kind: 'info', message: 'Password changed. Sign in with your new password. Two-factor authentication is still required if enabled.' }) }} /> : <main className='center'><p role='status'>Loading…</p></main>
+
   if (phase === 'loading') return <main className='center'><p role='status' className='dim'>Loading…</p></main>
 
   if (phase === 'error') {
@@ -528,6 +557,7 @@ function App() {
     onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={unauthorized} />
     {!me && <OidcSignIn key={inviteToken} invitationToken={inviteToken} />}</section></main>
   if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
+    onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
@@ -541,6 +571,7 @@ function App() {
   const pageTitles: Record<AppView, string> = {revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
+    if(next==='project'&&view==='explore'&&search.workspace===workspaceId&&search.project===project?.id)return {...target(next),...explorerAnalyticsNavigation(search,analyticsApplied!==null&&analyticsApplied.userId===me?.user.id&&analyticsApplied.projectId===project?.id&&analyticsApplied.explorerEntry===routeLocation.state.__TSR_key?analyticsApplied:undefined)};
     if(!['project','compare'].includes(view)||search.workspace!==workspaceId||search.project!==project?.id)return target(next);
     const {analyticsCompare,analyticsDimension,...report}=analyticsNavigation(search),applied=analyticsApplied?.userId===me?.user.id&&analyticsApplied?.projectId===project?.id?analyticsApplied:null,to=report.analyticsTo??applied?.to??new Date().toISOString().slice(0,10),from=report.analyticsFrom??applied?.from??new Date(Date.parse(`${to}T00:00:00Z`)-6*864e5).toISOString().slice(0,10);
     return {...target(next),...report,...report.analyticsInvalid?{}:{analyticsFrom:from,analyticsTo:to},...next==='compare'?{...(analyticsCompare?{analyticsCompare}:{}),...(analyticsDimension?{analyticsDimension}:{})}:{}};
@@ -551,6 +582,8 @@ function App() {
     const query=analyticsExplorerQuery(analyticsTarget('project'));
     return {...target('explore'),...(query===null?{exploreInvalid:'1' as const}:{exploreQuery:query})};
   }
+  const explorerReturnState=view==='explore'&&me&&project&&search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)?{userId:me.user.id,workspace:workspaceId,project:project.id,href:routeLocation.href}:undefined
+  const verifiedExplorerReturn=me&&project?readExplorerReturn('analyticsReturn'in routeLocation.state?routeLocation.state.analyticsReturn:null,me.user.id,workspaceId,project.id):null
   const pageScope = view === 'preferences' || view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' || view === 'meta-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
   const projectDescriptions: Partial<Record<AppView, string>> = {revenue:'Review recorded sales and refunds in one currency.',attribution: 'Compare recorded sources for your chosen conversion.', journeys: 'See frequent matching steps in retained native visits.', project: 'Understand how people find and use your website.', 'visitor-retention': 'See whether observed visitor keys return on later days.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', 'ai-search': 'Inspect explicitly captured ChatGPT consumer-search answers and their reported queries.', 'ai-insights': 'Review mentions and citations in retained prompt answers using current project context.', google: 'Import Search Console, GA4 and Google Ads reports without changing browser tracking.', sessions: 'Explore retained activity grouped by observed visitor keys. These keys are estimates and can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', 'domain-seo':'Find organic keywords a domain or URL ranks for in one market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
@@ -610,7 +643,7 @@ function App() {
         </nav>
         {project && workspace && <nav aria-label='Project sections' className='section-nav'>
           <p className='side-label'>Measure</p>
-          <Link className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={analyticsTarget('project')}>Analytics</Link>
+          <Link className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={analyticsTarget('project')} state={previous=>({...previous,analyticsReturn:explorerReturnState&&readExplorerReturn(explorerReturnState,me!.user.id,workspaceId,project!.id)?explorerReturnState:undefined})}>Analytics</Link>
           <Link className={view === 'realtime' ? 'proj active' : 'proj'} aria-current={view === 'realtime' ? 'page' : undefined} to='/' search={target('realtime')}>Realtime</Link>
           <Link className={view === 'compare' ? 'proj active' : 'proj'} aria-current={view === 'compare' ? 'page' : undefined} to='/' search={analyticsTarget('compare')}>Compare</Link>
           <Link className={view === 'campaigns' ? 'proj active' : 'proj'} aria-current={view === 'campaigns' ? 'page' : undefined} to='/' search={target('campaigns')}>UTM campaigns</Link>
@@ -697,7 +730,7 @@ function App() {
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'campaigns' && project && me && <UtmPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} search={search} onNavigate={value=>go({...target('explore'),...value})} onUnauthorized={unauthorized} />}
+        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} search={search} onAppliedRange={rememberAnalyticsRange} onNavigate={value=>go({...target('explore'),...value})} onUnauthorized={unauthorized} />}
         {view === 'compare' && project && me && <AnalyticsPanel projectId={project.id} userId={me.user.id} compareView onAppliedRange={rememberAnalyticsRange} search={{...target('compare'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('compare'),...value})} onUnauthorized={unauthorized} />}
         {view === 'realtime' && project && me && <RealtimePanel projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenSession={value=>go({...target('sessions'),...value})}/>}
         {view === 'conversions' && project && me && <ConversionsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
@@ -737,7 +770,7 @@ function App() {
         {view === 'project' && workspace && project !== null && (
           <>
             {events?.total === 0 && <section className='connection-callout'><div><strong>Ready when your website is.</strong><p>Add the tracking snippet, then review Collection and privacy to choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Connect website</Link></section>}
-            <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onAppliedRange={rememberAnalyticsRange} search={{...target('project'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('project'),...value})} onUnauthorized={unauthorized} />
+            <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onAppliedRange={rememberAnalyticsRange} onReturnToExplorer={verifiedExplorerReturn?()=>router.history.push(verifiedExplorerReturn):undefined} search={{...target('project'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('project'),...value})} onUnauthorized={unauthorized} />
           </>
         )}
         {view === 'sessions' && workspace && project !== null && <SessionExplorerPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('sessions'),...value})} onUnauthorized={unauthorized}/> }
@@ -891,7 +924,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   )
 }
 
-function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onCancel?: () => void; notice?: {message: string; kind: 'info' | 'error'} | null }) {
+function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onForgot: (email: string) => void; onCancel?: () => void; notice?: {message: string; kind: 'info' | 'error'} | null }) {
   const [email, setEmail] = useState(initialEmail)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -919,6 +952,7 @@ function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail
           <input id='si-pw' type='password' autoComplete='current-password' required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {error !== '' && <div role='alert' className='alert'>{error}</div>}
         <button className='btn primary' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button type='button' className='btn' disabled={busy} onClick={() => onForgot(email.trim())}>Forgot password?</button>
         {onCancel && <button type='button' className='btn' onClick={onCancel}>Back to invitation</button>}
         <OidcSignIn />
       </form>

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { FoundationError, getAuth } from './auth.ts';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
+import { getEmailStatus, sendTransactionalEmail } from './email.ts';
 import { readJson } from './validation.ts';
 import { accountPreferencesDefaults, accountPreferencesDtoSchema, accountPreferencesInputSchema, accountPreferencesMaxRevision, type AccountPreferencesDto } from '../lib/account-preferences.ts';
 
@@ -15,6 +16,9 @@ const passwordInput = z.object({ password: currentPassword }).strict();
 const codeInput = z.object({ code: z.string().regex(/^\d{6}$/) }).strict();
 const backupInput = z.object({ code: z.string().regex(/^[A-Za-z0-9]{5}-[A-Za-z0-9]{15}$/) }).strict();
 const signInInput = z.object({ email: z.string().trim().toLowerCase().email().max(254), password: currentPassword }).strict();
+const recoveryEmailInput = signInInput.pick({ email: true }).strict();
+const resetPasswordInput = z.object({ token: z.string().length(24).regex(/^[A-Za-z0-9]{24}$/), newPassword: z.string().min(12).max(128) }).strict();
+const invalidReset = 'This reset link is invalid, expired or already used. Request a new link and use a password between 12 and 128 characters.';
 const accountInputs = {
   '/api/account/password': z.object({ currentPassword, newPassword: z.string().min(12).max(128) }).strict(),
   '/api/account/sessions/revoke': z.object({ sessionId: z.string().min(1).max(128) }).strict(),
@@ -93,8 +97,9 @@ async function revokeOtherSessions(client: PoolClient, userId: string, sessionId
 async function invalidateChallenges(client: PoolClient, userId: string) {
   await client.query(
     `WITH removed AS (DELETE FROM verification WHERE value=$1
-       AND (identifier LIKE '2fa-%' OR identifier LIKE 'trust-device-%') RETURNING identifier)
-     DELETE FROM verification WHERE identifier IN (SELECT '2fa-attempts-' || identifier FROM removed)`, [userId],
+       AND (identifier LIKE '2fa-%' OR identifier LIKE 'trust-device-%' OR identifier LIKE 'reset-password:%') RETURNING identifier)
+     DELETE FROM verification WHERE identifier IN (SELECT '2fa-attempts-' || identifier FROM removed)
+       OR identifier IN (SELECT 'oidc-challenge:' || identifier FROM removed)`, [userId],
   );
 }
 
@@ -190,7 +195,67 @@ export async function applyOidcAccountSecurity(client: PoolClient, request: Requ
 }
 
 export async function handleAccountSecurity(request: Request): Promise<Response | null> {
-  const path = new URL(request.url).pathname.replace(/\/$/, '');
+  const url = new URL(request.url), path = url.pathname.replace(/\/$/, '');
+  // Exact public routes only; the upstream callback/token and proof APIs stay private.
+  if (['/api/auth/password-reset-status', '/api/auth/request-password-reset', '/api/auth/reset-password'].includes(url.pathname)) {
+    const status = url.pathname === '/api/auth/password-reset-status', asking = url.pathname === '/api/auth/request-password-reset';
+    if (request.method !== (status ? 'GET' : 'POST')) return json({ error: 'Method not allowed.' }, 405);
+    if (url.search || url.hash) throw new FoundationError(400, 'Password recovery does not accept URL parameters.');
+    if (status) {
+      if (request.body !== null || request.headers.has('transfer-encoding') || request.headers.has('content-length') && request.headers.get('content-length')?.trim() !== '0') throw new FoundationError(400, 'Read recovery availability without a request body.');
+      return json({ configured: getEmailStatus().configured });
+    }
+    if (request.headers.get('origin') !== getConfig().appUrl) throw new FoundationError(403, 'This action must originate from the application.');
+    await limit(`password-recovery:${asking ? 'request' : 'reset'}:global`, asking ? 20 : 60);
+    const input = await readJson(request);
+    if (asking) {
+      const details = parsed(recoveryEmailInput, input);
+      await limit(`password-recovery:email:${createHash('sha256').update(details.email).digest('hex')}`, 3);
+      if (!getEmailStatus().configured) throw new FoundationError(503, 'Email recovery is not configured. Contact the installation operator or use your linked identity provider.');
+      const captured: { message?: { to: string; token: string } } = {};
+      try {
+        await transaction(async client => {
+          const user = (await client.query<{ id: string; email: string }>('SELECT id,email FROM "user" WHERE lower(email)=$1 FOR UPDATE', [details.email])).rows[0];
+          const credential = await client.query('SELECT id FROM account WHERE "userId"=$1 AND "providerId"=\'credential\' AND password IS NOT NULL FOR UPDATE', [user?.id ?? '']);
+          if (!user || !credential.rowCount) return json({ ok: true });
+          const auth = getAuth(client, message => {
+            if (message.userId !== user.id || message.email !== user.email || message.token.length !== 24 || !/^[A-Za-z0-9]{24}$/.test(message.token)) throw new FoundationError(503, 'Password recovery is temporarily unavailable.');
+            captured.message = { to: message.email, token: message.token };
+          });
+          const response = await invoke(auth, request, '/request-password-reset', details);
+          if (!response.ok || !captured.message) throw new FoundationError(503, 'Password recovery is temporarily unavailable.');
+          return json({ ok: true });
+        });
+      } catch {
+        // Issuance and delivery failures must not disclose whether an address has a local account.
+        return json({ ok: true });
+      }
+      if (captured.message) {
+        const message = captured.message, link = new URL(`/#password-reset=${message.token}`, getConfig().appUrl).href;
+        // No PoolClient/auth instance survives into delivery, and no automatic retry is scheduled.
+        setImmediate(() => { void sendTransactionalEmail({ to: message.to, subject: 'Reset your ten98-monitor password', text: `A password reset was requested for your ten98-monitor account.\n\nOpen this link within one hour:\n${link}\n\nThe link works once. Your existing two-factor settings and recovery codes stay unchanged. If you did not request this, ignore this email.` }).catch(() => undefined); });
+      }
+      return json({ ok: true });
+    }
+    const rawToken = input !== null && typeof input === 'object' && 'token' in input && typeof input.token === 'string' ? input.token : '';
+    await limit(`password-recovery:token:${createHash('sha256').update(rawToken).digest('hex')}`, 5);
+    const details = resetPasswordInput.safeParse(input);
+    if (!details.success) throw new FoundationError(400, invalidReset);
+    return transaction(async (client, auth) => {
+      const identifier = `reset-password:${details.data.token}`;
+      // The untrusted token lookup is only a lock hint. Recheck after user -> credential locks.
+      const hint = (await client.query<{ value: string }>('SELECT value FROM verification WHERE identifier=$1', [identifier])).rows[0];
+      if (!hint) throw new FoundationError(400, invalidReset);
+      const user = await client.query('SELECT id FROM "user" WHERE id=$1 FOR UPDATE', [hint.value]);
+      const credential = await client.query('SELECT id FROM account WHERE "userId"=$1 AND "providerId"=\'credential\' AND password IS NOT NULL FOR UPDATE', [hint.value]);
+      const verification = await client.query('SELECT id FROM verification WHERE identifier=$1 AND value=$2 AND "expiresAt">clock_timestamp() FOR UPDATE', [identifier, hint.value]);
+      if (!user.rowCount || !credential.rowCount || verification.rowCount !== 1) throw new FoundationError(400, invalidReset);
+      const response = await invoke(auth, request, '/reset-password', details.data);
+      if (!response.ok) throw new FoundationError(response.status >= 500 ? 503 : 400, response.status >= 500 ? 'Password recovery is temporarily unavailable. Try again.' : invalidReset);
+      await invalidateChallenges(client, hint.value);
+      return json({ ok: true });
+    });
+  }
   if (path === '/api/account/preferences') return handleAccountPreferences(request);
   const signIn = path === '/api/auth/sign-in/email';
   const challenge = path === '/api/auth/two-factor/verify-totp' || path === '/api/auth/two-factor/verify-backup-code';
@@ -276,6 +341,7 @@ export async function handleAccountSecurity(request: Request): Promise<Response 
       const { sessionId } = parsed(accountInputs[path], input);
       const removed = await client.query('DELETE FROM session WHERE id=$1 AND "userId"=$2 RETURNING id', [sessionId, userId]);
       if (!removed.rowCount) throw new FoundationError(404, 'Session not found or unavailable.');
+      await invalidateChallenges(client, userId);
       const signedOut = sessionId === current.session.id;
       const response = signedOut ? await invoke(auth, request, '/sign-out', {}) : undefined;
       return json({ ok: true, signedOut }, 200, response);

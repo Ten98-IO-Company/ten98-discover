@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {promptCalendar,recurringCeiling,createPromptTrackerInput,approvePromptTrackerInput,promptTrackersResponse,promptOccurrenceSchema} from '../src/lib/prompt-recurring.ts';
+import {promptCalendar,recurringCeiling,createPromptTrackerInput,approvePromptTrackerInput,promptTrackersResponse,promptOccurrenceSchema,promptTrackerSchema,promptTrackerResponse,promptTrackerMutationResponse} from '../src/lib/prompt-recurring.ts';
 
 const calendar={interval:'daily',timezone:'America/New_York',hour:2,minute:30,weekday:null};
 test('calendar is explicit and strict; weekly needs one weekday and monthly is month-end',()=>{
@@ -17,6 +17,15 @@ test('positive micro-USD standing ceiling is bounded without floating point or h
 });
 test('wire rejects invented enabled grants, copied unknown keys and inconsistent occurrence identities',()=>{
  const id=randomUUID(),row={id,scheduledFor:'2026-10-16T04:55:51.447627Z',trigger:'calendar',status:'started',quoteId:randomUUID(),comparisonId:id,reason:null};assert.ok(promptOccurrenceSchema.safeParse(row).success);assert.equal(promptOccurrenceSchema.safeParse({...row,comparisonId:randomUUID()}).success,false);assert.equal(promptOccurrenceSchema.safeParse({...row,status:'quoted'}).success,false);
- const tracker={id:randomUUID(),createdRequestId:randomUUID(),name:'Sample',revision:1,enabled:false,calendar,maximumUsd:'0.050000',nextDueAt:null,definition:{promptId:randomUUID(),versionId:randomUUID(),models:['openai/gpt-4o-mini'],systemText:'',maxCompletionTokens:64},approval:null,lastStatus:null,occurrences:[row]};
- const body={projectId:randomUUID(),role:'viewer',items:[tracker]};assert.ok(promptTrackersResponse.safeParse(body).success);for(const invalid of [{...body,apiKey:'never'},{...body,role:'guest'},{...body,items:[{...tracker,enabled:true}]},{...body,items:[{...tracker,nextDueAt:'2026-10-17T00:00:00Z'}]},{...body,items:[{...tracker,definition:{...tracker.definition,models:['openai/gpt-4o-mini','openai/gpt-4o-mini']}}]}])assert.equal(promptTrackersResponse.safeParse(invalid).success,false);
+ const tracker={id:randomUUID(),createdRequestId:randomUUID(),name:'Sample',revision:1,enabled:false,archivedAt:null,calendar,maximumUsd:'0.050000',nextDueAt:null,definition:{promptId:randomUUID(),versionId:randomUUID(),models:['openai/gpt-4o-mini'],systemText:'',maxCompletionTokens:64},approval:null,lastStatus:null,occurrences:[row]};
+ const body={projectId:randomUUID(),role:'viewer',status:'active',items:[tracker],nextCursor:null};assert.ok(promptTrackersResponse.safeParse(body).success);for(const invalid of [{...body,apiKey:'never'},{...body,role:'guest'},{...body,items:[{...tracker,enabled:true}]},{...body,items:[{...tracker,nextDueAt:'2026-10-17T00:00:00Z'}]},{...body,items:[{...tracker,definition:{...tracker.definition,models:['openai/gpt-4o-mini','openai/gpt-4o-mini']}}]}])assert.equal(promptTrackersResponse.safeParse(invalid).success,false);
+});
+
+test('tracker pages stay bounded while point acknowledgements preserve archived identity independently of a page',()=>{
+ const item={id:randomUUID(),createdRequestId:randomUUID(),name:'Old tracker',revision:8,enabled:false,archivedAt:'2026-10-16T10:00:00Z',calendar,maximumUsd:'0.050000',nextDueAt:null,definition:{promptId:randomUUID(),versionId:randomUUID(),models:['openai/gpt-4o-mini'],systemText:'',maxCompletionTokens:64},approval:null,lastStatus:null,occurrences:[]},context={projectId:randomUUID(),role:'owner'};
+ assert.ok(promptTrackerSchema.safeParse(item).success);assert.equal(promptTrackerSchema.safeParse({...item,enabled:true}).success,false);
+ assert.ok(promptTrackerResponse.safeParse({...context,item}).success);
+ const ack={requestId:randomUUID(),trackerId:item.id,action:'archive',quoteId:null,occurrenceId:null};assert.ok(promptTrackerMutationResponse.safeParse({...context,item,ack}).success);assert.equal(promptTrackerMutationResponse.safeParse({...context,item,ack:{...ack,trackerId:randomUUID()}}).success,false);
+ const page={...context,status:'archived',items:Array.from({length:20},()=>({...item,id:randomUUID()})),nextCursor:'opaque'};assert.ok(promptTrackersResponse.safeParse(page).success);assert.equal(promptTrackersResponse.safeParse({...page,items:[...page.items,item]}).success,false);assert.equal(promptTrackersResponse.safeParse({...page,ack}).success,false);
+ assert.equal(promptTrackerMutationResponse.safeParse({...context,item,ack:{...ack,action:'delete'}}).success,false);assert.equal(promptTrackerResponse.safeParse({...context,item,extra:true}).success,false);
 });
