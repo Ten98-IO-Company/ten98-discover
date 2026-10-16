@@ -10,7 +10,7 @@ import type {InsightFilters} from '../src/server/prompt-insights';
 import '../src/styles.css';
 
 type Config={mode:'prompt'|'insights'|'comparison'|'suggestions'|'picker';scope:{userId:string;workspaceId:string;projectId:string};entry?:ExecutionEntry;filters?:InsightFilters;catalog?:unknown;maximum?:1|2;structured?:boolean;selected?:string[];observed?:unknown};
-declare global{interface Window{modelUIConfig:Config;modelUI:{set:(value:Config)=>void;selected:()=>string[];refreshes:()=>number}}}
+declare global{interface Window{modelUIConfig:Config;modelUI:{set:(value:Config)=>void;selected:()=>string[];refreshes:()=>number;expired:()=>unknown[]}}}
 function Picker({config}:{config:Config}){
  const [selected,setSelected]=React.useState(config.selected??[]),[refreshes,setRefreshes]=React.useState(0);
  window.modelUI.selected=()=>selected;window.modelUI.refreshes=()=>refreshes;
@@ -18,12 +18,12 @@ function Picker({config}:{config:Config}){
  return <><OpenRouterModelPicker catalog={readModelCatalog(config.catalog)} selected={selected} maximum={config.maximum??2} structured={config.structured} disabled={false} refreshing={false} canRefresh onChange={setSelected} onRefresh={()=>setRefreshes(n=>n+1)}/>{config.observed!==undefined&&<p>Observed options checked against the actual captured metadata.</p>}</>;
 }
 function Fixture(){
- const [config,setConfig]=React.useState(window.modelUIConfig),[destination,setDestination]=React.useState('');
- window.modelUI={set:value=>{setDestination('');setConfig(value);},selected:window.modelUI?.selected??(()=>[]),refreshes:window.modelUI?.refreshes??(()=>0)};
+ const [config,setConfig]=React.useState(window.modelUIConfig),[destination,setDestination]=React.useState(''),expiryEvents=React.useRef<unknown[]>([]);
+ window.modelUI={set:value=>{setDestination('');setConfig(value);},selected:window.modelUI?.selected??(()=>[]),refreshes:window.modelUI?.refreshes??(()=>0),expired:()=>expiryEvents.current};
  const common={...config.scope,onUnauthorized:()=>setDestination('Fixture signed out'),onBack:()=>setDestination('Fixture returned')};
  if(destination)return <h1>{destination}</h1>;
  if(config.mode==='picker')return <Picker key={JSON.stringify(config)} config={config}/>;
- if(config.mode==='prompt')return <PromptExecutionsPanel {...common} entry={config.entry!}/>;
+ if(config.mode==='prompt')return <PromptExecutionsPanel {...common} entry={config.entry!} onEvidenceExpired={event=>expiryEvents.current.push(event)}/>;
  if(config.mode==='suggestions')return <AiSuggestionsPanel {...common}/>;
  if(config.mode==='comparison')return <AIComparisonPanel {...common} filters={config.filters!} filtersLabel={`${config.filters!.from} to ${config.filters!.to} · ${config.filters!.timeZone}`}/>;
  return <AIInsightsPanel {...common} backLabel="Back to project" onOpenComparison={()=>setDestination('Fixture receipt')}/>;
