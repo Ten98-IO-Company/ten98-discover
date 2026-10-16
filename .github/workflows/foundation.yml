@@ -97,6 +97,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_google_ga4_ci');
             await client.query('CREATE DATABASE ten98_web_performance_ci');
             await client.query('CREATE DATABASE ten98_session_replay_ci');
+            await client.query('CREATE DATABASE ten98_replay_heatmaps_ci');
             await client.query('CREATE DATABASE ten98_domain_research_ci');
             await client.query('CREATE DATABASE ten98_backlink_research_ci');
             await client.query('CREATE DATABASE ten98_explorer_ci');
