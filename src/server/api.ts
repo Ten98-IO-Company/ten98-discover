@@ -56,7 +56,7 @@ import { getDestinations, getPublicDestinations, previewDestinations, publishDes
 
 import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,exportSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
 
-import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
+import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
 import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
 import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
@@ -439,14 +439,18 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
-    const executionRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-executions(?:/(quote|comparisons|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
+    const executionRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-executions(?:/(quote|comparisons|runs)(?:/(${id})(?:/(cancel|reconcile|summary|citations))?)?)?$`,'i'));
     if(executionRoute){
-      if(url.search)throw new FoundationError(400,'Prompt executions do not accept query parameters.');
       const [,projectId,action,runId,runAction]=executionRoute;
+      const citationRead=request.method==='GET'&&action==='runs'&&!!runId&&runAction==='citations';
+      if(url.search&&!citationRead)throw new FoundationError(400,'Prompt executions do not accept query parameters.');
       await projectAccess(projectId,user.id,request.method!=='GET');
       await limit(`execution:${user.id}`,120);
       if(request.method==='GET'&&!action)return json(await getPromptExecutions(projectId,user.id));
       if(request.method==='GET'&&action==='comparisons'&&runId&&!runAction)return json(await getPromptComparison(projectId,user.id,runId));
+      if(request.method==='GET'&&action==='comparisons'&&runId&&runAction==='summary')return json(await getPromptComparisonSummary(projectId,user.id,runId));
+      if(request.method==='GET'&&action==='runs'&&runId&&!runAction)return json(await getPromptExecutionResult(projectId,user.id,runId));
+      if(citationRead)return json(await getPromptExecutionCitations(projectId,user.id,runId,url.searchParams));
       if(request.method==='POST'){
         await limit(`execution-write:${user.id}`,10);
         const input=await readJson(request,32768);
