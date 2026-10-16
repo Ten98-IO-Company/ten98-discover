@@ -19,6 +19,7 @@ import {siteAuditQueue} from './site-audits.ts';
 import {rankQueue} from './rank-execution.ts';
 import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} from './rank-worker.ts';
 import {claimDueRankOccurrence} from './rank-recurring.ts';
+import {claimDuePromptOccurrence} from './prompt-recurring.ts';
 import {runMetaDeletionBatch} from './meta-callbacks.ts';
 import {expireMetaFlows} from './meta-auth.ts';
 import {metaQueue,expireMetaImportPages} from './meta-imports.ts';
@@ -211,11 +212,11 @@ export function startWorker(): Promise<void> {
           .finally(() => { metaDeletionTask = undefined; });
       }, 10_000);
       // Keep provider preflight outside heartbeat/healthcheck and never overlap a
-      // prior claim. ponytail: one due tracker per tick caps this worker at six
+      // prior claim. ponytail: one due tracker per family per tick caps each at six
       // starts/minute; use a bounded claim queue if workload requires more.
       recurringTimer = setInterval(() => {
-        if (!recurringTask) recurringTask = claimDueRankOccurrence()
-          .catch(() => console.error('Rank schedule check failed; inspect schedule status and database availability.'))
+        if (!recurringTask) recurringTask = Promise.allSettled([claimDueRankOccurrence(),claimDuePromptOccurrence()])
+          .then(results=>{if(results.some(result=>result.status==='rejected'))console.error('Recurring schedule check failed; inspect schedule status and database availability.');})
           .finally(() => { recurringTask = undefined; });
       }, 10_000);
     } catch (error) {

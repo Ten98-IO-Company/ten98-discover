@@ -118,6 +118,10 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .notice { background: var(--blue-tint); border: 1px solid var(--color-accent); color: var(--blue); }
 .google-reports .stack { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
 .research-panel { min-width: 0; overflow-wrap: anywhere; }
+.prompt-recurring { min-inline-size: 0; overflow-wrap: anywhere; --control-md: var(--control-touch); }
+.prompt-recurring label { min-inline-size: 0; }
+.prompt-recurring :is(input:not([type='checkbox']), select) { inline-size: 100%; min-inline-size: 0; min-block-size: var(--control-touch); }
+.prompt-recurring .btn { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
 .research-panel .stack { display: grid; gap: 14px; min-width: 0; }
 .research-panel .stack > p, .research-panel .stack > h3 { margin: 0; }
 .research-panel details > summary { min-height: var(--control-touch); padding: 10px 0; cursor: pointer; font-weight: 500; }
