@@ -16,6 +16,7 @@ import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
+import {exportAnalytics,analyticsExportLimits} from './analytics-export.ts';
 import {projectRealtime} from './realtime.ts';
 import {collectPerformance,projectPerformance} from './web-performance.ts';
 import {performanceObservation} from '../lib/web-performance.ts';
@@ -291,6 +292,12 @@ export async function handleApi(request: Request): Promise<Response> {
       return json({ error: 'Authentication route unavailable.' }, 404);
     }
     const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
+    const analyticsExportRoute=path.match(new RegExp('^/api/projects/('+id+')/analytics/export$','i'));
+    if(analyticsExportRoute){
+      if(request.method!=='POST')return json({error:'Method not allowed.'},405);
+      if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Analytics exports do not accept query parameters or fragments.');
+      await limit('analytics-export:'+user.id,6);return await exportAnalytics(analyticsExportRoute[1],user.id,await readJson(request,analyticsExportLimits.bodyBytes),request.signal);
+    }
     const trackedResponse=await handleTrackedAssets(request,user.id,limit);
     if(trackedResponse)return trackedResponse;
     const boardShareManagement=path.match(new RegExp('^/api/workspaces/('+id+')/boards/('+id+')/shares(?:/('+id+')(?:/(publish|revoke))?)?$','i'));

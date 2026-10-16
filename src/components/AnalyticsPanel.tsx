@@ -9,7 +9,7 @@ import { deriveAnalyticsComparison, retentionCoverage, type AnalyticsComparison,
 import {geographyFields,parseGeographyKey,type GeographyFilters,type GeographyReport,type GeoField,type GeographyKey,type GeographyDetail,type GeographyDetailIntent} from '../lib/analytics-geography';
 import {GeographyCard,geographyLabel,geographyLabels,validGeography,validGeographyDetail} from './GeographyCard';
 import {analyticsDimensions,analyticsSelectionFields,analyticsFieldLimit,type AnalyticsDimension,type AnalyticsDimensionComparison,type AnalyticsDimensionKey} from '../lib/analytics-dimensions';
-import {emptyAdvanced,readAdvanced,buildAdvanced,clean,focusAdvanced} from './ExplorerFilters';
+import {emptyAdvanced,readAdvanced,buildAdvanced,clean,focusAdvanced,initialDraft,buildParams,ExactFilterControls,TIMEZONES,patchLocationFilters,type Draft} from './ExplorerFilters';
 import './analytics.css';
 
 export type AnalyticsPanelProps = {
@@ -478,13 +478,16 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
 
   const busy = !invalid&&!unavailableRange&&(!routeReady||view.loading||view.queryKey!==queryKey);
   const data = !routeReady||invalid||unavailableRange||view.queryKey!==queryKey||acceptedOwner.current!==readOwner?null:view.data;
-  const comparisonData=data?.comparison?data as Analytics&{comparison:AnalyticsComparison}:null;
+  const exportDraft=initialDraft();exportDraft.from=from;exportDraft.to=to;
+  for(const[field,value]of Object.entries({...filters,...geographyFilters}))if(value!==undefined)exportDraft.filters[field]={on:true,value};
+  let exportUnsupported=invalid?'This applied scope cannot be exported. Return to Explore or explicitly reset Analytics.':'';
+  for(const field of selection?.draft.fields??[]){if(field.operator!=='eq'){exportUnsupported='This applied selection uses recorded or missing conditions that this archive cannot represent. Apply exact values before exporting.';break;}exportDraft.filters[field.field]={on:true,value:field.value};}  const comparisonData=data?.comparison?data as Analytics&{comparison:AnalyticsComparison}:null;
+  const exportRead=reqRef.current,exportEnabled=Boolean(data)&&!busy&&!view.denied;
+  const exportCurrent=()=>exportEnabled&&reqRef.current===exportRead&&currentOwner.current===readOwner&&acceptedOwner.current===readOwner&&projectRef.current===projectId&&queryRef.current===queryKey;
+  const exportAccessLost=(status:number)=>{reqRef.current++;acceptedOwner.current='';setView(value=>({...value,data:null,loading:false,denied:true,error:'Project access could not be verified. Retry to check current access.'}));if(status===401)unauthRef.current();};
   const today = todayUtc();
   const hasData = data !== null && (data.totals.pageViews ?? 0) + (data.totals.customEvents ?? 0) > 0;
-  const annotations = useAnnotations({projectId,userId,range:invalid||unavailableRange||view.denied?null:{from,to,timeZone:'UTC'},readOwner,readEnabled:routeReady&&!invalid&&!unavailableRange&&!view.denied,onUnauthorized,onAccessLost:()=>{
-    reqRef.current++;
-    setView(v=>({...v,data:null,loading:false,denied:true,error:'Project access could not be verified. Retry to check current access.'}));
-  }});
+  const annotations = useAnnotations({projectId,userId,range:invalid||unavailableRange||view.denied?null:{from,to,timeZone:'UTC'},readOwner,readEnabled:routeReady&&!invalid&&!unavailableRange&&!view.denied,onUnauthorized:()=>exportAccessLost(401),onAccessLost:exportAccessLost});
 
   return (
     <div className={'analytics'+(compareView?' analytics-compare':'')} aria-busy={busy}>
@@ -543,7 +546,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             </p>
           )}
         </form>
-        {compareView&&<div className="analytics-comparison-mode"><label htmlFor={`${uid}-compare`}>Compare with</label><select id={`${uid}-compare`} value={mode} disabled={busy||invalid} onChange={e=>navigate({...intent,analyticsFrom:from,analyticsTo:to,analyticsCompare:e.target.value as AnalyticsComparisonMode})}><option value="prev">Previous period</option><option value="yoy">Previous year</option></select></div>}
+        <AnalyticsExport key={queryKey+':'+readOwner} projectId={projectId} initial={exportDraft} unsupported={exportUnsupported} readOwner={readOwner+':'+String(reqRef.current)} readEnabled={exportEnabled} isParentCurrent={exportCurrent} onAccessLoss={exportAccessLost}/>        {compareView&&<div className="analytics-comparison-mode"><label htmlFor={`${uid}-compare`}>Compare with</label><select id={`${uid}-compare`} value={mode} disabled={busy||invalid} onChange={e=>navigate({...intent,analyticsFrom:from,analyticsTo:to,analyticsCompare:e.target.value as AnalyticsComparisonMode})}><option value="prev">Previous period</option><option value="yoy">Previous year</option></select></div>}
       </section>
       {!invalid&&(compareView||selection?.query)&&<SelectionControls key={queryKey} value={selection!.draft} busy={busy||Boolean(view.denied)} onApply={applySelection}/>}
       {!invalid&&Boolean(selection?.draft.fields.length)&&<section className="card analytics-environment-filters" aria-label="Applied report selection"><strong>{compareView?'Applied to both periods':'Applied to all analytics'}</strong><div className="row">{selection!.draft.fields.map(row=><button type="button" className="btn" key={row.field} disabled={busy} aria-label={`Remove ${selectionLabel(row.field)} selection`} onClick={()=>{const built=buildAdvanced({...selection!.draft,fields:selection!.draft.fields.filter(item=>item.field!==row.field)});if('error'in built)return;applySelection(built.predicates?new URLSearchParams({predicates:JSON.stringify(built.predicates)}).toString():undefined);}}>{selectionLabel(row.field)} {row.operator==='eq'?`is ${JSON.stringify(row.value)}`:row.operator==='exists'?'is recorded':'is missing'} <span aria-hidden="true">×</span></button>)}</div></section>}
@@ -747,4 +750,41 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
       )}
     </div>
   );
+}
+
+const exportMaxBytes=16*1024*1024;
+function AnalyticsExport({projectId,initial,unsupported,readOwner,readEnabled,isParentCurrent,onAccessLoss}:{projectId:string;initial:Draft;unsupported:string;readOwner:string;readEnabled:boolean;isParentCurrent:()=>boolean;onAccessLoss:(status:number)=>void}){
+ const uid=useId(),[draft,setDraft]=useState(()=>initial),[open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');const operation=useRef<AbortController|null>(null),serial=useRef(0),mounted=useRef(true),blob=useRef<string|null>(null),blobTimer=useRef<ReturnType<typeof setTimeout>|null>(null),callbacks=useRef({onAccessLoss,isParentCurrent});callbacks.current={onAccessLoss,isParentCurrent};
+ const authority=projectId+':'+readOwner+':'+String(readEnabled),latest=useRef(authority);latest.current=authority;const revoke=()=>{if(blobTimer.current)clearTimeout(blobTimer.current);blobTimer.current=null;if(blob.current)URL.revokeObjectURL(blob.current);blob.current=null;};
+ const cancel=()=>{serial.current++;operation.current?.abort();operation.current=null;revoke();setBusy(false);setNotice('Export cancelled. No download was started.');};
+ const dialog=useRef<HTMLDialogElement>(null),close=()=>{cancel();dialog.current?.close();setOpen(false);document.getElementById(uid+'open')?.focus();};
+ useEffect(()=>{const node=dialog.current;if(open&&node){if(!node.open)node.showModal();document.getElementById(uid+'title')?.focus();}else if(node?.open)node.close();},[open,uid]);
+ useEffect(()=>{operation.current?.abort();serial.current++;setBusy(false);setNotice('');revoke();dialog.current?.close();setOpen(false);},[authority]);useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;serial.current++;operation.current?.abort();revoke();};},[]);
+ const built=buildParams(draft);let scope='',validation='error'in built?built.error:'';if(!validation&&'qs'in built){const params=new URLSearchParams(built.qs);params.delete('kind');params.delete('groupBy');scope=params.toString();try{for(const value of [draft.from,draft.to])if(parseDay(value)===null)throw Error();new Intl.DateTimeFormat('en',{timeZone:draft.timeZone.trim()}).format();if(!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(draft.timeZone.trim()))throw Error();}catch{validation='Choose valid dates and a named IANA timezone.';}}
+ if(!clean(scope,20000)||new TextEncoder().encode(JSON.stringify({scope})).length>32768)validation='These filters are too large or invalid. Shorten the selection.';
+ const enabled=readEnabled&&!unsupported,disabled=busy||!enabled;
+ async function download(){if(disabled||validation||!scope||operation.current||!callbacks.current.isParentCurrent())return;const expected=authority,generation=++serial.current,ctrl=new AbortController();operation.current=ctrl;const current=()=>mounted.current&&latest.current===expected&&serial.current===generation&&!ctrl.signal.aborted&&callbacks.current.isParentCurrent();setBusy(true);setError('');setNotice('');revoke();let timedOut=false;const deadline=setTimeout(()=>{timedOut=true;ctrl.abort();},30000);
+  try{const path='/api/projects/'+encodeURIComponent(projectId)+'/analytics/export',response=await fetch(path,{method:'POST',credentials:'same-origin',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify({scope}),signal:ctrl.signal});if(!current()){await response.body?.cancel();return;}if(!response.ok){await response.body?.cancel();throw Object.assign(new ApiError(response.status===413?'The complete archive is too large. Narrow the dates or filters.':response.status===429?'Too many export attempts. Try again after a minute.':response.status===409?'Retention changed. Review the range and export again.':response.status===400?'Check the export dates and filters.':'The export could not be prepared. Try again.'),{status:response.status});}
+   const length=response.headers.get('content-length'),asOf=response.headers.get('x-export-as-of'),currentRole=response.headers.get('x-export-role');if(response.url!==new URL(path,location.origin).href||response.status!==200||response.headers.get('content-type')!=='application/zip'||response.headers.get('content-disposition')!=='attachment; filename="analytics.zip"'||response.headers.get('cache-control')!=='no-store, no-transform'||response.headers.get('x-content-type-options')!=='nosniff'||!['', 'identity'].includes(response.headers.get('content-encoding')??'')||!length||!/^\d{1,8}$/.test(length)||Number(length)<22||Number(length)>exportMaxBytes||!asOf||asOf.length>80||!Number.isFinite(Date.parse(asOf))||!currentRole||!['owner','admin','editor','viewer'].includes(currentRole)||!response.body){await response.body?.cancel();throw Error('Archive response invalid.');}
+   const bytes=new Uint8Array(Number(length)),reader=response.body.getReader();let written=0;try{for(;;){const part=await reader.read();if(!current())throw new DOMException('Cancelled','AbortError');if(part.done)break;if(part.value.length>bytes.length-written)throw Error('Archive exceeded its declared size.');bytes.set(part.value,written);written+=part.value.length;}}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}if(written!==bytes.length)throw Error('Archive incomplete.');if(bytes.length<22||new DataView(bytes.buffer).getUint32(0,true)!==0x04034b50||new DataView(bytes.buffer).getUint32(bytes.length-22,true)!==0x06054b50)throw Error('Archive signature invalid.');if(!current())return;blob.current=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));const link=document.createElement('a');link.href=blob.current;link.download='analytics.zip';document.body.append(link);link.click();link.remove();blobTimer.current=setTimeout(revoke,1000);setNotice('Archive download started: seven complete CSV files.');
+  }catch(value){if(!mounted.current||latest.current!==expected||serial.current!==generation||!callbacks.current.isParentCurrent())return;if(value instanceof ApiError&&(value.status===401||value.status===403||value.status===404)){callbacks.current.onAccessLoss(value.status);return;}if(ctrl.signal.aborted){if(timedOut)setError('The export timed out. Try a narrower range.');return;}setError(value instanceof ApiError?value.message:'The complete archive could not be verified. No download was started.');}finally{clearTimeout(deadline);if(operation.current===ctrl)operation.current=null;if(mounted.current&&latest.current===expected&&serial.current===generation&&callbacks.current.isParentCurrent())setBusy(false);}
+ }
+ const filterCount=Object.values(draft.filters).filter(value=>value.on).length+Number(draft.prop.on);
+ return <div><button id={uid+'open'} type="button" className="btn" disabled={!readEnabled||!!unsupported} onClick={()=>{setNotice('');setError('');setOpen(true);}} aria-haspopup="dialog" aria-expanded={open} aria-controls={uid+'dialog'}>Export analytics</button>{unsupported&&<p className="hint">{unsupported}</p>}
+  <dialog ref={dialog} id={uid+'dialog'} className="analytics-export-dialog" aria-labelledby={uid+'title'} onCancel={event=>{event.preventDefault();close();}} onClose={()=>{if(!dialog.current?.open){cancel();setOpen(false);}}}>
+   {open&&<section aria-labelledby={uid+'title'} className="analytics-export" aria-busy={busy}>
+    <header className="row between analytics-export-heading"><h3 id={uid+'title'} tabIndex={-1}>Export analytics</h3><button type="button" className="btn ghost" onClick={close}>Close export</button></header>
+    <p className="hint">Seven CSV files · {filterCount?filterCount+' exact '+(filterCount===1?'filter':'filters'):'No filters'}. Starts from the applied report; changes here affect only this download. The comparison period is excluded.</p>
+    <fieldset disabled={disabled}><legend>Date range and filters</legend><div className="analytics-export-range">
+     <label>From<input aria-label="Export start date" type="date" value={draft.from} onChange={e=>setDraft(value=>({...value,from:e.target.value}))}/></label>
+     <label>To<input aria-label="Export end date" type="date" value={draft.to} onChange={e=>setDraft(value=>({...value,to:e.target.value}))}/></label>
+     <label>Timezone<input aria-label="Export timezone" list={uid+'zones'} value={draft.timeZone} maxLength={80} onChange={e=>setDraft(value=>({...value,timeZone:e.target.value}))}/></label>
+    </div><p className="hint">Dates include both days in this timezone. Changing it affects this download; Analytics stays in UTC.</p><datalist id={uid+'zones'}>{TIMEZONES.map(zone=><option key={zone} value={zone}/>)}</datalist>
+    <ExactFilterControls uid={uid+'export'} draft={draft} patchFilter={(key,value)=>setDraft(old=>({...old,filters:patchLocationFilters(old.filters,key,value)}))} patchProp={value=>setDraft(old=>({...old,prop:{...old.prop,...value}}))}/></fieldset>
+    <details className="analytics-details"><summary>What's included</summary><p>Events, pages, referrers, browsers, operating systems, devices and countries, in seven complete CSV files. Missing data stays unavailable.</p><p>Exports use current access and retention. Oversized archives are refused in full. No new collection or provider request.</p></details>
+    {busy&&<p role="status">Preparing the complete archive…</p>}{validation&&<p role="alert">{validation}</p>}{error&&<p className="alert" role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
+    <div className="row analytics-export-actions"><button type="button" className="btn" disabled={disabled||!!validation} onClick={download}>Download analytics ZIP</button>{busy&&<button type="button" className="btn ghost" onClick={cancel}>Cancel export</button>}</div>
+   </section>}
+  </dialog>
+ </div>;
 }
