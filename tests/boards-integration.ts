@@ -1,3 +1,7 @@
+import {decodePublicBoardCard} from '../src/lib/boards.ts';
+import {createBoardShare,publishBoardShare,revokeBoardShare,getPublicBoardManifest,readPublicBoardCard,projectBoardShareCard} from '../src/server/boards.ts';
+import {analyticsPopulation} from '../src/server/analytics-population.ts';
+import {boardScope} from '../src/server/boards.ts';
 import assert from 'node:assert/strict';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -22,7 +26,7 @@ export async function runBoardChecks(){
  const config=getConfig(),db=new URL(config.databaseUrl),local=['localhost','127.0.0.1','[::1]'];if(process.env.GITHUB_ACTIONS==='true'){assert.equal(process.env.TEN98_ISOLATED_CI_DATABASE,'1');assert.equal(db.hostname,'127.0.0.1');assert.equal(db.port,'5432');assert.equal(db.pathname,'/ten98_boards_ci');assert.doesNotMatch(config.databaseUrl,/[?#]/);}else{assert.ok(local.includes(db.hostname));assert.equal(db.port,'55502');assert.match(db.pathname,/^\/ten98_boards_[a-f0-9]{12}$/);}assert.equal(db.search,'');assert.equal(db.hash,'');assert.equal(config.appUrl,'http://127.0.0.1:3111');
  for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[key],undefined);
  const{pool}=getDatabase();assert.equal((await pool.query("SELECT to_regclass('schema_version') AS table")).rows[0].table,null,'Fresh externally owned database only.');
- const sources=await migrationSources();assert.equal(sources.length,58);assert.equal(sources.at(-1)?.filename,'0058_tracked_assets.sql','Integrate and register the actual56/57/58 prefix first; never replace migrationSources.');
+ const sources=await migrationSources();assert.equal(sources.length,60);assert.equal(sources.at(-1)?.filename,'0060_board_shares.sql','Integrate and register the actual56/57/58/59/60 prefix first; never replace migrationSources.');
  const migration=await pool.connect();try{await migration.query('BEGIN');await migration.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');for(const source of sources){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}await initializeProviderAccountIdentity(migration);await migration.query('COMMIT');}catch(error){await migration.query('ROLLBACK');throw error;}finally{migration.release();}await assertSchema();
  const owner=randomUUID(),admin=randomUUID(),editor=randomUUID(),viewer=randomUUID(),stranger=randomUUID(),workspace=randomUUID(),foreignWorkspace=randomUUID(),project=randomUUID(),foreignProject=randomUUID();
  const password=randomBytes(24).toString('base64url'),hashed=await hashPassword(password),savedFetch=globalThis.fetch,groups:string[]=[],cleanup:unknown[]=[];let external=0,key:Awaited<ReturnType<typeof createApiKey>>|undefined,primary:unknown;
@@ -180,6 +184,9 @@ export async function runBoardChecks(){
    assert.equal(bounceComparison.environment.browsers.find(row=>row.value==='chrome')?.bounceRate,0);assert.equal(bounceComparison.geography.countries.rows.find(row=>row.key.state==='known'&&row.key.country==='US')?.bounceRate,0);
    const bounceBreakdown=await exploreAnalytics(project,owner,new URLSearchParams({from:'2026-01-01',to:'2026-01-02',timeZone:'UTC',path:summaryPath+'/excluded-custom',fields:JSON.stringify(['path','browser'])}));
    assert.equal(bounceBreakdown.coverage.status,'complete');assert.equal(bounceBreakdown.breakdown.groups.length,1);assert.equal(bounceBreakdown.breakdown.groups[0].bounceRate,0);
+   const singleton=await exploreAnalytics(project,owner,new URLSearchParams({from:'2026-01-01',to:'2026-01-02',timeZone:'UTC',path:summaryPath+'/excluded-custom',fields:'["path"]'}));
+   assert.deepEqual('fields'in singleton.query?singleton.query.fields:null,['path']);assert.equal(singleton.breakdown.groups.length,1);const single=singleton.breakdown.groups[0];
+   assert.equal(single.type,'tuple');assert.deepEqual(single.value,[{type:'string',value:summaryPath+'/excluded-custom'}]);assert.equal(single.pageViews,1);assert.equal(single.estimatedVisitors,1);assert.equal(single.visits,1);assert.equal(single.bounceRate,0);assert.equal(single.averageVisitSeconds,0);assert.ok(singleton.csv.includes('"Page views"'));assert.ok(singleton.csv.includes(summaryPath+'/excluded-custom'));
    const pairs=await summaryRead(basicScope+'&path='+encodeURIComponent(summaryPath+'/pairs'));assert.equal(pairs.measurement.visitors,2);assert.equal(pairs.measurement.visits,2,'Equal visit IDs from different visitors remain separate.');
    const anonymous=await summaryRead(basicScope+'&path='+encodeURIComponent(summaryPath+'/anonymous'));assert.equal(anonymous.totals.pageViews,1);assert.equal(anonymous.measurement.unidentifiedPageViews,1);for(const key of ['visitors','visits','bounceRate','averageVisitSeconds']as const)assert.equal(anonymous.measurement[key],null);
    for(const [day,zone,hours]of [['2025-03-09','America/New_York',23],['2025-11-02','America/New_York',25],['2011-12-30','Pacific/Apia',0]]as const){const scope=new URLSearchParams({from:day,to:day,timeZone:zone,path:summaryPath+'/empty'}).toString(),result=await summaryRead(scope);assert.equal(result.range.timeZone,zone);assert.equal(Date.parse(result.range.end)-Date.parse(result.range.start),hours*3600000);assert.equal(result.totals.pageViews,0);assert.equal(result.measurement.visitors,null);}
@@ -220,6 +227,60 @@ export async function runBoardChecks(){
    const precision=await read(assetBoard,assetMetric);assert.ok(precision.status==='ready'&&precision.source==='tracked-asset');assert.equal(precision.data.asset.revision,2);assert.equal(precision.data.coverage.status,'partial');assert.equal(precision.data.summary?.requests,0,'Native SQL must exclude a .000100 request before the .000900 asset watermark; JS millisecond rounding is not authority.');
    await pool.query("UPDATE tracked_asset SET retained_from='2026-01-03T00:00:00.000900Z'WHERE id=$1",[assetLink]);const expired=await read(assetBoard,assetMetric);assert.ok(expired.status==='ready'&&expired.source==='tracked-asset');assert.equal(expired.data.coverage.status,'unavailable');assert.equal(expired.data.summary?.requests,null);
    await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspace,viewer]);const terminalMixedCounts=(await pool.query('SELECT(SELECT count(*)::int FROM custom_board)AS boards,(SELECT count(*)::int FROM custom_board_request)AS receipts')).rows[0];assert.equal(terminalMixedCounts.boards,53);assert.equal(terminalMixedCounts.receipts,21);assert.equal((await pool.query('SELECT count(*)::int AS n FROM tracked_asset WHERE id=ANY($1::uuid[])',[assetIds])).rows[0].n,3);assert.equal((await pool.query('SELECT count(*)::int AS n FROM tracked_asset_event WHERE asset_id=ANY($1::uuid[])',[assetIds])).rows[0].n,11);await pass('mixed request card workspace waits recheck revoked or downgraded readers and current exact asset revision and microsecond retention without website substitution');assert.equal(groups.length,11);
+   // Additional share checks require the later genuine0060 registration; original11/checkpoints stay above.
+   {
+    const shareCard=makeCard('WebsiteChart'),recipientCards=[shareCard,...allCards.filter(card=>card.type!=='WebsiteChart').map(card=>card.type==='Goal'?{...card,analysisRevision:freshGoal.item!.revision}:card)],shareBoard=await saved(definition(recipientCards,basicScope,'Shared fixture'));
+    const input={requestId:randomUUID(),boardRevision:shareBoard.revision,label:'Public selected card',theme:'light',selectedCardIds:[shareCard.id],scope:basicScope,allowFilter:true,ongoingLive:false,
+     expiresAt:(await pool.query("SELECT clock_timestamp()+interval'2 hours' AS at")).rows[0].at.toISOString(),token:randomBytes(32).toString('base64url')};
+    const created=await createBoardShare(workspace,owner,shareBoard.id,input);assert.equal(created.role,'owner');assert.equal(created.ack.operation,'create');assert.ok(created.item);assert.equal(created.item.boardId,shareBoard.id);
+    assert.equal('token'in created.item,false);assert.equal('tokenHash'in created.item,false);
+    const manifest=await getPublicBoardManifest(created.ack.shareId,input.token);assert.equal(manifest.shareId,created.ack.shareId);assert.equal(manifest.rows.length,1);assert.equal(manifest.rows[0].cards[0]?.id,shareCard.id);
+    assert.equal(Object.hasOwn(manifest,'workspaceId'),false);assert.equal(Object.hasOwn(manifest,'definition'),false);assert.equal(Object.hasOwn(manifest,'role'),false);
+    const manifestCard=manifest.rows[0].cards[0];assert.ok(manifestCard&&'entityKind'in manifestCard);assert.equal(manifestCard.entityKind,'website');assert.equal('entity'in manifestCard,false);
+    const publicInput={grantRevision:1,boardRevision:shareBoard.revision,scope:basicScope},privateCard=await read(shareBoard,shareCard),publicCard=await readPublicBoardCard(created.ack.shareId,input.token,shareCard.id,publicInput);
+    const projected=projectBoardShareCard(shareCard,privateCard);assert.ok(publicCard.status==='ready'&&projected.status==='ready');assert.deepEqual(publicCard.data,projected.data);for(const field of ['role','workspaceId','entity','source','sessions','csv'])assert.equal(Object.hasOwn(publicCard,field),false);
+    assert.deepEqual(Object.keys(publicCard).sort(),['version','shareId','grantRevision','boardRevision','cardId','cardType','scope','effectiveWindow','readAt','status','data'].sort());
+    await assert.rejects(getPublicBoardManifest(created.ack.shareId,randomBytes(32).toString('base64url')),fail(404));
+    await assert.rejects(readPublicBoardCard(created.ack.shareId,input.token,randomUUID(),publicInput),fail(404));
+    await assert.rejects(readPublicBoardCard(created.ack.shareId,input.token,shareCard.id,{...publicInput,scope:basicScope.replace('timeZone=UTC','timeZone=America%2FNew_York')}),fail(403));
+    const publicUrl=config.appUrl+'/api/board-shares/'+created.ack.shareId,publicHeaders={'x-ten98-board-share':input.token,cookie:'invalid-ambient-cookie'};
+    const manifestHttp=await handleApi(new Request(publicUrl+'/manifest',{headers:publicHeaders}));assert.equal(manifestHttp.status,200);assert.equal(manifestHttp.headers.get('cache-control'),'no-store');assert.equal(manifestHttp.headers.get('referrer-policy'),'no-referrer');assert.equal(manifestHttp.headers.has('set-cookie'),false);
+    assert.equal((await handleApi(new Request(publicUrl+'/manifest',{headers:{cookie}}))).status,404,'Dashboard sign-in cannot replace a missing capability.');
+    for(const[name,value]of [['authorization','Bearer invalid'],['x-api-key','invalid']]as const){const headers=new Headers(publicHeaders);headers.set(name,value);assert.equal((await handleApi(new Request(publicUrl+'/manifest',{headers}))).status,403);}
+    assert.equal((await handleApi(new Request(publicUrl+'/manifest?x=1',{headers:publicHeaders}))).status,400);assert.equal((await handleApi(new Request(publicUrl+'/manifest',{method:'HEAD',headers:publicHeaders}))).status,405);
+    const publicRead=(origin=config.appUrl,body=JSON.stringify(publicInput))=>handleApi(new Request(publicUrl+'/cards/'+shareCard.id+'/read',{method:'POST',headers:{...publicHeaders,origin,'content-type':'application/json'},body}));
+    assert.equal((await publicRead()).status,200);assert.equal((await publicRead('https://foreign.example')).status,403);assert.equal((await publicRead(config.appUrl,JSON.stringify({...publicInput,padding:'x'.repeat(51201)}))).status,413);
+    const managed=await handleApi(new Request(endpoint+'/'+shareBoard.id+'/shares',{method:'POST',headers:{cookie,origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify(input)}));assert.equal(managed.status,200);assert.deepEqual((await managed.json()).ack,created.ack);
+    const same=await createBoardShare(workspace,owner,shareBoard.id,input);assert.deepEqual(same.ack,created.ack);assert.equal(same.replayed,true);
+    await assert.rejects(createBoardShare(workspace,editor,shareBoard.id,{...input,requestId:randomUUID(),token:randomBytes(32).toString('base64url')}),fail(404));
+    await assert.rejects(createBoardShare(workspace,owner,shareBoard.id,{...input,token:randomBytes(32).toString('base64url')}),fail(409));
+    const context={workspaceId:workspace,boardId:shareBoard.id,boardRevision:shareBoard.revision,shareId:created.ack.shareId,grantRevision:1,cardId:shareCard.id,cardType:shareCard.type,
+     entityId:project,entityKind:'website' as const,deadline:Date.now()+20000,tokenHash:createHash('sha256').update(input.token).digest('hex')};
+    const admitted=async(extra:Partial<typeof context>={},pid=project)=>{const q=analyticsPopulation(pid,'',boardScope(basicScope).query,null,false,undefined,undefined,{...context,...extra});return(await pool.query(q.ctes+' SELECT EXISTS(SELECT 1 FROM target)AS allowed',q.values)).rows[0].allowed;};
+    assert.equal(await admitted(),true);assert.equal(await admitted({},foreignProject),false);assert.equal(await admitted({cardId:randomUUID()}),false);assert.equal(await admitted({tokenHash:'0'.repeat(64)}),false);assert.equal(await admitted({workspaceId:foreignWorkspace}),false);
+    try{await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[workspace,owner]);assert.equal(await admitted(),true,'Grant is workspace-owned, not creator impersonation.');
+     await assert.rejects(createBoardShare(workspace,owner,shareBoard.id,input),fail(404));
+    }finally{await pool.query("UPDATE membership SET role='owner' WHERE workspace_id=$1 AND user_id=$2",[workspace,owner]);}
+    const edited=(await saveBoard(workspace,owner,{requestId:randomUUID(),revision:shareBoard.revision,definition:{...shareBoard.definition,name:'Reviewed next revision'}},shareBoard.id)).item!;
+    assert.equal(await admitted(),false,'Board edit cannot silently publish through a pinned share.');
+    await assert.rejects(getPublicBoardManifest(context.shareId,input.token),fail(409));
+    const{token:_token,requestId:_requestId,...publication}=input;
+    const published=await publishBoardShare(workspace,admin,shareBoard.id,context.shareId,{...publication,requestId:randomUUID(),revision:1,boardRevision:edited.revision,selectedCardIds:recipientCards.map(card=>card.id),ongoingLive:true});
+    assert.ok(published.item);assert.equal(published.item.slug,created.item.slug);assert.equal(published.ack.appliedGrantRevision,2);assert.equal(await admitted({boardRevision:edited.revision,grantRevision:2}),true);
+    for(const card of recipientCards){
+     const result=await readPublicBoardCard(context.shareId,input.token,card.id,{grantRevision:2,boardRevision:edited.revision,scope:basicScope});
+     const expected={shareId:context.shareId,grantRevision:2,boardRevision:edited.revision,cardId:card.id,cardType:card.type,scope:basicScope,entityKind:card.type==='TextBlock'?'none' as const:'website' as const};assert.ok(decodePublicBoardCard(result,expected),card.type);
+     assert.equal(result.status,'ready',card.type);for(const key of ['role','workspaceId','entity','source','sessions','detail','csv','activity','witnesses'])assert.equal(Object.hasOwn(result,key),false,card.type);
+    }
+    assert.equal(new Set(recipientCards.map(card=>card.type)).size,17);
+    const revoked=await revokeBoardShare(workspace,admin,shareBoard.id,context.shareId,{requestId:randomUUID(),revision:2});assert.ok(revoked.item?.revokedAt);
+    assert.equal(await admitted({boardRevision:edited.revision,grantRevision:3}),false);
+    await assert.rejects(getPublicBoardManifest(context.shareId,input.token),fail(404));await assert.rejects(readPublicBoardCard(context.shareId,input.token,shareCard.id,{...publicInput,boardRevision:edited.revision,grantRevision:3}),fail(404));
+    const replay=await createBoardShare(workspace,owner,shareBoard.id,input);assert.deepEqual(replay.ack,created.ack);assert.ok(replay.item?.revokedAt);
+    await assert.rejects(publishBoardShare(workspace,admin,shareBoard.id,context.shareId,{...publication,requestId:randomUUID(),revision:3,boardRevision:edited.revision}),fail(404));
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM board_share')).rows[0].n,1);assert.equal((await pool.query('SELECT count(*)::int AS n FROM board_share_request')).rows[0].n,3);
+    await pass('workspace-owned board share receipts and exact native target refuse foreign cards, wrong secrets, stale revisions and revoked exposure without creator impersonation');assert.equal(groups.length,12);
+   }
    }
  }catch(error){primary=error;}finally{try{if(key)await revokeApiKey(workspace,owner,key.key.id);}catch(error){cleanup.push(error);}try{await stable();}catch(error){cleanup.push(error);}globalThis.fetch=savedFetch;}
  if(primary||cleanup.length)throw new AggregateError([primary,...cleanup].filter(Boolean),'Board acceptance failed; retain original and cleanup evidence.');return{groups,external,cleanup:[]};

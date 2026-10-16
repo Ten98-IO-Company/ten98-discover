@@ -1,3 +1,4 @@
+import {retentionCoverage} from '../lib/analytics-comparison';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {useLocation} from '@tanstack/react-router';
 import {z} from 'zod';
@@ -27,7 +28,7 @@ function paramsFrom(draft:AttributionDraft):{qs:string}|{error:string}{
  if(p.toString().length>attributionLimits.queryCharacters||!draftFrom(p.toString()))return{error:'Check the attribution dates, filters and typed conversion.'};return{qs:p.toString()};
 }
 const number=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),nullable=number.nullable(),time=z.string().refine(value=>Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value);
-const coverage=z.object({status:z.enum(['complete','partial','unavailable']),retainedFrom:time.nullable()}).strict();
+const coverage=z.object({status:z.enum(['complete','partial','unavailable']),retainedFrom:z.union([time,z.iso.datetime({precision:6})]).nullable()}).strict();
 const range=z.object({from:z.string(),to:z.string(),timeZone:z.string().max(80),start:time,end:time}).strict();
 const item=z.object({id:z.uuid(),projectId:z.uuid(),revision:number.min(1).max(2147483647),definition:z.object({schemaVersion:z.literal(1),name:z.string().max(200),query:z.string().max(20000)}).strict(),createdAt:time,updatedAt:time}).strict();
 const predicateMethodSchema=z.object({version:z.literal('native-flat-predicates-v1'),requiredFilters:z.literal('all'),fieldMatch:z.enum(['all','any']),propertyMatch:z.literal('all'),textSearch:z.literal('postgresql-lower-literal'),regex:z.literal('postgresql-case-insensitive'),dateComparison:z.literal('calendar-day-in-scope-timezone'),sessionPropertyMatch:z.literal('all').optional(),sessionPropertyValues:z.literal('current-retained-at-report-snapshot').optional()}).strict();
@@ -44,7 +45,7 @@ const resultSchema=z.object({version:z.literal('native-attribution-v1'),projectI
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 const utf8=new TextEncoder();
 function byteCompare(a:string,b:string){const x=utf8.encode(a),y=utf8.encode(b);for(let i=0;i<Math.min(x.length,y.length);i++)if(x[i]!==y[i])return x[i]-y[i];return x.length-y.length;}
-const validCoverage=(r:AttributionResult['range'],c:AttributionResult['coverage'])=>c.status===(c.retainedFrom===null||r.start>=c.retainedFrom?'complete':r.end<=c.retainedFrom?'unavailable':'partial');
+const validCoverage=(r:AttributionResult['range'],c:AttributionResult['coverage'])=>c.status===retentionCoverage(r.start,r.end,c.retainedFrom).status;
 export function readAttributionResult(value:unknown,queryString:string,projectId:string):AttributionResult{
  const draft=draftFrom(queryString),parsed=resultSchema.safeParse(value);const fail=():never=>{throw Error('The attribution response could not be verified. Refresh the applied scope.');};if(!draft||!parsed.success)return fail();
  const data=parsed.data as AttributionResult,q=data.query,m=data.measurement,unavailable=data.selection.status==='unavailable';

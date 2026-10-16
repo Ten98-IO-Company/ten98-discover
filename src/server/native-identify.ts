@@ -24,14 +24,14 @@ export async function collectIdentify(request:Request,input:IdentifyInput,peerAd
     await client.query('SELECT id FROM project WHERE public_key=$1 FOR UPDATE',[input.siteKey]);
     const {project,userAgent,reason}=await nativeCollectionPolicy(client,request,input.siteKey,input,'identify');
     if(reason){await client.query('COMMIT');return {accepted:false,reason};}
-    const state=(await client.query(project.analytics_settings.linkIdentities===true?
+    const state=(await client.query(
       `SELECT c.instant AS now,w.raw_analytics_days AS days,to_char(c.instant AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at
-       FROM workspace w JOIN project p ON p.workspace_id=w.id CROSS JOIN (SELECT clock_timestamp() AS instant) c WHERE p.id=$1`:
-      'SELECT clock_timestamp() AS now,w.raw_analytics_days AS days FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1',[project.id])).rows[0];
+       FROM workspace w JOIN project p ON p.workspace_id=w.id CROSS JOIN (SELECT clock_timestamp() AS instant) c WHERE p.id=$1`,
+      [project.id])).rows[0];
     const now=state.now as Date,sentAt=new Date(input.sentAt),expiresAt=new Date(sentAt.getTime()+86_400_000);
     if(sentAt.getTime()>now.getTime()+300_000)throw new FoundationError(400,'Check the identify request timestamp.');
     if(now>=expiresAt)throw new IdentifyRequestExpired();
-    const identity=analyticsIdentity({projectId:project.id,ip:resolveAnalyticsNetwork(request,peerAddress),userAgent,distinctId:input.dimensions?.distinctId,context:input.context,now});
+    const identity=analyticsIdentity({projectId:project.id,ip:resolveAnalyticsNetwork(request,peerAddress),userAgent,distinctId:input.dimensions?.distinctId,context:input.context,epoch:project.analytics_epoch,now});
     if(!identity){await client.query('COMMIT');return {accepted:false,reason:'identity_unavailable'};}
     const {dimensions:_,...operation}=input;
     const operationHash=createHmac('sha256',getConfig().authSecret).update(JSON.stringify(['ten98.identify.receipt.v1',identity.visitor,canonicalHash(operation)])).digest('hex');
@@ -51,9 +51,9 @@ export async function collectIdentify(request:Request,input:IdentifyInput,peerAd
     if(count>50)throw new FoundationError(400,'A visitor key can retain at most 50 session properties.');
     await client.query(`INSERT INTO analytics_session_property(project_id,visitor_key,property_key,property,updated_at)
       SELECT $1,$2,key,value,$4 FROM jsonb_each($3::jsonb)
-      ON CONFLICT(project_id,visitor_key,property_key) DO UPDATE SET property=excluded.property,updated_at=excluded.updated_at`,[project.id,identity.visitor,JSON.stringify(input.properties),now]);
+      ON CONFLICT(project_id,visitor_key,property_key) DO UPDATE SET property=excluded.property,updated_at=excluded.updated_at`,[project.id,identity.visitor,JSON.stringify(input.properties),state.accepted_at]);
     await client.query(`INSERT INTO analytics_identify_receipt(project_id,request_id,visitor_key,operation_hash,sent_at,expires_at,accepted_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7)`,[project.id,input.requestId,identity.visitor,operationHash,sentAt,expiresAt,now]);
+      VALUES($1,$2,$3,$4,$5,$6,$7)`,[project.id,input.requestId,identity.visitor,operationHash,sentAt,expiresAt,state.accepted_at]);
     await client.query('COMMIT');return {accepted:true,duplicate:false,context:identity.context};
   }catch(error){await client.query('ROLLBACK').catch(()=>{});if((error as {code?:string})?.code==='57014')throw new FoundationError(503,'Identify processing took too long. The outcome may be unknown.');throw error;}
   finally{client.release();}

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
 import { Route as ShareSlugRouteImport } from './routes/share/$slug'
+import { Route as ShareBoardsSlugRouteImport } from './routes/share/boards/$slug'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,35 +29,44 @@ const ShareSlugRoute = ShareSlugRouteImport.update({
   path: '/share/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShareBoardsSlugRoute = ShareBoardsSlugRouteImport.update({
+  id: '/share/boards/$slug',
+  path: '/share/boards/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/$': typeof ApiSplatRoute
   '/share/$slug': typeof ShareSlugRoute
+  '/share/boards/$slug': typeof ShareBoardsSlugRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/$': typeof ApiSplatRoute
   '/share/$slug': typeof ShareSlugRoute
+  '/share/boards/$slug': typeof ShareBoardsSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/$': typeof ApiSplatRoute
   '/share/$slug': typeof ShareSlugRoute
+  '/share/boards/$slug': typeof ShareBoardsSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/$' | '/share/$slug'
+  fullPaths: '/' | '/api/$' | '/share/$slug' | '/share/boards/$slug'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/$' | '/share/$slug'
-  id: '__root__' | '/' | '/api/$' | '/share/$slug'
+  to: '/' | '/api/$' | '/share/$slug' | '/share/boards/$slug'
+  id: '__root__' | '/' | '/api/$' | '/share/$slug' | '/share/boards/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiSplatRoute: typeof ApiSplatRoute
   ShareSlugRoute: typeof ShareSlugRoute
+  ShareBoardsSlugRoute: typeof ShareBoardsSlugRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShareSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/share/boards/$slug': {
+      id: '/share/boards/$slug'
+      path: '/share/boards/$slug'
+      fullPath: '/share/boards/$slug'
+      preLoaderRoute: typeof ShareBoardsSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiSplatRoute: ApiSplatRoute,
   ShareSlugRoute: ShareSlugRoute,
+  ShareBoardsSlugRoute: ShareBoardsSlugRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

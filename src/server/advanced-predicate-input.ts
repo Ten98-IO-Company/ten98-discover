@@ -6,7 +6,7 @@ import {cleanText} from './context-input.ts';
 import {InputError} from './validation.ts';
 import {geographyFields,parseGeographyKey,type GeoField} from '../lib/analytics-geography.ts';
 
-export const predicateFields=['eventName','path','origin','referrer','language','browser','os','device','country','region','city','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent'] as const;
+export const predicateFields=['eventName','path','origin','referrer','language','browser','os','device','country','region','city','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','hostname','screen','channel'] as const;
 type Field=typeof predicateFields[number];
 type Presence='exists'|'missing';
 type Equality='eq'|'neq';

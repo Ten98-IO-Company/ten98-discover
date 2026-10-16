@@ -86,7 +86,7 @@ export async function projectAttribution(projectId:string,authority:SessionReadA
     COALESCE((SELECT json_agg(json_build_object('value',value,'credits',credits) ORDER BY credits DESC,value COLLATE "C") FROM ranked r WHERE r.field=f.field AND ordinal<=20),'[]') AS rows
     FROM dimension_fields f)
    SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT valid FROM key_authority) AS key_valid,
-    (SELECT analytics_retained_from FROM target) AS retained_from,(SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,(SELECT as_of FROM attribution_clock) AS as_of,
+    (SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,(SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,(SELECT as_of FROM attribution_clock) AS as_of,
     ${sessionAware?`(SELECT json_build_object('asOf',as_of,'cutoff',cutoff,'lostAt',lost_at,'expiredValuesPresent',expired_values_present) FROM session_context)`:'null'} AS session_context,
     ${reportCandidates?`(SELECT json_build_object('identified',count(visitor_id),'unidentified',count(*) FILTER(WHERE visitor_id IS NULL)) FROM ${reportCandidates})`:'null'} AS report_candidates,
     ${qualificationCandidates?`(SELECT json_build_object('identified',count(visitor_id),'unidentified',count(*) FILTER(WHERE visitor_id IS NULL)) FROM ${qualificationCandidates})`:'null'} AS qualification_candidates,

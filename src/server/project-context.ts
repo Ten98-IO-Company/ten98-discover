@@ -7,11 +7,12 @@ import {getDatabase} from './db.ts';
 import {canonicalHash,contextHost,contextPatch,parse,sectionKeys,type CitationPublisherCategory} from './context-input.ts';
 
 export type ContentProject={id:string;name:string;origin:string;role:'owner'|'admin'|'editor'|'viewer'};
-export async function withContentProject<T>(projectId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,project:ContentProject)=>Promise<T>,promptApiToken?:string):Promise<T> {
+export async function withContentProject<T>(projectId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,project:ContentProject)=>Promise<T>,promptApiToken?:string,nativeRead=false):Promise<T> {
   const pid=parse(z.uuid(),projectId),uid=parse(z.uuid(),userId),client=await getDatabase().pool.connect();
   try {
     // Prompt bearer calls opt into fresh statement snapshots. Other content callers keep their existing gate.
-    await client.query(promptApiToken!==undefined?'BEGIN ISOLATION LEVEL READ COMMITTED':write?'BEGIN':'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await client.query(promptApiToken!==undefined||nativeRead?'BEGIN ISOLATION LEVEL READ COMMITTED':write?'BEGIN':'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    if(nativeRead)await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");
     let promptWorkspace:string|undefined;
     if(promptApiToken!==undefined) {
       await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");
@@ -20,11 +21,12 @@ export async function withContentProject<T>(projectId:unknown,userId:unknown,wri
       if(!promptWorkspace)throw new FoundationError(404,'Project not found or unavailable.');
       const authority=await authorizeApiKey(promptApiToken,promptWorkspace,write?'prompts:write':'prompts:read',client);
       if(authority.userId!==uid)throw new FoundationError(404,'Project not found or unavailable.');
-    } else if(write) {
-      await client.query('SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR UPDATE OF w',[pid]);
+    } else if(write||nativeRead) {
+      await client.query(`SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR ${write?'UPDATE':'SHARE'} OF w`,[pid]);
+
     }
     const found=await client.query<ContentProject>(`SELECT p.id,p.name,p.origin,m.role FROM project p JOIN membership m ON m.workspace_id=p.workspace_id
-      WHERE p.id=$1 AND m.user_id=$2 ${write?'FOR UPDATE OF p':''}`,[pid,uid]);
+      WHERE p.id=$1 AND m.user_id=$2 ${write?'FOR UPDATE OF p':nativeRead?'FOR SHARE OF p':''}`,[pid,uid]);
     const project=found.rows[0];
     if(!project||(write&&!['owner','admin','editor'].includes(project.role))) throw new FoundationError(404,'Project not found or unavailable.');
     const result=await work(client,project);

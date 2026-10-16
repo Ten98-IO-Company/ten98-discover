@@ -1,3 +1,4 @@
+import {retentionCoverage} from './analytics-comparison.ts';
 import {z} from 'zod';
 import type {SessionPopulationQuery} from '../server/session-explorer-input.ts';
 import type {CohortReport,SessionPropertyScope} from '../server/analytics-population.ts';
@@ -37,7 +38,7 @@ export function retentionCell(row:Pick<RetentionRow,'date'|'cohortKeys'|'calenda
 
 const text=(max:number)=>z.string().max(max).refine(value=>!value.includes('\0')&&!/[\uD800-\uDFFF]/u.test(value));
 const count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),stamp=z.iso.datetime({offset:false}),day=z.iso.date(),coverage=z.enum(['complete','partial','unavailable']);
-const fields=['eventName','path','origin','referrer','language','browser','os','device','country','region','city','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent'] as const;
+const fields=['eventName','path','origin','referrer','language','browser','os','device','country','region','city','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','hostname','screen','channel'] as const;
 const property=z.object({key:text(320).min(1),type:z.enum(['string','number','boolean','null','date','array','missing']),value:z.unknown()}).strict();
 const query=z.object({month:z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/),timeZone:text(80),kind:z.enum(['all','pageviews','custom']),filters:z.partialRecord(z.enum(fields),text(2048)),property:property.nullable(),predicates:z.unknown().optional(),cohort:z.object({id:z.uuid(),revision:count.positive().max(2147483647)}).strict().optional()}).strict();
 const evidence=z.object({lost:z.boolean(),lostAt:stamp.nullable(),expiredValuesPresent:z.boolean()}).strict();
@@ -53,7 +54,7 @@ export function readRetentionReport(value:unknown,expected:RetentionQuery,projec
   const fail=():never=>{throw new Error('The retention report could not be verified. Reload this report.');};
   const parsed=schema.safeParse(value);if(!parsed.success)return fail();const v=parsed.data as unknown as RetentionReport;
   if(new TextEncoder().encode(JSON.stringify(value)).length>retentionLimits.json||new TextEncoder().encode(v.csv).length>retentionLimits.csv||!v.csv.startsWith(`"Report","${retentionReportVersion}"\r\n`)||!v.csv.endsWith('\r\n')||(v.csv.match(/^"\d{4}-\d{2}-\d{2}",/gm)||[]).length!==v.rows.length*10||v.projectId!==projectId||JSON.stringify(v.query)!==JSON.stringify(expected)||v.range.from!==expected.month+'-01'||v.range.to!==new Date(Date.UTC(Number(expected.month.slice(0,4)),Number(expected.month.slice(5)),0)).toISOString().slice(0,10)||v.rows.length!==Number(v.range.to.slice(-2))||JSON.stringify(v.offsets)!==JSON.stringify(retentionOffsets)||Date.parse(v.range.start)>Date.parse(v.range.observedEnd)||Date.parse(v.range.observedEnd)!==Math.min(Date.parse(v.range.end),Date.parse(v.asOf)))return fail();
-  const coverageAt=(start:string,end:string)=>v.coverage.retainedFrom===null||Date.parse(start)>=Date.parse(v.coverage.retainedFrom)?'complete':Date.parse(end)<=Date.parse(v.coverage.retainedFrom)?'unavailable':'partial';
+  const coverageAt=(start:string,end:string)=>retentionCoverage(start,end,v.coverage.retainedFrom).status;
   if(v.coverage.status!==coverageAt(v.range.start,v.range.end)||v.cohort&&(!expected.cohort||v.cohort.item.projectId!==projectId||v.cohort.item.id!==expected.cohort.id||v.cohort.item.revision!==expected.cohort.revision)||!!expected.cohort!==!!v.cohort||!!expected.predicates?.sessionProperties?.length!==!!v.sessionProperties)return fail();
   const reason:Reason=v.coverage.status==='unavailable'?'history-unavailable':v.cohort?.membership.status==='unavailable'?'cohort-unavailable':v.sessionProperties?.selection.status==='unavailable'?'session-property-unavailable':v.identity.entryEvents!==null&&v.identity.entryEvents>0&&v.identity.keyedEntryEvents===0?'identity-unavailable':null;
   const assignment=reason?'unavailable':v.coverage.status==='partial'||v.cohort?.coverage.status==='partial'||v.sessionProperties?.selection.countsAreLowerBounds||v.cohort?.membership.countsAreLowerBounds?'retained-only':'complete',suppressed=reason!==null&&reason!=='identity-unavailable';

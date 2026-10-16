@@ -17,7 +17,7 @@ const property=z.discriminatedUnion('type',[
 ]);
 const properties=z.record(text(320).min(1),property).refine(value=>Object.keys(value).length<=50);
 const range=z.object({from:text(10),to:text(10),timeZone:text(80),start:stamp,end:stamp}).strict();
-const coverage=z.object({status:z.enum(['complete','partial','unavailable']),retainedFrom:stamp.nullable()}).strict();
+const coverage=z.object({status:z.enum(['complete','partial','unavailable']),retainedFrom:instant.nullable()}).strict();
 const evidence=z.object({lost:z.boolean(),lostAt:stamp.nullable(),expiredValuesPresent:z.boolean()}).strict().refine(value=>value.lost===(value.lostAt!==null||value.expiredValuesPresent));
 const ref=z.object({id:uuid,revision:count.positive().max(2147483647)}).strict();
 const queryProperty=z.object({key:text(320).min(1),type:text(20),value:z.unknown()}).strict().refine(value=>value.type==='missing'?value.value===null:property.safeParse({type:value.type,value:value.value}).success);

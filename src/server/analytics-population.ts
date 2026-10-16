@@ -1,4 +1,4 @@
-import {analyticsCalendarSql,analyticsScopeSql,analyticsScopeValues,analyticsRevenuePeriodScopeSql} from './analytics-scope.ts';
+import {analyticsCalendarSql,analyticsScopeSql,analyticsScopeValues,analyticsRevenuePeriodScopeSql,boardShareAnalyticsScopeSql,type BoardShareReadContext} from './analytics-scope.ts';
 import {advancedPredicateSql,advancedPredicateMethod,sessionPredicateSql} from './advanced-predicates.ts';
 import {retentionCoverage} from './retention.ts';
 import type {explorerQuery} from './explorer-input.ts';
@@ -49,10 +49,11 @@ const qualificationSql=analyticsScopeSql.replace(/\$(\d+)\b/g,(_,slot)=>`$${Numb
 const qualificationCalendarSql=analyticsCalendarSql.replace(/\$(\d+)\b/g,(_,slot)=>`$${Number(slot)+12}`);
 export type AnalyticsPopulation={ctes:string;values:unknown[];population:'scope'|'report_scope'|'filtered_report';sessionAware:boolean;
   reportCandidates:'report_candidates'|null;qualificationCandidates:'qualification_candidates'|null};
-export function analyticsPopulation(projectId:string,userId:string,report:Query,qualification:Query|null,includeCurrentProperties:boolean,eventBefore?:string|null,mode?:'revenue-comparison'):AnalyticsPopulation{
+export function analyticsPopulation(projectId:string,userId:string,report:Query,qualification:Query|null,includeCurrentProperties:boolean,eventBefore?:string|null,mode?:'revenue-comparison',share?:BoardShareReadContext):AnalyticsPopulation{
+  if(share&&(qualification||includeCurrentProperties||mode||report.cohort||report.predicates))throw new Error('Board sharing accepts only its exact approved native card scope.');
   const reportSession=!!report.predicates?.sessionProperties?.length,qualificationSession=!!qualification?.predicates?.sessionProperties?.length;
   const paged=eventBefore!==undefined,sessionAware=includeCurrentProperties||reportSession||qualificationSession||paged;
-  const values=[...analyticsScopeValues(projectId,userId,report),report.groupBy,report.groupProperty,...(qualification?analyticsScopeValues(projectId,userId,qualification):[])];
+  const values=[...analyticsScopeValues(projectId,share?JSON.stringify(share):userId,report),report.groupBy,report.groupProperty,...(qualification?analyticsScopeValues(projectId,userId,qualification):[])];
   const bind=(value:unknown)=>{values.push(value);return `$${values.length}`;};
   let reportPredicate=advancedPredicateSql(report.predicates,bind,report.timeZone),qualificationPredicate=advancedPredicateSql(qualification?.predicates,bind,qualification?.timeZone??report.timeZone);
   const reportSessionPredicate=sessionPredicateSql(report.predicates?.sessionProperties,bind,report.timeZone),qualificationSessionPredicate=sessionPredicateSql(qualification?.predicates?.sessionProperties,bind,qualification?.timeZone??report.timeZone);
@@ -73,6 +74,6 @@ export function analyticsPopulation(projectId:string,userId:string,report:Query,
   const advancedSql=reportSession?`, report_candidates AS MATERIALIZED (SELECT s.* FROM ${basePopulation} s WHERE ${reportPredicate}),
     filtered_report AS MATERIALIZED (SELECT s.* FROM report_candidates s WHERE ${reportSessionPredicate})`:
     report.predicates||paged?`, filtered_report AS MATERIALIZED (SELECT s.* FROM ${basePopulation} s WHERE ${reportPredicate})`:'';
-  return {ctes:`${mode==='revenue-comparison'?analyticsRevenuePeriodScopeSql:analyticsScopeSql}, report_arguments AS MATERIALIZED (SELECT $11::text AS group_by,$12::text AS group_property)${sessionSql}${pageSql}${cohortSql}${advancedSql}`,
+  return {ctes:`${share?boardShareAnalyticsScopeSql:mode==='revenue-comparison'?analyticsRevenuePeriodScopeSql:analyticsScopeSql}, report_arguments AS MATERIALIZED (SELECT $11::text AS group_by,$12::text AS group_property)${sessionSql}${pageSql}${cohortSql}${advancedSql}`,
     values,population,sessionAware,reportCandidates:reportSession?'report_candidates':null,qualificationCandidates:qualificationSession?'qualification_candidates':null};
 }

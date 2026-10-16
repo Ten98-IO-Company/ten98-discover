@@ -1,6 +1,7 @@
+import type {BoardShareReadContext} from './analytics-scope.ts';
 import type {PoolClient} from 'pg';
 import type {BoardActivityResult,BoardDimensionResult,BoardSummaryResult} from '../lib/boards.ts';
-import {revenueChannelRules} from '../lib/revenue.ts';
+import {recordedDimensionSql} from './analytics-dimensions.ts';
 import {FoundationError} from './auth.ts';
 import {analyticsPopulation} from './analytics-population.ts';
 import {analyticsSummarySql,hideAnalyticsSummary} from './analytics.ts';
@@ -9,10 +10,10 @@ import type {explorerQuery} from './explorer-input.ts';
 import {retentionCoverage} from './retention.ts';
 
 // Called inside the board's current-membership workspace SHARE gate. No new capture or rollup.
-export async function boardActivity(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>,profile:BoardActivityResult['profile'],limit=10):Promise<BoardActivityResult>{
+export async function boardActivity(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>,profile:BoardActivityResult['profile'],limit=10,share?:BoardShareReadContext):Promise<BoardActivityResult>{
  if(query.cohort||query.predicates)throw new FoundationError(400,'Board activity supports exact field and typed event-property filters.');
  if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[query.timeZone])).rowCount)throw new FoundationError(400,'The database does not support this timezone.');
- const selected={...query,kind:profile==='events'?'custom':'pageviews'}, {ctes,values,population}=analyticsPopulation(projectId,userId,selected,null,false);
+ const selected={...query,kind:profile==='events'?'custom':'pageviews'}, {ctes,values,population}=analyticsPopulation(projectId,userId,selected,null,false,undefined,undefined,share);
  values.push(limit);const take='$'+values.length;
  const counts=(alias:string)=>`jsonb_build_object('events',count(${alias}.id),'identifiedEvents',count(${alias}.visitor_id),'unidentifiedEvents',count(${alias}.id) FILTER(WHERE ${alias}.visitor_id IS NULL),'estimatedVisitors',CASE WHEN count(${alias}.visitor_id)>0 THEN count(DISTINCT ${alias}.visitor_id) END)`;
  const row=(await client.query(`${ctes}, daily_counts AS (
@@ -23,7 +24,7 @@ export async function boardActivity(client:PoolClient,projectId:string,userId:st
   ), event_names AS MATERIALIZED (SELECT event_name,count(*) AS events FROM ${population} GROUP BY event_name),
   ranked AS MATERIALIZED (SELECT * FROM event_names ORDER BY events DESC,event_name COLLATE "C" LIMIT ${take}),
   event_days AS (SELECT event_name,(received_at AT TIME ZONE $5)::date AS day,count(*) AS events FROM ${population} GROUP BY 1,2)
-  SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT analytics_retained_from FROM target) AS retained_from,
+  SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,
    (SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,(SELECT ${counts('s')} FROM ${population} s) AS totals,
    (SELECT json_agg(json_build_object('date',to_char(c.day,'YYYY-MM-DD'),'start',c.start,'end',c.finish,'events',COALESCE(d.events,0),'identifiedEvents',COALESCE(d.identified,0),'unidentifiedEvents',COALESCE(d.events-d.identified,0),'estimatedVisitors',CASE WHEN d.identified>0 THEN d.visitors END) ORDER BY c.day)
     FROM calendar c LEFT JOIN daily_counts d ON d.day=c.day::date WHERE c.finish IS NOT NULL) AS daily,
@@ -51,13 +52,12 @@ export async function boardActivity(client:PoolClient,projectId:string,userId:st
 // The existing workspace gate owns current authority/policy and the 5s SQL timeout.
 // Filters qualify visits; boundaries use every retained pageview in the requested window.
 // ponytail: scan complete qualified visits, not the bounded journey reader; partition only if measured SQL cost requires it.
-export async function boardDimension(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>,dimension:BoardDimensionResult['dimension'],limit:number):Promise<BoardDimensionResult>{
+export async function boardDimension(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>,dimension:BoardDimensionResult['dimension'],limit:number,share?:BoardShareReadContext):Promise<BoardDimensionResult>{
  if(query.cohort||query.predicates)throw new FoundationError(400,'Board dimensions support exact field and typed event-property filters.');
  if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[query.timeZone])).rowCount)throw new FoundationError(400,'The database does not support this timezone.');
- const {ctes,values,population}=analyticsPopulation(projectId,userId,{...query,kind:'pageviews'},null,false),boundary=dimension==='entry'||dimension==='exit';
+ const {ctes,values,population}=analyticsPopulation(projectId,userId,{...query,kind:'pageviews'},null,false,undefined,undefined,share),boundary=dimension==='entry'||dimension==='exit';
  values.push(limit);const take='$'+values.length;
- const channel="CASE "+revenueChannelRules.map(([name,tokens])=>"WHEN lower(s.dimensions->'campaign'->>'medium')=ANY(ARRAY["+tokens.map(token=>"'"+token+"'").join(',')+"])THEN '"+name+"'").join(' ')+" WHEN NULLIF(s.dimensions->'campaign'->>'medium','')IS NOT NULL OR NULLIF(s.dimensions->'campaign'->>'source','')IS NOT NULL THEN 'other_tagged' WHEN NULLIF(s.dimensions->>'referrerHost','')IS NOT NULL THEN 'referrer_only' ELSE 'not_recorded' END";
- const key=dimension==='hostname'?`substring(s.dimensions->>'origin' from '^https?://(\\[[0-9a-f:.]+\\]|[a-z0-9.-]+)(?::[0-9]{1,5})?$')`:channel;
+ const key=recordedDimensionSql(dimension==='hostname'?'hostname':'channel','s');
  const row=(await client.query(`${ctes}, qualified_visits AS MATERIALIZED(
    SELECT DISTINCT visitor_id,visit_id FROM ${population} WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL
   )${boundary?`, retained_visit_pages AS MATERIALIZED(
@@ -78,7 +78,7 @@ export async function boardDimension(client:PoolClient,projectId:string,userId:s
   grouped AS MATERIALIZED(SELECT key,count(*) AS units,count(visitor_id) AS identified,
    CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END AS visitors FROM units GROUP BY key),
   ranked AS(SELECT * FROM grouped ORDER BY units DESC,key COLLATE "C" NULLS FIRST LIMIT ${take})
-  SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT analytics_retained_from FROM target) AS retained_from,
+  SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,
    (SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,
    (SELECT json_build_object('units',count(*),'identifiedUnits',count(visitor_id),'unidentifiedUnits',count(*)FILTER(WHERE visitor_id IS NULL),
     'estimatedVisitors',CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END) FROM units) AS totals,
@@ -102,14 +102,14 @@ export async function boardDimension(client:PoolClient,projectId:string,userId:s
  return result;
 }
 // Same selected-pageview arithmetic and whole-window custom-event suppression as Analytics.
-export async function boardSummary(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>):Promise<BoardSummaryResult>{
+export async function boardSummary(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>,share?:BoardShareReadContext):Promise<BoardSummaryResult>{
  if(query.cohort||query.predicates)throw new FoundationError(400,'Board summaries support exact field and typed event-property filters.');
  if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[query.timeZone])).rowCount)throw new FoundationError(400,'The database does not support this timezone.');
- const {ctes,values,population}=analyticsPopulation(projectId,userId,{...query,kind:'all'},null,false);
+ const {ctes,values,population}=analyticsPopulation(projectId,userId,{...query,kind:'all'},null,false,undefined,undefined,share);
  const row=(await client.query<{allowed:boolean;retained_from:string|null;start:Date;finish:Date;summary:Pick<BoardSummaryResult,'totals'|'measurement'>}>(`${ctes},
   custom_visits AS MATERIALIZED(${analyticsCustomVisitsSql('(SELECT start FROM bounds)','(SELECT finish FROM bounds)',"(e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date")}),
   observations AS MATERIALIZED(SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM ${population} s LEFT JOIN custom_visits c USING(visitor_id,visit_id)),${analyticsSummarySql.visits}
-  SELECT EXISTS(SELECT 1 FROM target)AS allowed,(SELECT analytics_retained_from::text FROM target)AS retained_from,
+  SELECT EXISTS(SELECT 1 FROM target)AS allowed,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target)AS retained_from,
    (SELECT start FROM bounds)AS start,(SELECT finish FROM bounds)AS finish,
    json_build_object('totals',${analyticsSummarySql.totals},'measurement',${analyticsSummarySql.measurement})AS summary FROM observations`,values)).rows[0];
  if(!row.allowed)throw new FoundationError(404,'Project not found or unavailable.');

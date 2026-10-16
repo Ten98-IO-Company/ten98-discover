@@ -9,6 +9,7 @@ import { claimInstallation, FoundationError, getAuth } from './auth.ts';
 import { enqueueProbe, reconcileProbes } from './jobs.ts';
 import { eventInput, InputError, projectInput, readJson } from './validation.ts';
 import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
+import {getAnalyticsReset,resetAnalytics} from './analytics-reset.ts';
 import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
@@ -25,7 +26,7 @@ import { exploreAnalytics } from './explorer.ts';
 import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
 import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
 import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
-import {listBoards,getBoard,saveBoard,cloneBoard,deleteBoard,readBoardCard,previewBoardCard} from './boards.ts';
+import {listBoards,getBoard,saveBoard,cloneBoard,deleteBoard,readBoardCard,previewBoardCard,listBoardShares,getBoardShare,createBoardShare,publishBoardShare,revokeBoardShare,getPublicBoardManifest,readPublicBoardCard} from './boards.ts';
 import {boardLimits} from '../lib/boards.ts';
 import {listCohorts,getCohort,saveCohort,deleteCohort} from './cohorts.ts';
 import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
@@ -80,8 +81,8 @@ import {nativeOpenApi} from './openapi.ts';
 import {beginSessionReplay,uploadSessionReplay,listSessionReplays,getSessionReplay} from './session-replay.ts';
 import {replayBegin,replayUpload} from '../lib/session-replay.ts';
 import {handleTrackedAssetPublic,handleTrackedAssets} from './tracked-assets.ts';
-import {beginHeatmap,collectHeatmap,projectHeatmaps,listSavedReplays,getSavedReplay,saveReplay} from './replay-heatmaps.ts';
-import {heatmapBegin,heatmapBatch} from '../lib/replay-heatmaps.ts';
+import {associateHeatmapBackground,getHeatmapBackground,beginHeatmap,collectHeatmap,projectHeatmaps,listSavedReplays,getSavedReplay,saveReplay} from './replay-heatmaps.ts';
+import {heatmapBegin,heatmapBatch,heatmapBackgroundUpload} from '../lib/replay-heatmaps.ts';
 
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
@@ -144,6 +145,21 @@ export async function handleApi(request: Request): Promise<Response> {
     const trackedPublic=await handleTrackedAssetPublic(request,limit);
     if(trackedPublic)return trackedPublic;
     if(path==='/api/mcp')return await (await import('./mcp.ts')).handleMcp(request,config.appUrl,limit);
+    // Public board capability is independent of ambient browser cookies; never resolve a session here.
+    const publicBoard=path.match(new RegExp('^/api/board-shares/('+id+')/(manifest|cards/('+id+')/read)$','i'));
+    if(publicBoard){
+      if(request.headers.has('authorization')||request.headers.has('x-api-key'))throw new FoundationError(403,'Use only the board share capability.');
+      if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Shared board reads do not accept query parameters.');
+      const cardId=publicBoard[3],method=cardId?'POST':'GET';
+      if(request.method!==method)return json({error:'Method not allowed.'},405,{allow:method});
+      const token=request.headers.get('x-ten98-board-share');
+      if(!token||!/^[A-Za-z0-9_-]{43}$(?![\s\S])/.test(token)||Buffer.from(token,'base64url').toString('base64url')!==token)throw new FoundationError(404,'Board share not found or unavailable.');
+      const origin=request.headers.get('origin');if(origin!==null&&origin!==config.appUrl||request.headers.get('sec-fetch-site')==='cross-site')throw new FoundationError(403,'Open this share on its hosted installation.');
+      if(cardId&&origin!==config.appUrl)throw new FoundationError(403,'This read must originate from the application.');
+      if(!cardId&&(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0'))throw new FoundationError(400,'The shared manifest does not accept a body.');
+      await limit('board-share:'+publicBoard[1].toLowerCase()+':read',120);
+      return json(cardId?await readPublicBoardCard(publicBoard[1],token,cardId,await readJson(request,51200)):await getPublicBoardManifest(publicBoard[1],token),200,{'referrer-policy':'no-referrer','x-robots-tag':'noindex, nofollow'});
+    }
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
@@ -178,7 +194,7 @@ export async function handleApi(request: Request): Promise<Response> {
       const { rows } = await getDatabase().pool.query("SELECT claimed FROM installation WHERE id='instance'");
       return json({ configured: rows[0]?.claimed === true, appUrl: config.appUrl });
     }
-    if (path === '/api/collect' || path === '/api/tracking-config' || path === '/api/replay/begin' || path === '/api/replay/chunks'||path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches') {
+    if (path === '/api/collect' || path === '/api/tracking-config' || path === '/api/replay/begin' || path === '/api/replay/chunks'||path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches'||path==='/api/heatmaps/backgrounds') {
       const origin = request.headers.get('origin');
       if (!origin) throw new FoundationError(403, 'A configured website origin is required.');
       await limit('collector:global', 6000);
@@ -186,10 +202,10 @@ export async function handleApi(request: Request): Promise<Response> {
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405, cors);
-      if(path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches'){
+      if(path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches'||path==='/api/heatmaps/backgrounds'){
         if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Heatmap collection has no query parameters.');
-        const begin=path.endsWith('/begin'),raw=await readJson(request,begin?8192:32768),input=begin?heatmapBegin.parse(raw):heatmapBatch.parse(raw);await limit(`heatmap:${input.siteKey}`,3000);
-        return json(begin?await beginHeatmap(request,input):await collectHeatmap(request,input),202,cors);
+        const begin=path.endsWith('/begin'),background=path.endsWith('/backgrounds'),raw=await readJson(request,background?4096:begin?8192:32768),input=background?heatmapBackgroundUpload.parse(raw):begin?heatmapBegin.parse(raw):heatmapBatch.parse(raw);await limit(`heatmap:${input.siteKey}`,3000);
+        return json(background?await associateHeatmapBackground(request,input):begin?await beginHeatmap(request,input):await collectHeatmap(request,input),202,cors);
       }
       if(path==='/api/replay/begin'||path==='/api/replay/chunks'){
         if(url.search)throw new FoundationError(400,'Replay collection has no query parameters.');
@@ -276,6 +292,19 @@ export async function handleApi(request: Request): Promise<Response> {
     const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
     const trackedResponse=await handleTrackedAssets(request,user.id,limit);
     if(trackedResponse)return trackedResponse;
+    const boardShareManagement=path.match(new RegExp('^/api/workspaces/('+id+')/boards/('+id+')/shares(?:/('+id+')(?:/(publish|revoke))?)?$','i'));
+    if(boardShareManagement){
+      if(request.url.includes('#')||request.method!=='GET'&&request.url.includes('?'))throw new FoundationError(400,'Board share changes do not accept query parameters.');
+      await limit('board-shares:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?120:30);
+      if(request.method==='GET'&&!boardShareManagement[4]){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Share management reads do not accept a body.');
+        if(boardShareManagement[3]){if(request.url.includes('?'))throw new FoundationError(400,'Share point reads have no query.');return json(await getBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],boardShareManagement[3]));}
+        return json(await listBoardShares(boardShareManagement[1],user.id,boardShareManagement[2],url.search.slice(1)));
+      }
+      if(request.method!=='POST'||boardShareManagement[3]&&!boardShareManagement[4])return json({error:'Method not allowed.'},405);
+      const body=await readJson(request,51200);
+      return json(!boardShareManagement[3]?await createBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],body):boardShareManagement[4]==='publish'?await publishBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],boardShareManagement[3],body):await revokeBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],boardShareManagement[3],body));
+    }
     const boardPreviewRoute=path.match(new RegExp('^/api/workspaces/('+id+')/boards/preview$','i'));
     if(boardPreviewRoute){
       if(request.method!=='POST')return json({error:'Method not allowed.'},405);
@@ -329,6 +358,12 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET'){if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Saved replay reads do not accept a body.');if(savedReplayRoute[3]&&request.url.includes('?'))throw new FoundationError(400,'Saved replay point reads have no query.');if(request.url.includes('#'))throw new FoundationError(400,'Saved replay reads have no fragment.');return json(savedReplayRoute[3]?await getSavedReplay(savedReplayRoute[1],user.id,savedReplayRoute[3]):await listSavedReplays(savedReplayRoute[1],user.id,url.search.slice(1)));}
       if(request.method==='POST'&&savedReplayRoute[3]){if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Saved replay writes have no query.');return json(await saveReplay(savedReplayRoute[1],user.id,savedReplayRoute[3],await readJson(request,8192)));}
       return json({error:'Method not allowed.'},405);
+    }
+    const backgroundRoute=path.match(new RegExp('^/api/projects/('+id+')/heatmaps/background$','i'));
+    if(backgroundRoute){
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(request.url.includes('#')||request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Background reads require supported query filters and no body.');
+      await limit('heatmap-read:'+user.id,60);return json(await getHeatmapBackground(backgroundRoute[1],user.id,url.search.slice(1)));
     }
     const heatmapRoute=path.match(new RegExp('^/api/projects/('+id+')/heatmaps$','i'));
     if(heatmapRoute){if(request.method!=='GET')return json({error:'Method not allowed.'},405);if(request.url.includes('#')||request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Heatmap reads require supported query filters and no body.');await limit('heatmap-read:'+user.id,60);return json(await projectHeatmaps(heatmapRoute[1],user.id,url.search.slice(1)));}
@@ -826,6 +861,14 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method or parameters not allowed.'},405);
     }
+    const resetRoute=path.match(new RegExp(`^/api/projects/(${id})/analytics-reset$`,'i'));
+    if(resetRoute){
+      if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Reset analytics has no query parameters.');
+      await limit(`analytics-reset:${user.id}`,20);
+      if(request.method==='GET'){if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Reset status does not accept a body.');return json(await getAnalyticsReset(resetRoute[1],user.id));}
+      if(request.method==='POST')return json(await resetAnalytics(resetRoute[1],user.id,await readJson(request,1024)));
+      return json({error:'Method not allowed.'},405,{allow:'GET, POST'});
+    }
     const analyticsSettingsRoute = path.match(new RegExp(`^/api/projects/(${id})/analytics-settings$`, 'i'));
     if (analyticsSettingsRoute) {
       await limit(`analytics-settings:${user.id}`, 60);
@@ -1020,14 +1063,23 @@ export async function handleApi(request: Request): Promise<Response> {
         return json(result);
       }
       if (request.method === 'GET' && match[2] === 'events') {
-        const { rows } = await getDatabase().pool.query(`WITH retained AS MATERIALIZED (
+        const client=await getDatabase().pool.connect();
+        try{
+        await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");
+        await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[target.workspace_id]);
+        await client.query('SELECT id FROM project WHERE id=$1 FOR SHARE',[match[1]]);
+        if(!(await client.query('SELECT 1 FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1 AND p.workspace_id=$3',[match[1],user.id,target.workspace_id])).rowCount)throw new FoundationError(404,'Project not found or unavailable.');
+        if(apiToken)await authorizeApiKey(apiToken,target.workspace_id,'analytics:read',client);
+        const { rows } = await client.query(`WITH retained AS MATERIALIZED (
           SELECT e.*,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN project p ON p.id=e.project_id WHERE p.id=$1
             AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
         ), recent AS (SELECT id,event_name AS "eventName",path,origin,received_at AS "receivedAt" FROM retained ORDER BY received_at DESC,id DESC LIMIT 50)
         SELECT (SELECT analytics_retained_from FROM project WHERE id=$1) AS "retainedFrom",(SELECT count(*) FROM retained) AS total,
           COALESCE((SELECT json_agg(recent ORDER BY "receivedAt" DESC,id DESC) FROM recent),'[]'::json) AS events`, [match[1]]);
-        if (apiToken) await authorizeApiKey(apiToken, target.workspace_id, 'analytics:read');
+        if (apiToken) await authorizeApiKey(apiToken, target.workspace_id, 'analytics:read',client);
+        await client.query('COMMIT');
         return json({ ...rows[0], total: Number(rows[0].total) });
+        }catch(error){await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'Events are busy. Reload the current project.');throw error;}finally{client.release();}
       }
       if (request.method === 'GET' && match[2] === 'jobs') {
         await reconcileProbes(match[1]);

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {randomUUID,webcrypto} from 'node:crypto';
+import {randomUUID,webcrypto,createHash} from 'node:crypto';
 import vm from 'node:vm';
-import {heatmapBatch,heatmapBegin,heatmapLimits} from '../src/lib/replay-heatmaps.ts';
+import {heatmapBatch,heatmapBegin,heatmapLimits,heatmapBackgroundUpload} from '../src/lib/replay-heatmaps.ts';
 
 const tracker=readFileSync(new URL('../public/tracker.js',import.meta.url),'utf8'),coordinator=readFileSync(new URL('../public/destinations.js',import.meta.url),'utf8');
 const site='11111111-1111-4111-8111-111111111111',epoch='33333333-3333-4333-8333-333333333333',collector='https://analytics.example',page='https://site.example';
@@ -12,9 +12,9 @@ const denied={analytics:false,advertising:false,adUserData:false,adPersonalizati
 // native Edge calibration is evidence for the coordinate formula, not this VM.
 type Handler=(event:any)=>void;
 type Post={url:string;body:string;input:any;options:any};
-function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknown;privacy?:boolean;direction?:'ltr'|'rtl';sampled?:boolean}={}){
+function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknown;privacy?:boolean;direction?:'ltr'|'rtl';sampled?:boolean;replay?:boolean}={}){
   const windows=new Map<string,Set<Handler>>(),documents=new Map<string,Set<Handler>>(),timers=new Map<number,{fn:()=>void;delay:number;interval:boolean}>(),storage=new Map<string,string>(),scripts:any[]=[],posts:Post[]=[];
-  let time=0,wall=Date.parse('2026-10-16T00:00:00.000Z'),timerId=0,configEpoch=epoch;
+  let replayEmit:((v:unknown)=>void)|undefined,takeSnapshots=0;const replayStorage=new Map<string,string>(),recordingId=randomUUID();let time=0,wall=Date.parse('2026-10-16T00:00:00.000Z'),timerId=0,configEpoch=epoch;
   class Clock extends Date{constructor(value?:string|number){super(value===undefined?wall:value);}static now(){return wall;}}
   const root={scrollWidth:1200,scrollHeight:2400,clientWidth:320,clientHeight:600},style={direction:options.direction??'ltr',writingMode:'horizontal-tb',zoom:'1'};
   const add=(map:Map<string,Set<Handler>>,type:string,fn:Handler)=>{if(!map.has(type))map.set(type,new Set());map.get(type)!.add(fn);};
@@ -23,12 +23,12 @@ function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknow
   const history={pushState(_state:unknown,_title:string,url:string){const next=new URL(url,location.href);location.pathname=next.pathname;location.search=next.search;location.hash=next.hash;},replaceState(_state:unknown,_title:string,url:string){this.pushState(_state,_title,url);}};
   const document:any={currentScript:{src:collector+'/tracker.js',getAttribute:(name:string)=>name==='data-site-key'?site:name==='data-environment'?'live':null},referrer:'',scrollingElement:root,
     addEventListener:(type:string,fn:Handler)=>add(documents,type,fn),removeEventListener:(type:string,fn:Handler)=>remove(documents,type,fn),
-    createElement:()=>({}),querySelectorAll:()=>scripts,head:{appendChild(script:any){scripts.push(script);return script;}},
+    createElement:()=>options.replay?{setAttribute(){},remove(){}}:{},querySelectorAll:()=>scripts,head:{appendChild(script:any){scripts.push(script);return script;}},
     get cookie():never{return assert.fail('Heatmaps must not inspect cookies.');},get body():never{return assert.fail('Heatmaps must not read body content or CSS zoom.');}};
   const response=(input:unknown,status=202)=>new Response(JSON.stringify(input),{status});
-  const flags={begin:null as null|((post:Post)=>Promise<Response>|Response),batch:null as null|((post:Post)=>Promise<Response>|Response),config:null as null|Record<string,unknown>};
-  const settings:Record<string,unknown>={enabled:true,collectionMode:options.mode??'consent-first',consentMode:'external',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:['/private'],...(options.heatmap===undefined?{heatmap:{enabled:true,sampleRate:options.sampled===false?0:1}}:{heatmap:options.heatmap})};
-  const sandbox:any={document,location,history,origin:page,URL,Intl,Date:Clock,AbortController,TextEncoder,TextDecoder,ReadableStream,crypto:{randomUUID,getRandomValues:webcrypto.getRandomValues.bind(webcrypto)},
+  const flags={begin:null as null|((post:Post)=>Promise<Response>|Response),batch:null as null|((post:Post)=>Promise<Response>|Response),config:null as null|Record<string,unknown>,replayHold:false,replayHeld:[] as Array<()=>void>,background:null as null|((post:Post)=>Promise<Response>|Response)};
+  const settings:Record<string,unknown>={...options.replay?{replay:{enabled:true,sampleRate:1,maskLevel:'strict',maxDurationMs:300000,blockSelector:''}}:{},enabled:true,collectionMode:options.mode??'consent-first',consentMode:'external',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:['/private'],...(options.heatmap===undefined?{heatmap:{enabled:true,sampleRate:options.sampled===false?0:1}}:{heatmap:options.heatmap})};
+  const sandbox:any={document,location,history,origin:page,URL,Intl,Date:Clock,AbortController,TextEncoder,TextDecoder,ReadableStream,crypto:{randomUUID,getRandomValues:webcrypto.getRandomValues.bind(webcrypto),...options.replay?{subtle:{async digest(_name:string,data:Uint8Array){return Uint8Array.from(createHash('sha256').update(data).digest()).buffer;}}}:{}},
     navigator:{globalPrivacyControl:!!options.privacy,language:'en'},performance:{timeOrigin:wall,now:()=>time},scrollX:options.direction==='rtl'?-880:0,scrollY:0,
     visualViewport:{scale:1,offsetLeft:0,offsetTop:0},getComputedStyle:(element:unknown)=>{assert.equal(element,root);return style;},console:{warn(){}},
     setTimeout(fn:()=>void,delay:number){timers.set(++timerId,{fn,delay,interval:false});return timerId;},clearTimeout:(id:number)=>timers.delete(id),
@@ -36,7 +36,7 @@ function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknow
     addEventListener:(type:string,fn:Handler)=>add(windows,type,fn),removeEventListener:(type:string,fn:Handler)=>remove(windows,type,fn),dispatchEvent(event:any){for(const fn of [...windows.get(event.type)??[]])fn(event);},
     CustomEvent:class{type:string;detail:unknown;constructor(type:string,init:any){this.type=type;this.detail=init.detail;}},
     localStorage:{getItem:(key:string)=>storage.get(key)??null,setItem:(key:string,value:string)=>storage.set(key,value),removeItem:(key:string)=>storage.delete(key)},
-    get sessionStorage():never{return assert.fail('Numeric heatmaps must not persist capabilities or points in browser storage.');},
+    get sessionStorage(){if(options.replay)return{getItem:(key:string)=>replayStorage.get(key)??null,setItem:(key:string,value:string)=>replayStorage.set(key,value),removeItem:(key:string)=>replayStorage.delete(key)};return assert.fail('Numeric heatmaps must not persist capabilities or points in browser storage.');},
     fetch(url:string,init:any){
       assert.equal(new URL(url).origin,collector,'The VM must never contact another origin.');
       const post={url,body:init.body,input:JSON.parse(init.body),options:init};posts.push(post);
@@ -47,14 +47,17 @@ function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknow
         if(flags.begin)return Promise.resolve(flags.begin(post));
         return Promise.resolve(response({accepted:options.sampled!==false,reason:options.sampled===false?'not_sampled':null,captureId:randomUUID(),token:options.sampled===false?null:'synthetic-'+randomUUID()+'.'+'a'.repeat(64),createdAt:new Date(wall).toISOString(),deadlineAt:new Date(wall+300000).toISOString(),uploadUntil:new Date(wall+360000).toISOString(),settings:{enabled:true,sampleRate:options.sampled===false?0:1},limits:heatmapLimits}));
       }
+      if(options.replay&&url===collector+'/api/replay/begin')return Promise.resolve(response({accepted:true,reason:null,recordingId,token:'eyJ0cnVlIjp0cnVlfQ.'+'b'.repeat(64),createdAt:new Date(wall).toISOString(),deadlineAt:new Date(wall+300000).toISOString(),uploadUntil:new Date(wall+360000).toISOString(),settings:settings.replay,limits:{chunkBytes:262144,eventsPerChunk:200,chunks:1024,recordingBytes:67108864,eventBytes:4194304,fragmentParts:64,depth:64,nodes:20000,drainMs:60000,pageSize:20,chunkPageSize:4}}));
+      if(options.replay&&url===collector+'/api/replay/chunks'){const bytes=Buffer.from(post.input.data,'base64url'),sha256=createHash('sha256').update(Buffer.concat([Buffer.from(post.input.sequence+':'+post.input.final+':'),bytes])).digest('hex'),ack=()=>response({accepted:true,duplicate:false,recordingId,sequence:post.input.sequence,sha256,complete:post.input.final});return flags.replayHold?new Promise<Response>(resolve=>flags.replayHeld.push(()=>resolve(ack()))):Promise.resolve(ack());}
+      if(options.replay&&url===collector+'/api/heatmaps/backgrounds'){heatmapBackgroundUpload.parse(post.input);return Promise.resolve(flags.background?flags.background(post):response({accepted:true,duplicate:false,requestId:post.input.requestId}));}
       assert.equal(url,collector+'/api/heatmaps/batches');heatmapBatch.parse(post.input);
       return Promise.resolve(flags.batch?flags.batch(post):response({accepted:true,duplicate:false,requestId:post.input.requestId}));
     }};
-  sandbox.window=sandbox;
+  if(options.replay)sandbox.btoa=(text:string)=>Buffer.from(text,'binary').toString('base64');sandbox.window=sandbox;
   const context=vm.createContext(sandbox),local=(input:unknown)=>vm.runInContext(`JSON.parse(${JSON.stringify(JSON.stringify(input))})`,context);
   const drain=async()=>{for(let i=0;i<60;i++)await Promise.resolve();};
   const run=async()=>{vm.runInContext(tracker,context,{filename:'tracker.js'});assert.equal(scripts.length,1);vm.runInContext(coordinator,context,{filename:'destinations.js'});await drain();};
-  const grant=async(value=analytics)=>{const result=sandbox.ten98.consent(local(value),local({siteKey:site,environment:'live',acknowledgeReload:true}));await drain();return result;};
+  const grant=async(value:typeof analytics&{replay?:boolean}=analytics)=>{const result=sandbox.ten98.consent(local(value),local({siteKey:site,environment:'live',acknowledgeReload:true}));await drain();return result;};
   const fire=(map:Map<string,Set<Handler>>,type:string,event:any)=>{for(const fn of [...map.get(type)??[]])fn({type,...event});};
   const click=async(x=40,y=80,extra:Record<string,unknown>={})=>{fire(documents,'click',{isTrusted:true,button:0,detail:1,clientX:x,clientY:y,target:null,...extra});await drain();};
   const scroll=async(x:number,y:number,target:unknown=document)=>{sandbox.scrollX=x;sandbox.scrollY=y;fire(windows,'scroll',{isTrusted:true,target});await drain();};
@@ -68,6 +71,16 @@ function environment(options:{mode?:'cookieless'|'consent-first';heatmap?:unknow
     async refresh(){await runTimers(30000);},
     resetIdentity(){return sandbox.ten98.resetIdentity(local({siteKey:site,environment:'live'}));},
     async pulse(){await runTimers(2000);},
+    backgrounds:()=>posts.filter(p=>p.url.endsWith('/api/heatmaps/backgrounds')),
+    replayChunks:()=>posts.filter(p=>p.url.endsWith('/api/replay/chunks')),
+    takeSnapshots:()=>takeSnapshots,
+    async loadReplay(snapshotText='***'){
+      assert.equal(options.replay,true);const script=scripts.find(s=>s.src?.endsWith('/replay.js'));assert.ok(script);
+      const emit=()=>{assert.ok(replayEmit);replayEmit(local({type:4,timestamp:wall,data:{href:page+location.pathname,width:root.clientWidth,height:root.clientHeight}}));replayEmit(local({type:2,timestamp:wall+1,data:{node:{type:0,id:1,childNodes:[{type:3,id:2,textContent:snapshotText}]},initialOffset:{left:0,top:0}}}));};
+      sandbox.__ten98FoundationHub.startReplayRecorder=Object.assign((_settings:unknown,callback:(v:unknown)=>void)=>{replayEmit=callback;emit();return()=>{};},{protocolVersion:1});
+      sandbox.__ten98FoundationHub.takeReplaySnapshot=Object.assign(()=>{takeSnapshots++;emit();return true;},{protocolVersion:1});script.onload();await drain();
+    },
+    async releaseReplay(){flags.replayHold=false;for(const done of flags.replayHeld.splice(0))done();await drain();},
     response,
   };
 }
@@ -126,4 +139,19 @@ test('one sampled capture has a fixed five-minute observation window and sixty-s
   e.advance(1);await e.runTimers(300000);assert.equal(e.batches().length,1);assert.equal(e.batches()[0].input.observations.length,1);e.advance(1);await e.click();assert.equal(e.state().heatmapCapture.parts.length,0);assert.equal(e.begin().length,1);
   await e.refresh();e.advance(59999);await e.runTimers(60000);assert.equal(e.batches()[0].options.signal.aborted,true);release(e.response({accepted:true,duplicate:false,requestId:e.batches()[0].input.requestId}));await e.drain();assert.equal(e.batches().length,1);assert.equal(e.state().heatmapCapture.active,false);
   const retry=environment();await retry.run();await retry.grant();retry.flags.batch=()=>new Promise(()=>{});await retry.click();await retry.pulse();await retry.runTimers(5000);assert.equal(retry.batches().length,2);assert.equal(retry.batches()[0].body,retry.batches()[1].body);await retry.runTimers(5000);assert.equal(retry.state().heatmapCapture.active,false);
+});
+
+// Synthetic VM callbacks/ACKs exercise coordinator causality only; real rrweb/Edge proof is a separate required gate.
+test('historical links wait for both real code paths ACKs and each new accepted geometry requests only one current snapshot',async()=>{
+ const e=environment({replay:true});await e.run();await e.grant({...analytics,replay:true});await e.loadReplay();let release!:(response:Response)=>void;
+ e.flags.batch=()=>new Promise(resolve=>{release=resolve;});await e.click();await e.pulse();assert.equal(e.backgrounds().length,0,'No geometry ACK means no link even when replay chunks are acknowledged');
+ e.flags.batch=null;release(e.response({accepted:true,duplicate:false,requestId:e.batches()[0].input.requestId}));await e.drain();assert.equal(e.backgrounds().length,1);const first=e.backgrounds()[0];assert.equal(first.input.batchRequestId,e.batches()[0].input.requestId);assert.equal(first.input.meta.kind,'event');assert.equal(first.input.snapshot.kind,'event');assert.equal('data'in first.input,false);assert.equal('replayOffsetMs'in first.input,false);
+ e.root.scrollHeight+=100;await e.click();await e.pulse();await e.pulse();await e.drain();assert.equal(e.takeSnapshots(),1,'A new acknowledged layout uses the actual adapter checkout seam once');assert.equal(e.backgrounds().length,2);assert.notEqual(e.backgrounds()[1].input.geometryKey,first.input.geometryKey);await e.click();await e.pulse();assert.equal(e.takeSnapshots(),1);assert.equal(e.backgrounds().length,2);
+});
+
+test('fragment links wait for every chunk ACK; withdrawal and optional association loss cannot send stale references or stop numeric collection',async()=>{
+ const e=environment({replay:true});await e.run();await e.grant({...analytics,replay:true});e.flags.replayHold=true;await e.loadReplay('*'.repeat(760000));await e.click();await e.pulse();assert.equal(e.backgrounds().length,0);
+ await e.releaseReplay();for(let i=0;i<8;i++)await e.drain();assert.equal(e.backgrounds().length,1);assert.equal(e.backgrounds()[0].input.snapshot.kind,'fragment');assert.ok(e.replayChunks().length>=5);
+ const revoked=environment({replay:true});await revoked.run();await revoked.grant({...analytics,replay:true});revoked.flags.replayHold=true;await revoked.loadReplay();await revoked.click();await revoked.pulse();await revoked.grant(analytics);await revoked.releaseReplay();assert.equal(revoked.backgrounds().length,0,'A late accepted replay response after withdrawal cannot create an association');
+ const optional=environment({replay:true});await optional.run();await optional.grant({...analytics,replay:true});await optional.loadReplay();optional.flags.background=()=>optional.response({accepted:true,duplicate:false,requestId:randomUUID()});await optional.click();await optional.pulse();await optional.drain();assert.equal(optional.backgrounds().length,2,'Optional association retries at most the same request twice');assert.equal(optional.backgrounds()[0].body,optional.backgrounds()[1].body);assert.equal(optional.state().heatmapCapture.active,true);await optional.click();await optional.pulse();assert.equal(optional.batches().length,2,'Numeric collection survives optional association uncertainty');
 });

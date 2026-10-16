@@ -5,7 +5,7 @@ import {analyticsEnvironment} from '../src/server/analytics-environment.ts';
 import {environmentVersion} from '../src/lib/analytics-environment.ts';
 
 test('linked activity accepts a skipped local calendar day and still rejects reversed UTC bounds',async()=>{
-  const server=await createServer({configFile:false,cacheDir:'private/linked-client-check-'+process.pid,appType:'custom',server:{middlewareMode:true,hmr:false,watch:null}});
+  const server=await createServer({configFile:false,cacheDir:'private/linked-client-check-'+process.pid,appType:'custom',ssr:{external:true},server:{host:'127.0.0.1',middlewareMode:true,hmr:false,ws:false,watch:null}});
   try{
     const {readLinkedActivityResponse}=await server.ssrLoadModule('/src/lib/session-explorer.ts');
     const project='10000000-0000-4000-8000-000000000001',visitor='a'.repeat(64);
@@ -27,7 +27,7 @@ test('linked activity accepts a skipped local calendar day and still rejects rev
 });
 
 test('native session and linked activity preserve bounded server environment, sparse historical metadata and long referrer hosts',async()=>{
-  const server=await createServer({configFile:false,cacheDir:'private/session-environment-client-'+process.pid,appType:'custom',server:{middlewareMode:true,hmr:false,watch:null}});
+  const server=await createServer({configFile:false,cacheDir:'private/session-environment-client-'+process.pid,appType:'custom',ssr:{external:true},server:{host:'127.0.0.1',middlewareMode:true,hmr:false,ws:false,watch:null}});
   try{
     const {readSessionResponse,readLinkedActivityResponse}=await server.ssrLoadModule('/src/lib/session-explorer.ts');
     const project='10000000-0000-4000-8000-000000000001',visitor='a'.repeat(64),visit='b'.repeat(64),params=new URLSearchParams({from:'2026-10-14',to:'2026-10-14',timeZone:'UTC'});

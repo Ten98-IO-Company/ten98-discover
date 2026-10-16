@@ -53,7 +53,7 @@ export async function projectRetentionReport(projectId:string,authority:SessionR
       returns AS (SELECT cohort_day,day,count(*) AS keys FROM key_days GROUP BY cohort_day,day)
       SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT valid FROM key_authority) AS key_valid,
         (SELECT m.role FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1) AS role,
-        (SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,(SELECT analytics_retained_from FROM target) AS retained_from,
+        (SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,
         ${stamp('c.as_of')} AS clock,json_build_object('asOf',c.as_of,'cutoff',c.cutoff,'lostAt',c.lost_at,'expiredValuesPresent',c.expired_values_present) AS session_context,
         ${reportCandidates?`(SELECT json_build_object('identified',count(visitor_id),'unidentified',count(*) FILTER(WHERE visitor_id IS NULL)) FROM ${reportCandidates})`:'null'} AS report_candidates,
         ${qualificationCandidates?`(SELECT json_build_object('identified',count(visitor_id),'unidentified',count(*) FILTER(WHERE visitor_id IS NULL)) FROM ${qualificationCandidates})`:'null'} AS qualification_candidates,

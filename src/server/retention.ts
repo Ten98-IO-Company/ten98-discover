@@ -201,11 +201,7 @@ export async function saveRetention(workspaceId: string, userId: string, raw: un
   finally { client.release(); }
 }
 
-export function retentionCoverage(start: string, end: string, retainedFrom: string | Date | null) {
-  const boundary = retainedFrom === null ? null : new Date(retainedFrom).toISOString();
-  return { status: boundary === null || Date.parse(start) >= Date.parse(boundary) ? 'complete' as const :
-    Date.parse(end) <= Date.parse(boundary) ? 'unavailable' as const : 'partial' as const, retainedFrom: boundary };
-}
+export {retentionCoverage} from '../lib/analytics-comparison.ts';
 
 // ponytail: one short workspace/project transaction per tick suits the single-host worker.
 // Add measured concurrency/partitioning only when this bounded pass cannot keep up.
@@ -224,15 +220,16 @@ export async function runRetentionBatch(projectId?: string) {
     await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE', [selected]);
     // Fresh statement after both gates: collection/settings may have committed while we waited.
     const { rows } = await client.query(`SELECT p.retention_cutoff,p.retention_policy_revision,w.retention_revision,
-      clock_timestamp()-w.raw_analytics_days*interval '24 hours' AS cutoff,
-      GREATEST(p.replay_retained_from,clock_timestamp()-w.replay_days*interval '24 hours') AS replay_cutoff,
+      to_char((clock_timestamp()-w.raw_analytics_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff,
+      to_char(GREATEST(p.analytics_retained_from,CASE WHEN p.retention_policy_revision=w.retention_revision AND p.retention_cutoff IS NOT NULL THEN p.retention_cutoff ELSE clock_timestamp()-w.raw_analytics_days*interval '24 hours' END) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS native_cutoff,
+      to_char(GREATEST(p.replay_retained_from,clock_timestamp()-w.replay_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS replay_cutoff,
       clock_timestamp()-w.derived_history_days*interval '24 hours' AS derived_cutoff,
-      clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' AS raw_evidence_cutoff,clock_timestamp() AS profile_as_of,
+      clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' AS raw_evidence_cutoff,to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS profile_as_of,
       to_char((statement_timestamp()-w.raw_analytics_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS link_cutoff,
       to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS link_as_of
       FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.id=$1`, [selected]);
     const state = rows[0];
-    const cutoff = state.retention_policy_revision === state.retention_revision && state.retention_cutoff ? state.retention_cutoff : state.cutoff;
+    const cutoff = state.native_cutoff as string; // Native erasure watermark never becomes a provider-history cutoff.
     const deleted = await client.query(`WITH expired AS (
       SELECT id FROM event WHERE project_id=$1 AND received_at<$2 ORDER BY received_at,id LIMIT 1000 FOR UPDATE
     ) DELETE FROM event e USING expired WHERE e.project_id=$1 AND e.id=expired.id RETURNING e.visitor_id`, [selected, cutoff]);
@@ -263,13 +260,21 @@ export async function runRetentionBatch(projectId?: string) {
     // Each batch is <=32KiB;64 rows add at most2MiB to the existing bounded pass.
     const heatmapBatches=await client.query(`WITH expired AS(SELECT h.request_id FROM heatmap_batch h JOIN project p ON p.id=h.project_id WHERE h.project_id=$1 AND h.received_at<GREATEST(p.analytics_retained_from,$2::timestamptz) ORDER BY h.received_at,h.request_id LIMIT 64 FOR UPDATE OF h)DELETE FROM heatmap_batch h USING expired e WHERE h.project_id=$1 AND h.request_id=e.request_id`,[selected,cutoff]);
     const heatmapPaths=await client.query(`WITH expired AS(SELECT c.id FROM heatmap_capture c JOIN project p ON p.id=c.project_id WHERE c.project_id=$1 AND c.path IS NOT NULL AND c.created_at<GREATEST(p.analytics_retained_from,$2::timestamptz) ORDER BY c.created_at,c.id LIMIT 1000 FOR UPDATE OF c)UPDATE heatmap_capture c SET path=NULL FROM expired e WHERE c.project_id=$1 AND c.id=e.id`,[selected,cutoff]);
+    // Reference metadata has no independent lifetime and never keeps either source alive.
+    const heatmapBackgrounds=await client.query(`WITH expired AS(
+      SELECT b.project_id,b.capture_id,b.geometry_key FROM heatmap_background b JOIN session_recording r ON r.project_id=b.project_id AND r.id=b.recording_id
+      JOIN heatmap_capture h ON h.project_id=b.project_id AND h.id=b.capture_id
+      WHERE b.project_id=$1 AND(r.created_at<$2 OR r.entry_path IS NULL OR h.path IS NULL)
+      ORDER BY b.accepted_at,b.capture_id,b.geometry_key LIMIT 64 FOR UPDATE OF b
+      )DELETE FROM heatmap_background b USING expired e WHERE b.project_id=e.project_id AND b.capture_id=e.capture_id AND b.geometry_key=e.geometry_key`,[selected,state.replay_cutoff]);
+    const heatmapBackgroundPending=(await client.query(`SELECT EXISTS(SELECT 1 FROM heatmap_background b JOIN session_recording r ON r.project_id=b.project_id AND r.id=b.recording_id JOIN heatmap_capture h ON h.project_id=b.project_id AND h.id=b.capture_id WHERE b.project_id=$1 AND(r.created_at<$2 OR r.entry_path IS NULL OR h.path IS NULL))AS pending`,[selected,state.replay_cutoff])).rows[0].pending;
     const heatmapCaptures=await client.query(`WITH expired AS(SELECT c.id FROM heatmap_capture c WHERE c.project_id=$1 AND c.created_at<LEAST($2::timestamptz,$3::timestamptz)AND c.path IS NULL AND NOT EXISTS(SELECT 1 FROM heatmap_batch b WHERE b.project_id=c.project_id AND b.capture_id=c.id)ORDER BY c.created_at,c.id LIMIT 1000 FOR UPDATE)DELETE FROM heatmap_capture c USING expired e WHERE c.project_id=$1 AND c.id=e.id`,[selected,cutoff,state.derived_cutoff]);
     const heatmapPending=(await client.query(`SELECT EXISTS(SELECT 1 FROM heatmap_batch h JOIN project p ON p.id=h.project_id WHERE h.project_id=$1 AND h.received_at<GREATEST(p.analytics_retained_from,$2::timestamptz))OR EXISTS(SELECT 1 FROM heatmap_capture c JOIN project p ON p.id=c.project_id WHERE c.project_id=$1 AND(c.created_at<LEAST($2::timestamptz,$3::timestamptz)OR(c.path IS NOT NULL AND c.created_at<GREATEST(p.analytics_retained_from,$2::timestamptz))))AS pending`,[selected,cutoff,state.derived_cutoff])).rows[0].pending;
     const affected = [...new Set(deleted.rows.map(row => row.visitor_id).filter(Boolean))];
     if (affected.length) {
       await client.query(`UPDATE analytics_visitor v SET (first_seen_at,last_seen_at)=(
-        SELECT min(received_at),max(received_at) FROM event WHERE project_id=v.project_id AND visitor_id=v.id)
-        WHERE v.project_id=$1 AND v.id=ANY($2::text[]) AND EXISTS(SELECT 1 FROM event WHERE project_id=v.project_id AND visitor_id=v.id)`, [selected, affected]);
+        SELECT min(received_at),max(received_at) FROM event WHERE project_id=v.project_id AND visitor_id=v.id AND received_at>=$3::timestamptz)
+        WHERE v.project_id=$1 AND v.id=ANY($2::text[]) AND EXISTS(SELECT 1 FROM event WHERE project_id=v.project_id AND visitor_id=v.id AND received_at>=$3::timestamptz)`, [selected, affected,cutoff]);
     }
     const removedVisitors = await client.query(`WITH expired AS (
       SELECT v.id FROM analytics_visitor v WHERE v.project_id=$1 AND v.last_seen_at<$2
@@ -280,7 +285,7 @@ export async function runRetentionBatch(projectId?: string) {
       OR EXISTS(SELECT 1 FROM web_performance WHERE project_id=$1 AND created_at<$2)
       OR EXISTS(SELECT 1 FROM analytics_visitor v WHERE v.project_id=$1 AND v.last_seen_at<$2
         AND NOT EXISTS(SELECT 1 FROM event e WHERE e.project_id=v.project_id AND e.visitor_id=v.id)) AS pending`, [selected, cutoff]);
-    const profiles=await expireSessionProperties(client,selected!,state.cutoff,state.profile_as_of);
+    const profiles=await expireSessionProperties(client,selected!,cutoff,state.profile_as_of);
     const links=await expireIdentityLinks(client,selected!,state.link_cutoff,state.link_as_of);
     const imported = await expireGoogleImportPages(client, selected!, state.derived_cutoff);
     const keywords = await expireKeywordResults(client, selected!, state.derived_cutoff);
@@ -292,13 +297,13 @@ export async function runRetentionBatch(projectId?: string) {
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
     const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
     const ranks = await expireRankData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
-    const complete = !heatmapPending && !replayPending && !domainResearch.pending && !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
+    const complete = !heatmapBackgroundPending && !heatmapPending && !replayPending && !domainResearch.pending && !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
-    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedPerformance:performance.rowCount??0,deletedHeatmapBatches:heatmapBatches.rowCount??0,clearedHeatmapPaths:heatmapPaths.rowCount??0,deletedHeatmapCaptures:heatmapCaptures.rowCount??0, clearedReplayPaths:replayPaths.rowCount??0,clearedReplayMetadata:replayMetadata.rowCount??0,deletedReplayChunks:replayChunks.rowCount??0,deletedReplayRecordings:replayRecordings.rowCount??0,deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedPerformance:performance.rowCount??0,deletedHeatmapBackgrounds:heatmapBackgrounds.rowCount??0,deletedHeatmapBatches:heatmapBatches.rowCount??0,clearedHeatmapPaths:heatmapPaths.rowCount??0,deletedHeatmapCaptures:heatmapCaptures.rowCount??0, clearedReplayPaths:replayPaths.rowCount??0,clearedReplayMetadata:replayMetadata.rowCount??0,deletedReplayChunks:replayChunks.rowCount??0,deletedReplayRecordings:replayRecordings.rowCount??0,deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
       expiredDomainResearchResults:domainResearch.expiredDomainResearchResults,
       expiredSuggestionResults:suggestions.expiredSuggestionResults,expiredSuggestionInputs:suggestions.expiredSuggestionInputs,
       expiredAiSearchResults:aiSearch.expiredAiSearchResults,expiredAiSearchInputs:aiSearch.expiredAiSearchInputs,expiredAiSearchQuotes:aiSearch.expiredAiSearchQuotes,

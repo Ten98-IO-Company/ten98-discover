@@ -1,5 +1,7 @@
 import {useEffect, useId, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
+import {AnalyticsResetPanel} from './AnalyticsResetPanel';
+import type {AnalyticsResetInput} from '../lib/analytics-reset';
 import type {GeographyReadiness} from '../lib/analytics-geography';
 import {defaultReplaySettings,replaySettings,type ReplaySettings} from '../lib/session-replay';
 import {defaultHeatmapSettings,heatmapSettings} from '../lib/replay-heatmaps';
@@ -35,6 +37,9 @@ interface Props {
   projectId: string;
   userId: string;
   onUnauthorized: () => void;
+  readOwner?:string;
+  readEnabled?:boolean;
+  isCurrent?:()=>boolean;
 }
 
 const MAX_PATHS = 50;
@@ -82,12 +87,15 @@ const NETWORK_COPY: Record<NetworkMode, string> = {
   proxy: 'Proxy: visitor estimates use a configured trusted proxy chain.',
 };
 
-export function AnalyticsSettingsPanel({projectId, userId, onUnauthorized}: Props) {
-  // Keyed remount: settings, drafts and in-flight requests can never cross project/user identities.
-  return <PanelInner key={`${projectId}:${userId}`} projectId={projectId} onUnauthorized={onUnauthorized} />;
+export function AnalyticsSettingsPanel({projectId,userId,onUnauthorized,readOwner='',readEnabled=true,isCurrent}:Props){
+  const identity=projectId+':'+userId,owner=JSON.stringify([identity,readOwner]),lease=useRef({owner,identity,enabled:readEnabled,epoch:0}),resetRequest=useRef<AnalyticsResetInput|null>(null);
+  if(lease.current.identity!==identity)resetRequest.current=null;
+  if(lease.current.owner!==owner||lease.current.enabled!==readEnabled)lease.current={owner,identity,enabled:readEnabled,epoch:lease.current.epoch+1};
+  const epoch=lease.current.epoch,current=()=>lease.current.epoch===epoch&&lease.current.owner===owner&&lease.current.enabled&&(isCurrent?.()??true);
+  return <PanelInner key={identity} projectId={projectId} userId={userId} onUnauthorized={onUnauthorized} authorityOwner={String(epoch)+':'+owner} isCurrent={current} resetRequest={resetRequest}/>;
 }
 
-function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthorized: () => void}) {
+function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,resetRequest}: {projectId:string;userId:string;onUnauthorized:()=>void;authorityOwner:string;isCurrent:()=>boolean;resetRequest:{current:AnalyticsResetInput|null}}) {
   const uid = useId();
   const [data, setData] = useState<Loaded | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);
@@ -99,6 +107,8 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
   const [conflict, setConflict] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
+  const [resetBusy,setResetBusy]=useState(false);
+  const [resetAccepted,setResetAccepted]=useState<string|null>(null);
   const [reloadTick, setReloadTick] = useState(0);
 
   const genRef = useRef(0);
@@ -107,6 +117,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
   const mountedRef = useRef(true);
   const saveCtrlRef = useRef<AbortController | null>(null);
   const unauthorizedRef = useRef(onUnauthorized);
+  const verifiedOwner=useRef(authorityOwner);
 
   unauthorizedRef.current = onUnauthorized;
 
@@ -122,6 +133,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
 
   // Initial GET and explicit Reload only; no background polling.
   useEffect(() => {
+    if(!isCurrent())return;
     let alive = true;
     const gen = ++genRef.current;
     const ctrl = new AbortController();
@@ -133,16 +145,16 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
     setSavedOk(false);
     api<Loaded>(url, {signal: ctrl.signal})
       .then((d) => {
-        if (!alive || ctrl.signal.aborted || gen !== genRef.current) return;
+        if (!alive || ctrl.signal.aborted || gen !== genRef.current || !isCurrent()) return;
         if(d.settings.replay!==undefined)replaySettings.parse(d.settings.replay);
         if(d.settings.heatmap!==undefined)heatmapSettings.parse(d.settings.heatmap);
-        setData({...d,geography:locationReadiness(d.geography)});
+        verifiedOwner.current=authorityOwner;setData({...d,geography:locationReadiness(d.geography)});
         setDraft(d.settings);
         setPathsText(d.settings.excludedPaths.join('\n'));
         setLoading(false);
       })
       .catch((e: unknown) => {
-        if (!alive || gen !== genRef.current || ctrl.signal.aborted) return;
+        if (!alive || gen !== genRef.current || ctrl.signal.aborted || !isCurrent()) return;
         setLoading(false);
         if (e instanceof ApiError) {
           if (e.status === 401) {
@@ -163,7 +175,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
       alive = false;
       ctrl.abort();
     };
-  }, [url, reloadTick]);
+  }, [url, reloadTick,authorityOwner]);
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     if (!lockRef.current && !readBusyRef.current) setDraft((d) => (d ? {...d, [key]: value} : d));
@@ -185,8 +197,8 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
   // ponytail: JSON.stringify dirty check; swap for a structural compare if settings ever grow nesting.
   const dirty = !!data && !!current && JSON.stringify(current) !== JSON.stringify(data.settings);
   const canEdit = data?.role === 'owner' || data?.role === 'admin';
-  const inputsDisabled = pending || loading || !canEdit;
-  const canSave = canEdit && dirty && pathErrors.length === 0 && !replayError && !heatmapError && !pending && !loading;
+  const inputsDisabled = pending || resetBusy || loading || !canEdit;
+  const canSave = canEdit && dirty && pathErrors.length === 0 && !replayError && !heatmapError && !pending && !resetBusy && !loading;
 
   const cancel = () => {
     if (!data || lockRef.current || readBusyRef.current) return;
@@ -197,7 +209,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
   };
 
   const save = async () => {
-    if (lockRef.current || readBusyRef.current || !canSave || !data || !current) return;
+    if (lockRef.current || readBusyRef.current || !canSave || !data || !current || !isCurrent()) return;
     lockRef.current = true; // synchronous mutation lock, held through state application
     const gen = ++genRef.current;
     const ctrl = new AbortController();
@@ -213,7 +225,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
         body: {revision: data.revision, settings: current},
         signal: ctrl.signal,
       });
-      if (!mountedRef.current || ctrl.signal.aborted || gen !== genRef.current) return;
+      if (!mountedRef.current || ctrl.signal.aborted || gen !== genRef.current || !isCurrent()) return;
       if(res.settings.replay!==undefined)replaySettings.parse(res.settings.replay);
       if(res.settings.heatmap!==undefined)heatmapSettings.parse(res.settings.heatmap);
       // Retain the last confirmed role/networkMode; no refetch after save.
@@ -222,7 +234,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
       setPathsText(res.settings.excludedPaths.join('\n'));
       setSavedOk(true);
     } catch (e) {
-      if (!mountedRef.current || gen !== genRef.current || ctrl.signal.aborted) return;
+      if (!mountedRef.current || gen !== genRef.current || ctrl.signal.aborted || !isCurrent()) return;
       if (e instanceof ApiError) {
         if (e.status === 401) {
           setData(null); setDraft(null);
@@ -247,6 +259,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
     }
   };
 
+  if(!isCurrent()||verifiedOwner.current!==authorityOwner)return <section className="card"><h2>Collection and privacy</h2><p>Loading current project access…</p></section>;
   if (hidden) {
     return (
       <section className="card">
@@ -532,6 +545,8 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
           </div>
         </div>
       )}
+      {resetAccepted===authorityOwner&&<p role="status">Reset accepted. Earlier analytics is unavailable. Any remaining stored-data cleanup continues in bounded background batches.</p>}
+      {canEdit&&<AnalyticsResetPanel projectId={projectId} userId={userId} authorityOwner={authorityOwner} isCurrent={isCurrent} pendingRequest={resetRequest} disabled={pending||loading||dirty} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onReset={()=>{if(isCurrent()){setResetAccepted(authorityOwner);reload();}}}/>}
     </section>
   );
 }

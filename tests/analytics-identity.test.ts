@@ -156,6 +156,7 @@ function apiClient(overrides: Record<string, unknown> = {}, inserted = true) {
   } };
   const client = { async query(sql: string, values: unknown[] = []) {
     if (sql.startsWith('SELECT * FROM project')) return { rows: [project], rowCount: 1 };
+    if (sql === `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`) return { rows: [{ at: '2026-01-01T00:00:00.000900Z' }], rowCount: 1 };
     if (sql.startsWith('INSERT INTO event')) { writes.push(values); return { rows: [], rowCount: inserted ? 1 : 0 }; }
     throw new Error('Unexpected database operation in API observation');
   } } as unknown as PoolClient;
@@ -176,6 +177,7 @@ test('API observations cannot impersonate a browser identity or retain disabled 
   assert.equal(fixture.writes.length, 1);
   const values = fixture.writes[0];
   assert.equal(values[3], '/welcome');
+  assert.equal(values[4], '2026-01-01T00:00:00.000900Z', 'API ingestion preserves the exact database acceptance timestamp.');
   assert.equal(values[5], null);
   assert.equal(values[6], null);
   assert.deepEqual(JSON.parse(values[7] as string), { plan: { type: 'string', value: 'basic' } });

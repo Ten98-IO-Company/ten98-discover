@@ -41,7 +41,7 @@ export async function runNativeIdentifyChecks(){
     // Every gate, mutation, receipt and retention query still executes against PostgreSQL.
     async function at<T>(now:Date,fn:()=>Promise<T>):Promise<T>{
       const connect=pool.connect.bind(pool);pool.connect=(async()=>{const client=await connect(),query=client.query.bind(client),release=client.release.bind(client);
-        client.query=(async(...args:any[])=>{const result=await (query as any)(...args);if(typeof args[0]==='string'&&args[0].startsWith('SELECT clock_timestamp() AS now,w.raw_analytics_days'))result.rows[0].now=now;return result;}) as typeof client.query;
+        client.query=(async(...args:any[])=>{const result=await (query as any)(...args);if(typeof args[0]==='string'&&args[0].startsWith('SELECT c.instant AS now,w.raw_analytics_days')){result.rows[0].now=now;result.rows[0].accepted_at=now.toISOString().replace('Z','000Z');}return result;}) as typeof client.query;
         client.release=((...args:any[])=>{client.query=query;release(...args);}) as typeof client.release;return client;}) as typeof pool.connect;
       try{return await fn();}finally{pool.connect=connect;}
     }

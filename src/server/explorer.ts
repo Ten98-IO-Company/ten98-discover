@@ -1,3 +1,4 @@
+import {boardShareSqlBudget} from './analytics-scope.ts';
 import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
 import { explorerQuery, explorerGroupingQuery, csvCell,type CompoundExplorerQuery,type ExplorerTupleAtom } from './explorer-input.ts';
@@ -17,12 +18,17 @@ type Group = {type:string;value:unknown;events:number;identifiedEvents:number;vi
 type Numeric = {samples:number;sum:string|null;average:string|null;min:string|null;max:string|null};
 type ExplorerGeographyProvenance=GeographyProvenance&{scope:'matching-report-events'};
 const usesGeography=(query:ReturnType<typeof explorerQuery>)=>geographyFields.includes(query.groupBy as GeoField)||geographyFields.some(field=>Object.hasOwn(query.filters,field))||!!query.predicates?.fields.some(filter=>geographyFields.includes(filter.field as GeoField));
-export async function exploreAnalytics(projectId:string,userId:string,params:URLSearchParams) {
+export async function exploreAnalytics(projectId:string,userId:string,params:URLSearchParams){return readExplorer(projectId,userId,params);}
+export async function readBoardShareExplorer(client:import('pg').PoolClient,context:import('./analytics-scope.ts').BoardShareReadContext,params:URLSearchParams){
+ const grouped=explorerGroupingQuery(params);if(context.entityKind!=='website'||grouped.scope.cohort||grouped.scope.predicates||'propertyReport'in grouped)throw new FoundationError(400,'This board share does not grant another Explorer mode.');
+ await boardShareSqlBudget(client,context);return readExplorer(context.entityId,JSON.stringify(context),params,{client,context});
+}
+async function readExplorer(projectId:string,userId:string,params:URLSearchParams,borrowed?:{client:import('pg').PoolClient;context:import('./analytics-scope.ts').BoardShareReadContext}) {
   const grouping=explorerGroupingQuery(params),{scope:query,fields}=grouping;
   const propertyDetails='propertyReport'in grouping?grouping.propertyReport:null,cursor=propertyDetails?.cursor??null;
   const propertyScope=propertyDetails?canonicalHash(['event-property-scope-v1',projectId,query]):null;
   if(cursor&&cursor.scope!==propertyScope)throw new FoundationError(400,'The property event cursor does not match these filters.');
-  const client = await getDatabase().pool.connect();
+  const client = borrowed?.client??await getDatabase().pool.connect();
   try {
     const reportSession=!!query.predicates?.sessionProperties?.length;
     const gatedBegin=async()=>{
@@ -33,8 +39,8 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       await client.query('SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR SHARE OF w',[projectId]);
       if(!(await client.query('SELECT 1 FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rowCount)throw new FoundationError(404,'Project not found or unavailable.');
     };
-    if(reportSession||propertyDetails)await gatedBegin();
-    else{await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='5s'");}
+    if(!borrowed&&(reportSession||propertyDetails))await gatedBegin();
+    else if(!borrowed){await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await client.query("SET LOCAL statement_timeout='5s'");}
     let item=query.cohort?await resolveCohort(client,projectId,userId,query.cohort.id,query.cohort.revision):null;
     let qualification=item?explorerQuery(new URLSearchParams(item.definition.query)):null;
     if(!reportSession&&!propertyDetails&&qualification?.predicates?.sessionProperties?.length){
@@ -43,12 +49,18 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
       qualification=explorerQuery(new URLSearchParams(item.definition.query));
     }
     const qualificationSession=!!qualification?.predicates?.sessionProperties?.length,sessionAware=reportSession||qualificationSession||!!propertyDetails;
+    // Keep the resolved cohort/aggregate on its original snapshot. Only publication
+    // reacquires a fresh gate; holding it over this snapshot would block cohort edits.
+    const publicationSql=`SELECT p.workspace_id,p.analytics_retained_from::text AS watermark,p.analytics_epoch AS epoch FROM project p
+      JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1 AND m.role IN('owner','admin','editor','viewer')`;
+    const publication=borrowed?null:(await client.query(publicationSql,[projectId,userId])).rows[0];
+    if(!borrowed&&!publication)throw new FoundationError(404,'Project not found or unavailable.');
     if(query.predicates||qualification?.predicates){
       if(!(await client.query('SELECT 1 FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rowCount)throw new FoundationError(404,'Project not found or unavailable.');
       await validateAdvancedRegex(client,query.predicates,qualification?.predicates);
     }
     for(const zone of new Set([query.timeZone,...(qualification?[qualification.timeZone]:[])]))if (!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[zone])).rowCount) throw new FoundationError(400,'The database does not support this timezone.');
-    const {ctes,values,population}=analyticsPopulation(projectId,userId,query,qualification,false,propertyDetails?cursor?.before??null:undefined);
+    const {ctes,values,population}=analyticsPopulation(projectId,userId,query,qualification,false,propertyDetails?cursor?.before??null:undefined,undefined,borrowed?.context);
     const geographyUsed=usesGeography(query)||!!fields?.some(field=>geographyFields.includes(field as GeoField))||!!qualification&&usesGeography(qualification);
     const tupleDimensions=fields?.map(field=>{values.push(field);return analyticsDimensionValueSql(`$${values.length}::text`,'s');});
     const labelSql=fields?`SELECT s.*,jsonb_build_object('type','tuple','value',jsonb_build_array(${fields.map((field,index)=>`CASE WHEN d.v${index} IS NULL THEN '{"type":"missing","value":null}'::jsonb ELSE jsonb_build_object('type',${geographyFields.includes(field as GeoField)?"'string'":`jsonb_typeof(d.v${index})`},'value',d.v${index}) END`).join(',')})) AS label
@@ -156,7 +168,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
         count(*) FILTER (WHERE event_name<>'page_view') AS custom FROM ${population} GROUP BY 1
     ), keys AS MATERIALIZED (SELECT DISTINCT jsonb_object_keys(properties) AS key FROM ${population}),
     numbers AS (SELECT (label->>'value')::numeric AS value FROM labeled WHERE $11='property' AND label->>'type'='number' AND jsonb_typeof(label->'value')='number')${propertyCtes}
-    SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT analytics_retained_from FROM target) AS retained_from,
+    SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,
       (SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,
       ${sessionAware?`(SELECT json_build_object('asOf',as_of,'cutoff',cutoff,'lostAt',lost_at,'expiredValuesPresent',expired_values_present) FROM session_context)`:'null'} AS session_context,
       ${reportSession?`(SELECT json_build_object('identified',count(visitor_id),'unidentified',count(*) FILTER (WHERE visitor_id IS NULL)) FROM report_candidates)`:'null'} AS report_candidates,
@@ -180,7 +192,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
         'truncated',(SELECT count(*)>100 FROM keys)) AS properties,
       (SELECT json_build_object('samples',count(*),'sum',sum(value)::text,'average',avg(value)::text,'min',min(value)::text,'max',max(value)::text) FROM numbers) AS numeric${propertySelect}
       FROM ${population}`,values);
-    await client.query('COMMIT');
+    if(!borrowed)await client.query('COMMIT');
     const row = rows[0];
     if(geographyFields.includes(query.groupBy as GeoField))for(const group of row.breakdown.groups)group.value=serializeGeographyKey(query.groupBy as GeoField,group.value);
     if(fields)for(const group of row.breakdown.groups)for(const [index,field]of fields.entries())if(geographyFields.includes(field as GeoField)){
@@ -228,12 +240,21 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     }
     const output={...result,...(propertyReport?{propertyReport}:{}),csv:explorerCsv(result)+(propertyReport?propertyCsv(propertyReport,daily,query.timeZone,result.totals.events):'')};
     if((fields||propertyDetails)&&Buffer.byteLength(JSON.stringify(output),'utf8')>2097152)throw new FoundationError(503,propertyDetails?'The complete property report is too large. Choose a shorter range or more filters.':'The complete combination report is too large. Choose a shorter range or more filters.');
+    if(!borrowed){
+      await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");
+      await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[publication.workspace_id]);
+      await client.query('SELECT id FROM project WHERE id=$1 FOR SHARE',[projectId]);
+      const current=(await client.query(publicationSql,[projectId,userId])).rows[0];
+      if(!current)throw new FoundationError(404,'Project not found or unavailable.');
+      if(current.workspace_id!==publication.workspace_id||current.watermark!==publication.watermark||current.epoch!==publication.epoch)throw new FoundationError(409,'Analytics was reset or its collection policy changed while this report loaded. Reload the report.');
+      await client.query('COMMIT');
+    }
     return output;
   } catch (error) {
-    await client.query('ROLLBACK').catch(()=>{});
+    if(!borrowed)await client.query('ROLLBACK').catch(()=>{});
     if (['57014','55P03'].includes((error as {code?:string}).code??'')) throw new FoundationError(503,'This query took too long. Choose a shorter date range or more filters.');
     throw error;
-  } finally {client.release();}
+  } finally {if(!borrowed)client.release();}
 }
 
 export type PropertyReport={version:1;key:string;snapshot:string;countsAreLowerBounds:boolean;values:PropertySeries[];numbers:{samples:number|null;sum:string|null;average:string|null}[];

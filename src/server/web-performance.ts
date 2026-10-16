@@ -23,8 +23,8 @@ export async function collectPerformance(request:Request,raw:unknown,peerAddress
   const dimensions={...analyticsEnvironment(userAgent,screen?.width),...screen?{screenWidth:screen.width,screenHeight:screen.height}:{},...settings.captureGeography===true?{geography:collectGeography(resolveAnalyticsNetwork(request,peerAddress))}:{}};
   const result=await client.query(`INSERT INTO web_performance(project_id,navigation_id,metric,value,revision,origin,path,dimensions,collection_basis)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-   ON CONFLICT(project_id,navigation_id,metric) DO UPDATE SET value=excluded.value,revision=excluded.revision,updated_at=clock_timestamp()
-    WHERE excluded.revision>web_performance.revision AND web_performance.origin=excluded.origin
+   ON CONFLICT(project_id,navigation_id,metric) DO UPDATE SET value=excluded.value,revision=excluded.revision,dimensions=CASE WHEN web_performance.created_at<(SELECT analytics_retained_from FROM project WHERE id=$1) THEN excluded.dimensions ELSE web_performance.dimensions END,created_at=CASE WHEN web_performance.created_at<(SELECT analytics_retained_from FROM project WHERE id=$1) THEN excluded.created_at ELSE web_performance.created_at END,updated_at=clock_timestamp()
+    WHERE (excluded.revision>web_performance.revision OR web_performance.created_at<(SELECT analytics_retained_from FROM project WHERE id=$1)) AND web_performance.origin=excluded.origin
       AND web_performance.path=excluded.path AND web_performance.collection_basis=excluded.collection_basis
    RETURNING revision`,[project.id,input.navigationId,input.metric,input.value,input.revision,new URL(input.url).origin,eventPath(input.url),JSON.stringify(dimensions),basis]);
   await client.query('COMMIT');return {accepted:true,duplicate:!result.rowCount};

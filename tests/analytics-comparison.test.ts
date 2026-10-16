@@ -6,7 +6,7 @@ import {analyticsDimensions} from '../src/lib/analytics-dimensions.ts';
 
 test('dimension comparisons accept only collected fields and reuse closed Explorer selection keys',()=>{
  for(const dimension of analyticsDimensions)assert.equal(analyticsQuery(new URLSearchParams({compare:'prev',dimension})).dimension,dimension);
- for(const dimension of ['channel','screen','hostname','distinctId','tag','property','__proto__'])assert.throws(()=>analyticsQuery(new URLSearchParams({compare:'prev',dimension})),{status:400});
+ for(const dimension of ['distinctId','tag','property','__proto__'])assert.throws(()=>analyticsQuery(new URLSearchParams({compare:'prev',dimension})),{status:400});
  assert.throws(()=>analyticsQuery(new URLSearchParams({dimension:'path'})),{status:400});
  const host='a'.repeat(2039)+'.example';assert.equal(host.length,2047);
  const selected=analyticsQuery(new URLSearchParams({selection:new URLSearchParams({referrer:host,campaignSource:'',path:'/x'}).toString()}));assert.equal(selected.selection!.fields.length,3);assert.ok(selected.selectionQuery);
@@ -29,4 +29,17 @@ test('year comparison clamps inclusive calendar endpoints and preserves every le
 test('a derived range before1970 is explicit invalid intent, never a fallback/shortened baseline',()=>{
  for(const mode of ['prev','yoy'] as const)assert.equal(deriveAnalyticsComparison({from:'1970-01-01',to:'1970-01-02'},mode),null);
  assert.equal(deriveAnalyticsComparison({from:'1971-01-01',to:'1971-01-01'},'yoy')?.range.from,'1970-01-01');for(const current of [{from:'2025-02-29',to:'2025-03-01'},{from:'2024-02-28',to:'2025-02-28'},{from:'2026-01-02',to:'2026-01-01'},{from:'9999-01-01',to:'9999-01-01'}])assert.equal(deriveAnalyticsComparison(current,'prev'),null);
+});
+
+test('recorded hostname, physical screen and tag-channel selection retain closed bounds and missing intent',()=>{
+ for(const [field,value]of [['hostname','www.example.com'],['screen','320x720'],['channel','tagged_email'],['origin','https://www.example.com:8443']]as const){
+  const selection=new URLSearchParams({[field]:value}).toString(),parsed=analyticsQuery(new URLSearchParams({compare:'prev',selection}));
+  assert.deepEqual(parsed.selection!.fields,[{field,operator:'eq',value}]);
+  const missing=new URLSearchParams({predicates:JSON.stringify({version:1,match:'all',fields:[{field,operator:'missing'}],properties:[]})}).toString();
+  assert.equal(analyticsQuery(new URLSearchParams({selection:missing})).selection!.fields[0].operator,'missing');
+ }
+ for(const [field,size]of [['hostname',2048],['screen',11],['channel',32]]as const){
+  assert.doesNotThrow(()=>analyticsQuery(new URLSearchParams({selection:new URLSearchParams({[field]:'x'.repeat(size)}).toString()})));
+  assert.throws(()=>analyticsQuery(new URLSearchParams({selection:new URLSearchParams({[field]:'x'.repeat(size+1)}).toString()})),{status:400});
+ }
 });

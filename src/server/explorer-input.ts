@@ -8,7 +8,7 @@ import {parseAdvancedPredicates,predicateFields,type AdvancedPredicates} from '.
 import {environmentFields,isEnvironmentFilter} from '../lib/analytics-environment.ts';
 import {geographyFields,geographyFiltersValid} from '../lib/analytics-geography.ts';
 
-export const explorerGroups = ['event','path','origin','referrer','language','browser','os','device','country','region','city','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','screenWidth','screenHeight','property'] as const;
+export const explorerGroups = ['event','path','origin','referrer','language','browser','os','device','country','region','city','campaignSource','campaignMedium','campaignName','campaignTerm','campaignContent','screenWidth','screenHeight','hostname','screen','channel','property'] as const;
 export const explorerFilters = predicateFields;
 const parameterNames = new Set(['from','to','timeZone','kind','groupBy','groupProperty','propertyKey','propertyType','propertyValue','cohortId','cohortRevision','predicates',...explorerFilters]);
 function bad(message = 'Check the exploration filters and try again.'): never { throw new InputError(400, message); }
@@ -99,9 +99,9 @@ export function explorerGroupingQuery(params:URLSearchParams,now=new Date()){
     return {scope,fields:null,propertyReport:{cursor}};
   }
   if(!params.has('fields'))return {scope:explorerQuery(params,now),fields:null};
-  if(params.toString().length>20000||params.getAll('fields').length!==1||params.has('groupBy')||params.has('groupProperty'))bad('Choose either one field or a combination of two or three fields.');
-  let raw:unknown;try{raw=JSON.parse(params.get('fields')!);}catch{return bad('Choose two or three supported fields.');}
-  if(!Array.isArray(raw)||raw.length<2||raw.length>3||new Set(raw).size!==raw.length||!raw.every(field=>typeof field==='string'&&field!=='property'&&(explorerGroups as readonly string[]).includes(field)))bad('Choose two or three different supported fields.');
+  if(params.toString().length>20000||params.getAll('fields').length!==1||params.has('groupBy')||params.has('groupProperty'))bad('Choose either legacy grouping or a breakdown of one to three fields.');
+  let raw:unknown;try{raw=JSON.parse(params.get('fields')!);}catch{return bad('Choose one to three supported fields.');}
+  if(!Array.isArray(raw)||raw.length<1||raw.length>3||new Set(raw).size!==raw.length||!raw.every(field=>typeof field==='string'&&field!=='property'&&(explorerGroups as readonly string[]).includes(field)))bad('Choose one to three different supported fields.');
   const fields=raw as ExplorerTupleField[],remaining=new URLSearchParams(params);remaining.delete('fields');
   const scope=explorerQuery(remaining,now),normalized=new URLSearchParams(remaining);
   normalized.set('fields',JSON.stringify(fields));
