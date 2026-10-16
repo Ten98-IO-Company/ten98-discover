@@ -250,10 +250,10 @@ try {
       assert.equal(await page.getByRole('button',{name:'Save retention',exact:true}).isVisible(),true,'The confirmation remains visible with detailed rules collapsed.');
       await expiryDetails.click();
       assert.equal(await page.getByText('Kept as-is:',{exact:false}).isVisible(),true,'Preservation and backup qualifications remain accessible.');
+      await page.getByText(/used quote metadata and charge evidence remain as receipts/).waitFor();
       await expiryDetails.click();
       await page.getByText('0 keyword results eligible.',{exact:true}).waitFor();
       await page.getByText(/finished Google imports eligible/).waitFor();
-      await page.getByText(/used quote metadata and charge evidence remain as receipts/).waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.screenshot({path:'private/google-browser/retention-mobile.png',fullPage:true});
       await page.setViewportSize({width:1280,height:900});await page.screenshot({path:'private/google-browser/retention-desktop.png',fullPage:true});
