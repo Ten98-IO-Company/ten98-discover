@@ -6,7 +6,7 @@ import { getDatabase } from './db.ts';
 import { getBoss } from './jobs.ts';
 import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection, googleAdsConfigured, googleAdsHeaders, googleAdsCustomer } from './google.ts';
 import { GoogleRequestError, googleRequest } from './google-http.ts';
-import { googleImportInput, googleInput, googleReportRequest, googleReports, googleAdsVersion, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
+import { googleImportInput, googleInput, googleReportRequest, googleReports, googleAdsVersion, ga4InventoryReports, googleCompatibilityRequest, normalizeGoogleCompatibility, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
 
 export const googleQueue = 'google-report-import';
 type ImportRow = { id: string; connection_id: string; project_id: string; user_id: string; request_id: string; connection_revision: number; app_revision: number; report: GoogleReport; date_from: string; date_to: string; status: string; pages: number; row_count: number; provider_row_count: number | null; source: Record<string, unknown>; quality: { warnings: string[]; metadata: Record<string, unknown> }; diagnostic: string | null; created_at: Date; completed_at: Date | null; data_expired_at: Date | null };
@@ -76,9 +76,9 @@ export async function runGoogleImport(importId: string): Promise<void> {
   try {
     for (;;) {
       await refreshGoogleConnection(initial.project_id, initial.user_id, initial.connection_id);
-      // ponytail: a GSC/GA4 page holds the workspace lock for one bounded 15s
-      // request; Ads uses two independently bounded 15s reads (customer verification
-      // then report). Split into revocable leases if volume
+      // ponytail: a GSC/legacy GA4 page holds the workspace lock for one bounded 15s
+      // request; detailed GA4 first-page attempts and Ads use two independently
+      // bounded reads (compatibility/customer verification, then report). Split into revocable leases if volume
       // makes this brief serialization disruptive; never drop the final recheck.
       const done = await googleProjectTransaction(initial.project_id, initial.user_id, true, async client => {
         const connection = await googleConnection(client, initial.project_id, initial.connection_id);
@@ -103,6 +103,10 @@ export async function runGoogleImport(importId: string): Promise<void> {
           return true;
         }
         const endpoint = connection.provider === 'gsc' ? `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(connection.property_id)}/searchAnalytics/query` : `https://analyticsdata.googleapis.com/v1beta/${connection.property_id}:runReport`;
+        if (connection.provider === 'ga4' && ga4InventoryReports.includes(row.report) && row.pages === 0) {
+          const compatibility = await googleRequest(`https://analyticsdata.googleapis.com/v1beta/${connection.property_id}:checkCompatibility`, accessToken, googleCompatibilityRequest(row.report, row.date_from, row.date_to));
+          normalizeGoogleCompatibility(row.report, compatibility);
+        }
         const raw = await googleRequest(endpoint, accessToken, googleReportRequest(row.report, row.date_from, row.date_to, row.row_count));
         const page = normalizeGoogleReport(row.report, raw, row.date_from, row.date_to);
         if (connection.provider === 'ga4' && row.provider_row_count !== null && page.rowCount !== row.provider_row_count) throw new FoundationError(409, 'Google data changed during pagination. Start a fresh import.');
@@ -119,6 +123,7 @@ export async function runGoogleImport(importId: string): Promise<void> {
         // suppression/restriction/sampling evidence or change property-local dates.
         const metadata = { ...row.quality.metadata, [`page${pages}`]: page.quality.metadata };
         if (page.quality.metadata.timeZone && page.quality.metadata.timeZone !== connection.time_zone) throw new FoundationError(409, 'The Google property timezone changed. Add a new source to preserve date provenance.');
+        if (connection.provider === 'ga4' && page.quality.metadata.currencyCode && page.quality.metadata.currencyCode !== connection.currency_code) throw new FoundationError(409, 'The Google property currency changed. Add a new source to preserve currency provenance.');
         await client.query('INSERT INTO google_import_page(import_id,page,rows) VALUES($1,$2,$3)', [row.id, row.pages, JSON.stringify(page.rows)]);
         await client.query(`UPDATE google_import SET status=$2,pages=$3,row_count=$4,provider_row_count=$5,quality=$6,diagnostic=NULL,
           completed_at=CASE WHEN $2 IN ('completed','partial') THEN now() ELSE NULL END WHERE id=$1`, [row.id, complete ? 'completed' : capped ? 'partial' : 'running', pages, rowCount, page.rowCount, { warnings, metadata }]);
