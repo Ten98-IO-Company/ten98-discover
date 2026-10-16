@@ -416,6 +416,20 @@ test('Domain SEO is a project Research view distinct from serving-domain configu
  assert.notEqual(navigationKey(target),navigationKey({...target,view:'domains'}));
 });
 
+test('Replay navigation binds bounded scalar intent to one project without exposing upload capabilities',()=>{
+ const base={workspace,project,view:'replays'} as const;
+ for(const replayQuery of [undefined,'recording='+workspace,'cursor=Y3Vyc29y']){
+  const value={...base,...replayQuery?{replayQuery}:{}};
+  const wire=defaultStringifySearch(value);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),value);assert.equal(canonicalNavigation(wire,value),true);
+ }
+ assert.equal(projectView('replays'),true);for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('replays',role,false),true);assert.equal(allowedView('replays',undefined,false),false);
+ assert.notEqual(navigationKey(base),navigationKey({...base,replayQuery:'recording='+workspace}));
+ for(const replayQuery of ['',null,1,true,{},['recording='+workspace],'x'.repeat(4097),'recording=%GG','cursor=%FF','cursor=%ED%A0%80','cursor=x\0'])assert.equal(parseNavigation({...base,replayQuery}).replayInvalid,'1');
+ for(const patch of [{workspace:undefined},{project:undefined},{token:'upload-capability'},{recording:workspace},{replayInvalid:'1'}])assert.equal(parseNavigation({...base,...patch}).replayInvalid,'1');
+ assert.deepEqual(parseNavigation({...base,view:'project',replayQuery:'recording='+workspace}),{workspace,project,view:'project'});
+ assert.equal(canonicalNavigation(defaultStringifySearch(base)+'&view=replays',base),false);
+});
+
 
 test('Context fallback preserves invalid scoped links instead of reading another project',async()=>{
  const{resolveNavigation}=await import('../src/lib/navigation.ts');
@@ -423,6 +437,7 @@ test('Context fallback preserves invalid scoped links instead of reading another
  assert.deepEqual(resolveNavigation(performance,workspace,project,'performance'),performance);
  for(const target of [{workspace,project:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},{workspace:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',project}])assert.equal(resolveNavigation(performance,target.workspace,target.project,'performance').performanceInvalid,'1');
  assert.equal(resolveNavigation(parseNavigation({view:'performance',performanceQuery:'metric=inp'}),workspace,project,'performance').performanceInvalid,'1');
+ const replay=parseNavigation({workspace,project,view:'replays',replayQuery:'recording='+workspace});assert.equal(resolveNavigation(replay,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','replays').replayInvalid,'1');
  const analytics=parseNavigation({workspace,project,view:'project',analyticsFrom:'2026-10-01',analyticsTo:'2026-10-02'});assert.equal(resolveNavigation(analytics,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','project').analyticsInvalid,'1');
  const session=parseNavigation({workspace,project,view:'sessions',visitorKey:'a'.repeat(64)});assert.equal(resolveNavigation(session,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','sessions').sessionInvalid,'1');
  assert.deepEqual(resolveNavigation({view:'project'},workspace,project,'project'),{workspace,project,view:'project'});

@@ -1,0 +1,135 @@
+import {useEffect,useMemo,useRef,useState} from 'react';
+import {z} from 'zod';
+import {ApiError} from '../lib/api';
+import {boundedTree,reassembleReplay,replaySummary,replayChunkDto,replayLimits,type ReplaySummary,type ReplayEvent} from '../lib/session-replay';
+
+type Props={projectId:string;userId:string;query?:string;onNavigate:(query:string)=>void;onUnauthorized:()=>void;onSettings?:()=>void;readOwner?:string;readEnabled?:boolean};
+const role=z.enum(['owner','admin','editor','viewer']),instant=z.string().datetime(),cursor=z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/),after=z.number().int().min(0).max(1023);
+const listDto=z.object({role,asOf:instant,retainedFrom:instant,items:z.array(replaySummary).max(20),nextCursor:cursor.nullable()}).strict();
+const detailDto=z.object({role,asOf:instant,item:replaySummary}).strict();
+const chunksDto=detailDto.extend({chunks:z.array(replayChunkDto).max(4),nextAfter:after.nullable()}).strict();
+type Chunk=z.infer<typeof replayChunkDto>;
+type View={owner:string;role:z.infer<typeof role>|null;asOf:string;retainedFrom:string;items:ReplaySummary[];nextCursor:string|null;item:ReplaySummary|null};
+type ChunkState={items:Chunk[];next:number|null;done:boolean;generation:string;heldBytes:number};
+const noChunks=():ChunkState=>({items:[],next:null,done:false,generation:'',heldBytes:0});
+class InvalidReplay extends Error{}
+const invalid=()=>new InvalidReplay('This replay response could not be verified. Reload the recording or list.');
+const clean=(s:string)=>!/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(s);
+const elapsed=(ms:number)=>{const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
+const size=(bytes:number)=>bytes>=1048576?(bytes/1048576).toFixed(1)+' MiB':Math.ceil(bytes/1024)+' KiB';
+const generation=(item:ReplaySummary)=>JSON.stringify([item.chunkCount,item.bytes,item.lastSequence,item.complete,item.missingChunks,item.missingFragments]);
+const identity=(a:ReplaySummary,b:ReplaySummary)=>a.id===b.id&&a.createdAt===b.createdAt&&a.deadlineAt===b.deadlineAt&&a.origin===b.origin&&JSON.stringify(a.settings)===JSON.stringify(b.settings)&&(b.resultExpired?b.entryPath===null:a.entryPath===b.entryPath);
+function validItem(item:ReplaySummary){
+  let origin:URL;try{origin=new URL(item.origin);}catch{throw invalid();}
+  if(!['http:','https:'].includes(origin.protocol)||origin.origin!==item.origin||Date.parse(item.deadlineAt)<Date.parse(item.createdAt)||item.entryPath!==null&&(!item.entryPath.startsWith('/')||item.entryPath.length>2048||/[?#]/.test(item.entryPath)||!clean(item.entryPath)))throw invalid();
+  if(item.resultExpired){if(item.entryPath!==null||item.chunkCount!==0||item.bytes!==0||item.lastSequence!==null||item.complete||item.missingChunks!==null||item.missingFragments!==null)throw invalid();return;}
+  if(item.entryPath===null||item.chunkCount===0&&item.bytes!==0)throw invalid();
+  if(item.lastSequence===null){if(item.complete||item.missingChunks!==null)throw invalid();}else if(item.chunkCount>item.lastSequence+1||item.missingChunks!==item.lastSequence+1-item.chunkCount)throw invalid();
+  if(item.complete&&(item.lastSequence===null||item.missingChunks!==0||item.missingFragments!==0))throw invalid();
+}
+function intent(raw:string){
+  if(raw.length>2600)throw invalid();decodeURIComponent(raw.replace(/\+/g,' '));const p=new URLSearchParams(raw);
+  if([...p.keys()].some(k=>!['recording','cursor'].includes(k)||p.getAll(k).length!==1)||p.has('recording')&&p.has('cursor'))throw invalid();
+  const id=p.get('recording'),page=p.get('cursor');if(id!==null&&!z.uuid().safeParse(id).success||page!==null&&!cursor.safeParse(page).success)throw invalid();
+  return{id,cursor:page,canonical:id!==null?new URLSearchParams({recording:id}).toString():page!==null?new URLSearchParams({cursor:page}).toString():''};
+}
+async function read<T>(url:string,schema:z.ZodType<T>,signal:AbortSignal):Promise<T>{
+  const combined=AbortSignal.any([signal,AbortSignal.timeout(15000)]);let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+  try{
+    const response=await fetch(url,{credentials:'same-origin',cache:'no-store',redirect:'error',signal:combined});
+    if(!response.ok){await response.body?.cancel().catch(()=>{});const e=new ApiError(response.status===401?'Your session expired. Sign in again.':[403,404].includes(response.status)?'Replay access is unavailable. Recorded content was cleared.':response.status===400?'This replay page is no longer available. Start from the newest recordings.':'The replay read was not completed. Retry this read.');e.status=response.status;throw e;}
+    const length=response.headers.get('content-length'),encoding=response.headers.get('content-encoding');if(!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body||length!==null&&(!/^(0|[1-9]\d*)$/.test(length)||Number(length)>2097152))throw invalid();
+    reader=response.body.getReader();let bytes=0,text='';const decoder=new TextDecoder('utf-8',{fatal:true});for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>2097152)throw invalid();text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();if((!encoding||encoding==='identity')&&length!==null&&Number(length)!==bytes)throw invalid();
+    let data:unknown;try{data=JSON.parse(text);}catch{throw invalid();}const parsed=schema.safeParse(data);if(!parsed.success)throw invalid();return parsed.data;
+  }catch(error){if(signal.aborted||error instanceof ApiError||error instanceof InvalidReplay)throw error;throw new Error('The replay request was not received completely. Retry this read.');}finally{await reader?.cancel().catch(()=>{});}
+}
+
+export function SessionReplayPanel({projectId,userId,query='',onNavigate,onUnauthorized,onSettings,readOwner='',readEnabled=true}:Props){
+  const context=JSON.stringify([userId,projectId,readOwner]),parsed=useMemo(()=>{try{if(!z.uuid().safeParse(projectId).success)throw invalid();return{value:intent(query),error:false};}catch{return{value:null,error:true};}},[query,context]),owner=JSON.stringify([context,parsed.value?.canonical??query]);
+  const empty=():View=>({owner,role:null,asOf:'',retainedFrom:'',items:[],nextCursor:null,item:null}),[view,setView]=useState<View>(empty),[chunks,setChunks]=useState<ChunkState>(noChunks),[busy,setBusy]=useState(false),[chunkLoading,setChunkLoading]=useState(false),[error,setError]=useState(''),[denied,setDenied]=useState(false),[preview,setPreview]=useState<{events:ReplayEvent[];duration:number;key:number}|null>(null);
+  const mounted=useRef(false),serial=useRef(0),operation=useRef<AbortController|null>(null),blocked=useRef(false),notified=useRef(false),expired=useRef(new Set<string>()),listBack=useRef(''),pages=useRef<string[]>([]),live=useRef({owner,readEnabled,onUnauthorized});live.current={owner,readEnabled,onUnauthorized};
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;serial.current++;operation.current?.abort();};},[]);
+  useEffect(()=>{blocked.current=false;notified.current=false;expired.current.clear();pages.current=[];listBack.current='';},[context]);
+  useEffect(()=>{serial.current++;operation.current?.abort();setView(empty());setChunks(noChunks());setPreview(null);setError('');setBusy(false);setChunkLoading(false);setDenied(false);if(parsed.value&&readEnabled&&!blocked.current)void loadInitial();return()=>{serial.current++;operation.current?.abort();};},[owner,readEnabled]);
+  function purge(message:string){blocked.current=true;setDenied(true);setView(empty());setChunks(noChunks());setPreview(null);setError(message);}
+  async function request<T>(work:(signal:AbortSignal,current:()=>boolean)=>Promise<T>,accept:(data:T)=>void,recover=false){
+    if(!mounted.current||!readEnabled||!parsed.value||blocked.current&&!recover)return;operation.current?.abort();const ctrl=new AbortController(),token=++serial.current;operation.current=ctrl;setBusy(true);setError('');setPreview(null);if(recover){blocked.current=false;setDenied(false);}
+    const current=()=>mounted.current&&live.current.owner===owner&&live.current.readEnabled&&serial.current===token&&!ctrl.signal.aborted;
+    try{const data=await work(ctrl.signal,current);if(current())accept(data);}catch(cause){if(!current())return;if(cause instanceof InvalidReplay)purge(cause.message);else if(cause instanceof ApiError&&[401,403,404].includes(cause.status)){purge(cause.message);if(cause.status===401&&!notified.current){notified.current=true;live.current.onUnauthorized();}}else setError(cause instanceof Error?cause.message:'The replay read was not completed. Retry this read.');}finally{if(current())setBusy(false);if(operation.current===ctrl)operation.current=null;}
+  }
+  function adopt(item:ReplaySummary,prior?:ReplaySummary|null){validItem(item);if(prior&&!identity(prior,item))throw invalid();if(expired.current.has(item.id)&&!item.resultExpired)throw invalid();if(item.resultExpired){expired.current.add(item.id);setChunks(noChunks());setPreview(null);}}
+  async function loadInitial(recover=false){
+    const selected=parsed.value;if(!selected)return;setChunks(noChunks());
+    if(selected.id){await request(signal=>read(`/api/projects/${projectId}/replays/${selected.id}`,detailDto,signal),data=>{if(data.item.id!==selected.id)throw invalid();adopt(data.item);setView({...empty(),role:data.role,asOf:data.asOf,item:data.item});},recover);}
+    else await request(signal=>read(`/api/projects/${projectId}/replays${selected.cursor?'?'+new URLSearchParams({cursor:selected.cursor}):''}`,listDto,signal),data=>{const ids=new Set<string>();for(const item of data.items){validItem(item);if(item.resultExpired||ids.has(item.id))throw invalid();ids.add(item.id);}if(data.nextCursor!==null&&(data.items.length!==20||data.nextCursor===selected.cursor))throw invalid();setView({...empty(),...data,item:null});},recover);
+  }
+  async function loadChunks(){
+    const item=view.owner===owner?view.item:null;if(!item||item.resultExpired||busy||denied||chunks.done)return;
+    await request(async(signal,isCurrent)=>{
+      const overall=AbortSignal.any([signal,AbortSignal.timeout(120000)]),started=performance.now();let loaded=chunks;
+      const paused=()=>{setError('Loading paused. Resume after a minute.');};setChunkLoading(true);
+      try{for(let page=0;page<256;page++){
+        if(!isCurrent())return;if(overall.aborted||performance.now()-started>=120000){paused();return;}
+        const first=loaded.items.length===0,from=first?null:loaded.next;if(!first&&from===null)throw invalid();
+        const data=await read(`/api/projects/${projectId}/replays/${item.id}/chunks${from===null?'':'?after='+from}`,chunksDto,overall);
+        if(!isCurrent())return;if(overall.aborted||performance.now()-started>=120000){paused();return;}
+        if(data.item.id!==item.id)throw invalid();validItem(data.item);if(!identity(item,data.item))throw invalid();
+        if(data.item.resultExpired){if(data.chunks.length||data.nextAfter!==null)throw invalid();adopt(data.item,item);setView(old=>({...old,role:data.role,asOf:data.asOf,item:data.item}));return;}
+        if(!first&&generation(data.item)!==loaded.generation){setChunks(noChunks());setPreview(null);setView(old=>({...old,role:data.role,asOf:data.asOf,item:data.item}));setError('The recording changed while its pages were loading. Reload recording to use one current version.');return;}
+        let prior=from??-1;for(const chunk of data.chunks){if(chunk.sequence<=prior||chunk.bytes<1)throw invalid();prior=chunk.sequence;try{boundedTree(chunk.parts);}catch{throw invalid();}for(const part of chunk.parts)if(part.type===4&&new URL(String(part.data.href)).origin!==item.origin)throw invalid();}
+        if(data.nextAfter!==null&&(data.chunks.length!==4||data.nextAfter!==data.chunks.at(-1)?.sequence))throw invalid();
+        const all=first?data.chunks:[...loaded.items,...data.chunks],bytes=all.reduce((n,c)=>n+c.bytes,0),heldBytes=loaded.heldBytes+data.chunks.reduce((n,c)=>n+new TextEncoder().encode(JSON.stringify(c.parts)).length,0),last=data.item.lastSequence;
+        if(all.length>replayLimits.chunks||all.length>data.item.chunkCount||bytes>replayLimits.recordingBytes||bytes>data.item.bytes||heldBytes>replayLimits.recordingBytes||data.nextAfter===null&&(all.length!==data.item.chunkCount||bytes!==data.item.bytes)||all.some(c=>c.final&&c.sequence!==last)||last!==null&&all.some(c=>c.sequence>last))throw invalid();
+        if(!isCurrent())return;if(overall.aborted||performance.now()-started>=120000){paused();return;}
+        adopt(data.item,item);loaded={items:all,next:data.nextAfter,done:data.nextAfter===null,generation:generation(data.item),heldBytes};setView(old=>({...old,role:data.role,asOf:data.asOf,item:data.item}));setChunks(loaded);if(loaded.done)return;
+      }throw invalid();}catch(cause){if(!isCurrent())return;if(cause instanceof ApiError&&cause.status===429||overall.aborted&&!signal.aborted){paused();return;}throw cause;}finally{if(isCurrent())setChunkLoading(false);}
+    },()=>{});
+  }
+  function cancelLoading(){if(!chunkLoading)return;serial.current++;operation.current?.abort();operation.current=null;setBusy(false);setChunkLoading(false);setError(chunks.items.length?'Loading paused. Resume loading when you are ready.':'Loading cancelled. Choose Load recording to try again.');}
+  function navigate(next:string){serial.current++;operation.current?.abort();setPreview(null);setChunks(noChunks());setView(empty());onNavigate(next);}
+  const current=readEnabled&&view.owner===owner&&!denied?view:null,item=current?.item;
+  const available=useMemo(()=>{
+    if(!item||item.resultExpired||chunkLoading||!chunks.done&&!chunks.items.length)return{events:null,duration:0,partial:true,reason:'Load recording before previewing.'};
+    let end=0;while(end<chunks.items.length&&chunks.items[end].sequence===end)end++;if(end===0)return{events:null,duration:0,partial:true,reason:item.chunkCount===0?'No replay data have been accepted yet.':'Chunk0 is missing. Playback cannot invent the missing beginning.'};
+    try{const assembled=reassembleReplay(chunks.items.slice(0,end).flatMap(c=>c.parts));if(!assembled.complete||assembled.missingFragments.length)return{events:null,duration:0,partial:true,reason:'A full snapshot, viewport or fragment is missing. Preview is unavailable.'};let min=Infinity,max=0;for(const event of assembled.events){boundedTree(event);min=Math.min(min,event.timestamp);max=Math.max(max,event.timestamp);if(event.type===4&&new URL(String(event.data.href)).origin!==item.origin)throw invalid();}if(max-min>item.settings.maxDurationMs)throw invalid();return{events:assembled.events,duration:max-min,partial:!chunks.done||!item.complete||end!==chunks.items.length,reason:''};}catch{return{events:null,duration:0,partial:true,reason:'The recording data could not be assembled safely. Reload the recording.'};}
+  },[item,chunks,chunkLoading]);
+  const canSettings=current?.role==='owner'||current?.role==='admin';
+  return <section className="research-panel" aria-label="Session replay" aria-busy={busy} style={{display:'grid',gridTemplateColumns:'minmax(0,1fr)',gap:16,minWidth:0,overflowWrap:'anywhere'}}>
+    <header><h2>Session replay</h2><p className="hint">Review retained recordings. Sampling and consent mean these recordings do not represent every visit. Heatmaps and saved replays are separate features.</p>{canSettings&&onSettings&&<button className="btn" type="button" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} onClick={onSettings}>Replay collection settings</button>}</header>
+    {parsed.error?<div className="alert" role="alert"><p>This replay link has unsupported, repeated or invalid parameters. No recordings were read.</p><button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} onClick={()=>navigate('')}>Reset replay view</button></div>:!readEnabled?<p role="status">Waiting for the current replay route. No recording is being read.</p>:<>
+      <div className="row">{parsed.value?.id&&<button type="button" className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} onClick={()=>navigate(listBack.current)}>Back to recordings</button>}<button type="button" className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} disabled={busy} onClick={()=>void loadInitial(true)}>{parsed.value?.id?'Reload recording':'Reload list'}</button></div>
+      {busy&&<p role="status">Loading replay data…</p>}{error&&<div role="alert" className="alert"><p>{error}</p>{!parsed.value?.id&&<button type="button" className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} onClick={()=>{pages.current=[];navigate('');}}>Start from newest recordings</button>}</div>}
+      {current&&current.asOf&&!parsed.value?.id&&<><p className="hint">Live pages of up to20 recordings. Retained from <time>{current.retainedFrom}</time>; snapshot as of <time>{current.asOf}</time>.</p>{current.items.length===0&&!busy?<p>No retained recordings are available. Recording may be disabled, not sampled, or not consented to.</p>:<div className="table-wrap" tabIndex={0} role="region" aria-label="Recorded sessions"><table style={{minWidth:680}}><thead><tr><th>Recorded at</th><th>Entry path</th><th>Status</th><th>Masking</th><th>Accepted data</th><th>Action</th></tr></thead><tbody>{current.items.map(row=><tr key={row.id}><td><time>{row.createdAt}</time></td><th scope="row"><bdi>{row.entryPath}</bdi></th><td>{row.complete?'Complete':'Incomplete'}</td><td>{row.settings.maskLevel}</td><td>{row.chunkCount} chunks ·{size(row.bytes)}</td><td><button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} aria-label={'Open recording '+row.id} onClick={()=>{listBack.current=parsed.value?.canonical??'';navigate(new URLSearchParams({recording:row.id}).toString());}}>Open recording</button></td></tr>)}</tbody></table></div>}<div className="row"><button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} disabled={busy||pages.current.length===0} onClick={()=>navigate(pages.current.pop()??'')}>Previous page</button><button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} disabled={busy||!current.nextCursor} onClick={()=>{if(current.nextCursor){pages.current.push(parsed.value?.canonical??'');navigate(new URLSearchParams({cursor:current.nextCursor}).toString());}}}>Next20 recordings</button></div></>}
+      {item&&<section className="card stack" aria-label="Recording details" style={{gridTemplateColumns:'minmax(0,1fr)'}}><h3>{item.resultExpired?'Recording expired':item.entryPath}</h3><p>Recorded <time>{item.createdAt}</time> ·{item.origin}</p>{item.resultExpired?<p role="status">Recorded content is unavailable under the current replay retention policy. The entry path, chunks and preview have been cleared.</p>:<>
+        <p>{item.complete?'Complete recording':'Incomplete recording'} ·{size(item.bytes)} of accepted recording data</p><p className="hint">{item.settings.maskLevel==='strict'?'Strict masking requested: input values and page text were intended to be masked.':'Moderate masking requested: input values were intended to be masked; page text can remain visible.'} Saved settings do not prove that recorded content was masked correctly. Capture limit: {item.settings.maxDurationMs/60000} minutes; this is not the observed duration.</p>
+        {!item.complete&&<p className="banner" role="status">{item.lastSequence===null?'No final marker has been accepted.':`${item.missingChunks??'Unknown'} missing chunks; ${item.missingFragments??'unknown'} missing fragment groups.`} Playback never fills missing content.</p>}
+        <div className="row"><button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} disabled={busy||denied||chunks.done} onClick={()=>void loadChunks()}>{chunks.items.length&&!chunks.done?'Resume loading':'Load recording'}</button>{chunkLoading&&<button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal'}} onClick={cancelLoading}>Cancel loading</button>}</div>
+        {chunkLoading&&<><p role="status">Loading recording data…</p><progress aria-label="Loading recording data" max={Math.max(1,item.bytes)} value={chunks.items.reduce((n,c)=>n+c.bytes,0)} style={{width:'100%',minWidth:0}}/></>}
+        <details><summary style={{minHeight:44}}>Data completeness</summary><p>{chunks.items.length}/{item.chunkCount} accepted chunks loaded; {size(chunks.items.reduce((n,c)=>n+c.bytes,0))} of {size(item.bytes)}.</p><p>Reads are sequential and bounded. Larger recordings may pause at the current read limit; Resume loading continues only this verified recording version.</p></details>
+        {(chunks.done||chunks.items.length>0&&!chunkLoading)&&<p role="status">{available.reason|| (available.partial?'Only a verified contiguous prefix is available. Preview remains incomplete.':'All declared chunks are assembled.')}</p>}
+        {available.events&&<button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} disabled={busy||denied} onClick={()=>{if(available.events)setPreview({events:available.events,duration:available.duration,key:serial.current});}}>{available.partial?'Preview available prefix':'Preview recording'}</button>}
+        {preview&&<><p className="hint">{available.partial?'Incomplete preview: only accepted contiguous data are shown.':'Recorded session preview.'} External resources may be withheld; playback is not a live website.</p><ReplayPreview key={owner+':'+preview.key} events={preview.events} duration={preview.duration}/><button type="button" className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} onClick={()=>setPreview(null)}>Close preview</button></>}
+      </>}</section>}
+    </>}
+  </section>;
+}
+
+function ReplayPreview({events,duration}:{events:ReplayEvent[];duration:number}){
+  const frame=useRef<HTMLIFrameElement|null>(null),port=useRef<MessagePort|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null),mounted=useRef(true),[attempt,setAttempt]=useState(0),[ready,setReady]=useState(false),[playing,setPlaying]=useState(false),[time,setTime]=useState(0),[speed,setSpeed]=useState(1),[error,setError]=useState('');
+  const document=useMemo(()=>{const nonce=crypto.randomUUID().replaceAll('-',''),asset=new URL('/replay.js',window.location.href);return`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; worker-src 'none'; frame-src about:; font-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><div id="replay-root"></div><script nonce="${nonce}" data-ten98-replay="player" referrerpolicy="no-referrer" src="${asset.href}"></script>`;},[attempt]);
+  function close(){if(timer.current!==null){clearTimeout(timer.current);timer.current=null;}port.current?.postMessage({type:'destroy'});port.current?.close();port.current=null;}
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;close();};},[]);
+  function loaded(){close();const channel=new MessageChannel();port.current=channel.port1;setReady(false);let valid=true,prepared=false;const fail=()=>{if(!mounted.current||port.current!==channel.port1||!valid)return;valid=false;close();setReady(false);setPlaying(false);setError('This replay could not be rendered safely. Retry preview.');};timer.current=setTimeout(fail,8000);channel.port1.onmessage=event=>{
+      if(!mounted.current||port.current!==channel.port1||!valid)return;const value:unknown=event.data;if(value===null||typeof value!=='object'||Array.isArray(value)){fail();return;}const v=value as Record<string,unknown>,keys=Object.keys(v).sort().join(',');
+      if(v.type==='ready'&&keys==='duration,type'&&!prepared&&v.duration===duration){if(timer.current!==null)clearTimeout(timer.current);timer.current=null;prepared=true;setReady(true);return;}
+      if(prepared&&v.type==='tick'&&keys==='playing,time,type'&&typeof v.time==='number'&&Number.isFinite(v.time)&&v.time>=0&&v.time<=duration&&typeof v.playing==='boolean'){setTime(v.time);setPlaying(v.playing);return;}
+      if(prepared&&v.type==='ended'&&keys==='type'){setTime(duration);setPlaying(false);return;}
+      fail();
+    };channel.port1.start();frame.current?.contentWindow?.postMessage({type:'ten98-replay-init',protocol:1,events},'*',[channel.port2]);}
+  const send=(value:unknown)=>{if(ready&&!error)port.current?.postMessage(value);};
+  return <section aria-label="Replay preview" className="stack" style={{gridTemplateColumns:'minmax(0,1fr)',minWidth:0}}>
+    {error?<div className="alert" role="alert"><p>{error}</p><button type="button" className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} onClick={()=>{close();setError('');setReady(false);setTime(0);setSpeed(1);setPlaying(false);setAttempt(n=>n+1);}}>Retry preview</button></div>:<iframe key={attempt} ref={frame} title="Isolated session replay" sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" tabIndex={-1} src={'data:text/html;charset=utf-8,'+encodeURIComponent(document)} onLoad={loaded} style={{width:'100%',height:'min(60vh,600px)',border:'1px solid var(--line)',minWidth:0}}/>}
+    {!ready&&!error&&<p role="status">Preparing isolated preview…</p>}<div className="row"><button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} disabled={!ready||!!error||playing} onClick={()=>send({type:'play',offset:time})}>Play replay</button><button className="btn" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} disabled={!ready||!!error||!playing} onClick={()=>send({type:'pause',offset:time})}>Pause replay</button><label style={{minWidth:0}}>Playback speed<select aria-label="Playback speed" style={{minHeight:44,maxWidth:'100%'}} value={speed} disabled={!ready||!!error} onChange={event=>{const n=Number(event.target.value);if([0.5,1,1.5,2].includes(n)){setSpeed(n);send({type:'speed',value:n});}}}>{[0.5,1,1.5,2].map(n=><option key={n} value={n}>{n}×</option>)}</select></label></div>
+    <label style={{minWidth:0}}>Playback position<input aria-label="Playback position" type="range" min={0} max={duration} step={1} value={time} disabled={!ready||!!error||duration===0} style={{minHeight:44,width:'100%',minWidth:0}} onChange={event=>{const offset=Number(event.target.value);setTime(offset);setPlaying(false);send({type:'pause',offset});}}/></label><output aria-label="Replay time">{elapsed(time)} / {elapsed(duration)}</output>
+  </section>;
+}

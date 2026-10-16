@@ -1,6 +1,7 @@
 import {useEffect, useId, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
 import type {GeographyReadiness} from '../lib/analytics-geography';
+import {defaultReplaySettings,replaySettings,type ReplaySettings} from '../lib/session-replay';
 
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 type NetworkMode = 'off' | 'direct' | 'proxy';
@@ -14,6 +15,7 @@ interface Settings {
   captureScreen: boolean;
   captureGeography?: boolean;
   capturePerformance?: boolean;
+  replay?: ReplaySettings;
   excludeBots: boolean;
   linkIdentities?: boolean;
   excludedPaths: string[];
@@ -130,6 +132,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
     api<Loaded>(url, {signal: ctrl.signal})
       .then((d) => {
         if (!alive || ctrl.signal.aborted || gen !== genRef.current) return;
+        if(d.settings.replay!==undefined)replaySettings.parse(d.settings.replay);
         setData({...d,geography:locationReadiness(d.geography)});
         setDraft(d.settings);
         setPathsText(d.settings.excludedPaths.join('\n'));
@@ -169,12 +172,16 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
 
   const draftPaths = parsePaths(pathsText);
   const pathErrors = validatePaths(draftPaths);
+  const replay = draft?.replay ?? defaultReplaySettings;
+  let replayError='';
+  if(draft?.replay){if(!replaySettings.safeParse(draft.replay).success)replayError='Choose valid replay settings.';else if(replay.blockSelector)try{document.querySelector(replay.blockSelector);}catch{replayError='Enter a valid CSS selector for blocked sections.';}}
+  const setReplay=(patch:Partial<ReplaySettings>)=>set('replay',{...replay,...patch});
   const current: Settings | null = draft ? {...draft, excludedPaths: draftPaths} : null;
   // ponytail: JSON.stringify dirty check; swap for a structural compare if settings ever grow nesting.
   const dirty = !!data && !!current && JSON.stringify(current) !== JSON.stringify(data.settings);
   const canEdit = data?.role === 'owner' || data?.role === 'admin';
   const inputsDisabled = pending || loading || !canEdit;
-  const canSave = canEdit && dirty && pathErrors.length === 0 && !pending && !loading;
+  const canSave = canEdit && dirty && pathErrors.length === 0 && !replayError && !pending && !loading;
 
   const cancel = () => {
     if (!data || lockRef.current || readBusyRef.current) return;
@@ -202,6 +209,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
         signal: ctrl.signal,
       });
       if (!mountedRef.current || ctrl.signal.aborted || gen !== genRef.current) return;
+      if(res.settings.replay!==undefined)replaySettings.parse(res.settings.replay);
       // Retain the last confirmed role/networkMode; no refetch after save.
       setData({settings: res.settings, revision: res.revision, role: data.role, networkMode: data.networkMode,geography:locationReadiness(res.geography)});
       setDraft(res.settings);
@@ -391,6 +399,24 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
           Language is included with accepted events. Third-party vendor SDKs have their own data collection behavior,
           which these settings do not change.
         </p>
+      </fieldset>
+
+      <fieldset disabled={inputsDisabled} className="stack" aria-describedby={`${uid}-replay-help`}>
+        <legend>Session replay</legend>
+        <label className="row"><input type="checkbox" style={{width:'auto',flexShrink:0}} checked={replay.enabled} onChange={e=>setReplay({enabled:e.target.checked})}/>Enable recordings after separate replay consent</label>
+        <p className="hint" id={`${uid}-replay-help`}>Basic analytics and analytics consent alone never start a recording. Visitors must also allow replay. Do Not Track, Global Privacy Control and excluded paths apply.</p>
+        <label htmlFor={`${uid}-replay-sample`}>Record {new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(replay.sampleRate*100)}% of eligible sessions</label>
+        <input id={`${uid}-replay-sample`} type="range" min="0" max="100" step="1" value={replay.sampleRate*100} onChange={e=>setReplay({sampleRate:Number(e.target.value)/100})}/>
+        <p className="hint">The sampling decision is made once per recording. A rate of 0% records nothing.</p>
+        <label htmlFor={`${uid}-replay-mask`}>Masking</label>
+        <select id={`${uid}-replay-mask`} value={replay.maskLevel} onChange={e=>setReplay({maskLevel:e.target.value as ReplaySettings['maskLevel']})}><option value="strict">Strict — mask form values and visible text</option><option value="moderate">Moderate — mask form values, keep visible text</option></select>
+        {replay.maskLevel==='moderate'&&<p className="alert">Visible page text can contain personal information. Review blocked sections and excluded pages before enabling this mode.</p>}
+        <label htmlFor={`${uid}-replay-duration`}>Maximum recording length</label>
+        <select id={`${uid}-replay-duration`} value={replay.maxDurationMs} onChange={e=>setReplay({maxDurationMs:Number(e.target.value) as ReplaySettings['maxDurationMs']})}>{[5,10,15,20].map(minutes=><option key={minutes} value={minutes*60000}>{minutes} minutes</option>)}</select>
+        <label htmlFor={`${uid}-replay-block`}>Block additional sections with a CSS selector</label>
+        <input id={`${uid}-replay-block`} maxLength={1024} value={replay.blockSelector} placeholder=".private-area, [data-sensitive]" onChange={e=>setReplay({blockSelector:e.target.value})}/>
+        {replayError&&<p className="alert" role="alert">{replayError}</p>}
+        <p className="hint">Form values are masked in both modes. Some URLs and structural attributes remain; exclude sensitive pages and block private sections. Embedded frames, canvas and media are not recorded. Recordings continue across allowed pages in the same tab until their original time limit.</p>
       </fieldset>
 
       <div className="field">

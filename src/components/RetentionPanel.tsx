@@ -45,6 +45,7 @@ interface PreviewDto {
     atLeast: boolean;
     logicalBytes: number | null;
   };
+  replayEstimate?: {status:'available'|'unavailable';recordings:number|null;chunks:number|null;atLeast:boolean;logicalBytes:number|null};
   profileEstimate?: {status: 'available' | 'unavailable'; properties: number | null; atLeast: boolean};
   identityLinkEstimate?: {status: 'available' | 'unavailable'; links: number | null; atLeast: boolean};
   categories: CategoryMap;
@@ -70,7 +71,7 @@ const FIELDS: ReadonlyArray<{
   helper: string;
 }> = [
   {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep events, performance observations, session properties and explicit identity links. Each property uses its latest update; each link uses its latest accepted evidence (default 90).'},
-  {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep replays (default 7).'},
+  {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep recording content and recorded paths (default 7). Expired content becomes unreadable immediately; bounded cleanup removes it afterward.'},
   {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep generated answers, copied execution input and observed redirect chains (default 90). Receipts and authored prompts remain.'},
   {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google and Meta reports, Meta campaign inventories, keyword and domain SEO research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
 ];
@@ -442,6 +443,8 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <p style={{margin:'8px 0'}}>{preview.identityLinkEstimate?.status==='available'&&preview.identityLinkEstimate.links!==null
                 ? `${preview.identityLinkEstimate.atLeast?'At least ':''}${preview.identityLinkEstimate.links.toLocaleString()} explicit identity links eligible for cleanup.`
                 : 'Identity link estimate unavailable.'} Shortening retention hides expired link evidence immediately; extending it does not restore that evidence.</p>
+              <h4>Session replay</h4>
+              <p style={{margin:'8px 0'}}>{preview.replayEstimate?.status==='available'&&preview.replayEstimate.recordings!==null&&preview.replayEstimate.chunks!==null?`${preview.replayEstimate.atLeast?'At least ':''}${preview.replayEstimate.recordings.toLocaleString()} recording records or expired request tombstones and ${preview.replayEstimate.chunks.toLocaleString()} stored replay chunks eligible for cleanup.`:'Replay estimate unavailable. Recording content still follows the replay retention period.'}{preview.replayEstimate?.status==='available'&&preview.replayEstimate.logicalBytes!==null?` About ${fmtBytes(preview.replayEstimate.logicalBytes)} in sampled logical row bytes, not guaranteed disk savings.`:''}</p>
               <h4>Imported reports and research</h4>
               <p style={{margin: '8px 0'}}>Derived data cutoff (UTC): {fmtUtc(preview.derivedCutoff)}. {preview.derivedEstimate.status === 'available' && preview.derivedEstimate.imports !== null ? `${preview.derivedEstimate.atLeast ? 'At least ' : ''}${preview.derivedEstimate.imports.toLocaleString()} finished Google imports eligible.` : 'Import estimate unavailable.'}</p>
               <p style={{margin: '8px 0'}}>{preview.metaEstimate?.status === 'available' && preview.metaEstimate.imports !== null ? `${preview.metaEstimate.atLeast ? 'At least ' : ''}${preview.metaEstimate.imports.toLocaleString()} finished Meta imports eligible or already awaiting cleanup. Their receipts remain.` : 'Meta import estimate unavailable. Finished Meta report rows still follow this policy.'}</p>
@@ -454,7 +457,7 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <p style={{margin:'8px 0'}}>{preview.promptEstimate.status==='available'&&preview.promptEstimate.results!==null?`${preview.promptEstimate.atLeast?'At least ':''}${preview.promptEstimate.results.toLocaleString()} generated prompt answers and ${preview.promptEstimate.inputs?.toLocaleString() ?? "unknown"} copied execution inputs eligible under raw provider evidence retention.`:'Prompt answer estimate unavailable.'}</p>
               <p style={{margin:'8px 0'}}>{preview.redirectEstimate?.status==='available'&&preview.redirectEstimate.checks!==null?`${preview.redirectEstimate.atLeast?'At least ':''}${preview.redirectEstimate.checks.toLocaleString()} redirect observations eligible. Their check receipts remain.`:'Redirect observation estimate unavailable.'}</p>
               <details><summary>What stays and how expiry works</summary>
-              <p className="hint" style={{margin: '8px 0'}}>Google and Meta report rows, Meta campaign metadata, Google quality metadata, keyword results and saved keyword metrics expire after the derived-history period. Saving or refreshing a list does not extend an older observation's expiry. Authored keywords, tags and prompt versions remain. Generated prompt answers and copied execution input follow raw provider evidence retention. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Replay stores nothing yet.</p>
+              <p className="hint" style={{margin: '8px 0'}}>Google and Meta report rows, Meta campaign metadata, Google quality metadata, keyword results and saved keyword metrics expire after the derived-history period. Saving or refreshing a list does not extend an older observation's expiry. Authored keywords, tags and prompt versions remain. Generated prompt answers and copied execution input follow raw provider evidence retention. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Expired replay paths and content are hidden immediately and purged in bounded passes. Safe request tombstones keep retries from recreating expired recordings until derived-history retention removes them; they contain no recorded path or events.</p>
               <p className="hint" style={{margin: '8px 0'}}>
                 Kept as-is: authored reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups.
               </p>

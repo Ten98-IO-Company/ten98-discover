@@ -24,7 +24,7 @@ const previewInput = z.object({ revision: z.number().int().positive(), settings:
 const tokenInput = previewInput.extend({ version: z.literal(1), workspaceId: z.uuid(), userId: z.string().min(1).max(128), issuedAt: z.number().int().nonnegative() }).strict();
 const settingsSql = `json_build_object('rawAnalyticsDays',w.raw_analytics_days,'replayDays',w.replay_days,
   'rawProviderEvidenceDays',w.raw_provider_evidence_days,'derivedHistoryDays',w.derived_history_days)`;
-export const retentionCategories = Object.freeze({ rawAnalytics: 'active', replay: 'not_implemented', rawProviderEvidence: 'active', derivedHistory: 'active' } as const);
+export const retentionCategories = Object.freeze({ rawAnalytics: 'active', replay: 'active', rawProviderEvidence: 'active', derivedHistory: 'active' } as const);
 
 function parse<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
   const result = schema.safeParse(value);
@@ -92,6 +92,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     let domainResearchEstimate: {status:'available'|'unavailable';results:number|null;atLeast:boolean}={status:'unavailable',results:null,atLeast:false};
     let savedKeywordEstimate: { status: 'available' | 'unavailable'; metrics: number | null; atLeast: boolean } = { status: 'unavailable', metrics: null, atLeast: false };
     let estimate: { status: 'available' | 'unavailable'; rows: number | null; atLeast: boolean; logicalBytes: number | null } = { status: 'unavailable', rows: null, atLeast: false, logicalBytes: null };
+    let replayEstimate:{status:'available'|'unavailable';recordings:number|null;chunks:number|null;atLeast:boolean;logicalBytes:number|null}={status:'unavailable',recordings:null,chunks:null,atLeast:false,logicalBytes:null};
     await client.query('SAVEPOINT estimate');
     try {
       await client.query("SET LOCAL statement_timeout='2s'");
@@ -103,6 +104,12 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
         ) raw ORDER BY project_id,at,id,kind LIMIT 10001`, [workspaceId, cutoff]);
       estimate = { status: 'available', rows: Math.min(sample.rows.length, 10000), atLeast: sample.rows.length > 10000,
         logicalBytes: sample.rows.slice(0, 10000).reduce((sum, row) => sum + row.bytes, 0) };
+      const replayCutoff=new Date(asOf.getTime()-input.settings.replayDays*86400000);
+      const replayRows=(await client.query(`SELECT kind,bytes FROM(
+        SELECT 'recording' AS kind,pg_column_size(r)::integer AS bytes,r.created_at,r.id AS recording_id,-1 AS sequence FROM session_recording r JOIN project p ON p.id=r.project_id WHERE p.workspace_id=$1 AND r.created_at<GREATEST(p.replay_retained_from,$2) AND(r.entry_path IS NOT NULL OR r.chunk_count<>0 OR r.byte_count<>0 OR r.created_at<$3)
+        UNION ALL SELECT 'chunk',pg_column_size(c)::integer,r.created_at,r.id,c.sequence FROM session_recording_chunk c JOIN session_recording r ON r.id=c.recording_id JOIN project p ON p.id=r.project_id WHERE p.workspace_id=$1 AND r.created_at<GREATEST(p.replay_retained_from,$2)
+        ) sampled ORDER BY created_at,recording_id,sequence LIMIT 10001`,[workspaceId,replayCutoff,derivedCutoff])).rows;
+      const replaySample=replayRows.slice(0,10000);replayEstimate={status:'available',recordings:replaySample.filter(r=>r.kind==='recording').length,chunks:replaySample.filter(r=>r.kind==='chunk').length,atLeast:replayRows.length>10000,logicalBytes:replaySample.reduce((n,r)=>n+r.bytes,0)};
       const profiles=await client.query(`SELECT s.property_key FROM project p JOIN analytics_session_property s ON s.project_id=p.id
         WHERE p.workspace_id=$1 AND s.updated_at<GREATEST(p.session_properties_retained_from,$2::timestamptz) LIMIT 10001`,[workspaceId,profileCutoff]);
       profileEstimate={status:'available',properties:Math.min(profiles.rows.length,10000),atLeast:profiles.rows.length>10000};
@@ -147,7 +154,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, metaEstimate, metaInventoryEstimate, keywordEstimate, domainResearchEstimate, savedKeywordEstimate, promptEstimate, aiSearchEstimate, contentSupportEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, replayEstimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, metaEstimate, metaInventoryEstimate, keywordEstimate, domainResearchEstimate, savedKeywordEstimate, promptEstimate, aiSearchEstimate, contentSupportEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }
@@ -162,7 +169,7 @@ export async function saveRetention(workspaceId: string, userId: string, raw: un
     await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [workspaceId]);
     await requireOwner(client, workspaceId, userId);
     if (preview.workspaceId !== workspaceId || preview.userId !== userId) throw new FoundationError(400, 'Preview these settings again before saving.');
-    const { rows } = await client.query('SELECT retention_revision AS revision,raw_analytics_days,raw_provider_evidence_days,derived_history_days,clock_timestamp() AS now FROM workspace WHERE id=$1', [workspaceId]);
+    const { rows } = await client.query('SELECT retention_revision AS revision,raw_analytics_days,replay_days,raw_provider_evidence_days,derived_history_days,clock_timestamp() AS now FROM workspace WHERE id=$1', [workspaceId]);
     const age = (rows[0].now as Date).getTime() - preview.issuedAt;
     if (rows[0].revision !== preview.revision || age < 0 || age > 300_000) throw new FoundationError(409, 'Retention changed or the preview expired. Reload and preview again.');
     const s = preview.settings;
@@ -174,6 +181,7 @@ export async function saveRetention(workspaceId: string, userId: string, raw: un
       to_char((instant-$2::integer*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ai_search_cutoff
       FROM (SELECT clock_timestamp() AS instant) clock`,[Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays),Math.min(rows[0].raw_provider_evidence_days,s.rawProviderEvidenceDays)])).rows[0];
     const saveNow=saveClock.now as Date;
+    await client.query('UPDATE project SET replay_retained_from=GREATEST(replay_retained_from,$2::timestamptz) WHERE workspace_id=$1',[workspaceId,new Date(saveNow.getTime()-Math.min(rows[0].replay_days,s.replayDays)*86400000)]);
     await latchSessionPropertyRetention(client,projects.rows.map(p=>p.id),new Date(saveNow.getTime()-Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays)*86_400_000),saveNow);
     await latchIdentityLinkRetention(client,projects.rows.map(p=>p.id),saveClock.link_cutoff,saveClock.link_as_of);
     await latchAiSearchExpiry(client,projects.rows.map(p=>p.id),saveClock.ai_search_cutoff);
@@ -210,6 +218,7 @@ export async function runRetentionBatch(projectId?: string) {
     // Fresh statement after both gates: collection/settings may have committed while we waited.
     const { rows } = await client.query(`SELECT p.retention_cutoff,p.retention_policy_revision,w.retention_revision,
       clock_timestamp()-w.raw_analytics_days*interval '24 hours' AS cutoff,
+      GREATEST(p.replay_retained_from,clock_timestamp()-w.replay_days*interval '24 hours') AS replay_cutoff,
       clock_timestamp()-w.derived_history_days*interval '24 hours' AS derived_cutoff,
       clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' AS raw_evidence_cutoff,clock_timestamp() AS profile_as_of,
       to_char((statement_timestamp()-w.raw_analytics_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS link_cutoff,
@@ -220,6 +229,26 @@ export async function runRetentionBatch(projectId?: string) {
     const deleted = await client.query(`WITH expired AS (
       SELECT id FROM event WHERE project_id=$1 AND received_at<$2 ORDER BY received_at,id LIMIT 1000 FOR UPDATE
     ) DELETE FROM event e USING expired WHERE e.project_id=$1 AND e.id=expired.id RETURNING e.visitor_id`, [selected, cutoff]);
+    // Each chunk is <=256KiB: 32 rows bound one pass to at most8MiB of replay payload.
+    const replayPaths=await client.query(`WITH expired AS(
+      SELECT id FROM session_recording WHERE project_id=$1 AND created_at<$2 AND entry_path IS NOT NULL ORDER BY created_at,id LIMIT 1000 FOR UPDATE
+      )UPDATE session_recording r SET entry_path=NULL FROM expired e WHERE r.id=e.id`,[selected,state.replay_cutoff]);
+    const replayChunks=await client.query(`WITH expired AS(
+      SELECT c.recording_id,c.sequence FROM session_recording_chunk c JOIN session_recording r ON r.id=c.recording_id
+      WHERE r.project_id=$1 AND r.created_at<$2 ORDER BY r.created_at,r.id,c.sequence LIMIT 32 FOR UPDATE OF c
+      )DELETE FROM session_recording_chunk c USING expired e WHERE c.recording_id=e.recording_id AND c.sequence=e.sequence`,[selected,state.replay_cutoff]);
+    // Retain bounded-lived request tombstones so a lost Begin ACK cannot recreate purged content.
+    const replayMetadata=await client.query(`WITH expired AS(
+      SELECT r.id FROM session_recording r WHERE r.project_id=$1 AND r.created_at<$2 AND NOT EXISTS(SELECT 1 FROM session_recording_chunk c WHERE c.recording_id=r.id)
+      AND(r.chunk_count<>0 OR r.byte_count<>0 OR r.last_sequence IS NOT NULL OR r.first_event_timestamp IS NOT NULL OR r.last_event_timestamp IS NOT NULL OR r.complete OR r.missing_fragments IS NOT NULL)
+      ORDER BY r.created_at,r.id LIMIT 1000 FOR UPDATE
+      )UPDATE session_recording r SET chunk_count=0,byte_count=0,last_sequence=NULL,first_event_timestamp=NULL,last_event_timestamp=NULL,complete=false,missing_fragments=NULL FROM expired e WHERE r.id=e.id`,[selected,state.replay_cutoff]);
+    const replayRecordings=await client.query(`WITH expired AS(
+      SELECT r.id FROM session_recording r WHERE r.project_id=$1 AND r.created_at<LEAST($2::timestamptz,$3::timestamptz) AND entry_path IS NULL AND NOT EXISTS(SELECT 1 FROM session_recording_chunk c WHERE c.recording_id=r.id)
+      ORDER BY r.created_at,r.id LIMIT 1000 FOR UPDATE
+      )DELETE FROM session_recording r USING expired e WHERE r.id=e.id`,[selected,state.replay_cutoff,state.derived_cutoff]);
+    const replayPending=(await client.query(`SELECT EXISTS(SELECT 1 FROM session_recording r WHERE project_id=$1 AND(created_at<LEAST($2::timestamptz,$3::timestamptz) OR(created_at<$2 AND(entry_path IS NOT NULL OR chunk_count<>0 OR byte_count<>0 OR last_sequence IS NOT NULL OR first_event_timestamp IS NOT NULL OR last_event_timestamp IS NOT NULL OR complete OR missing_fragments IS NOT NULL OR EXISTS(SELECT 1 FROM session_recording_chunk c WHERE c.recording_id=r.id))))) AS pending`,[selected,state.replay_cutoff,state.derived_cutoff])).rows[0].pending;
+    await client.query('UPDATE project SET replay_retained_from=GREATEST(replay_retained_from,$2::timestamptz) WHERE id=$1',[selected,state.replay_cutoff]);
     const performance=await client.query(`WITH expired AS (
       SELECT navigation_id,metric FROM web_performance WHERE project_id=$1 AND created_at<$2
       ORDER BY created_at,navigation_id,metric LIMIT 1000 FOR UPDATE
@@ -251,13 +280,13 @@ export async function runRetentionBatch(projectId?: string) {
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
     const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
     const ranks = await expireRankData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
-    const complete = !domainResearch.pending && !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
+    const complete = !replayPending && !domainResearch.pending && !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
-    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedPerformance:performance.rowCount??0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedPerformance:performance.rowCount??0, clearedReplayPaths:replayPaths.rowCount??0,clearedReplayMetadata:replayMetadata.rowCount??0,deletedReplayChunks:replayChunks.rowCount??0,deletedReplayRecordings:replayRecordings.rowCount??0,deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
       expiredDomainResearchResults:domainResearch.expiredDomainResearchResults,
       expiredSuggestionResults:suggestions.expiredSuggestionResults,expiredSuggestionInputs:suggestions.expiredSuggestionInputs,
       expiredAiSearchResults:aiSearch.expiredAiSearchResults,expiredAiSearchInputs:aiSearch.expiredAiSearchInputs,expiredAiSearchQuotes:aiSearch.expiredAiSearchQuotes,

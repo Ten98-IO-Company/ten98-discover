@@ -28,7 +28,7 @@
       (required || allowed).every(function (key) { return Object.prototype.hasOwnProperty.call(value, key); });
   }
   function denied() { return {analytics: false, advertising: false, adUserData: false, adPersonalization: false}; }
-  function choice(value) { return keys(value, purposes) && purposes.every(function (key) { return typeof value[key] === 'boolean'; }); }
+  function choice(value) { return keys(value, purposes.concat('replay'), purposes) && purposes.every(function (key) { return typeof value[key] === 'boolean'; }) && (!Object.prototype.hasOwnProperty.call(value,'replay') || typeof value.replay === 'boolean' && (!value.replay || value.analytics)); }
   function granted(value) { return purposes.some(function (key) { return value[key]; }); }
   function privacy() {
     return navigator.globalPrivacyControl === true || [navigator.doNotTrack, window.doNotTrack, navigator.msDoNotTrack].some(function (v) { return v === '1' || v === 'yes'; });
@@ -117,11 +117,12 @@
   }
   function applyChoice(state, value, acknowledge, basicOptOut, expiresAt) {
     if (!state.config || Date.now() >= state.expires || state.reload) return {ok: false, reason: 'Configuration unavailable or page reload required.'};
+    if (plain(value) && value.replay === true && value.analytics !== true) return {ok:false,reason:'Session replay also requires Analytics permission.'};
     if (!choice(value)) return {ok: false, reason: 'Provide all four consent choices as booleans.'};
     var requestedOptOut = basicOptOut === undefined ? !value.analytics : basicOptOut;
     value = privacy() ? denied() : Object.assign({}, value);
     if (granted(value) && acknowledge !== true) return {ok: false, reason: 'Explain the page reload warning before requesting consent.'};
-    var changed = purposes.some(function (key) { return state.consent[key] !== value[key]; }), newlyAnalytics = !state.consent.analytics && value.analytics;
+    var changed = purposes.concat('replay').some(function (key) { return !!state.consent[key] !== !!value[key]; }), newlyAnalytics = !state.consent.analytics && value.analytics, oldReplay = state.consent.replay === true;
     var before = nativeBasis(state);
     state.basicOptOut = requestedOptOut;
     var saved = saveChoice(state, value, expiresAt);
@@ -135,7 +136,9 @@
     state.consent = value;
     state.preferenceReadable = true;
     state.consentExpires = expiresAt || Date.now() + 180 * DAY;
+    if (oldReplay && value.replay !== true && hub.replayStop?.protocolVersion === 3) hub.replayStop(state,true);
     if ((before !== nativeBasis(state) || !value.analytics && state.basicOptOut) && typeof hub.nativeStop === 'function') hub.nativeStop(state);
+    if (value.replay === true && acknowledge === true) state.replayRestartRequired = false;
     if (state.preferenceButton) state.preferenceButton.textContent = 'Tracking preferences';
     if (changed && state.loaded) stop(state, 'Consent changed. Reload required to stop already loaded vendor SDKs.', true);
     else state.routes.forEach(function (route) { route.state = permitted(state, route) ? 'ready' : 'consent_blocked'; route.reason = 'No event has been invoked by this loader.'; });
@@ -144,6 +147,7 @@
     if ((newlyAnalytics || before === null && nativeBasis(state) === 'cookieless') && !state.reload && typeof hub.nativeEvent === 'function' && !(state.nativePageObservation && state.nativePageObservation.basic && state.nativePageObservation.sent && state.nativePageObservation.url === location.origin + location.pathname)) {
       try { hub.nativeEvent(state, {name: 'page_view', eventId: crypto.randomUUID(), url: location.origin + location.pathname}); } catch (_) {}
     }
+    if (!state.reload && value.replay === true && hub.replayStart?.protocolVersion === 3) hub.replayStart(state);
     return {ok: true, reloadRequired: state.reload};
   }
   function expire(state) {
@@ -175,9 +179,11 @@
     return nativeBasis(state) !== null;
   }
   function nativeConsentAllowed(state) { return nativeAllowed(state) && nativeBasis(state) === 'consent'; }
-  nativeAllowed.protocolVersion = nativeConsentAllowed.protocolVersion = 3;
+  function replayAllowed(state) { return nativeConsentAllowed(state) && state.environment === 'live' && state.consent.replay === true && state.config.nativeTracking.enabled && state.config.nativeTracking.replay?.enabled === true; }
+  nativeAllowed.protocolVersion = nativeConsentAllowed.protocolVersion = replayAllowed.protocolVersion = 3;
   hub.nativeAllowed = nativeAllowed;
   hub.nativeConsentAllowed = nativeConsentAllowed;
+  hub.replayAllowed = replayAllowed;
   function inject(state, route, url, attributes) {
     return new Promise(function (resolve, reject) {
       if (!permitted(state, route)) return reject(new Error('Consent unavailable.'));
@@ -229,10 +235,11 @@
       ![2, 3].includes(value.schemaVersion) || value.siteKey !== state.siteKey || value.environment !== state.environment || value.origin !== location.origin ||
       typeof value.validUntil !== 'string' || !configuration(value.configuration)) return false;
     var settings = value.nativeTracking;
-    if (!keys(settings, ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths', 'linkIdentities', 'capturePerformance'].concat(value.schemaVersion === 3 ? ['collectionMode'] : []), ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths'].concat(value.schemaVersion === 3 ? ['collectionMode'] : [])) ||
+    if (!keys(settings, ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths', 'linkIdentities', 'capturePerformance', 'replay'].concat(value.schemaVersion === 3 ? ['collectionMode'] : []), ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths'].concat(value.schemaVersion === 3 ? ['collectionMode'] : [])) ||
       (value.schemaVersion === 3 && !['cookieless', 'consent-first'].includes(settings.collectionMode)) ||
       (Object.prototype.hasOwnProperty.call(settings,'linkIdentities') && typeof settings.linkIdentities !== 'boolean') ||
       (Object.prototype.hasOwnProperty.call(settings,'capturePerformance') && typeof settings.capturePerformance !== 'boolean') ||
+      (Object.prototype.hasOwnProperty.call(settings,'replay') && (!keys(settings.replay,['enabled','sampleRate','maskLevel','maxDurationMs','blockSelector']) || typeof settings.replay.enabled !== 'boolean' || !Number.isFinite(settings.replay.sampleRate) || settings.replay.sampleRate<0 || settings.replay.sampleRate>1 || !['strict','moderate'].includes(settings.replay.maskLevel) || ![300000,600000,900000,1200000].includes(settings.replay.maxDurationMs) || typeof settings.replay.blockSelector !== 'string' || settings.replay.blockSelector.length>1024 || /\u0000|[\uD800-\uDFFF]/u.test(settings.replay.blockSelector))) ||
       !['builtin', 'external'].includes(settings.consentMode) || ['enabled', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots'].some(function (key) { return typeof settings[key] !== 'boolean'; }) ||
       !Array.isArray(settings.excludedPaths) || settings.excludedPaths.length > 50 || settings.excludedPaths.some(function (path) { return typeof path !== 'string' || path.length > 256 || !exact(/^\/[^?#\u0000-\u001f]*$/, path); })) return false;
     var expiry = Date.parse(value.validUntil);
@@ -271,6 +278,7 @@
         } else if (parsed && record.epoch === value.consentEpoch && record.updatedAt < started && record.expiresAt > Date.now() && granted(record.choice)) state.preferenceReadable = false;
       }
       if ((first || changed) && (nativeAllowed(state) || granted(state.consent)) && !(state.nativePageObservation && state.nativePageObservation.sent && state.nativePageObservation.url === location.origin + location.pathname)) dispatch(state, {name: 'page_view', eventId: crypto.randomUUID(), url: location.origin + location.pathname});
+      if (!state.reload && hub.replayStart?.protocolVersion === 3) hub.replayStart(state);
       if (first || changed) window.dispatchEvent(new CustomEvent('ten98:destinations-ready', {detail: {siteKey: state.siteKey, environment: state.environment, collectorOrigin: state.origin}}));
     } catch (_) { if (Date.now() >= state.expires) expire(state); }
     finally { clearTimeout(timer); state.fetching = false; }
@@ -295,7 +303,7 @@
     if (!value && !state.basicOptOut && state.preferenceReadable && state.config && Date.now() < state.expires && !state.reload && (!granted(state.consent) || Date.now() < state.consentExpires)) return {ok: true, reloadRequired: false};
     // A basic preference change cannot renew or manufacture enhanced grants.
     var current = Date.now() < state.consentExpires ? Object.assign({}, state.consent) : denied();
-    if (value) current.analytics = false;
+    if (value) { current.analytics = false; if (current.replay !== undefined) current.replay = false; }
     var result = applyChoice(state, current, options.acknowledgeReload, value, granted(current) ? state.consentExpires : undefined);
     if (result.ok && !value && !state.reload && nativeAllowed(state) && (!state.nativePageObservation || state.nativePageObservation.url !== location.origin + location.pathname)) {
       try { hub.nativeEvent(state, {name: 'page_view', eventId: crypto.randomUUID(), url: location.origin + location.pathname}); } catch (_) {}
@@ -316,8 +324,9 @@
       if (parsed && parsed.basicOptOut) state.basicOptOut = true;
       if (parsed && state.config && record.epoch === state.config.consentEpoch && record.expiresAt > Date.now()) {
         purposes.forEach(function (key) { next[key] = state.consent[key] && record.choice[key]; });
+        if (state.consent.replay !== undefined) next.replay = state.consent.replay === true && record.choice.replay === true;
       }
-      var changed = purposes.some(function (key) { return next[key] !== state.consent[key]; }); state.consent = next;
+      var changed = purposes.concat('replay').some(function (key) { return !!next[key] !== !!state.consent[key]; }); state.consent = next;
       if (changed || before !== nativeBasis(state) || !parsed) stop(state, 'Tracking preference changed in another tab. Reload required for loaded SDKs.', true);
     });
   });
@@ -334,6 +343,8 @@
     var nativeNotice = document.createElement('p'); nativeNotice.textContent = cookieless ? 'Basic analytics counts page paths and events without cookies or an analytics grant. Opting out or a browser privacy signal stops these observations. Enhanced analytics may send an identifier and profile details after you agree. Basic permission does not enable advertising or identification.' : 'Analytics records page paths and events after you agree. This website may also send an identifier and profile details to its native analytics collector. Earlier activity is discarded.'; dialog.appendChild(nativeNotice);
     var geographyNotice = document.createElement('p'); geographyNotice.textContent = 'When enabled by this site, approximate country, region and city may be derived locally from the connection address. The raw address and coordinates are not stored. This follows the analytics choice above; opting out, Do Not Track or Global Privacy Control stops new observations.'; dialog.appendChild(geographyNotice);
     if(state.config.nativeTracking.linkIdentities===true){var linkNotice=document.createElement('p');linkNotice.textContent='This website also links future activity with matching identifiers across devices and months within its own analytics project. The raw identifier is not stored. Earlier anonymous activity stays separate. Withdrawing consent stops new collection; previously accepted links remain subject to retention.';dialog.appendChild(linkNotice);}
+    var dialogPurposes = purposes.slice();
+    if(state.config.nativeTracking.replay){dialogPurposes.push('replay');var replayNotice=document.createElement('p');replayNotice.textContent='Session replay is a separate choice: it records a masked page and interactions only after you agree to both Analytics and Session replay. It does not grant advertising permission. A short-lived recording capability is kept in this tab for navigation; raw page data is not stored in browser storage. Withdrawal stops new recording; already shared data remains subject to retention.';dialog.appendChild(replayNotice);}
     var warning = document.createElement('p'); warning.textContent = 'Changing consent after a vendor tag loads reloads this page and may lose unsaved work. If consent storage fails, this page closes to stop loaded SDKs; clear site data before returning. Vendor SDKs may read the full URL, referrer and automatic events. Already shared or in-flight data cannot be withdrawn here.'; dialog.appendChild(warning);
     var vendors = document.createElement('p'), vendorNames = state.routes.filter(function (r) { return r.destination.enabled; }).map(function (r) { return r.destination.provider; }); vendors.textContent = vendorNames.length ? 'Configured vendors: ' + vendorNames.join(', ') : 'No additional vendor tags are configured.'; dialog.appendChild(vendors);
     var controls = {}, feedback = document.createElement('p'), basic; feedback.setAttribute('role', 'status');
@@ -341,7 +352,7 @@
       var basicLabel = document.createElement('label'); basic = document.createElement('input'); basic.type = 'checkbox'; basic.checked = !privacy() && state.preferenceReadable && !state.basicOptOut; basic.disabled = privacy(); basicLabel.appendChild(basic); basicLabel.appendChild(document.createTextNode(' Allow cookieless basic analytics')); dialog.appendChild(basicLabel);
       var basicStatus = document.createElement('p'); basicStatus.textContent = nativeBasis(state) === 'cookieless' ? 'Basic analytics is currently enabled. Enhanced analytics is a separate choice.' : 'Basic observations require an available configuration and no opt-out or browser privacy signal.'; dialog.appendChild(basicStatus);
     }
-    purposes.forEach(function (purpose) { var label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.checked = privacy() ? false : state.consent[purpose]; input.disabled = privacy(); controls[purpose] = input; label.appendChild(input); label.appendChild(document.createTextNode(' ' + ({analytics: cookieless ? 'Enhanced analytics' : 'Analytics', advertising: 'Advertising', adUserData: 'Ad user data', adPersonalization: 'Ad personalization'})[purpose])); dialog.appendChild(label); });
+    dialogPurposes.forEach(function (purpose) { var label = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox'; input.checked = privacy() ? false : state.consent[purpose] === true; input.disabled = privacy() || purpose === 'replay' && !state.config.nativeTracking.replay.enabled; controls[purpose] = input; label.appendChild(input); label.appendChild(document.createTextNode(' ' + ({analytics: cookieless ? 'Enhanced analytics' : 'Analytics', advertising: 'Advertising', adUserData: 'Ad user data', adPersonalization: 'Ad personalization', replay:'Session replay (also requires Analytics)'})[purpose])); dialog.appendChild(label); });
     if (privacy()) { var veto = document.createElement('p'); veto.textContent = 'Your browser privacy signal requires denial.'; dialog.appendChild(veto); }
     function close() { dialog.close(); dialog.remove(); state.dialog = null; state.closeDialog = null; prior?.focus(); }
     state.closeDialog = close;
@@ -350,7 +361,7 @@
       if (state.dialog !== dialog || state.config.consentEpoch !== openingEpoch) return;
       var result = applyChoice(state, value, true, optOut); if (result.ok && !result.reloadRequired) close(); else feedback.textContent = result.reason || 'Reload required to apply this choice to loaded SDKs.';
     }
-    button('Save choices', function () { var value = {}; purposes.forEach(function (p) { value[p] = controls[p].checked; }); if (basic && !basic.checked) value.analytics = false; submit(value, basic ? !basic.checked : undefined); });
+    button('Save choices', function () { var value = {}; dialogPurposes.forEach(function (p) { value[p] = controls[p].checked; }); if (basic && !basic.checked) {value.analytics = false;if(controls.replay)value.replay=false;} submit(value, basic ? !basic.checked : undefined); });
     button('Deny all', function () { submit(denied(), true); }); button('Cancel', close); dialog.appendChild(feedback);
     dialog.addEventListener('cancel', function (e) { e.preventDefault(); close(); });
     document.body.appendChild(dialog); if (typeof dialog.showModal !== 'function') { dialog.remove(); state.dialog = null; state.closeDialog = null; return false; } dialog.showModal(); controls.analytics.focus(); return true;

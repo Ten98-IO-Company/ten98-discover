@@ -9,6 +9,185 @@
   var PAGE_VIEW = 'page_view';
   var performanceCaptures = new Set();
   var performanceDocumentChanged = false;
+  var replayLimits = {chunkBytes:262144,eventsPerChunk:200,chunks:1024,recordingBytes:67108864,eventBytes:4194304,fragmentParts:64,depth:64,nodes:20000,drainMs:60000,pageSize:20,chunkPageSize:4};
+  var replayMemoryLimit = 8388608;
+  var replayUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+
+  function replayCurrent(c, draining) {
+    var h = hub();
+    return c.active && c.state.replayCapture === c && c.state.nativeGeneration === c.generation && c.state.config && c.state.config.consentEpoch === c.epoch &&
+      h && h.replayAllowed && h.replayAllowed.protocolVersion === 3 && h.replayAllowed(c.state) && nativeReady(c.state, true) &&
+      Date.now() < (draining ? Math.min(c.record.localDeadline + 60000, Date.parse(c.record.reply.uploadUntil)) : c.record.localDeadline);
+  }
+  function replaySave(c) {
+    var value = JSON.stringify(c.record);
+    sessionStorage.setItem(c.key, value);
+    if (sessionStorage.getItem(c.key) !== value) throw new Error('Replay tab storage is unavailable.');
+  }
+  function stopReplay(state, erase, terminal) {
+    var c = state.replayCapture;
+    if (c) {
+      c.active = false; clearInterval(c.flushTimer); clearTimeout(c.endTimer);
+      if (c.controller) c.controller.abort();
+      var stop = c.stop; c.stop = null; try { if (stop) stop(); } catch (_) {}
+      if (hub() && hub().replayOwner === c) hub().replayOwner = null;
+      c.queue.length = 0; c.parts.length = 0; c.queuedBytes = c.partBytes = 0; c.partNodes = 1;
+      if (terminal && c.record) try { c.record.terminal = true; if (c.record.reply && typeof c.record.reply==='object') c.record.reply.token = null; replaySave(c); } catch (_) {}
+    }
+    if (erase) { if (c) try { sessionStorage.removeItem(c.key); } catch (_) {} state.replayCapture = null; state.replayResumeRequest = null; }
+  }
+  function replayFail(c) { var allowed=false;try{allowed=hub().replayAllowed(c.state)&&nativeReady(c.state,true);}catch(_){}stopReplay(c.state,!allowed,true); }
+  function replayKeys(value, names) { return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === names.length && names.every(function (key) { return Object.prototype.hasOwnProperty.call(value, key); }); }
+  function replayReply(value, settings, terminal) {
+    if (!replayKeys(value,['accepted','reason','recordingId','token','createdAt','deadlineAt','uploadUntil','settings','limits']) || typeof value.accepted !== 'boolean' ||
+      typeof value.recordingId !== 'string' || value.recordingId.length!==36 || !replayUuid.test(value.recordingId) || value.reason !== (value.accepted ? null : 'not_sampled') ||
+      (value.accepted ? !(terminal && value.token === null) && (typeof value.token !== 'string' || value.token.length > 4096 || !/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$(?![\s\S])/.test(value.token)) : value.token !== null) ||
+      JSON.stringify(value.settings) !== JSON.stringify(settings) || !replayKeys(value.limits,Object.keys(replayLimits)) || Object.keys(replayLimits).some(function (key) { return value.limits[key] !== replayLimits[key]; })) return false;
+    return ['createdAt','deadlineAt','uploadUntil'].every(function (key) { try { return new Date(value[key]).toISOString() === value[key]; } catch (_) { return false; } }) &&
+      Date.parse(value.deadlineAt)-Date.parse(value.createdAt) === settings.maxDurationMs && Date.parse(value.uploadUntil)-Date.parse(value.deadlineAt) === 60000;
+  }
+  function replayStored(value, state, settings) {
+    return replayKeys(value,['version','siteKey','collector','origin','epoch','settings','requestId','beginUrl','localDeadline','nextSequence','usedBytes','terminal','reply']) && value.version === 1 &&
+      value.siteKey === state.siteKey && value.collector === state.origin && value.origin === location.origin && value.epoch === state.config.consentEpoch && JSON.stringify(value.settings) === JSON.stringify(settings) &&
+      typeof value.requestId==='string' && value.requestId.length===36 && replayUuid.test(value.requestId) && typeof value.beginUrl === 'string' && value.beginUrl.length <= 4096 && new URL(value.beginUrl).origin === location.origin && !new URL(value.beginUrl).username && !new URL(value.beginUrl).password && !/[?#]/.test(value.beginUrl) &&
+      Number.isFinite(value.localDeadline) && value.localDeadline <= Date.now()+settings.maxDurationMs && Number.isSafeInteger(value.nextSequence) && value.nextSequence >= 0 && value.nextSequence <= 1024 && Number.isSafeInteger(value.usedBytes) && value.usedBytes >= 0 && value.usedBytes <= 67108864 &&
+      typeof value.terminal === 'boolean' && (value.reply === null || replayReply(value.reply, settings, value.terminal) && value.localDeadline <= Date.parse(value.reply.deadlineAt));
+  }
+  function replayBase64(bytes) {
+    var text = ''; for (var i = 0; i < bytes.length; i += 16384) text += String.fromCharCode.apply(null, bytes.subarray(i,i+16384));
+    return btoa(text).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+  async function replayRequest(c, path, body, limit) {
+    var controller = new AbortController(); c.controller = controller;
+    var timer = setTimeout(function () { controller.abort(); }, 5000);
+    var cancelled = new Promise(function (_, reject) { controller.signal.addEventListener('abort',function () { reject(new Error('Replay request cancelled.')); },{once:true}); });
+    try { return await Promise.race([cancelled,(async function () {
+      if (!replayCurrent(c, c.finishing)) throw new Error('Replay permission changed.');
+      var response = await fetch(c.state.origin + path, {method:'POST',credentials:'omit',referrerPolicy:'no-referrer',mode:'cors',cache:'no-store',redirect:'error',signal:controller.signal,headers:{'Content-Type':'application/json'},body:body});
+      var text = await readNativeResponse(response,controller.signal,limit);
+      if (!replayCurrent(c,c.finishing)) throw new Error('Replay permission changed.');
+      return {status:response.status,value:JSON.parse(text)};
+    })()]); } finally { clearTimeout(timer); if (c.controller === controller) c.controller = null; }
+  }
+  function replayFlush(c) {
+    if (!c.parts.length) return;
+    var bytes = new TextEncoder().encode('[' + c.parts.join(',') + ']');
+    c.parts.length = 0; c.partBytes = 0; c.partNodes = 1; c.queue.push({bytes:bytes,final:false}); c.queuedBytes += bytes.length;
+  }
+  async function replayPump(c) {
+    if (c.sending || !c.started || !c.queue.length || !replayCurrent(c,c.finishing)) return;
+    c.sending = true;
+    try {
+      var chunk = c.queue[0], record = c.record;
+      if (record.nextSequence >= 1024 || record.usedBytes + chunk.bytes.length > 67108864) throw new Error('Replay capacity reached.');
+      var sequence = record.nextSequence++, prefix = new TextEncoder().encode(sequence + ':' + chunk.final + ':'), signed = new Uint8Array(prefix.length + chunk.bytes.length); signed.set(prefix); signed.set(chunk.bytes,prefix.length);
+      record.usedBytes += chunk.bytes.length; replaySave(c); // Reserve a sequence before sending: a navigation can leave an explicit gap, never a reused sequence.
+      var hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',signed)),function (v) { return v.toString(16).padStart(2,'0'); }).join('');
+      var body = JSON.stringify({siteKey:c.state.siteKey,url:currentUrl(),consent:{analytics:true,replay:true,epoch:c.epoch},token:record.reply.token,sequence:sequence,final:chunk.final,data:replayBase64(chunk.bytes)}), accepted = false;
+      for (var attempt = 0; attempt < 2 && replayCurrent(c,c.finishing); attempt++) {
+        var result;
+        try { result = await replayRequest(c,'/api/replay/chunks',body,2048); } catch (_) { continue; }
+        var value = result.value;
+        if (result.status === 202 && replayKeys(value,['accepted','duplicate','recordingId','sequence','sha256','complete']) && value.accepted === true && typeof value.duplicate === 'boolean' && typeof value.complete === 'boolean' && value.recordingId === record.reply.recordingId && value.sequence === sequence && value.sha256 === hash) { accepted = true; break; }
+        if ([400,403,409,413].includes(result.status)) break;
+      }
+      if (!accepted || !replayCurrent(c,c.finishing)) throw new Error('Replay chunk outcome is incomplete.');
+      c.queue.shift(); c.queuedBytes -= chunk.bytes.length;
+      if (chunk.final) { stopReplay(c.state,false,true); return; }
+    } catch (_) { if (c.active) replayFail(c); }
+    finally { c.sending = false; }
+    if (c.active) void replayPump(c);
+  }
+  function replayPart(c, text) {
+    var size = new TextEncoder().encode(text).length, pending = [{value:JSON.parse(text),depth:1}], nodes = 0;
+    if (size + 2 > 262144) return false;
+    while (pending.length) { var item = pending.pop(); if (++nodes + 1 > replayLimits.nodes || item.depth > replayLimits.depth) return false; if (item.value && typeof item.value === 'object') Object.keys(item.value).forEach(function (key) { pending.push({value:item.value[key],depth:item.depth+1}); }); }
+    if (c.parts.length >= 200 || c.partBytes + size + c.parts.length + 2 > 262144 || c.partNodes + nodes > replayLimits.nodes) replayFlush(c);
+    if (c.queuedBytes + (c.partBytes + size + c.parts.length + 2) * 2 > replayMemoryLimit) throw new Error('Replay memory queue is full.');
+    c.parts.push(text); c.partBytes += size; c.partNodes += nodes; return true;
+  }
+  function replayEmit(c, event) {
+    try {
+      if (c.finishing) return;
+      if (!replayCurrent(c,false)) { if (c.active) { if (Date.now() >= c.record.localDeadline) finishReplay(c); else replayFail(c); } return; }
+      if (!replayKeys(event,['type','timestamp','data']) || !Number.isInteger(event.type) || event.type < 0 || event.type > 4 || !Number.isSafeInteger(event.timestamp) || event.timestamp < 0 || event.timestamp > 8640000000000000 || !event.data || typeof event.data !== 'object' || Array.isArray(event.data)) throw new Error('Invalid recorder event.');
+      if (event.type === 4) { var u = new URL(event.data.href); if (u.origin !== location.origin || /[?#]/.test(event.data.href)) throw new Error('Invalid recorder URL.'); }
+      var text = JSON.stringify(event), bytes = new TextEncoder().encode(text);
+      if (bytes.length > 4194304) throw new Error('Replay event is too large.');
+      if (bytes.length + 2 > 262144 || !replayPart(c,text))
+      { var id = uuid(), size = 180000, total = Math.ceil(bytes.length/size); if (total > 64) throw new Error('Too many replay fragments.'); for (var i=0;i<total;i++) if(!replayPart(c,JSON.stringify({type:'fragment',id:id,index:i,total:total,data:replayBase64(bytes.subarray(i*size,(i+1)*size))}))) throw new Error('Replay fragment exceeds chunk limits.'); }
+      if (c.parts.length >= 200) replayFlush(c);
+      void replayPump(c);
+    } catch (_) { replayFail(c); }
+  }
+  function finishReplay(c) {
+    if (c.finishing || !c.active || c.state.replayCapture !== c) return;
+    if (!replayCurrent(c,true)) { replayFail(c); return; }
+    c.finishing = true; clearInterval(c.flushTimer); var stop = c.stop; c.stop = null; try { if (stop) stop(); } catch (_) {}
+    c.endTimer=setTimeout(function(){if(c.active&&c.state.replayCapture===c)stopReplay(c.state,false,true);},Math.max(0,Math.min(c.record.localDeadline+60000,Date.parse(c.record.reply.uploadUntil))-Date.now()));
+    replayFlush(c);
+    // A dispatched chunk's hash/body never changes; final uses an unsent tail or a new empty chunk.
+    if (!c.queue.length || c.sending && c.queue.length === 1) { if(c.queuedBytes+2>replayMemoryLimit){replayFail(c);return;}c.queue.push({bytes:new TextEncoder().encode('[]'),final:true}); c.queuedBytes += 2; }
+    else c.queue[c.queue.length-1].final = true;
+    void replayPump(c);
+  }
+  function replayNavigation(h) {
+    (h.replayStates || []).forEach(function (state) {
+      var c = state.replayCapture;
+      if (replayPathExcluded(state)) { state.replayDocumentBlocked = true; stopReplay(state,true); return; }
+      if (!c || !c.active) return;
+      try { if (!nativeReady(state,true)) { state.replayDocumentBlocked = true; stopReplay(state,true); } } catch (_) { state.replayDocumentBlocked = true; stopReplay(state,true); }
+    });
+  }
+  function replayPathExcluded(state) { try { return state.config.nativeTracking.excludedPaths.some(function (path) { return decodeURIComponent(location.pathname).startsWith(decodeURIComponent(path)); }); } catch (_) { return true; } }
+  function hideReplay(h) {
+    (h.replayStates || []).forEach(function (state) {
+      var c = state.replayCapture;
+      if (!c || !c.active) return;
+      // Ordinary navigation never invents a final receipt or persists DOM. Lost unsent bytes reserve gaps.
+      try { replayFlush(c); var unsent = c.queue.slice(c.sending?1:0),next=c.record.nextSequence+unsent.length,used=c.record.usedBytes+unsent.reduce(function(n,chunk){return n+chunk.bytes.length;},0);if(next>1024||used>67108864)throw new Error('Replay capacity reached.');c.record.nextSequence=next;c.record.usedBytes=used;replaySave(c);stopReplay(state,false);state.replayResumeRequest=c.record.requestId;if(state.replayCapture===c&&!c.active)state.replayCapture=null; }
+      catch (_) { replayFail(c); }
+    });
+  }
+  function startReplay(state) {
+    var h = hub(), settings = state.config && state.config.nativeTracking.replay;
+    if (h && settings) { if (!h.replayStates) h.replayStates=[]; if(!h.replayStates.includes(state))h.replayStates.push(state); if(replayPathExcluded(state)){state.replayDocumentBlocked=true;return;} }
+    if (!h || !h.replayAllowed || h.replayAllowed.protocolVersion !== 3 || !h.replayAllowed(state) || !nativeReady(state,true) || state.replayCapture || state.replayDocumentBlocked || state.replayRestartRequired || state.replayOwnerSkipped || typeof crypto==='undefined' || !crypto.subtle || typeof btoa !== 'function' || typeof TextEncoder!=='function' || typeof TextDecoder!=='function' || typeof AbortController!=='function' || typeof ReadableStream!=='function' || typeof fetch!=='function') return;
+    // ponytail: rrweb owns one document mirror; one authorized site records, other sites keep analytics only until a new document.
+    if (h.replayOwner && h.replayOwner.active) { state.replayOwnerSkipped = true; return; }
+    var c = {state:state,generation:state.nativeGeneration,epoch:state.config.consentEpoch,key:'ten98:replay:v1:'+state.origin+':'+state.siteKey+':'+state.environment,active:true,queue:[],parts:[],partBytes:0,partNodes:1,queuedBytes:0,started:false,sending:false,finishing:false};
+    state.replayCapture = c; h.replayOwner = c;
+    try {
+      var stored = sessionStorage.getItem(c.key);
+      if (stored !== null) { c.record = JSON.parse(stored); if (!replayStored(c.record,state,settings) || state.replayResumeRequest && c.record.requestId !== state.replayResumeRequest) throw new Error('Invalid replay tab capability.'); }
+      else { if(state.replayResumeRequest)throw new Error('Replay resume capability is unavailable.'); c.record = {version:1,siteKey:state.siteKey,collector:state.origin,origin:location.origin,epoch:c.epoch,settings:settings,requestId:uuid(),beginUrl:currentUrl(),localDeadline:Date.now()+settings.maxDurationMs,nextSequence:0,usedBytes:0,terminal:false,reply:null}; replaySave(c); }
+      if (c.record.terminal || Date.now() >= c.record.localDeadline) { replayFail(c); return; }
+    } catch (_) { replayFail(c); return; }
+    (async function () {
+      try {
+        if (!c.record.reply) {
+          var body = JSON.stringify({siteKey:state.siteKey,requestId:c.record.requestId,url:c.record.beginUrl,consent:{analytics:true,replay:true,epoch:c.epoch}}), result;
+          for (var attempt=0;attempt<2 && replayCurrent(c,false);attempt++) { try { result=await replayRequest(c,'/api/replay/begin',body,8192); } catch (_) { result=null; } if (result && (result.status===202 && replayReply(result.value,settings,false) || [400,403,409,413].includes(result.status))) break; result=null; }
+          if (!result || result.status!==202 || !replayReply(result.value,settings,false) || !replayCurrent(c,false)) throw new Error('Replay begin is incomplete.');
+          c.record.reply=result.value; c.record.localDeadline=Math.min(c.record.localDeadline,Date.parse(result.value.deadlineAt)); replaySave(c);
+        }
+        if (!c.record.reply.accepted) { c.record.terminal=true; replaySave(c); stopReplay(state,false); return; }
+        if (!replayCurrent(c,false)) throw new Error('Replay deadline passed.');
+        if (!h.replayLoader) h.replayLoader=new Promise(function (resolve) {
+          if (h.startReplayRecorder) { resolve(typeof h.startReplayRecorder==='function' && h.startReplayRecorder.protocolVersion===1); return; }
+          var loader=document.createElement('script'), done=false, timer=setTimeout(function () { finish(false); },5000);
+          function finish(ok) { if(done)return;done=true;clearTimeout(timer);loader.remove();resolve(ok); }
+          loader.src=state.origin+'/replay.js';loader.async=true;loader.referrerPolicy='no-referrer';loader.setAttribute('data-ten98-replay','record');if(script&&script.nonce)loader.nonce=script.nonce;
+          loader.onload=function () { finish(typeof h.startReplayRecorder==='function' && h.startReplayRecorder.protocolVersion===1); };loader.onerror=function () { finish(false); };(document.head||document.documentElement).appendChild(loader);
+        });
+        if (!await h.replayLoader || !replayCurrent(c,false)) throw new Error('Replay recorder unavailable.');
+        var stop=h.startReplayRecorder(c.record.reply.settings,function (event) { if(event===null)replayFail(c);else replayEmit(c,event); });
+        if(typeof stop!=='function'||!c.active){if(typeof stop==='function')stop();throw new Error('Replay recorder did not start.');}c.stop=stop;c.started=true;
+        c.flushTimer=setInterval(function () { if(!replayCurrent(c,false)){if(Date.now()>=c.record.localDeadline)finishReplay(c);else if(c.active)replayFail(c);return;}replayFlush(c);void replayPump(c); },2000);
+        c.endTimer=setTimeout(function () { finishReplay(c); },Math.max(0,c.record.localDeadline-Date.now()));void replayPump(c);
+      } catch (_) { if(c.active)replayFail(c); }
+    })();
+  }
 
   function startPerformance(state) {
     var h = hub(), settings = state.config && state.config.nativeTracking;
@@ -95,7 +274,7 @@
   function nativeCurrent(state, epoch, generation, controller, consentOnly) {
     return !controller.signal.aborted && state.nativeGeneration === generation && state.config && state.config.consentEpoch === epoch && nativeReady(state, consentOnly);
   }
-  async function readNativeResponse(response, signal) {
+  async function readNativeResponse(response, signal, limit) {
     var reader = response.body.getReader(), bytes = 0, text = '';
     function cancel() { reader.cancel().catch(function () {}); }
     signal.addEventListener('abort', cancel, {once: true});
@@ -107,7 +286,7 @@
         if (signal.aborted) throw new Error('Native request cancelled.');
         if (part.done) return text + decoder.decode();
         bytes += part.value.byteLength;
-        if (bytes > 2048) throw new Error('Native response too large.');
+        if (bytes > (limit || 2048)) throw new Error('Native response too large.');
         text += decoder.decode(part.value, {stream: true});
       }
     } catch (error) { cancel(); throw error; }
@@ -154,11 +333,13 @@
           if (current() && result.accepted && typeof result.context === 'string' && result.context.length <= 1024) state.nativeContext = result.context;
         }).catch(function () { if (!controller.signal.aborted) warn('ten98-monitor: collector unavailable or blocked.'); })
         .finally(function () { clearTimeout(timer); state.nativeRequests.delete(controller); if (performanceEvent) capture.requests.delete(controller); });
-      if (observation) startPerformance(state);
+      if (observation) { startPerformance(state); startReplay(state); }
     } catch (ignore) {} // Invalid application properties must never break the host page.
   }
 
   function nativeStop(state) {
+    if (state.replayCapture) state.replayRestartRequired = true;
+    stopReplay(state, true);
     if (state.performanceCapture) state.performanceCapture.active = false;
     state.nativeContext = null; state.nativeIdentifier = undefined; state.nativeGeneration = (state.nativeGeneration || 0) + 1;
     state.nativeRequests.forEach(function (request) { request.abort(); }); state.nativeRequests.clear();
@@ -287,6 +468,7 @@
       var url = currentUrl();
       if (url === h.lastUrl) return;
       stopPerformanceNavigation();
+      replayNavigation(h);
       h.lastUrl = url;
       fanout(PAGE_VIEW);
     } catch (ignore) {}
@@ -306,7 +488,7 @@
   function onPagehide() {
     try {
       var h = hub();
-      if (h) h.restored = false;
+      if (h) { h.restored = false; hideReplay(h); }
     } catch (ignore) {}
   }
 
@@ -351,8 +533,8 @@
   }
 
   function install() {
-    nativeEvent.protocolVersion = nativeStop.protocolVersion = nativeIdentify.protocolVersion = 3;
-    var h = { sites: [], lastUrl: currentUrl(), restored: false, nativeEvent: nativeEvent, nativeStop: nativeStop, nativeIdentify: nativeIdentify, api: { track: track, identify: identify, resetIdentity: resetIdentity } };
+    nativeEvent.protocolVersion = nativeStop.protocolVersion = nativeIdentify.protocolVersion = startReplay.protocolVersion = stopReplay.protocolVersion = 3;
+    var h = { sites: [], lastUrl: currentUrl(), restored: false, nativeEvent: nativeEvent, nativeStop: nativeStop, nativeIdentify: nativeIdentify, replayStart:startReplay, replayStop:stopReplay, api: { track: track, identify: identify, resetIdentity: resetIdentity } };
     window.__ten98FoundationHub = h;
     patchHistory('pushState');
     patchHistory('replaceState');

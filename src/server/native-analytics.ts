@@ -14,18 +14,19 @@ import {analyticsEnvironment} from './analytics-environment.ts';
 import {collectGeography,geographyReadiness} from './analytics-geography.ts';
 import type {GeographyObservation} from '../lib/analytics-geography.ts';
 import {normalizeRevenueProperties} from '../lib/revenue.ts';
+import {replaySettings} from '../lib/session-replay.ts';
 
 const settingsInput = z.object({
   enabled: z.boolean(), consentMode: z.enum(['builtin', 'external']),
   collectionMode: z.enum(['consent-first', 'cookieless']).optional(),
   captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),captureGeography:z.boolean().optional(),capturePerformance:z.boolean().optional(),
-  excludeBots: z.boolean(),linkIdentities:z.boolean().optional(),
+  excludeBots: z.boolean(),linkIdentities:z.boolean().optional(),replay:replaySettings.optional(),
   excludedPaths: z.array(z.string().min(1).max(256).regex(/^\/[^?#\u0000-\u001f\u007f]*$(?![\s\S])/).refine(value => { try { decodeURIComponent(value); return toUSVString(value) === value; } catch { return false; } })).max(50),
 }).strict();
 export type AnalyticsSettings = z.infer<typeof settingsInput>;
 type Project = { id: string; origin: string; analytics_settings: AnalyticsSettings; analytics_epoch: string; analytics_revision: number; destination_epoch: string | null };
 export function publicAnalyticsSettings(value: unknown): AnalyticsSettings { const parsed=settingsInput.parse(value); return {...parsed,collectionMode:parsed.collectionMode??'consent-first'}; }
-export function publicTrackingSettings(value:unknown){const s=publicAnalyticsSettings(value);return{enabled:s.enabled,consentMode:s.consentMode,collectionMode:s.collectionMode,captureReferrer:s.captureReferrer,captureCampaigns:s.captureCampaigns,captureScreen:s.captureScreen,excludeBots:s.excludeBots,...s.capturePerformance===undefined?{}:{capturePerformance:s.capturePerformance},...s.linkIdentities===undefined?{}:{linkIdentities:s.linkIdentities},excludedPaths:s.excludedPaths};}
+export function publicTrackingSettings(value:unknown){const s=publicAnalyticsSettings(value);return{enabled:s.enabled,consentMode:s.consentMode,collectionMode:s.collectionMode,captureReferrer:s.captureReferrer,captureCampaigns:s.captureCampaigns,captureScreen:s.captureScreen,excludeBots:s.excludeBots,...s.capturePerformance===undefined?{}:{capturePerformance:s.capturePerformance},...s.replay===undefined?{}:{replay:s.replay},...s.linkIdentities===undefined?{}:{linkIdentities:s.linkIdentities},excludedPaths:s.excludedPaths};}
 export function analyticsPathExcluded(path: string, prefixes: string[]): boolean {
   if (!prefixes.length) return false;
   try { const decoded = decodeURIComponent(path); return prefixes.some(prefix => decoded.startsWith(decodeURIComponent(prefix))); }
@@ -84,7 +85,7 @@ export async function saveAnalyticsSettings(projectId: string, userId: string, r
     if (!['owner','admin'].includes(role.rows[0]?.role)) throw new FoundationError(404, 'Project not found or unavailable.');
     const current=await client.query('SELECT analytics_settings FROM project WHERE id=$1 FOR UPDATE',[projectId]);
     if(!current.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
-    const saved=publicAnalyticsSettings(current.rows[0].analytics_settings),settings={...input.settings,collectionMode:input.settings.collectionMode??saved.collectionMode,captureGeography:input.settings.captureGeography??saved.captureGeography??false,...input.settings.capturePerformance===undefined&&saved.capturePerformance!==undefined?{capturePerformance:saved.capturePerformance}:{}};
+    const saved=publicAnalyticsSettings(current.rows[0].analytics_settings),settings={...input.settings,collectionMode:input.settings.collectionMode??saved.collectionMode,captureGeography:input.settings.captureGeography??saved.captureGeography??false,...input.settings.capturePerformance===undefined&&saved.capturePerformance!==undefined?{capturePerformance:saved.capturePerformance}:{},...input.settings.replay===undefined&&saved.replay!==undefined?{replay:saved.replay}:{}};
     const result = await client.query(`UPDATE project SET analytics_settings=$3,analytics_revision=analytics_revision+1,analytics_epoch=$4,
       identity_links_started_at=CASE WHEN $5::boolean THEN COALESCE(identity_links_started_at,clock_timestamp()) ELSE identity_links_started_at END
       WHERE id=$1 AND analytics_revision=$2 RETURNING analytics_settings AS settings,analytics_revision AS revision`, [projectId, input.revision, JSON.stringify(settings), randomUUID(),settings.linkIdentities===true]);
@@ -94,10 +95,10 @@ export async function saveAnalyticsSettings(projectId: string, userId: string, r
   finally { client.release(); }
 }
 
-export type Observation = { eventId: string; name: string; url: string; properties?: unknown; dimensions?: unknown; context?: string; consent?: { analytics: true; epoch: string }; collection?:{mode:'cookieless';epoch:string} };
+export type Observation = { eventId: string; name: string; url: string; properties?: unknown; dimensions?: unknown; context?: string; consent?: { analytics: true; epoch: string; replay?:true }; collection?:{mode:'cookieless';epoch:string} };
 // Caller holds the project publication gate. Read policy in a fresh statement
 // after waiting so collection and identify share the same current-consent rules.
-export async function nativeCollectionPolicy(client:PoolClient,request:Request,siteKey:string,input:Pick<Observation,'url'|'consent'|'collection'>,operation:'event'|'identify'){
+export async function nativeCollectionPolicy(client:PoolClient,request:Request,siteKey:string,input:Pick<Observation,'url'|'consent'|'collection'>,operation:'event'|'identify'|'replay'){
   const result=await client.query<Project>(`SELECT p.*,r.consent_epoch AS destination_epoch FROM project p
     LEFT JOIN tracking_state s ON s.project_id=p.id AND s.environment='live'
     LEFT JOIN tracking_revision r ON r.id=s.active_revision AND r.project_id=p.id AND r.environment=s.environment
@@ -110,7 +111,7 @@ export async function nativeCollectionPolicy(client:PoolClient,request:Request,s
   const excluded=!settings.enabled||analyticsPathExcluded(path,settings.excludedPaths)||request.headers.get('dnt')==='1'||request.headers.get('sec-gpc')==='1'||
     (settings.excludeBots&&/bot\b|crawler|spider|headless|slurp/i.test(userAgent));
   const epoch=trackingConsentEpoch(project.analytics_epoch,project.destination_epoch);
-  const basis=input.consent?.analytics===true&&input.consent.epoch===epoch&&!input.collection?'consent' as const:
+  const basis=input.consent?.analytics===true&&input.consent.epoch===epoch&&!input.collection&&(operation!=='replay'||input.consent.replay===true)?'consent' as const:
     operation==='event'&&!input.consent&&input.collection?.mode==='cookieless'&&input.collection.epoch===epoch&&settings.collectionMode==='cookieless'?'cookieless' as const:null;
   const reason=excluded?'collection_disabled' as const:basis===null?'consent_required' as const:null;
   return {project,userAgent,reason,basis};
