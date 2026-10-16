@@ -221,7 +221,7 @@ export async function runRetentionBatch(projectId?: string) {
     // Fresh statement after both gates: collection/settings may have committed while we waited.
     const { rows } = await client.query(`SELECT p.retention_cutoff,p.retention_policy_revision,w.retention_revision,
       to_char((clock_timestamp()-w.raw_analytics_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff,
-      to_char(GREATEST(p.analytics_retained_from,CASE WHEN p.retention_policy_revision=w.retention_revision AND p.retention_cutoff IS NOT NULL THEN p.retention_cutoff ELSE clock_timestamp()-w.raw_analytics_days*interval '24 hours' END) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS native_cutoff,
+      to_char(CASE WHEN p.retention_policy_revision=w.retention_revision AND p.retention_cutoff IS NOT NULL THEN p.retention_cutoff ELSE clock_timestamp()-w.raw_analytics_days*interval '24 hours' END AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS native_cutoff,
       to_char(GREATEST(p.replay_retained_from,clock_timestamp()-w.replay_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS replay_cutoff,
       clock_timestamp()-w.derived_history_days*interval '24 hours' AS derived_cutoff,
       clock_timestamp()-w.raw_provider_evidence_days*interval '24 hours' AS raw_evidence_cutoff,to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS profile_as_of,
@@ -229,7 +229,10 @@ export async function runRetentionBatch(projectId?: string) {
       to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS link_as_of
       FROM project p JOIN workspace w ON w.id=p.workspace_id WHERE p.id=$1`, [selected]);
     const state = rows[0];
-    const cutoff = state.native_cutoff as string; // Native erasure watermark never becomes a provider-history cutoff.
+    // The frozen target of an incomplete pass under the current policy revision, else the live policy; a reset freezes its acceptance instant
+    // the same way. A revised policy replaces a frozen target, so rows it no longer covers survive, while the retained-history boundary below
+    // never moves backwards and keeps them unavailable. The native target never becomes a provider-history cutoff.
+    const cutoff = state.native_cutoff as string;
     const deleted = await client.query(`WITH expired AS (
       SELECT id FROM event WHERE project_id=$1 AND received_at<$2 ORDER BY received_at,id LIMIT 1000 FOR UPDATE
     ) DELETE FROM event e USING expired WHERE e.project_id=$1 AND e.id=expired.id RETURNING e.visitor_id`, [selected, cutoff]);

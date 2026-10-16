@@ -49,7 +49,8 @@ export async function resetAnalytics(projectId:string,userId:string,raw:unknown)
    analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),replay_retained_from=GREATEST(replay_retained_from,$2::timestamptz),
    session_properties_retained_from=GREATEST(session_properties_retained_from,$2::timestamptz),session_properties_evidence_lost_at=COALESCE(session_properties_evidence_lost_at,$2::timestamptz),
    identity_links_retained_from=GREATEST(identity_links_retained_from,$2::timestamptz),identity_links_evidence_lost_at=COALESCE(identity_links_evidence_lost_at,$2::timestamptz),
-   retention_next_run_at=LEAST(retention_next_run_at,clock_timestamp()) WHERE id=$1 RETURNING analytics_revision AS revision`,[projectId,cutoff,randomUUID()])).rows[0];
+   retention_cutoff=GREATEST(COALESCE(retention_cutoff,'-infinity'::timestamptz),$2::timestamptz),retention_policy_revision=w.retention_revision,
+   retention_next_run_at=LEAST(retention_next_run_at,clock_timestamp()) FROM workspace w WHERE project.id=$1 AND w.id=project.workspace_id RETURNING analytics_revision AS revision`,[projectId,cutoff,randomUUID()])).rows[0];
   const ack={projectId,requestId:input.requestId,appliedRevision:updated.revision,cutoff};await receipt.save(ack);
   // ACK means the irreversible cutoff committed, not that bounded disk cleanup completed.
   return analyticsResetResult.parse({state:await state(client,projectId,userId),ack,replayed:false});
