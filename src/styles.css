@@ -221,7 +221,7 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .btn.primary { background: var(--blue); border-color: var(--blue); color: var(--color-on-accent); box-shadow: var(--shadow-panel); }
 .btn.primary:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); }
 .btn.ghost { padding: 7px 10px; border-color: transparent; background: transparent; color: var(--muted); }
-.btn:disabled, .btn.primary:disabled, .btn.ghost:disabled, input:not([type='checkbox']):not([type='radio']):disabled, select:disabled, textarea:disabled { color: var(--color-disabled-text); background: var(--color-disabled-surface); border-color: var(--color-border-control); box-shadow: none; opacity: 1; cursor: not-allowed; }
+.btn:disabled, .btn.primary:disabled, .btn.ghost:disabled, .google-source-picker .btn[aria-disabled='true'], input:not([type='checkbox']):not([type='radio']):disabled, select:disabled, textarea:disabled { color: var(--color-disabled-text); background: var(--color-disabled-surface); border-color: var(--color-border-control); box-shadow: none; opacity: 1; cursor: not-allowed; }
 .field { margin-bottom: 18px; }
 .ai-insights-overview .card { margin: 0; }
 .ai-insights-overview :is(h3, h4) { margin: 0; }

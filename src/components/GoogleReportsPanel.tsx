@@ -262,7 +262,7 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
             {overview.connections.map(c => <option key={c.id} value={c.id}>{c.name} · {PROVIDER_LABEL[c.provider]} · {connStatus(c.status)}</option>)}
           </select>
         </div>}
-        <button type="button" className="btn ghost" style={BTN} disabled={pending} onClick={manualRefresh}>Refresh status</button>
+        <button type="button" className="btn ghost" style={BTN} aria-disabled={pending} onClick={manualRefresh}>Refresh status</button>
       </div>
       {notice && <p role="status" className="hint">{notice}</p>}
       {err !== '' && <p role="alert" className="alert">{err}</p>}
