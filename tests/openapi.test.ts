@@ -63,7 +63,7 @@ test('static OpenAPI exposes exactly the supported 24 native operations with loc
 test('retention specification requires month/timezone and preserves closed entry-filter and response bounds',()=>{
  const operation=nativeOpenApi.paths['/api/projects/{projectId}/retention-report'].get,params=operation.parameters as any[],parameter=(name:string)=>params.find(x=>x.name===name);
  assert.deepEqual(operation['x-ten98-scopes'],['analytics:read']);assert.equal(Object.hasOwn(operation,'requestBody'),false);for(const name of ['month','timeZone'])assert.equal(parameter(name).required,true);
- const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['from','to','timeZone','groupBy','groupProperty','fields'].includes(x.name));assert.deepEqual(params.filter(x=>!['month','timeZone'].includes(x.name)),inherited);
+ const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['from','to','timeZone','groupBy','groupProperty','fields','propertyView','propertyCursor'].includes(x.name));assert.deepEqual(params.filter(x=>!['month','timeZone'].includes(x.name)),inherited);
  assert.match(operation.description,new RegExp(String(retentionLimits.json)));assert.match(operation.description,new RegExp(String(retentionLimits.csv)));
  const monthPattern=new RegExp(parameter('month').schema.pattern);for(const month of ['1970-01','2024-03','9998-12'])assert.equal(monthPattern.test(month),true);for(const month of ['1969-12','9999-01','2024-00','2024-13'])assert.equal(monthPattern.test(month),false);
  const now=new Date('2026-10-15T08:00:00Z'),valid={month:'2024-03',timeZone:'Asia/Dubai',kind:'custom',path:'/entry',propertyKey:'done',propertyType:'boolean',propertyValue:'false'};
@@ -71,11 +71,12 @@ test('retention specification requires month/timezone and preserves closed entry
  const invalid:Record<string,string>[]=[{month:''},{timeZone:''},{month:'1969-12'},{month:'9999-01'},{month:'2026-11'},{month:'2024-13'},{from:'2024-03-01'},{to:'2024-03-31'},{groupBy:'path'},{groupProperty:'done'},{cursor:'opaque'},{limit:'10'}];for(const patch of invalid)assert.throws(()=>retentionReportQuery(new URLSearchParams({...valid,...patch}),now));
  assert.throws(()=>retentionReportQuery(new URLSearchParams(new URLSearchParams(valid)+'&month=2024-03'),now));
  assert.throws(()=>retentionReportQuery(new URLSearchParams({...valid,fields:'["path","referrer"]'}),now));
+ for(const [name,value] of Object.entries({propertyView:'details',propertyCursor:'opaque'}))assert.throws(()=>retentionReportQuery(new URLSearchParams({...valid,[name]:value}),now));
 });
 test('Journeys specification reuses population filters with closed typed first/last step pairs',()=>{
  const operation=nativeOpenApi.paths['/api/projects/{projectId}/journeys'].get,params=operation.parameters as any[],schema=(name:string)=>params.find(x=>x.name===name)?.schema;
  assert.deepEqual(operation['x-ten98-scopes'],['analytics:read']);assert.equal(Object.hasOwn(operation,'requestBody'),false);
- const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['groupBy','groupProperty','fields'].includes(x.name));
+ const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['groupBy','groupProperty','fields','propertyView','propertyCursor'].includes(x.name));
  assert.deepEqual(params.filter(x=>!['steps','startKind','startValue','endKind','endValue'].includes(x.name)),inherited);
  assert.equal(schema('steps').minimum,2);assert.equal(schema('steps').maximum,journeysLimits.steps);assert.equal(schema('steps').default,journeysQuery(new URLSearchParams()).steps);
  assert.match(operation.description,new RegExp(String(journeysLimits.responseBytes)));
@@ -85,17 +86,19 @@ test('Journeys specification reuses population filters with closed typed first/l
  for(const value of invalid)assert.throws(()=>journeysQuery(new URLSearchParams(value)));
  assert.throws(()=>journeysQuery(new URLSearchParams('steps=3&steps=4')));
  assert.throws(()=>journeysQuery(new URLSearchParams({fields:'["path","referrer"]'})));
+ for(const [name,value] of Object.entries({propertyView:'details',propertyCursor:'opaque'}))assert.throws(()=>journeysQuery(new URLSearchParams({[name]:value})));
 });
 test('attribution specification preserves native population filters and the required closed conversion pair',()=>{
  const operation=nativeOpenApi.paths['/api/projects/{projectId}/attribution'].get,params=operation.parameters as any[],parameter=(name:string)=>params.find(x=>x.name===name);
  assert.deepEqual(operation['x-ten98-scopes'],['analytics:read']);assert.equal(Object.hasOwn(operation,'requestBody'),false);
- const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['groupBy','groupProperty','fields'].includes(x.name));assert.deepEqual(params.filter(x=>!['model','conversionKind','conversionValue'].includes(x.name)),inherited);
+ const inherited=(nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[]).filter(x=>!['groupBy','groupProperty','fields','propertyView','propertyCursor'].includes(x.name));assert.deepEqual(params.filter(x=>!['model','conversionKind','conversionValue'].includes(x.name)),inherited);
  for(const name of ['conversionKind','conversionValue'])assert.equal(parameter(name).required,true);assert.deepEqual(parameter('model').schema.enum,['first-click','last-click']);assert.equal(parameter('model').schema.default,'first-click');assert.match(operation.description,new RegExp(String(attributionLimits.responseBytes)));
  for(const model of parameter('model').schema.enum)for(const kind of parameter('conversionKind').schema.enum){const value=kind==='pageview'?'/literal%25':'signup',result=attributionQuery(new URLSearchParams({model,conversionKind:kind,conversionValue:value,from:'2024-03-01',to:'2024-03-07',timeZone:'Asia/Dubai',kind:'custom',campaignSource:'recorded'}));assert.equal(result.model,model);assert.deepEqual(result.conversion,{kind,value});assert.equal(result.scope.filters.campaignSource,'recorded');assert.equal(result.scope.timeZone,'Asia/Dubai');}
  const valid={conversionKind:'custom',conversionValue:'signup'};assert.equal(attributionQuery(new URLSearchParams(valid)).model,parameter('model').schema.default);
  const invalid:Record<string,string>[]=[{model:'linear'},{conversionKind:''},{conversionValue:''},{conversionKind:'custom',conversionValue:'page_view'},{conversionKind:'pageview',conversionValue:'/path?query'},{groupBy:'path'},{groupProperty:'plan'},{cursor:'opaque'},{limit:'100'},{sort:'keys'},{currency:'USD'},{compare:'prev'}];for(const patch of invalid)assert.throws(()=>attributionQuery(new URLSearchParams({...valid,...patch})));
  assert.throws(()=>attributionQuery(new URLSearchParams({conversionKind:'custom'})));assert.throws(()=>attributionQuery(new URLSearchParams({conversionValue:'signup'})));assert.throws(()=>attributionQuery(new URLSearchParams(new URLSearchParams(valid)+'&model=first-click&model=last-click')));
  assert.throws(()=>attributionQuery(new URLSearchParams({...valid,fields:'["path","referrer"]'})));
+ for(const [name,value] of Object.entries({propertyView:'details',propertyCursor:'opaque'}))assert.throws(()=>attributionQuery(new URLSearchParams({...valid,[name]:value})));
 });
 
 test('published batch/patch limits match native strict input and atomic batch semantics',()=>{
