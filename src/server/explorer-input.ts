@@ -86,6 +86,18 @@ export type CompoundExplorerQuery=Omit<ReturnType<typeof explorerQuery>,'groupBy
 
 // Grouping belongs only to Explore, never to saved predicates or other reports.
 export function explorerGroupingQuery(params:URLSearchParams,now=new Date()){
+  if(params.has('propertyView')||params.has('propertyCursor')){
+    if(params.toString().length>20000)bad('The exploration query is too large.');
+    if(params.getAll('propertyView').length!==1||params.get('propertyView')!=='details'||params.getAll('propertyCursor').length>1||params.has('fields'))bad('Choose a property details view.');
+    const remaining=new URLSearchParams(params);remaining.delete('propertyView');remaining.delete('propertyCursor');
+    const scope=explorerQuery(remaining,now);if(scope.groupBy!=='property')bad('Choose a property key for property details.');
+    let cursor:PropertyReportCursor|null=null;
+    if(params.has('propertyCursor')){
+      const raw=params.get('propertyCursor')!;if(raw.length>4096||!/^[A-Za-z0-9_-]+$/.test(raw))bad('Reload property events before continuing.');
+      try{const bytes=Buffer.from(raw,'base64url');if(bytes.toString('base64url')!==raw)bad();cursor=propertyReportCursorSchema.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)));}catch{return bad('Reload property events before continuing.');}
+    }
+    return {scope,fields:null,propertyReport:{cursor}};
+  }
   if(!params.has('fields'))return {scope:explorerQuery(params,now),fields:null};
   if(params.toString().length>20000||params.getAll('fields').length!==1||params.has('groupBy')||params.has('groupProperty'))bad('Choose either one field or a combination of two or three fields.');
   let raw:unknown;try{raw=JSON.parse(params.get('fields')!);}catch{return bad('Choose two or three supported fields.');}
@@ -99,6 +111,10 @@ export function explorerGroupingQuery(params:URLSearchParams,now=new Date()){
   if(normalized.toString().length>20000)bad('The exploration query is too large.');
   return {scope,fields};
 }
+
+const propertyStamp=z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/).refine(value=>Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value.slice(0,23)+'Z');
+const propertyReportCursorSchema=z.object({version:z.literal(1),scope:z.string().regex(/^[a-f0-9]{64}$/),policy:z.string().regex(/^[a-f0-9]{64}$/),before:propertyStamp,last:z.object({at:propertyStamp,id:z.uuid()}).strict()}).strict();
+export type PropertyReportCursor=z.infer<typeof propertyReportCursorSchema>;
 
 // Quoting alone does not stop spreadsheets from executing a leading formula.
 export function csvCell(value: unknown): string {
