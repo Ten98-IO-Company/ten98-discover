@@ -10,6 +10,7 @@ import { withGoogleTransportForTests } from '../src/server/google-http.ts';
 import { runRetentionBatch } from '../src/server/retention.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { runGoogleChecks } from './google-integration.ts';
+import { runGoogleGa4Checks } from './google-ga4-integration.ts';
 
 // Production client/SSR assets, actual API functions, PostgreSQL and queue worker;
 // only Google HTTP endpoints and the Google consent page are synthetic fixtures.
@@ -154,6 +155,25 @@ try {
       await page.getByRole('alert').filter({ hasText: 'Google reporting could not be connected.' }).waitFor();
       assert.equal(external, 0); assert.equal(pageErrors, 0);
       console.log('PASS production Google UI with real local API, PKCE callback, worker import, retention expiry, local disconnect, mobile bounds and zero external requests');
+      // New GA4 positives use real native imports; no successful API body is intercepted or rewritten.
+      await runGoogleGa4Checks(async ga4=>{
+        const gaContext=await browser.newContext({viewport:{width:1280,height:900}});let gaExternal=0,gaErrors=0;
+        try{
+          await gaContext.route('**/*',(route:any)=>{if(new URL(route.request().url()).origin!==config.appUrl){gaExternal++;return route.abort();}return route.continue();});
+          const gaPage=await gaContext.newPage();gaPage.setDefaultTimeout(15000);gaPage.on('pageerror',()=>gaErrors++);await gaPage.goto(config.appUrl);await gaPage.getByLabel('Email',{exact:true}).fill(ga4.email);await gaPage.getByLabel('Password',{exact:true}).fill(ga4.password);await gaPage.getByRole('button',{name:'Sign in',exact:true}).click();await gaPage.getByRole('heading',{name:'Web analytics',exact:true}).waitFor();
+          assert.equal(await gaPage.getByLabel('Workspace',{exact:true}).inputValue(),ga4.workspaceId);const menu=gaPage.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await gaPage.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Google reports',exact:true}).click();
+          const source=gaPage.locator('section.google-connection').filter({has:gaPage.getByRole('heading',{name:'GA4 report inventory',exact:true})});await source.getByLabel('Report',{exact:true}).waitFor();
+          for(const [report,label,column]of [['ga4_pages','Pages and screens','Page path and screen class'],['ga4_acquisition','Traffic acquisition','Session campaign'],['ga4_key_events','Key events','Is key event']]){
+            await source.getByLabel('Report',{exact:true}).selectOption(report);await source.getByLabel('Start date',{exact:true}).fill('2024-03-01');await source.getByLabel('End date',{exact:true}).fill('2024-03-01');
+            const queued=gaPage.waitForResponse((response:any)=>new URL(response.url()).pathname===`/api/projects/${ga4.projectId}/google/connections/${ga4.connectionId}/imports`&&response.request().method()==='POST').then(async(response:any)=>{assert.equal(response.status(),202);return response.json();});
+            await source.getByRole('button',{name:'Import report snapshot',exact:true}).click();const receipt=await queued;assert.equal(receipt.import.report,report);await ga4.complete(receipt.import.id);await gaPage.getByRole('button',{name:'Refresh status',exact:true}).click();await source.locator('.google-imports li').first().getByText(/Completed/).waitFor();
+            const captured=gaPage.waitForResponse((response:any)=>new URL(response.url()).pathname===`/api/projects/${ga4.projectId}/google/imports/${receipt.import.id}`).then(async(response:any)=>{assert.equal(response.status(),200);const bytes=await response.body();assert.ok(bytes.length<=2097152);return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));});await source.locator('.google-imports li').first().getByRole('button',{name:'View snapshot',exact:true}).click();const native=await captured;
+            assert.equal(native.import.id,receipt.import.id);assert.equal(native.import.report,report);assert.deepEqual(native.rows,ga4.snapshots[report].rows);assert.equal(native.source.timeZone,'America/New_York');assert.equal(native.source.currencyCode,'AED');await source.getByRole('heading',{name:label,exact:true}).waitFor();await source.getByRole('columnheader',{name:column,exact:true}).waitFor();await source.getByRole('cell',{name:'AED -9007199254740993.1250',exact:true}).waitFor();assert.equal(await source.getByText(/no whole-range user total is calculated/).count(),1);
+          }
+          await gaPage.setViewportSize({width:320,height:900});assert.equal(await gaPage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await gaPage.screenshot({path:'private/google-browser/ga4-320-ltr.png',fullPage:true});await gaPage.evaluate(()=>{document.documentElement.dir='rtl';document.body.style.zoom='2';});assert.equal(await gaPage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await source.getByLabel('Report',{exact:true}).focus();await gaPage.keyboard.press('Tab');assert.notEqual(await gaPage.evaluate(()=>document.activeElement?.tagName),'BODY');await gaPage.screenshot({path:'private/google-browser/ga4-320-rtl-body-zoom200.png',fullPage:true});assert.equal(gaExternal,0);assert.equal(gaErrors,0);
+          console.log('PASS GA4 three explicit imports with actual native rows, scoped readable tables/exact currency,320RTL/bodyCSSzoom200 and keyboard traversal');
+        }finally{await gaContext.close();}
+      });
     } finally {
       releaseTarget?.();
       await browser?.close(); browser = undefined;

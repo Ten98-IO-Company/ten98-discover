@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
-import { googleAdsColumnLabel, googleAdsCost } from '../lib/google-report-display';
+import { googleAdsColumnLabel, googleAdsCost, googleGa4ColumnLabel, googleGa4MetricValue } from '../lib/google-report-display';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
 
 const BTN = { minHeight: 44 };
 
 type Provider = 'gsc' | 'ga4' | 'ads';
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
-type ReportKind = 'gsc_daily' | 'gsc_queries' | 'gsc_pages' | 'ga4_traffic' | 'ga4_events' | 'ads_daily' | 'ads_campaigns' | 'ads_ad_groups';
+type ReportKind = 'gsc_daily' | 'gsc_queries' | 'gsc_pages' | 'ga4_traffic' | 'ga4_events' | 'ga4_pages' | 'ga4_acquisition' | 'ga4_key_events' | 'ads_daily' | 'ads_campaigns' | 'ads_ad_groups';
 
 interface ImportDto {
   id: string;
@@ -66,6 +66,9 @@ const REPORT_OPTIONS: Record<Provider, Array<{ kind: ReportKind; label: string }
   ga4: [
     { kind: 'ga4_traffic', label: 'Traffic' },
     { kind: 'ga4_events', label: 'Events' },
+    { kind: 'ga4_pages', label: 'Pages and screens' },
+    { kind: 'ga4_acquisition', label: 'Traffic acquisition' },
+    { kind: 'ga4_key_events', label: 'Key events' },
   ],
   ads: [
     { kind: 'ads_daily', label: 'Ads account by day' },
@@ -555,6 +558,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
               {REPORT_OPTIONS[conn.provider].map(o => <option key={o.kind} value={o.kind}>{o.label}</option>)}
             </select>
           </div>
+          {conn.provider === 'ga4' && <p className="hint">{report === 'ga4_pages' ? 'Daily views and engagement by page path or app screen class.' : report === 'ga4_acquisition' ? 'Daily acquisition by session source, medium and campaign; this is not first-user attribution.' : report === 'ga4_key_events' ? 'Daily events Google marked as key at collection time. Key events are not Google Ads conversions.' : 'Daily property measurements reported by Google Analytics.'} Dates use {conn.timeZone ?? 'the property time zone'}. User counts are specific to each row; do not add them across dates or dimensions.</p>}
           <div className="row">
             <div className="field">
               <label htmlFor={`from-${conn.id}`}>Start date</label>
@@ -601,6 +605,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
 
       {snap && (
         <div className="stack">
+          {snap.source.provider === 'ga4' && <><h3>{reportLabel(snap.imp.report)}</h3><p className="hint">Daily Google Analytics property measurements. User counts are non-additive; no whole-range user total is calculated from these rows. Engagement time is total seconds, not an average. Key events remain separate from advertising conversions and native analytics.</p></>}
           <p>Snapshot status: {impStatus(snap.imp.status)}</p>
           {snap.imp.diagnostic && <p role="status" className="hint">{snap.imp.diagnostic}</p>}
           <p className="dim">
@@ -624,15 +629,15 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
               <table style={{ minWidth: '36rem' }}>
                 <thead>
                   <tr>
-                    {snap.dimensions.map(d => <th key={d} scope="col" title={d}>{snap.source.provider === 'ads' ? googleAdsColumnLabel(d) : d}</th>)}
-                    {snap.metrics.map(m => <th key={m} scope="col" title={m}>{snap.source.provider === 'ads' ? googleAdsColumnLabel(m) : m}</th>)}
+                    {snap.dimensions.map(d => <th key={d} scope="col" title={d}>{snap.source.provider === 'ads' ? googleAdsColumnLabel(d) : snap.source.provider === 'ga4' ? googleGa4ColumnLabel(d) : d}</th>)}
+                    {snap.metrics.map(m => <th key={m} scope="col" title={m}>{snap.source.provider === 'ads' ? googleAdsColumnLabel(m) : snap.source.provider === 'ga4' ? googleGa4ColumnLabel(m) : m}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {snap.rows.map((r, i) => (
                     <tr key={i}>
                       {snap.dimensions.map(d => <td key={d}>{r.dimensions[d] ?? ''}</td>)}
-                      {snap.metrics.map(m => <td key={m} title={snap.source.provider === 'ads' && m === 'costMicros' && typeof r.metrics[m] === 'string' ? `${r.metrics[m]} costMicros` : undefined}>{snap.source.provider === 'ads' && m === 'costMicros' ? <bdi dir="ltr">{googleAdsCost(r.metrics[m], snap.source.currencyCode)}</bdi> : r.metrics[m] ?? 'Unavailable'}</td>)}
+                      {snap.metrics.map(m => <td key={m} title={typeof r.metrics[m] === 'string' ? snap.source.provider === 'ads' && m === 'costMicros' ? `${r.metrics[m]} costMicros` : snap.source.provider === 'ga4' ? r.metrics[m]! : undefined : undefined}>{snap.source.provider === 'ads' && m === 'costMicros' ? <bdi dir="ltr">{googleAdsCost(r.metrics[m], snap.source.currencyCode)}</bdi> : snap.source.provider === 'ga4' ? <bdi dir="ltr">{googleGa4MetricValue(m, r.metrics[m], snap.source.currencyCode)}</bdi> : r.metrics[m] ?? 'Unavailable'}</td>)}
                     </tr>
                   ))}
                 </tbody>
