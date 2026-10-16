@@ -113,6 +113,10 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
   const [savedOk, setSavedOk] = useState(false);
   const [resetBusy,setResetBusy]=useState(false);
   const [resetAccepted,setResetAccepted]=useState<string|null>(null);
+  // An accepted reset changes the project revision, so both danger-action children remount under a new owner
+  // while the parent reloads; their pending request refs stay identity-bound in the outer component.
+  const [dangerEpoch,setDangerEpoch]=useState(0);
+  const dangerOwner=authorityOwner+'/'+dangerEpoch;
   const [reloadTick, setReloadTick] = useState(0);
 
   const genRef = useRef(0);
@@ -205,7 +209,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
   const inputsDisabled = pending || resetBusy || loading || !canEdit || unresolved;
   const canSave = canEdit && dirty && pathErrors.length === 0 && !replayError && !heatmapError && !pending && !resetBusy && !loading && !unresolved;
 
-  const deletion=workspaceId&&onDeleted?<ProjectDeletePanel key={authorityOwner} workspaceId={workspaceId} projectId={projectId} userId={userId} authorityOwner={authorityOwner} isCurrent={isCurrent} pendingRequest={deleteRequest} disabled={pending||loading||dirty||resetBusy||resetRequest.current!==null} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onDeleted={()=>{if(isCurrent())onDeleted();}}/>:null;
+  const deletion=workspaceId&&onDeleted?<ProjectDeletePanel key={'delete:'+dangerOwner} workspaceId={workspaceId} projectId={projectId} userId={userId} authorityOwner={dangerOwner} isCurrent={isCurrent} pendingRequest={deleteRequest} disabled={pending||loading||dirty||resetBusy||resetRequest.current!==null} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onDeleted={()=>{if(isCurrent())onDeleted();}}/>:null;
   const cancel = () => {
     if (!data || lockRef.current || readBusyRef.current) return;
     setDraft(data.settings);
@@ -553,8 +557,8 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
         </div>
       )}
       {canEdit&&deletion}
-      {resetAccepted===authorityOwner&&<p role="status">Reset accepted. Earlier analytics is unavailable. Any remaining stored-data cleanup continues in bounded background batches.</p>}
-      {canEdit&&<AnalyticsResetPanel key={authorityOwner} projectId={projectId} userId={userId} authorityOwner={authorityOwner} isCurrent={isCurrent} pendingRequest={resetRequest} disabled={pending||loading||dirty||resetBusy||deleteRequest.current!==null} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onReset={()=>{if(isCurrent()){setResetAccepted(authorityOwner);reload();}}}/>}
+      {resetAccepted===dangerOwner&&<p role="status">Reset accepted. Earlier analytics is unavailable. Any remaining stored-data cleanup continues in bounded background batches.</p>}
+      {canEdit&&<AnalyticsResetPanel key={'reset:'+dangerOwner} projectId={projectId} userId={userId} authorityOwner={dangerOwner} isCurrent={isCurrent} pendingRequest={resetRequest} disabled={pending||loading||dirty||resetBusy||deleteRequest.current!==null} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onReset={()=>{if(isCurrent()){setDangerEpoch(dangerEpoch+1);setResetAccepted(authorityOwner+'/'+(dangerEpoch+1));reload();}}}/>}
     </section>
   );
 }

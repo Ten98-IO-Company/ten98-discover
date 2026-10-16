@@ -35,10 +35,26 @@ Actual failed reset checks on the pre-deletion schema60 snapshot MUST remain fai
 
 The deletion code received root and independent source review with no additional P1/P2 finding. Its3pure checks now pass. Its8native groups,7component groups/20contexts/35GET/24POST/four screenshots, migrationCLI29 and compiled project-selector/navigation behavior are **not executed**. The new native CI lane is not wired.
 
+## Validation on 2026-10-17 (Claude, original machine)
+
+Environment: Node 24.19.0, pnpm 11.19.0, Playwright 1.62.1 with headless Microsoft Edge 155, and a fresh trust-auth PostgreSQL 18 container bound to 127.0.0.1:5432 with CI-shaped database names (`GITHUB_ACTIONS=true`, `TEN98_ISOLATED_CI_DATABASE=1`). Every lane below was run from this branch; no paid provider, email or deployment was involved.
+
+| Check | Result |
+| --- | --- |
+| TypeScript, offline suite, build | `pnpm typecheck` passed; `pnpm test` passed 898 of 901 (3 skipped) before and after the component change; `pnpm build` passed. |
+| Reset native8 | Reproduced the handoff stall exactly: six groups in two seconds, then group7 idle until timeout. Root cause was the test seam, not the product: `beginAt` replaced `pool.connect` with a promise-only function and then called `pool.query`, whose pg-pool implementation drives `connect` through a callback that the seam never invoked. The epoch read now precedes the seam; all eight groups pass in about two seconds with every original assertion intact. |
+| Reset browser7 | Reproduced the handoff failure exactly in context2. Root cause was the settings parent: after an accepted reset the reset child stayed open, so the `Reset analytics` button and the parent status line could never appear. The parent now remounts both danger-action children under a new owner and reloads; seven groups,18 contexts,30 GET,20 POST and four screenshots pass. |
+| Deletion native8 | Eight groups pass on a fresh schema61 database. |
+| Deletion browser7 | First run failed in the settings parent because both danger-action children shared one React sibling key, which React documents as unsupported; with distinct keys seven groups,20 contexts,35 GET,24 POST and four screenshots pass. |
+| Migrations CLI lane | Full lane passed, including the actual CLI60-to-61 upgrade and the61 no-op. |
+| CI wiring | `ten98_analytics_reset_ci` and `ten98_project_delete_ci` lanes added to the foundation workflow. |
+
+Still open from the list below: compiled-App deletion navigation (item3), RTL classic-scrollbar heatmap calibration and heatmap composition (item4), export composition (item5), and the full register audit (item6).
+
 ## Immediate work
 
-1. Diagnose the two reset failures above without weakening assertions, extending deadlines or treating partial markers as acceptance.
-2. Validate deletion in a fresh isolated schema61 database: exact current owner/admin, actor/body/request retry after deletion, reserved/dispatched/uncertain paid-work refusal, financial/other-project preservation, FK dependency order and atomic rollback. Run the authored CLI29: genuine60-to61 upgrade and61 no-op; preserve all older populated-fixture assertions.
+1. Done 2026-10-17; see the validation table. Original wording: Diagnose the two reset failures above without weakening assertions, extending deadlines or treating partial markers as acceptance.
+2. Done 2026-10-17; see the validation table. Original wording: Validate deletion in a fresh isolated schema61 database: exact current owner/admin, actor/body/request retry after deletion, reserved/dispatched/uncertain paid-work refusal, financial/other-project preservation, FK dependency order and atomic rollback. Run the authored CLI29: genuine60-to61 upgrade and61 no-op; preserve all older populated-fixture assertions.
 3. Verify compiled App behavior after deletion: invalidate current owner, remove selector entry, navigate and reload the project catalog. Component callback tests do not prove this.
 4. Diagnose classic RTL heatmap calibration, then compose the newer heatmap branch. Existing numeric probes suggest a scrollbar-origin offset but have not proved a supported-DOM fix. Use agents/handoff/heatmap-calibration-probe.mjs only as a diagnostic; it never replaces the original readiness assertion. Rerun RTL/narrow/classic/zoom and original6/collector17 regressions after any asset change.
 5. Compose export without losing reset epoch/cutoff checks, then run its native/browser/compiled checks on the combined tree.
