@@ -7,9 +7,9 @@ import {getBoss,stopJobs} from '../src/server/jobs.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createWorkspace} from '../src/server/teams.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
-import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
+import {saveProvider,saveProviderLimit,saveBudget,revokeProvider} from '../src/server/providers.ts';
 import {getDomainResearch,getDomainResearchRun,quoteDomainResearch,startDomainResearch,executeDomainResearch,cancelDomainResearch,reconcileDomainResearch,reconcileDomainResearchJobs,refreshDomainResearchMarkets} from '../src/server/domain-research.ts';
-import {domainPayload,domainRankedEndpoint,type DomainRequest} from '../src/server/domain-research-input.ts';
+import {domainPayload,domainRankedEndpoint,domainEndpoint,domainEndpointName,type DomainRequest,type DomainReport} from '../src/server/domain-research-input.ts';
 import {keywordAccountEndpoint,keywordCatalogEndpoint,keywordReconcileEndpoint} from '../src/server/keyword-research-input.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
 
@@ -26,14 +26,23 @@ export async function runDomainResearchChecks(browserCheck?:(fixture:DomainBrows
  const pool=getDatabase().pool,password=randomBytes(24).toString('base64url'),actors:Actor[]=[];
  for(const role of ['owner','admin','editor','viewer','foreign']){const id=randomUUID(),email=id+'@domain.integration.test';await pool.query('INSERT INTO "user"(id,name,email)VALUES($1,$2,$3)',[id,'Domain '+role,email]);await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password)VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),id,await hashPassword(password)]);actors.push({id,email,cookie:'',role});}
  const [owner,admin,editor,viewer,foreign]=actors,originalFetch=globalThis.fetch;
- let paid=0,free=0,account='synthetic@domain.integration.test',mode:'ok'|'unknown'|'invalid'|'over'|'wide'='ok',receipts:unknown[]=[],lastPayload:Record<string,any>|null=null;
+ let paid=0,free=0,account='synthetic@domain.integration.test',mode:'ok'|'unknown'|'invalid'|'over'|'wide'|'empty'='ok',receipts:unknown[]=[],lastPayload:Record<string,any>|null=null,reportPriceMultiplier=1;
+ const reportPrices={domain_rank_overview:0.01,relevant_pages:0.02,competitors_domain:0.03};
  const taskIds=new Map<string,string>(),captured:Record<string,unknown>={};
  const freeResponse=(result:unknown[])=>Response.json({status_code:20000,cost:0,tasks_count:1,tasks:[{status_code:20000,cost:0,result}]});
  const send:typeof fetch=async(url,init)=>{
   assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);
   if(url===keywordCatalogEndpoint){free++;return freeResponse([{location_code:2840,location_name:'United States',location_type:'Country',available_languages:[{language_code:'en',language_name:'English',available_sources:['google']}]}]);}
-  if(url===keywordAccountEndpoint){free++;return freeResponse([{login:account,price:{dataforseo_labs:{ranked_keywords:{live:{priority_normal:[{cost_type:'per_request',cost:0.012},{cost_type:'per_result',cost:0.00012}]}}}}}]);}
+  if(url===keywordAccountEndpoint){free++;return freeResponse([{login:account,price:{dataforseo_labs:{ranked_keywords:{live:{priority_normal:[{cost_type:'per_request',cost:0.012},{cost_type:'per_result',cost:0.00012}]}},...Object.fromEntries(Object.entries(reportPrices).map(([name,price])=>[name,{live:{priority_normal:[{cost_type:'per_request',cost:price*reportPriceMultiplier},{cost_type:'per_result',cost:price/100*reportPriceMultiplier}]}}]))}}}]);}
   if(url===keywordReconcileEndpoint){free++;assert.equal(JSON.parse(String(init?.body))[0].include_metadata,true);return freeResponse(receipts);}
+  const endpoint=typeof url==='string'?url.split('/').at(-2):'';
+  if(endpoint&&Object.hasOwn(reportPrices,endpoint)){
+   assert.equal(url,'https://api.dataforseo.com/v3/dataforseo_labs/google/'+endpoint+'/live');paid++;const data=JSON.parse(String(init?.body))[0];lastPayload=data;const task='synthetic-'+randomUUID(),basePrice=reportPrices[endpoint as keyof typeof reportPrices],cost=mode==='empty'?basePrice:Number((basePrice+basePrice/100).toFixed(6));taskIds.set(data.tag,task);
+   receipts=[{id:task,url:'v3/dataforseo_labs/google/'+endpoint+'/live',metadata:data,status:'20000',cost}];
+   if(mode==='unknown')throw Error('Synthetic interrupted report response after dispatch.');
+   const organic={count:mode==='invalid'?-1:0,etv:0,estimated_paid_traffic_cost:null,pos_1:0},item=endpoint==='domain_rank_overview'?{se_type:'google',location_code:data.location_code,language_code:data.language_code,metrics:{organic}}:endpoint==='relevant_pages'?{se_type:'google',page_address:'https://'+data.target+'/guide?q=1',metrics:{organic}}:{se_type:'google',domain:'competitor.example.org',intersections:2,avg_position:3.5,full_domain_metrics:{organic:{...organic,etv:200}},metrics:{organic:{count:2,etv:5}}};
+   return Response.json({status_code:20000,cost,tasks_count:1,tasks:[{id:task,status_code:20000,cost,path:['v3','dataforseo_labs','google',endpoint,'live'],data,result_count:1,result:[{se_type:'google',target:data.target,location_code:data.location_code,language_code:data.language_code,total_count:mode==='empty'?0:endpoint==='domain_rank_overview'?1:101,items_count:mode==='empty'?0:1,items:mode==='empty'?null:[item]}]}]});
+  }
   assert.equal(url,domainRankedEndpoint);paid++;const data=JSON.parse(String(init?.body))[0];lastPayload=data;const task='synthetic-'+randomUUID();taskIds.set(data.tag,task);
   if(mode==='unknown')throw Error('Synthetic interrupted response after dispatch.');
   const path='/guide',cost=mode==='over'?0.03:0.01212;
@@ -88,8 +97,40 @@ export async function runDomainResearchChecks(browserCheck?:(fixture:DomainBrows
 
   mode='wide';const wide=await start(f,{scope:'subdomains',limit:100});await executeDomainResearch(wide.run.id,send);mode='ok';const refused=await api(base+'/runs/'+wide.run.id,owner);assert.equal(refused.status,413);assert.match((await refused.json()).error,/complete domain research response is too large/);const replay=await startDomainResearch(f.project,owner.id,{quoteId:wide.quote.id,requestKey:wide.key});assert.equal(replay.run.id,wide.run.id);assert.equal(replay.run.status,'completed');assert.equal(Object.hasOwn(replay.run,'result'),false);assert.equal(replay.run.actualUsd,'0.012120');assert.equal(paid,8);const recovered=await body(api(base+'/runs/'+(captured.exact_url as any).run.id,owner));assert.equal(recovered.run.result.rows.length,1);assert.equal(paid,8);
   console.log('PASS genuine complete2MiB result refusal keeps bounded completed replay ACK and small-read recovery');
+  await body(api(base+'/runs/'+wide.run.id+'/export',owner),413);assert.equal(paid,8,'Oversized export does not fetch or purchase another dataset.');
 
   const totals=(await pool.query("SELECT status,count(*)::int AS n,coalesce(sum(actual_micros),0)::text AS micros FROM provider_request WHERE operation='domain.ranked_keywords' GROUP BY status ORDER BY status")).rows;assert.deepEqual(totals,[{status:'cancelled',n:5,micros:'0'},{status:'settled',n:8,micros:'114840'},{status:'uncertain',n:1,micros:'0'}]);assert.equal(paid,8);assert.ok(free>8);assert.equal((await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='domain-research'")).rows[0].n,14);
+  const reportFixture=await fixture(),reportBase='/api/projects/'+reportFixture.project+'/domain-research',reportRuns:{quote:any;key:string;run:any}[]=[];
+  const reportPatch=(report:DomainReport,scope:DomainRequest['scope']='subdomains'):Partial<DomainRequest>=>({report,scope,limit:report==='overview_v1'?1:25});
+  for(const [report,scope] of [['overview_v1','subdomains'],['pages_v1','subdomains'],['pages_v1','domain'],['pages_v1','subfolder'],['pages_v1','exact_url'],['competitors_v1','subdomains']] as const){
+   const q=(await quoteDomainResearch(reportFixture.project,owner.id,{...reportFixture.request,...reportPatch(report,scope)},send)).quote,requestKey=randomUUID();
+   assert.equal(q.upperItems,report==='overview_v1'?1:25);assert.equal(q.estimateUsd,report==='overview_v1'?'0.010100':report==='pages_v1'?'0.025000':'0.037500');
+   const [a,b]=await Promise.all([startDomainResearch(reportFixture.project,owner.id,{quoteId:q.id,requestKey}),startDomainResearch(reportFixture.project,owner.id,{quoteId:q.id,requestKey})]);assert.equal(a.run.id,b.run.id);assert.equal(Object.hasOwn(a.run,'result'),false);
+   const before:number=paid;await Promise.all([executeDomainResearch(a.run.id,send),executeDomainResearch(a.run.id,send)]);assert.equal(paid,before+1);assert.deepEqual(lastPayload,domainPayload(q.request,a.run.id));
+   const detail=await body(api(reportBase+'/runs/'+a.run.id,viewer)),exported=await body(api(reportBase+'/runs/'+a.run.id+'/export',viewer));assert.equal(detail.run.status,'completed');assert.equal(detail.run.result.report,report);assert.equal(detail.run.result.scope,scope);assert.equal(exported.run.id,a.run.id);assert.equal(Object.hasOwn(exported.run,'result'),false);assert.equal(exported.rowCount,1);assert.ok(exported.csv.includes('"Report","'+report+'"\r\n'));assert.ok(exported.csv.includes('"Scope","'+scope+'"\r\n'));assert.ok(exported.csv.includes('Unavailable'));assert.ok(!exported.csv.includes('undefined'));
+   if(report==='competitors_v1'){assert.equal(detail.run.result.rows[0].fullDomain.estimatedTraffic,200);assert.equal(detail.run.result.rows[0].targetOverlap.estimatedTraffic,5);assert.match(exported.csv,/Competitor full domain/);assert.match(exported.csv,/Target on shared keywords/);}
+   reportRuns.push({quote:q,key:requestKey,run:a.run});
+  }
+  assert.equal(paid,14);await body(api(reportBase+'/runs/'+reportRuns[0].run.id+'/export',foreign),404);await body(api(reportBase+'/runs/'+reportRuns[0].run.id+'/export?limit=1',viewer),400);
+  const beforeUnsupported=free;for(const report of ['overview_v1','competitors_v1'] as const)await assert.rejects(quoteDomainResearch(reportFixture.project,owner.id,{...reportFixture.request,...reportPatch(report,'exact_url')},send),{status:400});assert.equal(free,beforeUnsupported);
+  await assert.rejects(startDomainResearch(reportFixture.project,owner.id,{quoteId:reportRuns[1].quote.id,requestKey:reportRuns[0].key}),{status:409});
+  console.log('PASS three native profiles, all page scopes, exact current prices, concurrent one-send, bound JSON CSV and no scope widening');
+
+  const unknownReport=await start(reportFixture,reportPatch('pages_v1'));mode='unknown';await executeDomainResearch(unknownReport.run.id,send);mode='ok';assert.equal((await getDomainResearchRun(reportFixture.project,owner.id,unknownReport.run.id)).run.chargeStatus,'uncertain');await assert.rejects(start(reportFixture,reportPatch('overview_v1')),{status:409});
+  const evidence=structuredClone(receipts);receipts=(receipts as any[]).map(r=>({...r,url:'v3/dataforseo_labs/google/ranked_keywords/live'}));assert.equal((await reconcileDomainResearch(reportFixture.project,owner.id,unknownReport.run.id,{connectionId:reportFixture.connectionId},send)).reconciliation.status,'inconclusive');receipts=evidence;
+  assert.equal((await reconcileDomainResearch(reportFixture.project,owner.id,unknownReport.run.id,{connectionId:reportFixture.connectionId},send)).reconciliation.status,'matched');assert.equal(paid,15);await saveBudget(reportFixture.workspace,owner.id,{paused:false});
+  const malformedReport=await start(reportFixture,reportPatch('competitors_v1'));mode='invalid';await executeDomainResearch(malformedReport.run.id,send);mode='ok';const malformed=(await getDomainResearchRun(reportFixture.project,owner.id,malformedReport.run.id)).run;assert.equal(malformed.status,'failed');assert.equal(malformed.result,null);assert.equal(malformed.actualUsd,'0.030300');
+  const emptyReport=await start(reportFixture,reportPatch('overview_v1'));mode='empty';await executeDomainResearch(emptyReport.run.id,send);mode='ok';const emptyResult=(await getDomainResearchRun(reportFixture.project,viewer.id,emptyReport.run.id)).run.result;assert.deepEqual(emptyResult.rows,[]);assert.equal(emptyResult.totalCount,0);assert.equal((await body(api(reportBase+'/runs/'+emptyReport.run.id+'/export',viewer))).rowCount,0);assert.equal(paid,17);
+  console.log('PASS profile-bound unknown-charge reconciliation, known malformed charge and explicit no-data report without fabricated scores');
+
+  for(const reason of ['price','cap','role'] as const){const isolated=await fixture(),pendingReport=await start(isolated,reportPatch('pages_v1'));
+   if(reason==='price')reportPriceMultiplier=2;if(reason==='cap')await saveProviderLimit(isolated.workspace,owner.id,isolated.connectionId,{revision:1,expectedMonthlyLimitUsd:'1',monthlyLimitUsd:'0'});if(reason==='role')await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[isolated.workspace,owner.id]);
+   await executeDomainResearch(pendingReport.run.id,send);reportPriceMultiplier=1;assert.equal((await getDomainResearchRun(isolated.project,viewer.id,pendingReport.run.id)).run.status,'cancelled');assert.equal(paid,17);
+  }
+  const retainedReport=reportRuns[1],beforeReceipt=(await pool.query('SELECT to_jsonb(p) AS receipt FROM provider_request p WHERE id=$1',[retainedReport.run.id])).rows;
+  await pool.query("UPDATE domain_research_run SET completed_at=clock_timestamp()-interval '400 days' WHERE id=$1",[retainedReport.run.id]);await body(api(reportBase+'/runs/'+retainedReport.run.id+'/export',viewer),409);await runRetentionBatch(reportFixture.project);const afterPurge=(await getDomainResearchRun(reportFixture.project,viewer.id,retainedReport.run.id)).run;assert.equal(afterPurge.result,null);assert.equal(afterPurge.resultExpired,true);assert.deepEqual((await pool.query('SELECT to_jsonb(p) AS receipt FROM provider_request p WHERE id=$1',[retainedReport.run.id])).rows,beforeReceipt);assert.equal((await startDomainResearch(reportFixture.project,owner.id,{quoteId:retainedReport.quote.id,requestKey:retainedReport.key})).run.id,retainedReport.run.id);assert.equal(paid,17);
+  const reportTotals=(await pool.query("SELECT count(*)::int AS n,coalesce(sum(actual_micros),0)::text AS micros FROM provider_request WHERE operation IN ('domain.domain_rank_overview','domain.relevant_pages','domain.competitors_domain') AND status='settled'")).rows[0];assert.deepEqual(reportTotals,{n:9,micros:'181700'});
+  console.log('PASS dispatch current-price/cap/role refusal, profile retention/export expiry, immutable replay receipts and exact synthetic report accounting');
   if(browserCheck)await browserCheck({owner,actors,password,workspaceId:f.workspace,projectId:f.project,connectionId:f.connectionId,initial:captured.initial,completed:captured.exact_url,complete:id=>executeDomainResearch(id,send)});
   console.log('PASS exact synthetic charge/job accounting, no extra provider operations and native UI callback boundary');
  }finally{try{await stopJobs();}finally{globalThis.fetch=originalFetch;}}

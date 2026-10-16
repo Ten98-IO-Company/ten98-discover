@@ -133,11 +133,12 @@ test('specification bypasses invalid configuration and database/setup, with no r
  }finally{if(previous===undefined)delete process.env.APP_URL;else process.env.APP_URL=previous;}
 });
 
-test('Domain SEO fixed ranked-keyword operations are browser-only and keep explicit quote bounds',()=>{
+test('Domain SEO fixed profiles and retained exports stay browser-only with explicit quote bounds',()=>{
  const inventory=nativeOpenApi['x-ten98-browser-operations'];
  const quote=inventory['/api/projects/{projectId}/domain-research/quote'].post;
- assert.deepEqual(quote.body.scope.enum,['subdomains','domain','subfolder','exact_url']);assert.deepEqual(quote.body.limit.enum,[25,50,100]);assert.equal(quote.quoteSeconds,300);assert.equal(quote.bodyMaxBytes,8192);
+ assert.deepEqual(quote.body.scope.enum,['subdomains','domain','subfolder','exact_url']);assert.deepEqual(quote.body.limit.enum,[1,25,50,100]);assert.deepEqual(quote.body.report.enum,['overview_v1','pages_v1','competitors_v1']);assert.equal(quote.body.report.optional,true);assert.match(quote.summary,/overview requires limit1/);assert.match(quote.summary,/overview\/competitors require subdomains scope/);assert.equal(quote.quoteSeconds,300);assert.equal(quote.bodyMaxBytes,8192);
  for(const path of Object.keys(inventory).filter(path=>path.includes('/domain-research'))){assert.equal(Object.hasOwn(nativeOpenApi.paths,path),false);}
  assert.match(inventory['/api/projects/{projectId}/domain-research/runs'].post.summary,/summary-only ACK/);
  assert.equal(inventory['/api/projects/{projectId}/domain-research/runs/{runId}'].get.responseMaxBytes,2097152);
+ assert.equal(inventory['/api/projects/{projectId}/domain-research/runs/{runId}/export'].get.responseMaxBytes,2097152);assert.match(inventory['/api/projects/{projectId}/domain-research/runs/{runId}/export'].get.summary,/current-retention CSV/);
 });
