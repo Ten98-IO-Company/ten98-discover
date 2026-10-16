@@ -3,6 +3,43 @@ import test from 'node:test';
 import {csvCell,explorerQuery,explorerGroupingQuery} from '../src/server/explorer-input.ts';
 import {parseSegmentDefinition} from '../src/server/segment-input.ts';
 import {parseCohortDefinition} from '../src/server/cohort-input.ts';
+import {propertyDecimalScale,comparePropertyDecimals,propertyCalendarDay,propertyDateUnit,propertyDateBucket,validPropertyDateSummary,validPropertyNumberStats} from '../src/lib/property-visuals.ts';
+
+test('property chart coordinates preserve sign, zeros and unknowns without converting decimal amounts to floats',()=>{
+  assert.deepEqual(propertyDecimalScale(['-10','2.5','0',null]),[-1,0.25,0,null]);
+  const huge='9'.repeat(400);assert.deepEqual(propertyDecimalScale([huge,'-'+huge,null]),[1,-1,null]);
+  assert.deepEqual(propertyDecimalScale(['0','-0.000',null]),[0,0,null]);
+  assert.equal(comparePropertyDecimals('123.123456789012345675','123.12345678901234567'),1);
+  assert.equal(comparePropertyDecimals('-0.00001','-0.0000100'),0);
+  for(const bad of ['1e999','NaN','Infinity','1\n',' 1','+'+'1','1'.repeat(1025)])assert.throws(()=>propertyDecimalScale([bad]));
+  assert.throws(()=>propertyDecimalScale(Array(733).fill('1')));
+});
+
+test('property date units use calendar spans and Monday weeks including year zero and timezone edge years',()=>{
+  const after=(days:number)=>new Date(Date.parse('2024-01-01T00:00:00Z')+days*86400000).toISOString().slice(0,10);
+  for(const [days,unit]of [[45,'day'],[46,'week'],[180,'week'],[181,'month'],[730,'month'],[731,'year']]as const)assert.equal(propertyDateUnit('2024-01-01',after(days)),unit);
+  assert.equal(propertyDateBucket('2026-03-08','week'),'2026-03-02');assert.equal(propertyDateBucket('2026-03-02','week',true),'2026-03-09');
+  assert.equal(propertyDateBucket('0000-02-29','day',true),'0000-03-01');assert.equal(propertyDateBucket('-000001-12-31','day',true),'0000-01-01');assert.equal(propertyDateBucket('9999-12-31','day',true),'+010000-01-01');
+  for(const valid of ['0000-02-29','-000001-12-31','+010000-01-01'])assert.equal(propertyCalendarDay(valid),true);
+  for(const bad of ['2026-02-30','0001-02-29','2026-01-01\n','-000002-01-01'])assert.equal(propertyCalendarDay(bad),false);
+});
+
+test('property histogram reader refuses missing zero buckets, contradictory full counts and invented unavailable values',()=>{
+  const summary={samples:103,unit:'day',earliest:'2026-03-07',latest:'2026-03-09',topDate:{date:'2026-03-09',count:102},weekdays:[102,0,0,0,0,1,0],histogram:[{date:'2026-03-07',count:1},{date:'2026-03-08',count:0},{date:'2026-03-09',count:102}]};
+  assert.equal(validPropertyDateSummary(summary,105),true,'Summary counts are independent of a truncated exact-value table.');
+  assert.equal(validPropertyDateSummary({...summary,histogram:summary.histogram.filter(b=>b.count!==0)},105),false);
+  assert.equal(validPropertyDateSummary({...summary,samples:102},105),false);assert.equal(validPropertyDateSummary({...summary,unit:'week'},105),false);
+  assert.equal(validPropertyDateSummary({...summary,weekdays:[0,0,0,0,0,103,0]},105),false);
+  const empty={samples:0,unit:null,earliest:null,latest:null,topDate:null,weekdays:Array(7).fill(0),histogram:[]};assert.equal(validPropertyDateSummary(empty,0),true);assert.equal(validPropertyDateSummary(empty,null),false);
+  assert.equal(validPropertyDateSummary({...empty,samples:null,weekdays:null},null),true);
+});
+
+test('property numeric summary reader keeps no samples and unavailable distinct and rejects invalid median bounds',()=>{
+  const stats={samples:2,sum:'246.24691357802469135',average:'123.12345678901234568',median:'123.123456789012345675',min:'123.12345678901234567',max:'123.12345678901234568'};
+  assert.equal(validPropertyNumberStats(stats,2),true);assert.equal(validPropertyNumberStats({...stats,median:'123.12345678901234569'},2),false);
+  assert.equal(validPropertyNumberStats({...stats,sum:'1e1000'},2),false);assert.equal(validPropertyNumberStats({...stats,sum:'1'.repeat(1025)},2),false);
+  const empty={samples:0,sum:null,average:null,median:null,min:null,max:null};assert.equal(validPropertyNumberStats(empty,0),true);assert.equal(validPropertyNumberStats(empty,null),false);assert.equal(validPropertyNumberStats({...empty,samples:null},null),true);
+});
 
 test('property details are report-only, bounded and keep exact typed cursor clocks',()=>{
   const params=new URLSearchParams({from:'2026-03-08',to:'2026-03-09',groupBy:'property',groupProperty:' spaced ',propertyView:'details'}),result=explorerGroupingQuery(params,new Date('2026-03-10'));
