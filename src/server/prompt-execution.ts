@@ -7,13 +7,26 @@ import {getBoss} from './jobs.ts';
 import {credentialKeys,decryptCredentials} from './credential-vault.ts';
 import {providerTransaction,usd} from './providers.ts';
 import {reserveSpendInTransaction,dispatchSpend,settleSpend,requestHash} from './spending.ts';
-import {executionInput,executionParse,type RenderedInput,type RouteSnapshot} from './openrouter-input.ts';
+import {executionInput,executionParse,promptCacheKey,type RenderedInput,type RouteSnapshot} from './openrouter-input.ts';
 import {readOpenRouterRoutes,keyFingerprint,executionActor,executionRequestBody,requestPromptExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
 import {openRouterTextProfile,openRouterMetadataBytes} from '../lib/openrouter-models.ts';
 import {boundedOpenRouterMetadata,cachedOpenRouterModels} from './openrouter-models.ts';
 
 export const promptExecutionQueue='prompt-execution';
 const writers=['owner','admin','editor'],readers=[...writers,'viewer'];
+type CacheItem={key:string;model:string;sourceRunId:string|null;sourceComparisonId:string|null;observedAt:string|null;eligibleUntil:string|null};
+async function cacheCandidates(client:PoolClient,projectId:string,keys:string[],ids:string[]|null=null){
+ if(!keys.length)return [];
+ return (await client.query(`WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at)
+  SELECT DISTINCT ON(r.cache_key) r.cache_key AS key,r.id AS "sourceRunId",r.comparison_id AS "sourceComparisonId",
+   r.completed_at AS "observedAt",LEAST(r.completed_at+interval '168 hours',r.completed_at+w.raw_provider_evidence_days*interval '24 hours') AS "eligibleUntil"
+  FROM prompt_execution r JOIN provider_request p ON p.id=r.id JOIN workspace w ON w.id=r.workspace_id CROSS JOIN read_clock
+  WHERE r.project_id=$1 AND r.cache_key=ANY($2::text[]) AND ($3::uuid[] IS NULL OR r.id=ANY($3))
+   AND r.status='completed' AND p.status='settled' AND p.actual_micros IS NOT NULL AND r.evidence->>'isByok'='false'
+   AND r.result IS NOT NULL AND r.result_purged_at IS NULL AND r.completed_at<=read_clock.at AND r.completed_at>read_clock.at-interval '168 hours'
+   AND r.completed_at>=read_clock.at-w.raw_provider_evidence_days*interval '24 hours'
+  ORDER BY r.cache_key,r.completed_at DESC,r.id DESC`,[projectId,keys,ids])).rows;
+}
 const runSelect=`SELECT r.*,c.quote_id,c.user_id,c.cancel_requested,q.prompt_id,q.version_id,q.connection_id,q.connection_revision,q.key_fingerprint,q.request_actor,
  q.input,q.messages,q.input_purged_at,q.input_hash,q.expires_at,p.status AS charge_status,p.estimate_micros,p.actual_micros,p.provider_reference
  FROM prompt_execution r JOIN prompt_comparison c ON c.id=r.comparison_id JOIN prompt_execution_quote q ON q.id=c.quote_id JOIN provider_request p ON p.id=r.id`;
@@ -40,7 +53,9 @@ async function promptVersion(client:PoolClient,projectId:string,promptId:string,
 function summary(row:any,details=false){return {id:row.id,model:row.route.model,provider:row.route.providerName,status:row.status,chargeStatus:row.charge_status,
   estimateUsd:usd(row.estimate_micros),actualUsd:row.actual_micros===null?null:usd(row.actual_micros),dispatchedAt:row.dispatched_at,completedAt:row.completed_at,
   diagnostic:row.diagnostic,resultExpired:row.read_expired,...(details?{result:row.read_expired?null:row.result,reportedCost:row.evidence?.reportedCost??null,
-    isByok:row.evidence?.isByok??null,upstreamReportedCost:row.evidence?.upstreamReportedCost??null,generationId:row.generation_id}:{} )};}
+    isByok:row.evidence?.isByok??null,upstreamReportedCost:row.evidence?.upstreamReportedCost??null,generationId:row.generation_id}:{} ),
+  ...(row.reused?{chargeStatus:null,estimateUsd:null,actualUsd:null,dispatchedAt:null,reuse:{sourceRunId:row.source_execution_id,sourceComparisonId:row.source_comparison_id,
+    observedAt:row.completed_at,originalCharge:{status:row.charge_status,estimateUsd:usd(row.estimate_micros),actualUsd:row.actual_micros===null?null:usd(row.actual_micros)}}}:{})};}
 function boundedPromptRead<T>(value:T,answer=false){
   if(Buffer.byteLength(JSON.stringify(value),'utf8')>openRouterMetadataBytes)throw new FoundationError(413,answer?
     'The retained answer exceeds the complete 2MiB response limit. Its charge receipt remains available in the comparison summary.':
@@ -51,10 +66,10 @@ async function comparisonDto(client:PoolClient,projectId:string,id:string,userId
   // Reads enforce the same strict raw cutoff as cleanup, including pending-input
   // protection. Cleanup lag must not expose expired payloads through a receipt.
   const c=(await client.query(`WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at)
-    SELECT c.*,q.prompt_id,q.version_id,q.input,q.messages,jsonb_array_length(q.routes) AS model_count,v.text,read_clock.at::text AS read_at,
+    SELECT c.*,q.prompt_id,q.version_id,q.input,q.messages,q.cache_plan,jsonb_array_length(q.routes) AS model_count,v.text,read_clock.at::text AS read_at,
     (q.input_purged_at IS NOT NULL OR (
-      EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id)
-      AND NOT EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id
+      EXISTS(SELECT 1 FROM prompt_comparison_item i WHERE i.comparison_id=c.id)
+      AND NOT EXISTS(SELECT 1 FROM prompt_comparison_item i JOIN prompt_execution r ON r.id=i.execution_id WHERE i.comparison_id=c.id
         AND (r.status IN('queued','running') OR r.completed_at IS NULL
           OR r.completed_at>=read_clock.at-w.raw_provider_evidence_days*interval '24 hours')))) AS input_expired
     FROM prompt_comparison c
@@ -65,26 +80,27 @@ async function comparisonDto(client:PoolClient,projectId:string,id:string,userId
   if(!c)throw new FoundationError(404,'Comparison not found or unavailable.');
   const includeAnswers=details&&!individual&&c.model_count<=2;
   // Summaries never retrieve answer blobs or copied provider evidence from PostgreSQL.
-  const projection=includeAnswers?runSelect:`SELECT r.id,r.workspace_id,r.position,r.route,r.status,r.diagnostic,r.dispatched_at,r.completed_at,
+  const projection=`SELECT i.id,i.workspace_id,i.position,i.reused,r.id AS source_execution_id,r.comparison_id AS source_comparison_id,r.route,r.status,r.diagnostic,r.dispatched_at,r.completed_at,
     r.result_purged_at,(r.result IS NOT NULL) AS has_result,p.status AS charge_status,p.estimate_micros,p.actual_micros
-    FROM prompt_execution r JOIN provider_request p ON p.id=r.id`;
+    ${includeAnswers?',r.result,r.evidence,r.generation_id':''}
+    FROM prompt_comparison_item i JOIN prompt_execution r ON r.id=i.execution_id JOIN provider_request p ON p.id=r.id`;
   const rows=(await client.query(`SELECT saved.*,
     (saved.result_purged_at IS NOT NULL OR (${includeAnswers?'saved.result IS NOT NULL':'saved.has_result'} AND saved.completed_at IS NOT NULL
       AND saved.completed_at<$3::timestamptz-w.raw_provider_evidence_days*interval '24 hours')) AS read_expired
-    FROM (${projection} WHERE r.comparison_id=$1 AND r.project_id=$2) saved
+    FROM (${projection} WHERE i.comparison_id=$1 AND i.project_id=$2) saved
     JOIN workspace w ON w.id=saved.workspace_id ORDER BY saved.position`,[id,projectId,c.read_at])).rows;
   return {id:c.id,quoteId:c.quote_id,createdAt:c.created_at,cancelRequested:c.cancel_requested,
     prompt:{id:c.prompt_id,versionId:c.version_id,textPreview:Array.from(c.text as string).slice(0,160).join('')},
     canCancel:writers.includes(role)&&(role==='owner'||c.user_id===userId)&&rows.some(r=>r.status==='queued'&&r.charge_status==='reserved'),
     runs:rows.map(r=>summary(r,includeAnswers)),
-    ...(details?{input:c.input_expired?null:c.input,messages:c.input_expired?null:c.messages,inputExpired:c.input_expired,cache:{reused:false,available:false},...(!includeAnswers?{answerMode:'individual' as const}:{})}:{})};
+    ...(details?{input:c.input_expired?null:c.input,messages:c.input_expired?null:c.messages,inputExpired:c.input_expired,cache:{reused:rows.some(r=>r.reused),available:c.cache_plan!==null},...(!includeAnswers?{answerMode:'individual' as const}:{})}:{})};
 }
 export async function getPromptExecutions(projectId:string,userId:string){return scoped(projectId,userId,readers,async(client,wid,role)=>{
   const connections=await client.query("SELECT id,name,check_status AS \"checkStatus\" FROM provider_connection WHERE workspace_id=$1 AND provider='openrouter' AND revoked_at IS NULL ORDER BY created_at,id",[wid]);
   const budget=(await client.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[wid])).rows[0];
   const comparisons=[];for(const row of (await client.query('SELECT id FROM prompt_comparison WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 20',[projectId])).rows)comparisons.push(await comparisonDto(client,projectId,row.id,userId,role));
   const catalog=cachedOpenRouterModels();
-  return boundedOpenRouterMetadata({role,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),catalog,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,comparisons,cache:{available:false},scheduling:{available:false}});
+  return boundedOpenRouterMetadata({role,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),catalog,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,comparisons,cache:{available:true},scheduling:{available:false}});
 });}
 export async function getPromptComparison(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true)}));}
 export async function getPromptComparisonSummary(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)}));}
@@ -93,12 +109,13 @@ export async function getPromptExecutionResult(projectId:string,userId:string,id
     // Capture the raw-evidence cutoff after the workspace/project wait. Cleanup lag
     // cannot expose an expired answer, and no copied input or full evidence is exported.
     const row=(await client.query(`WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at),saved AS (
-      SELECT r.*,p.status AS charge_status,p.estimate_micros,p.actual_micros,
+      SELECT i.id,i.comparison_id,i.reused,r.id AS source_execution_id,r.comparison_id AS source_comparison_id,r.route,r.status,r.diagnostic,r.dispatched_at,r.completed_at,r.result,r.evidence,r.generation_id,
+        p.status AS charge_status,p.estimate_micros,p.actual_micros,
         (r.result_purged_at IS NOT NULL OR (r.result IS NOT NULL AND r.completed_at IS NOT NULL
           AND r.completed_at<read_clock.at-w.raw_provider_evidence_days*interval '24 hours')) AS read_expired
-      FROM prompt_execution r JOIN provider_request p ON p.id=r.id JOIN workspace w ON w.id=r.workspace_id CROSS JOIN read_clock
-      WHERE r.id=$1 AND r.project_id=$2)
-      SELECT id,comparison_id,route,status,charge_status,estimate_micros,actual_micros,dispatched_at,completed_at,diagnostic,read_expired,
+      FROM prompt_comparison_item i JOIN prompt_execution r ON r.id=i.execution_id JOIN provider_request p ON p.id=r.id JOIN workspace w ON w.id=r.workspace_id CROSS JOIN read_clock
+      WHERE i.id=$1 AND i.project_id=$2)
+      SELECT id,comparison_id,reused,source_execution_id,source_comparison_id,route,status,charge_status,estimate_micros,actual_micros,dispatched_at,completed_at,diagnostic,read_expired,
         CASE WHEN read_expired THEN NULL ELSE result-'citations' END AS result,generation_id,
         CASE WHEN read_expired OR result IS NULL THEN NULL ELSE jsonb_array_length(result->'citations') END AS citation_count,
         jsonb_build_object('reportedCost',evidence->'reportedCost','isByok',evidence->'isByok','upstreamReportedCost',evidence->'upstreamReportedCost') AS evidence
@@ -113,10 +130,10 @@ export async function getPromptExecutionCitations(projectId:string,userId:string
   const offset=Number(query.get('offset'));
   return scoped(projectId,userId,readers,async(client,_wid,role)=>{
     const row=(await client.query(`WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at),saved AS (
-      SELECT r.id,r.comparison_id,r.result,
+      SELECT i.id,i.comparison_id,r.result,
         (r.result_purged_at IS NOT NULL OR (r.result IS NOT NULL AND r.completed_at IS NOT NULL
           AND r.completed_at<read_clock.at-w.raw_provider_evidence_days*interval '24 hours')) AS read_expired
-      FROM prompt_execution r JOIN workspace w ON w.id=r.workspace_id CROSS JOIN read_clock WHERE r.id=$1 AND r.project_id=$2),
+      FROM prompt_comparison_item i JOIN prompt_execution r ON r.id=i.execution_id JOIN workspace w ON w.id=r.workspace_id CROSS JOIN read_clock WHERE i.id=$1 AND i.project_id=$2),
       retained AS (SELECT id,comparison_id,read_expired,CASE WHEN read_expired OR result IS NULL THEN NULL ELSE result->'citations' END AS citations FROM saved)
       SELECT id,comparison_id,read_expired,jsonb_array_length(citations) AS total,
         COALESCE((SELECT jsonb_agg(item.value ORDER BY item.ordinality)
@@ -138,17 +155,24 @@ export async function quotePromptExecution(projectId:string,userId:string,raw:un
   for(const route of routes)executionRequestBody(saved.messages,route,input.maxCompletionTokens,'00000000-0000-4000-8000-000000000000',executionActor(userId));
   return scoped(projectId,userId,writers,async(client,wid,role)=>{
     await connection(client,wid,input.connectionId,saved.revision);await promptVersion(client,projectId,input.promptId,input.versionId);
-    const hash=requestHash(JSON.stringify({input,messages:saved.messages,routes}));
-    const row=(await client.query(`INSERT INTO prompt_execution_quote(id,workspace_id,project_id,user_id,prompt_id,version_id,connection_id,connection_revision,key_fingerprint,input,messages,routes,input_hash,request_actor,expires_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,clock_timestamp()+interval '5 minutes') RETURNING id,created_at,expires_at`,
-      [randomUUID(),wid,projectId,userId,input.promptId,input.versionId,input.connectionId,saved.revision,fingerprint,JSON.stringify(input),JSON.stringify(saved.messages),JSON.stringify(routes),hash,executionActor(userId)])).rows[0];
+    let plan:CacheItem[]|null=null;
+    if(input.reuseCached!==undefined){
+      const catalog=cachedOpenRouterModels();if(catalog.status!=='fresh')throw new FoundationError(409,'Refresh models before preparing a cache-aware quote.');
+      plan=routes.map(route=>{const model=catalog.models.find(m=>m.id===route.model&&m.admission==='candidate');if(!model)throw new FoundationError(409,'The observed model identity changed. Prepare a new quote.');return {key:promptCacheKey(wid,projectId,input,saved.messages,route,model.canonicalSlug,saved.revision,fingerprint),model:route.model,sourceRunId:null,sourceComparisonId:null,observedAt:null,eligibleUntil:null};});
+      if(input.reuseCached)for(const hit of await cacheCandidates(client,projectId,plan.map(i=>i.key))){const item=plan.find(i=>i.key===hit.key)!;Object.assign(item,hit);}
+    }
+    const hash=requestHash(JSON.stringify({input,messages:saved.messages,routes,...(plan?{cachePlan:plan}:{})}));
+    const row=(await client.query(`INSERT INTO prompt_execution_quote(id,workspace_id,project_id,user_id,prompt_id,version_id,connection_id,connection_revision,key_fingerprint,input,messages,routes,input_hash,request_actor,expires_at,cache_plan)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,clock_timestamp()+interval '5 minutes',$15) RETURNING id,created_at,expires_at`,
+      [randomUUID(),wid,projectId,userId,input.promptId,input.versionId,input.connectionId,saved.revision,fingerprint,JSON.stringify(input),JSON.stringify(saved.messages),JSON.stringify(routes),hash,executionActor(userId),plan===null?null:JSON.stringify(plan)])).rows[0];
     return {role,quote:{id:row.id,createdAt:row.created_at,expiresAt:row.expires_at,input,messages:saved.messages,connectionName:saved.name,
-      routes:routes.map(r=>({...r,estimateMicros:undefined,estimateUsd:usd(r.estimateMicros)})),estimateUsd:usd(routes.reduce((sum,r)=>sum+BigInt(r.estimateMicros),0n)),
-      explanation:'Conservative reservation under the selected endpoint’s published limits. Actual credit charges are recorded after completion; external invoices, credit-purchase fees and taxes are excluded.',cacheReused:false}};
+      routes:routes.map(r=>({...r,estimateMicros:undefined,estimateUsd:usd(r.estimateMicros)})),estimateUsd:usd(routes.reduce((sum,r,index)=>sum+(plan?.[index].sourceRunId?0n:BigInt(r.estimateMicros)),0n)),
+      explanation:plan===null?'Conservative reservation under the selected endpoint’s published limits. Actual credit charges are recorded after completion; external invoices, credit-purchase fees and taxes are excluded.':'Conservative reservation for new requests only. Reused answers retain their original observation and charge. Provider updates in place may not be detected; saved answers can be up to seven days old. External invoices, credit-purchase fees and taxes are excluded.',cacheReused:plan?.some(i=>i.sourceRunId!==null)??false,
+      ...(plan?{cache:{version:'seven-day-v1',items:plan.map(({key,...item})=>item)}}:{})}};
   });
 }
 export async function startPromptExecution(projectId:string,userId:string,raw:unknown){
-  const {quoteId,requestKey}=executionParse(z.object({quoteId:z.uuid(),requestKey:z.uuid()}).strict(),raw),boss=await getBoss();
+  const {quoteId,requestKey}=executionParse(z.object({quoteId:z.uuid(),requestKey:z.uuid()}).strict(),raw);
   return scoped(projectId,userId,writers,async(client,wid,role)=>{
     const prior=(await client.query('SELECT * FROM prompt_comparison WHERE workspace_id=$1 AND request_key=$2',[wid,requestKey])).rows[0];
     if(prior){if(prior.project_id!==projectId||prior.user_id!==userId||prior.quote_id!==quoteId)throw new FoundationError(409,'This request key already identifies different work.');return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,prior.id,userId,role,true,true)});}
@@ -157,13 +181,19 @@ export async function startPromptExecution(projectId:string,userId:string,raw:un
     if(q.expires_at.getTime()<=Date.now())throw new FoundationError(409,'The quote expired. Prepare a new quote.');
     await connection(client,wid,q.connection_id,q.connection_revision);await promptVersion(client,projectId,q.prompt_id,q.version_id);
     if((await client.query('SELECT id FROM prompt_comparison WHERE quote_id=$1',[quoteId])).rowCount)throw new FoundationError(409,'This quote already started a comparison.');
+    const plan=q.cache_plan as CacheItem[]|null,hits=plan?.filter(i=>i.sourceRunId!==null)??[];
+    const current=await cacheCandidates(client,projectId,hits.map(i=>i.key),hits.map(i=>i.sourceRunId!));
+    if(hits.some(i=>!current.some(r=>r.key===i.key&&r.sourceRunId===i.sourceRunId)))throw new FoundationError(409,'A saved answer is no longer eligible. Prepare a new quote; no paid replacement was started.');
+    const hasMiss=(q.routes as RouteSnapshot[]).some((_r,index)=>!plan?.[index].sourceRunId),boss=hasMiss?await getBoss():null;
     const id=randomUUID();await client.query('INSERT INTO prompt_comparison(id,quote_id,workspace_id,project_id,user_id,request_key) VALUES($1,$2,$3,$4,$5,$6)',[id,quoteId,wid,projectId,userId,requestKey]);
     for(const [position,route] of (q.routes as RouteSnapshot[]).entries()){
+      const item=plan?.[position];
+      if(item?.sourceRunId){await client.query('INSERT INTO prompt_comparison_item(id,comparison_id,workspace_id,project_id,position,execution_id,reused) VALUES($1,$2,$3,$4,$5,$6,true)',[randomUUID(),id,wid,projectId,position,item.sourceRunId]);continue;}
       await reserveSpendInTransaction(client,wid,userId,{connectionId:q.connection_id,requestKey:randomUUID(),operation:'prompt.execute',inputHash:requestHash(`${q.input_hash}:${position}:${route.model}`),estimateUsd:usd(route.estimateMicros)},async(tx,child)=>{
-        await tx.query("INSERT INTO prompt_execution(id,comparison_id,workspace_id,project_id,position,route,status) VALUES($1,$2,$3,$4,$5,$6,'queued')",[child,id,wid,projectId,position,JSON.stringify(route)]);
+        await tx.query("INSERT INTO prompt_execution(id,comparison_id,workspace_id,project_id,position,route,status,cache_key) VALUES($1,$2,$3,$4,$5,$6,'queued',$7)",[child,id,wid,projectId,position,JSON.stringify(route),item?.key??null]);
       });
     }
-    if(!await boss.send(promptExecutionQueue,{comparisonId:id},{id,retryLimit:0,expireInSeconds:180,db:{executeSql:(text,values)=>client.query(text,values)}}))throw new Error('Comparison could not be queued.');
+    if(boss&&!await boss.send(promptExecutionQueue,{comparisonId:id},{id,retryLimit:0,expireInSeconds:180,db:{executeSql:(text,values)=>client.query(text,values)}}))throw new Error('Comparison could not be queued.');
     return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)});
   });
 }
