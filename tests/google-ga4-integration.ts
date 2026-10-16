@@ -28,7 +28,7 @@ export async function runGoogleGa4Checks(browserCheck?:(fixture:GoogleGa4Browser
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig(),{pool}=getDatabase();
   assert.equal(new URL(config.databaseUrl).port,'55501');for(const url of [config.appUrl,config.databaseUrl])assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname));
   assert.match(new URL(config.databaseUrl).pathname,/^\/ten98_(?:google_ga4|google_browser)_[a-f0-9]{12}$/);
-  await assertSchema();assert.equal((await migrationSources()).at(-1)?.filename,'0046_ga4_report_inventory.sql','Integrate actual registered45 and46 first; no private migrationSources bypass.');
+  await assertSchema();assert.equal((await migrationSources()).at(-1)?.filename,'0047_prompt_explorer_models.sql','Integrate actual registered45,46 and47 first; no private migrationSources bypass.');
   const finance=async()=>createHash('sha256').update(JSON.stringify((await pool.query('SELECT to_jsonb(p) AS row FROM provider_request p ORDER BY id')).rows)).digest('hex'),financialBefore=await finance();
   const password=randomBytes(24).toString('base64url'),secret=randomBytes(24).toString('base64url'),access=randomBytes(24).toString('base64url'),refresh=randomBytes(24).toString('base64url');
   const actors:Actor[]=[];for(const role of ['owner','admin','editor','viewer','foreign']){const id=randomUUID(),email=id+'@ga4.integration.test';await pool.query('INSERT INTO "user"(id,name,email)VALUES($1,$2,$3)',[id,'GA4 '+role,email]);await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password)VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),id,await hashPassword(password)]);actors.push({id,email,role,cookies:new Map()});}
