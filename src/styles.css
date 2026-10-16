@@ -202,6 +202,13 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .google-reports .field { min-inline-size: 0; }
 .google-connect > summary { min-height: var(--control-touch); padding: 9px 0; cursor: pointer; font-weight: 600; }
 .google-connect[open] > summary { margin-bottom: 14px; }
+.google-reports > .google-source-panel[hidden] { display: none; }
+.google-source-picker, .google-snapshot-choice > .row { align-items: end; }
+.google-source-picker .field, .google-snapshot-choice .field { flex: 1 1 18rem; max-inline-size: 100%; }
+.google-tools > summary { min-height: var(--control-touch); padding: 9px 0; cursor: pointer; font-weight: 600; }
+.google-tools[open] > summary { margin-bottom: 14px; }
+.google-snapshot h3 { margin: 0; overflow-wrap: anywhere; }
+.google-snapshot h3:focus { outline: 2px solid var(--blue); outline-offset: 4px; }
 .google-connection h2 { margin: 0; }
 .google-connection > .row p { margin: 4px 0 0; }
 .google-connection { overflow-wrap: anywhere; }
