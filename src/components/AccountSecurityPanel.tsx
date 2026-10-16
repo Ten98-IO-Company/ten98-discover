@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
+import { useAccountPresentation } from '../lib/account-presentation'
+import { accountLocaleMapping, accountPreferencesDefaults } from '../lib/account-preferences'
 
 type SessionInfo = {
   id: string
@@ -19,12 +21,9 @@ type Op = 'password' | 'enable' | 'verify' | 'disable' | 'recovery' | 'revoke' |
 
 const isAbort = (e: unknown): boolean => e instanceof Error && e.name === 'AbortError'
 
-const fmt = (iso: string): string => {
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
-}
-
 export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expectedUserId: string; onUnauthorized: () => void }) {
+  const presentation=useAccountPresentation(),preferences=presentation?.data?.user.id===expectedUserId?presentation.data.preferences:accountPreferencesDefaults
+  const fmt=(iso:string)=>{const date=new Date(iso);if(Number.isNaN(date.getTime()))return iso;try{return new Intl.DateTimeFormat(accountLocaleMapping(preferences.locale).formatLocale,{timeZone:preferences.timeZone,dateStyle:'medium',timeStyle:'short'}).format(date)}catch{return `${iso} (saved time zone unavailable in this browser)`}}
   const [data, setData] = useState<SecurityData | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadErr, setLoadErr] = useState('')
