@@ -2,9 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { validateAnalyticsNetworkConfig } from './analytics-network.ts';
 
-export function secret(name: string, env: NodeJS.ProcessEnv = process.env): string {
+export function environmentValue(name: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (env[name] && env[`${name}_FILE`]) throw new Error(`Set only ${name} or ${name}_FILE`);
-  const value = env[`${name}_FILE`] ? readFileSync(env[`${name}_FILE`]!, 'utf8').trim() : env[name];
+  return env[`${name}_FILE`] ? readFileSync(env[`${name}_FILE`]!, 'utf8').trim() : env[name];
+}
+
+export function secret(name: string, env: NodeJS.ProcessEnv = process.env): string {
+  const value = environmentValue(name, env);
   if (!value || value.length < 32) throw new Error(`${name} must contain at least 32 characters`);
   return value;
 }

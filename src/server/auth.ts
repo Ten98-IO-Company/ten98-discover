@@ -12,7 +12,9 @@ import { getConfig } from './config.ts'
 import { getDatabase } from './db.ts'
 import * as schema from './schema.ts'
 
-function createAuth(client?: PoolClient) {
+export type ResetPasswordMessage = { userId: string; email: string; token: string }
+
+function createAuth(client?: PoolClient, captureReset?: (message: ResetPasswordMessage) => void) {
   const config = getConfig()
   const factors = twoFactor({
     issuer: 'ten98-monitor',
@@ -69,6 +71,10 @@ function createAuth(client?: PoolClient) {
       disableSignUp: true,
       minPasswordLength: 12,
       maxPasswordLength: 128,
+      resetPasswordTokenExpiresIn: 3600,
+      revokeSessionsOnPasswordReset: true,
+      // Capture only; the security boundary sends after the outer transaction commits.
+      sendResetPassword: captureReset ? async ({ user, token }) => { captureReset({ userId: user.id, email: user.email, token }) } : undefined,
     },
     // api.ts enforces shared and per-email database limits. No proxy IP is trusted yet.
     rateLimit: { enabled: false },
@@ -77,9 +83,10 @@ function createAuth(client?: PoolClient) {
 
 let auth: ReturnType<typeof createAuth> | undefined
 
-export function getAuth(client?: PoolClient) {
+export function getAuth(client?: PoolClient, captureReset?: (message: ResetPasswordMessage) => void) {
   // Security routes bind every library query to one PostgreSQL transaction.
-  if (client) return createAuth(client)
+  if (client) return createAuth(client, captureReset)
+  if (captureReset) throw new Error('Password recovery requires a transaction.')
   return (auth ??= createAuth())
 }
 

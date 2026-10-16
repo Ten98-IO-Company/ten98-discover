@@ -22,6 +22,7 @@ import ReportsPanel from '../components/ReportsPanel'
 import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
 import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
+import { PasswordRecoveryPanel, type PasswordRecovery } from '../components/PasswordRecoveryPanel'
 import { AccountPreferencesPanel } from '../components/AccountPreferencesPanel'
 import { AccountPresentationContext, requestAccountPreferences } from '../lib/account-presentation'
 import type { AccountPreferencesDto } from '../lib/account-preferences'
@@ -55,7 +56,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
+import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: App })
@@ -103,7 +104,9 @@ function App() {
   const projectsRequest = useRef<{ workspace: string; controller: AbortController } | null>(null)
   const callback = useRef<{ value: CallbackIntent; generation: number } | null>(null)
   const [navigationPending, setNavigationPending] = useState(true)
-  const [phase, setPhase] = useState<'loading' | 'error' | 'setup' | 'signin' | 'factor' | 'app'>('loading')
+  const [phase, setPhase] = useState<'loading' | 'error' | 'setup' | 'signin' | 'factor' | 'recovery' | 'app'>('loading')
+  const recoveryRef = useRef<PasswordRecovery | null>(null), recoveryGeneration = useRef(0)
+  const [recovery, setRecovery] = useState<{ value: PasswordRecovery; generation: number } | null>(null)
   const [pageError, setPageError] = useState('')
   const [status, setStatus] = useState<Status | null>(null)
   const [me, setMe] = useState<Me | null>(null)
@@ -185,8 +188,19 @@ function App() {
     })
     let alive = true
     async function captureInvitation() {
+      const reset = parsePasswordResetFragment(window.location.hash)
+      if (reset !== null) {
+        beginRecovery({ kind: 'reset', token: reset.token })
+        setInviteToken(''); setInviteSigningIn(false)
+        // Scrub before boot or any API call; the capability remains only in this component's memory.
+        await navigate({ search: intent.current.search, hash: '', replace: true })
+        return
+      }
       const value = parseCallback(window.location.hash)
       if (!value) return
+      const wasRecovery = recoveryRef.current !== null
+      if (wasRecovery) resetSession()
+      const session = sessionGeneration.current
       const generation = intent.current.generation
       callback.current = { value, generation }
       oidcProof.current = undefined; setOidcProofId(undefined); oidcFactor.current = false
@@ -201,12 +215,15 @@ function App() {
       else if (value.kind === 'invalid' || value.kind === 'identity-error') setAuthNotice({ kind: 'error', message: 'The return link is invalid or ambiguous. Start the connection again, or reopen the original invitation.' })
       // Capabilities live only in memory. Let the router own its history entry.
       await navigate({ search: intent.current.search, hash: '', replace: true })
-      if (alive && currentMe.current) applyCallback(currentMe.current)
+      if (!alive || sessionGeneration.current !== session || recoveryRef.current !== null) return
+      if (currentMe.current) applyCallback(currentMe.current)
+      else if (wasRecovery) { setPhase('loading'); void boot() }
     }
     const capture = () => { void captureInvitation() }
     window.addEventListener('hashchange', capture)
     const ac = new AbortController()
-    void captureInvitation().then(() => { if (alive) void boot(ac.signal) })
+    const initialSession = sessionGeneration.current
+    void captureInvitation().then(() => { if (alive && sessionGeneration.current === initialSession && recoveryRef.current === null) void boot(ac.signal) })
     return () => { alive = false; ac.abort(); projectsRequest.current?.controller.abort(); unsubscribe(); window.removeEventListener('hashchange', capture) }
   }, [])
 
@@ -334,6 +351,7 @@ function App() {
 
   function resetSession() {
     sessionGeneration.current += 1; bootGeneration.current += 1
+    recoveryGeneration.current += 1; recoveryRef.current = null; setRecovery(null)
     preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;preferencesEntry.current=false
     setAccountPreferences({data:null,loading:false,error:''})
     callback.current = null
@@ -345,6 +363,13 @@ function App() {
     currentMe.current = null; loadedProjects.current = null
     setMe(null); setProjects(null); setWorkspaceId(''); setNavigationPending(true)
     setPhase('signin')
+  }
+
+  function beginRecovery(value: PasswordRecovery, email?: string) {
+    resetSession()
+    recoveryRef.current = value; setRecovery({ value, generation: recoveryGeneration.current })
+    if (email !== undefined) setSignInEmail(email)
+    setAuthNotice(null); setPhase('recovery')
   }
 
   function guardAuth(e: unknown): boolean {
@@ -509,6 +534,9 @@ function App() {
   const renderedSession = sessionGeneration.current, renderedIntent = intent.current.generation
   const unauthorized = () => { if (sessionGeneration.current === renderedSession) resetSession() }
 
+  if (phase === 'recovery') return recovery ? <PasswordRecoveryPanel key={recovery.generation} value={recovery.value} initialEmail={signInEmail}
+    onRequest={() => { if (sessionGeneration.current === renderedSession) beginRecovery({ kind: 'request' }) }} onSignIn={changed => { if (sessionGeneration.current !== renderedSession) return; resetSession(); if (changed) setAuthNotice({ kind: 'info', message: 'Password changed. Sign in with your new password. Two-factor authentication is still required if enabled.' }) }} /> : <main className='center'><p role='status'>Loading…</p></main>
+
   if (phase === 'loading') return <main className='center'><p role='status' className='dim'>Loading…</p></main>
 
   if (phase === 'error') {
@@ -528,6 +556,7 @@ function App() {
     onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={unauthorized} />
     {!me && <OidcSignIn key={inviteToken} invitationToken={inviteToken} />}</section></main>
   if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
+    onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
@@ -891,7 +920,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   )
 }
 
-function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onCancel?: () => void; notice?: {message: string; kind: 'info' | 'error'} | null }) {
+function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onForgot: (email: string) => void; onCancel?: () => void; notice?: {message: string; kind: 'info' | 'error'} | null }) {
   const [email, setEmail] = useState(initialEmail)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -919,6 +948,7 @@ function SignInForm({ initialEmail, onSignIn, onCancel, notice }: { initialEmail
           <input id='si-pw' type='password' autoComplete='current-password' required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {error !== '' && <div role='alert' className='alert'>{error}</div>}
         <button className='btn primary' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button type='button' className='btn' disabled={busy} onClick={() => onForgot(email.trim())}>Forgot password?</button>
         {onCancel && <button type='button' className='btn' onClick={onCancel}>Back to invitation</button>}
         <OidcSignIn />
       </form>
