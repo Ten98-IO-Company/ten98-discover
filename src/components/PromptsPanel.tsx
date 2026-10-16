@@ -618,7 +618,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
       <div className="row between">
         <div>
           <h2 ref={libraryHeading} tabIndex={-1}>Prompt library</h2>
-          <p className="footnote">Saving prompts does not run them. Automatic scheduling is not available yet.</p>
+          <p className="footnote">Saving prompts does not run them. Choose Review a run, then Recurring prompt tracking. Scheduling requires explicit owner approval.</p>
         </div>
         <div className="row">
           {role && <button style={{minHeight:44}} id="pl-suggest-prompts" type="button" className="btn ghost" onClick={openSuggestions} disabled={busy || loading}>Suggest prompts</button>}
@@ -759,7 +759,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
             <label htmlFor="pl-enabled">
               <input style={{width: 'auto'}} id="pl-enabled" disabled={busy || !!retryAttempt} type="checkbox" checked={fEnabled} onChange={e => setFEnabled(e.target.checked)} /> Include when tracking is configured
             </label>
-            <p className="hint">Saving prompts does not run them. Automatic scheduling is not available yet.</p>
+            <p className="hint">Saving prompts does not run them. Choose Review a run, then Recurring prompt tracking. Scheduling requires explicit owner approval.</p>
           </div>
 
           {conflict && (
