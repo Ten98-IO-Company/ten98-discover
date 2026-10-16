@@ -1,8 +1,10 @@
-import {analyticsFieldLimit} from '../lib/analytics-dimensions';
+import {analyticsFieldLimit,analyticsSelectionFields} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type AdvancedRow,type AdvancedDraft,type AdvancedIssue,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {useBlocker,useLocation} from '@tanstack/react-router';
-import {explorerNavigation,sessionNavigation,canonicalNavigation,navigationKey,parseNavigation,type NavigationSearch,type ExplorerNavigation} from '../lib/navigation';
+import {explorerNavigation,analyticsNavigation,analyticsNavigationNames,geographyNavigationNames,sessionNavigation,canonicalNavigation,navigationKey,parseNavigation,type NavigationSearch,type ExplorerNavigation,type AnalyticsNavigation} from '../lib/navigation';
+import {analyticsExplorerQuery} from './AnalyticsPanel';
+import {defaultParseSearch} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import {useAnnotations} from './AnnotationsPanel';
 import type {AdvancedPredicates} from '../server/advanced-predicate-input';
@@ -78,6 +80,30 @@ export function readExplorerScope(query?:string){
   }
   const built=combinationParams(draft,cohort,fields,propertyDetails);
   return 'error'in built?null:{draft,fields,cohort,propertyDetails,qs:built.qs};
+}
+
+/** Project only a complete verified population; unsupported predicates never disappear. */
+export function explorerAnalyticsNavigation(search:NavigationSearch,defaultRange?:{from:string;to:string}):AnalyticsNavigation{
+  const invalid={analyticsInvalid:'1'} as const,nav=explorerNavigation(search);
+  if(search.view!=='explore'||nav.exploreInvalid||nav.exploreQuery===undefined&&!defaultRange)return invalid;
+  let value=readExplorerScope(nav.exploreQuery);if(!value)return invalid;
+  if(nav.exploreQuery===undefined){if(!defaultRange)return invalid;const p=new URLSearchParams(value.qs);p.set('from',defaultRange.from);p.set('to',defaultRange.to);value=readExplorerScope(p.toString());if(!value)return invalid;}
+  const {draft,cohort}=value;
+  if(draft.timeZone!=='UTC'||draft.kind!=='all'||cohort||draft.prop.on||draft.filters.origin.on)return invalid;
+  const fields=draft.advanced.fields.concat(analyticsSelectionFields.filter(field=>draft.filters[field].on).map(field=>({id:'return-'+field,field,operator:'eq',type:'',value:draft.filters[field].value})));
+  const built=buildAdvanced({...draft.advanced,fields});if('error'in built)return invalid;
+  const out:AnalyticsNavigation={analyticsFrom:draft.from,analyticsTo:draft.to};
+  for(const field of environmentFields)if(draft.filters[field].on)out[analyticsNavigationNames[field]]=draft.filters[field].value;
+  for(const field of geographyFields)if(draft.filters[field].on)out[geographyNavigationNames[field]]=draft.filters[field].value;
+  if(built.predicates)out.analyticsSelection=new URLSearchParams({predicates:JSON.stringify(built.predicates)}).toString();
+  const target={workspace:search.workspace,project:search.project,view:'project' as const,...out},verified=analyticsNavigation(target);
+  return analyticsExplorerQuery(target)===null?invalid:verified;
+}
+
+/** Native history state is only a return address, never authority or report data. */
+export function readExplorerReturn(value:unknown,userId:string,workspace:string,project:string):string|null{
+  if(!uuid(userId)||!uuid(workspace)||!uuid(project)||!record(value)||Object.keys(value).length!==4||value.userId!==userId||value.workspace!==workspace||value.project!==project||!clean(value.href,65536)||/[\\\x00-\x20\x7f]/u.test(value.href)||!value.href.startsWith('/?'))return null;
+  try{const url=new URL(value.href,'https://return.invalid'),search=parseNavigation(defaultParseSearch(url.search));return url.origin==='https://return.invalid'&&url.pathname==='/'&&!url.hash&&search.view==='explore'&&search.workspace===workspace&&search.project===project&&canonicalNavigation(url.search,search)&&!explorerNavigation(search).exploreInvalid&&readExplorerScope(search.exploreQuery)?value.href:null;}catch{return null;}
 }
 export function validReportBase(result:ExploreResult,params:URLSearchParams):boolean{
   if(!record(result)||!record(result.query)||!record(result.totals)||!record(result.breakdown)||!record(result.coverage)||!['complete','partial','unavailable'].includes(result.coverage.status)||!Array.isArray(result.breakdown.groups)||!clean(result.csv,2097152))return false;
@@ -260,11 +286,11 @@ function groupValue(type:string,value:unknown,field?:string):string{
 }
 const groupType=(type:string)=>type?type.charAt(0).toUpperCase()+type.slice(1):'Unknown';
 
-type Props={projectId:string;userId:string;onUnauthorized:()=>void;search?:NavigationSearch;onNavigate?:(value:ExplorerNavigation)=>void};
+type Props={projectId:string;userId:string;onUnauthorized:()=>void;search?:NavigationSearch;onNavigate?:(value:ExplorerNavigation)=>void;onAppliedRange?:(userId:string,projectId:string,range:{from:string;to:string},entry:string)=>void};
 export function ExplorerPanel(props:Props){
   return <ExplorerInner key={`${props.userId}:${props.projectId}`} {...props}/>;
 }
-function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate}:Props){
+function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppliedRange}:Props){
   const uid=useId(),filterDialog=useRef<HTMLDialogElement>(null),filterButton=useRef<HTMLButtonElement>(null);
   const location=useLocation(),controlled=!!search&&!!onNavigate,nav:ExplorerNavigation=controlled?explorerNavigation(search!):{},navText=JSON.stringify(nav),entry=location.state.__TSR_key;
   const restored=nav.exploreInvalid?null:readExplorerScope(nav.exploreQuery),invalidLink=controlled&&!restored;
@@ -284,6 +310,7 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate}:Props
   const [snapshot,setResult]=useState<ExploreResult|null>(null),acceptedRoute=useRef('');
   const result=scopeReady&&(!controlled||acceptedRoute.current===routeScope)?snapshot:null;
   const [phase,setPhase]=useState<'loading'|'ok'|'error'|'unavailable'|'denied'>('loading');
+  useEffect(()=>{if(controlled&&nav.exploreQuery===undefined&&scopeReady&&phase==='ok'&&typeof entry==='string'&&result?.range.timeZone==='UTC'&&result.coverage.status!=='unavailable'&&result.totals.events!==null)onAppliedRange?.(userId,projectId,{from:result.range.from,to:result.range.to},entry);},[controlled,nav.exploreQuery,scopeReady,phase,result,userId,projectId,entry,onAppliedRange]);
   const [message,setMessage]=useState('');
   const [formError,setFormError]=useState('');
   const base=`/api/projects/${encodeURIComponent(projectId)}/segments`;

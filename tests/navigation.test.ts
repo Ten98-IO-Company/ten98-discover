@@ -8,6 +8,21 @@ import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
+test('returned Analytics population uses the existing scalar serializer without Explore or Compare presentation',()=>{
+ const predicates={version:1,match:'all',fields:[{field:'path',operator:'eq',value:''},{field:'eventName',operator:'exists'},{field:'campaignName',operator:'eq',value:'null'}],properties:[]},analyticsSelection=new URLSearchParams({predicates:JSON.stringify(predicates)}).toString();
+ const target={workspace,project,view:'project',analyticsFrom:'2026-10-01',analyticsTo:'2026-10-07',analyticsBrowser:'not-recorded',analyticsSelection} as const;
+ const wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(Object.hasOwn(parseNavigation(target),'analyticsCompare'),false);assert.equal(Object.hasOwn(parseNavigation(target),'analyticsDimension'),false);assert.equal(Object.hasOwn(parseNavigation(target),'exploreQuery'),false);
+ assert.equal(parseNavigation({...target,analyticsCompare:'prev'}).analyticsInvalid,'1');assert.equal(parseNavigation({...target,analyticsDimension:'path'}).analyticsInvalid,'1');assert.equal(canonicalNavigation(wire+'&analyticsSelection=x',target),false);
+});
+
+test('unsupported return sentinel is reload-stable and history return addresses never become query capabilities',()=>{
+ const target={workspace,project,view:'project',analyticsInvalid:'1'} as const,wire=defaultStringifySearch(target);
+ assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);
+ const applied={workspace,project,view:'project',analyticsFrom:'2026-10-01',analyticsTo:'2026-10-07'} as const;
+ for(const extra of [{analyticsReturn:'https://outside.example.org/'},{analyticsReturn:{userId:'someone'}},{exploreQuery:'kind=all'},{cohortId:workspace},{propertyKey:'private'}])assert.equal(parseNavigation({...applied,...extra}).analyticsInvalid,'1');
+ assert.deepEqual(parseNavigation({...applied,view:'explore'}),{workspace,project,view:'explore',exploreInvalid:'1'});
+});
+
 test('Explore keeps one bounded project-scoped query through router reload and history',()=>{
  const base={workspace,project,view:'explore'} as const,query=new URLSearchParams({from:'2026-10-01',to:'2026-10-07',timeZone:'Asia/Dubai',kind:'all',groupBy:'event',path:'/مرحبا?literal=true',browser:'not-recorded'}).toString();
  for(const exploreQuery of [query,'from=2026-10-01&to=2026-10-07&timeZone=UTC&kind=all&fields=%5B%22campaignSource%22%2C%22campaignMedium%22%5D']){
