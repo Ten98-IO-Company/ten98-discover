@@ -1,3 +1,11 @@
+async function editExplore(target:any){
+  const dialog=target.getByRole('dialog',{name:'Explore filters',exact:true}),button=target.getByRole('button',{name:'Edit filters',exact:true});
+  if(await button.count()){if(!await dialog.isVisible())await button.click();const presets=dialog.locator('details.explorer-presets');if(!await presets.evaluate((node:any)=>node.open))await presets.locator(':scope > summary').click();}
+  return target;
+}
+async function closeExplore(target:any){
+  const dialog=target.getByRole('dialog',{name:'Explore filters',exact:true});if(await dialog.isVisible())await dialog.getByRole('button',{name:'Close filters',exact:true}).click();return target;
+}
 import assert from 'node:assert/strict';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
@@ -145,15 +153,15 @@ try{
   const link=(extra:Record<string,string>={})=>origin+'/?'+new URLSearchParams({workspace,project,view:'sessions',from:reportDay,to:reportDay,timeZone:'America/New_York',...extra});
   const shot=async(name:string)=>{assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);await page.screenshot({path:join(evidence,name),fullPage:true,animations:'disabled'});screenshots.push(name);};
   stage='same-date list, detail and restored page';await uiRead<SessionList>(()=>page.goto(link()));await list().waitFor();await open('More filters');
-  await page.getByLabel('Enable Path',{exact:true}).check();await page.getByLabel('Path equals',{exact:true}).fill('/list-filter');
-  const readsBeforeDraft=allReadTimes.length;await page.getByLabel('Show',{exact:true}).selectOption('custom');await settle();assert.equal(allReadTimes.length,readsBeforeDraft);
+  await (await editExplore(page)).getByLabel('Enable Path',{exact:true}).check();await (await editExplore(page)).getByLabel('Path equals',{exact:true}).fill('/list-filter');
+  const readsBeforeDraft=allReadTimes.length;await (await editExplore(page)).getByLabel('Show',{exact:true}).selectOption('custom');await settle();assert.equal(allReadTimes.length,readsBeforeDraft);
   const applied=await uiRead<SessionList>(()=>button('Apply filters').click());assert.equal(applied.totalKeys,55);assert.equal(applied.rows!.length,25);assert.equal(applied.query.filters.path,'/list-filter');assert.equal(page.url().includes('list-filter'),false);
   const second=await uiRead<SessionList>(()=>button('Next').click());assert.equal(second.rows!.length,25);assert.equal(second.paging.eventBefore,applied.paging.eventBefore);
   const selected=second.rows![0].visitorKey,cta=page.getByRole('link',{name:'View all activity in selected dates for '+selected,exact:true});
   await cta.focus();const detail=await uiRead<SessionDetail>(()=>page.keyboard.press('Enter'),true);assert.equal(detail.summary.events,2);assert.equal(detail.range.from,reportDay);assert.equal(detail.range.timeZone,'America/New_York');assert.deepEqual(new Set(detail.activity!.map(row=>row.path)),new Set(['/list-filter','/other']));
   assert.match(await page.locator('body').innerText(),/List filters selected this key; they do not filter this timeline/);
   const returned=await uiRead<SessionList>(()=>page.getByRole('link',{name:'Back to sessions',exact:true}).click());assert.deepEqual(returned.rows,second.rows);assert.equal(returned.query.filters.path,'/list-filter');
-  assert.match(await page.getByLabel('Session pagination').innerText(),/Page 2/);assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'View all activity in selected dates for '+selected);
+  assert.match(await (await editExplore(page)).getByLabel('Session pagination').innerText(),/Page 2/);assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'View all activity in selected dates for '+selected);
   const third=await uiRead<SessionList>(()=>button('Next').click());assert.equal(third.rows!.length,5);assert.equal(third.paging.nextCursor,null);
   assert.equal(new Set([...applied.rows!,...second.rows!,...third.rows!].map(row=>row.visitorKey)).size,55);
   mark('Draft filters wait for Apply; three list pages retain 55 keys, explicit detail shows all same-date activity, and Back restores filters, page and keyboard focus.');
@@ -172,7 +180,7 @@ try{
   assert.match(await currentProperties.innerText(),/\(null\)/);assert.match(await currentProperties.innerText(),/\["",1,false,null\]/);assert.match(await currentProperties.innerText(),/1234567Z/);assert.match(await currentProperties.innerText(),/<img src=x/);assert.equal(await page.locator('img[src="x"]').count(),0);assert.equal(await page.evaluate(()=>(window as any).fixtureInjected),undefined);
   const qualificationPredicates={version:1,match:'all',fields:[],properties:[{key:'plan',operator:'eq',type:'string',value:'qualification-event'}],sessionProperties:[{key:'plan',operator:'eq',type:'string',value:'pro'}]};
   const cohort=(await post(ownerContext,base+'/cohorts',{requestId:randomUUID(),definition:{schemaVersion:1,name:'Dubai qualification',query:new URLSearchParams({from:qualificationDay,to:qualificationDay,timeZone:'Asia/Dubai',kind:'all',path:'/qualify',predicates:JSON.stringify(qualificationPredicates)}).toString()}})).item;
-  const beforeLink=allReadTimes.length;await page.goto(link({cohortId:cohort.id,cohortRevision:String(cohort.revision)}));await button('Apply filters').waitFor();await settle();assert.equal(allReadTimes.length,beforeLink);
+  const beforeLink=allReadTimes.length;await page.goto(link({cohortId:cohort.id,cohortRevision:String(cohort.revision)}));await (await editExplore(page)).getByRole('button',{name:'Apply filters',exact:true}).waitFor();await settle();assert.equal(allReadTimes.length,beforeLink);
   await open('Saved filters and cohorts');const cohortBox=page.getByRole('group',{name:'Saved cohort',exact:true});await cohortBox.getByRole('button',{name:'Load linked version',exact:true}).click();await settle();assert.equal(allReadTimes.length,beforeLink);
   const qualified=await uiRead<SessionList>(()=>button('Apply filters').click());assert.equal(qualified.totalKeys,1);assert.equal(qualified.rows![0].events,501);assert.equal(qualified.cohort!.range.from,qualificationDay);assert.equal(qualified.cohort!.range.timeZone,'Asia/Dubai');assert.equal(qualified.range.from,reportDay);assert.equal(qualified.range.timeZone,'America/New_York');assert.equal(qualified.cohort!.sessionProperties!.asOf,qualified.asOf);
   mark('Typed current values stay distinct from event properties; latest identify changes an explicit older-date rerun without traffic mutation, and a staged cohort keeps separate Dubai qualification dates.');
@@ -180,14 +188,14 @@ try{
   stage='real empty, unknown and expired property evidence';
   const empty=await listApi({path:'/never-observed'});assert.equal(empty.totalKeys,0);assert.deepEqual(empty.rows,[]);assert.equal(empty.selection.status,'available');
   const unknown=await listApi({path:'/unknown'});assert.equal(unknown.selection.status,'unavailable');assert.equal(unknown.selection.reason,'identity_unavailable');assert.equal(unknown.rows,null);assert.equal(unknown.totalKeys,null);
-  await uiRead<SessionList>(()=>page.goto(link()));await open('More filters');await page.getByLabel('Enable Path',{exact:true}).check();await page.getByLabel('Path equals',{exact:true}).fill('/never-observed');await uiRead<SessionList>(()=>button('Apply filters').click());assert.match(await list().innerText(),/No matching activity/);
-  await page.getByLabel('Path equals',{exact:true}).fill('/unknown');await uiRead<SessionList>(()=>button('Apply filters').click());assert.match(await list().innerText(),/cannot be grouped into visitor sessions/);
+  await uiRead<SessionList>(()=>page.goto(link()));await open('More filters');await (await editExplore(page)).getByLabel('Enable Path',{exact:true}).check();await (await editExplore(page)).getByLabel('Path equals',{exact:true}).fill('/never-observed');await uiRead<SessionList>(()=>button('Apply filters').click());assert.match(await list().innerText(),/No matching activity/);
+  await (await editExplore(page)).getByLabel('Path equals',{exact:true}).fill('/unknown');await uiRead<SessionList>(()=>button('Apply filters').click());assert.match(await list().innerText(),/cannot be grouped into visitor sessions/);
   const profileCount=(await pool.query('SELECT count(*)::int AS n FROM analytics_session_property WHERE project_id=$1',[project])).rows[0].n;
   await pool.query("UPDATE analytics_session_property SET updated_at=clock_timestamp()-interval '4000 days' WHERE project_id=$1 AND visitor_key=$2 AND property_key='plan'",[project,mainKey]);
   const missing={version:1,match:'all',fields:[],properties:[],sessionProperties:[{key:'never-observed',operator:'missing'}]};
   const lost=await listApi({path:'/never-observed',predicates:JSON.stringify(missing)});assert.equal(lost.coverage.status,'complete');assert.equal(lost.sessionProperties!.evidence.expiredValuesPresent,true);assert.equal(lost.sessionProperties!.selection.reason,'missing_evidence_lost');assert.deepEqual(lost.sessionProperties!.candidates,{identifiedEvents:0,unidentifiedEvents:0});assert.equal(lost.totalKeys,null);assert.equal(lost.rows,null);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM analytics_session_property WHERE project_id=$1',[project])).rows[0].n,profileCount,'Loss is real expiry evidence before physical deletion.');
-  await page.getByLabel('Path equals',{exact:true}).fill('/never-observed');await open('Advanced filters');await button('Add session property condition').click();const propertyRow=page.getByRole('group',{name:'Session property condition 1',exact:true});await propertyRow.getByLabel('Property key',{exact:true}).fill('never-observed');await propertyRow.getByLabel('Operator',{exact:true}).selectOption('missing');
+  await (await editExplore(page)).getByLabel('Path equals',{exact:true}).fill('/never-observed');await open('Advanced filters');await button('Add session property condition').click();const propertyRow=page.getByRole('group',{name:'Session property condition 1',exact:true});await propertyRow.getByLabel('Property key',{exact:true}).fill('never-observed');await propertyRow.getByLabel('Operator',{exact:true}).selectOption('missing');
   const lostUi=await uiRead<SessionList>(()=>button('Apply filters').click());assert.equal(lostUi.totalKeys,null);assert.match(await list().innerText(),/Current session property evidence cannot establish/);assert.equal((await list().innerText()).includes('No matching activity'),false);
   mark('Genuine empty membership, unidentified-only activity and expired missing-property evidence produce distinct actual SQL and UI states, including zero-candidate unavailability.');
 
