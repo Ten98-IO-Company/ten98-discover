@@ -79,7 +79,7 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .proj-head { margin-bottom: 26px; }
 .proj-head p { margin: 0; }
 .project-origin { color: var(--muted); font-size: var(--text-xs); margin-bottom: 6px !important; overflow-wrap: anywhere; }
-.proj-head h1 { margin-bottom: 6px; }
+.proj-head h1 { margin-bottom: 6px; overflow-wrap: anywhere; }
 .card { min-width: 0; margin-bottom: 20px; padding: var(--space-4); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-panel); }
 .card h2 { margin-bottom: 12px; }
 .annotation-dates { display: flex; gap: var(--space-2); overflow-x: auto; padding-block: var(--space-2); margin-block-end: var(--space-4); }
@@ -400,7 +400,7 @@ td select { min-width: 7rem; } tbody tr:last-child td { border-bottom: 0; }
     --color-danger: #b42318; --color-danger-subtle: #fff1ef;
   }
 }
-.account-preferences { max-inline-size: var(--form-max); }
+.account-preferences { max-inline-size: var(--form-max); overflow-wrap: anywhere; }
 .account-preferences fieldset { margin-inline: 0; min-inline-size: 0; }
 .account-preferences legend { padding-inline: var(--space-2); font-weight: var(--weight-semibold); }
 .account-preferences .field input, .account-preferences .field select { min-inline-size: 0; inline-size: 100%; }
