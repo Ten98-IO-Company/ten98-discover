@@ -3,6 +3,7 @@ import {Link} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,type OpenRouterCatalog} from '../lib/openrouter-models';
 import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelReservation,modelUsdMicros,type ModelQuoteRoute} from './OpenRouterModelPicker';
+import {PromptRecurringPanel} from './PromptRecurringPanel';
 
 type Role='owner'|'admin'|'editor'|'viewer';
 type Model=string;
@@ -23,7 +24,7 @@ type Comparison=Summary&{input:Input|null;messages:Message[]|null;inputExpired:b
 type AnswerResponse={role:Role;comparisonId:string;run:Run;citations:{count:number|null;pageSize:20}};
 type SourcePage={role:Role;comparisonId:string;runId:string;resultExpired:boolean;total:number|null;offset:number;nextOffset:number|null;items:Source[]};
 type Card={run:Run|null;loading:boolean;error:string|null;sources:Source[];total:number|null;nextOffset:number|null;sourcesLoading:boolean;sourcesError:string|null};
-type Metadata={role:Role;models:Model[];catalog:OpenRouterCatalog|null;vaultConfigured:boolean;spendingPaused:boolean;connections:{id:string;name:string;checkStatus:'untested'|'ok'|'error'}[];comparisons:Summary[];cache:{available:boolean};scheduling:{available:false}};
+type Metadata={role:Role;models:Model[];catalog:OpenRouterCatalog|null;vaultConfigured:boolean;spendingPaused:boolean;connections:{id:string;name:string;checkStatus:'untested'|'ok'|'error'}[];comparisons:Summary[];cache:{available:boolean};scheduling:{available:boolean;kind?:'owner-approved-text-v1'}};
 type DetailResponse={role:Role;comparison:Comparison};
 type ReconcileResponse=DetailResponse&{reconciliation:{status:'matched'|'inconclusive';message:string}};
 export type ExecutionEntry={kind:'configure';promptId:string;versionId:string;authoredText:string}|{kind:'history'}|{kind:'receipt';comparisonId:string;promptId:string};
@@ -97,7 +98,7 @@ export function PromptExecutionsPanel(props:Props){
   const key=props.entry.kind==='configure'?`${props.entry.promptId}:${props.entry.versionId}`:props.entry.kind==='receipt'?`${props.entry.promptId}:${props.entry.comparisonId}`:'history';
   return <Panel key={`${props.userId}:${props.workspaceId}:${props.projectId}:${props.entry.kind}:${key}`} {...props}/>;
 }
-function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired}:Props){
+function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/prompt-executions',uid=useId();
   const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   const [metadata,setMetadata]=useState<Metadata|null>(null),[role,setRole]=useState<Role|null>(null);
@@ -110,6 +111,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
   const [error,setError]=useState<string|null>(null),[notice,setNotice]=useState<string|null>(null);
   const [polling,setPolling]=useState(false),[clock,setClock]=useState(Date.now());
   const mounted=useRef(false),generation=useRef(0),operation=useRef<Operation|null>(null);
+  const roleAuthority=useRef<{value:Role|null}>({value:null}),recurringAuthority=roleAuthority.current;
   const selection=useRef<string|null>(null),attemptRef=useRef<Attempt|null>(null),pollingUntil=useRef(0);
   const restoreReceipt=useRef(entry.kind==='receipt');
   const expiredInputs=useRef(new Set<string>()),expiredResults=useRef(new Set<string>());
@@ -129,9 +131,9 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
   function setPending(value:Attempt|null){attemptRef.current=value;setAttempt(value);}
   function move(view:Screen){focusNext.current=true;setScreen(view);}
   function clearDraft(){setReuseCached(true);setQuote(null);setPending(null);setConnectionId('');setModels([]);setSystemText('');setMaxTokens('1024');setFunded(false);}
-  function applyRole(value:Role){setRole(value);setAccessLost(false);if(value==='viewer'){clearDraft();if(['setup','quote','unknown'].includes(screen))move('history');}}
+  function applyRole(value:Role){if(roleAuthority.current.value!==value)roleAuthority.current={value};setRole(value);setAccessLost(false);if(value==='viewer'){if(attemptRef.current)move('unknown');else{clearDraft();if(['setup','quote','unknown'].includes(screen))move('history');}}}
   function purge(message:string){
-    invalidate();clearDraft();setMetadata(null);setComparison(null);setCards({});setRole(null);selection.current=null;setPolling(false);
+    invalidate();clearDraft();setMetadata(null);setComparison(null);setCards({});roleAuthority.current={value:null};setRole(null);selection.current=null;setPolling(false);
     setNotice(null);setError(message);setAccessLost(true);initialized.current=false;restoreReceipt.current=entry.kind==='receipt';move(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   }
   function failure(e:unknown,op:Operation):boolean{
@@ -344,9 +346,11 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
         {screen==='unknown'?<div className="banner"><p>This start may already have been accepted. Retrying resends the identical quote and request key; it does not create a new paid attempt. This recovery remains available after quote expiry.</p><button type="button" className="btn primary" onClick={()=>void start()} disabled={writing||!attempt}>Retry same start request</button></div>:<div className="row"><button type="button" className="btn primary" onClick={()=>void start()} disabled={writing||blocked||expired}>{paidCount===0?'Use saved answers':`Start ${paidCount} paid ${paidCount===1?'request':'requests'}`}</button><button type="button" className="btn ghost" onClick={setup} disabled={writing}>Back to setup</button>{expired&&<button type="button" className="btn" onClick={setup} disabled={writing}>Get new quote</button>}</div>}
         {expired&&screen!=='unknown'&&<p className="hint">This unused quote expired. Return to setup and explicitly get a new quote.</p>}
       </div>}
+      {screen==='unknown'&&attempt&&!writer&&<div className="banner"><p>The pending Start request is retained. Your current role cannot start or retry paid work; inspect saved runs or refresh access before recovery.</p><button type="button" className="btn" disabled={writing} onClick={()=>void refreshMetadata()}>Refresh recovery access</button></div>}
       {screen==='history'&&<div className="card stack"><div className="row between"><h3>Latest project comparisons</h3><button type="button" className="btn" onClick={()=>void refreshMetadata()} disabled={writing}>Refresh</button></div><p className="hint">Latest 20 project comparisons. Prompt-library filters do not filter this list.</p>
         {metadata.comparisons.length===0&&!error?<p>No prompt runs yet. Choose a saved prompt in the library to review your first run.</p>:metadata.comparisons.length>0&&<div className="table-wrap" role="region" aria-label="Recent prompt runs" tabIndex={0}><table style={{minWidth:680}}><thead><tr><th>Authored prompt version</th><th>Models</th><th>Started</th><th>Outcome</th><th>Action</th></tr></thead><tbody>{metadata.comparisons.map(c=><tr key={c.id}><td style={{minWidth:200,...textStyle}}>{c.prompt.textPreview}</td><td>{c.runs.map(r=>modelName(r.model)).join(' + ')}</td><td>{when(c.createdAt)}</td><td>{c.runs.filter(r=>r.chargeStatus==='uncertain').length>0?`${c.runs.filter(r=>r.chargeStatus==='uncertain').length} need charge review`:c.runs.map(outcome).join(' · ')}</td><td><button type="button" className="btn" onClick={()=>void openComparison(c.id)} disabled={writing}>Open run</button></td></tr>)}</tbody></table></div>}
       </div>}
+      {metadata.scheduling?.available===true&&metadata.scheduling.kind==='owner-approved-text-v1'&&<PromptRecurringPanel projectId={projectId} userId={userId} role={role} quote={screen==='quote'&&!attempt?quote:null} onUnauthorized={onUnauthorized} onRole={value=>{if(roleAuthority.current===recurringAuthority)applyRole(value);}} onOpenComparison={id=>void openComparison(id)}/>}
       {screen==='detail'&&(comparison?<div className="stack">
         <div className="card"><div className="row between"><h3>Authored prompt version</h3><button type="button" className="btn" onClick={()=>void openComparison(comparison.id)} disabled={writing}>Refresh status</button></div><p style={textStyle}>{comparison.prompt.textPreview}</p><p>Started {when(comparison.createdAt)} · {comparison.runs.length} model {comparison.runs.length===1?'request':'requests'}</p>
           {active(comparison)&&<p className="hint">{polling?'Checking saved status every 5 seconds, for at most 5 minutes.':'Automatic status checks stopped. Refresh status to check again.'}</p>}
@@ -360,7 +364,7 @@ function Panel({workspaceId,projectId,entry,onBack,onUnauthorized,backLabel='Bac
           {run.status==='uncertain'&&<div className="banner"><p>The charge is unconfirmed; unknown does not mean free.</p>{role==='owner'?(detail?.generationId?<><button type="button" className="btn" onClick={()=>void reconcile(detail)} disabled={writing}>Check charge receipt</button><p className="hint">Read-only provider lookup; does not request another answer.</p></>:<p>{card.loading?'Loading the saved charge metadata.':card.error?'Charge metadata is unavailable until this answer is reloaded.':'No saved generation ID is available for automatic matching. This charge remains unresolved.'}</p>):<p>A workspace owner can review the charge.</p>}</div>}
           <AnswerView run={run} card={card} busy={busy} onAnswer={()=>void retryCard(summary)} onSources={()=>void retryCard(summary,true)}/>
           {detail&&(detail.reportedCost!==null||detail.upstreamReportedCost!==null)&&<details><summary>Original charge evidence</summary>{detail.reportedCost!==null&&<p>Reported credit cost: USD {detail.reportedCost}</p>}{detail.upstreamReportedCost!==null&&<p>Reported upstream cost: USD {detail.upstreamReportedCost}</p>}<p className="hint">Original reported evidence is separate from app-accounted credit charges.</p></details>}
-        </article>;})}</div><p className="hint">These direct API responses do not establish consumer ChatGPT behavior, live web search, ranking or brand visibility. Reused answers may be up to seven days old; provider model updates in place may not be detected. Scheduling is not available.</p>
+        </article>;})}</div><p className="hint">These direct API responses do not establish consumer ChatGPT behavior, live web search, ranking or brand visibility. Reused answers may be up to seven days old; provider model updates in place may not be detected. Recurring tracking requires a separate explicit owner approval and always requests fresh answers.</p>
       </div>:<div><p>{error?'The selected run could not be read.':'Loading the selected run.'}</p>{error&&selection.current&&<button type="button" className="btn" onClick={()=>void openComparison(selection.current!)} disabled={writing}>Retry loading run</button>}</div>)}
     </>}
   </section>;

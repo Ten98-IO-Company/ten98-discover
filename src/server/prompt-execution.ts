@@ -11,6 +11,7 @@ import {executionInput,executionParse,promptCacheKey,type RenderedInput,type Rou
 import {readOpenRouterRoutes,keyFingerprint,executionActor,executionRequestBody,requestPromptExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
 import {openRouterTextProfile,openRouterMetadataBytes} from '../lib/openrouter-models.ts';
 import {boundedOpenRouterMetadata,cachedOpenRouterModels} from './openrouter-models.ts';
+import {assertPromptRecurringAuthority} from './prompt-recurring.ts';
 
 export const promptExecutionQueue='prompt-execution';
 const writers=['owner','admin','editor'],readers=[...writers,'viewer'];
@@ -100,7 +101,7 @@ export async function getPromptExecutions(projectId:string,userId:string){return
   const budget=(await client.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[wid])).rows[0];
   const comparisons=[];for(const row of (await client.query('SELECT id FROM prompt_comparison WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 20',[projectId])).rows)comparisons.push(await comparisonDto(client,projectId,row.id,userId,role));
   const catalog=cachedOpenRouterModels();
-  return boundedOpenRouterMetadata({role,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),catalog,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,comparisons,cache:{available:true},scheduling:{available:false}});
+  return boundedOpenRouterMetadata({role,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),catalog,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,comparisons,cache:{available:true},scheduling:{available:true,kind:'owner-approved-text-v1'}});
 });}
 export async function getPromptComparison(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true)}));}
 export async function getPromptComparisonSummary(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)}));}
@@ -144,7 +145,7 @@ export async function getPromptExecutionCitations(projectId:string,userId:string
       nextOffset:row.total!==null&&offset+20<row.total?offset+20:null,items:row.items});
   });
 }
-export async function quotePromptExecution(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
+export async function quotePromptExecution(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch,internal?:{checkpoint:(client:PoolClient,quoteId:string)=>Promise<void>}){
   const input=executionParse(executionInput,raw);
   const saved=await scoped(projectId,userId,writers,async(client,wid)=>{
     const text=await promptVersion(client,projectId,input.promptId,input.versionId),row=await connection(client,wid,input.connectionId);
@@ -165,6 +166,9 @@ export async function quotePromptExecution(projectId:string,userId:string,raw:un
     const row=(await client.query(`INSERT INTO prompt_execution_quote(id,workspace_id,project_id,user_id,prompt_id,version_id,connection_id,connection_revision,key_fingerprint,input,messages,routes,input_hash,request_actor,expires_at,cache_plan)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,clock_timestamp()+interval '5 minutes',$15) RETURNING id,created_at,expires_at`,
       [randomUUID(),wid,projectId,userId,input.promptId,input.versionId,input.connectionId,saved.revision,fingerprint,JSON.stringify(input),JSON.stringify(saved.messages),JSON.stringify(routes),hash,executionActor(userId),plan===null?null:JSON.stringify(plan)])).rows[0];
+    // Trusted server-only hook: recurrence and its quote either both commit or neither does.
+    // It is never read from HTTP input and runs under this existing W -> P gate.
+    if(internal)await internal.checkpoint(client,row.id);
     return {role,quote:{id:row.id,createdAt:row.created_at,expiresAt:row.expires_at,input,messages:saved.messages,connectionName:saved.name,
       routes:routes.map(r=>({...r,estimateMicros:undefined,estimateUsd:usd(r.estimateMicros)})),estimateUsd:usd(routes.reduce((sum,r,index)=>sum+(plan?.[index].sourceRunId?0n:BigInt(r.estimateMicros)),0n)),
       explanation:plan===null?'Conservative reservation under the selected endpoint’s published limits. Actual credit charges are recorded after completion; external invoices, credit-purchase fees and taxes are excluded.':'Conservative reservation for new requests only. Reused answers retain their original observation and charge. Provider updates in place may not be detected; saved answers can be up to seven days old. External invoices, credit-purchase fees and taxes are excluded.',cacheReused:plan?.some(i=>i.sourceRunId!==null)??false,
@@ -178,6 +182,7 @@ export async function startPromptExecution(projectId:string,userId:string,raw:un
     if(prior){if(prior.project_id!==projectId||prior.user_id!==userId||prior.quote_id!==quoteId)throw new FoundationError(409,'This request key already identifies different work.');return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,prior.id,userId,role,true,true)});}
     const q=(await client.query('SELECT * FROM prompt_execution_quote WHERE id=$1 AND project_id=$2 AND user_id=$3 AND workspace_id=$4 FOR UPDATE',[quoteId,projectId,userId,wid])).rows[0];
     if(!q)throw new FoundationError(404,'Quote not found or unavailable.');
+    await assertPromptRecurringAuthority(client,q.id);
     if(q.expires_at.getTime()<=Date.now())throw new FoundationError(409,'The quote expired. Prepare a new quote.');
     await connection(client,wid,q.connection_id,q.connection_revision);await promptVersion(client,projectId,q.prompt_id,q.version_id);
     if((await client.query('SELECT id FROM prompt_comparison WHERE quote_id=$1',[quoteId])).rowCount)throw new FoundationError(409,'This quote already started a comparison.');
@@ -185,7 +190,7 @@ export async function startPromptExecution(projectId:string,userId:string,raw:un
     const current=await cacheCandidates(client,projectId,hits.map(i=>i.key),hits.map(i=>i.sourceRunId!));
     if(hits.some(i=>!current.some(r=>r.key===i.key&&r.sourceRunId===i.sourceRunId)))throw new FoundationError(409,'A saved answer is no longer eligible. Prepare a new quote; no paid replacement was started.');
     const hasMiss=(q.routes as RouteSnapshot[]).some((_r,index)=>!plan?.[index].sourceRunId),boss=hasMiss?await getBoss():null;
-    const id=randomUUID();await client.query('INSERT INTO prompt_comparison(id,quote_id,workspace_id,project_id,user_id,request_key) VALUES($1,$2,$3,$4,$5,$6)',[id,quoteId,wid,projectId,userId,requestKey]);
+    const id=q.recurring_occurrence_id??randomUUID();await client.query('INSERT INTO prompt_comparison(id,quote_id,workspace_id,project_id,user_id,request_key) VALUES($1,$2,$3,$4,$5,$6)',[id,quoteId,wid,projectId,userId,requestKey]);
     for(const [position,route] of (q.routes as RouteSnapshot[]).entries()){
       const item=plan?.[position];
       if(item?.sourceRunId){await client.query('INSERT INTO prompt_comparison_item(id,comparison_id,workspace_id,project_id,position,execution_id,reused) VALUES($1,$2,$3,$4,$5,$6,true)',[randomUUID(),id,wid,projectId,position,item.sourceRunId]);continue;}
@@ -194,6 +199,7 @@ export async function startPromptExecution(projectId:string,userId:string,raw:un
       });
     }
     if(boss&&!await boss.send(promptExecutionQueue,{comparisonId:id},{id,retryLimit:0,expireInSeconds:180,db:{executeSql:(text,values)=>client.query(text,values)}}))throw new Error('Comparison could not be queued.');
+    if(q.recurring_occurrence_id){const linked=await client.query("UPDATE prompt_occurrence SET comparison_id=$2,status='started',reason=NULL WHERE id=$1 AND quote_id=$3 AND request_key=$4 AND status='quoted' AND comparison_id IS NULL",[q.recurring_occurrence_id,id,q.id,requestKey]);if(linked.rowCount!==1)throw new FoundationError(409,'This recurring occurrence changed. Reload its saved status.');}
     return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)});
   });
 }
@@ -237,7 +243,7 @@ export async function executePromptComparison(id:string,send:typeof fetch=fetch)
     if(row.status==='running'||row.status==='uncertain')return;if(row.status!=='queued')continue;
     let secret:unknown,dispatchedAt:Date|undefined;
     try{
-      const saved=await scoped(row.project_id,row.user_id,writers,async(client,wid)=>({credentials:credentials(await connection(client,wid,row.connection_id,row.connection_revision))}));
+      const saved=await scoped(row.project_id,row.user_id,writers,async(client,wid)=>{await assertPromptRecurringAuthority(client,row.quote_id);return {credentials:credentials(await connection(client,wid,row.connection_id,row.connection_revision))};});
       if(keyFingerprint(saved.credentials)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
       executionRequestBody(row.messages,row.route,row.input.maxCompletionTokens,row.id,row.request_actor);
       const [fresh]=await readOpenRouterRoutes(saved.credentials,[row.route.model],row.input.maxCompletionTokens,send,row.route.profile,row.route.profile?[row.route.tag]:undefined);
@@ -247,6 +253,7 @@ export async function executePromptComparison(id:string,send:typeof fetch=fetch)
         if(live.status!=='queued'||live.cancel_requested||live.expires_at.getTime()<=Date.now())throw new FoundationError(409,'Execution authorization expired.');
         if((await client.query("SELECT id FROM prompt_execution WHERE comparison_id=$1 AND position<$2 AND status IN('queued','running','uncertain')",[id,live.position])).rowCount)throw new FoundationError(409,'An earlier comparison request is unfinished.');
         await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[row.project_id]);await promptVersion(client,row.project_id,row.prompt_id,row.version_id);
+        await assertPromptRecurringAuthority(client,row.quote_id,true);
         secret=credentials(await connection(client,row.workspace_id,row.connection_id,row.connection_revision));if(keyFingerprint(secret)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
         dispatchedAt=(await client.query("UPDATE prompt_execution SET status='running',dispatched_at=clock_timestamp() WHERE id=$1 RETURNING dispatched_at",[row.id])).rows[0].dispatched_at;
       });
@@ -264,6 +271,8 @@ export async function executePromptComparison(id:string,send:typeof fetch=fetch)
     await finish(row,outcome);
   }
 }
+// Same-client leaves, reused by recurring authorization without nesting transactions.
+export {scoped as withPromptProject,connection as promptConnection,cancelChildren as cancelPromptChildren};
 export async function reconcilePromptExecution(projectId:string,userId:string,id:string,raw:unknown,send:typeof fetch=fetch){
   z.uuid().parse(id);executionParse(z.object({}).strict(),raw);
   const saved=await scoped(projectId,userId,['owner'],async(client,wid)=>{
