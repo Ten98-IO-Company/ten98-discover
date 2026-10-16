@@ -20,11 +20,13 @@ function open(envelope:unknown):Payload {
 }
 async function quoteState(client:Pick<PoolClient,'query'>) {
   const relation=(await client.query(`SELECT to_regclass('public.ai_search_quote') IS NOT NULL AS present,
-    EXISTS(SELECT 1 FROM schema_version WHERE version='0042') AS applied`)).rows[0];
-  if(!relation||(relation.applied&&!relation.present))unavailable();
+    EXISTS(SELECT 1 FROM schema_version WHERE version='0042') AS applied,
+    to_regclass('public.domain_research_quote') IS NOT NULL AS domain_present,
+    EXISTS(SELECT 1 FROM schema_version WHERE version='0048') AS domain_applied`)).rows[0];
+  if(!relation||(relation.applied&&!relation.present)||(relation.domain_applied&&!relation.domain_present))unavailable();
   // Historical migration fixtures legitimately run before0042. An applied but
   // missing relation is corruption, never permission to regenerate a fingerprint.
-  const ai=relation.present?' OR EXISTS(SELECT 1 FROM ai_search_quote)':'';
+  const ai=(relation.present?' OR EXISTS(SELECT 1 FROM ai_search_quote)':'')+(relation.domain_present?' OR EXISTS(SELECT 1 FROM domain_research_quote)':'');
   return (await client.query(`SELECT
     EXISTS(SELECT 1 FROM keyword_quote) OR EXISTS(SELECT 1 FROM saved_keyword_refresh_plan)
       OR EXISTS(SELECT 1 FROM rank_run)

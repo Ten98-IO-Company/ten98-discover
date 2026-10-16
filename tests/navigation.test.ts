@@ -362,3 +362,12 @@ test('personal profile preferences are role-independent and preserve only native
   assert.deepEqual(parseNavigation({workspace,project,view:'preferences',revenueQuery:'currency=USD',analyticsFrom:'2026-01-01',locale:'ar-SA',theme:'dark',userId:workspace}),{workspace,project,view:'preferences'});
   assert.notEqual(navigationKey({view:'preferences'}),navigationKey({view:'security'}));
 });
+
+test('Domain SEO is a project Research view distinct from serving-domain configuration',()=>{
+ const target={workspace,project,view:'domain-seo'} as const,wire=defaultStringifySearch(target);
+ assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView('domain-seo'),true);
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('domain-seo',role,false),true);
+ assert.equal(allowedView('domain-seo',undefined,false),false);assert.equal(allowedView('domains','viewer',false),false);
+ assert.deepEqual(parseNavigation({...target,target:'example.com',scope:'domain',quoteId:workspace,requestKey:project}),target,'Paid drafts/quotes never become URL authority.');
+ assert.notEqual(navigationKey(target),navigationKey({...target,view:'domains'}));
+});
