@@ -244,6 +244,13 @@ try {
       assert.equal(await page.getByRole('heading', { name: 'Google reports', exact: true }).count(), 0, 'Delayed callback project loading must not override newer account navigation.');
       await settings('Data retention');
       await page.getByRole('button',{name:'Preview cleanup',exact:true}).click();
+      for(const name of ['Analytics and identities','Imported reports and research','AI answers and other evidence'])await page.getByRole('heading',{name,exact:true}).waitFor();
+      const expiryDetails=page.getByText('What stays and how expiry works',{exact:true});
+      assert.equal(await expiryDetails.evaluate((el:HTMLElement)=>(el.parentElement as HTMLDetailsElement).open),false,'Detailed expiry rules do not crowd the cleanup amounts.');
+      assert.equal(await page.getByRole('button',{name:'Save retention',exact:true}).isVisible(),true,'The confirmation remains visible with detailed rules collapsed.');
+      await expiryDetails.click();
+      assert.equal(await page.getByText('Kept as-is:',{exact:false}).isVisible(),true,'Preservation and backup qualifications remain accessible.');
+      await expiryDetails.click();
       await page.getByText('0 keyword results eligible.',{exact:true}).waitFor();
       await page.getByText(/finished Google imports eligible/).waitFor();
       await page.getByText(/used quote metadata and charge evidence remain as receipts/).waitFor();
