@@ -40,7 +40,7 @@ import {assertMetaCredentialsReadable} from './meta-auth.ts';
 import { assertGoogleCredentialsReadable } from './google.ts';
 import {assertProviderAccountIdentityReadable} from './provider-account-identity.ts';
 import {getKeywordResearch,getKeywordRun,refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch} from './keyword-research.ts';
-import {getDomainResearch,getDomainResearchRun,refreshDomainResearchMarkets,quoteDomainResearch,startDomainResearch,cancelDomainResearch,reconcileDomainResearch} from './domain-research.ts';
+import {getDomainResearch,getDomainResearchRun,exportDomainResearchRun,refreshDomainResearchMarkets,quoteDomainResearch,startDomainResearch,cancelDomainResearch,reconcileDomainResearch} from './domain-research.ts';
 import {listRankTrackers,getRankTracker,getRankCatalog,searchRankLocations,createRankTracker,updateRankTracker,archiveRankTracker,changeRankKeywords} from './rank-tracking.ts';
 import {getRankRun,quoteRankCheck,startRankCheck} from './rank-execution.ts';
 import {cancelRankRun} from './rank-worker.ts';
@@ -58,6 +58,7 @@ import { getDestinations, getPublicDestinations, previewDestinations, publishDes
 import {getSiteAuditSetup,startSiteAudit,listSiteAudits,getSiteAudit,listSiteAuditPages,exportSiteAuditPages,getSiteAuditPage,listSiteAuditIssues,listSiteAuditLinks,cancelSiteAudit,deleteSiteAudit} from './site-audits.ts';
 
 import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,reconcilePromptExecution} from './prompt-execution.ts';
+import {getPromptTrackers,createPromptTracker,approvePromptTracker,pausePromptTracker,runPromptTrackerNow} from './prompt-recurring.ts';
 import {getAiSuggestions,getAiSuggestion,quoteAiSuggestions,startAiSuggestions,cancelAiSuggestion,acceptAiSuggestions} from './ai-suggestions.ts';
 import {reconcileAiSuggestion} from './ai-suggestion-worker.ts';
 import {getOpenRouterModels,refreshOpenRouterModels} from './openrouter-models.ts';
@@ -440,6 +441,21 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
+    const trackerRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-trackers(?:/(${id})/(approve|pause|run))?$`,'i'));
+    if(trackerRoute){
+      const [,projectId,trackerId,action]=trackerRoute;
+      if(/[?#]/.test(request.url))throw new FoundationError(400,'Prompt tracker actions do not accept query parameters or fragments.');
+      await projectAccess(projectId,user.id,request.method!=='GET');await limit(`prompt-tracker-read:${user.id}`,120);
+      if(request.method==='GET'&&!trackerId)return json(await getPromptTrackers(projectId,user.id));
+      if(request.method==='POST'){
+        await limit(`prompt-tracker-write:${user.id}`,10);const input=await readJson(request,8192);
+        if(!trackerId)return json(await createPromptTracker(projectId,user.id,input));
+        if(action==='approve')return json(await approvePromptTracker(projectId,user.id,trackerId,input));
+        if(action==='pause')return json(await pausePromptTracker(projectId,user.id,trackerId,input));
+        if(action==='run')return json(await runPromptTrackerNow(projectId,user.id,trackerId,input),202);
+      }
+      return json({error:'Method not allowed.'},405);
+    }
     const executionRoute=path.match(new RegExp(`^/api/projects/(${id})/prompt-executions(?:/(quote|comparisons|runs)(?:/(${id})(?:/(cancel|reconcile|summary|citations))?)?)?$`,'i'));
     if(executionRoute){
       const [,projectId,action,runId,runAction]=executionRoute;
@@ -647,13 +663,14 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
-    const domainResearchRoute=path.match(new RegExp(`^/api/projects/(${id})/domain-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile))?)?)?$`,'i'));
+    const domainResearchRoute=path.match(new RegExp(`^/api/projects/(${id})/domain-research(?:/(catalog|quote|runs)(?:/(${id})(?:/(cancel|reconcile|export))?)?)?$`,'i'));
     if(domainResearchRoute){
       const [,projectId,action,runId,runAction]=domainResearchRoute;
       if(url.search)throw new FoundationError(400,'Domain research does not accept query parameters.');
       await projectAccess(projectId,user.id,request.method!=='GET');await limit(`domain-research:${user.id}`,120);
       if(request.method==='GET'&&!action)return json(await getDomainResearch(projectId,user.id));
       if(request.method==='GET'&&action==='runs'&&runId&&!runAction)return json(await getDomainResearchRun(projectId,user.id,runId));
+      if(request.method==='GET'&&action==='runs'&&runId&&runAction==='export')return json(await exportDomainResearchRun(projectId,user.id,runId));
       if(request.method==='POST'){
         await limit(`domain-research-write:${user.id}`,10);const input=await readJson(request,8192);
         if(!runId&&action==='catalog')return json(await refreshDomainResearchMarkets(projectId,user.id,input));
