@@ -1,4 +1,5 @@
 import {toUSVString} from 'node:util';
+import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {openRouterModelId,openRouterRouteIdentity,openRouterTextProfile,type OpenRouterRequestProfile} from '../lib/openrouter-models.ts';
@@ -8,10 +9,18 @@ export type OpenRouterModel=string;
 export const executionInput=z.object({connectionId:z.uuid(),promptId:z.uuid(),versionId:z.uuid(),
   systemText:z.string().max(4000).refine(v=>toUSVString(v)===v&&!/[\x00\x0b\x0c]/.test(v)),
   models:z.array(z.string().refine(openRouterModelId)).min(1).max(4).refine(v=>new Set(v).size===v.length),
-  maxCompletionTokens:z.number().int().min(16).max(4096),fundedCredits:z.literal(true)}).strict();
+  maxCompletionTokens:z.number().int().min(16).max(4096),fundedCredits:z.literal(true),reuseCached:z.boolean().optional()}).strict();
 export function executionParse<T extends z.ZodType>(schema:T,input:unknown):z.output<T>{const result=schema.safeParse(input);if(!result.success)throw new FoundationError(400,'Check the prompt execution fields and try again.');return result.data;}
 export type ExecutionInput=z.infer<typeof executionInput>;
 export type RenderedInput={role:'system'|'user';content:string}[];
+
+// Only the user prompt collapses whitespace. System messages and inference policy remain exact.
+export function promptCacheKey(workspaceId:string,projectId:string,input:ExecutionInput,messages:RenderedInput,route:RouteSnapshot,canonicalSlug:string,connectionRevision:number,fingerprint:string){
+ return createHash('sha256').update(JSON.stringify({version:'prompt-answer-cache-v1',workspaceId,projectId,connectionId:input.connectionId,connectionRevision,fingerprint,
+  model:route.model,canonicalSlug,provider:route.tag,providerName:route.providerName,profile:route.profile??'openrouter-api-text-no-search-v1',
+  system:messages.find(m=>m.role==='system')?.content??null,prompt:messages[messages.length-1].content.trim().replace(/\s+/g,' '),maxCompletionTokens:input.maxCompletionTokens,
+  stream:false,serviceTier:'default',fallback:false,compression:route.profile===openRouterTextProfile?false:null,webSearch:false,country:null})).digest('hex');
+}
 
 // Decimal coefficients stay exact until the single conservative microUSD rounding step.
 // Limits bound exponentiation and payload parsing, not provider pricing assumptions.

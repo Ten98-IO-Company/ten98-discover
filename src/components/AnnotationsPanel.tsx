@@ -10,7 +10,7 @@ type Item={id:string;projectId:string;revision:number;definition:Definition;crea
 type Timeline={range:Range;days:{date:string;count:number;previews:Item[]}[];totalCount:number};
 type Attempt={kind:'create'|'update'|'delete';id?:string;body:{requestId:string;revision?:number;definition?:Definition|DayDefinition}};
 type Editor={item:Item|null;note:string;day:string;timeZone:string;timed:boolean;instant:string;changeDate:boolean};
-type Props={projectId:string;userId:string;range:Range|null;onUnauthorized:()=>void;onAccessLost:(status:number)=>void};
+type Props={projectId:string;userId:string;range:Range|null;readOwner?:string;readEnabled?:boolean;onUnauthorized:()=>void;onAccessLost:(status:number)=>void};
 const record=(v:unknown):v is Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const clean=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length<=max&&!v.includes('\0')&&new TextDecoder().decode(new TextEncoder().encode(v))===v;
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v);
@@ -28,28 +28,30 @@ const field={width:'100%',minWidth:0,minHeight:44};
 const summary={minHeight:44,paddingBlock:10};
 
 // Callers are keyed by account and project; a range change keeps immutable pending intent.
-export function useAnnotations({projectId,range,onUnauthorized,onAccessLost}:Props){
+export function useAnnotations({projectId,range,readOwner,readEnabled=true,onUnauthorized,onAccessLost}:Props){
   const uid=useId(),base=`/api/projects/${encodeURIComponent(projectId)}/annotations`,rangeKey=range?JSON.stringify(range):'';
-  const [role,setRole]=useState<Role|null>(null),[rows,setRows]=useState<Item[]>([]),[cursor,setCursor]=useState<string|null>(null),[timeline,setTimeline]=useState<Timeline|null>(null);
+  const [role,setRole]=useState<Role|null>(null),[storedRows,setRows]=useState<Item[]>([]),[storedCursor,setCursor]=useState<string|null>(null),[storedTimeline,setTimeline]=useState<Timeline|null>(null);
   const [scope,setScope]=useState<'range'|'all'>('range'),[day,setDay]=useState(''),[search,setSearch]=useState(''),[appliedSearch,setAppliedSearch]=useState('');
-  const [open,setOpen]=useState(false),[editor,setEditor]=useState<Editor|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[loaded,setLoaded]=useState(false),[pending,setPending]=useState<Attempt|null>(null);
+  const [open,setOpen]=useState(false),[editor,setEditor]=useState<Editor|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[storedLoaded,setLoaded]=useState(false),[pending,setPending]=useState<Attempt|null>(null),[readError,setReadError]=useState<{owner:string|undefined;message:string}|null>(null);
   const alive=useRef(false),opRef=useRef<AbortController|null>(null),epoch=useRef(0),roleRef=useRef<Role|null>(null),pendingRef=useRef<Attempt|null>(null),deleted=useRef(new Set<string>()),rangeRef=useRef(rangeKey),callbacks=useRef({onUnauthorized,onAccessLost}),manager=useRef<HTMLDetailsElement>(null);
+  const ownerRef=useRef(readOwner),acceptedOwner=useRef(readOwner),enabledRef=useRef(readEnabled),readOp=useRef<AbortController|null>(null),previousScope=useRef({rangeKey,readOwner,readEnabled});ownerRef.current=readOwner;enabledRef.current=readEnabled;
+  const currentSnapshot=readEnabled&&(readOwner===undefined||acceptedOwner.current===readOwner),rows=currentSnapshot?storedRows:[],cursor=currentSnapshot?storedCursor:null,timeline=currentSnapshot?storedTimeline:null,loaded=currentSnapshot&&storedLoaded;
   callbacks.current={onUnauthorized,onAccessLost};rangeRef.current=rangeKey;
-  function clearData(){setRows([]);setTimeline(null);setCursor(null);setEditor(null);setLoaded(false);setRole(null);roleRef.current=null;setNotice('');}
+  function clearData(){setRows([]);setTimeline(null);setCursor(null);setEditor(null);setLoaded(false);setRole(null);roleRef.current=null;setNotice('');setReadError(null);}
   function deny(status:number,keep:Attempt|null=null){epoch.current++;opRef.current?.abort();opRef.current=null;setBusy(false);clearData();setSearch('');setAppliedSearch('');pendingRef.current=keep;setPending(keep);setError('Annotation access could not be verified. Reload annotations to check current access.');if(status===401)callbacks.current.onUnauthorized();else callbacks.current.onAccessLost(status);}
   function acceptRole(value:unknown){if(!roleValue(value)){deny(403,pendingRef.current);throw new Error('Annotation access could not be verified.');}roleRef.current=value;setRole(value);return value;}
   function edit(item:Item|null){if(pendingRef.current||!writable(roleRef.current)||!range)return;setEditor({item,note:item?.definition.note??'',day:item?localDay(item.definition.date,range.timeZone):range.to,timeZone:range.timeZone,timed:item?!item.definition.allDay:false,instant:item?.definition.date??'',changeDate:!item});setNotice('');}
   async function load(options:{scope?:'range'|'all';day?:string;search?:string;cursor?:string;id?:string}={}){
-    if(opRef.current&&pendingRef.current||options.id&&pendingRef.current)return;
+    if(!enabledRef.current||opRef.current&&pendingRef.current||options.id&&pendingRef.current)return;
     const currentRange=range;if(!currentRange)return;
-    opRef.current?.abort();const op=new AbortController(),generation=epoch.current,key=rangeRef.current;opRef.current=op;setBusy(true);setError('');roleRef.current=null;
+    opRef.current?.abort();const op=new AbortController(),generation=epoch.current,key=rangeRef.current,owner=ownerRef.current;opRef.current=op;readOp.current=op;setBusy(true);setError('');setReadError(null);roleRef.current=null;
     const nextScope=options.scope??scope,nextDay=options.day??day,nextSearch=options.search??appliedSearch;
     const params=new URLSearchParams(nextScope==='range'?{from:nextDay||currentRange.from,to:nextDay||currentRange.to,timeZone:currentRange.timeZone}:{});
     if(nextSearch)params.set('search',nextSearch);if(options.cursor)params.set('cursor',options.cursor);
     try{
       const signal=AbortSignal.any([op.signal,AbortSignal.timeout(20000)]);
       const [list,marks]=await Promise.all([api<unknown>(options.id?`${base}/${encodeURIComponent(options.id)}`:base+'?'+params,{signal}),api<unknown>(base+'/timeline?'+new URLSearchParams(currentRange),{signal})]);
-      if(!alive.current||op.signal.aborted||generation!==epoch.current||key!==rangeRef.current)return;
+      if(!alive.current||!enabledRef.current||op.signal.aborted||generation!==epoch.current||key!==rangeRef.current||owner!==ownerRef.current)return;
       if(!record(list)||!record(marks))throw new Error('Annotations could not be verified. Reload annotations.');
       const currentRole=acceptRole(list.role);if(!roleValue(marks.role)||marks.role!==currentRole){deny(403,pendingRef.current);return;}
       const markRange=marks.range;
@@ -68,14 +70,14 @@ export function useAnnotations({projectId,range,onUnauthorized,onAccessLost}:Pro
         if(nextScope==='range'&&values.some(item=>{const date=localDay(item.definition.date,currentRange.timeZone);return date<(nextDay||currentRange.from)||date>(nextDay||currentRange.to);}))throw new Error('Annotation scope could not be verified.');
         setRows(old=>[...new Map([...(options.cursor?old:[]),...values].map(item=>[item.id,item])).values()]);setCursor(list.nextCursor as string|null);setScope(nextScope);setDay(nextDay);setAppliedSearch(nextSearch);setLoaded(true);if(!writable(currentRole))setEditor(null);
       }
-      setTimeline(marks as unknown as Timeline);
-    }catch(e){if(!alive.current||op.signal.aborted||generation!==epoch.current||key!==rangeRef.current)return;const status=e instanceof ApiError?e.status:0;if([401,403,404].includes(status))deny(status,pendingRef.current);else{clearData();setError(errMsg(e));}}
-    finally{if(opRef.current===op){opRef.current=null;if(alive.current)setBusy(false);}}
+      acceptedOwner.current=owner;setTimeline(marks as unknown as Timeline);
+    }catch(e){if(!alive.current||!enabledRef.current||op.signal.aborted||generation!==epoch.current||key!==rangeRef.current||owner!==ownerRef.current)return;const status=e instanceof ApiError?e.status:0;if([401,403,404].includes(status))deny(status,pendingRef.current);else{clearData();setReadError({owner,message:errMsg(e)});}}
+    finally{if(readOp.current===op)readOp.current=null;if(opRef.current===op){opRef.current=null;if(alive.current)setBusy(false);}}
   }
   async function save(attempt:Attempt){
     if(opRef.current||!writable(roleRef.current))return;
     const confirming=pendingRef.current===attempt;
-    pendingRef.current=attempt;setPending(attempt);const op=new AbortController(),generation=epoch.current;opRef.current=op;setBusy(true);setError('');setNotice('');let refresh=false,conflict=false;
+    pendingRef.current=attempt;setPending(attempt);const op=new AbortController(),generation=epoch.current;opRef.current=op;setBusy(true);setError('');setReadError(null);setNotice('');let refresh=false,conflict=false;
     try{
       const data=await api<unknown>(attempt.kind==='create'?base:`${base}/${encodeURIComponent(attempt.id!)}/${attempt.kind}`,{method:'POST',body:attempt.body,signal:AbortSignal.any([op.signal,AbortSignal.timeout(20000)])});
       if(!alive.current||op.signal.aborted||generation!==epoch.current)return;
@@ -108,6 +110,11 @@ export function useAnnotations({projectId,range,onUnauthorized,onAccessLost}:Pro
   useBlocker({shouldBlockFn:()=>pendingRef.current!==null&&!window.confirm('An annotation request may still complete. Leave without confirming its outcome?'),enableBeforeUnload:()=>pendingRef.current!==null});
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;opRef.current?.abort();};},[]);
   useEffect(()=>{epoch.current++;opRef.current?.abort();opRef.current=null;setBusy(false);clearData();setDay('');setSearch('');setAppliedSearch('');setScope('range');if(range)void load({scope:'range',day:'',search:''});},[rangeKey]);
+  useEffect(()=>{
+    const previous=previousScope.current;previousScope.current={rangeKey,readOwner,readEnabled};if(previous.rangeKey!==rangeKey||previous.readOwner===readOwner&&previous.readEnabled===readEnabled)return;
+    // Route entries own reads only; an in-flight write keeps its original acknowledgement and retry body.
+    const op=readOp.current;op?.abort();readOp.current=null;if(op&&opRef.current===op){opRef.current=null;setBusy(false);}if(range)void load();
+  },[rangeKey,readOwner,readEnabled]);
   const locked=busy||!!pending,zone=range?.timeZone??'UTC';
   function dayButton(date:string){
     const count=timeline?.days.find(mark=>mark.date===date)?.count??0;
@@ -118,7 +125,7 @@ export function useAnnotations({projectId,range,onUnauthorized,onAccessLost}:Pro
     <p className="hint">Project notes add context. They do not change traffic, filters or CSV exports.</p>
     {range?<p className="hint">{range.from} to {range.to} ({zone}){timeline?` · ${timeline.totalCount} ${timeline.totalCount===1?'annotation':'annotations'}`:''}</p>:<p className="hint">Load report results to see annotations for the applied dates.</p>}
     {busy&&<p role="status">{pending?'Saving annotation…':'Loading annotations…'}</p>}
-    {notice&&<p className="notice" role="status">{notice}</p>}{error&&<p className="alert" role="alert">{error}</p>}
+    {notice&&<p className="notice" role="status">{notice}</p>}{error&&<p className="alert" role="alert">{error}</p>}{readError&&readError.owner===readOwner&&<p className="alert" role="alert">{readError.message}</p>}
     {pending&&<div className="row"><p className="hint">Only the original request can be retried until its outcome is confirmed.</p><button type="button" className="btn" disabled={busy||!writable(role)} onClick={()=>void save(pending)}>Retry same request</button></div>}
     {timeline?.totalCount===0&&<p className="hint">No annotations in this range.</p>}
     <details id={`${uid}-manager`} ref={manager} open={open} onToggle={e=>setOpen(e.currentTarget.open)}><summary style={summary}>View or manage notes</summary><div className="stack">

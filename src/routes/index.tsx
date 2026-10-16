@@ -2,7 +2,7 @@ import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
-import { AnalyticsPanel } from '../components/AnalyticsPanel'
+import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
 import { SessionExplorerPanel } from '../components/SessionExplorerPanel'
 import { JourneysPanel } from '../components/JourneysPanel'
@@ -55,7 +55,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
+import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parseNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: App })
@@ -545,6 +545,12 @@ function App() {
     const {analyticsCompare,analyticsDimension,...report}=analyticsNavigation(search),applied=analyticsApplied?.userId===me?.user.id&&analyticsApplied?.projectId===project?.id?analyticsApplied:null,to=report.analyticsTo??applied?.to??new Date().toISOString().slice(0,10),from=report.analyticsFrom??applied?.from??new Date(Date.parse(`${to}T00:00:00Z`)-6*864e5).toISOString().slice(0,10);
     return {...target(next),...report,...report.analyticsInvalid?{}:{analyticsFrom:from,analyticsTo:to},...next==='compare'?{...(analyticsCompare?{analyticsCompare}:{}),...(analyticsDimension?{analyticsDimension}:{})}:{}};
   }
+  const exploreTarget=():NavigationSearch=>{
+    if(view==='explore'&&search.workspace===workspaceId&&search.project===project?.id)return {...target('explore'),...explorerNavigation(search)};
+    if(!['project','compare'].includes(view)||search.workspace!==workspaceId||search.project!==project?.id)return target('explore');
+    const query=analyticsExplorerQuery(analyticsTarget('project'));
+    return {...target('explore'),...(query===null?{exploreInvalid:'1' as const}:{exploreQuery:query})};
+  }
   const pageScope = view === 'preferences' || view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' || view === 'meta-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
   const projectDescriptions: Partial<Record<AppView, string>> = {revenue:'Review recorded sales and refunds in one currency.',attribution: 'Compare recorded sources for your chosen conversion.', journeys: 'See frequent matching steps in retained native visits.', project: 'Understand how people find and use your website.', 'visitor-retention': 'See whether observed visitor keys return on later days.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', 'ai-search': 'Inspect explicitly captured ChatGPT consumer-search answers and their reported queries.', 'ai-insights': 'Review mentions and citations in retained prompt answers using current project context.', google: 'Import Search Console, GA4 and Google Ads reports without changing browser tracking.', sessions: 'Explore retained activity grouped by observed visitor keys. These keys are estimates and can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', 'domain-seo':'Find organic keywords a domain or URL ranks for in one market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
@@ -608,7 +614,7 @@ function App() {
           <Link className={view === 'realtime' ? 'proj active' : 'proj'} aria-current={view === 'realtime' ? 'page' : undefined} to='/' search={target('realtime')}>Realtime</Link>
           <Link className={view === 'compare' ? 'proj active' : 'proj'} aria-current={view === 'compare' ? 'page' : undefined} to='/' search={analyticsTarget('compare')}>Compare</Link>
           <Link className={view === 'campaigns' ? 'proj active' : 'proj'} aria-current={view === 'campaigns' ? 'page' : undefined} to='/' search={target('campaigns')}>UTM campaigns</Link>
-          <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={target('explore')}>Explore</Link>
+          <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={exploreTarget()}>Explore</Link>
           <Link className={view === 'sessions' ? 'proj active' : 'proj'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}>Sessions</Link>
           <Link className={view === 'attribution' ? 'proj active' : 'proj'} aria-current={view === 'attribution' ? 'page' : undefined} to='/' search={target('attribution')}>Attribution</Link>
           <Link className={view === 'journeys' ? 'proj active' : 'proj'} aria-current={view === 'journeys' ? 'page' : undefined} to='/' search={target('journeys')}>Journeys</Link>
@@ -691,7 +697,7 @@ function App() {
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'campaigns' && project && me && <UtmPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} search={search} onNavigate={value=>go({...target('explore'),...value})} onUnauthorized={unauthorized} />}
         {view === 'compare' && project && me && <AnalyticsPanel projectId={project.id} userId={me.user.id} compareView onAppliedRange={rememberAnalyticsRange} search={{...target('compare'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('compare'),...value})} onUnauthorized={unauthorized} />}
         {view === 'realtime' && project && me && <RealtimePanel projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenSession={value=>go({...target('sessions'),...value})}/>}
         {view === 'conversions' && project && me && <ConversionsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}

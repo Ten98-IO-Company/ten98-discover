@@ -52,7 +52,7 @@ export function domainPayload(request:DomainRequest,id:string):Record<string,unk
   // OpenSEO89e5 researchScopeFilters adaptation (MIT, Ben Senescu); see notices.
   // LIKE avoids the provider's URL-regex restriction. At most eight conditions,
   // including query variants; every returned URL is checked again independently.
-  const patterns=[t.hostname,'www.'+t.hostname].flatMap(host=>{const base='%://'+escape(host),path=escape(t.path);return t.scope==='domain'?[base+'/%']:t.scope==='subfolder'?[base+path,base+path+'/%',base+path+'?%']:[base+path,base+(t.path==='/'?'':path)+'/',base+path+'?%',base+(t.path==='/'?'':path)+'/?%'];});
+  const patterns=[t.hostname,'www.'+t.hostname].flatMap(host=>{const base='%://'+escape(host),path=escape(t.path);return t.scope==='domain'?[base,base+'?%',base+'/%']:t.scope==='subfolder'?[base+path,base+path+'/%',base+path+'?%']:t.path==='/'?[base,base+'/',base+'?%',base+'/?%']:[base+path,base+path+'/',base+path+'?%',base+path+'/?%'];});
   const filters=t.scope==='subdomains'?undefined:patterns.flatMap<unknown>((pattern,i)=>i?['or',['page_address','like',pattern]]:[['page_address','like',pattern]]);
   return {...common,item_types:['organic'],include_clickstream_data:false,historical_serp_mode:'live',ignore_synonyms:false,order_by:['metrics.organic.etv,desc','page_address,asc'],...(filters?{filters}:{})};
  }

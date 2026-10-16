@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { toUSVString } from 'node:util';
 import { FoundationError } from './auth.ts';
-import { googleDecimalPlain } from '../lib/google-report-display.ts';
+import { googleCalendarWeek, googleDecimalPlain, googleLastCompletedDay } from '../lib/google-report-display.ts';
 
 export const googleScopes = { gsc: 'https://www.googleapis.com/auth/webmasters.readonly', ga4: 'https://www.googleapis.com/auth/analytics.readonly', ads: 'https://www.googleapis.com/auth/adwords' } as const;
 export const googleAdsVersion = 'v26';
@@ -55,17 +55,14 @@ export function organicPreviousRange(from: string, to: string) {
 }
 export function validateOrganicDates(from: string, to: string, timeZone: string | null, now = new Date()) {
   organicPreviousRange(from, to);
-  let today: string;
-  try { if (!timeZone) throw Error(); const parts = new Intl.DateTimeFormat('en', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now); today = ['year', 'month', 'day'].map(key => parts.find(part => part.type === key)!.value).join('-'); }
-  catch { throw new FoundationError(409, 'The property timezone is unavailable. Reconnect the source.'); }
-  if (to >= today) throw new FoundationError(400, 'Organic reports require completed days in the property timezone. Choose an earlier end date.');
+  const lastDay=googleLastCompletedDay(timeZone,now);
+  if (!lastDay) throw new FoundationError(409, 'The property timezone is unavailable. Reconnect the source.');
+  if (to > lastDay) throw new FoundationError(400, 'Organic reports require completed days in the property timezone. Choose an earlier end date.');
 }
 
 // Google calendar weeks start Sunday; Jan 1 belongs to week01, not the ISO week-year.
 export function organicWeek(date: string) {
-  googleInput(googleDate, date); const year = date.slice(0, 4), start = new Date(year + '-01-01T00:00:00Z');
-  const week = Math.min(53, Math.floor(((Date.parse(date) - start.getTime()) / 86400000 + start.getUTCDay()) / 7) + 1);
-  return year + String(week).padStart(2, '0');
+  googleInput(googleDate, date); return googleCalendarWeek(date);
 }
 
 type GoogleReportRequest =

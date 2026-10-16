@@ -19,8 +19,12 @@ export async function quarantineRestoredSpending() {
     const schedules = await client.query(`UPDATE rank_config SET schedule_enabled=false,next_due_at=NULL,
       last_skip_reason='Restored installation: review and explicitly approve a new schedule.',updated_at=clock_timestamp()
       WHERE schedule_enabled OR next_due_at IS NOT NULL`);
+    const promptSchedules=await client.query(`UPDATE prompt_tracker SET enabled=false,next_due_at=NULL,approval_id=NULL,approval_user_id=NULL,
+      approval_connection_revision=NULL,approval_key_fingerprint=NULL,approval_models_hash=NULL,approved_at=NULL,
+      revision=LEAST(revision+1,2147483646),last_status='Restored installation: review a fresh quote and explicitly approve again.',updated_at=clock_timestamp()
+      WHERE enabled OR approval_id IS NOT NULL OR next_due_at IS NOT NULL`);
     await client.query('COMMIT');
-    return { pausedBudgets: budgets.rowCount ?? 0, cancelledReservations: cancelled.rowCount ?? 0, disabledSchedules: schedules.rowCount ?? 0 };
+    return { pausedBudgets: budgets.rowCount ?? 0, cancelledReservations: cancelled.rowCount ?? 0, disabledSchedules: (schedules.rowCount??0)+(promptSchedules.rowCount??0) };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw error;

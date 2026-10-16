@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {decimalSumMicros,decimalText,executionInput,executionBody,parseOpenRouterJson,ExactCost} from '../src/server/openrouter-input.ts';
+import {decimalSumMicros,decimalText,executionInput,executionBody,parseOpenRouterJson,ExactCost,promptCacheKey} from '../src/server/openrouter-input.ts';
 import {parseRoute,parseExecutionOutcome,readOpenRouterRoutes,requestPromptExecution,reconcileOpenRouter,executionActor} from '../src/server/openrouter.ts';
 import {openRouterTextProfile} from '../src/lib/openrouter-models.ts';
 import {refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
@@ -11,6 +11,18 @@ const model='openai/gpt-4o-mini' as const,now=new Date('2026-10-13T12:00:00Z'),i
 // Current public OpenAI endpoint shape: optional request omitted, null input capacity and numeric discount.
 function endpoint(){return {data:{id:model,endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens'],pricing:{prompt:'0.00000015',completion:'0.0000006',discount:0,input_cache_read:'0.000000075'}}]}};}
 const route=parseRoute(model,endpoint(),2048);
+test('per-model cache identity preserves case/system/policy and ignores selected model order',()=>{
+ const input=executionInput.parse({connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),systemText:'Exact system',models:[model,'openai/gpt-4o'],maxCompletionTokens:2048,fundedCredits:true,reuseCached:true});
+ const wid=randomUUID(),pid=randomUUID(),messages=[{role:'system' as const,content:input.systemText},{role:'user' as const,content:'  Compare Go\tvs\n go  '}];
+ const key=(patch:Partial<typeof input>={},text=messages,revision=1,provider=route,canonical:string=model,project=pid)=>promptCacheKey(wid,project,{...input,...patch},text,provider,canonical,revision,'a'.repeat(64));
+ assert.equal(key(),key({models:[...input.models].reverse(),reuseCached:false},[messages[0],{role:'user',content:'Compare Go vs go'}]));
+ assert.notEqual(key(),key({},[messages[0],{role:'user',content:'Compare go vs go'}]));
+ assert.notEqual(key(),key({},[{role:'system',content:'Exact  system'},messages[1]]));
+ assert.notEqual(key(),key({maxCompletionTokens:1024}));assert.notEqual(key(),key({},messages,2));
+ assert.notEqual(key(),key({},messages,1,{...route,tag:'other'}));assert.notEqual(key(),key({},messages,1,route,'openai/different-version'));assert.notEqual(key(),key({},messages,1,route,model,randomUUID()));
+ const legacy={connectionId:input.connectionId,promptId:input.promptId,versionId:input.versionId,systemText:input.systemText,models:input.models,maxCompletionTokens:input.maxCompletionTokens,fundedCredits:true};
+ assert.equal(Object.hasOwn(executionInput.parse(legacy),'reuseCached'),false);
+});
 function body(){return parseOpenRouterJson(JSON.stringify({id:'gen-test-one',model,provider:'OpenAI',created:now.getTime()/1000,choices:[{finish_reason:'stop',message:{content:'Untrusted https://example.test answer'}}],usage:{is_byok:false,cost:0.000012345,prompt_tokens:12,completion_tokens:20,cost_details:{upstream_inference_cost:0}}}));}
 test('exact decimal pricing rounds once and preserves JSON cost lexemes',()=>{
  assert.equal(decimalSumMicros([{price:'1.5e-7',count:128000},{price:'6e-7',count:2048},{price:'0',count:1}]),20429n);

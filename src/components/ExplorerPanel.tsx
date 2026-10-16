@@ -1,7 +1,8 @@
 import {analyticsFieldLimit} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type AdvancedRow,type AdvancedDraft,type AdvancedIssue,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {useBlocker} from '@tanstack/react-router';
+import {useBlocker,useLocation} from '@tanstack/react-router';
+import {explorerNavigation,sessionNavigation,canonicalNavigation,navigationKey,parseNavigation,type NavigationSearch,type ExplorerNavigation} from '../lib/navigation';
 import {api,ApiError,errMsg} from '../lib/api';
 import {useAnnotations} from './AnnotationsPanel';
 import type {AdvancedPredicates} from '../server/advanced-predicate-input';
@@ -50,6 +51,33 @@ function combinationParams(draft:Draft,cohort:CohortRef|null,fields:string[]|nul
   if(!tupleFields(JSON.stringify(fields)))return {error:'Choose two or three different fields.'};
   const p=new URLSearchParams(result.qs);p.delete('groupBy');p.delete('groupProperty');p.set('fields',JSON.stringify(fields));
   return p.toString().length>20000?{error:'These filters are too large. Shorten values or remove conditions.'}:{qs:p.toString()};
+}
+/** Restore one complete applied report; property pagination is deliberately snapshot-local. */
+export function readExplorerScope(query?:string){
+  let draft=initialDraft(),fields:string[]|null=null,cohort:CohortRef|null=null,propertyDetails=false;
+  if(query!==undefined){
+    if(!clean(query,20000)||!query)return null;
+    try{decodeURIComponent(query);}catch{return null;}
+    const p=new URLSearchParams(query),allowed=new Set(['from','to','timeZone','kind','groupBy','groupProperty','fields','propertyView','cohortId','cohortRevision','propertyKey','propertyType','propertyValue','predicates',...FILTERS.map(([key])=>key)]);
+    for(const key of p.keys())if(!allowed.has(key)||p.getAll(key).length!==1)return null;
+    if(['from','to','timeZone'].some(key=>!p.has(key)))return null;
+    const dates=sessionNavigation(Object.fromEntries(['from','to','timeZone','cohortId','cohortRevision'].filter(key=>p.has(key)).map(key=>[key,p.get(key)])));
+    if(dates.sessionInvalid||!dates.from)return null;
+    const today=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:dates.timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(part=>[part.type,part.value]));
+    if(dates.to!>`${today.year}-${today.month}-${today.day}`)return null;
+    if(dates.cohortId)cohort={id:dates.cohortId,revision:Number(dates.cohortRevision)};
+    if(p.has('fields')){fields=tupleFields(p.get('fields'));if(!fields||p.has('groupBy')||p.has('groupProperty'))return null;}
+    const groupBy=fields?'event':p.get('groupBy');if(!GROUPS.some(([key])=>key===groupBy)||p.has('groupProperty')!==(groupBy==='property'))return null;
+    const groupProperty=p.get('groupProperty')??'';if(groupBy==='property'&&(!clean(groupProperty,320)||!groupProperty))return null;
+    if(p.has('propertyView')){if(p.get('propertyView')!=='details'||groupBy!=='property'||fields)return null;propertyDetails=true;}
+    for(const key of ['from','to','timeZone','groupBy','groupProperty','fields','propertyView','cohortId','cohortRevision'])p.delete(key);
+    const filters=savedPredicates(p.toString());if(!filters)return null;
+    if(filters.filters.origin.on&&'error'in buildAdvanced({...emptyAdvanced(),fields:[{id:'origin',field:'origin',operator:'eq',type:'',value:filters.filters.origin.value}]}))return null;
+    if(filters.prop.on&&'error'in buildAdvanced({...emptyAdvanced(),properties:[{id:'property',field:filters.prop.key,operator:filters.prop.type==='missing'?'missing':'eq',type:filters.prop.type,value:filters.prop.value}]}))return null;
+    draft={...draft,...filters,from:dates.from,to:dates.to!,timeZone:dates.timeZone!,groupBy:groupBy!,groupProperty};
+  }
+  const built=combinationParams(draft,cohort,fields,propertyDetails);
+  return 'error'in built?null:{draft,fields,cohort,propertyDetails,qs:built.qs};
 }
 export function validReportBase(result:ExploreResult,params:URLSearchParams):boolean{
   if(!record(result)||!record(result.query)||!record(result.totals)||!record(result.breakdown)||!record(result.coverage)||!['complete','partial','unavailable'].includes(result.coverage.status)||!Array.isArray(result.breakdown.groups)||!clean(result.csv,2097152))return false;
@@ -232,22 +260,29 @@ function groupValue(type:string,value:unknown,field?:string):string{
 }
 const groupType=(type:string)=>type?type.charAt(0).toUpperCase()+type.slice(1):'Unknown';
 
-type Props={projectId:string;userId:string;onUnauthorized:()=>void};
+type Props={projectId:string;userId:string;onUnauthorized:()=>void;search?:NavigationSearch;onNavigate?:(value:ExplorerNavigation)=>void};
 export function ExplorerPanel(props:Props){
   return <ExplorerInner key={`${props.userId}:${props.projectId}`} {...props}/>;
 }
-function ExplorerInner({projectId,userId,onUnauthorized}:Props){
+function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate}:Props){
   const uid=useId(),filterDialog=useRef<HTMLDialogElement>(null),filterButton=useRef<HTMLButtonElement>(null);
+  const location=useLocation(),controlled=!!search&&!!onNavigate,nav:ExplorerNavigation=controlled?explorerNavigation(search!):{},navText=JSON.stringify(nav),entry=location.state.__TSR_key;
+  const restored=nav.exploreInvalid?null:readExplorerScope(nav.exploreQuery),invalidLink=controlled&&!restored;
+  const routeReady=!controlled||location.pathname==='/'&&!location.hash&&search!.view==='explore'&&search!.project===projectId&&navigationKey(parseNavigation(location.search))===navigationKey(search!)&&canonicalNavigation(location.searchStr,search!);
+  const routeScope=controlled?`${entry}:${location.href}:${navText}`:'local',currentRoute=useRef('');currentRoute.current=routeReady?routeScope:'';
   const unauthRef=useRef(onUnauthorized);
   unauthRef.current=onUnauthorized;
 
-  const [draft,setDraft]=useState<Draft>(initialDraft);
-  const [combined,setCombined]=useState(false),[fields,setFields]=useState<string[]>(['campaignSource','campaignMedium']);
-  const [propertyDetails,setPropertyDetails]=useState(false);
+  const [draft,setDraft]=useState<Draft>(()=>restored?.draft??initialDraft());
+  const [combined,setCombined]=useState(!!restored?.fields),[fields,setFields]=useState<string[]>(()=>restored?.fields??['campaignSource','campaignMedium']);
+  const [propertyDetails,setPropertyDetails]=useState(restored?.propertyDetails??false);
   const [propertyTab,setPropertyTab]=useState('values');
-  const [applied,setApplied]=useState<string>(()=>{const r=buildParams(initialDraft());return 'qs'in r?r.qs:'';});
+  const [applied,setApplied]=useState<string>(()=>restored?.qs??''),[appliedNavigation,setAppliedNavigation]=useState(navText);
+  const appliedRoot=new URLSearchParams(applied);appliedRoot.delete('propertyCursor');
+  const scopeReady=routeReady&&!invalidLink&&(!controlled||appliedNavigation===navText&&(nav.exploreQuery===undefined||restored?.qs===appliedRoot.toString()));
   const [attempt,setAttempt]=useState(0);
-  const [result,setResult]=useState<ExploreResult|null>(null);
+  const [snapshot,setResult]=useState<ExploreResult|null>(null),acceptedRoute=useRef('');
+  const result=scopeReady&&(!controlled||acceptedRoute.current===routeScope)?snapshot:null;
   const [phase,setPhase]=useState<'loading'|'ok'|'error'|'unavailable'|'denied'>('loading');
   const [message,setMessage]=useState('');
   const [formError,setFormError]=useState('');
@@ -259,7 +294,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   const savedOp=useRef<AbortController|null>(null),savedRoleRef=useRef<Role|null>(null),pendingRef=useRef<SaveAttempt|null>(null),deletedIds=useRef(new Set<string>());
   const cohortBase=`/api/projects/${encodeURIComponent(projectId)}/cohorts`;
   const [cohortItems,setCohortItems]=useState<SavedFilter[]>([]),[cohortCursor,setCohortCursor]=useState<string|null>(null),[cohortSelected,setCohortSelected]=useState<SavedFilter|null>(null),[cohortSelectedId,setCohortSelectedId]=useState('');
-  const [cohortDraft,setCohortDraft]=useState<(CohortRef&{definition?:Definition})|null>(null),[cohortEditor,setCohortEditor]=useState<CohortEditor|null>(null),[cohortRole,setCohortRole]=useState<Role|null>(null);
+  const [cohortDraft,setCohortDraft]=useState<(CohortRef&{definition?:Definition})|null>(()=>restored?.cohort??null),[cohortEditor,setCohortEditor]=useState<CohortEditor|null>(null),[cohortRole,setCohortRole]=useState<Role|null>(null);
   const [cohortBusy,setCohortBusy]=useState(false),[cohortError,setCohortError]=useState(''),[cohortNotice,setCohortNotice]=useState(''),[cohortPending,setCohortPending]=useState<SaveAttempt|null>(null);
   const cohortOp=useRef<AbortController|null>(null),cohortRoleRef=useRef<Role|null>(null),cohortPendingRef=useRef<SaveAttempt|null>(null),cohortDeleted=useRef(new Set<string>()),cohortInvalid=useRef(new Set<string>()),cohortManager=useRef<HTMLDetailsElement>(null);
   function clearCohortData(){cohortOp.current?.abort();cohortOp.current=null;setCohortBusy(false);setCohortItems([]);setCohortCursor(null);setCohortSelected(null);setCohortSelectedId('');setCohortEditor(null);setCohortRole(null);cohortRoleRef.current=null;setCohortNotice('');setCohortDraft(old=>old?{id:old.id,revision:old.revision}:null);}
@@ -267,14 +302,14 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
     filterDialog.current?.close();accessEpoch.current++;accessDenied.current=true;analyticsRead.current?.abort();savedOp.current?.abort();savedOp.current=null;
     clearCohortData();
     setResult(null);setDraft(initialDraft());setCombined(false);setFields(['campaignSource','campaignMedium']);setFormError('');setSavedItems([]);setSavedCursor(null);setSavedLoaded(false);setSelected(null);setSelectedId('');setSavedName('');setSavedRole(null);savedRoleRef.current=null;setSavedBusy(false);setSavedError('');setSavedNotice('');pendingRef.current=keepAttempt;setPending(keepAttempt);
-    const initial=buildParams(initialDraft());if('qs'in initial)setApplied(old=>{const previous=new URLSearchParams(old),next=new URLSearchParams(initial.qs);for(const key of ['cohortId','cohortRevision'])if(previous.has(key))next.set(key,previous.get(key)!);return next.toString();});
+    const initial=buildParams(initialDraft());if(!controlled&&'qs'in initial)setApplied(old=>{const previous=new URLSearchParams(old),next=new URLSearchParams(initial.qs);for(const key of ['cohortId','cohortRevision'])if(previous.has(key))next.set(key,previous.get(key)!);return next.toString();});
     setPhase(status===401?'denied':'unavailable');setMessage(notice??(status===401?'Your session has ended. Sign in again to continue.':'This project is unavailable. It may have been removed or you may not have access.'));
     if(status===401)unauthRef.current();
   }
   function acceptCohortRole(value:unknown){if(!roleValue(value)){purgeAccess(403,'Cohort access could not be verified. Reload cohort access before continuing.',pendingRef.current);throw new Error('Cohort access could not be verified.');}cohortRoleRef.current=value;setCohortRole(value);return value;}
   async function readCohorts(id?:string,mode:'inspect'|'load'|'edit'='inspect',cursor?:string,recover=false){
     if(accessDenied.current&&!recover||cohortPendingRef.current&&(cohortOp.current||mode!=='inspect'))return;
-    cohortOp.current?.abort();const op=new AbortController(),generation=accessEpoch.current;cohortOp.current=op;setCohortBusy(true);setCohortError('');cohortRoleRef.current=null;
+    cohortOp.current?.abort();const op=new AbortController(),generation=accessEpoch.current,owner=currentRoute.current;cohortOp.current=op;setCohortBusy(true);setCohortError('');cohortRoleRef.current=null;
     try{
       const data=await api<unknown>(id?`${cohortBase}/${encodeURIComponent(id)}`:cohortBase+(cursor?'?'+new URLSearchParams({cursor}):''),{signal:AbortSignal.any([op.signal,AbortSignal.timeout(20000)])});
       if(!alive.current||op.signal.aborted||generation!==accessEpoch.current)return;
@@ -282,7 +317,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
       if(id){
         if(!validCohort(data.item,projectId)||data.item.id!==id||cohortDeleted.current.has(id))throw new Error('This cohort could not be verified. Refresh cohorts.');
         const item=data.item;setCohortSelected(item);setCohortSelectedId(id);setCohortItems(old=>[...new Map([...old,item].map(v=>[v.id,v])).values()]);
-        if(mode==='load'){setCohortDraft({id:item.id,revision:item.revision,definition:item.definition});cohortInvalid.current.delete(`${item.id}:${item.revision}`);setCohortNotice('Cohort loaded into your draft. Apply filters to update results and CSV.');}
+        if(mode==='load'&&owner===currentRoute.current){setCohortDraft({id:item.id,revision:item.revision,definition:item.definition});cohortInvalid.current.delete(`${item.id}:${item.revision}`);setCohortNotice('Cohort loaded into your draft. Apply filters to update results and CSV.');}
         if(mode==='edit'&&canSave(role)){setCohortEditor({item,name:item.definition.name,draft:qualificationDraft(item.definition.query)!});if(cohortManager.current)cohortManager.current.open=true;}
       }else{
         if(!Array.isArray(data.items)||data.items.length>50||!data.items.every(v=>validCohort(v,projectId))||new Set(data.items.map(v=>v.id)).size!==data.items.length||data.nextCursor!==null&&(!clean(data.nextCursor,4096)||!data.nextCursor))throw new Error('Cohorts could not be verified. Refresh cohorts.');
@@ -341,7 +376,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   function acceptRole(value:unknown){if(!roleValue(value)){purgeAccess(403,'Project access could not be verified. Reload access before confirming any pending save.',pendingRef.current);throw new Error('Project access could not be verified.');}savedRoleRef.current=value;setSavedRole(value);return value;}
   async function readSaved(id?:string,loadDraft=false,cursor?:string,recover=false){
     if(accessDenied.current&&!recover||pendingRef.current&&loadDraft)return;
-    savedOp.current?.abort();const op=new AbortController(),generation=accessEpoch.current;savedOp.current=op;setSavedBusy(true);setSavedError('');savedRoleRef.current=null;
+    savedOp.current?.abort();const op=new AbortController(),generation=accessEpoch.current,owner=currentRoute.current;savedOp.current=op;setSavedBusy(true);setSavedError('');savedRoleRef.current=null;
     try{
       const data=await api<unknown>(id?`${base}/${encodeURIComponent(id)}`:base+(cursor?'?'+new URLSearchParams({cursor}):''),{signal:AbortSignal.any([op.signal,AbortSignal.timeout(20000)])});
       if(!alive.current||op.signal.aborted||generation!==accessEpoch.current||savedOp.current!==op)return;
@@ -349,7 +384,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
       if(id){
         if(!validSaved(data.item,projectId)||data.item.id!==id||deletedIds.current.has(id))throw new Error('This saved filter is no longer available. Refresh the saved list.');
         const item=data.item;setSelected(item);setSelectedId(id);setSavedName(item.definition.name);setSavedItems(old=>old.map(value=>value.id===id?item:value));
-        if(loadDraft){const predicates=savedPredicates(item.definition.query)!;setDraft(old=>({...old,...predicates}));setFormError('');setSavedNotice('Saved filters loaded into your draft. Apply filters to update results and CSV.');}
+        if(loadDraft&&owner===currentRoute.current){const predicates=savedPredicates(item.definition.query)!;setDraft(old=>({...old,...predicates}));setFormError('');setSavedNotice('Saved filters loaded into your draft. Apply filters to update results and CSV.');}
       }else{
         if(!Array.isArray(data.items)||data.items.length>50||!data.items.every(value=>validSaved(value,projectId))||new Set(data.items.map(value=>value.id)).size!==data.items.length||data.nextCursor!==null&&!clean(data.nextCursor,4096))throw new Error('Saved filters could not be verified. Refresh the saved list.');
         const items=(data.items as SavedFilter[]).filter(value=>!deletedIds.current.has(value.id));
@@ -415,15 +450,26 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   useEffect(()=>{alive.current=true;void readSaved();return()=>{alive.current=false;accessEpoch.current++;savedOp.current?.abort();pendingRef.current=null;};},[]);
 
   useEffect(()=>{
-    if(accessDenied.current)return;
+    if(!controlled)return;
+    analyticsRead.current?.abort();acceptedRoute.current='';setResult(null);propertyCursorStale.current=false;filterDialog.current?.close();setFormError('');setAppliedNavigation(navText);
+    // Library reads and saved-write receipts belong to this identity, not a report route.
+    const value=nav.exploreInvalid?null:readExplorerScope(nav.exploreQuery);
+    setDraft(value?.draft??initialDraft());setCombined(!!value?.fields);setFields(value?.fields??['campaignSource','campaignMedium']);setPropertyDetails(value?.propertyDetails??false);setPropertyTab('values');setCohortDraft(value?.cohort??null);setApplied(value?.qs??'');
+    if(!value){setPhase('error');setMessage('This Explore link contains unsupported or invalid filters. No report was loaded. Reset the report to choose a valid scope.');}
+    else if(accessDenied.current){setPhase('unavailable');setMessage('Project access must be rechecked. Refresh the applied report to try again.');}
+  },[controlled,navText,entry]);
+
+  useEffect(()=>{
+    if(accessDenied.current||!scopeReady||!applied)return;
     const ctrl=new AbortController();
-    const generation=accessEpoch.current;analyticsRead.current=ctrl;
+    const generation=accessEpoch.current,owner=routeScope;analyticsRead.current=ctrl;
+    const current=()=>!ctrl.signal.aborted&&generation===accessEpoch.current&&currentRoute.current===owner;
     setResult(null);setPhase('loading');setMessage('');
     const path=`/api/projects/${encodeURIComponent(projectId)}/explore?${applied}`;
-    (new URLSearchParams(applied).has('fields')||new URLSearchParams(applied).has('propertyView')?readCombination(path,ctrl.signal):api<ExploreResult>(path,{signal:ctrl.signal}))
-      .then(r=>{if(!ctrl.signal.aborted&&generation===accessEpoch.current){if(!validCohortResult(r,new URLSearchParams(applied),projectId))throw new Error('The applied report filters could not be verified. Reload before applying again.');setResult(r);setPhase('ok');}})
+    (controlled||new URLSearchParams(applied).has('fields')||new URLSearchParams(applied).has('propertyView')?readCombination(path,ctrl.signal):api<ExploreResult>(path,{signal:ctrl.signal}))
+      .then(r=>{if(current()){const params=new URLSearchParams(applied);if(controlled&&(!validReportBase(r,params)||!params.has('fields')&&(r.query.groupBy!==params.get('groupBy')||r.query.groupProperty!==(params.get('groupProperty')??null)))||!validCohortResult(r,params,projectId))throw new Error('The applied report filters could not be verified. Reload before applying again.');acceptedRoute.current=owner;setResult(r);setPhase('ok');}})
       .catch(e=>{
-        if(ctrl.signal.aborted||generation!==accessEpoch.current)return;
+        if(!current())return;
         setResult(null);
         const params=new URLSearchParams(applied),cohortId=params.get('cohortId');
         if(params.has('propertyCursor')&&e instanceof ApiError&&e.status===409&&e.message==='Retention settings changed. Reload property events.'){
@@ -447,16 +493,17 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
         }
       });
     return()=>ctrl.abort();
-  },[applied,attempt,projectId]);
+  },[applied,attempt,projectId,scopeReady,routeScope]);
 
-  const refresh=()=>{if(propertyCursorStale.current){propertyCursorStale.current=false;setApplied(old=>{const p=new URLSearchParams(old);p.delete('propertyCursor');return p.toString();});}if(accessDenied.current){accessDenied.current=false;void readSaved();void readCohorts();}setResult(null);setPhase('loading');setMessage('');setAttempt(a=>a+1);};
+  const refresh=()=>{if(!scopeReady)return;if(propertyCursorStale.current){propertyCursorStale.current=false;setApplied(old=>{const p=new URLSearchParams(old);p.delete('propertyCursor');return p.toString();});}if(accessDenied.current){accessDenied.current=false;void readSaved();void readCohorts();}setResult(null);setPhase('loading');setMessage('');setAttempt(a=>a+1);};
 
   const apply=(e:FormEvent)=>{
     e.preventDefault();
-    if(accessDenied.current)return;
+    if(accessDenied.current||!routeReady||invalidLink)return;
     if(cohortDraft&&(cohortDeleted.current.has(cohortDraft.id)||cohortInvalid.current.has(`${cohortDraft.id}:${cohortDraft.revision}`))){setFormError('Clear the unavailable cohort or load its current definition before applying.');return;}
     const r=combinationParams(draft,cohortDraft,combined?fields:null,propertyDetails);
     if('error'in r){setFormError(r.error);if(r.advanced)focusAdvanced(`${uid}-report-advanced`,r.advanced);return;}
+    if(controlled){if(!readExplorerScope(r.qs)){setFormError('Check the report dates, time zone and filters before applying.');return;}if(nav.exploreQuery!==r.qs){setFormError('');onNavigate!({exploreQuery:r.qs});return;}}
     setFormError('');setApplied(r.qs);refresh();filterDialog.current?.close();
   };
 
@@ -482,18 +529,20 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   const appliedDates=new URLSearchParams(applied);
   const cohortLocked=cohortBusy||!!cohortPending,qualification=cohortEditor?.draft,cohortMembershipUnavailable=result?.cohort?.membership.status==='unavailable',sessionUnavailable=result?.sessionProperties?.selection.status==='unavailable'||result?.cohort?.sessionProperties?.selection.status==='unavailable';
   function patchQualification(patch:Partial<Draft>){setCohortEditor(old=>old?{...old,draft:{...old.draft,...patch}}:old);}
-  const annotations=useAnnotations({projectId,userId,range:accessDenied.current?null:{from:appliedDates.get('from')!,to:appliedDates.get('to')!,timeZone:result?.range.timeZone??appliedDates.get('timeZone')!},onUnauthorized,onAccessLost:status=>purgeAccess(status)});
+  const annotations=useAnnotations({projectId,userId,readOwner:controlled?routeScope:undefined,readEnabled:scopeReady,range:accessDenied.current||invalidLink||!applied?null:{from:appliedDates.get('from')!,to:appliedDates.get('to')!,timeZone:result?.range.timeZone??appliedDates.get('timeZone')!},onUnauthorized,onAccessLost:status=>purgeAccess(status)});
 
   return(
     <section className="explorer stack" aria-labelledby={`${uid}-h`} style={{'--control-md':'var(--control-touch)'} as import('react').CSSProperties}>
       <h2 id={`${uid}-h`}>Explore</h2>
+      {controlled&&<p className="hint">Explore uses one applied date range. Analytics filters carry over in UTC; comparison periods and ranking displays stay in Compare. Applied filters are stored in this page's link; drafts are not.</p>}
+      {invalidLink&&<div className="alert" role="alert"><p>This Explore link contains unsupported or invalid filters. No report was loaded.</p><button className="btn" type="button" onClick={()=>onNavigate!({exploreQuery:readExplorerScope()!.qs})}>Reset report scope</button></div>}
 
       <div className="explorer-applied-bar">
-        <div><strong>Applied report</strong><p className="hint"><bdi>{appliedDates.get('from')} to {appliedDates.get('to')}</bdi> · <bdi>{appliedDates.get('timeZone')}</bdi><br/>{labelOf(KINDS,appliedDates.get('kind')??'all')} · {appliedDates.has('fields')?'Combined fields':labelOf(GROUPS,appliedDates.get('groupBy')??'event')}{appliedDates.get('groupProperty')&&<>: <bdi>{appliedDates.get('groupProperty')}</bdi></>}</p></div>
-        <div className="row"><button ref={filterButton} className="btn" type="button" onClick={()=>filterDialog.current?.showModal()}>Edit filters</button><button className="btn" type="button" disabled={phase==='loading'} onClick={refresh}>Refresh</button>{phase==='ok'&&result&&<button className="btn" type="button" onClick={download}>Download CSV</button>}</div>
+        <div><strong>{invalidLink?'No applied report':'Applied report'}</strong>{applied&&<p className="hint"><bdi>{appliedDates.get('from')} to {appliedDates.get('to')}</bdi> · <bdi>{appliedDates.get('timeZone')}</bdi><br/>{labelOf(KINDS,appliedDates.get('kind')??'all')} · {appliedDates.has('fields')?'Combined fields':labelOf(GROUPS,appliedDates.get('groupBy')??'event')}{appliedDates.get('groupProperty')&&<>: <bdi>{appliedDates.get('groupProperty')}</bdi></>}</p>}</div>
+        <div className="row"><button ref={filterButton} className="btn" type="button" onClick={()=>filterDialog.current?.showModal()}>Edit filters</button><button className="btn" type="button" disabled={phase==='loading'||!scopeReady} onClick={refresh}>Refresh</button>{phase==='ok'&&result&&<button className="btn" type="button" onClick={download}>Download CSV</button>}</div>
       </div>
       {phase==='ok'&&result&&<p className="hint dim">CSV downloads the current bounded table, daily data and scope — it is not a complete data export.</p>}
-      {unapplied&&<p className="hint" role="status">You have unapplied changes. Apply filters to update the results and CSV.</p>}
+      {unapplied&&!invalidLink&&<p className="hint" role="status">You have unapplied changes. Apply filters to update the results and CSV.</p>}
       {(pending||cohortPending)&&<p className="alert" role="status">A saved action still needs confirmation. Open Edit filters to review and retry that same request.</p>}
       {(savedError||cohortError)&&<p className="alert" role="status">Saved-filter or cohort access needs attention. Open Edit filters to review the message.</p>}
       <dialog ref={filterDialog} className="analytics-environment-dialog explorer-filter-dialog" aria-labelledby={`${uid}-filters-title`} onClose={()=>filterButton.current?.focus()}>
@@ -578,7 +627,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
 
         <AdvancedControls id={`${uid}-report-advanced`} label="Advanced filters" draft={draft.advanced} zone={draft.timeZone} error={formError||savedError} onChange={advanced=>patch({advanced})}/>
         <div className="row">
-          <button className="btn primary" type="submit">Apply filters</button>
+          <button className="btn primary" type="submit" disabled={invalidLink||!routeReady}>Apply filters</button>
         </div>
         {!combined&&draft.groupBy==='property'&&<label><input type="checkbox" checked={propertyDetails} onChange={e=>setPropertyDetails(e.target.checked)}/> Property analysis and event properties</label>}
         {formError&&<p className="alert" role="alert">{formError}</p>}
