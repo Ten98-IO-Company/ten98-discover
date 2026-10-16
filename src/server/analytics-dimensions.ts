@@ -10,3 +10,11 @@ export function analyticsDimensionValueSql(selector:string,alias:string){
  WHEN 'campaignSource' THEN ${alias}.dimensions->'campaign'->'source' WHEN 'campaignMedium' THEN ${alias}.dimensions->'campaign'->'medium'
  WHEN 'campaignName' THEN ${alias}.dimensions->'campaign'->'campaign' WHEN 'campaignTerm' THEN ${alias}.dimensions->'campaign'->'term' WHEN 'campaignContent' THEN ${alias}.dimensions->'campaign'->'content' END`;
 }
+
+/** Fixed SQL expressions from the Analytics and native-calendar report callers only. */
+export function analyticsCustomVisitsSql(start:string,finish:string,calendar='TRUE'){
+ return `SELECT DISTINCT e.visitor_id,e.visit_id FROM event e CROSS JOIN target t
+  WHERE e.project_id=$1 AND e.received_at>=${start} AND e.received_at<${finish} AND (${calendar})
+   AND (t.analytics_retained_from IS NULL OR e.received_at>=t.analytics_retained_from)
+   AND e.event_name<>'page_view' AND e.visitor_id IS NOT NULL AND e.visit_id IS NOT NULL`;
+}

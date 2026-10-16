@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {boardCard,boardCardTypes,boardDefinition,boardMetricFields,boardPreviewInput,boardLimits,type BoardCard,type BoardDefinition} from '../src/lib/boards.ts';
-import {boardParams,boardScope,parseBoardDefinition,parseBoardPreview} from '../src/server/boards.ts';
+import {boardParams,boardScope,parseBoardDefinition,parseBoardPreview,boardAssetQuery} from '../src/server/boards.ts';
 import {nativeOpenApi} from '../src/server/openapi.ts';
+import {analyticsQuery} from '../src/server/analytics.ts';
 
 const scope='from=2026-01-01&to=2026-01-02&timeZone=UTC';
 const card=(type:typeof boardCardTypes[number]):BoardCard=>boardCard.parse({id:randomUUID(),type,...type==='TextBlock'?{text:'<script>plain text 🐎</script>'}:{entity:null},...type==='Goal'||type==='Funnel'?{analysisId:randomUUID(),analysisRevision:1}:{},...type==='UTM'?{parameter:'campaignSource',limit:5}:{},...type==='EventsChart'?{limit:10}:{},...type.startsWith('Revenue')?{currency:'USD'}:{},...type==='RevenueMetricsTable'?{dimension:'referrer'}:{},...type==='MetricsTable'?{dimension:'path',limit:20}:{}});
@@ -46,4 +47,28 @@ test('optional design preserves legacy JSON and real bounded canonical unsaved p
  const remaining=20000-largeScope.toString().length;assert.ok(remaining>=0&&remaining<=320);largeScope.set('campaignSource','x'.repeat(remaining));const canonical=boardScope(largeScope.toString()).scope;assert.equal(canonical.length,20000);
  const largest={previewId:randomUUID(),card:{...card('TextBlock'),title:'\u0001'.repeat(120),description:'\u0001'.repeat(1000),text:'\u0001'.repeat(4000)},defaultEntity:legacy.defaultEntity,scope:canonical};const bytes=Buffer.byteLength(JSON.stringify(largest));assert.ok(bytes>32768&&bytes<=boardLimits.previewBodyBytes);assert.deepEqual(parseBoardPreview(largest),largest);assert.equal(boardLimits.previewBodyBytes,51200);
  assert.equal(nativeOpenApi['x-ten98-browser-operations']['/api/workspaces/{workspaceId}/boards/preview'].post.bodyMaxBytes,boardLimits.previewBodyBytes);
+});
+
+test('mixed tracked cards use only exact native request report families and fixed row bounds',()=>{
+ const value=definition(),assetScope=boardScope(scope+'&browser=unknown&referrer=referrer.example.com'),link={kind:'link' as const,id:randomUUID()};
+ for(const kind of ['link','pixel']as const)for(const type of ['WebsiteMetricsBar','WebsiteChart','MetricsTable','WorldMap']as const){
+  const c=boardCard.parse({...card(type),entity:{...link,kind},...type==='MetricsTable'?{dimension:'referrer',limit:5}:{}});
+  const query=boardAssetQuery(c,assetScope);assert.ok(query);assert.equal(query.from,'2026-01-01');assert.equal(query.timeZone,'UTC');assert.deepEqual(query.filters,{referrer:'referrer.example.com',browser:'unknown'});assert.equal(query.dimension,type==='WorldMap'?'country':'referrer');assert.equal(query.limit,type==='WorldMap'?100:type==='MetricsTable'?5:10);
+ }
+ for(const dimension of ['referrer','channel','browser','os','device','country','region','city']){const c=boardCard.parse({...card('MetricsTable'),entity:link,dimension,limit:20});assert.equal(boardAssetQuery(c,boardScope(scope))?.dimension,dimension);}
+ for(const dimension of ['path','entry','exit','hostname','screen','utmSource','event'])assert.equal(boardAssetQuery(boardCard.parse({...card('MetricsTable'),dimension}),boardScope(scope)),null);
+ for(const type of ['UTM','RevenueChart','Goal','RealtimeHeader','WeeklyTraffic']as const)assert.equal(boardAssetQuery(card(type),boardScope(scope)),null);
+ assert.deepEqual(parseBoardDefinition({...value,defaultEntity:link,rows:[{...value.rows[0],cards:[{...card('WebsiteChart'),entity:null}]}]}).defaultEntity,link);
+});
+test('tracked board scopes refuse website, event, campaign and property widening without changing the original applied scope',()=>{
+ const c={...card('WebsiteMetricsBar'),entity:{kind:'pixel' as const,id:randomUUID()}};
+ for(const suffix of ['&path=%2Fa','&origin=https%3A%2F%2Fexample.com','&eventName=purchase','&language=en','&campaignSource=','&propertyKey=plan&propertyType=string&propertyValue=%22pro%22','&referrer=https%3A%2F%2Fexample.com%2Fprivate'])assert.equal(boardAssetQuery(c,boardScope(scope+suffix)),null);
+ const original=boardScope(scope+'&referrer=REFERRER.EXAMPLE.COM'),query=boardAssetQuery(c,original);assert.ok(query);assert.equal(query.filters.referrer,'referrer.example.com');assert.equal(original.scope,scope+'&referrer=REFERRER.EXAMPLE.COM','The board echo remains its full applied scope; only the native hostname equivalence is canonicalized.');
+ assert.equal(boardAssetQuery(c,boardScope(scope+'&device=not-recorded'))?.filters.device,'not-recorded');
+});
+
+test('board local exact scopes do not expand the legacy Analytics parser, UTC range or comparison protocol',()=>{
+ const legacy=analyticsQuery(new URLSearchParams({from:'2026-01-01',to:'2026-01-02',compare:'prev'}));assert.equal(legacy.compare,'prev');assert.deepEqual(legacy.range,{from:'2026-01-01',to:'2026-01-02',timeZone:'UTC',start:'2026-01-01T00:00:00.000Z',end:'2026-01-03T00:00:00.000Z'});
+ for(const field of [{timeZone:'America/New_York'},{origin:'https://example.com'},{propertyKey:'price',propertyType:'number',propertyValue:'0'}]){const params=new URLSearchParams({from:'2026-01-01',to:'2026-01-02'});for(const[key,value]of Object.entries(field))if(value!==undefined)params.set(key,value);assert.throws(()=>analyticsQuery(params));}
+ const local=new URLSearchParams({from:'2025-03-09',to:'2025-03-09',timeZone:'America/New_York',origin:'https://example.com',browser:'chrome',country:JSON.stringify({state:'known',country:'US'}),propertyKey:'price',propertyType:'number',propertyValue:'0'}),parsed=boardScope(local.toString());assert.equal(parsed.query.timeZone,'America/New_York');assert.deepEqual(parsed.query.property,{key:'price',type:'number',value:0});for(const key of ['origin','browser','country'])assert.equal(parsed.query.filters[key],local.get(key));
 });

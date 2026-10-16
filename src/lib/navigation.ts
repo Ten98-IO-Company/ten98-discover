@@ -7,7 +7,7 @@ import {journeysLimits} from './journeys.ts'
 import {attributionLimits} from './attribution.ts'
 import {analyticsDimensions,type AnalyticsDimension} from './analytics-dimensions.ts'
 
-export const views = ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'boards', 'compare', 'campaigns', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'boards', 'compare', 'campaigns', 'links', 'pixels', 'tracked-share', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export type RevenueNavigation={revenueQuery?:string;revenueKey?:string;revenueCalendar?:'months';revenueInvalid?:'1'};
@@ -42,6 +42,13 @@ export type AttributionNavigation={attributionQuery?:string;attributionInvalid?:
 export type ExplorerNavigation={exploreQuery?:string;exploreInvalid?:'1'};
 export type PerformanceNavigation={performanceQuery?:string;performanceInvalid?:'1'};
 export type ReplayNavigation={replayQuery?:string;replayInvalid?:'1'};
+export type TrackedAssetNavigation={assetQuery?:string;assetInvalid?:'1'};
+export function trackedAssetNavigation(raw:Record<string,unknown>):TrackedAssetNavigation{
+ if(!navigationId(raw.workspace)||raw.project!==undefined||raw.assetInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','view','assetQuery','assetInvalid'].includes(key)))return{assetInvalid:'1'};
+ if(raw.assetQuery===undefined)return{};const value=raw.assetQuery;
+ if(typeof value!=='string'||!value.length||value.length>26000||/[\u0000\uD800-\uDFFF]/u.test(value))return{assetInvalid:'1'};
+ try{decodeURIComponent(value.replaceAll('+',' '));return{assetQuery:value};}catch{return{assetInvalid:'1'};}
+}
 export type BoardNavigation={boardQuery?:string;boardInvalid?:'1'};
 export function boardNavigation(raw:Record<string,unknown>):BoardNavigation{
  if(!navigationId(raw.workspace)||raw.project!==undefined||raw.boardInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','view','boardQuery','boardInvalid'].includes(key)))return{boardInvalid:'1'};
@@ -102,7 +109,7 @@ export function retentionNavigation(raw:Record<string,unknown>):RetentionNavigat
   if(typeof month!=='string'||!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||month<'1970-01'||month>'9998-12'||typeof zone!=='string'||zone.length>80||!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(zone)||entry!==undefined&&(typeof entry!=='string'||entry.length>20000||entry.includes('\0')||new TextDecoder().decode(new TextEncoder().encode(entry))!==entry))return invalid();
   try{const format=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit'}),parts=format.formatToParts(new Date()),current=['year','month'].map(key=>parts.find(part=>part.type===key)!.value).join('-');if(month>current)return invalid();return {retentionMonth:month,retentionTimeZone:format.resolvedOptions().timeZone,...entry!==undefined?{retentionEntry:entry as string}:{}};}catch{return invalid();}
 }
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation & HeatmapNavigation & BoardNavigation
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView; trackedShareInvalid?:'1' } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & ExplorerNavigation & PerformanceNavigation & ReplayNavigation & TrackedAssetNavigation & HeatmapNavigation & BoardNavigation
 
 // The panel verifies the closed nested scope with the existing Explorer controls
 // before fetching; this boundary keeps its URL value scalar and project-scoped.
@@ -197,11 +204,14 @@ export function navigationId(value: unknown): value is string {
 
 // Search values are untrusted: TanStack can parse JSON values and repeated keys.
 export function parseNavigation(raw: Record<string, unknown>): NavigationSearch {
+  // Preserve rejected public-share intent before the router canonicalizes a duplicate/JSON view into the private default.
+  const sharedIntent=(Array.isArray(raw.view)?raw.view:[raw.view]).some(value=>typeof value==='string'&&value.includes('tracked-share'))
+  if(sharedIntent&&(raw.view!=='tracked-share'||raw.trackedShareInvalid!==undefined))return{view:'tracked-share',trackedShareInvalid:'1'}
   const workspace = navigationId(raw.workspace) ? raw.workspace.toLowerCase() : undefined
   const view = typeof raw.view === 'string' && (views as readonly string[]).includes(raw.view) ? raw.view as AppView : 'project'
   return {
     ...(workspace ? { workspace } : {}),
-    ...(workspace && navigationId(raw.project) ? { project: raw.project.toLowerCase() } : {}),
+    ...(workspace && !['links','pixels','tracked-share'].includes(view) && navigationId(raw.project) ? { project: raw.project.toLowerCase() } : {}),
     view,
     ...(view==='sessions'&&workspace&&navigationId(raw.project)?sessionNavigation(raw):{}),
     ...(view==='journeys'?journeysNavigation(raw):{}),
@@ -211,6 +221,7 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     ...(view==='explore'?explorerNavigation(raw):{}),
     ...(view==='performance'?performanceNavigation(raw):{}),
     ...(view==='replays'?replayNavigation(raw):{}),
+    ...(['links','pixels'].includes(view)?trackedAssetNavigation(raw):{}),
     ...(view==='boards'?boardNavigation(raw):{}),
     ...(view==='heatmaps'?heatmapNavigation(raw):{}),
     ...(view==='audits'?auditNavigation(raw):{}),
@@ -227,6 +238,7 @@ export function resolveNavigation(requested:NavigationSearch,workspace:string|un
 }
 
 export function navigationKey(search: NavigationSearch): string {
+  if(search.view==='links'||search.view==='pixels')return `${search.workspace??''}:${search.view}:${JSON.stringify(trackedAssetNavigation(search))}`;
   return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='boards'?':'+JSON.stringify(boardNavigation(search)):search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='performance'?':'+JSON.stringify(performanceNavigation(search)):search.view==='replays'?':'+JSON.stringify(replayNavigation(search)):search.view==='heatmaps'?':'+JSON.stringify(heatmapNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 

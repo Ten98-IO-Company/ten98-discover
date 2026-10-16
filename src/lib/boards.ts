@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {revenueCurrencies} from './revenue.ts';
+import type {AnalyticsPeriodReport} from './analytics-comparison.ts';
 
 export const boardLimits=Object.freeze({cards:40,rows:40,columns:4,bodyBytes:196608,previewBodyBytes:51200,responseBytes:2097152,pageSize:20});
 export const boardCardTypes=['WebsiteMetricsBar','EventsMetricsBar','Goal','Funnel','WebsiteChart','UTM','RealtimeHeader','RealtimeChart','RealtimeActiveUsers','RevenueMetricsBar','RevenueChart','RevenueMetricsTable','MetricsTable','WorldMap','WeeklyTraffic','EventsChart','TextBlock'] as const;
@@ -74,4 +75,9 @@ export type BoardDimensionResult={version:'native-board-dimension-v1';projectId:
  totals:{units:number|null;identifiedUnits:number|null;unidentifiedUnits:number|null;estimatedVisitors:number|null};
  evidence:{matchingPageviews:number|null;anonymousPageviews:number|null;qualifiedVisits:number|null;retainedVisitPageviews:number|null;windowClippedVisits:number|null;orderingTieVisits:number|null;retentionClippedVisits:null};
  breakdown:{rows:{key:string|null;units:number;identifiedUnits:number;estimatedVisitors:number|null}[];totalGroups:number|null;returnedUnits:number|null;omittedUnits:number|null;limit:number;truncated:boolean};
+};
+export type BoardSummaryResult={version:'native-board-summary-v1';projectId:string;scope:string;
+ range:BoardActivityResult['range'];coverage:BoardCoverage;
+ method:{population:'selected-retained-observations';visits:'project-visitor-visit-pair';customSuppression:'whole-window-retained-custom-events';duration:'selected-pageview-span';historyComplete:false};
+ totals:AnalyticsPeriodReport['totals'];measurement:AnalyticsPeriodReport['measurement'];
 };

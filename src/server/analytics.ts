@@ -10,9 +10,30 @@ import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geograp
 import {analyticsDimensions,analyticsSelectionFields,type AnalyticsDimension,type AnalyticsDimensionComparison,type AnalyticsDimensionMetrics,type AnalyticsDimensionRow} from '../lib/analytics-dimensions.ts';
 import {parseAdvancedPredicates,type AdvancedPredicates} from './advanced-predicate-input.ts';
 import {advancedPredicateSql} from './advanced-predicates.ts';
-import {analyticsDimensionValueSql} from './analytics-dimensions.ts';
+import {analyticsDimensionValueSql,analyticsCustomVisitsSql} from './analytics-dimensions.ts';
 import {serializeGeographyKey,type GeoField} from '../lib/analytics-geography.ts';
 
+export const analyticsSummarySql={
+ visits:`visits AS (
+      SELECT visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
+        bool_or(visit_has_custom) AS custom,
+        extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
+      FROM observations WHERE visit_id IS NOT NULL GROUP BY visitor_id,visit_id
+      HAVING count(*) FILTER (WHERE event_name='page_view')>0
+    )`,
+ totals:`json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
+        'customEvents',count(*) FILTER (WHERE event_name<>'page_view'))`,
+ measurement:`json_build_object('version','umami-3.4-hour-cache-v1',
+        'identifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NOT NULL),
+        'unidentifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NULL),
+        'visitors',(SELECT CASE WHEN count(*)>0 THEN count(DISTINCT visitor_id) END FROM visits),
+        'visits',(SELECT CASE WHEN count(*)>0 THEN count(*) END FROM visits),
+        'bounceRate',(SELECT 100.0*count(*) FILTER (WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) FROM visits),
+        'averageVisitSeconds',(SELECT avg(duration) FROM visits))`,
+};
+export function hideAnalyticsSummary(summary:Pick<AnalyticsPeriodReport,'totals'|'measurement'>){
+ summary.totals={pageViews:null,customEvents:null};summary.measurement.identifiedPageViews=null;summary.measurement.unidentifiedPageViews=null;
+}
 const dayMs = 86_400_000;
 function dateValue(value: string): Date {
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -99,7 +120,9 @@ export async function projectAnalytics(projectId: string, userId: string, params
       CROSS JOIN key_authority k WHERE p.id=$1 AND k.valid
     ), periods AS (SELECT 'current' AS period,$3::timestamptz AS start,$4::timestamptz AS finish,$5::date AS from_day,$6::date AS to_day
       UNION ALL SELECT 'comparison',$9::timestamptz,$10::timestamptz,$11::date,$12::date WHERE $9::timestamptz IS NOT NULL),
-    geography_candidates AS MATERIALIZED (
+    custom_visits AS MATERIALIZED (
+      SELECT q.period,v.* FROM periods q CROSS JOIN LATERAL (${analyticsCustomVisitsSql('q.start','q.finish')}) v
+    ), geography_candidates AS MATERIALIZED (
       SELECT q.period,e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions,e.collection_basis,g.geography,COALESCE(e.dimensions->>'origin',p.origin) AS origin
       FROM periods q CROSS JOIN event e CROSS JOIN target p CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
       WHERE e.project_id=$1 AND e.received_at >= q.start AND e.received_at < q.finish
@@ -107,13 +130,13 @@ export async function projectAnalytics(projectId: string, userId: string, params
         AND (NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
         AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
         AND (NOT $7::jsonb ? 'device' OR CASE WHEN $7::jsonb->>'device'='not-recorded' THEN e.dimensions->>'device' IS NULL ELSE e.dimensions->>'device'=$7::jsonb->>'device' END)
-    ), all_observations AS MATERIALIZED (SELECT * FROM geography_candidates s WHERE ${geographyFilterSql('$14::jsonb')} AND (${predicate})),
+    ), all_observations AS MATERIALIZED (SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM geography_candidates s LEFT JOIN custom_visits c ON c.period=s.period AND c.visitor_id=s.visitor_id AND c.visit_id=s.visit_id WHERE ${geographyFilterSql('$14::jsonb')} AND (${predicate})),
     dimension_labeled AS MATERIALIZED (SELECT s.*,d.value AS label FROM all_observations s CROSS JOIN LATERAL (SELECT ${analyticsDimensionValueSql('$16::text','s')} AS value) d
       WHERE $16::text IS NOT NULL AND (CASE WHEN $16='event' THEN event_name<>'page_view' ELSE true END)),
-    dimension_visits AS (SELECT period,label,visitor_id,visit_id,count(*) FILTER(WHERE event_name='page_view') AS pageviews,count(*) FILTER(WHERE event_name<>'page_view') AS custom,
+    dimension_visits AS (SELECT period,label,visitor_id,visit_id,count(*) FILTER(WHERE event_name='page_view') AS pageviews,bool_or(visit_has_custom) AS custom,
       extract(epoch FROM max(received_at) FILTER(WHERE event_name='page_view')-min(received_at) FILTER(WHERE event_name='page_view')) AS duration
       FROM dimension_labeled WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL GROUP BY period,label,visitor_id,visit_id HAVING count(*) FILTER(WHERE event_name='page_view')>0),
-    dimension_measurement AS (SELECT period,label,count(DISTINCT visitor_id) AS visitors,count(*) AS visits,100.0*count(*) FILTER(WHERE pageviews=1 AND custom=0)/NULLIF(count(*),0) AS bounce,avg(duration) AS duration FROM dimension_visits GROUP BY period,label),
+    dimension_measurement AS (SELECT period,label,count(DISTINCT visitor_id) AS visitors,count(*) AS visits,100.0*count(*) FILTER(WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce,avg(duration) AS duration FROM dimension_visits GROUP BY period,label),
     dimension_counts AS (SELECT period,label,count(*) FILTER(WHERE event_name='page_view') AS pageviews,count(*) FILTER(WHERE event_name<>'page_view') AS custom,count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NOT NULL) AS identified
       FROM dimension_labeled GROUP BY period,label HAVING CASE WHEN $16='event' THEN count(*) FILTER(WHERE event_name<>'page_view')>0 ELSE count(*) FILTER(WHERE event_name='page_view')>0 END),
     dimension_groups AS MATERIALIZED (SELECT a.*,m.visitors,m.visits,m.bounce,m.duration FROM dimension_counts a LEFT JOIN dimension_measurement m ON a.period=m.period AND a.label IS NOT DISTINCT FROM m.label),
@@ -125,13 +148,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
         'counterpart',CASE WHEN b.period IS NULL THEN NULL ELSE json_build_object('pageViews',b.pageviews,'customEvents',b.custom,'identifiedPageViews',b.identified,'visitors',b.visitors,'visits',b.visits,'bounceRate',b.bounce,'averageVisitSeconds',b.duration) END) ORDER BY a.rank)
         FROM dimension_ranked a LEFT JOIN dimension_groups b ON b.period<>a.period AND b.label IS NOT DISTINCT FROM a.label WHERE a.period=q.period AND a.rank<=20),'[]'::json) AS dimension_rows,r.*
     FROM periods q CROSS JOIN clock c CROSS JOIN LATERAL (
-    WITH observations AS MATERIALIZED (SELECT * FROM all_observations WHERE period=q.period), visits AS (
-      SELECT visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
-        count(*) FILTER (WHERE event_name<>'page_view') AS custom,
-        extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
-      FROM observations WHERE visit_id IS NOT NULL GROUP BY visitor_id,visit_id
-      HAVING count(*) FILTER (WHERE event_name='page_view')>0
-    ), buckets AS (
+    WITH observations AS MATERIALIZED (SELECT * FROM all_observations WHERE period=q.period), ${analyticsSummarySql.visits}, buckets AS (
       SELECT (received_at AT TIME ZONE 'UTC')::date AS day,
         count(*) FILTER (WHERE event_name='page_view') AS views,
         count(*) FILTER (WHERE event_name<>'page_view') AS custom
@@ -149,13 +166,13 @@ export async function projectAnalytics(projectId: string, userId: string, params
         (VALUES ('browser',e.dimensions->>'browser'),('os',e.dimensions->>'os'),('device',e.dimensions->>'device')) d(field,value)
     ), environment_visits AS (
       SELECT field,value,visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
-        count(*) FILTER (WHERE event_name<>'page_view') AS custom,
+        bool_or(visit_has_custom) AS custom,
         extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
       FROM environment_observations WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL GROUP BY field,value,visitor_id,visit_id
       HAVING count(*) FILTER (WHERE event_name='page_view')>0
     ), environment_measurement AS (
       SELECT field,value,count(DISTINCT visitor_id) AS visitors,count(*) AS visits,
-        100.0*count(*) FILTER (WHERE pageviews=1 AND custom=0)/NULLIF(count(*),0) AS bounce_rate,avg(duration) AS duration
+        100.0*count(*) FILTER (WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce_rate,avg(duration) AS duration
       FROM environment_visits GROUP BY field,value
     ), environment_counts AS (
       SELECT field,value,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
@@ -169,19 +186,12 @@ export async function projectAnalytics(projectId: string, userId: string, params
     )${geographyAggregateCtes}
     SELECT ${geographyDetailSql} AS geography_detail,(SELECT analytics_retained_from FROM target) AS retained_from,(SELECT analytics_settings FROM target) AS analytics_settings,
       EXISTS(SELECT 1 FROM target) AS allowed,json_build_object(
-      'totals',json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
-        'customEvents',count(*) FILTER (WHERE event_name<>'page_view')),
+      'totals',${analyticsSummarySql.totals},
       'collection',json_build_object('captureCoverage','unknown','pageViews',json_build_object(
         'cookieless',count(*) FILTER (WHERE event_name='page_view' AND collection_basis='cookieless'),
         'consent',count(*) FILTER (WHERE event_name='page_view' AND collection_basis='consent'),
         'unknown',count(*) FILTER (WHERE event_name='page_view' AND collection_basis IS NULL))),
-      'measurement',json_build_object('version','umami-3.4-hour-cache-v1',
-        'identifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NOT NULL),
-        'unidentifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NULL),
-        'visitors',(SELECT CASE WHEN count(*)>0 THEN count(DISTINCT visitor_id) END FROM visits),
-        'visits',(SELECT CASE WHEN count(*)>0 THEN count(*) END FROM visits),
-        'bounceRate',(SELECT 100.0*count(*) FILTER (WHERE pageviews=1 AND custom=0)/NULLIF(count(*),0) FROM visits),
-        'averageVisitSeconds',(SELECT avg(duration) FROM visits)),
+      'measurement',${analyticsSummarySql.measurement},
       'daily',(SELECT json_agg(json_build_object('date',to_char(c.day,'YYYY-MM-DD'),
         'pageViews',COALESCE(b.views,0),'customEvents',COALESCE(b.custom,0)) ORDER BY c.day)
         FROM calendar c LEFT JOIN buckets b ON b.day=c.day),
@@ -253,9 +263,7 @@ function formatReport(row:{retained_from:string|Date|null;analytics_settings:unk
   const environment=report.environment as AnalyticsEnvironment;
   if(environment.coverage.firstRecordedAt!==null)environment.coverage.firstRecordedAt=new Date(environment.coverage.firstRecordedAt).toISOString();
   if (coverage.status === 'unavailable') {
-    report.totals = { pageViews: null, customEvents: null };
-    report.measurement.identifiedPageViews = null;
-    report.measurement.unidentifiedPageViews = null;
+    hideAnalyticsSummary(report);
     report.collection.pageViews={cookieless:null,consent:null,unknown:null};
     environment.browsers=[];environment.operatingSystems=[];environment.devices=[];
     environment.coverage={pageViews:null,recordedPageViews:null,notRecordedPageViews:null,firstRecordedAt:null};

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { z } from 'zod';
+import type {PoolClient} from 'pg';
 import { getConfig } from './config.ts';
 import { assertSchema, getDatabase } from './db.ts';
 import { claimInstallation, FoundationError, getAuth } from './auth.ts';
@@ -78,6 +79,7 @@ import {getPromptCitationSpecializations,exportPromptCitationSpecializations} fr
 import {nativeOpenApi} from './openapi.ts';
 import {beginSessionReplay,uploadSessionReplay,listSessionReplays,getSessionReplay} from './session-replay.ts';
 import {replayBegin,replayUpload} from '../lib/session-replay.ts';
+import {handleTrackedAssetPublic,handleTrackedAssets} from './tracked-assets.ts';
 import {beginHeatmap,collectHeatmap,projectHeatmaps,listSavedReplays,getSavedReplay,saveReplay} from './replay-heatmaps.ts';
 import {heatmapBegin,heatmapBatch} from '../lib/replay-heatmaps.ts';
 
@@ -90,8 +92,8 @@ function json(body: unknown, status = 200, additional?: HeadersInit) {
   return Response.json(body, { status, headers });
 }
 
-async function limit(key: string, maximum: number) {
-  const { rows } = await getDatabase().pool.query(
+async function limit(key: string, maximum: number, client?:PoolClient) {
+  const { rows } = await (client??getDatabase().pool).query(
     `WITH expired AS (DELETE FROM request_limit WHERE minute < floor(extract(epoch FROM now()) / 60) - 60)
      INSERT INTO request_limit(key,minute,count) VALUES ($1,floor(extract(epoch FROM now()) / 60),1)
      ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING count`, [key, maximum],
@@ -139,6 +141,8 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     const config = getConfig();
     await assertSchema();
+    const trackedPublic=await handleTrackedAssetPublic(request,limit);
+    if(trackedPublic)return trackedPublic;
     if(path==='/api/mcp')return await (await import('./mcp.ts')).handleMcp(request,config.appUrl,limit);
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
@@ -270,6 +274,8 @@ export async function handleApi(request: Request): Promise<Response> {
       return json({ error: 'Authentication route unavailable.' }, 404);
     }
     const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
+    const trackedResponse=await handleTrackedAssets(request,user.id,limit);
+    if(trackedResponse)return trackedResponse;
     const boardPreviewRoute=path.match(new RegExp('^/api/workspaces/('+id+')/boards/preview$','i'));
     if(boardPreviewRoute){
       if(request.method!=='POST')return json({error:'Method not allowed.'},405);
