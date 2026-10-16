@@ -26,8 +26,13 @@ export type GoogleGa4BrowserFixture={email:string;password:string;userId:string;
 /** Actual native API/queue/worker/storage; only fixed Google HTTP transport is synthetic. */
 export async function runGoogleGa4Checks(browserCheck?:(fixture:GoogleGa4BrowserFixture)=>Promise<void>){
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig(),{pool}=getDatabase();
-  assert.equal(new URL(config.databaseUrl).port,'55501');for(const url of [config.appUrl,config.databaseUrl])assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname));
+  if(process.env.GITHUB_ACTIONS==='true'){
+    const database=new URL(config.databaseUrl);assert.equal(process.env.TEN98_ISOLATED_CI_DATABASE,'1');assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'5432');assert.equal(database.pathname,'/ten98_google_ga4_ci');assert.doesNotMatch(config.databaseUrl,/[?#]/);
+  }else{
+  assert.equal(new URL(config.databaseUrl).port,'55501');
   assert.match(new URL(config.databaseUrl).pathname,/^\/ten98_(?:google_ga4|google_browser)_[a-f0-9]{12}$/);
+  }
+  for(const url of [config.appUrl,config.databaseUrl])assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname));
   await assertSchema();assert.equal((await migrationSources()).at(-1)?.filename,'0046_ga4_report_inventory.sql','Integrate actual registered45 and46 first; no private migrationSources bypass.');
   const finance=async()=>createHash('sha256').update(JSON.stringify((await pool.query('SELECT to_jsonb(p) AS row FROM provider_request p ORDER BY id')).rows)).digest('hex'),financialBefore=await finance();
   const password=randomBytes(24).toString('base64url'),secret=randomBytes(24).toString('base64url'),access=randomBytes(24).toString('base64url'),refresh=randomBytes(24).toString('base64url');

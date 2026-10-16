@@ -20,8 +20,13 @@ export async function runAccountPreferencesChecks(verifyOriginalRows:()=>Promise
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_ACCOUNT_PREFERENCES_TEST,'1');
   assert.equal(process.env.ANALYTICS_NETWORK_MODE,'off');
   const config=getConfig(),database=new URL(config.databaseUrl),origin='http://127.0.0.1:3111';
-  assert.equal(config.appUrl,origin);assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'55501');
+  assert.equal(config.appUrl,origin);
+  if(process.env.GITHUB_ACTIONS==='true'){
+    assert.equal(process.env.TEN98_ISOLATED_CI_DATABASE,'1');assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'5432');assert.equal(database.pathname,'/ten98_account_preferences_ci');assert.doesNotMatch(config.databaseUrl,/[?#]/);
+  }else{
+  assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'55501');
   assert.match(database.pathname,/^\/ten98_account_preferences_[a-f0-9]{12}$/);assert.equal(database.search,'');assert.equal(database.hash,'');
+  }
   for(const name of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[name],undefined);
   const {pool}=getDatabase();assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public'")).rows[0].n,0);
   const originalFetch=globalThis.fetch;let outbound=0;globalThis.fetch=async()=>{outbound++;throw Error('Account preferences permit no outbound request.');};

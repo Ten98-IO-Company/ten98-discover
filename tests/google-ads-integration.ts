@@ -16,7 +16,11 @@ import {stopJobs} from '../src/server/jobs.ts';
 /** Native routes and actual queue/storage, with the existing in-process Google transport seam only. */
 export async function runGoogleAdsChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig(),{pool}=getDatabase();
+ if(process.env.GITHUB_ACTIONS==='true'){
+  const database=new URL(config.databaseUrl);assert.equal(process.env.TEN98_ISOLATED_CI_DATABASE,'1');assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'5432');assert.equal(database.pathname,'/ten98_google_ads_ci');assert.doesNotMatch(config.databaseUrl,/[?#]/);
+ }else{
  assert.equal(new URL(config.databaseUrl).port,'55501');assert.match(new URL(config.databaseUrl).pathname,/^\/ten98_google_ads_[a-f0-9]{12}$/);
+ }
  for(const value of [config.appUrl,config.databaseUrl])assert.ok(['127.0.0.1','localhost','[::1]'].includes(new URL(value).hostname));
  await assertSchema();assert.equal((await migrationSources()).at(-1)?.version,'0046');
  const finance=async()=>createHash('sha256').update(JSON.stringify((await pool.query('SELECT to_jsonb(p) AS row FROM provider_request p ORDER BY id')).rows)).digest('hex'),financialBefore=await finance();

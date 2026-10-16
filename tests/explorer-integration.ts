@@ -15,6 +15,9 @@ import {resolve} from 'node:path';
 export async function runExplorerChecks(){
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
   const config=getConfig();assert.ok(['127.0.0.1','localhost','[::1]'].includes(new URL(config.databaseUrl).hostname));
+  if(process.env.GITHUB_ACTIONS==='true'){
+    const database=new URL(config.databaseUrl);assert.equal(process.env.TEN98_ISOLATED_CI_DATABASE,'1');assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'5432');assert.equal(database.pathname,'/ten98_explorer_ci');assert.doesNotMatch(config.databaseUrl,/[?#]/);
+  }
   const {pool}=getDatabase(),owner=randomUUID(),viewer=randomUUID(),foreign=randomUUID(),workspace=randomUUID(),project=randomUUID(),other=randomUUID();
   const password=randomBytes(24).toString('base64url');
   for(const id of [owner,viewer,foreign]){

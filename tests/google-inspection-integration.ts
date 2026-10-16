@@ -15,9 +15,16 @@ import {createApiKey} from '../src/server/api-keys.ts';
 
 /** Fresh owned fixture only. Real cookie/route/OAuth logic; Google transport is in-process synthetic data. */
 export async function runGoogleInspectionChecks(capture?:(value:unknown)=>Promise<void>){
- assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig(),database=new URL(config.databaseUrl),{pool}=getDatabase();
- assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'55501');assert.match(database.pathname,/^\/ten98_gsc_inspection_[a-f0-9]{12}$/);assert.equal(new URL(config.appUrl).hostname,'127.0.0.1');
- await assertSchema();assert.equal((await pool.query('SELECT count(*)::int n FROM "user"')).rows[0].n,0);assert.equal((await pool.query("SELECT claimed FROM installation WHERE id='instance'")).rows[0].claimed,true,'Outer fixture must explicitly claim only its fresh installation.');
+ assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig(),database=new URL(config.databaseUrl),ci=process.env.GITHUB_ACTIONS==='true',{pool}=getDatabase();
+ if(ci){
+  assert.equal(process.env.TEN98_ISOLATED_CI_DATABASE,'1');assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'5432');assert.equal(database.pathname,'/ten98_gsc_inspection_ci');assert.doesNotMatch(config.databaseUrl,/[?#]/);
+ }else{
+ assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'55501');assert.match(database.pathname,/^\/ten98_gsc_inspection_[a-f0-9]{12}$/);
+ }
+ assert.equal(new URL(config.appUrl).hostname,'127.0.0.1');
+ await assertSchema();assert.equal((await pool.query('SELECT count(*)::int n FROM "user"')).rows[0].n,0);
+ if(ci)assert.equal((await pool.query("UPDATE installation SET claimed=true WHERE id='instance' AND claimed=false")).rowCount,1);
+ assert.equal((await pool.query("SELECT claimed FROM installation WHERE id='instance'")).rows[0].claimed,true,'Outer fixture must explicitly claim only its fresh installation.');
  const password=randomBytes(24).toString('base64url'),roles=['owner','admin','editor','viewer'] as const,actors:Record<string,{id:string;email:string;cookie:string}>={};
  for(const role of [...roles,'foreign']){const id=randomUUID(),email=`${id}@inspection.test`;await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)',[id,`Inspection ${role}`,email]);await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),id,await hashPassword(password)]);actors[role]={id,email,cookie:''};}
  const owner=actors.owner,{workspace}=await createWorkspace(owner.id,{name:'Inspection fixture'}),foreign=await createWorkspace(actors.foreign.id,{name:'Foreign inspection fixture'}),projectId=randomUUID(),otherProjectId=randomUUID(),foreignProject=randomUUID();
