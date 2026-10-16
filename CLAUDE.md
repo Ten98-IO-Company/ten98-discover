@@ -48,14 +48,15 @@ Environment: Node 24.19.0, pnpm 11.19.0, Playwright 1.62.1 with headless Microso
 | Deletion browser7 | First run failed in the settings parent because both danger-action children shared one React sibling key, which React documents as unsupported; with distinct keys seven groups,20 contexts,35 GET,24 POST and four screenshots pass. |
 | Migrations CLI lane | Full lane passed, including the actual CLI60-to-61 upgrade and the61 no-op. |
 | CI wiring | `ten98_analytics_reset_ci` and `ten98_project_delete_ci` lanes added to the foundation workflow. |
+| Compiled-App deletion | `tests/project-delete-compiled-browser.mjs` drove the real built server on a fresh migrated database in headless Edge: owner claim, two websites, deletion from Collection and privacy, router/selector/reload/404/stale-link checks, eight steps passed with no page errors. |
 
-Still open from the list below: compiled-App deletion navigation (item3), RTL classic-scrollbar heatmap calibration and heatmap composition (item4), export composition (item5), and the full register audit (item6).
+Still open from the list below: RTL classic-scrollbar heatmap calibration and heatmap composition (item4), export composition (item5), and the full register audit (item6).
 
 ## Immediate work
 
 1. Done 2026-10-17; see the validation table. Original wording: Diagnose the two reset failures above without weakening assertions, extending deadlines or treating partial markers as acceptance.
 2. Done 2026-10-17; see the validation table. Original wording: Validate deletion in a fresh isolated schema61 database: exact current owner/admin, actor/body/request retry after deletion, reserved/dispatched/uncertain paid-work refusal, financial/other-project preservation, FK dependency order and atomic rollback. Run the authored CLI29: genuine60-to61 upgrade and61 no-op; preserve all older populated-fixture assertions.
-3. Verify compiled App behavior after deletion: invalidate current owner, remove selector entry, navigate and reload the project catalog. Component callback tests do not prove this.
+3. Done 2026-10-17; see the validation table. Original wording: Verify compiled App behavior after deletion: invalidate current owner, remove selector entry, navigate and reload the project catalog. Component callback tests do not prove this.
 4. Diagnose classic RTL heatmap calibration, then compose the newer heatmap branch. Existing numeric probes suggest a scrollbar-origin offset but have not proved a supported-DOM fix. Use agents/handoff/heatmap-calibration-probe.mjs only as a diagnostic; it never replaces the original readiness assertion. Rerun RTL/narrow/classic/zoom and original6/collector17 regressions after any asset change.
 5. Compose export without losing reset epoch/cutoff checks, then run its native/browser/compiled checks on the combined tree.
 6. Resume the complete81-requirement audit and implementation. A smaller milestone does not waive V1 scope. Open areas include click-ID attribution, remaining AI/SEO datasets and flows, platform imports, rendered/protected/scheduled audits, local SEO, OIDC policies, full public-sharing scopes and Docker backup/restore/capacity/privacy acceptance. Verify each against source and the requirement register before changing its status.
