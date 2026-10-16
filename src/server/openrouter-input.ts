@@ -7,7 +7,7 @@ export type PromptModel=string;
 export type OpenRouterModel=string;
 export const executionInput=z.object({connectionId:z.uuid(),promptId:z.uuid(),versionId:z.uuid(),
   systemText:z.string().max(4000).refine(v=>toUSVString(v)===v&&!/[\x00\x0b\x0c]/.test(v)),
-  models:z.array(z.string().refine(openRouterModelId)).min(1).max(2).refine(v=>new Set(v).size===v.length),
+  models:z.array(z.string().refine(openRouterModelId)).min(1).max(4).refine(v=>new Set(v).size===v.length),
   maxCompletionTokens:z.number().int().min(16).max(4096),fundedCredits:z.literal(true)}).strict();
 export function executionParse<T extends z.ZodType>(schema:T,input:unknown):z.output<T>{const result=schema.safeParse(input);if(!result.success)throw new FoundationError(400,'Check the prompt execution fields and try again.');return result.data;}
 export type ExecutionInput=z.infer<typeof executionInput>;

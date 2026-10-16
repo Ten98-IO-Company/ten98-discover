@@ -9,7 +9,7 @@ import {providerTransaction,usd} from './providers.ts';
 import {reserveSpendInTransaction,dispatchSpend,settleSpend,requestHash} from './spending.ts';
 import {executionInput,executionParse,type RenderedInput,type RouteSnapshot} from './openrouter-input.ts';
 import {readOpenRouterRoutes,keyFingerprint,executionActor,executionRequestBody,requestPromptExecution,reconcileOpenRouter,unknownExecution,type ExecutionOutcome} from './openrouter.ts';
-import {openRouterTextProfile} from '../lib/openrouter-models.ts';
+import {openRouterTextProfile,openRouterMetadataBytes} from '../lib/openrouter-models.ts';
 import {boundedOpenRouterMetadata,cachedOpenRouterModels} from './openrouter-models.ts';
 
 export const promptExecutionQueue='prompt-execution';
@@ -41,31 +41,43 @@ function summary(row:any,details=false){return {id:row.id,model:row.route.model,
   estimateUsd:usd(row.estimate_micros),actualUsd:row.actual_micros===null?null:usd(row.actual_micros),dispatchedAt:row.dispatched_at,completedAt:row.completed_at,
   diagnostic:row.diagnostic,resultExpired:row.read_expired,...(details?{result:row.read_expired?null:row.result,reportedCost:row.evidence?.reportedCost??null,
     isByok:row.evidence?.isByok??null,upstreamReportedCost:row.evidence?.upstreamReportedCost??null,generationId:row.generation_id}:{} )};}
-async function comparisonDto(client:PoolClient,projectId:string,id:string,userId:string,role:string,details=false){
+function boundedPromptRead<T>(value:T,answer=false){
+  if(Buffer.byteLength(JSON.stringify(value),'utf8')>openRouterMetadataBytes)throw new FoundationError(413,answer?
+    'The retained answer exceeds the complete 2MiB response limit. Its charge receipt remains available in the comparison summary.':
+    'The complete prompt response exceeds the 2MiB limit. Read its comparison summary and individual answers.');
+  return value;
+}
+async function comparisonDto(client:PoolClient,projectId:string,id:string,userId:string,role:string,details=false,individual=false){
   // Reads enforce the same strict raw cutoff as cleanup, including pending-input
   // protection. Cleanup lag must not expose expired payloads through a receipt.
-  const c=(await client.query(`SELECT c.*,q.prompt_id,q.version_id,v.text,
+  const c=(await client.query(`WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at)
+    SELECT c.*,q.prompt_id,q.version_id,q.input,q.messages,jsonb_array_length(q.routes) AS model_count,v.text,read_clock.at::text AS read_at,
     (q.input_purged_at IS NOT NULL OR (
       EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id)
       AND NOT EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id
         AND (r.status IN('queued','running') OR r.completed_at IS NULL
-          OR r.completed_at>=transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours')))) AS input_expired
+          OR r.completed_at>=read_clock.at-w.raw_provider_evidence_days*interval '24 hours')))) AS input_expired
     FROM prompt_comparison c
     JOIN prompt_execution_quote q ON q.id=c.quote_id
     JOIN workspace w ON w.id=c.workspace_id
     JOIN prompt_text_version v ON v.id=q.version_id AND v.project_id=q.project_id AND v.prompt_id=q.prompt_id
-    WHERE c.id=$1 AND c.project_id=$2`,[id,projectId])).rows[0];
+    CROSS JOIN read_clock WHERE c.id=$1 AND c.project_id=$2`,[id,projectId])).rows[0];
   if(!c)throw new FoundationError(404,'Comparison not found or unavailable.');
+  const includeAnswers=details&&!individual&&c.model_count<=2;
+  // Summaries never retrieve answer blobs or copied provider evidence from PostgreSQL.
+  const projection=includeAnswers?runSelect:`SELECT r.id,r.workspace_id,r.position,r.route,r.status,r.diagnostic,r.dispatched_at,r.completed_at,
+    r.result_purged_at,(r.result IS NOT NULL) AS has_result,p.status AS charge_status,p.estimate_micros,p.actual_micros
+    FROM prompt_execution r JOIN provider_request p ON p.id=r.id`;
   const rows=(await client.query(`SELECT saved.*,
-    (saved.result_purged_at IS NOT NULL OR (saved.result IS NOT NULL AND saved.completed_at IS NOT NULL
-      AND saved.completed_at<transaction_timestamp()-w.raw_provider_evidence_days*interval '24 hours')) AS read_expired
-    FROM (${runSelect} WHERE r.comparison_id=$1 AND r.project_id=$2) saved
-    JOIN workspace w ON w.id=saved.workspace_id ORDER BY saved.position`,[id,projectId])).rows;
+    (saved.result_purged_at IS NOT NULL OR (${includeAnswers?'saved.result IS NOT NULL':'saved.has_result'} AND saved.completed_at IS NOT NULL
+      AND saved.completed_at<$3::timestamptz-w.raw_provider_evidence_days*interval '24 hours')) AS read_expired
+    FROM (${projection} WHERE r.comparison_id=$1 AND r.project_id=$2) saved
+    JOIN workspace w ON w.id=saved.workspace_id ORDER BY saved.position`,[id,projectId,c.read_at])).rows;
   return {id:c.id,quoteId:c.quote_id,createdAt:c.created_at,cancelRequested:c.cancel_requested,
     prompt:{id:c.prompt_id,versionId:c.version_id,textPreview:Array.from(c.text as string).slice(0,160).join('')},
     canCancel:writers.includes(role)&&(role==='owner'||c.user_id===userId)&&rows.some(r=>r.status==='queued'&&r.charge_status==='reserved'),
-    runs:rows.map(r=>summary(r,details)),
-    ...(details?{input:c.input_expired?null:rows[0]?.input,messages:c.input_expired?null:rows[0]?.messages,inputExpired:c.input_expired,cache:{reused:false,available:false}}:{})};
+    runs:rows.map(r=>summary(r,includeAnswers)),
+    ...(details?{input:c.input_expired?null:c.input,messages:c.input_expired?null:c.messages,inputExpired:c.input_expired,cache:{reused:false,available:false},...(!includeAnswers?{answerMode:'individual' as const}:{})}:{})};
 }
 export async function getPromptExecutions(projectId:string,userId:string){return scoped(projectId,userId,readers,async(client,wid,role)=>{
   const connections=await client.query("SELECT id,name,check_status AS \"checkStatus\" FROM provider_connection WHERE workspace_id=$1 AND provider='openrouter' AND revoked_at IS NULL ORDER BY created_at,id",[wid]);
@@ -74,7 +86,47 @@ export async function getPromptExecutions(projectId:string,userId:string){return
   const catalog=cachedOpenRouterModels();
   return boundedOpenRouterMetadata({role,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),catalog,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,comparisons,cache:{available:false},scheduling:{available:false}});
 });}
-export async function getPromptComparison(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>({role,comparison:await comparisonDto(client,projectId,id,userId,role,true)}));}
+export async function getPromptComparison(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true)}));}
+export async function getPromptComparisonSummary(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)}));}
+export async function getPromptExecutionResult(projectId:string,userId:string,id:string){
+  z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>{
+    // Capture the raw-evidence cutoff after the workspace/project wait. Cleanup lag
+    // cannot expose an expired answer, and no copied input or full evidence is exported.
+    const row=(await client.query(`WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at),saved AS (
+      SELECT r.*,p.status AS charge_status,p.estimate_micros,p.actual_micros,
+        (r.result_purged_at IS NOT NULL OR (r.result IS NOT NULL AND r.completed_at IS NOT NULL
+          AND r.completed_at<read_clock.at-w.raw_provider_evidence_days*interval '24 hours')) AS read_expired
+      FROM prompt_execution r JOIN provider_request p ON p.id=r.id JOIN workspace w ON w.id=r.workspace_id CROSS JOIN read_clock
+      WHERE r.id=$1 AND r.project_id=$2)
+      SELECT id,comparison_id,route,status,charge_status,estimate_micros,actual_micros,dispatched_at,completed_at,diagnostic,read_expired,
+        CASE WHEN read_expired THEN NULL ELSE result-'citations' END AS result,generation_id,
+        CASE WHEN read_expired OR result IS NULL THEN NULL ELSE jsonb_array_length(result->'citations') END AS citation_count,
+        jsonb_build_object('reportedCost',evidence->'reportedCost','isByok',evidence->'isByok','upstreamReportedCost',evidence->'upstreamReportedCost') AS evidence
+      FROM saved`,[id,projectId])).rows[0];
+    if(!row)throw new FoundationError(404,'Prompt request not found or unavailable.');
+    return boundedPromptRead({role,comparisonId:row.comparison_id,run:summary(row,true),citations:{count:row.citation_count,pageSize:20}},true);
+  });
+}
+export async function getPromptExecutionCitations(projectId:string,userId:string,id:string,query:URLSearchParams){
+  z.uuid().parse(id);
+  if(query.size!==1||!['0','20','40','60','80','100'].includes(query.get('offset')??''))throw new FoundationError(400,'Use exactly one citation offset: 0, 20, 40, 60, 80 or 100.');
+  const offset=Number(query.get('offset'));
+  return scoped(projectId,userId,readers,async(client,_wid,role)=>{
+    const row=(await client.query(`WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at),saved AS (
+      SELECT r.id,r.comparison_id,r.result,
+        (r.result_purged_at IS NOT NULL OR (r.result IS NOT NULL AND r.completed_at IS NOT NULL
+          AND r.completed_at<read_clock.at-w.raw_provider_evidence_days*interval '24 hours')) AS read_expired
+      FROM prompt_execution r JOIN workspace w ON w.id=r.workspace_id CROSS JOIN read_clock WHERE r.id=$1 AND r.project_id=$2),
+      retained AS (SELECT id,comparison_id,read_expired,CASE WHEN read_expired OR result IS NULL THEN NULL ELSE result->'citations' END AS citations FROM saved)
+      SELECT id,comparison_id,read_expired,jsonb_array_length(citations) AS total,
+        COALESCE((SELECT jsonb_agg(item.value ORDER BY item.ordinality)
+          FROM jsonb_array_elements(citations) WITH ORDINALITY AS item(value,ordinality)
+          WHERE item.ordinality>$3 AND item.ordinality<=$3+20),'[]'::jsonb) AS items FROM retained`,[id,projectId,offset])).rows[0];
+    if(!row)throw new FoundationError(404,'Prompt request not found or unavailable.');
+    return boundedPromptRead({role,runId:row.id,comparisonId:row.comparison_id,resultExpired:row.read_expired,total:row.total,offset,
+      nextOffset:row.total!==null&&offset+20<row.total?offset+20:null,items:row.items});
+  });
+}
 export async function quotePromptExecution(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
   const input=executionParse(executionInput,raw);
   const saved=await scoped(projectId,userId,writers,async(client,wid)=>{
@@ -99,7 +151,7 @@ export async function startPromptExecution(projectId:string,userId:string,raw:un
   const {quoteId,requestKey}=executionParse(z.object({quoteId:z.uuid(),requestKey:z.uuid()}).strict(),raw),boss=await getBoss();
   return scoped(projectId,userId,writers,async(client,wid,role)=>{
     const prior=(await client.query('SELECT * FROM prompt_comparison WHERE workspace_id=$1 AND request_key=$2',[wid,requestKey])).rows[0];
-    if(prior){if(prior.project_id!==projectId||prior.user_id!==userId||prior.quote_id!==quoteId)throw new FoundationError(409,'This request key already identifies different work.');return {role,comparison:await comparisonDto(client,projectId,prior.id,userId,role,true)};}
+    if(prior){if(prior.project_id!==projectId||prior.user_id!==userId||prior.quote_id!==quoteId)throw new FoundationError(409,'This request key already identifies different work.');return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,prior.id,userId,role,true,true)});}
     const q=(await client.query('SELECT * FROM prompt_execution_quote WHERE id=$1 AND project_id=$2 AND user_id=$3 AND workspace_id=$4 FOR UPDATE',[quoteId,projectId,userId,wid])).rows[0];
     if(!q)throw new FoundationError(404,'Quote not found or unavailable.');
     if(q.expires_at.getTime()<=Date.now())throw new FoundationError(409,'The quote expired. Prepare a new quote.');
@@ -112,7 +164,7 @@ export async function startPromptExecution(projectId:string,userId:string,raw:un
       });
     }
     if(!await boss.send(promptExecutionQueue,{comparisonId:id},{id,retryLimit:0,expireInSeconds:180,db:{executeSql:(text,values)=>client.query(text,values)}}))throw new Error('Comparison could not be queued.');
-    return {role,comparison:await comparisonDto(client,projectId,id,userId,role,true)};
+    return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)});
   });
 }
 async function cancelChildren(client:PoolClient,id:string,diagnostic:string){
@@ -128,7 +180,7 @@ export async function cancelPromptComparison(projectId:string,userId:string,id:s
     if(!row)throw new FoundationError(404,'Comparison not found or unavailable.');
     if(row.user_id!==userId&&role!=='owner')throw new FoundationError(403,'Only the initiating user or owner can stop this comparison.');
     await client.query('UPDATE prompt_comparison SET cancel_requested=true WHERE id=$1',[id]);await cancelChildren(client,id,'Stopped before dispatch. Already dispatched work may still incur a charge.');
-    return {role,comparison:await comparisonDto(client,projectId,id,userId,role,true)};
+    return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)});
   });
 }
 async function workerTransaction<T>(comparisonId:string,work:(client:PoolClient)=>Promise<T>){
@@ -194,7 +246,7 @@ export async function reconcilePromptExecution(projectId:string,userId:string,id
   });
   let outcome:ExecutionOutcome;
   try{outcome=await reconcileOpenRouter(saved.credentials,saved.row.generation_id,saved.row.route,saved.row.dispatched_at,id,saved.row.request_actor,send);}
-  catch(error){if(error instanceof FoundationError)return {...await getPromptComparison(projectId,userId,saved.row.comparison_id),reconciliation:{status:'inconclusive',message:error.message}};throw error;}
+  catch(error){if(error instanceof FoundationError)return boundedPromptRead({...await getPromptComparisonSummary(projectId,userId,saved.row.comparison_id),reconciliation:{status:'inconclusive',message:error.message}});throw error;}
   return scoped(projectId,userId,['owner'],async(client,wid,role)=>{
     const conn=await connection(client,wid,saved.row.connection_id,saved.revision);if(keyFingerprint(credentials(conn))!==saved.row.key_fingerprint)throw new FoundationError(409,'The key changed during reconciliation.');
     const current=(await client.query(runSelect+' WHERE r.id=$1 AND r.project_id=$2',[id,projectId])).rows[0];
@@ -203,7 +255,7 @@ export async function reconcilePromptExecution(projectId:string,userId:string,id
     // Charge recovery is not a new answer or a new raw-evidence retention period.
     await client.query('UPDATE prompt_execution SET status=$2,evidence=$3,diagnostic=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',[id,settled.reconciliationRequired?'uncertain':current.result?'completed':'reconciled',JSON.stringify(outcome.evidence),outcome.diagnostic??'The credit charge was recovered. The original answer is unavailable; a new answer requires a new paid quote.']);
     await client.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[wid]);
-    return {role,comparison:await comparisonDto(client,projectId,current.comparison_id,userId,role,true),reconciliation:{status:settled.reconciliationRequired?'inconclusive':'matched',message:'Spending remains paused until an owner reviews the charge.'}};
+    return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,current.comparison_id,userId,role,true,true),reconciliation:{status:settled.reconciliationRequired?'inconclusive':'matched',message:'Spending remains paused until an owner reviews the charge.'}});
   });
 }
 export async function reconcilePromptExecutionJobs(){
