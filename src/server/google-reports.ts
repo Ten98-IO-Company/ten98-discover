@@ -11,11 +11,15 @@ export const googleReports = {
   gsc_pages: { provider: 'gsc', dimensions: ['date', 'page'], metrics: ['clicks', 'impressions', 'ctr', 'position'] },
   ga4_traffic: { provider: 'ga4', dimensions: ['date', 'sessionDefaultChannelGroup'], metrics: ['sessions', 'totalUsers', 'screenPageViews', 'engagedSessions'] },
   ga4_events: { provider: 'ga4', dimensions: ['date', 'eventName'], metrics: ['eventCount', 'keyEvents', 'totalUsers'] },
+  ga4_pages: { provider: 'ga4', dimensions: ['date', 'unifiedPagePathScreen'], metrics: ['screenPageViews', 'activeUsers', 'userEngagementDuration', 'eventCount', 'keyEvents', 'totalRevenue'] },
+  ga4_acquisition: { provider: 'ga4', dimensions: ['date', 'sessionSource', 'sessionMedium', 'sessionCampaignName'], metrics: ['sessions', 'engagedSessions', 'totalUsers', 'eventCount', 'keyEvents', 'totalRevenue'] },
+  ga4_key_events: { provider: 'ga4', dimensions: ['date', 'eventName', 'isKeyEvent'], metrics: ['eventCount', 'keyEvents', 'totalUsers', 'totalRevenue'] },
   ads_daily: { provider: 'ads', dimensions: ['date', 'customerId'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
   ads_campaigns: { provider: 'ads', dimensions: ['date', 'customerId', 'campaignId', 'campaignName', 'campaignStatus'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
   ads_ad_groups: { provider: 'ads', dimensions: ['date', 'customerId', 'campaignId', 'campaignName', 'adGroupId', 'adGroupName', 'adGroupStatus'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
 } as const;
 export type GoogleReport = keyof typeof googleReports;
+export const ga4InventoryReports: readonly GoogleReport[] = ['ga4_pages', 'ga4_acquisition', 'ga4_key_events'];
 export type GoogleProvider = keyof typeof googleScopes;
 export type ReportRow = { dimensions: Record<string, string>; metrics: Record<string, string | null> };
 export type ReportPage = { rows: ReportRow[]; rowCount: number | null; complete?: boolean; quality: { warnings: string[]; metadata: Record<string, unknown> } };
@@ -34,7 +38,24 @@ export function googleInput<T extends z.ZodType>(schema: T, value: unknown): z.o
   return parsed.data;
 }
 
-export function googleReportRequest(report: GoogleReport, from: string, to: string, offset: number) {
+type GoogleReportRequest =
+  | {
+    query: string; searchSettings: { returnTotalResultsCount: true };
+    startDate?: never; endDate?: never; dimensions?: never; type?: never; dataState?: never; aggregationType?: never; rowLimit?: never; startRow?: never;
+    dateRanges?: never; metrics?: never; orderBys?: never; offset?: never; limit?: never; returnPropertyQuota?: never; keepEmptyRows?: never; dimensionFilter?: never;
+  }
+  | {
+    startDate: string; endDate: string; dimensions: readonly string[]; type: 'web'; dataState: 'final'; aggregationType: 'auto'; rowLimit: 1000; startRow: number;
+    query?: never; searchSettings?: never; dateRanges?: never; metrics?: never; orderBys?: never; offset?: never; limit?: never; returnPropertyQuota?: never; keepEmptyRows?: never; dimensionFilter?: never;
+  }
+  | {
+    dateRanges: Array<{ startDate: string; endDate: string }>; dimensions: Array<{ name: string }>; metrics: Array<{ name: string }>;
+    orderBys: Array<{ dimension: { dimensionName: string; orderType?: 'ALPHANUMERIC' } }>; offset: string; limit: '1000'; returnPropertyQuota: true; keepEmptyRows: true;
+    dimensionFilter?: { filter: { fieldName: 'isKeyEvent'; stringFilter: { matchType: 'EXACT'; value: 'true'; caseSensitive: true } } };
+    query?: never; searchSettings?: never; startDate?: never; endDate?: never; type?: never; dataState?: never; aggregationType?: never; rowLimit?: never; startRow?: never;
+  };
+
+export function googleReportRequest(report: GoogleReport, from: string, to: string, offset: number): GoogleReportRequest {
   const definition = googleReports[report];
   if (definition.provider === 'ads') {
     googleInput(googleDate, from); googleInput(googleDate, to);
@@ -44,8 +65,33 @@ export function googleReportRequest(report: GoogleReport, from: string, to: stri
     return { query: `SELECT ${fields.join(', ')} FROM ${resource} WHERE segments.date BETWEEN '${from}' AND '${to}' ORDER BY segments.date${resource === 'customer' ? '' : ', campaign.id'}${resource === 'ad_group' ? ', ad_group.id' : ''}`, searchSettings: { returnTotalResultsCount: true } };
   }
   if (definition.provider === 'gsc') return { startDate: from, endDate: to, dimensions: definition.dimensions, type: 'web', dataState: 'final', aggregationType: 'auto', rowLimit: 1000, startRow: offset };
+  const keyEventFilter: { dimensionFilter?: { filter: { fieldName: 'isKeyEvent'; stringFilter: { matchType: 'EXACT'; value: 'true'; caseSensitive: true } } } } = {};
+  if (report === 'ga4_key_events') keyEventFilter.dimensionFilter = { filter: { fieldName: 'isKeyEvent', stringFilter: { matchType: 'EXACT', value: 'true', caseSensitive: true } } };
   return { dateRanges: [{ startDate: from, endDate: to }], dimensions: definition.dimensions.map(name => ({ name })), metrics: definition.metrics.map(name => ({ name })),
-    orderBys: definition.dimensions.map(dimensionName => ({ dimension: { dimensionName } })), offset: String(offset), limit: '1000', returnPropertyQuota: true, keepEmptyRows: true };
+    orderBys: definition.dimensions.map(dimensionName => ({ dimension: { dimensionName, ...(ga4InventoryReports.includes(report) ? { orderType: 'ALPHANUMERIC' } : {}) } })), offset: String(offset), limit: '1000', returnPropertyQuota: true, keepEmptyRows: true,
+    ...keyEventFilter };
+}
+
+export function googleCompatibilityRequest(report: GoogleReport, from: string, to: string) {
+  if (!ga4InventoryReports.includes(report)) throw new FoundationError(400, 'Select a detailed GA4 report.');
+  const request = googleReportRequest(report, from, to, 0);
+  return { dimensions: request.dimensions, metrics: request.metrics, ...(request.dimensionFilter ? { dimensionFilter: request.dimensionFilter } : {}) };
+}
+
+export function normalizeGoogleCompatibility(report: GoogleReport, value: unknown): void {
+  if (!ga4InventoryReports.includes(report)) throw new FoundationError(400, 'Select a detailed GA4 report.');
+  try {
+    const metadata = z.object({ apiName: safeGoogleString(120) });
+    // Google returns an inventory, not just requested fields. The transport caps
+    // the complete body at 2 MiB; inspect requested names once without selecting extras.
+    const data = z.object({ dimensionCompatibilities: z.array(z.object({ dimensionMetadata: metadata, compatibility: z.unknown().optional() })), metricCompatibilities: z.array(z.object({ metricMetadata: metadata, compatibility: z.unknown().optional() })) }).parse(value);
+    for (const [kind, expected] of [['dimension', googleReports[report].dimensions], ['metric', googleReports[report].metrics]] as const) {
+      const entries = kind === 'dimension' ? data.dimensionCompatibilities.map(entry => ({ name: entry.dimensionMetadata.apiName, compatibility: entry.compatibility })) : data.metricCompatibilities.map(entry => ({ name: entry.metricMetadata.apiName, compatibility: entry.compatibility }));
+      const requested = new Set<string>(expected), seen = new Set<string>();
+      for (const entry of entries) if (requested.has(entry.name)) { if (seen.has(entry.name) || entry.compatibility !== 'COMPATIBLE') throw new Error(); seen.add(entry.name); }
+      if (seen.size !== requested.size) throw new Error();
+    }
+  } catch { throw new FoundationError(502, 'Google could not confirm compatibility for this report. No dimensions or metrics were substituted.'); }
 }
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -104,6 +150,7 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
       }).parse(value);
       const headerlessEmpty = data.dimensionHeaders === undefined && data.metricHeaders === undefined && !data.rows.length && !data.rowCount;
       if (!headerlessEmpty && (JSON.stringify(data.dimensionHeaders?.map(h => h.name)) !== JSON.stringify(definition.dimensions) || JSON.stringify(data.metricHeaders?.map(h => h.name)) !== JSON.stringify(definition.metrics))) malformed();
+      if (data.rows.length && (data.rowCount === undefined || data.rowCount < data.rows.length)) malformed();
       const restricted = new Set(data.metadata?.schemaRestrictionResponse?.activeMetricRestrictions?.map(item => item.metricName));
       rows = data.rows.map(row => {
         if (row.dimensionValues.length !== definition.dimensions.length || row.metricValues.length !== definition.metrics.length) malformed();
@@ -111,6 +158,8 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
           metrics: Object.fromEntries(definition.metrics.map((name, i) => [name, restricted.has(name) ? null : row.metricValues[i].value])) };
       });
       rowCount = data.rowCount ?? rows.length;
+      if (report === 'ga4_key_events' && rows.some(row => row.dimensions.isKeyEvent !== 'true')) malformed();
+      if (ga4InventoryReports.includes(report) && rows.length && (!data.metadata?.timeZone || rows.some(row => row.metrics.totalRevenue !== null) && !data.metadata.currencyCode)) malformed();
       Object.assign(metadata, data.metadata ?? {}, { quota: data.propertyQuota ?? null });
       if (data.metadata?.subjectToThresholding) warnings.push('Google may suppress rows below its privacy thresholds.');
       if (data.metadata?.dataLossFromOtherRow) warnings.push('Google groups some high-cardinality data into an other row.');

@@ -16,7 +16,7 @@ type Coverage='complete'|'partial'|'unavailable';
 
 interface ExploreResult{
   range:{from:string;to:string;timeZone:string;start:string;end:string};
-  query:{from:string;to:string;timeZone:string;kind:string;groupBy:string;groupProperty:string|null;filters:Record<string,string>;property:{key:string;type:string;value:unknown}|null;cohort?:CohortRef;predicates?:AdvancedPredicates};
+  query:{from:string;to:string;timeZone:string;kind:string;groupBy?:string;groupProperty?:string|null;fields?:string[];filters:Record<string,string>;property:{key:string;type:string;value:unknown}|null;cohort?:CohortRef;predicates?:AdvancedPredicates};
   predicateMethod?:ReturnType<typeof advancedPredicateMethod>;
   sessionProperties?:SessionSelection;
   coverage:{status:Coverage;retainedFrom:string|null};
@@ -36,14 +36,80 @@ type SaveAttempt={kind:'create'|'update'|'delete';id?:string;body:{requestId:str
 type CohortEditor={item:SavedFilter|null;name:string;draft:Draft};
 const roleValue=(value:unknown):value is Role=>['owner','admin','editor','viewer'].includes(value as string);
 const canSave=(role:Role|null)=>role==='owner'||role==='admin'||role==='editor';
+function tupleFields(raw:string|null):string[]|null{
+  try{const fields:unknown=JSON.parse(raw??'null');return Array.isArray(fields)&&fields.length>=2&&fields.length<=3&&new Set(fields).size===fields.length&&fields.every(field=>GROUPS.some(([key])=>key!=='property'&&key===field))?fields:null;}catch{return null;}
+}
+function combinationParams(draft:Draft,cohort:CohortRef|null,fields:string[]|null){
+  const result=reportParams(fields?{...draft,groupBy:'event',groupProperty:''}:draft,cohort);if('error'in result||!fields)return result;
+  if(!tupleFields(JSON.stringify(fields)))return {error:'Choose two or three different fields.'};
+  const p=new URLSearchParams(result.qs);p.delete('groupBy');p.delete('groupProperty');p.set('fields',JSON.stringify(fields));
+  return p.toString().length>20000?{error:'These filters are too large. Shorten values or remove conditions.'}:{qs:p.toString()};
+}
+export function validTupleResult(result:ExploreResult,params:URLSearchParams):boolean{
+  const fields=tupleFields(params.get('fields'));if(!fields||!record(result)||!record(result.query)||JSON.stringify(result.query.fields)!==JSON.stringify(fields)||Object.hasOwn(result.query,'groupBy')||Object.hasOwn(result.query,'groupProperty')||!record(result.totals)||!record(result.breakdown)||!record(result.coverage)||!['complete','partial','unavailable'].includes(result.coverage.status)||!Array.isArray(result.breakdown.groups)||result.breakdown.groups.length>100||result.numeric!==null||!clean(result.csv,2097152))return false;
+  for(const key of ['from','to','kind']as const)if(result.query[key]!==params.get(key))return false;
+  try{if(new Intl.DateTimeFormat('en-US',{timeZone:result.query.timeZone}).resolvedOptions().timeZone!==new Intl.DateTimeFormat('en-US',{timeZone:params.get('timeZone')!}).resolvedOptions().timeZone)return false;}catch{return false;}
+  if(!record(result.range)||(['from','to','timeZone']as const).some(key=>result.range[key]!==result.query[key]))return false;
+  const expectedFilters=Object.fromEntries(FILTERS.filter(([key])=>params.has(key)).map(([key])=>[key,params.get(key)]));if(JSON.stringify(result.query.filters)!==JSON.stringify(expectedFilters)){
+    if(!record(result.query.filters)||Object.keys(result.query.filters).length!==Object.keys(expectedFilters).length||Object.entries(expectedFilters).some(([key,value])=>result.query.filters[key]!==value))return false;
+  }
+  const propertyValue=params.has('propertyValue')?JSON.parse(params.get('propertyValue')!):null;
+  const expectedProperty=params.has('propertyKey')?{key:params.get('propertyKey'),type:params.get('propertyType'),value:params.get('propertyType')==='date'?preciseDate(propertyValue):propertyValue}:null;
+  if(JSON.stringify(result.query.property)!==JSON.stringify(expectedProperty))return false;
+  const count=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0;
+  const stamp=(value:unknown):value is string=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;
+  const from=Date.parse(result.range.from+'T00:00:00.000Z'),to=Date.parse(result.range.to+'T00:00:00.000Z'),days=(to-from)/864e5+1;
+  if(!Number.isInteger(days)||days<1||days>366||utcDate(new Date(from))!==result.range.from||utcDate(new Date(to))!==result.range.to||!stamp(result.range.start)||!stamp(result.range.end)||result.range.start>result.range.end||result.coverage.retainedFrom!==null&&!stamp(result.coverage.retainedFrom)||!record(result.properties)||!Array.isArray(result.properties.keys)||result.properties.keys.length>100||!result.properties.keys.every(key=>clean(key,320)&&key.length>0)||new Set(result.properties.keys).size!==result.properties.keys.length||typeof result.properties.truncated!=='boolean'||result.properties.truncated&&result.properties.keys.length!==100||!Array.isArray(result.daily)||result.daily.length!==days)return false;
+  const coverage=(start:string,end:string)=>result.coverage.retainedFrom===null||start>=result.coverage.retainedFrom?'complete':end<=result.coverage.retainedFrom?'unavailable':'partial';
+  if(result.coverage.status!==coverage(result.range.start,result.range.end))return false;
+  const selectionUnavailable=result.sessionProperties?.selection?.status==='unavailable'||result.cohort?.membership?.status==='unavailable';
+  let dailyEvents=0,dailyViews=0,dailyCustom=0;
+  for(const [index,day]of result.daily.entries()){
+    if(!record(day)||day.date!==utcDate(new Date(from+index*864e5))||!stamp(day.start)||!stamp(day.end)||day.start>day.end||day.start<result.range.start||day.end>result.range.end||index===0&&day.start!==result.range.start||index===days-1&&day.end!==result.range.end||day.skipped!==(day.start===day.end)||day.coverage!==coverage(day.start,day.end))return false;
+    if(selectionUnavailable||day.coverage==='unavailable'){if([day.events,day.pageViews,day.customEvents].some(value=>value!==null))return false;}
+    else{if(!count(day.events)||!count(day.pageViews)||!count(day.customEvents)||day.pageViews+day.customEvents!==day.events||day.skipped&&day.events!==0||result.query.kind==='pageviews'&&day.customEvents!==0||result.query.kind==='custom'&&day.pageViews!==0)return false;dailyEvents+=day.events;dailyViews+=day.pageViews;dailyCustom+=day.customEvents;}
+  }
+  if(Object.keys(result.totals).sort().join(',')!=='customEvents,events,identifiedEvents,pageViews,unidentifiedEvents,visitors,visits'||!Object.values(result.totals).every(value=>value===null||count(value)))return false;
+  if(result.totals.events===null)return (result.coverage.status==='unavailable'||selectionUnavailable)&&Object.values(result.totals).every(value=>value===null)&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===null&&result.breakdown.returnedGroupEvents===null&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;
+  if(selectionUnavailable||dailyEvents!==result.totals.events||dailyViews!==result.totals.pageViews||dailyCustom!==result.totals.customEvents)return false;
+  if(result.coverage.status==='unavailable'||!count(result.totals.identifiedEvents)||result.totals.identifiedEvents>result.totals.events||!count(result.totals.unidentifiedEvents)||result.totals.identifiedEvents+result.totals.unidentifiedEvents!==result.totals.events||!count(result.totals.pageViews)||!count(result.totals.customEvents)||result.totals.pageViews+result.totals.customEvents!==result.totals.events||(result.totals.identifiedEvents===0?result.totals.visitors!==null:!count(result.totals.visitors)||result.totals.visitors<1||result.totals.visitors>result.totals.identifiedEvents)||result.totals.visits!==null&&(!count(result.totals.visits)||result.totals.visits<1||result.totals.visits>result.totals.events)||!count(result.breakdown.totalGroups)||result.breakdown.totalGroups>result.totals.events||result.breakdown.groups.length!==Math.min(100,result.breakdown.totalGroups)||result.breakdown.truncated!==(result.breakdown.totalGroups>100))return false;
+  const seen=new Set<string>();let events=0,identified=0;
+  for(const row of result.breakdown.groups){
+    if(!record(row)||row.type!=='tuple'||!Array.isArray(row.value)||row.value.length!==fields.length||!count(row.events)||row.events<1||row.events>result.totals.events||!count(row.identifiedEvents)||row.identifiedEvents>row.events||row.identifiedEvents>result.totals.identifiedEvents||row.identifiedEvents===0&&row.visitors!==null||row.identifiedEvents>0&&(!count(row.visitors)||row.visitors<1||row.visitors>row.identifiedEvents||result.totals.visitors===null||row.visitors>result.totals.visitors))return false;
+    for(const [index,atom]of row.value.entries()){
+      if(!record(atom)||Object.keys(atom).sort().join(',')!=='type,value')return false;
+      const field=fields[index];if(isGeo(field)){if(atom.type!=='string'||typeof atom.value!=='string'||!parseGeographyKey(field,atom.value))return false;}
+      else if(atom.type==='missing'||atom.type==='null'){if(atom.value!==null)return false;}
+      else if(field==='screenWidth'||field==='screenHeight'){if(atom.type!=='number'||!count(atom.value))return false;}
+      else if(atom.type!=='string'||!clean(atom.value,field==='path'||field==='referrer'||field==='origin'?2048:320))return false;
+    }
+    const key=JSON.stringify(row.value);if(seen.has(key))return false;seen.add(key);events+=row.events;identified+=row.identifiedEvents;
+  }
+  return result.breakdown.returnedGroupEvents===events&&events<=result.totals.events&&identified<=result.totals.identifiedEvents&&(result.breakdown.truncated||events===result.totals.events&&identified===result.totals.identifiedEvents);
+}
+async function readCombination(path:string,signal:AbortSignal):Promise<ExploreResult>{
+  const response=await fetch(path,{credentials:'same-origin',redirect:'error',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)])});
+  const failure=(message:string)=>{const error=new ApiError(message);error.status=response.status;return error;};
+  if([401,403,404].includes(response.status)){void response.body?.cancel();throw failure(response.status===401?'Your session has expired. Sign in again.':'This project is unavailable.');}
+  if(response.ok&&response.status!==200){void response.body?.cancel();throw failure('The combination response status could not be verified.');}
+  if(!response.body||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw failure('The combination response could not be verified. Refresh the applied report.');
+  const reader=response.body.getReader(),limit=response.ok?2097152:8192,parts:Uint8Array[]=[];let size=0;
+  try{for(;;){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;if(size>limit)throw failure('The complete combination response is too large. Narrow the filters.');parts.push(next.value);}}finally{await reader.cancel().catch(()=>{});}
+  const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
+  let value:unknown;try{value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw failure('The combination response was incomplete or malformed.');}
+  if(!response.ok)throw failure(record(value)&&typeof value.error==='string'?value.error:'The combination report could not be loaded.');
+  return value as ExploreResult;
+}
 function redactedReport(result:ExploreResult){return Object.values(result.totals).every(n=>n===null)&&result.daily.every(day=>day.events===null&&day.pageViews===null&&day.customEvents===null)&&result.numeric===null&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===null&&result.breakdown.returnedGroupEvents===null&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;}
 function validCohortResult(result:ExploreResult,params:URLSearchParams,projectId:string){
+  const fields=params.has('fields')?tupleFields(params.get('fields')):null;
+  if(params.has('fields')&&!validTupleResult(result,params))return false;
   const expected=params.has('predicates')?JSON.parse(params.get('predicates')!) as AdvancedPredicates:undefined;
   if(!validAdvancedResult(result.query.predicates,result.predicateMethod,expected)||!validSessionSelection(result.sessionProperties,expected)||result.sessionProperties?.selection.status==='unavailable'&&!redactedReport(result))return false;
-  const geoScope=isGeo(result.query.groupBy)||geographyFields.some(field=>Object.hasOwn(result.query.filters,field))||isGeo(params.get('groupBy')??'')||geographyFields.some(field=>params.has(field))||expected?.fields.some(row=>isGeo(row.field));
+  const geoScope=!!fields?.some(isGeo)||isGeo(result.query.groupBy??'')||geographyFields.some(field=>Object.hasOwn(result.query.filters,field))||isGeo(params.get('groupBy')??'')||geographyFields.some(field=>params.has(field))||expected?.fields.some(row=>isGeo(row.field));
   if(geoScope){
-    if(!result||!record(result.query)||result.query.groupBy!==params.get('groupBy')||!record(result.query.filters)||geographyFields.some(field=>result.query.filters[field]!== (params.get(field)??undefined))||!record(result.breakdown)||!Array.isArray(result.breakdown.groups)||result.breakdown.groups.length>100)return false;
-    const group=result.query.groupBy;if(isGeo(group)){const seen=new Set<string>();let events=0;for(const row of result.breakdown.groups){if(!record(row)||row.type!=='string'||typeof row.value!=='string'||!parseGeographyKey(group,row.value)||seen.has(row.value)||!Number.isSafeInteger(row.events)||row.events<1||!Number.isSafeInteger(row.identifiedEvents)||row.identifiedEvents<0||row.identifiedEvents>row.events||(row.identifiedEvents===0?row.visitors!==null:!Number.isSafeInteger(row.visitors)||row.visitors!<1||row.visitors!>row.identifiedEvents))return false;seen.add(row.value);events+=row.events;}if(result.breakdown.returnedGroupEvents!==null&&result.breakdown.returnedGroupEvents!==events)return false;}
+    if(!result||!record(result.query)||!fields&&result.query.groupBy!==params.get('groupBy')||!record(result.query.filters)||geographyFields.some(field=>result.query.filters[field]!== (params.get(field)??undefined))||!record(result.breakdown)||!Array.isArray(result.breakdown.groups)||result.breakdown.groups.length>100)return false;
+    const group=result.query.groupBy??'';if(isGeo(group)){const seen=new Set<string>();let events=0;for(const row of result.breakdown.groups){if(!record(row)||row.type!=='string'||typeof row.value!=='string'||!parseGeographyKey(group,row.value)||seen.has(row.value)||!Number.isSafeInteger(row.events)||row.events<1||!Number.isSafeInteger(row.identifiedEvents)||row.identifiedEvents<0||row.identifiedEvents>row.events||(row.identifiedEvents===0?row.visitors!==null:!Number.isSafeInteger(row.visitors)||row.visitors!<1||row.visitors!>row.identifiedEvents))return false;seen.add(row.value);events+=row.events;}if(result.breakdown.returnedGroupEvents!==null&&result.breakdown.returnedGroupEvents!==events)return false;}
   }
   const provenance=result.geographyProvenance;
   if(geoScope&&!provenance)return false;
@@ -86,6 +152,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   unauthRef.current=onUnauthorized;
 
   const [draft,setDraft]=useState<Draft>(initialDraft);
+  const [combined,setCombined]=useState(false),[fields,setFields]=useState<string[]>(['campaignSource','campaignMedium']);
   const [applied,setApplied]=useState<string>(()=>{const r=buildParams(initialDraft());return 'qs'in r?r.qs:'';});
   const [attempt,setAttempt]=useState(0);
   const [result,setResult]=useState<ExploreResult|null>(null);
@@ -107,7 +174,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   function purgeAccess(status:number,notice?:string,keepAttempt:SaveAttempt|null=pendingRef.current){
     accessEpoch.current++;accessDenied.current=true;analyticsRead.current?.abort();savedOp.current?.abort();savedOp.current=null;
     clearCohortData();
-    setResult(null);setDraft(initialDraft());setFormError('');setSavedItems([]);setSavedCursor(null);setSavedLoaded(false);setSelected(null);setSelectedId('');setSavedName('');setSavedRole(null);savedRoleRef.current=null;setSavedBusy(false);setSavedError('');setSavedNotice('');pendingRef.current=keepAttempt;setPending(keepAttempt);
+    setResult(null);setDraft(initialDraft());setCombined(false);setFields(['campaignSource','campaignMedium']);setFormError('');setSavedItems([]);setSavedCursor(null);setSavedLoaded(false);setSelected(null);setSelectedId('');setSavedName('');setSavedRole(null);savedRoleRef.current=null;setSavedBusy(false);setSavedError('');setSavedNotice('');pendingRef.current=keepAttempt;setPending(keepAttempt);
     const initial=buildParams(initialDraft());if('qs'in initial)setApplied(old=>{const previous=new URLSearchParams(old),next=new URLSearchParams(initial.qs);for(const key of ['cohortId','cohortRevision'])if(previous.has(key))next.set(key,previous.get(key)!);return next.toString();});
     setPhase(status===401?'denied':'unavailable');setMessage(notice??(status===401?'Your session has ended. Sign in again to continue.':'This project is unavailable. It may have been removed or you may not have access.'));
     if(status===401)unauthRef.current();
@@ -260,7 +327,8 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
     const ctrl=new AbortController();
     const generation=accessEpoch.current;analyticsRead.current=ctrl;
     setResult(null);setPhase('loading');setMessage('');
-    api<ExploreResult>(`/api/projects/${encodeURIComponent(projectId)}/explore?${applied}`,{signal:ctrl.signal})
+    const path=`/api/projects/${encodeURIComponent(projectId)}/explore?${applied}`;
+    (new URLSearchParams(applied).has('fields')?readCombination(path,ctrl.signal):api<ExploreResult>(path,{signal:ctrl.signal}))
       .then(r=>{if(!ctrl.signal.aborted&&generation===accessEpoch.current){if(!validCohortResult(r,new URLSearchParams(applied),projectId))throw new Error('The applied report filters could not be verified. Reload before applying again.');setResult(r);setPhase('ok');}})
       .catch(e=>{
         if(ctrl.signal.aborted||generation!==accessEpoch.current)return;
@@ -275,7 +343,9 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
           purgeAccess(e.status);
         }else if(e instanceof ApiError&&e.status===400&&e.message.includes('regular expression')){
           setPhase('error');setMessage('One or more patterns are invalid. Check the pattern conditions and try again.');focusAdvanced(`${uid}-report-advanced`);
-        }else if(e instanceof ApiError&&e.status===503&&(params.has('predicates')||cohortId)){
+        }else if(e instanceof ApiError&&e.status===503&&e.message==='The complete combination report is too large. Choose a shorter range or more filters.'){
+          setPhase('error');setMessage(e.message);
+        }else if(e instanceof ApiError&&e.status===503&&(params.has('predicates')||cohortId)&&e.message==='This query took too long. Choose a shorter date range or more filters.'){
           setPhase('error');setMessage('The report took too long. Simplify the patterns or shorten the date range, then Apply filters.');
         }else{
           setPhase('error');setMessage(`Couldn't load explore data. ${errMsg(e)}`);
@@ -290,7 +360,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
     e.preventDefault();
     if(accessDenied.current)return;
     if(cohortDraft&&(cohortDeleted.current.has(cohortDraft.id)||cohortInvalid.current.has(`${cohortDraft.id}:${cohortDraft.revision}`))){setFormError('Clear the unavailable cohort or load its current definition before applying.');return;}
-    const r=reportParams(draft,cohortDraft);
+    const r=combinationParams(draft,cohortDraft,combined?fields:null);
     if('error'in r){setFormError(r.error);if(r.advanced)focusAdvanced(`${uid}-report-advanced`,r.advanced);return;}
     setFormError('');setApplied(r.qs);refresh();
   };
@@ -311,7 +381,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   const keyList=phase==='ok'&&result?result.properties.keys:[];
   const keysTruncated=phase==='ok'&&result?result.properties.truncated:false;
   const t=result?.totals;
-  const currentParams=reportParams(draft,cohortDraft);
+  const currentParams=combinationParams(draft,cohortDraft,combined?fields:null);
   const unapplied='error'in currentParams||currentParams.qs!==applied;
   const appliedDates=new URLSearchParams(applied);
   const cohortLocked=cohortBusy||!!cohortPending,qualification=cohortEditor?.draft,cohortMembershipUnavailable=result?.cohort?.membership.status==='unavailable',sessionUnavailable=result?.sessionProperties?.selection.status==='unavailable'||result?.cohort?.sessionProperties?.selection.status==='unavailable';
@@ -378,19 +448,20 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
           <select id={`${uid}-kind`} value={draft.kind} onChange={e=>patch({kind:e.target.value})}>
             {KINDS.map(([k,l])=><option key={k} value={k}>{l}</option>)}
           </select>
-          </div><div>
+          </div><div><label htmlFor={`${uid}-group-mode`}>Grouping</label><select id={`${uid}-group-mode`} value={combined?'combined':'single'} onChange={e=>setCombined(e.target.value==='combined')}><option value="single">Single field</option><option value="combined">Combined fields</option></select></div>{!combined&&<div>
           <label htmlFor={`${uid}-gb`}>Group by</label>
           <select id={`${uid}-gb`} value={draft.groupBy} onChange={e=>patch({groupBy:e.target.value})}>
             {GROUPS.map(([k,l])=><option key={k} value={k}>{l}</option>)}
           </select>
-          </div>
-          {draft.groupBy==='property'&&(<div>
+          </div>}
+          {!combined&&draft.groupBy==='property'&&(<div>
             <label htmlFor={`${uid}-gp`}>Property key</label>
             <input id={`${uid}-gp`} type="text" required maxLength={320} list={`${uid}-keys`} placeholder="nested.count or a\.b" value={draft.groupProperty} onChange={e=>patch({groupProperty:e.target.value})}/>
           </div>)}
           <datalist id={`${uid}-keys`}>{keyList.map(k=><option key={k} value={k}/>)}</datalist>
         </div>
-        {draft.groupBy==='property'&&keysTruncated&&(
+        {combined&&<fieldset className="stack" style={{minWidth:0}}><legend>Combined fields</legend><p className="hint">Each row is one observed combination. Visitor keys can appear in several rows; do not add row visitors together. Changes remain draft-only until Apply filters.</p><div className="row">{fields.map((field,index)=><div key={index} style={{minWidth:0,flex:'1 1 180px'}}><label htmlFor={`${uid}-field-${index}`}>Field {index+1}</label><select id={`${uid}-field-${index}`} value={field} onChange={e=>setFields(old=>old.map((value,i)=>i===index?e.target.value:value))}>{GROUPS.filter(([key])=>key!=='property').map(([key,label])=><option key={key} value={key} disabled={fields.includes(key)&&field!==key}>{label}</option>)}</select>{index>0&&<button type="button" className="btn" aria-label={`Move field ${index+1} earlier`} onClick={()=>setFields(old=>{const next=[...old];[next[index-1],next[index]]=[next[index],next[index-1]];return next;})}>Move earlier</button>}</div>)}</div><div className="row">{fields.length===2?<button type="button" className="btn" onClick={()=>setFields(old=>[...old,GROUPS.find(([key])=>key!=='property'&&!old.includes(key))![0]])}>Add third field</button>:<button type="button" className="btn" onClick={()=>setFields(old=>old.slice(0,2))}>Remove third field</button>}<button type="button" className="btn" onClick={()=>{setFields(['campaignSource','campaignMedium','campaignName']);patch({kind:'pageviews'});}}>Stage source × medium × campaign</button></div><p className="hint">The campaign preset stages Page views and three campaign fields. Review dates and filters, then Apply filters. Grouping is not stored in saved filters or the page URL.</p></fieldset>}
+        {!combined&&draft.groupBy==='property'&&keysTruncated&&(
           <p className="hint dim">Key suggestions show the top 100 keys only; exact keys not listed still work.</p>
         )}
 
@@ -443,7 +514,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
 
       {phase==='ok'&&result&&t&&(<><GeographyAttribution/>{result.geographyProvenance&&<p className="hint">Location source builds across matching report events: {num(result.geographyProvenance.databaseCount)}{result.geographyProvenance.oldestDatabaseBuild?` · oldest ${new Date(result.geographyProvenance.oldestDatabaseBuild*1000).toISOString().slice(0,10)}`:''}{result.geographyProvenance.newestDatabaseBuild?` · newest ${new Date(result.geographyProvenance.newestDatabaseBuild*1000).toISOString().slice(0,10)}`:''}. This uses retained report events, not the cohort qualification period or current database file.</p>}
         <p className="hint dim">
-          {result.range.from} to {result.range.to} ({result.range.timeZone}) · {labelOf(KINDS,result.query.kind)} · grouped by {labelOf(GROUPS,result.query.groupBy)}{result.query.groupProperty?`: ${result.query.groupProperty}`:''}
+          {result.range.from} to {result.range.to} ({result.range.timeZone}) · {labelOf(KINDS,result.query.kind)} · grouped by {result.query.fields?result.query.fields.map(field=>labelOf(GROUPS,field)).join(' × '):labelOf(GROUPS,result.query.groupBy??'')}{result.query.groupProperty?`: ${result.query.groupProperty}`:''}
         </p>
         <details className="explorer-scope"><summary>Applied filters and boundaries</summary>
           <p className="hint">UTC bounds: {result.range.start} (inclusive) to {result.range.end} (exclusive). Only instants within the selected local dates are included.</p>
@@ -490,7 +561,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
         </div>
 
         <div className="card stack">
-          <h3>Breakdown</h3>{isGeo(result.query.groupBy)&&<p className="hint">Select a location to add a required draft filter. Apply filters to update results and CSV. Names include their country and region; location is approximate.</p>}
+          <h3>Breakdown</h3>{(isGeo(result.query.groupBy??'')||result.query.fields?.some(isGeo))&&<p className="hint">Select a location to add a required draft filter. Apply filters to update results and CSV. Names include their country and region; location is approximate.</p>}
           <p className="hint dim">
             {sessionUnavailable?'Breakdown unavailable because session-property selection is unavailable.':cohortMembershipUnavailable?'Breakdown unavailable because cohort membership is unavailable.':result.coverage.status==='unavailable'?'Breakdown unavailable after retention.':<>
             Returned {num(result.breakdown.returnedGroupEvents)} of {num(t.events)} events across {num(result.breakdown.totalGroups)} groups.
@@ -502,12 +573,12 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
           ):(
             <div className="table-wrap" tabIndex={0} role="region" aria-label="Breakdown data, scroll horizontally for all columns">
               <table>
-                <thead><tr><th>Value</th><th>Type</th><th>Events</th><th>Visitors</th></tr></thead>
+                <thead><tr>{result.query.fields?result.query.fields.map(field=><th key={field} scope="col">{labelOf(GROUPS,field)}</th>):<><th>Value</th><th>Type</th></>}<th>Events</th><th>Visitors</th></tr></thead>
                 <tbody>
                   {result.breakdown.groups.slice(0,100).map((g,i)=>(
                     <tr key={i}>
-                      <td>{isGeo(result.query.groupBy)?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(result.query.groupBy,{on:true,value:g.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,result.query.groupBy)}: ${groupValue(g.type,g.value,result.query.groupBy)}`}><bdi>{groupValue(g.type,g.value,result.query.groupBy)}</bdi></button>:groupValue(g.type,g.value,result.query.groupBy)}</td>
-                      <td>{isGeo(result.query.groupBy)?parseGeographyKey(result.query.groupBy,g.value)?.state==='known'?'Known location':parseGeographyKey(result.query.groupBy,g.value)?.state==='unknown'?'Unknown':'Not recorded':groupType(g.type)}</td>
+                      {result.query.fields?(g.value as Array<{type:string;value:unknown}>).map((atom,index)=>{const field=result.query.fields![index],label=groupValue(atom.type,atom.value,field);return <td key={field}>{isGeo(field)?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(field,{on:true,value:atom.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,field)}: ${label}`}><bdi>{label}</bdi></button>:<><bdi>{label}</bdi> <span className="hint">({groupType(atom.type)})</span></>}</td>;}):<><td>{isGeo(result.query.groupBy??'')?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(result.query.groupBy!,{on:true,value:g.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,result.query.groupBy??'')}: ${groupValue(g.type,g.value,result.query.groupBy)}`}><bdi>{groupValue(g.type,g.value,result.query.groupBy)}</bdi></button>:groupValue(g.type,g.value,result.query.groupBy)}</td>
+                      <td>{isGeo(result.query.groupBy??'')?parseGeographyKey(result.query.groupBy as GeoField,g.value)?.state==='known'?'Known location':parseGeographyKey(result.query.groupBy as GeoField,g.value)?.state==='unknown'?'Unknown':'Not recorded':groupType(g.type)}</td></>}
                       <td>{g.events}</td>
                       <td>{g.visitors==null?'Unavailable':g.visitors}</td>
                     </tr>

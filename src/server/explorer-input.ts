@@ -80,6 +80,26 @@ export function explorerQuery(params: URLSearchParams, now = new Date()) {
   return {from:range.from,to:range.to,timeZone,kind,groupBy,groupProperty,filters,property,...(cohort?{cohort}:{}),...(predicates?{predicates}:{})};
 }
 
+export type ExplorerTupleField=Exclude<typeof explorerGroups[number],'property'>;
+export type ExplorerTupleAtom={type:string;value:unknown};
+export type CompoundExplorerQuery=Omit<ReturnType<typeof explorerQuery>,'groupBy'|'groupProperty'>&{fields:ExplorerTupleField[];groupBy?:undefined;groupProperty?:undefined};
+
+// Grouping belongs only to Explore, never to saved predicates or other reports.
+export function explorerGroupingQuery(params:URLSearchParams,now=new Date()){
+  if(!params.has('fields'))return {scope:explorerQuery(params,now),fields:null};
+  if(params.toString().length>20000||params.getAll('fields').length!==1||params.has('groupBy')||params.has('groupProperty'))bad('Choose either one field or a combination of two or three fields.');
+  let raw:unknown;try{raw=JSON.parse(params.get('fields')!);}catch{return bad('Choose two or three supported fields.');}
+  if(!Array.isArray(raw)||raw.length<2||raw.length>3||new Set(raw).size!==raw.length||!raw.every(field=>typeof field==='string'&&field!=='property'&&(explorerGroups as readonly string[]).includes(field)))bad('Choose two or three different supported fields.');
+  const fields=raw as ExplorerTupleField[],remaining=new URLSearchParams(params);remaining.delete('fields');
+  const scope=explorerQuery(remaining,now),normalized=new URLSearchParams(remaining);
+  normalized.set('fields',JSON.stringify(fields));
+  for(const [key,value]of Object.entries({from:scope.from,to:scope.to,timeZone:scope.timeZone,kind:scope.kind}))normalized.set(key,value);
+  if(scope.predicates)normalized.set('predicates',JSON.stringify(scope.predicates));
+  if(scope.property&&scope.property.type!=='missing')normalized.set('propertyValue',JSON.stringify(scope.property.value));
+  if(normalized.toString().length>20000)bad('The exploration query is too large.');
+  return {scope,fields};
+}
+
 // Quoting alone does not stop spreadsheets from executing a leading formula.
 export function csvCell(value: unknown): string {
   let cell = value === null || value === undefined ? 'Unavailable' : typeof value === 'object' ? JSON.stringify(value) : String(value);

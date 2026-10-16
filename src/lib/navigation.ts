@@ -7,7 +7,7 @@ import {journeysLimits} from './journeys.ts'
 import {attributionLimits} from './attribution.ts'
 import {analyticsDimensions,type AnalyticsDimension} from './analytics-dimensions.ts'
 
-export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'realtime', 'compare', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'meta', 'meta-app', 'meta-reports', 'keywords', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export type RevenueNavigation={revenueQuery?:string;revenueKey?:string;revenueCalendar?:'months';revenueInvalid?:'1'};
@@ -202,7 +202,7 @@ export function projectView(view: AppView): boolean {
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {
   if (view === 'google-app' || view === 'meta-app') return operator
-  if (['security', 'identity', 'workspace', 'project'].includes(view)) return true
+  if (['preferences', 'security', 'identity', 'workspace', 'project'].includes(view)) return true
   if (!role) return false
   if (view === 'providers') return role === 'owner'
   if (['team', 'keys', 'domains', 'destinations'].includes(view)) return ['owner', 'admin'].includes(role)
