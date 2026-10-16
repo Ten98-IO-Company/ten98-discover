@@ -148,6 +148,11 @@
       try { hub.nativeEvent(state, {name: 'page_view', eventId: crypto.randomUUID(), url: location.origin + location.pathname}); } catch (_) {}
     }
     if (!state.reload && value.replay === true && hub.replayStart?.protocolVersion === 3) hub.replayStart(state);
+    if (!state.reload && value.analytics === true && hub.heatmapStart?.protocolVersion === 3) {
+      var restartHeatmap = state.heatmapRestartRequired === true && acknowledge === true;
+      if (acknowledge === true) state.heatmapRestartRequired = false;
+      hub.heatmapStart(state,restartHeatmap);
+    }
     return {ok: true, reloadRequired: state.reload};
   }
   function expire(state) {
@@ -235,10 +240,11 @@
       ![2, 3].includes(value.schemaVersion) || value.siteKey !== state.siteKey || value.environment !== state.environment || value.origin !== location.origin ||
       typeof value.validUntil !== 'string' || !configuration(value.configuration)) return false;
     var settings = value.nativeTracking;
-    if (!keys(settings, ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths', 'linkIdentities', 'capturePerformance', 'replay'].concat(value.schemaVersion === 3 ? ['collectionMode'] : []), ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths'].concat(value.schemaVersion === 3 ? ['collectionMode'] : [])) ||
+    if (!keys(settings, ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths', 'linkIdentities', 'capturePerformance', 'replay', 'heatmap'].concat(value.schemaVersion === 3 ? ['collectionMode'] : []), ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths'].concat(value.schemaVersion === 3 ? ['collectionMode'] : [])) ||
       (value.schemaVersion === 3 && !['cookieless', 'consent-first'].includes(settings.collectionMode)) ||
       (Object.prototype.hasOwnProperty.call(settings,'linkIdentities') && typeof settings.linkIdentities !== 'boolean') ||
       (Object.prototype.hasOwnProperty.call(settings,'capturePerformance') && typeof settings.capturePerformance !== 'boolean') ||
+      (Object.prototype.hasOwnProperty.call(settings,'heatmap') && (!keys(settings.heatmap,['enabled','sampleRate']) || typeof settings.heatmap.enabled!=='boolean' || !Number.isFinite(settings.heatmap.sampleRate) || settings.heatmap.sampleRate<0 || settings.heatmap.sampleRate>1)) ||
       (Object.prototype.hasOwnProperty.call(settings,'replay') && (!keys(settings.replay,['enabled','sampleRate','maskLevel','maxDurationMs','blockSelector']) || typeof settings.replay.enabled !== 'boolean' || !Number.isFinite(settings.replay.sampleRate) || settings.replay.sampleRate<0 || settings.replay.sampleRate>1 || !['strict','moderate'].includes(settings.replay.maskLevel) || ![300000,600000,900000,1200000].includes(settings.replay.maxDurationMs) || typeof settings.replay.blockSelector !== 'string' || settings.replay.blockSelector.length>1024 || /\u0000|[\uD800-\uDFFF]/u.test(settings.replay.blockSelector))) ||
       !['builtin', 'external'].includes(settings.consentMode) || ['enabled', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots'].some(function (key) { return typeof settings[key] !== 'boolean'; }) ||
       !Array.isArray(settings.excludedPaths) || settings.excludedPaths.length > 50 || settings.excludedPaths.some(function (path) { return typeof path !== 'string' || path.length > 256 || !exact(/^\/[^?#\u0000-\u001f]*$/, path); })) return false;
@@ -279,6 +285,7 @@
       }
       if ((first || changed) && (nativeAllowed(state) || granted(state.consent)) && !(state.nativePageObservation && state.nativePageObservation.sent && state.nativePageObservation.url === location.origin + location.pathname)) dispatch(state, {name: 'page_view', eventId: crypto.randomUUID(), url: location.origin + location.pathname});
       if (!state.reload && hub.replayStart?.protocolVersion === 3) hub.replayStart(state);
+      if (!state.reload && hub.heatmapStart?.protocolVersion === 3) hub.heatmapStart(state);
       if (first || changed) window.dispatchEvent(new CustomEvent('ten98:destinations-ready', {detail: {siteKey: state.siteKey, environment: state.environment, collectorOrigin: state.origin}}));
     } catch (_) { if (Date.now() >= state.expires) expire(state); }
     finally { clearTimeout(timer); state.fetching = false; }
@@ -344,6 +351,7 @@
     var geographyNotice = document.createElement('p'); geographyNotice.textContent = 'When enabled by this site, approximate country, region and city may be derived locally from the connection address. The raw address and coordinates are not stored. This follows the analytics choice above; opting out, Do Not Track or Global Privacy Control stops new observations.'; dialog.appendChild(geographyNotice);
     if(state.config.nativeTracking.linkIdentities===true){var linkNotice=document.createElement('p');linkNotice.textContent='This website also links future activity with matching identifiers across devices and months within its own analytics project. The raw identifier is not stored. Earlier anonymous activity stays separate. Withdrawing consent stops new collection; previously accepted links remain subject to retention.';dialog.appendChild(linkNotice);}
     var dialogPurposes = purposes.slice();
+    if(state.config.nativeTracking.heatmap?.enabled===true){var heatmapNotice=document.createElement('p');heatmapNotice.textContent='Analytics also collects numeric click positions and page scroll depths for sampled heatmaps after you agree. It does not record page contents, form values or element labels and works independently of Session replay. Opting out or a browser privacy signal stops new samples.';dialog.appendChild(heatmapNotice);}
     if(state.config.nativeTracking.replay){dialogPurposes.push('replay');var replayNotice=document.createElement('p');replayNotice.textContent='Session replay is a separate choice: it records a masked page and interactions only after you agree to both Analytics and Session replay. It does not grant advertising permission. A short-lived recording capability is kept in this tab for navigation; raw page data is not stored in browser storage. Withdrawal stops new recording; already shared data remains subject to retention.';dialog.appendChild(replayNotice);}
     var warning = document.createElement('p'); warning.textContent = 'Changing consent after a vendor tag loads reloads this page and may lose unsaved work. If consent storage fails, this page closes to stop loaded SDKs; clear site data before returning. Vendor SDKs may read the full URL, referrer and automatic events. Already shared or in-flight data cannot be withdrawn here.'; dialog.appendChild(warning);
     var vendors = document.createElement('p'), vendorNames = state.routes.filter(function (r) { return r.destination.enabled; }).map(function (r) { return r.destination.provider; }); vendors.textContent = vendorNames.length ? 'Configured vendors: ' + vendorNames.join(', ') : 'No additional vendor tags are configured.'; dialog.appendChild(vendors);

@@ -12,6 +12,119 @@
   var replayLimits = {chunkBytes:262144,eventsPerChunk:200,chunks:1024,recordingBytes:67108864,eventBytes:4194304,fragmentParts:64,depth:64,nodes:20000,drainMs:60000,pageSize:20,chunkPageSize:4};
   var replayMemoryLimit = 8388608;
   var replayUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+  // Numeric heatmaps are independent of replay. Native root extents already include
+  // CSS zoom; the RTL offset follows the retained Edge geometry calibration.
+  var heatmapLimits = {batchBytes:32768,observations:20,captureBatches:256,captureBytes:8388608,captureMs:300000,drainMs:60000,extent:10000000,viewport:20000,pageSize:20,points:5000};
+
+  function heatmapCurrent(c, drain) {
+    return c.active && c.state.heatmapCapture === c && !c.state.heatmapHidden && c.state.nativeGeneration === c.generation && c.state.config && c.state.config.consentEpoch === c.epoch &&
+      c.state.config.nativeTracking.heatmap && c.state.config.nativeTracking.heatmap.enabled === true && c.state.config.nativeTracking.heatmap.sampleRate === c.settings.sampleRate &&
+      nativeReady(c.state,true) && (currentUrl() === c.url || drain && c.nextUrl === currentUrl()) && performance.now() < c.start + (drain ? 360000 : 300000);
+  }
+  function heatmapUnlisten(c) {
+    if (!c.click) return;
+    document.removeEventListener('click',c.click,true); window.removeEventListener('scroll',c.scroll,true); window.removeEventListener('resize',c.resize);
+    c.click = c.scroll = c.resize = null;
+  }
+  function stopHeatmap(state, expected) {
+    var c = expected || state.heatmapCapture;
+    if (!c || expected && state.heatmapCapture !== expected) return;
+    c.active = false; heatmapUnlisten(c); clearInterval(c.flushTimer); clearTimeout(c.endTimer);
+    if (c.controller) c.controller.abort(); c.queue.length = c.parts.length = 0; c.queuedBytes = 0;
+    c.reply = null; // Keep the terminal sampling marker, never its upload capability.
+  }
+  function heatmapGeometry() {
+    var root = document.scrollingElement, style = root && getComputedStyle(root), visual = window.visualViewport;
+    if (!root || !style || style.writingMode !== 'horizontal-tb' || !['ltr','rtl'].includes(style.direction) || visual && (visual.scale !== 1 || visual.offsetLeft !== 0 || visual.offsetTop !== 0)) return null;
+    var w=root.scrollWidth,h=root.scrollHeight,vw=root.clientWidth,vh=root.clientHeight,sx=window.scrollX,sy=window.scrollY;
+    if (![w,h,vw,vh,sx,sy].every(Number.isFinite) || w<1 || h<1 || w>10000000 || h>10000000 || vw<1 || vh<1 || vw>20000 || vh>20000 || w<vw || h<vh || sy<0 || sy>h-vh) return null;
+    var left=sx+(style.direction==='rtl'?w-vw:0);
+    if (left<0 || left>w-vw) return null;
+    return {geometry:{basis:'document-css-v1',direction:style.direction,pageWidth:w,pageHeight:h,viewportWidth:vw,viewportHeight:vh},scrollX:sx,scrollY:sy,left:left};
+  }
+  async function heatmapRequest(c,path,body) {
+    var controller=new AbortController();c.controller=controller;
+    var timer=setTimeout(function(){controller.abort();},5000),cancelled=new Promise(function(_,reject){controller.signal.addEventListener('abort',function(){reject(new Error('Heatmap request cancelled.'));},{once:true});});
+    try{return await Promise.race([cancelled,(async function(){
+      if(!heatmapCurrent(c,c.ending))throw new Error('Heatmap permission changed.');
+      var response=await fetch(c.state.origin+path,{method:'POST',credentials:'omit',referrerPolicy:'no-referrer',mode:'cors',cache:'no-store',redirect:'error',signal:controller.signal,headers:{'Content-Type':'application/json'},body:body});
+      var text=await readNativeResponse(response,controller.signal,8192);if(!heatmapCurrent(c,c.ending))throw new Error('Heatmap permission changed.');return{status:response.status,value:JSON.parse(text)};
+    })()]);}finally{clearTimeout(timer);if(c.controller===controller)c.controller=null;}
+  }
+  function heatmapReply(v,c) {
+    if(!replayKeys(v,['accepted','reason','captureId','token','createdAt','deadlineAt','uploadUntil','settings','limits']) || typeof v.accepted!=='boolean' || typeof v.captureId!=='string' || !replayUuid.test(v.captureId) || v.captureId.length!==36 || v.reason!==(v.accepted?null:'not_sampled') ||
+      (v.accepted?typeof v.token!=='string'||v.token.length>4096||!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$(?![\s\S])/.test(v.token):v.token!==null) ||
+      !replayKeys(v.settings,['enabled','sampleRate']) || v.settings.enabled!==true || v.settings.sampleRate!==c.settings.sampleRate || !replayKeys(v.limits,Object.keys(heatmapLimits)) || Object.keys(heatmapLimits).some(function(k){return v.limits[k]!==heatmapLimits[k];}))return false;
+    return ['createdAt','deadlineAt','uploadUntil'].every(function(k){try{return new Date(v[k]).toISOString()===v[k];}catch(_){return false;}}) && Date.parse(v.deadlineAt)-Date.parse(v.createdAt)===300000 && Date.parse(v.uploadUntil)-Date.parse(v.deadlineAt)===60000;
+  }
+  function heatmapFlush(c) {
+    if(!c.parts.length)return;
+    var requestId=uuid(),body=JSON.stringify({siteKey:c.state.siteKey,requestId:requestId,url:c.url,consent:{analytics:true,epoch:c.epoch},captureId:c.reply.captureId,token:c.reply.token,geometry:c.geometry,observations:c.parts}),bytes=new TextEncoder().encode(body).length;
+    if(bytes>32768 || c.queuedBytes+bytes>8388608 || c.usedBytes+c.queuedBytes+bytes>8388608 || c.usedBatches+c.queue.length>=256)throw new Error('Heatmap capacity reached.');
+    c.queue.push({body:body,bytes:bytes,requestId:requestId});c.queuedBytes+=bytes;c.parts=[];
+  }
+  async function heatmapPump(c) {
+    if(c.sending || !c.reply || !c.queue.length || !heatmapCurrent(c,c.ending))return;
+    c.sending=true;
+    try{
+      var entry=c.queue[0],accepted=false;
+      for(var attempt=0;attempt<2&&heatmapCurrent(c,c.ending);attempt++){
+        var result;try{result=await heatmapRequest(c,'/api/heatmaps/batches',entry.body);}catch(_){continue;}
+        var v=result.value;if(result.status===202&&replayKeys(v,['accepted','duplicate','requestId'])&&v.accepted===true&&typeof v.duplicate==='boolean'&&v.requestId===entry.requestId){accepted=true;break;}
+        if([400,401,403,409,413].includes(result.status))break;
+      }
+      if(!accepted || !heatmapCurrent(c,c.ending))throw new Error('Heatmap outcome is unknown.');
+      c.queue.shift();c.queuedBytes-=entry.bytes;c.usedBytes+=entry.bytes;c.usedBatches++;
+    }catch(_){stopHeatmap(c.state,c);}finally{c.sending=false;}
+    if(c.active&&c.queue.length)void heatmapPump(c);
+    else if(c.active&&c.ending){var next=c.nextUrl;stopHeatmap(c.state,c);if(next===currentUrl()&&!c.state.heatmapRestartRequired){c.state.heatmapCapture=null;startHeatmap(c.state);}}
+  }
+  function heatmapFinish(c,nextUrl) {
+    if(!c.active || c.state.heatmapCapture!==c)return;
+    if(!heatmapCurrent(c,true)){stopHeatmap(c.state,c);return;}
+    c.ending=true;c.nextUrl=nextUrl||null;heatmapUnlisten(c);clearInterval(c.flushTimer);clearTimeout(c.endTimer);
+    c.endTimer=setTimeout(function(){stopHeatmap(c.state,c);},Math.max(0,c.start+360000-performance.now()));
+    try{heatmapFlush(c);if(c.queue.length)void heatmapPump(c);else{stopHeatmap(c.state,c);if(nextUrl===currentUrl()){c.state.heatmapCapture=null;startHeatmap(c.state);}}}catch(_){stopHeatmap(c.state,c);}
+  }
+  function heatmapObserve(c,event,kind) {
+    try{
+      if(!heatmapCurrent(c,false)){if(heatmapCurrent(c,true)&&performance.now()>=c.start+300000)heatmapFinish(c);else stopHeatmap(c.state,c);return;}
+      if(!event || event.isTrusted!==true || kind==='click'&&(event.button!==0||event.detail<1) || kind==='scroll'&&event.target!==document&&event.target!==window&&event.target!==document.scrollingElement)return;
+      var fact=heatmapGeometry();if(!fact){stopHeatmap(c.state,c);return;}var geometry=fact.geometry,point={kind:kind,scrollX:fact.scrollX,scrollY:fact.scrollY,offsetMs:performance.now()-c.start};
+      if(!Number.isFinite(point.offsetMs)||point.offsetMs<c.lastOffset||point.offsetMs>300000){stopHeatmap(c.state,c);return;}
+      if(kind==='click'){
+        if(!Number.isFinite(event.clientX)||!Number.isFinite(event.clientY)||event.clientX<0||event.clientY<0||event.clientX>geometry.viewportWidth||event.clientY>geometry.viewportHeight)return;
+        point.x=event.clientX+fact.left;point.y=event.clientY+fact.scrollY;point.clientX=event.clientX;point.clientY=event.clientY;
+        if(point.x<0||point.x>geometry.pageWidth||point.y<0||point.y>geometry.pageHeight)return;
+      }
+      if(c.geometry&&JSON.stringify(c.geometry)!==JSON.stringify(geometry))heatmapFlush(c);
+      c.geometry=geometry;c.lastOffset=point.offsetMs;c.parts.push(point);
+      if(c.parts.length>=20)heatmapFlush(c);void heatmapPump(c);
+    }catch(_){stopHeatmap(c.state,c);}
+  }
+  function startHeatmap(state,fresh) {
+    var h=hub(),settings=state.config&&state.config.nativeTracking.heatmap;
+    if(h){if(!h.heatmapStates)h.heatmapStates=[];if(!h.heatmapStates.includes(state))h.heatmapStates.push(state);}
+    if(fresh&&state.heatmapCapture&&!state.heatmapCapture.active)state.heatmapCapture=null; // Only an explicit new grant clears a revoked capture.
+    if(!h || !settings || settings.enabled!==true || !nativeReady(state,true) || state.heatmapCapture || state.heatmapRestartRequired || state.heatmapHidden || typeof performance==='undefined' || typeof performance.now!=='function' || typeof fetch!=='function' || typeof TextEncoder!=='function' || typeof TextDecoder!=='function' || typeof ReadableStream!=='function' || typeof AbortController!=='function')return;
+    if(!heatmapGeometry())return;
+    var c={state:state,url:currentUrl(),epoch:state.config.consentEpoch,generation:state.nativeGeneration,settings:{enabled:true,sampleRate:settings.sampleRate},start:performance.now(),active:true,queue:[],parts:[],queuedBytes:0,usedBytes:0,usedBatches:0,lastOffset:0,sending:false,ending:false,reply:null};state.heatmapCapture=c;
+    (async function(){try{
+      var body=JSON.stringify({siteKey:state.siteKey,requestId:uuid(),url:c.url,consent:{analytics:true,epoch:c.epoch}}),result;
+      for(var attempt=0;attempt<2&&heatmapCurrent(c,false);attempt++){try{result=await heatmapRequest(c,'/api/heatmaps/begin',body);}catch(_){result=null;}if(result&&(result.status===202&&heatmapReply(result.value,c)||[400,401,403,409,413].includes(result.status)))break;result=null;}
+      if(!result||result.status!==202||!heatmapReply(result.value,c)||!heatmapCurrent(c,false))throw new Error('Heatmap Begin is unknown.');c.reply=result.value;
+      if(!c.reply.accepted){stopHeatmap(state,c);return;}
+      c.click=function(e){heatmapObserve(c,e,'click');};c.scroll=function(e){heatmapObserve(c,e,'scroll');};c.resize=function(){try{if(heatmapCurrent(c,false)){heatmapFlush(c);void heatmapPump(c);}else stopHeatmap(state,c);}catch(_){stopHeatmap(state,c);}};
+      document.addEventListener('click',c.click,true);window.addEventListener('scroll',c.scroll,true);window.addEventListener('resize',c.resize);
+      c.flushTimer=setInterval(function(){if(!heatmapCurrent(c,false)){if(heatmapCurrent(c,true)&&performance.now()>=c.start+300000)heatmapFinish(c);else stopHeatmap(state,c);return;}try{heatmapFlush(c);void heatmapPump(c);}catch(_){stopHeatmap(state,c);}},2000);
+      c.endTimer=setTimeout(function(){heatmapFinish(c);},Math.max(0,c.start+300000-performance.now()));
+    }catch(_){stopHeatmap(state,c);}})();
+  }
+  function heatmapNavigation(h) {
+    (h.heatmapStates||[]).forEach(function(state){var c=state.heatmapCapture;if(!c)return;if(!nativeReady(state,true)){state.heatmapRestartRequired=true;stopHeatmap(state,c);return;}if(c.url===currentUrl())return;
+      if(c.active&&c.reply){c.nextUrl=currentUrl();heatmapFinish(c,c.nextUrl);}else{stopHeatmap(state,c);state.heatmapCapture=null;}
+    });
+  }
 
   function replayCurrent(c, draining) {
     var h = hub();
@@ -333,13 +446,15 @@
           if (current() && result.accepted && typeof result.context === 'string' && result.context.length <= 1024) state.nativeContext = result.context;
         }).catch(function () { if (!controller.signal.aborted) warn('ten98-monitor: collector unavailable or blocked.'); })
         .finally(function () { clearTimeout(timer); state.nativeRequests.delete(controller); if (performanceEvent) capture.requests.delete(controller); });
-      if (observation) { startPerformance(state); startReplay(state); }
+      if (observation) { startPerformance(state); startReplay(state); startHeatmap(state); }
     } catch (ignore) {} // Invalid application properties must never break the host page.
   }
 
   function nativeStop(state) {
     if (state.replayCapture) state.replayRestartRequired = true;
     stopReplay(state, true);
+    if (state.heatmapCapture) state.heatmapRestartRequired = true;
+    stopHeatmap(state);
     if (state.performanceCapture) state.performanceCapture.active = false;
     state.nativeContext = null; state.nativeIdentifier = undefined; state.nativeGeneration = (state.nativeGeneration || 0) + 1;
     state.nativeRequests.forEach(function (request) { request.abort(); }); state.nativeRequests.clear();
@@ -469,6 +584,7 @@
       if (url === h.lastUrl) return;
       stopPerformanceNavigation();
       replayNavigation(h);
+      heatmapNavigation(h);
       h.lastUrl = url;
       fanout(PAGE_VIEW);
     } catch (ignore) {}
@@ -479,6 +595,7 @@
       var h = hub();
       if (!h || !event || !event.persisted || h.restored) return; // ordinary pageshow must not duplicate
       h.restored = true; // exactly one restored page_view per bfcache restoration; pagehide re-arms
+      (h.heatmapStates||[]).forEach(function(state){state.heatmapHidden=false;}); // Never resume or renew the discarded capture.
       restorePerformance(event);
       h.lastUrl = currentUrl();
       fanout(PAGE_VIEW);
@@ -488,7 +605,7 @@
   function onPagehide() {
     try {
       var h = hub();
-      if (h) { h.restored = false; hideReplay(h); }
+      if (h) { h.restored = false; hideReplay(h); (h.heatmapStates||[]).forEach(function(state){state.heatmapHidden=true;stopHeatmap(state);}); }
     } catch (ignore) {}
   }
 
@@ -533,8 +650,8 @@
   }
 
   function install() {
-    nativeEvent.protocolVersion = nativeStop.protocolVersion = nativeIdentify.protocolVersion = startReplay.protocolVersion = stopReplay.protocolVersion = 3;
-    var h = { sites: [], lastUrl: currentUrl(), restored: false, nativeEvent: nativeEvent, nativeStop: nativeStop, nativeIdentify: nativeIdentify, replayStart:startReplay, replayStop:stopReplay, api: { track: track, identify: identify, resetIdentity: resetIdentity } };
+    nativeEvent.protocolVersion = nativeStop.protocolVersion = nativeIdentify.protocolVersion = startReplay.protocolVersion = stopReplay.protocolVersion = startHeatmap.protocolVersion = 3;
+    var h = { sites: [], lastUrl: currentUrl(), restored: false, nativeEvent: nativeEvent, nativeStop: nativeStop, nativeIdentify: nativeIdentify, replayStart:startReplay, replayStop:stopReplay, heatmapStart:startHeatmap, api: { track: track, identify: identify, resetIdentity: resetIdentity } };
     window.__ten98FoundationHub = h;
     patchHistory('pushState');
     patchHistory('replaceState');
