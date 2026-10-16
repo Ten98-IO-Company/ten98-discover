@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {csvCell,explorerQuery} from '../src/server/explorer-input.ts';
+import {csvCell,explorerQuery,explorerGroupingQuery} from '../src/server/explorer-input.ts';
+import {parseSegmentDefinition} from '../src/server/segment-input.ts';
+import {parseCohortDefinition} from '../src/server/cohort-input.ts';
 
 test('explorer defaults follow the named calendar; properties retain exact type and escaped key',()=>{
   const q = explorerQuery(new URLSearchParams('timeZone=America/New_York'),new Date('2026-03-09T01:00:00Z'));
@@ -72,3 +74,28 @@ test('advanced Explorer size includes resolved report defaults without mutating 
 });
 
 test('exact referrer filters preserve the accepted2048-character normalizer bound',()=>{assert.equal(explorerQuery(new URLSearchParams({referrer:'a'.repeat(2048)})).filters.referrer.length,2048);assert.throws(()=>explorerQuery(new URLSearchParams({referrer:'a'.repeat(2049)})),{status:400});});
+
+test('compound grouping keeps scalar input and exact scope unchanged without mutating callers',()=>{
+  const now=new Date('2026-10-14T12:00:00Z'),scalar=new URLSearchParams({groupBy:'property',groupProperty:' spaced ',campaignName:'',timeZone:'UTC'});
+  assert.deepEqual(explorerGroupingQuery(scalar,now),{scope:explorerQuery(scalar,now),fields:null});
+  const params=new URLSearchParams({fields:'[ "campaignSource", "campaignMedium", "campaignName" ]',campaignName:'',from:'2026-03-08',to:'2026-03-08',timeZone:'America/New_York'}),before=params.toString();
+  const result=explorerGroupingQuery(params,now);assert.deepEqual(result.fields,['campaignSource','campaignMedium','campaignName']);assert.equal(result.scope.filters.campaignName,'');assert.equal(result.scope.groupBy,'event');assert.equal(params.toString(),before);
+  assert.deepEqual(explorerGroupingQuery(new URLSearchParams({fields:'["screenWidth","city"]'}),now).fields,['screenWidth','city']);
+});
+
+test('compound grouping refuses ambiguous, repeated, unsupported and oversized inputs',()=>{
+  for(const fields of ['{','null','{}','[]','["path"]','["path","path"]','["path","property"]','["path",1]','["path","future"]','["path","origin","language","device"]'])assert.throws(()=>explorerGroupingQuery(new URLSearchParams({fields})),{status:400},fields);
+  for(const extra of Array.of<Record<string,string>>({groupBy:'path'},{groupProperty:'x'},{future:'x'}))assert.throws(()=>explorerGroupingQuery(new URLSearchParams({fields:'["path","origin"]',...extra})),{status:400});
+  assert.throws(()=>explorerGroupingQuery(new URLSearchParams('fields=%5B%22path%22%2C%22origin%22%5D&fields=%5B%22path%22%2C%22origin%22%5D')),{status:400});
+  const now=new Date('2026-10-14T12:00:00Z'),params=new URLSearchParams({fields:'["path","origin"]',path:'中'.repeat(2048),eventName:'中'.repeat(140),language:''}),normalized=new URLSearchParams(params);
+  for(const [key,value]of Object.entries({from:'2026-10-08',to:'2026-10-14',timeZone:'UTC',kind:'all'}))normalized.set(key,value);
+  const padding=20000-normalized.toString().length;
+  assert.ok(padding>=0&&padding<320);params.set('language','a'.repeat(padding));assert.doesNotThrow(()=>explorerGroupingQuery(params,now));params.set('language','a'.repeat(padding+1));assert.throws(()=>explorerGroupingQuery(params,now),{status:400});
+  assert.throws(()=>explorerGroupingQuery(new URLSearchParams({fields:' '.repeat(20001)})),{status:400});
+});
+
+test('compound grouping cannot leak into saved predicate or qualification definitions',()=>{
+  const query=new URLSearchParams({from:'2026-03-08',to:'2026-03-08',timeZone:'UTC',path:'/entry',fields:'["campaignSource","campaignMedium"]'}).toString();
+  for(const parse of [parseSegmentDefinition,parseCohortDefinition])assert.throws(()=>parse({schemaVersion:1,name:'Saved filters',query}),{status:400});
+  assert.throws(()=>explorerQuery(new URLSearchParams({fields:'["path","origin"]'})),{status:400},'Other report callers retain the closed scalar parser.');
+});
