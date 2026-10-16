@@ -15,7 +15,11 @@ import {createApiKey} from '../src/server/api-keys.ts';
 import {refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
 
 export async function runPromptRecurringChecks(){
- assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig(),db=new URL(config.databaseUrl);assert.equal(db.hostname,'127.0.0.1');assert.equal(db.port,'55502');assert.match(db.pathname,/^\/ten98_prompt_recurring_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');assert.equal(config.appUrl,'http://127.0.0.1:3111');
+ assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');const config=getConfig(),db=new URL(config.databaseUrl);assert.equal(db.hostname,'127.0.0.1');
+ if(process.env.GITHUB_ACTIONS==='true'){
+  assert.equal(process.env.TEN98_ISOLATED_CI_DATABASE,'1');assert.equal(process.env.ANALYTICS_NETWORK_MODE,'off');assert.equal(db.port,'5432');assert.equal(db.pathname,'/ten98_prompt_recurring_ci');assert.doesNotMatch(config.databaseUrl,/[?#]/);
+ }else{assert.equal(db.port,'55502');assert.match(db.pathname,/^\/ten98_prompt_recurring_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');}
+ assert.equal(config.appUrl,'http://127.0.0.1:3111');
  const pool=getDatabase().pool,owner=randomUUID(),admin=randomUUID(),editor=randomUUID(),viewer=randomUUID(),foreign=randomUUID(),password=randomBytes(24).toString('base64url'),oldFetch=globalThis.fetch;
  let paid=0,free=0,price='0.00000015',mode:'ok'|'unknown'='ok',changedCanonical=false,hold:(()=>Promise<void>)|null=null;const receipts=new Map<string,object>();
  const models=['openai/gpt-4o-mini','openai/gpt-4o','openai/gpt-4.1-nano','openai/gpt-4.1-mini'];
