@@ -95,6 +95,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_prompt_recurring_ci');
             await client.query('CREATE DATABASE ten98_google_ads_ci');
             await client.query('CREATE DATABASE ten98_google_ga4_ci');
+            await client.query('CREATE DATABASE ten98_web_performance_ci');
             await client.query('CREATE DATABASE ten98_domain_research_ci');
             await client.query('CREATE DATABASE ten98_backlink_research_ci');
             await client.query('CREATE DATABASE ten98_explorer_ci');
@@ -168,6 +169,7 @@ jobs:
               ['ten98_domain_research_ci', [['src/server/cli.ts', 'migrate'], ['tests/domain-research-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_backlink_research_ci', [['src/server/cli.ts', 'migrate'], ['tests/backlink-research-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_google_ga4_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-commerce-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', TEN98_GOOGLE_COMMERCE_INTEGRATION: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_web_performance_ci', [['src/server/cli.ts', 'migrate'], ['tests/web-performance-integration.ts']], { TEN98_WEB_PERFORMANCE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_explorer_ci', [['src/server/cli.ts', 'migrate'], ['tests/explorer-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_gsc_inspection_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-inspection-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_prompt_insights_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-insights-integration.ts']], { TEN98_PROMPT_INSIGHTS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],

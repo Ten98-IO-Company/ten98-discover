@@ -18,14 +18,14 @@ import {normalizeRevenueProperties} from '../lib/revenue.ts';
 const settingsInput = z.object({
   enabled: z.boolean(), consentMode: z.enum(['builtin', 'external']),
   collectionMode: z.enum(['consent-first', 'cookieless']).optional(),
-  captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),captureGeography:z.boolean().optional(),
+  captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),captureGeography:z.boolean().optional(),capturePerformance:z.boolean().optional(),
   excludeBots: z.boolean(),linkIdentities:z.boolean().optional(),
   excludedPaths: z.array(z.string().min(1).max(256).regex(/^\/[^?#\u0000-\u001f\u007f]*$(?![\s\S])/).refine(value => { try { decodeURIComponent(value); return toUSVString(value) === value; } catch { return false; } })).max(50),
 }).strict();
 export type AnalyticsSettings = z.infer<typeof settingsInput>;
 type Project = { id: string; origin: string; analytics_settings: AnalyticsSettings; analytics_epoch: string; analytics_revision: number; destination_epoch: string | null };
 export function publicAnalyticsSettings(value: unknown): AnalyticsSettings { const parsed=settingsInput.parse(value); return {...parsed,collectionMode:parsed.collectionMode??'consent-first'}; }
-export function publicTrackingSettings(value:unknown){const s=publicAnalyticsSettings(value);return{enabled:s.enabled,consentMode:s.consentMode,collectionMode:s.collectionMode,captureReferrer:s.captureReferrer,captureCampaigns:s.captureCampaigns,captureScreen:s.captureScreen,excludeBots:s.excludeBots,...s.linkIdentities===undefined?{}:{linkIdentities:s.linkIdentities},excludedPaths:s.excludedPaths};}
+export function publicTrackingSettings(value:unknown){const s=publicAnalyticsSettings(value);return{enabled:s.enabled,consentMode:s.consentMode,collectionMode:s.collectionMode,captureReferrer:s.captureReferrer,captureCampaigns:s.captureCampaigns,captureScreen:s.captureScreen,excludeBots:s.excludeBots,...s.capturePerformance===undefined?{}:{capturePerformance:s.capturePerformance},...s.linkIdentities===undefined?{}:{linkIdentities:s.linkIdentities},excludedPaths:s.excludedPaths};}
 export function analyticsPathExcluded(path: string, prefixes: string[]): boolean {
   if (!prefixes.length) return false;
   try { const decoded = decodeURIComponent(path); return prefixes.some(prefix => decoded.startsWith(decodeURIComponent(prefix))); }
@@ -84,7 +84,7 @@ export async function saveAnalyticsSettings(projectId: string, userId: string, r
     if (!['owner','admin'].includes(role.rows[0]?.role)) throw new FoundationError(404, 'Project not found or unavailable.');
     const current=await client.query('SELECT analytics_settings FROM project WHERE id=$1 FOR UPDATE',[projectId]);
     if(!current.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
-    const saved=publicAnalyticsSettings(current.rows[0].analytics_settings),settings={...input.settings,collectionMode:input.settings.collectionMode??saved.collectionMode,captureGeography:input.settings.captureGeography??saved.captureGeography??false};
+    const saved=publicAnalyticsSettings(current.rows[0].analytics_settings),settings={...input.settings,collectionMode:input.settings.collectionMode??saved.collectionMode,captureGeography:input.settings.captureGeography??saved.captureGeography??false,...input.settings.capturePerformance===undefined&&saved.capturePerformance!==undefined?{capturePerformance:saved.capturePerformance}:{}};
     const result = await client.query(`UPDATE project SET analytics_settings=$3,analytics_revision=analytics_revision+1,analytics_epoch=$4,
       identity_links_started_at=CASE WHEN $5::boolean THEN COALESCE(identity_links_started_at,clock_timestamp()) ELSE identity_links_started_at END
       WHERE id=$1 AND analytics_revision=$2 RETURNING analytics_settings AS settings,analytics_revision AS revision`, [projectId, input.revision, JSON.stringify(settings), randomUUID(),settings.linkIdentities===true]);

@@ -1,5 +1,9 @@
 # Upstream provenance and reuse gate
 
+## Browser performance measurements
+
+`public/performance.js` wraps the unmodified browser IIFE from [GoogleChrome/web-vitals 6.2.3](https://github.com/GoogleChrome/web-vitals) in a private scope and connects its five metric callbacks to the native tracker's collection policy. The upstream 8,991-byte asset has SHA-256 `1e5e9b9af6b8d71cfef508e5a869c53b4cf2bbccad8c9b5ac664c34e93f6151a`; it came from the versioned npm registry archive, whose integrity was verified before copying. The wrapper is a ten98-monitor modification. This optional asset is served locally and starts observers only after the project opts into performance collection and the tracker permits collection. It uses no external CDN or additional Node dependency. The upstream code is Apache-2.0, with its full license distributed at `public/vendor/web-vitals-LICENSE.txt`; the application's MIT license does not relicense that code.
+
 The application includes the attributed Elmo and OpenSEO adaptations recorded below. Statements describing an empty application import ledger refer to the earlier planning/foundation stage.
 
 ## OpenSEO domain scope filters

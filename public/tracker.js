@@ -7,6 +7,58 @@
 
   var NAME_RE = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
   var PAGE_VIEW = 'page_view';
+  var performanceCaptures = new Set();
+  var performanceDocumentChanged = false;
+
+  function startPerformance(state) {
+    var h = hub(), settings = state.config && state.config.nativeTracking;
+    if (!h || !settings || settings.capturePerformance !== true || state.performanceCapture || performanceDocumentChanged || typeof PerformanceObserver !== 'function') return;
+    var capture = {state: state, navigationId: uuid(), url: currentUrl(), epoch: state.config.consentEpoch, generation: state.nativeGeneration, revision: 0, active: true, started: false, requests: new Set()};
+    state.performanceCapture = capture; performanceCaptures.add(capture);
+    function begin(ready) {
+      if (!ready || capture.started || !capture.active || state.nativeGeneration !== capture.generation || !state.config || state.config.consentEpoch !== capture.epoch || !nativeReady(state)) return;
+      capture.started = true;
+      h.startPerformance(function (metric) {
+        try {
+          if (!capture.active || !state.config || state.config.consentEpoch !== capture.epoch || state.nativeGeneration !== capture.generation || currentUrl() !== capture.url || !nativeReady(state)) return;
+          if (capture.restoreAt !== undefined && (metric.navigationType !== 'back-forward-cache' || metric.navigationStartTime !== capture.restoreAt)) return;
+          var name = typeof metric.name === 'string' ? metric.name.toLowerCase() : '';
+          if (!['lcp', 'inp', 'cls', 'fcp', 'ttfb'].includes(name) || !Number.isFinite(metric.value) || metric.value < 0 || metric.value > (name === 'cls' ? 1000 : 3600000) || capture.revision >= 1000000) return;
+          nativeEvent(state, {type: 'performance', navigationId: capture.navigationId, url: capture.url, metric: name, value: metric.value, revision: ++capture.revision});
+        } catch (ignore) {}
+      });
+    }
+    if (typeof h.startPerformance === 'function' && h.startPerformance.protocolVersion === 1) { begin(true); return; }
+    if (!h.performanceLoader) h.performanceLoader = new Promise(function (resolve) {
+      var loader = document.createElement('script'), finished = false;
+      var timer = setTimeout(function () { finish(false); }, 5000);
+      function finish(ready) { if (finished) return; finished = true; clearTimeout(timer); loader.remove(); resolve(ready); }
+      loader.src = state.origin + '/performance.js'; loader.async = true; loader.referrerPolicy = 'no-referrer';
+      if (script && script.nonce) loader.nonce = script.nonce;
+      loader.onload = function () { finish(typeof h.startPerformance === 'function' && h.startPerformance.protocolVersion === 1); };
+      loader.onerror = function () { finish(false); };
+      (document.head || document.documentElement).appendChild(loader);
+    });
+    h.performanceLoader.then(begin).catch(function () {});
+  }
+
+  function stopPerformanceNavigation() {
+    // ponytail: document metrics stop at SPA path changes, so excluded routes cannot
+    // leak into a later aggregate. Add soft-navigation metrics with upstream lifecycle support.
+    performanceDocumentChanged = true;
+    performanceCaptures.forEach(function (capture) { capture.active = false; capture.requests.forEach(function (request) { request.abort(); }); });
+  }
+
+  function restorePerformance(event) {
+    performanceCaptures.forEach(function (capture) {
+      var state = capture.state;
+      // A library loaded after restore cannot reconstruct fresh bfcache measurements.
+      if (!capture.started || !Number.isFinite(event.timeStamp) || event.timeStamp < 0 || !state.config || state.config.nativeTracking.capturePerformance !== true || !nativeReady(state)) { capture.active = false; return; }
+      capture.navigationId = uuid(); capture.url = currentUrl(); capture.revision = 0;
+      capture.restoreAt = event.timeStamp;
+      capture.epoch = state.config.consentEpoch; capture.generation = state.nativeGeneration; capture.active = true;
+    });
+  }
 
   function uuid() {
     var bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -67,18 +119,20 @@
     try {
       var config = state.config, settings = config.nativeTracking;
       if (!nativeReady(state) || state.nativeRequests.size >= 20 || typeof TextDecoder !== 'function' || typeof ReadableStream !== 'function') return;
+      var performanceEvent = event.type === 'performance', capture = state.performanceCapture;
+      if (performanceEvent && (settings.capturePerformance !== true || !capture || !capture.active || capture.navigationId !== event.navigationId || capture.url !== event.url)) return;
       var consented = hub().nativeConsentAllowed(state), dimensions = {}, epoch = config.consentEpoch, generation = state.nativeGeneration;
-      if (consented && state.nativeIdentifier !== undefined) dimensions.distinctId = state.nativeIdentifier;
-      if (navigator.language) dimensions.language = navigator.language;
-      if (settings.captureReferrer && document.referrer) dimensions.referrer = new URL(document.referrer).origin;
+      if (!performanceEvent && consented && state.nativeIdentifier !== undefined) dimensions.distinctId = state.nativeIdentifier;
+      if (!performanceEvent && navigator.language) dimensions.language = navigator.language;
+      if (!performanceEvent && settings.captureReferrer && document.referrer) dimensions.referrer = new URL(document.referrer).origin;
       if (settings.captureScreen && window.screen) dimensions.screen = {width: screen.width, height: screen.height};
-      if (settings.captureCampaigns) {
+      if (!performanceEvent && settings.captureCampaigns) {
         var query = new URL(location.href).searchParams, campaign = {};
         ['source', 'medium', 'campaign', 'term', 'content'].forEach(function (key) { var value = query.get('utm_' + key); if (value) campaign[key] = value; });
         if (Object.keys(campaign).length) dimensions.campaign = campaign;
       }
-      var payload = {siteKey: state.siteKey, name: event.name, eventId: event.eventId, url: event.url, properties: event.properties,
-        dimensions: dimensions, context: state.nativeContext || undefined};
+      var payload = performanceEvent ? {type: 'performance', siteKey: state.siteKey, navigationId: event.navigationId, url: event.url, metric: event.metric, value: event.value, revision: event.revision, dimensions: dimensions} :
+        {siteKey: state.siteKey, name: event.name, eventId: event.eventId, url: event.url, properties: event.properties, dimensions: dimensions, context: state.nativeContext || undefined};
       if (consented) payload.consent = {analytics: true, epoch: epoch};
       else payload.collection = {mode: 'cookieless', epoch: epoch};
       var body = JSON.stringify(payload);
@@ -87,21 +141,25 @@
       var observation = event.name === PAGE_VIEW ? {url: event.url, basic: !consented, sent: false} : null;
       if (observation) state.nativePageObservation = observation;
       var controller = new AbortController(); state.nativeRequests.add(controller);
+      if (performanceEvent) capture.requests.add(controller);
+      function current() { return nativeCurrent(state, epoch, generation, controller) && (!performanceEvent || capture.active && capture.navigationId === payload.navigationId && capture.url === payload.url); }
       var timer = setTimeout(function () { controller.abort(); }, 5000);
-      Promise.resolve().then(function () { if (!nativeCurrent(state, epoch, generation, controller)) return; if (observation) observation.sent = true; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
+      Promise.resolve().then(function () { if (!current()) return; if (observation) observation.sent = true; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
         cache: 'no-store', redirect: 'error', keepalive: true, signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body}); })
         .then(async function (response) {
           if (!response) return;
           var text = await readNativeResponse(response, controller.signal);
           if (!response.ok) { warn('ten98-monitor: event was not accepted. Check installation diagnostics.'); return; }
           var result = JSON.parse(text);
-          if (nativeCurrent(state, epoch, generation, controller) && result.accepted && typeof result.context === 'string' && result.context.length <= 1024) state.nativeContext = result.context;
+          if (current() && result.accepted && typeof result.context === 'string' && result.context.length <= 1024) state.nativeContext = result.context;
         }).catch(function () { if (!controller.signal.aborted) warn('ten98-monitor: collector unavailable or blocked.'); })
-        .finally(function () { clearTimeout(timer); state.nativeRequests.delete(controller); });
+        .finally(function () { clearTimeout(timer); state.nativeRequests.delete(controller); if (performanceEvent) capture.requests.delete(controller); });
+      if (observation) startPerformance(state);
     } catch (ignore) {} // Invalid application properties must never break the host page.
   }
 
   function nativeStop(state) {
+    if (state.performanceCapture) state.performanceCapture.active = false;
     state.nativeContext = null; state.nativeIdentifier = undefined; state.nativeGeneration = (state.nativeGeneration || 0) + 1;
     state.nativeRequests.forEach(function (request) { request.abort(); }); state.nativeRequests.clear();
   }
@@ -228,6 +286,7 @@
       if (!h) return;
       var url = currentUrl();
       if (url === h.lastUrl) return;
+      stopPerformanceNavigation();
       h.lastUrl = url;
       fanout(PAGE_VIEW);
     } catch (ignore) {}
@@ -238,6 +297,7 @@
       var h = hub();
       if (!h || !event || !event.persisted || h.restored) return; // ordinary pageshow must not duplicate
       h.restored = true; // exactly one restored page_view per bfcache restoration; pagehide re-arms
+      restorePerformance(event);
       h.lastUrl = currentUrl();
       fanout(PAGE_VIEW);
     } catch (ignore) {}
@@ -297,7 +357,7 @@
     patchHistory('pushState');
     patchHistory('replaceState');
     window.addEventListener('popstate', afterNav);
-    window.addEventListener('pageshow', onPageshow);
+    window.addEventListener('pageshow', onPageshow, true); // reset RUM identity before the library's bfcache callbacks
     window.addEventListener('pagehide', onPagehide);
     try { document.addEventListener('click', onDeclaredClick, true); } catch (ignore) {}
     if (!window.ten98) window.ten98 = h.api; // never overwrite a foreign global
@@ -313,6 +373,7 @@
       loader.src = new URL('/destinations.js?v=3', site.endpoint).href;
       loader.async = true;
       loader.referrerPolicy = 'no-referrer';
+      if (script && script.nonce) loader.nonce = script.nonce;
       loader.onerror = function () { warn('ten98-monitor: destination loader unavailable or blocked.'); };
       (document.head || document.documentElement).appendChild(loader);
     } catch (ignore) {} // A blocked coordinator leaves collection disabled.
