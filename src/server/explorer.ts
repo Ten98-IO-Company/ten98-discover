@@ -11,7 +11,7 @@ import {geographyFields,parseGeographyKey,serializeGeographyKey,type GeoField,ty
 
 type Totals = {events:number|null;pageViews:number|null;customEvents:number|null;identifiedEvents:number|null;unidentifiedEvents:number|null;visitors:number|null;visits:number|null};
 type Day = {date:string;start:string;end:string;events:number|null;pageViews:number|null;customEvents:number|null;skipped:boolean;coverage:'complete'|'partial'|'unavailable'};
-type Group = {type:string;value:unknown;events:number;identifiedEvents:number;visitors:number|null};
+type Group = {type:string;value:unknown;events:number;identifiedEvents:number;visitors:number|null;pageViews?:number;identifiedPageViews?:number;estimatedVisitors?:number|null;visits?:number|null;bounceRate?:number|null;averageVisitSeconds?:number|null};
 type Numeric = {samples:number;sum:string|null;average:string|null;min:string|null;max:string|null};
 type ExplorerGeographyProvenance=GeographyProvenance&{scope:'matching-report-events'};
 const usesGeography=(query:ReturnType<typeof explorerQuery>)=>geographyFields.includes(query.groupBy as GeoField)||geographyFields.some(field=>Object.hasOwn(query.filters,field))||!!query.predicates?.fields.some(filter=>geographyFields.includes(filter.field as GeoField));
@@ -52,6 +52,36 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
         WHEN d.dimension IS NULL THEN '{"type":"missing","value":null}'::jsonb
         ELSE jsonb_build_object('type',CASE WHEN $11 IN ('country','region','city') THEN 'string' ELSE jsonb_typeof(d.dimension) END,'value',d.dimension) END AS label
       FROM ${population} s CROSS JOIN LATERAL (SELECT ${analyticsDimensionValueSql('$11::text','s')} AS dimension) d`;
+    // Umami counts page views within each tuple/visitor/visit, but custom events
+    // suppress bounces across the authorized date range before report filters.
+    const groupingSql=fields?`tuple_custom_visits AS MATERIALIZED (
+      SELECT DISTINCT e.visitor_id,e.visit_id FROM event e JOIN target t ON t.id=e.project_id CROSS JOIN bounds b
+      WHERE e.received_at>=b.start AND e.received_at<b.finish AND (e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date
+        AND (t.analytics_retained_from IS NULL OR e.received_at>=t.analytics_retained_from)
+        AND e.event_name<>'page_view' AND e.visitor_id IS NOT NULL AND e.visit_id IS NOT NULL
+    ), tuple_visits AS (
+      SELECT label::text COLLATE "C" AS label,visitor_id,visit_id,count(*) AS pageviews,
+        extract(epoch FROM max(received_at)-min(received_at)) AS duration
+      FROM labeled WHERE event_name='page_view' AND visitor_id IS NOT NULL AND visit_id IS NOT NULL
+      GROUP BY label::text COLLATE "C",visitor_id,visit_id
+    ), tuple_measurement AS (
+      SELECT v.label,count(DISTINCT v.visitor_id) AS estimated_visitors,count(*) AS visits,
+        100.0*count(*) FILTER(WHERE v.pageviews=1 AND c.visit_id IS NULL)/count(*) AS bounce,
+        avg(v.duration) AS duration FROM tuple_visits v LEFT JOIN tuple_custom_visits c ON c.visitor_id=v.visitor_id AND c.visit_id=v.visit_id GROUP BY v.label
+    ), tuple_counts AS (
+      SELECT label::text COLLATE "C" AS label,count(*) AS events,count(visitor_id) AS identified,
+        CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END AS visitors,
+        count(*) FILTER(WHERE event_name='page_view') AS pageviews,count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NOT NULL) AS identified_pageviews
+      FROM labeled GROUP BY label::text COLLATE "C"
+    ), grouped AS MATERIALIZED (
+      SELECT c.*,m.estimated_visitors,m.visits,m.bounce,m.duration FROM tuple_counts c LEFT JOIN tuple_measurement m ON m.label=c.label
+    ), ranked AS (SELECT label::jsonb AS label,events,identified,visitors,pageviews,identified_pageviews,estimated_visitors,visits,bounce,duration FROM grouped
+      ORDER BY estimated_visitors DESC NULLS LAST,pageviews DESC,grouped.label COLLATE "C" ASC LIMIT 500)`:
+      `grouped AS MATERIALIZED (
+      SELECT label,count(*) AS events,count(visitor_id) AS identified,
+        CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END AS visitors FROM labeled GROUP BY label
+    ), ranked AS (SELECT * FROM grouped ORDER BY events DESC,label::text COLLATE "C" ASC LIMIT 100)`;
+    const groupOrder=fields?'estimated_visitors DESC NULLS LAST,pageviews DESC,label::text COLLATE "C"':'events DESC,label::text COLLATE "C"';
     // One statement binds membership, retention, buckets and totals to one snapshot.
     // ponytail: bounded raw aggregation; introduce rollups only after measured query limits.
     // PostgreSQL resolves ambiguous wall times to the later offset. Check both
@@ -59,10 +89,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     // midnights to find a gap's first real instant (including skipped dates).
     const {rows} = await client.query(`${ctes}, labeled AS MATERIALIZED (
       ${labelSql}
-    ), grouped AS MATERIALIZED (
-      SELECT ${fields?'label::text COLLATE "C" AS label':'label'},count(*) AS events,count(visitor_id) AS identified,
-        CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END AS visitors FROM labeled GROUP BY ${fields?'label::text COLLATE "C"':'label'}
-    ), ranked AS (SELECT ${fields?'label::jsonb AS label,events,identified,visitors':'*'} FROM grouped ORDER BY events DESC,label::text COLLATE "C" ASC LIMIT 100),
+    ), ${groupingSql},
     buckets AS (
       SELECT (received_at AT TIME ZONE $5)::date AS day,count(*) AS events,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
         count(*) FILTER (WHERE event_name<>'page_view') AS custom FROM ${population} GROUP BY 1
@@ -85,9 +112,9 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
         'events',COALESCE(b.events,0),'pageViews',COALESCE(b.pageviews,0),'customEvents',COALESCE(b.custom,0)) ORDER BY c.day)
         FROM calendar c LEFT JOIN buckets b ON b.day=c.day::date WHERE c.finish IS NOT NULL) AS daily,
       json_build_object('groups',COALESCE((SELECT json_agg(json_build_object('type',label->>'type','value',label->'value',
-        'events',events,'identifiedEvents',identified,'visitors',visitors) ORDER BY events DESC,label::text COLLATE "C") FROM ranked),'[]'::json),
+        'events',events,'identifiedEvents',identified,'visitors',visitors${fields?",'pageViews',pageviews,'identifiedPageViews',identified_pageviews,'estimatedVisitors',estimated_visitors,'visits',visits,'bounceRate',bounce,'averageVisitSeconds',duration":''}) ORDER BY ${groupOrder}) FROM ranked),'[]'::json),
         'totalGroups',(SELECT count(*) FROM grouped),'returnedGroupEvents',(SELECT COALESCE(sum(events),0) FROM ranked),
-        'truncated',(SELECT count(*)>100 FROM grouped)) AS breakdown,
+        'truncated',(SELECT count(*)>${fields?500:100} FROM grouped)) AS breakdown,
       json_build_object('keys',COALESCE((SELECT json_agg(key ORDER BY key COLLATE "C") FROM (SELECT key FROM keys ORDER BY key COLLATE "C" LIMIT 100) k),'[]'::json),
         'truncated',(SELECT count(*)>100 FROM keys)) AS properties,
       (SELECT json_build_object('samples',count(*),'sum',sum(value)::text,'average',avg(value)::text,'min',min(value)::text,'max',max(value)::text) FROM numbers) AS numeric
@@ -106,6 +133,7 @@ export async function exploreAnalytics(projectId:string,userId:string,params:URL
     const sessionProperties=reportSession?sessionScope(row.session_context,row.report_candidates,query.predicates!.sessionProperties!.some(filter=>filter.operator==='missing'),
       coverage.status==='unavailable'||cohort?.membership.status==='unavailable',coverage.status==='partial'||!!cohort?.membership.countsAreLowerBounds):undefined;
     const membershipUnavailable=cohort?.membership.status==='unavailable'||sessionProperties?.selection.status==='unavailable';
+    if(fields&&(coverage.status!=='complete'||cohort?.membership.countsAreLowerBounds||sessionProperties?.selection.countsAreLowerBounds))for(const group of row.breakdown.groups){group.bounceRate=null;group.averageVisitSeconds=null;}
     const totals: Totals = row.totals;
     if (coverage.status === 'unavailable'||membershipUnavailable) for (const key of Object.keys(totals) as (keyof Totals)[]) totals[key] = null;
     const daily: Day[] = row.daily.map((day:Day) => {
@@ -134,10 +162,11 @@ function explorerCsv(result:{query:ReturnType<typeof explorerQuery>|CompoundExpl
   const fields='fields'in result.query?result.query.fields:null,groupBy='groupBy'in result.query?result.query.groupBy:null;
   const geoGroup=geographyFields.includes(groupBy as GeoField),location=(value:unknown,field=groupBy)=>{const key=parseGeographyKey(field as GeoField,value);if(!key)return 'Not recorded';if(key.state!=='known')return key.state==='unknown'?'Unknown':'Not recorded';const country=new Intl.DisplayNames('en-US',{type:'region'}).of(key.country)??key.country,region='region'in key&&key.region?key.region.value:'Unknown region';return 'city'in key?`${key.city} · ${region} · ${country} (${key.country})`:'region'in key?`${region} · ${country} (${key.country})`:`${country} (${key.country})`;};
   const groupLines=fields?[
-    [...fields.flatMap(field=>[`${field} type`,`${field} value`,...(geographyFields.includes(field as GeoField)?[`${field} location`]:[])]),'Events','Identified events','Visitors'],
-    ...result.breakdown.groups.map(g=>[...(g.value as ExplorerTupleAtom[]).flatMap((atom,index)=>[atom.type,atom.type==='missing'?'Missing / uncollected':atom.type==='null'?'null':atom.value,...(geographyFields.includes(fields[index] as GeoField)?[location(atom.value,fields[index])]:[])]),g.events,g.identifiedEvents,g.visitors])
+    [...fields.flatMap(field=>[`${field} type`,`${field} value`,...(geographyFields.includes(field as GeoField)?[`${field} location`]:[])]),'Events','Identified events','Visitors (all events)','Page views','Identified page views','Estimated visitors (page views)','Visits (page views)','Bounce rate (%)','Average observed visit duration (seconds)'],
+    ...result.breakdown.groups.map(g=>[...(g.value as ExplorerTupleAtom[]).flatMap((atom,index)=>[atom.type,atom.type==='missing'?'Missing / uncollected':atom.type==='null'?'null':atom.value,...(geographyFields.includes(fields[index] as GeoField)?[location(atom.value,fields[index])]:[])]),g.events,g.identifiedEvents,g.visitors,g.pageViews,g.identifiedPageViews,g.estimatedVisitors,g.visits,g.bounceRate,g.averageVisitSeconds])
   ]:[['Type',...(geoGroup?['Location','Canonical key']:['Value']),'Events','Identified events','Visitors'],...result.breakdown.groups.map(g=>[g.type,...geoGroup?[location(g.value),g.value]:[g.type === 'null' ? 'null' : g.type === 'missing' ? 'Missing / uncollected' : g.value],g.events,g.identifiedEvents,g.visitors])];
   const lines:unknown[][] = [['ten98-monitor','Bounded exploration result'],['Scope',JSON.stringify(result.query)],['Start (inclusive)',result.range.start],['End (exclusive)',result.range.end],
+    ...(fields?[['Page-view metrics','Observed rotating project visitor/visit keys; not people or complete sessions. Visitors (all events) additionally includes custom events.'],['Bounce method','One matching page view and no retained custom event for the same visitor/visit in the whole authorized project/local-date range, before report filters.'],['Duration method','Mean of each matching visitor/visit pair\'s last minus first matching page view, in seconds; zero-length visits included.'],['Incomplete evidence','Rates and duration unavailable for partial history or incomplete cohort/current-property selection; observed counts retained.'],['Nonadditive keys','Do not sum visitor or visit estimates across groups.']]:[]),
     ['Selection','Only instants in the selected local calendar dates; UTC envelopes can overlap at a repeated midnight.'],
     ['Retention coverage',result.coverage.status],['Retained from',result.coverage.retainedFrom ?? 'No retention boundary'],
     ...(result.geographyProvenance?[['Location source','DB-IP City Lite (CC BY 4.0) — https://db-ip.com/db/lite.php'],['Location provenance scope','Matching report events; qualification dataset builds are not returned'],['Location datasets',result.geographyProvenance.databaseCount],['Oldest location database build (Unix seconds)',result.geographyProvenance.oldestDatabaseBuild],['Newest location database build (Unix seconds)',result.geographyProvenance.newestDatabaseBuild],['Location accuracy','Approximate; stored observations only; no coordinates or raw IP addresses']]:[]),
