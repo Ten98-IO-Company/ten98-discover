@@ -72,15 +72,20 @@ export function parseRoute(model:OpenRouterModel,body:unknown,maxCompletionToken
 }
 async function readRoutes(credentials:unknown,models:OpenRouterModel[],maxCompletionTokens:number,send:typeof fetch,structured=false,profile?:OpenRouterRequestProfile,pinnedTags?:string[]){
   try{
-    if(!Array.isArray(models)||models.length<1||models.length>2||new Set(models).size!==models.length)invalid();
+    if(!Array.isArray(models)||models.length<1||models.length>4||new Set(models).size!==models.length)invalid();
     if(profile){if(profile!==openRouterTextProfile)invalid();await requireCatalogModels(models,send,structured);}
     const key=await read('/key',credentials,send);
     if(!object(key?.data)||key.data.is_free_tier!==false||key.data.is_management_key!==false||key.data.is_provisioning_key===true)invalid();
     const routes:RouteSnapshot[]=[];
-    for(const [index,model]of models.entries()){
-      if(!openRouterModelId(model))invalid();const [author,slug]=model.split('/');
-      const body=await read('/models/'+encodeURIComponent(author)+'/'+encodeURIComponent(slug)+'/endpoints',credentials,send);
-      routes.push(parseRoute(model,body,maxCompletionTokens,profile,structured,pinnedTags?.[index]));
+    // ponytail: at most two free endpoint reads at once; retain selection order and
+    // the existing 10s per-read/2MiB limits rather than parallelizing paid sends.
+    for(let index=0;index<models.length;index+=2){
+      const settled=await Promise.allSettled(models.slice(index,index+2).map(async(model,offset)=>{
+        if(!openRouterModelId(model))invalid();const [author,slug]=model.split('/');
+        const body=await read('/models/'+encodeURIComponent(author)+'/'+encodeURIComponent(slug)+'/endpoints',credentials,send);
+        return parseRoute(model,body,maxCompletionTokens,profile,structured,pinnedTags?.[index+offset]);
+      }));
+      for(const route of settled){if(route.status==='rejected')throw route.reason;routes.push(route.value);}
     }
     return routes;
   }catch{throw new FoundationError(502,'Could not verify the ordinary funded OpenRouter key and supported endpoint prices. No model request was sent.');}

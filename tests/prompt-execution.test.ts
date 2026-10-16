@@ -3,6 +3,8 @@ import test from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {decimalSumMicros,decimalText,executionInput,executionBody,parseOpenRouterJson,ExactCost} from '../src/server/openrouter-input.ts';
 import {parseRoute,parseExecutionOutcome,readOpenRouterRoutes,requestPromptExecution,reconcileOpenRouter,executionActor} from '../src/server/openrouter.ts';
+import {openRouterTextProfile} from '../src/lib/openrouter-models.ts';
+import {refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
 process.env.AUTH_SECRET='prompt-unit-auth-only-'.repeat(4);process.env.BOOTSTRAP_TOKEN='prompt-unit-bootstrap-only-'.repeat(4);process.env.DATABASE_URL='postgresql://synthetic:synthetic@localhost/unused_prompt_unit';
 delete process.env.AUTH_SECRET_FILE;delete process.env.BOOTSTRAP_TOKEN_FILE;delete process.env.DATABASE_URL_FILE;
 const model='openai/gpt-4o-mini' as const,now=new Date('2026-10-13T12:00:00Z'),id=randomUUID(),actor=executionActor(randomUUID());
@@ -53,4 +55,38 @@ test('read-only readiness and reconciliation require exact route/session/actor/t
  const out=await reconcileOpenRouter(secret,receipt.id,route,now,id,actor,async(url)=>{assert.equal(url,'https://openrouter.ai/api/v1/generation?id=gen-test-one');return Response.json({data:receipt});});assert.equal(out.cost,'0.000013');assert.equal(out.result,null);
  for(const change of [{id:'gen-other'},{model:'other'},{session_id:null},{external_user:'other'},{created_at:'2020-01-01'},{finish_reason:null},{total_cost:'0.01'}])await assert.rejects(reconcileOpenRouter(secret,receipt.id,route,now,id,actor,async()=>Response.json({data:{...receipt,...change}})));
  let unknownSent=false;await assert.rejects(reconcileOpenRouter(secret,null as any,route,now,id,actor,async()=>{unknownSent=true;return Response.json({});}));assert.equal(unknownSent,false);
+});
+test('one through four literal models are admitted without admitting a fifth or duplicates',()=>{
+ const input={connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),systemText:'Exact\n  whitespace',models:[],maxCompletionTokens:16,fundedCredits:true};
+ const models=['openai/gpt-4o-mini','openai/gpt-4o','mistralai/fixture-a','google/fixture-b'];
+ for(const count of [1,3,4])assert.deepEqual(executionInput.parse({...input,models:models.slice(0,count)}).models,models.slice(0,count));
+ for(const selected of [[],[...models,'other/fifth'],[...models.slice(0,3),models[0]]])assert.equal(executionInput.safeParse({...input,models:selected}).success,false);
+});
+test('free endpoint discovery has at most two in flight and keeps the selected model order',{timeout:5000},async()=>{
+ const models=['fixture/one','fixture/two','fixture/three','fixture/four'],pending:{finish:()=>void}[]=[];
+ let active=0,maximum=0,firstReady!:()=>void,secondReady!:()=>void;
+ const first=new Promise<void>(r=>firstReady=r),second=new Promise<void>(r=>secondReady=r);
+ const send:typeof fetch=async(url,init)=>{
+  assert.equal(init?.method,undefined);assert.ok(init?.signal);const path=String(url);
+  if(path.includes('/models?'))return Response.json({data:models.map(id=>({id,canonical_slug:id,name:id,architecture:{input_modalities:['text'],output_modalities:['text']},context_length:128000,top_provider:{max_completion_tokens:16384},supported_parameters:['max_tokens'],pricing:{prompt:'0.00000015',completion:'0.0000006',request:'0'}})),total_count:4,links:{next:null}});
+  if(path.endsWith('/key'))return Response.json({data:{is_free_tier:false,is_management_key:false}});
+  const selected=models.find(id=>path.endsWith('/'+id+'/endpoints'));assert.ok(selected);active++;maximum=Math.max(maximum,active);
+  await new Promise<void>(finish=>{pending.push({finish});if(pending.length===2)firstReady();if(pending.length===4)secondReady();});active--;
+  const data=endpoint().data;return Response.json({data:{...data,id:selected,architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:data.endpoints.map(e=>({...e,model_id:selected}))}});
+ };
+ await refreshOpenRouterCatalog(send);
+ const reading=readOpenRouterRoutes({apiKey:'synthetic-never-live'},models,16,send,openRouterTextProfile);
+ await first;assert.equal(active,2);assert.equal(pending.length,2);pending[1].finish();pending[0].finish();
+ await second;assert.equal(active,2);pending[3].finish();pending[2].finish();
+ assert.deepEqual((await reading).map(r=>r.model),models);assert.equal(maximum,2);assert.equal(active,0);
+ let released!:()=>void,started!:()=>void,finished=false;
+ const held=new Promise<void>(r=>released=r),inFlight=new Promise<void>(r=>started=r);
+ const failing=readOpenRouterRoutes({apiKey:'synthetic-never-live'},models.slice(0,2),16,async url=>{
+  if(String(url).endsWith('/key'))return Response.json({data:{is_free_tier:false,is_management_key:false}});
+  if(String(url).endsWith('/'+models[0]+'/endpoints'))throw Error('Synthetic metadata refusal.');
+  started();await held;const data=endpoint().data;return Response.json({data:{...data,id:models[1],architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:data.endpoints.map(e=>({...e,model_id:models[1]}))}});
+ },openRouterTextProfile).then(()=>{finished=true;return null;},error=>{finished=true;return error;});
+ try{await inFlight;await new Promise<void>(r=>setImmediate(r));assert.equal(finished,false,'A failed batch must await its other started free request.');}
+ finally{released();}
+ assert.equal((await failing)?.status,502);assert.equal(finished,true);
 });

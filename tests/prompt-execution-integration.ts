@@ -6,7 +6,8 @@ import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
 import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
 import {createPrompts,updatePrompt,setPromptArchived,listPrompts} from '../src/server/prompts.ts';
-import {getPromptExecutions,getPromptComparison,quotePromptExecution,startPromptExecution,cancelPromptComparison,executePromptComparison,reconcilePromptExecution,reconcilePromptExecutionJobs} from '../src/server/prompt-execution.ts';
+import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,executePromptComparison,reconcilePromptExecution,reconcilePromptExecutionJobs} from '../src/server/prompt-execution.ts';
+import {refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
 import {runRetentionBatch,previewRetention,getRetention} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
@@ -170,7 +171,7 @@ export async function runPromptExecutionChecks(){
   const retainedPolicy=await getRetention(retainedAnswer.workspace,owner),previewBeforeRecovery=await previewRetention(retainedAnswer.workspace,owner,{revision:retainedPolicy.revision,settings:retainedPolicy.settings});assert.equal(previewBeforeRecovery.promptEstimate.results,1);
   const paidBeforeRecovery=paid;receiptChange={total_cost:0.000012345};const recoveredAnswer=await reconcilePromptExecution(retainedAnswer.project,owner,retainedChild.id,{},send);receiptChange={};
   assert.equal(recoveredAnswer.reconciliation.status,'matched');assert.equal((await ledger(retainedChild.id)).status,'settled');assert.equal((await ledger(retainedChild.id)).actual_micros,'13');assert.equal(paid,paidBeforeRecovery);
-  assert.equal(recoveredAnswer.comparison.runs[0].resultExpired,true);assert.equal(recoveredAnswer.comparison.runs[0].result,null);assert.equal(recoveredAnswer.comparison.messages,null);
+  assert.equal(recoveredAnswer.comparison.runs[0].resultExpired,true);assert.ok(!('result'in recoveredAnswer.comparison.runs[0]));assert.equal(recoveredAnswer.comparison.answerMode,'individual');assert.ok(Buffer.byteLength(JSON.stringify(recoveredAnswer),'utf8')<=2_097_152);assert.equal(recoveredAnswer.comparison.messages,null);
   assert.deepEqual((await pool.query('SELECT completed_at::text AS completed,result FROM prompt_execution WHERE id=$1',[retainedChild.id])).rows[0],evidenceBeforeRecovery,'Charge-only reconciliation must preserve the exact original completion timestamp and answer.');
   const insightsAfter=await getPromptInsights(retainedAnswer.project,viewer,insightParams);assert.equal(insightsAfter.coverage.expired,1);assert.equal(insightsAfter.coverage.eligible,0);assert.equal(insightsAfter.metrics[0].eligibleAnswers,null);
   assert.equal((await previewRetention(retainedAnswer.workspace,owner,{revision:retainedPolicy.revision,settings:retainedPolicy.settings})).promptEstimate.results,1);
@@ -184,7 +185,7 @@ export async function runPromptExecutionChecks(){
   // Read cutoff comparisons must keep PostgreSQL microseconds and elapsed days,
   // even when the database/session timezone crosses daylight-saving changes.
   mode='ok';const dst=await fixture(),dstRun=await start(dst);await executePromptComparison(dstRun.id,send);
-  const dstConnect=pool.connect.bind(pool);let offset=0;
+  const dstConnect=pool.connect.bind(pool);let offset=2_000_000;
   pool.connect=(async(...args:any[])=>{if(args.length)return (dstConnect as any)(...args);const client=await dstConnect(),query=client.query.bind(client),release=client.release.bind(client);
     client.query=(async(...values:any[])=>{const result=await (query as any)(...values);if(String(values[0])==='BEGIN'){
       await query("SET LOCAL TimeZone='America/New_York'");
@@ -196,8 +197,10 @@ export async function runPromptExecutionChecks(){
     client.release=((...args:any[])=>{client.query=query;return (release as any)(...args);}) as typeof client.release;return client;
   }) as typeof pool.connect;
   try{const exact=await detail(dst,dstRun.id);assert.ok(exact.runs.every(r=>!r.resultExpired&&r.result!==null));assert.equal(exact.inputExpired,false);
-    offset=-1;const earlier=await detail(dst,dstRun.id);assert.ok(earlier.runs.every(r=>r.resultExpired&&r.result===null));assert.equal(earlier.inputExpired,true);assert.equal(earlier.messages,null);
+    offset=-2_000_000;const earlier=await detail(dst,dstRun.id);assert.ok(earlier.runs.every(r=>r.resultExpired&&r.result===null));assert.equal(earlier.inputExpired,true);assert.equal(earlier.messages,null);
   }finally{pool.connect=dstConnect;}
+  assert.deepEqual((await pool.query(`WITH cutoff AS MATERIALIZED(SELECT clock_timestamp() AS at)
+    SELECT at-interval '1 microsecond'<at AS earlier,at<at AS exact,at+interval '1 microsecond'<at AS later FROM cutoff`)).rows[0],{earlier:true,exact:false,later:false});
 
   mode='ok';const crashed=await fixture(),cr=await start(crashed);await pool.query("UPDATE provider_request SET status='dispatched' WHERE id=$1",[cr.runs[0].id]);await pool.query("UPDATE prompt_execution SET status='running',dispatched_at=clock_timestamp()-interval '2 minutes' WHERE id=$1",[cr.runs[0].id]);before=paid;await reconcilePromptExecutionJobs();const stopped=await detail(crashed,cr.id);assert.equal(stopped.runs[0].status,'uncertain');assert.equal(stopped.runs[1].status,'cancelled');assert.equal(paid,before);
   const evidence=(await pool.query('SELECT row_to_json(p) AS ledger,r.evidence FROM provider_request p JOIN prompt_execution r ON r.id=p.id WHERE p.id=$1',[done.runs[0].id])).rows[0];await pool.query("UPDATE prompt_execution SET completed_at=clock_timestamp()-interval '91 days' WHERE comparison_id=$1",[done.id]);const policy=await getRetention(f.workspace,owner);const preview=await previewRetention(f.workspace,owner,{revision:policy.revision,settings:policy.settings});assert.equal(preview.promptEstimate.results,2);
@@ -240,6 +243,149 @@ export async function runPromptExecutionChecks(){
   assert.equal((await handleApi(new Request(endpoint+'/quote',{method:'POST',headers:{cookie,origin:'https://foreign.test','content-type':'application/json'},body:'{}'}))).status,403);const keyToken=await createApiKey(f.workspace,owner,{name:'No execution permission',scopes:['analytics:read']});assert.equal((await handleApi(new Request(endpoint,{headers:{authorization:'Bearer '+keyToken.token}}))).status,403);
   await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[f.workspace,owner]);assert.equal((await handleApi(new Request(endpoint,{headers:{cookie}}))).status,404);
   console.log('PASS actual queue worker, cookie/Origin/API-key/current-membership enforcement and secret-free execution metadata');
+
+  // Separate additive fixture: all answers are genuine outputs of the production
+  // parser/worker using this fake transport, never rewritten success DTOs.
+  const four=await fixture(),selected=[...models,'mistralai/fixture-a','google/fixture-b'],largeText='漢'.repeat(250000);
+  let fourPaid=0,loseFour=false,failModel:string|null=null,nearWireBytes:number|null=null;
+  const sendFour:typeof fetch=async(url,init)=>{
+   const path=String(url);assert.ok(init?.signal);assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');
+   const pricing={prompt:'0.00000015',completion:'0.0000006',request:'0'};
+   if(path.includes('/models?'))return Response.json({data:selected.map(id=>({id,canonical_slug:id,name:id,architecture:{input_modalities:['text'],output_modalities:['text']},context_length:128000,top_provider:{max_completion_tokens:16384},supported_parameters:['max_tokens'],pricing})),total_count:4,links:{next:null}});
+   if(path.endsWith('/key'))return Response.json({data:{is_free_tier:false,is_management_key:false}});
+   if(path.endsWith('/endpoints')){const id=selected.find(model=>path.endsWith('/'+model+'/endpoints'));assert.ok(id);return Response.json({data:{id,architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:[{model_id:id,tag:'fixture',provider_name:'Fixture',status:0,context_length:128000,max_completion_tokens:16384,supported_parameters:['max_tokens'],pricing}]}});}
+   assert.equal(path,'https://openrouter.ai/api/v1/chat/completions');assert.equal(init?.method,'POST');const body=JSON.parse(String(init?.body));assert.deepEqual(body.provider.only,['fixture']);assert.equal(body.provider.allow_fallbacks,false);fourPaid++;
+   assert.ok(Buffer.byteLength(String(init?.body),'utf8')<=163840);if(body.messages[0]?.content==='\u0001'.repeat(4000))nearWireBytes=Buffer.byteLength(JSON.stringify(body.messages),'utf8');
+   if(loseFour)throw Error('Synthetic lost outcome; never live.');
+   const id='gen-'+randomUUID();return Response.json({id,model:body.model,provider:'Fixture',created:Math.floor(Date.now()/1000),choices:[{finish_reason:'stop',message:{content:body.model===failModel?'invalid\0':largeText}}],usage:{cost:0.000012345,is_byok:false,prompt_tokens:12,completion_tokens:20}},{headers:{'x-generation-id':id}});
+  };
+  await refreshOpenRouterCatalog(sendFour);
+  const fourInput={...four.request,models:selected},three=await quotePromptExecution(four.project,owner,{...fourInput,models:selected.slice(0,3)},sendFour);
+  assert.deepEqual(three.quote.routes.map(r=>r.model),selected.slice(0,3));
+  for(const invalid of [[...selected,'other/fifth'],[...selected.slice(0,3),selected[0]]])await assert.rejects(quotePromptExecution(four.project,owner,{...fourInput,models:invalid},sendFour),{status:400});
+  const fourQuote=(await quotePromptExecution(four.project,owner,fourInput,sendFour)).quote;assert.equal(fourQuote.estimateUsd,'0.081716');
+  await saveProviderLimit(four.workspace,owner,four.connectionId,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.07'});
+  await assert.rejects(startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:randomUUID()}),{status:409});
+  for(const table of ['provider_request','prompt_comparison','prompt_execution'])assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE workspace_id=$1`,[four.workspace])).rows[0].n,0,'The fourth reservation rolls back all preceding children.');
+  await saveProviderLimit(four.workspace,owner,four.connectionId,{revision:1,expectedMonthlyLimitUsd:'0.07',monthlyLimitUsd:'0.09'});
+  const fourKey=randomUUID(),fourStart=await startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:fourKey});
+  assert.equal(fourStart.comparison.runs.length,4);assert.equal(fourStart.comparison.answerMode,'individual');
+  assert.ok(fourStart.comparison.runs.every(r=>!('result'in r)));assert.equal(fourPaid,0);
+  await executePromptComparison(fourStart.comparison.id,sendFour);assert.equal(fourPaid,4);
+  const fourSummary=await getPromptComparisonSummary(four.project,viewer,fourStart.comparison.id);
+  assert.deepEqual(fourSummary.comparison.runs.map(r=>r.status),['completed','completed','completed','completed']);assert.ok(fourSummary.comparison.runs.every(r=>!('result'in r)));
+  assert.equal((await startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:fourKey})).comparison.id,fourStart.comparison.id);assert.equal(fourPaid,4);
+  assert.ok(Number((await pool.query('SELECT sum(octet_length(result::text))::text AS bytes FROM prompt_execution WHERE comparison_id=$1',[fourStart.comparison.id])).rows[0].bytes)>2_097_152);
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'admin')",[four.workspace,foreign]);
+  for(const [user,role] of [[owner,'owner'],[foreign,'admin'],[editor,'editor'],[viewer,'viewer']])for(const run of fourSummary.comparison.runs){const answer=await getPromptExecutionResult(four.project,user,run.id);assert.equal(answer.role,role);assert.equal(answer.comparisonId,fourStart.comparison.id);assert.equal(answer.run.result.text,largeText);assert.equal(answer.run.actualUsd,'0.000013');assert.ok(Buffer.byteLength(JSON.stringify(answer))<=2_097_152);assert.ok(!('messages'in answer)&&!('input'in answer));}
+  await assert.rejects(getPromptExecutionResult(other.project,owner,fourStart.comparison.runs[0].id),{status:404});
+  const fourEndpoint=`${config.appUrl}/api/projects/${four.project}/prompt-executions`;
+  for(const path of ['/comparisons/'+fourStart.comparison.id+'/summary','/runs/'+fourStart.comparison.runs[0].id]){const response=await handleApi(new Request(fourEndpoint+path,{headers:{cookie}}));assert.equal(response.status,200);const bytes=new Uint8Array(await response.arrayBuffer());assert.ok(bytes.byteLength<=2_097_152);const body=new TextDecoder('utf-8',{fatal:true}).decode(bytes),value=JSON.parse(body);if(path.startsWith('/runs/'))assert.equal(value.run.result.text,largeText);else{assert.equal(value.comparison.answerMode,'individual');assert.equal(value.comparison.runs.length,4);assert.ok(value.comparison.runs.every((run:object)=>!('result'in run)));}for(const secret of ['synthetic-never-live','key_fingerprint','encrypted_credentials','request_actor'])assert.ok(!body.includes(secret));assert.equal((await handleApi(new Request(fourEndpoint+path+'?unexpected=1',{headers:{cookie}}))).status,400);}
+  const fourToken=await createApiKey(four.workspace,owner,{name:'No answer scope',scopes:['analytics:read']});assert.equal((await handleApi(new Request(fourEndpoint+'/runs/'+fourStart.comparison.runs[0].id,{headers:{authorization:'Bearer '+fourToken.token}}))).status,403);
+  console.log('PASS three/four-model quote, fourth-reservation atomic rollback, four genuine large answers, bounded native summary/individual reads and all current roles');
+
+  // Both waits observe PostgreSQL lock evidence; neither advances a synthetic clock.
+  async function heldRead<T>(workspaceId:string,action:()=>Promise<T>,whileHeld:(client:import('pg').PoolClient)=>Promise<void>){
+   const gate=await pool.connect();let pending:Promise<T>|undefined;
+   try{await gate.query('BEGIN');await gate.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[workspaceId]);const pid=(await gate.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    pending=action();pending.catch(()=>{});const until=Date.now()+3000;let observed=false;
+    while(Date.now()<until){if((await pool.query("SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND wait_event_type='Lock'",[pid])).rowCount){observed=true;break;}await new Promise(r=>setTimeout(r,10));}assert.equal(observed,true);
+    await whileHeld(gate);await gate.query('COMMIT');return await pending;
+   }finally{await gate.query('ROLLBACK').catch(()=>{});gate.release();await pending?.catch(()=>{});}
+  }
+  const retainedId=fourStart.comparison.runs[0].id;
+  await pool.query(`WITH stamp AS MATERIALIZED(SELECT clock_timestamp()-interval '90 days'+interval '1 second' AS at)
+    UPDATE prompt_execution SET completed_at=stamp.at,dispatched_at=stamp.at,
+      result=jsonb_set(result,'{receivedAt}',to_jsonb(to_char(stamp.at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))
+    FROM stamp WHERE id=$1`,[retainedId]);
+  const expiredAnswer=await heldRead(four.workspace,()=>getPromptExecutionResult(four.project,viewer,retainedId),async gate=>{
+   assert.equal((await gate.query("SELECT completed_at>clock_timestamp()-interval '90 days' AS fresh FROM prompt_execution WHERE id=$1",[retainedId])).rows[0].fresh,true);
+   const until=Date.now()+2500;while((await gate.query("SELECT completed_at>=clock_timestamp()-interval '90 days' AS fresh FROM prompt_execution WHERE id=$1",[retainedId])).rows[0].fresh&&Date.now()<until)await new Promise(r=>setTimeout(r,10));
+   assert.equal((await gate.query("SELECT completed_at<clock_timestamp()-interval '90 days' AS expired FROM prompt_execution WHERE id=$1",[retainedId])).rows[0].expired,true);
+  });assert.equal(expiredAnswer.run.resultExpired,true);assert.equal(expiredAnswer.run.result,null);
+  await assert.rejects(heldRead(four.workspace,()=>getPromptExecutionResult(four.project,viewer,retainedId),async gate=>{await gate.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[four.workspace,viewer]);}),{status:404});
+  const one=await fixture(),system='\u0001'.repeat(4000),nearMessages=[{role:'system',content:system},{role:'user',content:'a'.repeat(2000)}];
+  const extra=32768-Buffer.byteLength(JSON.stringify(nearMessages),'utf8'),controls=Math.floor(extra/5),accent=extra%5;
+  const nearText='\u0001'.repeat(controls)+'é'.repeat(accent)+'a'.repeat(2000-controls-accent);
+  const nearPrompt=(await createPrompts(one.project,owner,{requestId:randomUUID(),prompts:[{text:nearText,enabled:false}]})).items[0];
+  const nearInput={...one.request,promptId:nearPrompt.id,versionId:nearPrompt.currentVersionId,systemText:system,models:[mini]},nearQuote=(await quotePromptExecution(one.project,owner,nearInput,sendFour)).quote;
+  assert.equal(Buffer.byteLength(JSON.stringify(nearQuote.messages),'utf8'),32768);assert.ok(Buffer.byteLength(JSON.stringify(nearInput),'utf8')<=32768);
+  const overPrompt=(await createPrompts(one.project,owner,{requestId:randomUUID(),prompts:[{text:nearText.slice(0,-1)+'é',enabled:false}]})).items[0];
+  await assert.rejects(quotePromptExecution(one.project,owner,{...nearInput,promptId:overPrompt.id,versionId:overPrompt.currentVersionId},sendFour),{status:413});
+  const oneStart=await startPromptExecution(one.project,owner,{quoteId:nearQuote.id,requestKey:randomUUID()});await executePromptComparison(oneStart.comparison.id,sendFour);assert.equal(fourPaid,5);assert.equal(nearWireBytes,32768);
+  for(const legacy of [{workspace:one.workspace,project:one.project,id:oneStart.comparison.id,count:1},{workspace:worker.workspace,project:worker.project,id:wr.id,count:2}]){
+   await pool.query(`WITH stamp AS MATERIALIZED(SELECT clock_timestamp()-interval '90 days'+interval '1 second' AS at)
+     UPDATE prompt_execution SET completed_at=stamp.at,dispatched_at=stamp.at FROM stamp WHERE comparison_id=$1`,[legacy.id]);
+   const after=await heldRead(legacy.workspace,()=>getPromptComparison(legacy.project,viewer,legacy.id),async gate=>{
+    assert.equal((await gate.query("SELECT bool_and(completed_at>clock_timestamp()-interval '90 days') AS fresh FROM prompt_execution WHERE comparison_id=$1",[legacy.id])).rows[0].fresh,true);
+    const until=Date.now()+2500;while((await gate.query("SELECT bool_or(completed_at>=clock_timestamp()-interval '90 days') AS fresh FROM prompt_execution WHERE comparison_id=$1",[legacy.id])).rows[0].fresh&&Date.now()<until)await new Promise(r=>setTimeout(r,10));
+    assert.equal((await gate.query("SELECT bool_and(completed_at<clock_timestamp()-interval '90 days') AS expired FROM prompt_execution WHERE comparison_id=$1",[legacy.id])).rows[0].expired,true);
+   });assert.equal(after.comparison.runs.length,legacy.count);assert.ok(after.comparison.runs.every(r=>r.resultExpired&&r.result===null));assert.equal(after.comparison.inputExpired,true);assert.equal(after.comparison.messages,null);assert.ok(!('answerMode'in after.comparison));
+  }
+  const failedFour=await fixture(),failedQuote=(await quotePromptExecution(failedFour.project,owner,{...failedFour.request,models:selected},sendFour)).quote,failedStart=await startPromptExecution(failedFour.project,owner,{quoteId:failedQuote.id,requestKey:randomUUID()});
+  failModel=selected[1];await executePromptComparison(failedStart.comparison.id,sendFour);failModel=null;assert.equal(fourPaid,9);
+  const failedSummary=await getPromptComparisonSummary(failedFour.project,viewer,failedStart.comparison.id);
+  assert.deepEqual(failedSummary.comparison.runs.map(r=>r.status),['completed','failed','completed','completed']);assert.ok(failedSummary.comparison.runs.every(r=>r.chargeStatus==='settled'));
+  for(const [index,run] of failedSummary.comparison.runs.entries())assert.equal((await getPromptExecutionResult(failedFour.project,viewer,run.id)).run.result?.text??null,index===1?null:largeText);
+  const uncertainFour=await fixture(),uncertainQuote=(await quotePromptExecution(uncertainFour.project,owner,{...uncertainFour.request,models:selected},sendFour)).quote,uncertainStart=await startPromptExecution(uncertainFour.project,owner,{quoteId:uncertainQuote.id,requestKey:randomUUID()});
+  loseFour=true;await executePromptComparison(uncertainStart.comparison.id,sendFour);assert.equal(fourPaid,10);const unresolvedFour=await getPromptComparisonSummary(uncertainFour.project,owner,uncertainStart.comparison.id);
+  assert.deepEqual(unresolvedFour.comparison.runs.map(r=>r.status),['uncertain','cancelled','cancelled','cancelled']);assert.equal((await getPromptExecutions(uncertainFour.project,owner)).spendingPaused,true);await executePromptComparison(uncertainStart.comparison.id,sendFour);assert.equal(fourPaid,10);
+  assert.deepEqual((await pool.query(`SELECT status,count(*)::int AS count,sum(actual_micros)::text AS actual FROM provider_request
+    WHERE workspace_id=ANY($1::text[]) GROUP BY status ORDER BY status`,[[four.workspace,one.workspace,failedFour.workspace,uncertainFour.workspace]])).rows,
+    [{status:'cancelled',count:3,actual:null},{status:'settled',count:9,actual:'117'},{status:'uncertain',count:1,actual:null}]);
+  console.log('PASS actual held-answer expiry/current-membership denial and four-model unknown-charge pause without replay');
+
+  // Two additional genuine parser/worker outputs. Raw legal Unicode URLs grow
+  // only through the unchanged URL.href canonicalization, never a stored-body rewrite.
+  const cited=await fixture(),sourceText='漢'.repeat(250000),rawCitations=Array.from({length:100},(_,index)=>({url:'https://sources.test/'+'漢'.repeat(2000)+'/'+index,title:'Source '+index}));
+  assert.ok(rawCitations.every(item=>item.url.length<=2048));
+  const expectedCitations=rawCitations.map(item=>({...item,url:new URL(item.url).href}));let citationPaid=0;
+  const sendCitations:typeof fetch=async(url,init)=>{
+    if(String(url)!=='https://openrouter.ai/api/v1/chat/completions')return sendFour(url,init);
+    assert.equal(init?.method,'POST');assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);
+    const input=JSON.parse(String(init?.body));assert.deepEqual(input.provider.only,['fixture']);assert.equal(input.provider.allow_fallbacks,false);assert.ok(models.includes(input.model));citationPaid++;
+    const id='gen-'+randomUUID(),body=JSON.stringify({id,model:input.model,provider:'Fixture',created:Math.floor(Date.now()/1000),choices:[{finish_reason:'stop',message:{content:sourceText,annotations:rawCitations.map(url_citation=>({type:'url_citation',url_citation}))}}],usage:{cost:0.000012345,is_byok:false,prompt_tokens:12,completion_tokens:20}});
+    assert.ok(Buffer.byteLength(body,'utf8')<2_097_152,'The actual provider response is within its unchanged raw2MiB bound.');
+    return new Response(body,{headers:{'content-type':'application/json','x-generation-id':id}});
+  };
+  const citedQuote=(await quotePromptExecution(cited.project,owner,cited.request,sendCitations)).quote,citedKey=randomUUID(),citedStart=await startPromptExecution(cited.project,owner,{quoteId:citedQuote.id,requestKey:citedKey});
+  await executePromptComparison(citedStart.comparison.id,sendCitations);assert.equal(citationPaid,2);assert.equal(fourPaid,10);
+  assert.ok((await pool.query('SELECT bool_and(octet_length(result::text)>2097152) AS expanded FROM prompt_execution WHERE comparison_id=$1',[citedStart.comparison.id])).rows[0].expanded,'Each genuinely normalized retained answer exceeds2MiB.');
+  await assert.rejects(getPromptComparison(cited.project,owner,citedStart.comparison.id),{status:413});
+  const citedSummary=await getPromptComparisonSummary(cited.project,owner,citedStart.comparison.id);assert.equal(citedSummary.comparison.runs.length,2);assert.ok(citedSummary.comparison.runs.every(run=>run.status==='completed'&&!('result'in run)));
+  await assert.rejects(getPromptExecutionCitations(cited.project,foreign,citedStart.comparison.runs[0].id,new URLSearchParams({offset:'0'})),{status:404});
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role)VALUES($1,$2,'admin')",[cited.workspace,foreign]);
+  for(const [actor,role]of [[owner,'owner'],[foreign,'admin'],[editor,'editor'],[viewer,'viewer']])for(const run of citedSummary.comparison.runs){
+    const answer=await getPromptExecutionResult(cited.project,actor,run.id);assert.equal(answer.role,role);assert.equal(answer.comparisonId,citedStart.comparison.id);assert.equal(answer.run.result.text,sourceText);assert.ok(!('citations'in answer.run.result));assert.deepEqual(answer.citations,{count:100,pageSize:20});assert.ok(Buffer.byteLength(JSON.stringify(answer),'utf8')<=2_097_152);
+    const sources=[];for(const offset of [0,20,40,60,80,100]){const page=await getPromptExecutionCitations(cited.project,actor,run.id,new URLSearchParams({offset:String(offset)}));assert.equal(page.role,role);assert.equal(page.runId,run.id);assert.equal(page.comparisonId,citedStart.comparison.id);assert.equal(page.resultExpired,false);assert.equal(page.total,100);assert.equal(page.offset,offset);assert.equal(page.nextOffset,offset<80?offset+20:null);assert.equal(page.items.length,offset===100?0:20);assert.ok(Buffer.byteLength(JSON.stringify(page),'utf8')<=2_097_152);sources.push(...page.items);}assert.deepEqual(sources,expectedCitations);
+  }
+  const citedId=citedStart.comparison.runs[0].id,citedEndpoint=`${config.appUrl}/api/projects/${cited.project}/prompt-executions`,citedPath='/runs/'+citedId+'/citations';
+  const native=(path:string)=>handleApi(new Request(citedEndpoint+path,{headers:{cookie}}));
+  const ackRows=async()=>({ledger:(await pool.query('SELECT id,md5(to_jsonb(p)::text) AS digest FROM provider_request p WHERE workspace_id=$1 ORDER BY id',[cited.workspace])).rows,jobs:(await pool.query('SELECT id,md5(to_jsonb(j)::text) AS digest FROM pgboss.job j WHERE id=$1',[citedStart.comparison.id])).rows});
+  const beforeAcks=await ackRows();
+  for(const [path,input,status]of [['/comparisons',{quoteId:citedQuote.id,requestKey:citedKey},202],['/comparisons/'+citedStart.comparison.id+'/cancel',{},200]]as const){const response=await handleApi(new Request(citedEndpoint+path,{method:'POST',headers:{cookie,origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify(input)}));assert.equal(response.status,status);const bytes=new Uint8Array(await response.arrayBuffer());assert.ok(bytes.byteLength<=2_097_152);const ack=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(bytes));assert.equal(ack.comparison.id,citedStart.comparison.id);assert.equal(ack.comparison.answerMode,'individual');assert.deepEqual(ack.comparison.runs.map((run:any)=>run.id),citedStart.comparison.runs.map(run=>run.id));assert.ok(ack.comparison.runs.every((run:any)=>run.status==='completed'&&!('result'in run)&&!('generationId'in run)&&!('reportedCost'in run)));if(status===200)assert.equal(ack.comparison.cancelRequested,true);}
+  assert.deepEqual(await ackRows(),beforeAcks);assert.equal(citationPaid,2);assert.equal((await pool.query('SELECT count(*)::int AS n FROM prompt_comparison WHERE workspace_id=$1',[cited.workspace])).rows[0].n,1);
+  let reconcileReads=0;const inconclusiveAck=await reconcilePromptExecution(uncertainFour.project,owner,unresolvedFour.comparison.runs[0].id,{},async(url,init)=>{reconcileReads++;return sendFour(url,init);});assert.equal(inconclusiveAck.reconciliation.status,'inconclusive');assert.equal(inconclusiveAck.comparison.id,uncertainStart.comparison.id);assert.equal(inconclusiveAck.comparison.answerMode,'individual');assert.ok(inconclusiveAck.comparison.runs.every(run=>!('result'in run)));assert.ok(Buffer.byteLength(JSON.stringify(inconclusiveAck),'utf8')<=2_097_152);assert.equal(reconcileReads,0);assert.equal(fourPaid,10);
+  assert.equal((await native('/comparisons/'+citedStart.comparison.id)).status,413);assert.equal((await native('/comparisons/'+citedStart.comparison.id+'/summary')).status,200);
+  const textResponse=await native('/runs/'+citedId);assert.equal(textResponse.status,200);const textDto=await textResponse.json();assert.equal(textDto.run.result.text,sourceText);assert.deepEqual(textDto.citations,{count:100,pageSize:20});assert.ok(!('citations'in textDto.run.result));
+  const nativeSources=[];for(const offset of [0,20,40,60,80,100]){const response=await native(citedPath+'?offset='+offset);assert.equal(response.status,200);assert.match(response.headers.get('cache-control')??'',/no-store/);const bytes=new Uint8Array(await response.arrayBuffer());assert.ok(bytes.byteLength<=2_097_152);const page=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(bytes));assert.equal(page.runId,citedId);assert.equal(page.comparisonId,citedStart.comparison.id);assert.equal(page.total,100);assert.equal(page.offset,offset);assert.equal(page.nextOffset,offset<80?offset+20:null);nativeSources.push(...page.items);}assert.deepEqual(nativeSources,expectedCitations);
+  for(const query of ['', '?offset=', '?offset=-20', '?offset=1', '?offset=120', '?offset=20.0', '?offset=0%0A', '?offset=+20', '?offset=00', '?offset=0&offset=20', '?offset=0&other=1'])assert.equal((await native(citedPath+query)).status,400);
+  for(const path of ['/runs/'+citedId,'/comparisons/'+citedStart.comparison.id,'/comparisons/'+citedStart.comparison.id+'/summary'])assert.equal((await native(path+'?offset=0')).status,400);
+  assert.equal((await handleApi(new Request(citedEndpoint+citedPath+'?offset=0',{headers:{authorization:'Bearer '+fourToken.token}}))).status,403);
+  await assert.rejects(getPromptExecutionCitations(other.project,owner,citedId,new URLSearchParams({offset:'0'})),{status:404});
+  const emptySources=await getPromptExecutionCitations(four.project,owner,fourSummary.comparison.runs[1].id,new URLSearchParams({offset:'0'}));assert.equal(emptySources.total,0);assert.deepEqual(emptySources.items,[]);assert.equal(emptySources.nextOffset,null);
+  const noAnswer=await getPromptExecutionResult(failedFour.project,owner,failedSummary.comparison.runs[1].id);assert.equal(noAnswer.run.result,null);assert.equal(noAnswer.citations.count,null);const unavailable=await getPromptExecutionCitations(failedFour.project,owner,failedSummary.comparison.runs[1].id,new URLSearchParams({offset:'0'}));assert.equal(unavailable.total,null);assert.deepEqual(unavailable.items,[]);assert.equal(unavailable.nextOffset,null);
+  await pool.query("UPDATE prompt_execution SET completed_at=clock_timestamp()-interval '90 days'+interval '1 second' WHERE id=$1",[citedId]);
+  const expiredSources=await heldRead(cited.workspace,()=>getPromptExecutionCitations(cited.project,viewer,citedId,new URLSearchParams({offset:'20'})),async gate=>{
+    assert.equal((await gate.query("SELECT completed_at>clock_timestamp()-interval '90 days' AS fresh FROM prompt_execution WHERE id=$1",[citedId])).rows[0].fresh,true);
+    const until=Date.now()+2500;while((await gate.query("SELECT completed_at>=clock_timestamp()-interval '90 days' AS fresh FROM prompt_execution WHERE id=$1",[citedId])).rows[0].fresh&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,10));assert.equal((await gate.query("SELECT completed_at<clock_timestamp()-interval '90 days' AS expired FROM prompt_execution WHERE id=$1",[citedId])).rows[0].expired,true);
+  });assert.equal(expiredSources.resultExpired,true);assert.equal(expiredSources.total,null);assert.equal(expiredSources.nextOffset,null);assert.deepEqual(expiredSources.items,[]);
+  const expiredText=await getPromptExecutionResult(cited.project,owner,citedId);assert.equal(expiredText.run.result,null);assert.equal(expiredText.run.resultExpired,true);assert.equal(expiredText.citations.count,null);
+  await assert.rejects(heldRead(cited.workspace,()=>getPromptExecutionCitations(cited.project,viewer,citedId,new URLSearchParams({offset:'0'})),async gate=>{await gate.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[cited.workspace,viewer]);}),{status:404});
+  assert.equal(citationPaid,2);assert.equal(fourPaid,10);assert.deepEqual((await pool.query('SELECT status,count(*)::int AS count,sum(actual_micros)::text AS actual FROM provider_request WHERE workspace_id=$1 GROUP BY status',[cited.workspace])).rows,[{status:'settled',count:2,actual:'26'}]);
+  assert.deepEqual((await pool.query('SELECT status,count(*)::int AS count,sum(actual_micros)::text AS actual FROM provider_request WHERE workspace_id=ANY($1::text[]) GROUP BY status ORDER BY status',[[four.workspace,one.workspace,failedFour.workspace,uncertainFour.workspace,cited.workspace]])).rows,[{status:'cancelled',count:3,actual:null},{status:'settled',count:11,actual:'143'},{status:'uncertain',count:1,actual:null}]);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM pgboss.job WHERE id=ANY($1::uuid[])',[[fourStart.comparison.id,oneStart.comparison.id,failedStart.comparison.id,uncertainStart.comparison.id,citedStart.comparison.id]])).rows[0].n,5);
+  console.log('PASS expanded legal citations preserve bounded answer text and all ordered sources, native aggregate413, fresh page retention/access and exact additional charges');
  }finally{try{await stopJobs();}finally{globalThis.fetch=originalFetch;}}
 }
 if(import.meta.main){try{await runPromptExecutionChecks();}finally{await closeDatabase();}}

@@ -321,6 +321,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
   onReconnect: (conn: Connection) => void;
 }) {
   const base = `/api/projects/${projectId}/google/connections/${conn.id}`;
+  const unsuccessful = conn.imports.filter(imp => imp.status === 'failed' || imp.status === 'denied').length;
   const [localBusy, setBusy] = useState(false);
   const busy = localBusy || ops.busy;
   const [err, setErr] = useState('');
@@ -532,7 +533,8 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
       </div>
       {note !== '' && <p role="status" className="hint">{note}</p>}
       {err !== '' && <p role="alert" className="alert">{err}</p>}
-      {conn.imports.filter(imp => ['queued', 'running', 'failed', 'denied'].includes(imp.status)).map(imp => (
+      {unsuccessful > 0 && <p className="hint">{unsuccessful} unsuccessful {unsuccessful === 1 ? 'import' : 'imports'}. Open Import history for details.</p>}
+      {conn.imports.filter(imp => ['queued', 'running'].includes(imp.status)).map(imp => (
         <p key={imp.id} role="status" className="hint">{reportLabel(imp.report)} · {imp.from} to {imp.to}: {impStatus(imp.status)}. {imp.diagnostic ?? 'Use Refresh status to follow progress.'}</p>
       ))}
       {conn.imports.length > 0 ? (

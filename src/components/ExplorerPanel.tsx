@@ -22,7 +22,7 @@ interface ExploreResult{
   coverage:{status:Coverage;retainedFrom:string|null};
   totals:{events:number|null;pageViews:number|null;customEvents:number|null;identifiedEvents:number|null;unidentifiedEvents:number|null;visitors:number|null;visits:number|null};
   daily:Array<{date:string;start:string;end:string;skipped:boolean;coverage:Coverage;events:number|null;pageViews:number|null;customEvents:number|null}>;
-  breakdown:{groups:Array<{type:string;value:unknown;events:number;identifiedEvents:number;visitors:number|null}>;totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean};
+  breakdown:{groups:Array<{type:string;value:unknown;events:number;identifiedEvents:number;visitors:number|null;pageViews?:number;identifiedPageViews?:number;estimatedVisitors?:number|null;visits?:number|null;bounceRate?:number|null;averageVisitSeconds?:number|null}>;totalGroups:number|null;returnedGroupEvents:number|null;truncated:boolean};
   properties:{keys:string[];truncated:boolean};
   numeric:{samples:number;sum:string|null;average:string|null;min:string|null;max:string|null}|null;
   csv:string;
@@ -46,7 +46,7 @@ function combinationParams(draft:Draft,cohort:CohortRef|null,fields:string[]|nul
   return p.toString().length>20000?{error:'These filters are too large. Shorten values or remove conditions.'}:{qs:p.toString()};
 }
 export function validTupleResult(result:ExploreResult,params:URLSearchParams):boolean{
-  const fields=tupleFields(params.get('fields'));if(!fields||!record(result)||!record(result.query)||JSON.stringify(result.query.fields)!==JSON.stringify(fields)||Object.hasOwn(result.query,'groupBy')||Object.hasOwn(result.query,'groupProperty')||!record(result.totals)||!record(result.breakdown)||!record(result.coverage)||!['complete','partial','unavailable'].includes(result.coverage.status)||!Array.isArray(result.breakdown.groups)||result.breakdown.groups.length>100||result.numeric!==null||!clean(result.csv,2097152))return false;
+  const fields=tupleFields(params.get('fields'));if(!fields||!record(result)||!record(result.query)||JSON.stringify(result.query.fields)!==JSON.stringify(fields)||Object.hasOwn(result.query,'groupBy')||Object.hasOwn(result.query,'groupProperty')||!record(result.totals)||!record(result.breakdown)||!record(result.coverage)||!['complete','partial','unavailable'].includes(result.coverage.status)||!Array.isArray(result.breakdown.groups)||result.breakdown.groups.length>500||result.numeric!==null||!clean(result.csv,2097152))return false;
   for(const key of ['from','to','kind']as const)if(result.query[key]!==params.get(key))return false;
   try{if(new Intl.DateTimeFormat('en-US',{timeZone:result.query.timeZone}).resolvedOptions().timeZone!==new Intl.DateTimeFormat('en-US',{timeZone:params.get('timeZone')!}).resolvedOptions().timeZone)return false;}catch{return false;}
   if(!record(result.range)||(['from','to','timeZone']as const).some(key=>result.range[key]!==result.query[key]))return false;
@@ -72,10 +72,18 @@ export function validTupleResult(result:ExploreResult,params:URLSearchParams):bo
   if(Object.keys(result.totals).sort().join(',')!=='customEvents,events,identifiedEvents,pageViews,unidentifiedEvents,visitors,visits'||!Object.values(result.totals).every(value=>value===null||count(value)))return false;
   if(result.totals.events===null)return (result.coverage.status==='unavailable'||selectionUnavailable)&&Object.values(result.totals).every(value=>value===null)&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===null&&result.breakdown.returnedGroupEvents===null&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;
   if(selectionUnavailable||dailyEvents!==result.totals.events||dailyViews!==result.totals.pageViews||dailyCustom!==result.totals.customEvents)return false;
-  if(result.coverage.status==='unavailable'||!count(result.totals.identifiedEvents)||result.totals.identifiedEvents>result.totals.events||!count(result.totals.unidentifiedEvents)||result.totals.identifiedEvents+result.totals.unidentifiedEvents!==result.totals.events||!count(result.totals.pageViews)||!count(result.totals.customEvents)||result.totals.pageViews+result.totals.customEvents!==result.totals.events||(result.totals.identifiedEvents===0?result.totals.visitors!==null:!count(result.totals.visitors)||result.totals.visitors<1||result.totals.visitors>result.totals.identifiedEvents)||result.totals.visits!==null&&(!count(result.totals.visits)||result.totals.visits<1||result.totals.visits>result.totals.events)||!count(result.breakdown.totalGroups)||result.breakdown.totalGroups>result.totals.events||result.breakdown.groups.length!==Math.min(100,result.breakdown.totalGroups)||result.breakdown.truncated!==(result.breakdown.totalGroups>100))return false;
-  const seen=new Set<string>();let events=0,identified=0;
+  if(result.coverage.status==='unavailable'||!count(result.totals.identifiedEvents)||result.totals.identifiedEvents>result.totals.events||!count(result.totals.unidentifiedEvents)||result.totals.identifiedEvents+result.totals.unidentifiedEvents!==result.totals.events||!count(result.totals.pageViews)||!count(result.totals.customEvents)||result.totals.pageViews+result.totals.customEvents!==result.totals.events||(result.totals.identifiedEvents===0?result.totals.visitors!==null:!count(result.totals.visitors)||result.totals.visitors<1||result.totals.visitors>result.totals.identifiedEvents)||result.totals.visits!==null&&(!count(result.totals.visits)||result.totals.visits<1||result.totals.visits>result.totals.events)||!count(result.breakdown.totalGroups)||result.breakdown.totalGroups>result.totals.events||result.breakdown.groups.length!==Math.min(500,result.breakdown.totalGroups)||result.breakdown.truncated!==(result.breakdown.totalGroups>500))return false;
+  const incomplete=result.coverage.status!=='complete'||result.sessionProperties?.selection?.countsAreLowerBounds||result.cohort?.membership?.countsAreLowerBounds;
+  const seen=new Set<string>();let events=0,identified=0,views=0,identifiedViews=0;
   for(const row of result.breakdown.groups){
     if(!record(row)||row.type!=='tuple'||!Array.isArray(row.value)||row.value.length!==fields.length||!count(row.events)||row.events<1||row.events>result.totals.events||!count(row.identifiedEvents)||row.identifiedEvents>row.events||row.identifiedEvents>result.totals.identifiedEvents||row.identifiedEvents===0&&row.visitors!==null||row.identifiedEvents>0&&(!count(row.visitors)||row.visitors<1||row.visitors>row.identifiedEvents||result.totals.visitors===null||row.visitors>result.totals.visitors))return false;
+    if(!count(row.pageViews)||row.pageViews>row.events||!count(row.identifiedPageViews)||row.identifiedPageViews>row.pageViews||row.identifiedPageViews>row.identifiedEvents||row.pageViews-row.identifiedPageViews>row.events-row.identifiedEvents)return false;
+    if(row.identifiedPageViews===0){if([row.estimatedVisitors,row.visits,row.bounceRate,row.averageVisitSeconds].some(value=>value!==null))return false;}
+    else{
+      if(!count(row.estimatedVisitors)||row.estimatedVisitors<1||!count(row.visits)||row.visits<row.estimatedVisitors||row.visits>row.identifiedPageViews||row.visitors===null||row.estimatedVisitors>row.visitors||result.totals.visits===null||row.visits>result.totals.visits)return false;
+      if(incomplete){if(row.bounceRate!==null||row.averageVisitSeconds!==null)return false;}
+      else if(typeof row.bounceRate!=='number'||!Number.isFinite(row.bounceRate)||row.bounceRate<0||row.bounceRate>100||typeof row.averageVisitSeconds!=='number'||!Number.isFinite(row.averageVisitSeconds)||row.averageVisitSeconds<0||row.averageVisitSeconds>(Date.parse(result.range.end)-Date.parse(result.range.start))/1000||row.identifiedPageViews===row.visits&&row.averageVisitSeconds!==0)return false;
+    }
     for(const [index,atom]of row.value.entries()){
       if(!record(atom)||Object.keys(atom).sort().join(',')!=='type,value')return false;
       const field=fields[index];if(isGeo(field)){if(atom.type!=='string'||typeof atom.value!=='string'||!parseGeographyKey(field,atom.value))return false;}
@@ -83,9 +91,9 @@ export function validTupleResult(result:ExploreResult,params:URLSearchParams):bo
       else if(field==='screenWidth'||field==='screenHeight'){if(atom.type!=='number'||!count(atom.value))return false;}
       else if(atom.type!=='string'||!clean(atom.value,field==='path'||field==='referrer'||field==='origin'?2048:320))return false;
     }
-    const key=JSON.stringify(row.value);if(seen.has(key))return false;seen.add(key);events+=row.events;identified+=row.identifiedEvents;
+    const key=JSON.stringify(row.value);if(seen.has(key))return false;seen.add(key);events+=row.events;identified+=row.identifiedEvents;views+=row.pageViews;identifiedViews+=row.identifiedPageViews;
   }
-  return result.breakdown.returnedGroupEvents===events&&events<=result.totals.events&&identified<=result.totals.identifiedEvents&&(result.breakdown.truncated||events===result.totals.events&&identified===result.totals.identifiedEvents);
+  return result.breakdown.returnedGroupEvents===events&&events<=result.totals.events&&identified<=result.totals.identifiedEvents&&views<=result.totals.pageViews&&identifiedViews<=result.totals.identifiedEvents&&(result.breakdown.truncated||events===result.totals.events&&identified===result.totals.identifiedEvents&&views===result.totals.pageViews);
 }
 async function readCombination(path:string,signal:AbortSignal):Promise<ExploreResult>{
   const response=await fetch(path,{credentials:'same-origin',redirect:'error',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)])});
@@ -108,7 +116,7 @@ function validCohortResult(result:ExploreResult,params:URLSearchParams,projectId
   if(!validAdvancedResult(result.query.predicates,result.predicateMethod,expected)||!validSessionSelection(result.sessionProperties,expected)||result.sessionProperties?.selection.status==='unavailable'&&!redactedReport(result))return false;
   const geoScope=!!fields?.some(isGeo)||isGeo(result.query.groupBy??'')||geographyFields.some(field=>Object.hasOwn(result.query.filters,field))||isGeo(params.get('groupBy')??'')||geographyFields.some(field=>params.has(field))||expected?.fields.some(row=>isGeo(row.field));
   if(geoScope){
-    if(!result||!record(result.query)||!fields&&result.query.groupBy!==params.get('groupBy')||!record(result.query.filters)||geographyFields.some(field=>result.query.filters[field]!== (params.get(field)??undefined))||!record(result.breakdown)||!Array.isArray(result.breakdown.groups)||result.breakdown.groups.length>100)return false;
+    if(!result||!record(result.query)||!fields&&result.query.groupBy!==params.get('groupBy')||!record(result.query.filters)||geographyFields.some(field=>result.query.filters[field]!== (params.get(field)??undefined))||!record(result.breakdown)||!Array.isArray(result.breakdown.groups)||result.breakdown.groups.length>(fields?500:100))return false;
     const group=result.query.groupBy??'';if(isGeo(group)){const seen=new Set<string>();let events=0;for(const row of result.breakdown.groups){if(!record(row)||row.type!=='string'||typeof row.value!=='string'||!parseGeographyKey(group,row.value)||seen.has(row.value)||!Number.isSafeInteger(row.events)||row.events<1||!Number.isSafeInteger(row.identifiedEvents)||row.identifiedEvents<0||row.identifiedEvents>row.events||(row.identifiedEvents===0?row.visitors!==null:!Number.isSafeInteger(row.visitors)||row.visitors!<1||row.visitors!>row.identifiedEvents))return false;seen.add(row.value);events+=row.events;}if(result.breakdown.returnedGroupEvents!==null&&result.breakdown.returnedGroupEvents!==events)return false;}
   }
   const provenance=result.geographyProvenance;
@@ -568,19 +576,21 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
             {result.breakdown.truncated?' Breakdown truncated — apply filters to narrow the results.':''}
             </>}
           </p>
+          {result.query.fields&&<p className="hint">Page-view metrics use observed rotating visitor and visit keys, not people or complete sessions. Visitors (all events) also includes custom events; estimated visitors and visits use page views only. Anonymous page views remain counted, with unavailable key metrics. Duration is the mean of each matching visit's last minus first matching page view, including zero-length visits. Any retained custom event in the project/date range suppresses that visit's bounce, including outside these filters. Rates and duration are unavailable when history or selection evidence is incomplete. Rows rank by estimated visitors, then page views; do not add visitors or visits across rows.</p>}
           {result.breakdown.groups.length===0?(
             <p className="hint dim">{sessionUnavailable?'Review the session-property evidence above. Unavailable selection does not mean no matching events.':cohortMembershipUnavailable?'Qualification data cannot establish membership. Review the qualification period and identifier coverage.':result.coverage.status==='unavailable'?'This history is no longer available. Choose a more recent range.':'No retained events match these filters. Change the dates or remove filters.'}</p>
           ):(
             <div className="table-wrap" tabIndex={0} role="region" aria-label="Breakdown data, scroll horizontally for all columns">
               <table>
-                <thead><tr>{result.query.fields?result.query.fields.map(field=><th key={field} scope="col">{labelOf(GROUPS,field)}</th>):<><th>Value</th><th>Type</th></>}<th>Events</th><th>Visitors</th></tr></thead>
+                <thead><tr>{result.query.fields?result.query.fields.map(field=><th key={field} scope="col">{labelOf(GROUPS,field)}</th>):<><th>Value</th><th>Type</th></>}<th>Events</th><th>{result.query.fields?'Visitors (all events)':'Visitors'}</th>{result.query.fields&&<><th scope="col">Page views</th><th scope="col">Estimated visitors (page views)</th><th scope="col">Visits (page views)</th><th scope="col">Bounce rate</th><th scope="col">Average observed visit duration</th></>}</tr></thead>
                 <tbody>
-                  {result.breakdown.groups.slice(0,100).map((g,i)=>(
+                  {result.breakdown.groups.slice(0,result.query.fields?500:100).map((g,i)=>(
                     <tr key={i}>
                       {result.query.fields?(g.value as Array<{type:string;value:unknown}>).map((atom,index)=>{const field=result.query.fields![index],label=groupValue(atom.type,atom.value,field);return <td key={field}>{isGeo(field)?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(field,{on:true,value:atom.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,field)}: ${label}`}><bdi>{label}</bdi></button>:<><bdi>{label}</bdi> <span className="hint">({groupType(atom.type)})</span></>}</td>;}):<><td>{isGeo(result.query.groupBy??'')?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(result.query.groupBy!,{on:true,value:g.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,result.query.groupBy??'')}: ${groupValue(g.type,g.value,result.query.groupBy)}`}><bdi>{groupValue(g.type,g.value,result.query.groupBy)}</bdi></button>:groupValue(g.type,g.value,result.query.groupBy)}</td>
                       <td>{isGeo(result.query.groupBy??'')?parseGeographyKey(result.query.groupBy as GeoField,g.value)?.state==='known'?'Known location':parseGeographyKey(result.query.groupBy as GeoField,g.value)?.state==='unknown'?'Unknown':'Not recorded':groupType(g.type)}</td></>}
                       <td>{g.events}</td>
                       <td>{g.visitors==null?'Unavailable':g.visitors}</td>
+                      {result.query.fields&&<><td>{g.pageViews}</td><td>{num(g.estimatedVisitors??null)}</td><td>{num(g.visits??null)}</td><td>{g.bounceRate==null?'Unavailable':<bdi>{new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(g.bounceRate)}%</bdi>}</td><td>{g.averageVisitSeconds==null?'Unavailable':<bdi>{new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(g.averageVisitSeconds)} s</bdi>}</td></>}
                     </tr>
                   ))}
                 </tbody>

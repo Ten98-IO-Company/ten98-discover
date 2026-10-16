@@ -414,6 +414,7 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
                   <li key={f.key}>{f.label}: {preview.settings[f.key]} days</li>
                 ))}
               </ul>
+              <h4>Analytics and identities</h4>
               <p style={{margin: '8px 0'}}>
                 Cutoff (UTC): {fmtUtc(preview.cutoff)}
                 <br />
@@ -440,18 +441,22 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <p style={{margin:'8px 0'}}>{preview.identityLinkEstimate?.status==='available'&&preview.identityLinkEstimate.links!==null
                 ? `${preview.identityLinkEstimate.atLeast?'At least ':''}${preview.identityLinkEstimate.links.toLocaleString()} explicit identity links eligible for cleanup.`
                 : 'Identity link estimate unavailable.'} Shortening retention hides expired link evidence immediately; extending it does not restore that evidence.</p>
+              <h4>Imported reports and research</h4>
               <p style={{margin: '8px 0'}}>Derived data cutoff (UTC): {fmtUtc(preview.derivedCutoff)}. {preview.derivedEstimate.status === 'available' && preview.derivedEstimate.imports !== null ? `${preview.derivedEstimate.atLeast ? 'At least ' : ''}${preview.derivedEstimate.imports.toLocaleString()} finished Google imports eligible.` : 'Import estimate unavailable.'}</p>
               <p style={{margin: '8px 0'}}>{preview.metaEstimate?.status === 'available' && preview.metaEstimate.imports !== null ? `${preview.metaEstimate.atLeast ? 'At least ' : ''}${preview.metaEstimate.imports.toLocaleString()} finished Meta imports eligible or already awaiting cleanup. Their receipts remain.` : 'Meta import estimate unavailable. Finished Meta report rows still follow this policy.'}</p>
               <p style={{margin: '8px 0'}}>{preview.metaInventoryEstimate?.status === 'available' && preview.metaInventoryEstimate.inventories !== null ? `${preview.metaInventoryEstimate.atLeast ? 'At least ' : ''}${preview.metaInventoryEstimate.inventories.toLocaleString()} finished Meta campaign inventories eligible or already awaiting cleanup. Their receipts remain.` : 'Meta campaign inventory estimate unavailable. Finished campaign metadata still follows this policy.'}</p>
               <p style={{margin: '8px 0'}}>{preview.keywordEstimate.status === 'available' && preview.keywordEstimate.results !== null ? `${preview.keywordEstimate.atLeast ? 'At least ' : ''}${preview.keywordEstimate.results.toLocaleString()} keyword results eligible.` : 'Keyword result estimate unavailable.'}</p>
               <p style={{margin: '8px 0'}}>{preview.savedKeywordEstimate.status === 'available' && preview.savedKeywordEstimate.metrics !== null ? `${preview.savedKeywordEstimate.atLeast ? 'At least ' : ''}${preview.savedKeywordEstimate.metrics.toLocaleString()} saved keyword metric snapshots eligible. Authored keywords and tags remain.` : 'Saved keyword metric estimate unavailable. Authored keywords and tags remain.'}</p>
+              <h4>AI answers and other evidence</h4>
               <p style={{margin:'8px 0'}}>Raw provider evidence cutoff (UTC): {fmtUtc(preview.rawEvidenceCutoff)}</p>
               <p style={{margin:'8px 0'}}>{preview.promptEstimate.status==='available'&&preview.promptEstimate.results!==null?`${preview.promptEstimate.atLeast?'At least ':''}${preview.promptEstimate.results.toLocaleString()} generated prompt answers and ${preview.promptEstimate.inputs?.toLocaleString() ?? "unknown"} copied execution inputs eligible under raw provider evidence retention.`:'Prompt answer estimate unavailable.'}</p>
               <p style={{margin:'8px 0'}}>{preview.redirectEstimate?.status==='available'&&preview.redirectEstimate.checks!==null?`${preview.redirectEstimate.atLeast?'At least ':''}${preview.redirectEstimate.checks.toLocaleString()} redirect observations eligible. Their check receipts remain.`:'Redirect observation estimate unavailable.'}</p>
+              <details><summary>What stays and how expiry works</summary>
               <p className="hint" style={{margin: '8px 0'}}>Google and Meta report rows, Meta campaign metadata, Google quality metadata, keyword results and saved keyword metrics expire after the derived-history period. Saving or refreshing a list does not extend an older observation's expiry. Authored keywords, tags and prompt versions remain. Generated prompt answers and copied execution input follow raw provider evidence retention. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Replay stores nothing yet.</p>
               <p className="hint" style={{margin: '8px 0'}}>
                 Kept as-is: authored reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups.
               </p>
+              </details>
               <div className="alert" style={{margin: '8px 0'}}>
                 Older analytics, finished Google and Meta reports, Meta campaign metadata, keyword results, saved keyword metrics, generated prompt answers and copied execution input will be deleted automatically. Authored keyword lists and tags remain. Increasing these periods later cannot restore deleted data.
               </div>
