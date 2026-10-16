@@ -2,7 +2,7 @@ import {FoundationError} from './auth.ts';
 import {dataforseoJson} from './dataforseo-transport.ts';
 import {microUsd,providerMicros,validText} from './keyword-research-input.ts';
 import {normalizePublicHostname} from './domains.ts';
-import {backlinkEndpoint,backlinkEndpointName,backlinkPayload,backlinkReconcileEndpoint,backlinkUrlMatches,matchesBacklinkPayload,type BacklinkRequest,type BacklinkResult,type BacklinkRow} from './backlink-research-input.ts';
+import {backlinkEndpoint,backlinkEndpointName,backlinkPayload,backlinkReconcileEndpoint,backlinkUrlMatches,matchesBacklinkPayload,type BacklinkRequest,type BacklinkResult,type BacklinkRow,type BacklinkGroupMetrics} from './backlink-research-input.ts';
 import type {DomainOutcome} from './dataforseo-domains.ts';
 type Obj=Record<string,unknown>;
 const object=(v:unknown):v is Obj=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -24,6 +24,7 @@ function row(value:unknown,r:Extract<BacklinkRequest,{report:'backlinks_profile_
  return {sourceUrl,targetUrl,sourceDomain:value.domain_from as string,targetDomain:value.domain_to as string,rank:metric(value.rank,100),pageRank:metric(value.page_from_rank,100),domainRank:metric(value.domain_from_rank,100),spamScore:metric(value.backlink_spam_score,100),dofollow,isLost,isBroken:flag(value.is_broken),anchor:typeof value.anchor==='string'?value.anchor:null,firstSeen:stamp(value.first_seen),lastSeen:stamp(value.last_seen),linksCount:metric(value.links_count,Number.MAX_SAFE_INTEGER,true)};
 }
 export type BacklinkOutcome=Omit<DomainOutcome,'result'>&{result:BacklinkResult|null};
+function groupMetrics(v:Obj):BacklinkGroupMetrics{return {backlinks:metric(v.backlinks,Number.MAX_SAFE_INTEGER,true),referringDomains:metric(v.referring_domains,Number.MAX_SAFE_INTEGER,true),referringMainDomains:metric(v.referring_main_domains,Number.MAX_SAFE_INTEGER,true),referringPages:metric(v.referring_pages,Number.MAX_SAFE_INTEGER,true),referringPagesNofollow:metric(v.referring_pages_nofollow,Number.MAX_SAFE_INTEGER,true),referringIps:metric(v.referring_ips,Number.MAX_SAFE_INTEGER,true),referringSubnets:metric(v.referring_subnets,Number.MAX_SAFE_INTEGER,true),brokenBacklinks:metric(v.broken_backlinks,Number.MAX_SAFE_INTEGER,true),brokenPages:metric(v.broken_pages,Number.MAX_SAFE_INTEGER,true),rank:metric(v.rank,100),spamScore:metric(v.backlinks_spam_score,100),firstSeen:stamp(v.first_seen),lostAt:stamp(v.lost_date)};}
 const final=new Set([20000,40102,40103,40106,40501,40502,40503,40504,40505,40506]);
 export function parseBacklinkOutcome(response:{httpStatus:number;body:unknown},request:BacklinkRequest,id:string,now=new Date()):BacklinkOutcome{
  const outcome:BacklinkOutcome={cost:null,reference:null,result:null,diagnostic:'The provider charge is unknown. Reconcile it before spending again.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
@@ -40,9 +41,18 @@ export function parseBacklinkOutcome(response:{httpStatus:number;body:unknown},r
    const rank=metric(r.rank,100);outcome.result={...base,report:request.report,returnedCount:1,totalCount:1,limited:false,rows:[{backlinks:metric(r.backlinks,Number.MAX_SAFE_INTEGER,true),referringDomains:metric(r.referring_domains,Number.MAX_SAFE_INTEGER,true),referringMainDomains:metric(r.referring_main_domains,Number.MAX_SAFE_INTEGER,true),referringPages:metric(r.referring_pages,Number.MAX_SAFE_INTEGER,true),referringIps:metric(r.referring_ips,Number.MAX_SAFE_INTEGER,true),referringSubnets:metric(r.referring_subnets,Number.MAX_SAFE_INTEGER,true),brokenBacklinks:metric(r.broken_backlinks,Number.MAX_SAFE_INTEGER,true),spamScore:metric(r.backlinks_spam_score,100),rank:request.scope==='subfolder'?null:rank,firstSeen:stamp(r.first_seen),lostAt:stamp(r.lost_date)}]};
   }else{
    const items=r.items===null&&r.items_count===0?[]:r.items;
-   if(r.mode!=='as_is'||r.custom_mode!=null||!Number.isSafeInteger(r.total_count)||Number(r.total_count)<0||!Array.isArray(items)||items.length>request.limit||r.items_count!==items.length||items.length>Math.max(0,Number(r.total_count)-request.offset))invalid();
-   const rows=items.map(v=>row(v,request));if(new Set(rows.map(v=>v.sourceUrl)).size!==rows.length)invalid();
-   outcome.result={...base,report:request.report,offset:request.offset,limit:request.limit,follow:request.follow,sourceHost:request.sourceHost??null,order:request.order,rows,returnedCount:rows.length,totalCount:Number(r.total_count),limited:request.offset>0||Number(r.total_count)>rows.length};
+   if((request.report==='backlinks_profile_v1'?r.mode!=='as_is':r.mode!=null)||r.custom_mode!=null||!Number.isSafeInteger(r.total_count)||Number(r.total_count)<0||!Array.isArray(items)||items.length>request.limit||r.items_count!==items.length||items.length>Math.max(0,Number(r.total_count)-request.offset))invalid();
+   const page={...base,offset:request.offset,limit:request.limit,follow:request.follow,sourceHost:request.sourceHost??null,returnedCount:items.length,totalCount:Number(r.total_count),limited:request.offset>0||Number(r.total_count)>items.length};
+   if(request.report==='backlinks_profile_v1'){
+    const rows=items.map(v=>row(v,request));if(new Set(rows.map(v=>v.sourceUrl)).size!==rows.length)invalid();
+    outcome.result={...page,report:request.report,order:request.order,rows};
+   }else if(request.report==='backlinks_referring_domains_v1'){
+    const rows=items.map(v=>{if(!object(v)||v.type!=='backlinks_referring_domain'||!validText(v.domain,253)||normalizePublicHostname(v.domain)!==v.domain)invalid();return {...groupMetrics(v),domain:v.domain};});
+    if(new Set(rows.map(v=>v.domain)).size!==rows.length)invalid();outcome.result={...page,report:request.report,order:request.order,rows};
+   }else{
+    const rows=items.map(v=>{if(!object(v)||v.type!=='backlinks_anchor'||typeof v.anchor!=='string'||v.anchor.length>4096||v.anchor!==''&&!validText(v.anchor.replace(/[\t\r\n]/g,' '),4096))invalid();return {...groupMetrics(v),anchor:v.anchor};});
+    if(new Set(rows.map(v=>v.anchor)).size!==rows.length)invalid();outcome.result={...page,report:request.report,order:request.order,rows};
+   }
   }
   if(Buffer.byteLength(JSON.stringify(outcome.result),'utf8')>2097152)invalid();outcome.diagnostic=null;
  }catch{outcome.result=null;/* Verified financial evidence survives unusable content. */}
