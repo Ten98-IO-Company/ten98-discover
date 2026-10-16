@@ -351,7 +351,8 @@ try {
   await runRetentionChecks({ ownerId: owner.body.user.id });
   stage = 'retention coverage and historical availability';
   await runRetentionCoverageChecks();
-  await runExplorerChecks();
+  // Hosted CI runs the complete Explorer suite in its dedicated database above.
+  if(process.env.GITHUB_ACTIONS!=='true')await runExplorerChecks();
   stage = 'scoped API keys';
   await runApiKeyChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'account security lifecycle';
