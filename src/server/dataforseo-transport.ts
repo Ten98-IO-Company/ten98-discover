@@ -3,7 +3,7 @@ import {validText} from './keyword-research-input.ts';
 export type DataforseoResponse={httpStatus:number;body:unknown};
 const origin='https://api.dataforseo.com/v3/';
 const getPaths=new Set(['appendix/user_data','dataforseo_labs/locations_and_languages','serp/google/locations','serp/google/languages','ai_optimization/chat_gpt/llm_scraper/locations','ai_optimization/chat_gpt/llm_scraper/languages']);
-const postPaths=new Set(['dataforseo_labs/google/keyword_overview/live','dataforseo_labs/google/keyword_ideas/live','dataforseo_labs/google/ranked_keywords/live','dataforseo_labs/google/domain_rank_overview/live','dataforseo_labs/google/relevant_pages/live','dataforseo_labs/google/competitors_domain/live','dataforseo_labs/id_list','serp/google/organic/live/advanced','serp/google/organic/task_post','serp/id_list','ai_optimization/chat_gpt/llm_scraper/live/advanced','ai_optimization/id_list']);
+const postPaths=new Set(['dataforseo_labs/google/keyword_overview/live','dataforseo_labs/google/keyword_ideas/live','dataforseo_labs/google/ranked_keywords/live','dataforseo_labs/google/domain_rank_overview/live','dataforseo_labs/google/relevant_pages/live','dataforseo_labs/google/competitors_domain/live','dataforseo_labs/id_list','backlinks/summary/live','backlinks/backlinks/live','backlinks/id_list','serp/google/organic/live/advanced','serp/google/organic/task_post','serp/id_list','ai_optimization/chat_gpt/llm_scraper/live/advanced','ai_optimization/id_list']);
 const taskPath=/^serp\/google\/organic\/task_get\/advanced\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$(?![\s\S])/;
 function invalid():never{throw new Error('DataForSEO request or response is unavailable.');}
 function authorization(value:unknown){

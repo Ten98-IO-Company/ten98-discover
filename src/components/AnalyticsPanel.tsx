@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
-import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
+import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, canonicalNavigation, navigationKey, parseNavigation, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
+import {useLocation} from '@tanstack/react-router';
 import { useAnnotations } from './AnnotationsPanel';
 import { deriveAnalyticsComparison, type AnalyticsComparison, type AnalyticsComparisonMode } from '../lib/analytics-comparison';
 import {geographyFields,parseGeographyKey,type GeographyFilters,type GeographyReport,type GeoField,type GeographyKey,type GeographyDetail,type GeographyDetailIntent} from '../lib/analytics-geography';
@@ -19,6 +20,7 @@ export type AnalyticsPanelProps = {
   onNavigate?: (value: AnalyticsNavigation) => void;
   compareView?: boolean;
   onAppliedRange?: (userId:string,projectId:string,range:Range) => void;
+  onReturnToExplorer?:()=>void;
 };
 
 type Daily = { date: string; pageViews: number | null; customEvents: number | null; coverage: 'complete' | 'partial' | 'unavailable' };
@@ -377,12 +379,14 @@ function DailyChart({ daily }: { daily: Daily[] }) {
 export function AnalyticsPanel(props: AnalyticsPanelProps) {
   return <AnalyticsInner key={`${props.userId}:${props.projectId}:${Boolean(props.compareView)}`} {...props} />;
 }
-function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate, compareView=false, onAppliedRange }: AnalyticsPanelProps) {
+function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate, compareView=false, onAppliedRange, onReturnToExplorer }: AnalyticsPanelProps) {
   const uid = useId();
   const [localIntent,setLocalIntent]=useState<AnalyticsNavigation>({});
   const [geographyField,setGeographyField]=useState<GeoField>('country');
   const [environmentField,setEnvironmentField]=useState<EnvironmentField>('browser');
   const intent=search?analyticsNavigation(search):localIntent, queryKey=JSON.stringify(intent),mode=compareView?intent.analyticsCompare??'prev':undefined;
+  const location=useLocation(),controlled=!!search&&!!onNavigate,routeReady=!controlled||location.pathname==='/'&&!location.hash&&search!.view===(compareView?'compare':'project')&&search!.project===projectId&&navigationKey(parseNavigation(location.search))===navigationKey(search!)&&canonicalNavigation(location.searchStr,search!);
+  const readOwner=controlled?location.state.__TSR_key+':'+location.href+':'+queryKey:'local',currentOwner=useRef(''),acceptedOwner=useRef('');currentOwner.current=routeReady?readOwner:'';
   const dimension=compareView?intent.analyticsDimension??'path':undefined,selection=selectionFrom(intent.analyticsSelection);
   const filters:EnvironmentFilters={};
   for(const field of environmentFields){const value=intent[analyticsNavigationNames[field]];if(value!==undefined)filters[field]=value;}
@@ -401,13 +405,14 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
   unauthRef.current = onUnauthorized;
 
   const { from, to } = view.range;
-  useEffect(()=>{if(!invalid)onAppliedRange?.(userId,projectId,{from,to});},[userId,projectId,from,to,invalid,onAppliedRange]);
+  useEffect(()=>{if(routeReady&&!invalid)onAppliedRange?.(userId,projectId,{from,to});},[userId,projectId,from,to,routeReady,invalid,onAppliedRange]);
   const derived=mode?deriveAnalyticsComparison(view.range,mode):null,unavailableRange=compareView&&!derived;
   const nonce = view.nonce;
   useEffect(() => {
     const id = ++reqRef.current;
     const ctrl = new AbortController();
-    if(invalid||unavailableRange)return ()=>ctrl.abort();
+    if(!routeReady||invalid||unavailableRange)return ()=>ctrl.abort();
+    setView(v=>({...v,data:null,error:null,loading:true}));
     const detail=view.detail,params=new URLSearchParams({from,to,...filters,...geographyFilters,...mode?{compare:mode}:{},...dimension?{dimension}:{},...selection?.query?{selection:selection.query}:{},...detail?{geoDetail:detail.field,geoPeriod:detail.period,geoSearch:detail.search}:{}});
     if((dimension||selection?.query)&&params.toString().length>20000){setView(v=>({...v,data:null,loading:false,error:'These report filters are too large. Shorten values or remove conditions.'}));return ()=>ctrl.abort();}
     api<Analytics>(
@@ -415,14 +420,14 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
       { signal: ctrl.signal },
     ).then(
       (data) => {
-        if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId || queryRef.current!==queryKey) return;
+        if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId || queryRef.current!==queryKey || currentOwner.current!==readOwner) return;
         if(!validReport(data,{from,to},filters,MAX_DAYS,geographyFilters)||(mode?!validComparison(data,{from,to},filters,mode,geographyFilters):data.comparison!==undefined)||!validDimension(data,dimension,selection?.query)||(detail?!validGeographyDetail(data.geographyDetail,detail,detail.period==='comparison'?data.comparison!.report:data,data.comparison?.asOf):data.geographyDetail!==undefined)||data.comparison?.report&&'geographyDetail'in data.comparison.report){
           setView(v=>v.key===projectId&&v.queryKey===queryKey?{...v,data:null,loading:false,error:'The analytics response did not match the requested range, filters or measurement evidence. Retry to read a fresh snapshot.'}:v);return;
         }
-        setView((v) => (v.key === projectId ? { ...v, data, loading: false, error: null, denied: false } : v));
+        acceptedOwner.current=readOwner;setView((v) => (v.key === projectId ? { ...v, data, loading: false, error: null, denied: false } : v));
       },
       (err: unknown) => {
-        if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId || queryRef.current!==queryKey) return;
+        if (id !== reqRef.current || ctrl.signal.aborted || projectRef.current !== projectId || queryRef.current!==queryKey || currentOwner.current!==readOwner) return;
         if (err instanceof ApiError && err.status === 401) {
           setView(v=>({...v,data:null,loading:false,denied:true}));
           unauthRef.current();
@@ -432,7 +437,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
       },
     );
     return () => ctrl.abort();
-  }, [projectId, from, to, nonce, filterKey, queryKey, invalid, mode, unavailableRange,dimension,selection?.query]);
+  }, [projectId, from, to, nonce, filterKey, queryKey, invalid, mode, unavailableRange,dimension,selection?.query,routeReady,readOwner]);
 
   const navigate=(value:AnalyticsNavigation)=>onNavigate?onNavigate(value):setLocalIntent(value);
   const applyRange = (range: Range) => {
@@ -471,19 +476,19 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
     applyRange({ from: view.draft.from, to: view.draft.to });
   };
 
-  const busy = !invalid&&!unavailableRange&&(view.loading||view.queryKey!==queryKey);
-  const data = invalid||unavailableRange||view.queryKey!==queryKey?null:view.data;
+  const busy = !invalid&&!unavailableRange&&(!routeReady||view.loading||view.queryKey!==queryKey);
+  const data = !routeReady||invalid||unavailableRange||view.queryKey!==queryKey||acceptedOwner.current!==readOwner?null:view.data;
   const comparisonData=data?.comparison?data as Analytics&{comparison:AnalyticsComparison}:null;
   const today = todayUtc();
   const hasData = data !== null && (data.totals.pageViews ?? 0) + (data.totals.customEvents ?? 0) > 0;
-  const annotations = useAnnotations({projectId,userId,range:invalid||unavailableRange||view.denied?null:{from,to,timeZone:'UTC'},onUnauthorized,onAccessLost:()=>{
+  const annotations = useAnnotations({projectId,userId,range:invalid||unavailableRange||view.denied?null:{from,to,timeZone:'UTC'},readOwner,readEnabled:routeReady&&!invalid&&!unavailableRange&&!view.denied,onUnauthorized,onAccessLost:()=>{
     reqRef.current++;
     setView(v=>({...v,data:null,loading:false,denied:true,error:'Project access could not be verified. Retry to check current access.'}));
   }});
 
   return (
     <div className={'analytics'+(compareView?' analytics-compare':'')} aria-busy={busy}>
-      {invalid&&<div className="alert" role="alert"><p>This analytics link has invalid or ambiguous dates, environment or location filters, or comparison mode. Reset the view to choose a valid range.</p><button type="button" className="btn" onClick={()=>navigate({})}>Reset analytics view</button></div>}
+      {invalid&&<div className="alert" role="alert"><p>This Analytics link has invalid or unsupported applied scope. No analytics report was loaded. Analytics supports UTC dates, environment, location and literal page, event or campaign selections; cohorts, properties, other event kinds and advanced selections stay in Explore.</p>{onReturnToExplorer?<button type="button" className="btn" onClick={onReturnToExplorer}>Return to Explorer</button>:<p>The exact previous Explore link is not available in this history entry. Use browser Back or open Explore to choose a scope.</p>}<p>Reset deliberately clears these filters and loads the default Analytics range.</p><button type="button" className="btn" onClick={()=>navigate({})}>Reset analytics view</button></div>}
       <section className="card analytics-toolbar">
         <form onSubmit={applyDraft}>
           <fieldset className="analytics-fieldset" disabled={busy||invalid}>
@@ -548,7 +553,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
 
       {!invalid&&Object.keys(geographyFilters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied location filters"><strong>{compareView?'Applied to both periods':'Applied to all analytics'}</strong><div className="row">{geographyFields.filter(field=>geographyFilters[field]!==undefined).map(field=><button type="button" className="btn" key={field} disabled={busy} onClick={()=>{const next={...intent};delete next[geographyNavigationNames[field]];navigate(next);}}>{geographyLabels[field]}: <bdi>{geographyLabel(parseGeographyKey(field,geographyFilters[field])!)}</bdi> <span aria-hidden="true">×</span></button>)}<button type="button" className="btn ghost" disabled={busy} onClick={()=>{const next={...intent};for(const field of geographyFields)delete next[geographyNavigationNames[field]];navigate(next);}}>Clear location filters</button></div><p className="hint">All cards, daily data and reports use these same exact location filters.</p></section>}
 
-      {view.error && (
+      {routeReady&&view.error && (
         <div className="alert" role="alert">
           <p>Could not load analytics for this range: {view.error}</p>
           <button type="button" className="btn" onClick={retry} disabled={busy}>
