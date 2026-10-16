@@ -7,6 +7,7 @@ import { registerResourceCleanup } from './resource-cleanup.ts';
 import { runRetentionBatch } from './retention.ts';
 import { googleQueue, reconcileGoogleImports, startGoogleImportWorker } from './google-jobs.ts';
 import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs} from './keyword-research.ts';
+import {domainResearchQueue,executeDomainResearch,reconcileDomainResearchJobs} from './domain-research.ts';
 import {promptExecutionQueue,executePromptComparison,reconcilePromptExecutionJobs} from './prompt-execution.ts';
 import {suggestionQueue} from './ai-suggestions.ts';
 import {executeAiSuggestion,reconcileAiSuggestionJobs} from './ai-suggestion-worker.ts';
@@ -48,6 +49,7 @@ export function getBoss(): Promise<PgBoss> {
         await boss.createQueue(queueName);
         await boss.createQueue(googleQueue);
         await boss.createQueue(keywordQueue);
+        await boss.createQueue(domainResearchQueue);
         await boss.createQueue(promptExecutionQueue);
         await boss.createQueue(suggestionQueue);
         await boss.createQueue(aiSearchQueue);
@@ -133,6 +135,7 @@ async function heartbeat() {
   await reconcileProbes();
   await reconcileGoogleImports();
   await reconcileKeywordJobs();
+  await reconcileDomainResearchJobs();
   await reconcileRankJobs();
   await reconcilePromptExecutionJobs();
   await reconcileAiSuggestionJobs();
@@ -152,6 +155,7 @@ export function startWorker(): Promise<void> {
     try {
       const boss = await getBoss();
       await reconcileKeywordJobs();
+      await reconcileDomainResearchJobs();
       await reconcileRankJobs();
       await reconcilePromptExecutionJobs();
       await reconcileAiSuggestionJobs();
@@ -184,6 +188,7 @@ export function startWorker(): Promise<void> {
       await boss.work<{importId:string}>(metaQueue,{batchSize:1},async jobs=>{for(const job of jobs)await runMetaImportStep(job.data?.importId);});
       await boss.work<{inventoryId:string}>(metaInventoryQueue,{batchSize:1},async jobs=>{for(const job of jobs)await runMetaInventoryStep(job.data?.inventoryId);});
       await boss.work<{runId:string}>(keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
+      await boss.work<{runId:string}>(domainResearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainResearch(job.data?.runId);});
       await boss.work<{dispatchId:string}>(rankQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeRankDispatch(job.data?.dispatchId);});
       await boss.work<{dispatchId:string;generation:string}>(rankPollQueue,{batchSize:1},async jobs=>{for(const job of jobs)await pollRankDispatch(job.data?.dispatchId,job.data?.generation);});
       await boss.work<{comparisonId:string}>(promptExecutionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executePromptComparison(job.data?.comparisonId);});
