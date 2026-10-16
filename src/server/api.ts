@@ -10,6 +10,7 @@ import { enqueueProbe, reconcileProbes } from './jobs.ts';
 import { eventInput, InputError, projectInput, readJson } from './validation.ts';
 import { analyticsSettings, collectNative, insertApiObservation, saveAnalyticsSettings } from './native-analytics.ts';
 import {getAnalyticsReset,resetAnalytics} from './analytics-reset.ts';
+import {getProjectDeletion,deleteProject} from './project-delete.ts';
 import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
@@ -860,6 +861,14 @@ export async function handleApi(request: Request): Promise<Response> {
         if(action==='archive'||action==='restore') return json(await setPromptArchived(pid,user.id,promptId,action==='archive',input,apiToken??undefined));
       }
       return json({error:'Method or parameters not allowed.'},405);
+    }
+    const projectDeleteRoute=path.match(new RegExp(`^/api/workspaces/(${id})/projects/(${id})/delete$`,'i'));
+    if(projectDeleteRoute){
+      if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Website deletion has no query parameters.');
+      await limit(`project-delete:${user.id}`,20);
+      if(request.method==='GET'){if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Deletion access does not accept a body.');return json(await getProjectDeletion(projectDeleteRoute[1],projectDeleteRoute[2],user.id));}
+      if(request.method==='POST')return json(await deleteProject(projectDeleteRoute[1],projectDeleteRoute[2],user.id,await readJson(request,1024)));
+      return json({error:'Method not allowed.'},405,{allow:'GET, POST'});
     }
     const resetRoute=path.match(new RegExp(`^/api/projects/(${id})/analytics-reset$`,'i'));
     if(resetRoute){

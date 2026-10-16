@@ -1,6 +1,8 @@
 import {useEffect, useId, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
 import {AnalyticsResetPanel} from './AnalyticsResetPanel';
+import {ProjectDeletePanel} from './ProjectDeletePanel';
+import type {ProjectDeleteInput} from '../lib/project-delete';
 import type {AnalyticsResetInput} from '../lib/analytics-reset';
 import type {GeographyReadiness} from '../lib/analytics-geography';
 import {defaultReplaySettings,replaySettings,type ReplaySettings} from '../lib/session-replay';
@@ -37,6 +39,8 @@ interface Props {
   projectId: string;
   userId: string;
   onUnauthorized: () => void;
+  workspaceId?:string;
+  onDeleted?:()=>void;
   readOwner?:string;
   readEnabled?:boolean;
   isCurrent?:()=>boolean;
@@ -87,15 +91,15 @@ const NETWORK_COPY: Record<NetworkMode, string> = {
   proxy: 'Proxy: visitor estimates use a configured trusted proxy chain.',
 };
 
-export function AnalyticsSettingsPanel({projectId,userId,onUnauthorized,readOwner='',readEnabled=true,isCurrent}:Props){
-  const identity=projectId+':'+userId,owner=JSON.stringify([identity,readOwner]),lease=useRef({owner,identity,enabled:readEnabled,epoch:0}),resetRequest=useRef<AnalyticsResetInput|null>(null);
-  if(lease.current.identity!==identity)resetRequest.current=null;
+export function AnalyticsSettingsPanel({projectId,userId,onUnauthorized,workspaceId,onDeleted,readOwner='',readEnabled=true,isCurrent}:Props){
+  const identity=JSON.stringify([workspaceId??'',projectId,userId]),owner=JSON.stringify([identity,readOwner]),lease=useRef({owner,identity,enabled:readEnabled,epoch:0}),resetRequest=useRef<AnalyticsResetInput|null>(null),deleteRequest=useRef<ProjectDeleteInput|null>(null);
+  if(lease.current.identity!==identity){resetRequest.current=null;deleteRequest.current=null;}
   if(lease.current.owner!==owner||lease.current.enabled!==readEnabled)lease.current={owner,identity,enabled:readEnabled,epoch:lease.current.epoch+1};
   const epoch=lease.current.epoch,current=()=>lease.current.epoch===epoch&&lease.current.owner===owner&&lease.current.enabled&&(isCurrent?.()??true);
-  return <PanelInner key={identity} projectId={projectId} userId={userId} onUnauthorized={onUnauthorized} authorityOwner={String(epoch)+':'+owner} isCurrent={current} resetRequest={resetRequest}/>;
+  return <PanelInner key={identity} projectId={projectId} userId={userId} onUnauthorized={onUnauthorized} authorityOwner={String(epoch)+':'+owner} isCurrent={current} resetRequest={resetRequest} deleteRequest={deleteRequest} workspaceId={workspaceId} onDeleted={onDeleted}/>;
 }
 
-function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,resetRequest}: {projectId:string;userId:string;onUnauthorized:()=>void;authorityOwner:string;isCurrent:()=>boolean;resetRequest:{current:AnalyticsResetInput|null}}) {
+function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,resetRequest,deleteRequest,workspaceId,onDeleted}: {projectId:string;userId:string;onUnauthorized:()=>void;authorityOwner:string;isCurrent:()=>boolean;resetRequest:{current:AnalyticsResetInput|null};deleteRequest:{current:ProjectDeleteInput|null};workspaceId?:string;onDeleted?:()=>void}) {
   const uid = useId();
   const [data, setData] = useState<Loaded | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);
@@ -197,9 +201,11 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
   // ponytail: JSON.stringify dirty check; swap for a structural compare if settings ever grow nesting.
   const dirty = !!data && !!current && JSON.stringify(current) !== JSON.stringify(data.settings);
   const canEdit = data?.role === 'owner' || data?.role === 'admin';
-  const inputsDisabled = pending || resetBusy || loading || !canEdit;
-  const canSave = canEdit && dirty && pathErrors.length === 0 && !replayError && !heatmapError && !pending && !resetBusy && !loading;
+  const unresolved=resetRequest.current!==null||deleteRequest.current!==null;
+  const inputsDisabled = pending || resetBusy || loading || !canEdit || unresolved;
+  const canSave = canEdit && dirty && pathErrors.length === 0 && !replayError && !heatmapError && !pending && !resetBusy && !loading && !unresolved;
 
+  const deletion=workspaceId&&onDeleted?<ProjectDeletePanel key={authorityOwner} workspaceId={workspaceId} projectId={projectId} userId={userId} authorityOwner={authorityOwner} isCurrent={isCurrent} pendingRequest={deleteRequest} disabled={pending||loading||dirty||resetBusy||resetRequest.current!==null} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onDeleted={()=>{if(isCurrent())onDeleted();}}/>:null;
   const cancel = () => {
     if (!data || lockRef.current || readBusyRef.current) return;
     setDraft(data.settings);
@@ -259,12 +265,13 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
     }
   };
 
-  if(!isCurrent()||verifiedOwner.current!==authorityOwner)return <section className="card"><h2>Collection and privacy</h2><p>Loading current project access…</p></section>;
+  if(!isCurrent()||verifiedOwner.current!==authorityOwner)return <section className="card"><h2>Collection and privacy</h2><p>Loading current project access…</p>{isCurrent()&&deleteRequest.current&&deletion}</section>;
   if (hidden) {
     return (
       <section className="card">
         <h2>Collection and privacy</h2>
         <p className="dim">Analytics settings are not available for this project.</p>
+        {deleteRequest.current&&deletion}
       </section>
     );
   }
@@ -545,8 +552,9 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
           </div>
         </div>
       )}
+      {canEdit&&deletion}
       {resetAccepted===authorityOwner&&<p role="status">Reset accepted. Earlier analytics is unavailable. Any remaining stored-data cleanup continues in bounded background batches.</p>}
-      {canEdit&&<AnalyticsResetPanel projectId={projectId} userId={userId} authorityOwner={authorityOwner} isCurrent={isCurrent} pendingRequest={resetRequest} disabled={pending||loading||dirty} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onReset={()=>{if(isCurrent()){setResetAccepted(authorityOwner);reload();}}}/>}
+      {canEdit&&<AnalyticsResetPanel key={authorityOwner} projectId={projectId} userId={userId} authorityOwner={authorityOwner} isCurrent={isCurrent} pendingRequest={resetRequest} disabled={pending||loading||dirty||resetBusy||deleteRequest.current!==null} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onReset={()=>{if(isCurrent()){setResetAccepted(authorityOwner);reload();}}}/>}
     </section>
   );
 }

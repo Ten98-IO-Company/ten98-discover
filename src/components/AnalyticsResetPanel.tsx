@@ -1,8 +1,8 @@
 import {useEffect,useRef,useState} from 'react';
 import {analyticsResetInput,analyticsResetState,analyticsResetResult,type AnalyticsResetInput,type AnalyticsResetState,type AnalyticsResetResult} from '../lib/analytics-reset';
 
-class ResetError extends Error {constructor(readonly status:number){super('Reset request unavailable.');}}
-async function request(url:string,signal:AbortSignal,body?:AnalyticsResetInput):Promise<unknown>{
+export class ResetError extends Error {constructor(readonly status:number){super('Reset request unavailable.');}}
+export async function request(url:string,signal:AbortSignal,body?:unknown):Promise<unknown>{
  const response=await fetch(url,{method:body?'POST':'GET',credentials:'same-origin',headers:body?{'content-type':'application/json'}:{},signal,...body?{body:JSON.stringify(body)}:{}});
  if(!response.ok){await response.body?.cancel();throw new ResetError(response.status);}
  if(!response.headers.get('content-type')?.startsWith('application/json')){await response.body?.cancel();throw Error('Invalid reset reply.');}
