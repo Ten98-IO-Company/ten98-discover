@@ -39,6 +39,12 @@ export function revenueNavigation(raw:Record<string,unknown>):RevenueNavigation{
  return{revenueQuery:query,...key!==undefined?{revenueKey:key as string}:{},...raw.revenueCalendar==='months'?{revenueCalendar:'months' as const}:{}};
 }
 export type AttributionNavigation={attributionQuery?:string;attributionInvalid?:'1'};
+export type ExplorerNavigation={exploreQuery?:string;exploreInvalid?:'1'};
+export function explorerNavigation(raw:Record<string,unknown>):ExplorerNavigation{
+ if(!navigationId(raw.workspace)||!navigationId(raw.project)||raw.exploreInvalid!==undefined||Object.keys(raw).some(key=>!['workspace','project','view','exploreQuery','exploreInvalid'].includes(key)))return{exploreInvalid:'1'};
+ if(raw.exploreQuery===undefined)return{};
+ const query=raw.exploreQuery;return typeof query==='string'&&query.length>0&&query.length<=20000&&!query.includes('\0')&&new TextDecoder().decode(new TextEncoder().encode(query))===query?{exploreQuery:query}:{exploreInvalid:'1'};
+}
 export type JourneysNavigation={journeyQuery?:string;journeyInvalid?:'1'};
 export const auditIssueCodes = 'blocked-page,rate-limited-page,server-error,broken-page,slow-response,noindex-page,canonical-conflict,canonicalized-page,deep-page,javascript-rendering-suspected,missing-title,title-too-long,title-too-short,missing-meta-description,meta-description-too-long,meta-description-too-short,missing-h1,multiple-h1,heading-order-skip,thin-content,images-missing-alt,no-outgoing-links,duplicate-title,duplicate-meta-description,duplicate-content,redirect-chain,redirect-loop,broken-internal-link,orphan-page'.split(',')
 export const auditCoverages = ['analyzed','partial','shell','redirect','non_html','http_error','blocked','rate_limited','robots_disallowed','not_fetched','unavailable'] as const
@@ -69,7 +75,7 @@ export function retentionNavigation(raw:Record<string,unknown>):RetentionNavigat
   if(typeof month!=='string'||!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)||month<'1970-01'||month>'9998-12'||typeof zone!=='string'||zone.length>80||!/^(?:UTC|[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+)$/.test(zone)||entry!==undefined&&(typeof entry!=='string'||entry.length>20000||entry.includes('\0')||new TextDecoder().decode(new TextEncoder().encode(entry))!==entry))return invalid();
   try{const format=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit'}),parts=format.formatToParts(new Date()),current=['year','month'].map(key=>parts.find(part=>part.type===key)!.value).join('-');if(month>current)return invalid();return {retentionMonth:month,retentionTimeZone:format.resolvedOptions().timeZone,...entry!==undefined?{retentionEntry:entry as string}:{}};}catch{return invalid();}
 }
-export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation
+export type NavigationSearch = { workspace?: string; project?: string; view: AppView } & SessionNavigation & AuditNavigation & AnalyticsNavigation & JourneysNavigation & RetentionNavigation & AttributionNavigation & RevenueNavigation & AISearchNavigation & ExplorerNavigation
 
 // The panel verifies the closed nested scope with the existing Explorer controls
 // before fetching; this boundary keeps its URL value scalar and project-scoped.
@@ -175,6 +181,7 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
     ...(view==='revenue'?revenueNavigation(raw):{}),
     ...(view==='ai-search'?aiSearchNavigation(raw):{}),
     ...(view==='attribution'?attributionNavigation(raw):{}),
+    ...(view==='explore'?explorerNavigation(raw):{}),
     ...(view==='audits'?auditNavigation(raw):{}),
     ...(['project','compare'].includes(view)?analyticsNavigation(raw):{}),
     ...(view==='visitor-retention'?retentionNavigation(raw):{}),
@@ -182,7 +189,7 @@ export function parseNavigation(raw: Record<string, unknown>): NavigationSearch 
 }
 
 export function navigationKey(search: NavigationSearch): string {
-  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
+  return `${search.workspace ?? ''}:${search.project ?? ''}:${search.view}${search.view==='sessions'?':'+JSON.stringify(sessionNavigation(search)):search.view==='explore'?':'+JSON.stringify(explorerNavigation(search)):search.view==='ai-search'?':'+JSON.stringify(aiSearchNavigation(search)):search.view==='revenue'?':'+JSON.stringify(revenueNavigation(search)):search.view==='journeys'?':'+JSON.stringify(journeysNavigation(search)):search.view==='attribution'?':'+JSON.stringify(attributionNavigation(search)):search.view==='visitor-retention'?':'+JSON.stringify(retentionNavigation(search)):search.view==='audits'?':'+JSON.stringify(auditNavigation(search)):['project','compare'].includes(search.view)?':'+JSON.stringify(analyticsNavigation(search)):''}`
 }
 
 export function canonicalNavigation(search: string, target: NavigationSearch): boolean {
