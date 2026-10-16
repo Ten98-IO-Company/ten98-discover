@@ -1,5 +1,17 @@
 # Analytics exploration
 
+## Event property details
+
+`GET /api/projects/:id/explore?...&groupBy=property&groupProperty=<exact-key>&propertyView=details` adds `propertyReport`; requests without that flag keep their existing scalar/tuple response. The mode is report-only and cannot enter saved segment/cohort definitions. The interface enables **Property analysis and event properties** after choosing a property, then reuses Apply/Refresh, applied-snapshot CSV, current access purge and draft indicators. Tabs show typed value series, exact daily numeric statistics, property date values, array-element occurrences and matching event properties. No model/provider request is involved.
+
+Value and array series use the existing local event-day calendar and complete filtered population, including advanced filters, current retained session-property conditions and cohorts. Numeric sums/averages remain decimal strings; days without numeric samples have zero samples and unavailable aggregates. Missing, null, empty strings, numbers and strings stay distinct. Array elements preserve their primitive types and repeated elements count repeatedly; an empty array contributes an array sample but no element occurrences. Date distribution uses the actual normalized UTC property value, independently of the event's receipt day. These distinctions follow the pinned Umami property/numeric/date/array flows while retaining native typed identities.
+
+Each value/array/date inventory returns at most100 entries with explicit total/truncation metadata; series counts come from all matching observations, not a client-side pivot of the displayed groups. Event rows include anonymous observations and their normalized typed properties. Pages contain50 rows ordered by exact microsecond receipt time and UUID. `propertyCursor` is a bounded canonical base64url record bound to project/query hash, original native statement-clock bound and current retention-policy hash; a changed scope is400 and changed policy is409. It grants no authority; every page repeats current project membership/analytics-key admission. The workspace SHARE gate and existing five-second SQL/250ms lock bound apply to this mode.
+
+All sections and same-response CSV share a snapshot. Unavailable history/selection returns empty series/rows and null statistics, never fabricated zero; partial evidence is labelled. The whole new response including CSV is limited to2097152 UTF-8 bytes and fails503 completely when oversized. The UI reuses the bounded20-second JSON reader, fatal UTF-8 decoding and access-first error handling. CSV is formula-safe and covers the displayed event page, with a more-pages marker. No schema, dependency, cache or worker is added.
+
+Source is authored; pure/native/browser/type/resource acceptance and final visual parity remain pending. New checks are additive to the original scalar/compound oracles. This is not a production-readiness claim.
+
 ## Compound grouping increment
 
 The existing Explore screen offers **Single field** and **Combined fields**. Combined grouping accepts two or three different scalar fields. The source × medium × campaign preset stages those fields and **Page views**; review the draft scope and select **Apply filters**. Editing selectors, reordering fields or loading saved predicates does not change the accepted result or its CSV. Refresh and unchanged Apply each request a fresh report. Grouping is local to this screen: it is not saved in segment/cohort definitions or the page URL.
@@ -139,3 +151,5 @@ The interface separates **Current session properties — all** from event proper
 ## Model and source evidence
 
 The design follows Umami's focused filtering/breakdown pattern and the stored native property contract. PostgreSQL calendar operations are based on its [date/time documentation](https://www.postgresql.org/docs/18/functions-datetime.html); regression fixtures determine edge behaviour. This slice copies no upstream application source.
+
+Property event pagination excludes later arrivals using its original event-receipt bound. Every page rechecks current retention, saved-cohort authority and current session-property selection; eligible events and report counts can change between pages. This is not a cross-page database snapshot. A retention cursor conflict clears displayed data and export, preserves the draft/cohort, and Retry reloads the first event page.

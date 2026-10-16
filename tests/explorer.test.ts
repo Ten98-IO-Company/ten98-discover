@@ -4,6 +4,15 @@ import {csvCell,explorerQuery,explorerGroupingQuery} from '../src/server/explore
 import {parseSegmentDefinition} from '../src/server/segment-input.ts';
 import {parseCohortDefinition} from '../src/server/cohort-input.ts';
 
+test('property details are report-only, bounded and keep exact typed cursor clocks',()=>{
+  const params=new URLSearchParams({from:'2026-03-08',to:'2026-03-09',groupBy:'property',groupProperty:' spaced ',propertyView:'details'}),result=explorerGroupingQuery(params,new Date('2026-03-10'));
+  assert.equal(result.scope.groupProperty,' spaced ');assert.ok('propertyReport'in result&&result.propertyReport);assert.equal(result.propertyReport.cursor,null);
+  const value={version:1,scope:'a'.repeat(64),policy:'b'.repeat(64),before:'2026-03-10T00:00:00.000001Z',last:{at:'2026-03-08T00:00:00.999999Z',id:'11111111-1111-4111-8111-111111111111'}};
+  params.set('propertyCursor',Buffer.from(JSON.stringify(value)).toString('base64url'));const paged=explorerGroupingQuery(params,new Date('2026-03-10'));assert.ok('propertyReport'in paged&&paged.propertyReport);assert.deepEqual(paged.propertyReport.cursor,value);
+  for(const extra of [{propertyView:'future'},{groupBy:'event'},{fields:'["path","origin"]'},{propertyCursor:'='},{propertyCursor:Buffer.from(JSON.stringify({...value,last:{...value.last,at:'2026-02-30T00:00:00.000000Z'}})).toString('base64url')}])assert.throws(()=>explorerGroupingQuery(new URLSearchParams(Object.fromEntries([...params,...Object.entries(extra)])),new Date('2026-03-10')),{status:400});
+  assert.throws(()=>explorerQuery(params),{status:400});for(const parse of [parseSegmentDefinition,parseCohortDefinition])assert.throws(()=>parse({schemaVersion:1,name:'No report mode in predicates',query:params.toString()}),{status:400});
+});
+
 test('explorer defaults follow the named calendar; properties retain exact type and escaped key',()=>{
   const q = explorerQuery(new URLSearchParams('timeZone=America/New_York'),new Date('2026-03-09T01:00:00Z'));
   assert.equal(q.from,'2026-03-02');assert.equal(q.to,'2026-03-08');assert.equal(q.timeZone,'America/New_York');
