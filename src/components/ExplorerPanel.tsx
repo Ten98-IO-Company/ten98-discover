@@ -16,7 +16,7 @@ import {propertyWeekdays,propertyDecimal,comparePropertyDecimals,propertyDecimal
 type Coverage='complete'|'partial'|'unavailable';
 
 
-interface ExploreResult{
+export interface ExploreResult{
   propertyReport?:PropertyReport;
   range:{from:string;to:string;timeZone:string;start:string;end:string};
   query:{from:string;to:string;timeZone:string;kind:string;groupBy?:string;groupProperty?:string|null;fields?:string[];filters:Record<string,string>;property:{key:string;type:string;value:unknown}|null;cohort?:CohortRef;predicates?:AdvancedPredicates};
@@ -51,7 +51,7 @@ function combinationParams(draft:Draft,cohort:CohortRef|null,fields:string[]|nul
   const p=new URLSearchParams(result.qs);p.delete('groupBy');p.delete('groupProperty');p.set('fields',JSON.stringify(fields));
   return p.toString().length>20000?{error:'These filters are too large. Shorten values or remove conditions.'}:{qs:p.toString()};
 }
-function validReportBase(result:ExploreResult,params:URLSearchParams):boolean{
+export function validReportBase(result:ExploreResult,params:URLSearchParams):boolean{
   if(!record(result)||!record(result.query)||!record(result.totals)||!record(result.breakdown)||!record(result.coverage)||!['complete','partial','unavailable'].includes(result.coverage.status)||!Array.isArray(result.breakdown.groups)||!clean(result.csv,2097152))return false;
   for(const key of ['from','to','kind']as const)if(result.query[key]!==params.get(key))return false;
   try{if(new Intl.DateTimeFormat('en-US',{timeZone:result.query.timeZone}).resolvedOptions().timeZone!==new Intl.DateTimeFormat('en-US',{timeZone:params.get('timeZone')!}).resolvedOptions().timeZone)return false;}catch{return false;}
@@ -76,7 +76,7 @@ function validReportBase(result:ExploreResult,params:URLSearchParams):boolean{
     else{if(!count(day.events)||!count(day.pageViews)||!count(day.customEvents)||day.pageViews+day.customEvents!==day.events||day.skipped&&day.events!==0||result.query.kind==='pageviews'&&day.customEvents!==0||result.query.kind==='custom'&&day.pageViews!==0)return false;dailyEvents+=day.events;dailyViews+=day.pageViews;dailyCustom+=day.customEvents;}
   }
   if(Object.keys(result.totals).sort().join(',')!=='customEvents,events,identifiedEvents,pageViews,unidentifiedEvents,visitors,visits'||!Object.values(result.totals).every(value=>value===null||count(value)))return false;
-  if(result.totals.events===null)return (result.coverage.status==='unavailable'||selectionUnavailable)&&Object.values(result.totals).every(value=>value===null)&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===null&&result.breakdown.returnedGroupEvents===null&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;
+  if(result.totals.events===null){const empty=(params.has('fields')||params.has('propertyView')||selectionUnavailable)?null:0;return (result.coverage.status==='unavailable'||selectionUnavailable)&&Object.values(result.totals).every(value=>value===null)&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===empty&&result.breakdown.returnedGroupEvents===empty&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;}
   if(selectionUnavailable||dailyEvents!==result.totals.events||dailyViews!==result.totals.pageViews||dailyCustom!==result.totals.customEvents)return false;
   if(result.coverage.status==='unavailable'||!count(result.totals.identifiedEvents)||result.totals.identifiedEvents>result.totals.events||!count(result.totals.unidentifiedEvents)||result.totals.identifiedEvents+result.totals.unidentifiedEvents!==result.totals.events||!count(result.totals.pageViews)||!count(result.totals.customEvents)||result.totals.pageViews+result.totals.customEvents!==result.totals.events||(result.totals.identifiedEvents===0?result.totals.visitors!==null:!count(result.totals.visitors)||result.totals.visitors<1||result.totals.visitors>result.totals.identifiedEvents)||result.totals.visits!==null&&(!count(result.totals.visits)||result.totals.visits<1||result.totals.visits>result.totals.events)||!count(result.breakdown.totalGroups)||result.breakdown.totalGroups>result.totals.events||result.breakdown.groups.length!==Math.min(params.has('fields')?500:100,result.breakdown.totalGroups)||result.breakdown.truncated!==(result.breakdown.totalGroups>(params.has('fields')?500:100)))return false;
   return true;
@@ -109,7 +109,7 @@ export function validTupleResult(result:ExploreResult,params:URLSearchParams):bo
   }
   return result.breakdown.returnedGroupEvents===events&&events<=result.totals.events&&identified<=result.totals.identifiedEvents&&views<=result.totals.pageViews&&identifiedViews<=result.totals.identifiedEvents&&(result.breakdown.truncated||events===result.totals.events&&identified===result.totals.identifiedEvents&&views===result.totals.pageViews);
 }
-async function readCombination(path:string,signal:AbortSignal):Promise<ExploreResult>{
+export async function readCombination(path:string,signal:AbortSignal):Promise<ExploreResult>{
   const response=await fetch(path,{credentials:'same-origin',redirect:'error',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)])});
   const failure=(message:string)=>{const error=new ApiError(message);error.status=response.status;return error;};
   if([401,403,404].includes(response.status)){void response.body?.cancel();throw failure(response.status===401?'Your session has expired. Sign in again.':'This project is unavailable.');}
@@ -123,7 +123,7 @@ async function readCombination(path:string,signal:AbortSignal):Promise<ExploreRe
   return value as ExploreResult;
 }
 function redactedReport(result:ExploreResult){return Object.values(result.totals).every(n=>n===null)&&result.daily.every(day=>day.events===null&&day.pageViews===null&&day.customEvents===null)&&result.numeric===null&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===null&&result.breakdown.returnedGroupEvents===null&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;}
-function validCohortResult(result:ExploreResult,params:URLSearchParams,projectId:string){
+export function validCohortResult(result:ExploreResult,params:URLSearchParams,projectId:string){
   if(params.has('propertyView')&&!validPropertyReport(result,params))return false;
   const fields=params.has('fields')?tupleFields(params.get('fields')):null;
   if(params.has('fields')&&!validTupleResult(result,params))return false;
@@ -181,14 +181,14 @@ function validPropertyReport(result:ExploreResult,params:URLSearchParams){
   const last=p.events.at(-1);if(next&&(!last||next.last.at!==last.receivedAt||next.last.id!==last.id)||cursor&&p.events.some(e=>e.receivedAt>cursor.last.at||e.receivedAt===cursor.last.at&&e.id>=cursor.last.id))return false;
   return p.events.every((e,index)=>stamp(e.receivedAt)&&e.receivedAt<p.snapshot&&Date.parse(e.receivedAt)>=Date.parse(result.range.start)&&Date.parse(e.receivedAt)<Date.parse(result.range.end)&&(index===0||p.events[index-1].receivedAt>e.receivedAt||p.events[index-1].receivedAt===e.receivedAt&&p.events[index-1].id>e.id)&&uuid(e.id)&&clean(e.eventName,320)&&clean(e.path,2048)&&typeof e.receivedAt==='string'&&Number.isFinite(Date.parse(e.receivedAt))&&record(e.properties)&&Object.entries(e.properties).every(([key,value])=>key.length<=320&&record(value)&&atom(value.type,value.value)));
 }
-function PropertyShares({items,total,label}:{items:{key:string;label:string;count:number}[];total:number|null;label:string}){
+export function PropertyShares({items,total,label,noun}:{items:{key:string;label:string;count:number}[];total:number|null;label:string;noun?:string}){
   const pattern=useId().replaceAll(':',''),returned=items.reduce((sum,item)=>sum+item.count,0),first=items.slice(0,8),rest=returned-first.reduce((sum,item)=>sum+item.count,0);
   const slices=[...first,...(rest>0?[{key:'returned',label:'Other returned values',count:rest}]:[]),...(total!==null&&total>returned?[{key:'omitted',label:'Values omitted from the exact table',count:total-returned}]:[])];
   const color=(key:string)=>{if(key==='returned'||key==='omitted')return `url(#${pattern}-${key})`;let hash=0;for(const char of key)hash=(Math.imul(hash,31)+char.codePointAt(0)!)>>>0;return `var(--color-chart-${hash%4+1})`;};
   let offset=0;
-  return <div className="stack">{total!==null&&total>0?<svg viewBox="0 0 180 180" style={{width:'100%',maxWidth:240,height:180,alignSelf:'center'}} role="img" aria-label={`${label}: share of ${total} observed ${label==='Array occurrence shares'?'occurrences':'samples'}`}>
+  return <div className="stack">{total!==null&&total>0?<svg viewBox="0 0 180 180" style={{width:'100%',maxWidth:240,height:180,alignSelf:'center'}} role="img" aria-label={`${label}: share of ${total} observed ${noun??(label==='Array occurrence shares'?'occurrences':'samples')}`}>
     <defs><pattern id={`${pattern}-returned`} width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--color-chart-5)"/><path d="M0 0L6 6" stroke="var(--color-surface)" strokeWidth="2"/></pattern><pattern id={`${pattern}-omitted`} width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--color-text-muted)"/><circle cx="3" cy="3" r="1.5" fill="var(--color-surface)"/></pattern></defs>
-    <title>{label}; counts and exact denominator in the adjacent table</title>{slices.map(slice=>{const share=slice.count/total*100,start=offset;offset+=share;return <circle key={slice.key} cx="90" cy="90" r="65" pathLength="100" fill="none" stroke={color(slice.key)} strokeWidth="28" strokeDasharray={`${share} ${100-share}`} strokeDashoffset={-start} transform="rotate(-90 90 90)"><title>{slice.label}: {slice.count} of {total} ({share.toFixed(1)}%)</title></circle>;})}</svg>:<p className="hint">{total===null?'Share distribution unavailable.':'No observed samples for this distribution.'}</p>}
+    <title>{label}; counts and exact denominator in the adjacent table</title>{slices.map(slice=>{const share=slice.count/total*100,start=offset;offset+=share;return <circle key={slice.key} cx="90" cy="90" r="65" pathLength="100" fill="none" stroke={color(slice.key)} strokeWidth="28" strokeDasharray={`${share} ${100-share}`} strokeDashoffset={-start} transform="rotate(-90 90 90)"><title>{slice.label}: {slice.count} of {total} ({share.toFixed(1)}%)</title></circle>;})}</svg>:<p className="hint">{total===null?'Share distribution unavailable.':`No observed ${noun??'samples'} for this distribution.`}</p>}
     <div className="table-wrap" tabIndex={0} role="region" aria-label={label}><table><thead><tr><th>Value</th><th>Count</th><th>Share of observed total</th></tr></thead><tbody>{slices.map(slice=><tr key={slice.key}><td><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{marginInlineEnd:6}}><rect x="1" y="1" width="10" height="10" fill={color(slice.key)} stroke="var(--color-text)"/></svg><bdi>{slice.label}</bdi></td><td>{slice.count}</td><td>{total===null?'Unavailable':total===0?'No samples':`${(slice.count/total*100).toFixed(1)}%`}</td></tr>)}</tbody><tfoot><tr><th>Observed total</th><td>{num(total)}</td><td>{total===null?'Unavailable':total===0?'No samples':'100%'}</td></tr></tfoot></table></div>
   </div>;
 }
