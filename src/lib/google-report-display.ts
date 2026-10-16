@@ -5,6 +5,34 @@ const adsLabels: Record<string, string> = {
 };
 export const googleAdsColumnLabel = (field: string) => Object.hasOwn(adsLabels, field) ? adsLabels[field] : field;
 const currencies = new Set(Intl.supportedValuesOf('currency'));
+const calendarDay = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d\d-\d\d$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+/** Subtract a calendar date, not 24 hours from the current instant across DST. */
+export function googleLastCompletedDay(timeZone: string | null, now = new Date()): string | null {
+  try {
+    if (!timeZone || !Number.isFinite(now.valueOf())) return null;
+    const parts = new Intl.DateTimeFormat('en', { timeZone, year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(now);
+    const today = ['year','month','day'].map(key => parts.find(part => part.type === key)!.value).join('-');
+    if (!calendarDay(today)) return null;
+    const previous = new Date(Date.parse(today) - 86400000).toISOString().slice(0, 10);
+    return calendarDay(previous) && previous >= '0001-01-01' ? previous : null;
+  } catch { return null; }
+}
+/** Google weeks begin Sunday and restart at January 1, unlike ISO week-years. */
+export function googleCalendarWeek(date: string): string {
+  if (!calendarDay(date)) throw new RangeError('Invalid Google calendar date.');
+  const year = date.slice(0,4), start = new Date(year + '-01-01T00:00:00Z');
+  return year + String(Math.min(53, Math.floor(((Date.parse(date)-start.valueOf())/86400000+start.getUTCDay())/7)+1)).padStart(2,'0');
+}
+/** Include missing calendar buckets as gaps, never as invented zero observations. */
+export function googleOrganicCalendar(from: string, to: string, weekly: boolean): Array<{key:string;from:string;to:string}> {
+  if (!calendarDay(from) || !calendarDay(to) || to < from || Date.parse(to)-Date.parse(from) >= 366*86400000) throw new RangeError('Choose up to 366 valid calendar days.');
+  const buckets: Array<{key:string;from:string;to:string}> = [];
+  for (let at=Date.parse(from);at<=Date.parse(to);at+=86400000) {
+    const date=new Date(at).toISOString().slice(0,10),key=weekly?googleCalendarWeek(date):date,last=buckets.at(-1);
+    if(last?.key===key)last.to=date;else buckets.push({key,from:date,to:date});
+  }
+  return buckets;
+}
 /** Keep provider int64 micros exact; never pass money through Number. */
 export function googleAdsCost(micros: unknown, currency: unknown): string {
   if (typeof micros !== 'string' || !/^(?:0|[1-9]\d{0,29})$(?![\s\S])/.test(micros)) return 'Unavailable';
@@ -53,7 +81,7 @@ export type OrganicOverview = { complete: true; interval: 'daily' | 'weekly'; cu
 export function readOrganicOverview(value: unknown, from: string, to: string, weekly: boolean): OrganicOverview | null {
   const record = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
   const keys = (v: Record<string, unknown>, expected: readonly string[]) => Object.keys(v).sort().join(',') === [...expected].sort().join(',');
-  const day = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d\d-\d\d$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
+  const day = calendarDay;
   if (!record(value) || !keys(value, ['complete','interval','current','previous','trend']) || value.complete !== true || value.interval !== (weekly ? 'weekly' : 'daily') || !day(from) || !day(to) || JSON.stringify(value).length > 131072) return null;
   const days = (Date.parse(to) - Date.parse(from)) / 86400000 + 1; if (days < 1 || days > 366) return null;
   const previousFrom = new Date(Date.parse(from) - days * 86400000).toISOString().slice(0, 10), previousTo = new Date(Date.parse(from) - 86400000).toISOString().slice(0, 10);
