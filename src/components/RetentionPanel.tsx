@@ -37,6 +37,7 @@ interface PreviewDto {
   promptEstimate: { status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean };
   redirectEstimate?:{status:'available'|'unavailable';checks:number|null;atLeast:boolean};
   keywordEstimate: { status: 'available' | 'unavailable'; results: number | null; atLeast: boolean };
+  domainResearchEstimate?: {status:'available'|'unavailable';results:number|null;atLeast:boolean};
   savedKeywordEstimate: { status: 'available' | 'unavailable'; metrics: number | null; atLeast: boolean };
   estimate: {
     status: 'available' | 'unavailable';
@@ -71,7 +72,7 @@ const FIELDS: ReadonlyArray<{
   {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep events, session properties and explicit identity links. Each property uses its latest update; each link uses its latest accepted evidence (default 90).'},
   {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep replays (default 7).'},
   {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep generated answers, copied execution input and observed redirect chains (default 90). Receipts and authored prompts remain.'},
-  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google and Meta reports, Meta campaign inventories, keyword research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
+  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google and Meta reports, Meta campaign inventories, keyword and domain SEO research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
 ];
 
 function toDraft(s: RetentionSettings): Draft {
@@ -446,6 +447,7 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <p style={{margin: '8px 0'}}>{preview.metaEstimate?.status === 'available' && preview.metaEstimate.imports !== null ? `${preview.metaEstimate.atLeast ? 'At least ' : ''}${preview.metaEstimate.imports.toLocaleString()} finished Meta imports eligible or already awaiting cleanup. Their receipts remain.` : 'Meta import estimate unavailable. Finished Meta report rows still follow this policy.'}</p>
               <p style={{margin: '8px 0'}}>{preview.metaInventoryEstimate?.status === 'available' && preview.metaInventoryEstimate.inventories !== null ? `${preview.metaInventoryEstimate.atLeast ? 'At least ' : ''}${preview.metaInventoryEstimate.inventories.toLocaleString()} finished Meta campaign inventories eligible or already awaiting cleanup. Their receipts remain.` : 'Meta campaign inventory estimate unavailable. Finished campaign metadata still follows this policy.'}</p>
               <p style={{margin: '8px 0'}}>{preview.keywordEstimate.status === 'available' && preview.keywordEstimate.results !== null ? `${preview.keywordEstimate.atLeast ? 'At least ' : ''}${preview.keywordEstimate.results.toLocaleString()} keyword results eligible.` : 'Keyword result estimate unavailable.'}</p>
+              <p style={{margin: '8px 0'}}>{preview.domainResearchEstimate?.status==='available'&&preview.domainResearchEstimate.results!==null?`${preview.domainResearchEstimate.atLeast?'At least ':''}${preview.domainResearchEstimate.results.toLocaleString()} domain SEO reports eligible. Their used quotes and charges remain.`:'Domain SEO report estimate unavailable. Reports still follow derived history retention.'}</p>
               <p style={{margin: '8px 0'}}>{preview.savedKeywordEstimate.status === 'available' && preview.savedKeywordEstimate.metrics !== null ? `${preview.savedKeywordEstimate.atLeast ? 'At least ' : ''}${preview.savedKeywordEstimate.metrics.toLocaleString()} saved keyword metric snapshots eligible. Authored keywords and tags remain.` : 'Saved keyword metric estimate unavailable. Authored keywords and tags remain.'}</p>
               <h4>AI answers and other evidence</h4>
               <p style={{margin:'8px 0'}}>Raw provider evidence cutoff (UTC): {fmtUtc(preview.rawEvidenceCutoff)}</p>

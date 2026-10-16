@@ -56,8 +56,8 @@ export async function runAccountPreferencesChecks(verifyOriginalRows:()=>Promise
     const response=await checked(api('/api/auth/sign-in/email',undefined,{email,password}));actor.cookie=cookies(response);assert.ok(actor.cookie);actors.push(actor);return actor;
   }
   try {
-    const sources=await migrationSources();assert.equal(sources.at(-1)?.filename,'0047_prompt_explorer_models.sql','Register actual47 after accepted44/45/46 before this native gate; do not privately bypass the registry.');
-    assert.equal(sources.at(-2)?.filename,'0046_ga4_report_inventory.sql');assert.equal(sources.at(-3)?.filename,'0045_account_preferences.sql');assert.equal(sources.at(-4)?.version,'0044');
+    const sources=await migrationSources();assert.equal(sources.at(-1)?.filename,'0048_domain_research.sql','Register actual48 after accepted44–47 before this native gate; do not privately bypass the registry.');
+    assert.equal(sources.at(-2)?.filename,'0047_prompt_explorer_models.sql');assert.equal(sources.at(-3)?.filename,'0046_ga4_report_inventory.sql');assert.equal(sources.at(-4)?.filename,'0045_account_preferences.sql');assert.equal(sources.at(-5)?.version,'0044');
     const migration=await pool.connect();try{await migration.query('BEGIN');await migration.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');for(const source of sources){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}await initializeProviderAccountIdentity(migration);await migration.query('COMMIT');}catch(error){await migration.query('ROLLBACK');throw error;}finally{migration.release();}await assertSchema();
     const email=randomUUID()+'@preferences.test',password=randomBytes(24).toString('hex');
     const setup=await checked(api('/api/setup',undefined,{token:config.bootstrapToken,name:'Preferences owner',email,password,workspaceName:'Preferences owned fixture'}));
