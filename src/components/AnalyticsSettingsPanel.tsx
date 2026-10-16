@@ -13,6 +13,7 @@ interface Settings {
   captureCampaigns: boolean;
   captureScreen: boolean;
   captureGeography?: boolean;
+  capturePerformance?: boolean;
   excludeBots: boolean;
   linkIdentities?: boolean;
   excludedPaths: string[];
@@ -375,6 +376,11 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
           />
           Screen dimensions
         </label>
+        <label className="row">
+          <input type="checkbox" style={{width:'auto',flexShrink:0}} checked={draft.capturePerformance===true} onChange={e=>set('capturePerformance',e.target.checked)}/>
+          Page loading and interaction performance
+        </label>
+        <p className="hint">Measures loading speed, responsiveness and layout stability while collection is allowed. Browser timings can describe the start of the current page load, before permission was granted. Privacy choices and excluded paths apply. Screen and input contents are not recorded.</p>
         <label className="row">
           <input type="checkbox" style={{width:'auto',flexShrink:0}} checked={draft.captureGeography===true} onChange={e=>set('captureGeography',e.target.checked)}/>
           Approximate country, region and city

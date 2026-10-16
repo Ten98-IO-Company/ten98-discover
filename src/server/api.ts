@@ -14,6 +14,8 @@ import { extractAnalyticsPeer } from './analytics-network.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {projectRealtime} from './realtime.ts';
+import {collectPerformance,projectPerformance} from './web-performance.ts';
+import {performanceObservation} from '../lib/web-performance.ts';
 import {projectJourneys} from './journeys.ts';
 import {projectRevenue,listRevenueSessions,getRevenueSession}from'./revenue.ts';
 import {projectAttribution} from './attribution.ts';
@@ -136,7 +138,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
       const workspaceRoute = path.match(new RegExp(`^/api/workspaces/(${id})/(projects|team)$`, 'i'));
-      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|journeys|attribution|retention-report|revenue(?:/sessions(?:/[a-f0-9]{64})?)?|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
+      const projectRoute = path.match(new RegExp(`^/api/projects/(${id})/(events|analytics|realtime|performance|journeys|attribution|retention-report|revenue(?:/sessions(?:/[a-f0-9]{64})?)?|explore|sessions(?:/[a-f0-9]{64}(?:/linked-activity)?)?)$`, 'i'));
       const promptApiRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?$`,'i'));
       const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
@@ -180,12 +182,15 @@ export async function handleApi(request: Request): Promise<Response> {
         return json(await getPublicDestinations(input.siteKey, input.environment, origin), 200, cors);
       }
       const raw = await readJson(request, identifyBodyLimit);
-      const event = (raw as {type?:unknown}|null)?.type==='identify' ? parseIdentifyInput(raw) : eventInput.parse(raw);
+      const type=(raw as {type?:unknown}|null)?.type;
+      if(type==='performance'&&Buffer.byteLength(JSON.stringify(raw),'utf8')>16384)throw new FoundationError(413,'The performance observation is too large.');
+      const event = type==='performance'?performanceObservation.parse(raw):type==='identify' ? parseIdentifyInput(raw) : eventInput.parse(raw);
       const { rows } = await getDatabase().pool.query('SELECT id,origin FROM project WHERE public_key=$1', [event.siteKey]);
       const project = rows[0];
       if (!project || new URL(event.url).origin !== origin || !await collectionOriginAllowed(getDatabase().pool, origin, project)) throw new FoundationError(403, 'Event does not match an allowed website origin.');
       await limit(`collector:${project.id}`, 3000);
       // Origin and a site key are public routing values, never visitor identity proof.
+      if('type'in event&&event.type==='performance')return json(await collectPerformance(request,event,extractAnalyticsPeer(request)),202,cors);
       if ('type' in event) {
         try { return json(await collectIdentify(request,event,extractAnalyticsPeer(request)),202,cors); }
         catch(error) { if(error instanceof IdentifyRequestExpired)return json({error:error.message,reason:'request_expired'},400,cors);throw error; }
@@ -907,6 +912,13 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Retention reports do not accept a request body.');
       await limit(`retention-report:${user.id}`,30);
       return json(await projectRetentionReport(match[1],apiToken?{kind:'api-key',token:apiToken}:{kind:'session',userId:user.id},url.searchParams));
+    }
+    match=path.match(new RegExp(`^/api/projects/(${id})/performance$`,'i'));
+    if(match){
+      if(request.method!=='GET')return json({error:'Method not allowed.'},405);
+      if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Performance reads do not accept a body.');
+      await limit(`web-performance:${user.id}`,30);
+      return json(await projectPerformance(match[1],apiToken?{kind:'api-key',token:apiToken}:{kind:'session',userId:user.id},url.search.slice(1)));
     }
     match=path.match(new RegExp(`^/api/projects/(${id})/realtime$`,'i'));
     if(match){

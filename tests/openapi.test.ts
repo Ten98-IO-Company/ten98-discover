@@ -41,16 +41,16 @@ test('Revenue inventory matches the three closed native readers and pinned curre
  }
 });
 
-test('static OpenAPI exposes exactly the supported 24 native operations with local references',()=>{
+test('static OpenAPI exposes exactly the supported 25 native operations with local references',()=>{
  assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
  const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
   assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
   assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
   const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
  }
- assert.equal(ids.length,24);assert.equal(new Set(ids).size,24);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ assert.equal(ids.length,25);assert.equal(new Set(ids).size,25);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
  const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
- assert.deepEqual(ids.filter(id=>!['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession'].includes(id)).sort(),prior.sort());for(const name of ['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession'])assert.equal(ids.filter(id=>id===name).length,1);
+ assert.deepEqual(ids.filter(id=>!['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance'].includes(id)).sort(),prior.sort());for(const name of ['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance'])assert.equal(ids.filter(id=>id===name).length,1);
  const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
  const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
  assert.ok(params.some(x=>x.name==='eventName'));assert.ok(!params.some(x=>x.name==='event'||x.name==='screenWidth'));

@@ -69,7 +69,7 @@ const FIELDS: ReadonlyArray<{
   label: string;
   helper: string;
 }> = [
-  {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep events, session properties and explicit identity links. Each property uses its latest update; each link uses its latest accepted evidence (default 90).'},
+  {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep events, performance observations, session properties and explicit identity links. Each property uses its latest update; each link uses its latest accepted evidence (default 90).'},
   {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep replays (default 7).'},
   {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep generated answers, copied execution input and observed redirect chains (default 90). Receipts and authored prompts remain.'},
   {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google and Meta reports, Meta campaign inventories, keyword and domain SEO research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
@@ -432,7 +432,7 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               )}
               {preview.estimate.status === 'available' && preview.estimate.logicalBytes !== null && (
                 <p className="hint" style={{margin: '8px 0'}}>
-                  About {fmtBytes(preview.estimate.logicalBytes)} in sampled event-row bytes — an approximation, not guaranteed disk savings.
+                  About {fmtBytes(preview.estimate.logicalBytes)} in sampled raw analytics row bytes — an approximation, not guaranteed disk savings.
                 </p>
               )}
               <p style={{margin: '8px 0'}}>{preview.profileEstimate?.status === 'available' && preview.profileEstimate.properties !== null

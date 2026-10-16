@@ -18,14 +18,17 @@ const ANALYTICS = { ...DENIED, analytics: true };
 type Payload = { name: string; eventId: string; siteKey: string; url: string; properties?: unknown;
   context?: string; consent: { analytics: boolean; epoch: string }; dimensions: Record<string, unknown> };
 type IdentifyPayload = {type: 'identify'; siteKey: string; requestId: string; sentAt: string; url: string; properties: Record<string, unknown>; dimensions?: {distinctId?: string}; context?: string; consent: {analytics: true; epoch: string}};
+type PerformancePayload = {type:'performance';siteKey:string;navigationId:string;url:string;metric:string;value:number;revision:number;dimensions:Record<string,unknown>;consent?:{analytics:true;epoch:string};collection?:{mode:'cookieless';epoch:string}};
 
 function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; environment?: string; saved?: boolean;
   pageAge?: number; privacy?: boolean; dnt?: string; failStorage?: boolean; settings?: Record<string, unknown>;
   destinations?: unknown[]; deferCoordinator?: boolean; secondCollector?: boolean; collectionMode?: 'cookieless' | 'consent-first'; preference?: unknown; failRead?: boolean;
-  trackerSource?: string; coordinatorSource?: string; pageUrl?: string; windowOrigin?: string } = {}) {
+  trackerSource?: string; coordinatorSource?: string; pageUrl?: string; windowOrigin?: string;scriptNonce?:string;
+  performanceObserver?:boolean;performanceAdapter?:'ready'|'delayed' } = {}) {
   const listeners = new Map<string, Array<(ev: any) => void>>(), documentListeners = new Map<string, Array<(ev: any) => void>>(), warnings: string[] = [], scripts: any[] = [];
   const fetchCalls: Array<{ url: string; options: any }> = [], payloads: Payload[] = [];
   const identifyPayloads: IdentifyPayload[] = [];
+  const performancePayloads:PerformancePayload[]=[],performanceCallbacks:Array<(metric:unknown)=>void>=[];
   const historyCalls: Array<{ method: string; thisArg: unknown; args: unknown[] }> = [];
   const storage = new Map<string, string>(), timers = new Map<number, {fn: () => void; delay: number; interval: boolean}>();
   const storageCalls: string[] = [];
@@ -54,7 +57,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   const response = () => new Response(JSON.stringify(flags.response), {status: flags.fetchOk ? 202 : 400});
   const document: any = { currentScript: null, referrer: 'https://referrer.example/path?secret=hidden#fragment',
     addEventListener(type: string, fn: (event: any) => void) { const list = documentListeners.get(type) ?? []; list.push(fn); documentListeners.set(type, list); },
-    createElement: () => ({}), querySelectorAll: () => scripts, head: { appendChild(script: any) { scripts.push(script); return script; } },
+    createElement: () => opts.performanceObserver?{remove(){}}:{}, querySelectorAll: () => scripts, head: { appendChild(script: any) { scripts.push(script); return script; } },
     get cookie(): never { throw new Error('document.cookie must not be touched'); } };
   const sandbox: any = { document, history, location, origin: opts.windowOrigin ?? pageUrl.origin, URL, Intl, Date: Clock, AbortController, TextEncoder, TextDecoder, ReadableStream,
     crypto: { randomUUID, getRandomValues: webcrypto.getRandomValues.bind(webcrypto) },
@@ -83,13 +86,14 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
       else assert.equal(String(url), ENDPOINT, 'The VM must never make a third-party network call.');
       if (flags.fetchThrows) throw new Error('fetch exploded');
       const payload = JSON.parse(options.body);
-      if (payload.type === 'identify') identifyPayloads.push(payload); else payloads.push(payload);
+      if (payload.type === 'identify') identifyPayloads.push(payload); else if(payload.type==='performance')performancePayloads.push(payload);else payloads.push(payload);
       if (flags.fetchReject) return Promise.reject(new Error('network down'));
       if (flags.collectionResponse) return flags.collectionResponse(payload, options);
       if (payload.type === 'identify') return Promise.resolve(new Response(JSON.stringify(flags.identifyResponse), {status: flags.identifyStatus}));
       return flags.hold ? new Promise(resolve => pending.push(resolve)) : Promise.resolve(response());
     } };
   sandbox.window = sandbox;
+  if(opts.performanceObserver)sandbox.PerformanceObserver=class {};
   const context = vm.createContext(sandbox);
   const local = (value: unknown) => vm.runInContext(`JSON.parse(${JSON.stringify(JSON.stringify(value))})`, context);
   const storageKey = (key = SITE, environment = opts.environment ?? 'live') => `ten98:consent:v1:https://analytics.example.com:${key}:${environment}`;
@@ -97,12 +101,14 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   if (opts.preference !== undefined) storage.set(storageKey(), typeof opts.preference === 'string' ? opts.preference : JSON.stringify(opts.preference));
   if (opts.failRead) sandbox.localStorage.getItem = () => {throw new Error('Storage read blocked');};
   const setScript = (key: string | null, src: string | null, environment = opts.environment) => {
-    document.currentScript = src === null ? null : { src,
+    document.currentScript = src === null ? null : { src,nonce:opts.scriptNonce,
       getAttribute: (attr: string) => attr === 'data-site-key' ? key : attr === 'data-environment' ? environment : null };
   };
   setScript('siteKey' in opts ? opts.siteKey ?? null : SITE, 'scriptSrc' in opts ? opts.scriptSrc ?? null : SCRIPT_SRC);
+  const installPerformanceAdapter=()=>{assert.ok(sandbox.__ten98FoundationHub);sandbox.__ten98FoundationHub.startPerformance=Object.assign((callback:(metric:unknown)=>void)=>performanceCallbacks.push(callback),{protocolVersion:1});};
   const run = () => {
     vm.runInContext(opts.trackerSource ?? SRC, context, { filename: 'tracker.js' });
+    if(opts.performanceAdapter==='ready'&&!sandbox.__ten98FoundationHub?.startPerformance)installPerformanceAdapter();
     if (!opts.deferCoordinator && !coordinatorLoaded && scripts.some(s => new URL(s.src).pathname === '/destinations.js')) {
       coordinatorLoaded = true; vm.runInContext(opts.coordinatorSource ?? COORDINATOR, context, { filename: 'destinations.js' });
     }
@@ -115,7 +121,10 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   const start = async () => { run(); await drain(); return grant(); };
   const dispatch = (type: string, event: any = {}) => sandbox.dispatchEvent({ ...event, type });
   return { sandbox, document, history, location, listeners, documentListeners, warnings, fetchCalls, payloads, identifyPayloads, historyCalls, scripts, local,
-    storage, storageCalls, timers, storageKey, settings, flags, setScript, run, start, grant, dispatch, drain,
+    storage, storageCalls, timers, storageKey, settings, flags, setScript, run, start, grant, dispatch, drain,performancePayloads,performanceCallbacks,
+    emitPerformance(metric:unknown,index=0){const callback=performanceCallbacks[index];assert.ok(callback,'A real tracker adapter registration must exist before emitting a synthetic metric');callback(metric);},
+    async loadPerformance(ready=true){const loaders=scripts.filter(script=>new URL(script.src).pathname==='/performance.js');assert.equal(loaders.length,1,'One shared optional adapter script');if(ready)installPerformanceAdapter();if(ready)loaders[0].onload();else loaders[0].onerror();await drain();},
+    performanceCalls:()=>fetchCalls.filter(call=>call.url.endsWith('/api/collect')&&JSON.parse(call.options.body).type==='performance'),
     loadCoordinator() { opts.deferCoordinator = false; run(); }, advance(ms: number) { now += ms; },
     async runTimers(delay: number) { for (const [id, timer] of [...timers]) if (timer.delay === delay) { if (!timer.interval) timers.delete(id); timer.fn(); } await drain(); },
     complete: async () => { for (const resolve of pending.splice(0)) resolve(response()); await drain(); },
@@ -782,4 +791,117 @@ test('native responses enforce a streaming UTF-8 byte limit and cancel unread by
   const missing = makeEnv(); await missing.start(); let fallbackReads = 0;
   missing.flags.collectionResponse = () => ({status: 202, text() { fallbackReads++; return Promise.resolve('{"accepted":true,"duplicate":false}'); }});
   assert.equal((await identify(missing, {}, 'intent')).status, 'unknown'); assert.equal(fallbackReads, 0, 'No unbounded response.text fallback is allowed.');
+});
+
+// P40 additive tracker protocol checks. Metrics and adapter callbacks are explicit
+// synthetic inputs; this VM does not run the embedded web-vitals implementation.
+test('performance public configuration keeps optional true false and absent distinct and rejects a wrong-type flag', async () => {
+  for(const flag of [undefined,false,true]){
+    const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',settings:flag===undefined?{}:{capturePerformance:flag}});
+    assert.equal((await e.start()).ok,true);assert.equal(e.payloads.length,1,'A valid optional setting must not disable ordinary analytics');
+    assert.equal(e.performanceCallbacks.length,flag===true?1:0);assert.equal(e.performancePayloads.length,0,'Starting observers does not invent a measurement');
+  }
+  for(const flag of ['true',1,null,{},[]]){
+    const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',settings:{capturePerformance:flag}});e.run();await e.drain();
+    assert.equal((await e.grant()).ok,false,'Wrong-type config must stay unavailable');assert.equal(e.collectCalls().length,0);assert.equal(e.performanceCallbacks.length,0);
+  }
+});
+
+test('five bounded performance metrics send only their anonymous native payload and never invoke advertising', async () => {
+  const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',destinations:[meta],pageUrl:'https://site.example/dashboard?utm_source=campaign-secret#fragment-secret',settings:{capturePerformance:true,captureScreen:true,captureCampaigns:true,captureReferrer:true}});
+  await e.start();assert.equal(e.performanceCallbacks.length,1);await identify(e,{plan:'profile-secret'},'identifier-secret');
+  assert.equal(e.performancePayloads.length,0);e.dispatch('pageshow',{persisted:true,timeStamp:1000});await e.drain();
+  const values:[string,number][]=[['LCP',2500],['INP',200],['CLS',0],['FCP',1800],['TTFB',0]];
+  for(const[name,value]of values)e.emitPerformance({name,value,navigationType:'back-forward-cache',navigationStartTime:1000,navigationURL:'https://private.example/?raw-secret',entries:[{text:'private DOM secret'}]});
+  await e.drain();assert.equal(e.performancePayloads.length,5);assert.deepEqual(e.performancePayloads.map(payload=>payload.metric),['lcp','inp','cls','fcp','ttfb']);assert.deepEqual(e.performancePayloads.map(payload=>payload.value),[2500,200,0,1800,0]);assert.deepEqual(e.performancePayloads.map(payload=>payload.revision),[1,2,3,4,5]);
+  const nav=e.performancePayloads[0].navigationId;assert.match(nav,UUID_RE);
+  for(const payload of e.performancePayloads){assert.equal(payload.navigationId,nav);assert.equal(payload.siteKey,SITE);assert.equal(payload.url,'https://site.example/dashboard');assert.deepEqual(payload.consent,{analytics:true,epoch:EPOCH});assert.equal(payload.collection,undefined);assert.deepEqual(payload.dimensions,{screen:{width:1280,height:720}});assert.deepEqual(Object.keys(payload).sort(),['consent','dimensions','metric','navigationId','revision','siteKey','type','url','value']);}
+  assert.doesNotMatch(JSON.stringify(e.performancePayloads),/identifier-secret|profile-secret|campaign-secret|fragment-secret|raw-secret|private DOM|referrer|language|context/);
+  for(const call of e.performanceCalls()){assert.equal(call.options.credentials,'omit');assert.equal(call.options.referrerPolicy,'no-referrer');assert.equal(call.options.redirect,'error');assert.equal(call.options.keepalive,true);assert.equal(call.url,ENDPOINT);}
+  assert.equal(e.scripts.some(script=>/facebook|tiktok|googletagmanager/.test(script.src)),false,'An analytics grant must not load an advertising SDK');
+  const before=e.performancePayloads.length;
+  for(const metric of [null,{}, {name:'OTHER',value:1},{name:3,value:1},{name:'LCP',value:'2'},{name:'CLS',value:-1},{name:'LCP',value:NaN},{name:'LCP',value:Infinity},{name:'CLS',value:1000.01},{name:'LCP',value:3600001}])e.emitPerformance(metric===null?null:{navigationType:'back-forward-cache',navigationStartTime:1000,...metric});
+  await e.drain();assert.equal(e.performancePayloads.length,before,'Unknown or out-of-bound metrics must not create a request');
+  for(const[name,value]of [['CLS',1000],['LCP',3600000]] as const)e.emitPerformance({name,value,navigationType:'back-forward-cache',navigationStartTime:1000});
+  await e.drain();assert.deepEqual(e.performancePayloads.slice(-2).map(payload=>payload.value),[1000,3600000],'Inclusive legal metric ceilings remain accepted');
+});
+
+test('performance requires current collection permission browser support and privacy gates without queued event replay', async () => {
+  const noGrant=makeEnv({performanceObserver:true,performanceAdapter:'ready',settings:{capturePerformance:true}});noGrant.run();await noGrant.drain();assert.equal(noGrant.performanceCallbacks.length,0);assert.equal(noGrant.collectCalls().length,0);
+  noGrant.sandbox.ten98.track('before_permission');await noGrant.drain();assert.equal(noGrant.performanceCallbacks.length,0);await noGrant.grant();assert.equal(noGrant.performanceCallbacks.length,1);assert.equal(noGrant.performancePayloads.length,0,'A grant cannot synthesize earlier samples');
+  for(const options of [{privacy:true},{dnt:'1'},{dnt:'yes'},{environment:'test'},{settings:{enabled:false}},{settings:{excludedPaths:['/dashboard']}},{performanceObserver:false}]){
+    const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',...options,settings:{capturePerformance:true,...options.settings}});await e.start();assert.equal(e.performanceCallbacks.length,0);assert.equal(e.performancePayloads.length,0);assert.equal(e.scripts.some(script=>new URL(script.src).pathname==='/performance.js'),false);
+  }
+  const basic=makeEnv({collectionMode:'cookieless',performanceObserver:true,performanceAdapter:'ready',settings:{capturePerformance:true}});basic.run();await basic.drain();assert.equal(basic.performanceCallbacks.length,1);basic.emitPerformance({name:'TTFB',value:0});await basic.drain();assert.deepEqual(basic.performancePayloads[0].collection,{mode:'cookieless',epoch:EPOCH});assert.equal(basic.performancePayloads[0].consent,undefined);assert.equal(basic.storage.size,0);
+  basic.sandbox.navigator.globalPrivacyControl=true;const sent=basic.performancePayloads.length;basic.emitPerformance({name:'LCP',value:1});await basic.drain();assert.equal(basic.performancePayloads.length,sent);basic.sandbox.navigator.globalPrivacyControl=false;basic.emitPerformance({name:'LCP',value:2});await basic.drain();assert.equal(basic.performancePayloads.length,sent,'Clearing a privacy flag cannot reactivate a stopped document capture');
+});
+
+test('duplicate and multi-site initialization registers one performance callback per authorized site with one shared loader', async () => {
+  const e=makeEnv({performanceObserver:true,performanceAdapter:'delayed',secondCollector:true,settings:{capturePerformance:true}});await e.start();e.run();e.run();await e.drain();assert.equal(e.performanceCallbacks.length,0);
+  e.setScript(SECOND_SITE,SCRIPT_SRC);e.run();await e.drain();await e.grant(ANALYTICS,SECOND_SITE);assert.equal(e.scripts.filter(script=>new URL(script.src).pathname==='/performance.js').length,1);
+  await e.loadPerformance();assert.equal(e.performanceCallbacks.length,2);await e.loadPerformance();assert.equal(e.performanceCallbacks.length,2,'A duplicate onload cannot register observers twice');
+  e.emitPerformance({name:'LCP',value:1},0);e.emitPerformance({name:'LCP',value:2},1);await e.drain();assert.deepEqual(e.performancePayloads.map(payload=>payload.siteKey),[SITE,SECOND_SITE]);assert.notEqual(e.performancePayloads[0].navigationId,e.performancePayloads[1].navigationId);
+  await e.grant(DENIED,SECOND_SITE);e.emitPerformance({name:'LCP',value:3},0);e.emitPerformance({name:'LCP',value:4},1);await e.drain();assert.deepEqual(e.performancePayloads.slice(2).map(payload=>payload.siteKey),[SITE]);
+  e.setScript(SITE,'https://analytics-other.example.com/tracker.js');e.run();await e.drain();assert.equal(e.sandbox.ten98.consent(e.local(ANALYTICS),scope(e,{collectorOrigin:'https://analytics-other.example.com',acknowledgeReload:true})).ok,true);await e.drain();assert.equal(e.performanceCallbacks.length,3);
+  e.emitPerformance({name:'LCP',value:5},2);await e.drain();assert.equal(e.performanceCalls().at(-1)!.url,'https://analytics-other.example.com/api/collect');assert.equal(e.scripts.filter(script=>new URL(script.src).pathname==='/performance.js').length,1);for(const name of ['pageshow','pagehide','popstate'])assert.equal(e.listeners.get(name)!.length,1);
+});
+
+test('SPA transitions prohibit late first document metrics while query and hash changes preserve a live capture', async () => {
+  const late=makeEnv({performanceObserver:true,performanceAdapter:'ready',settings:{capturePerformance:true}});late.run();await late.drain();late.history.pushState({},'','/allowed?private=1#fragment');await late.grant();assert.equal(late.payloads.length,1);assert.equal(late.payloads[0].url,'https://site.example/allowed');assert.equal(late.performanceCallbacks.length,0,'First permission after a pathname change cannot attribute old navigation entries to the new page');
+  const excluded=makeEnv({collectionMode:'cookieless',performanceObserver:true,performanceAdapter:'ready',pageUrl:'https://site.example/excluded',settings:{capturePerformance:true,excludedPaths:['/excluded']}});excluded.run();await excluded.drain();assert.equal(excluded.collectCalls().length,0);excluded.history.pushState({},'','/allowed');await excluded.drain();assert.equal(excluded.payloads.length,1);assert.equal(excluded.performanceCallbacks.length,0,'An initially excluded document cannot leak its load into an allowed SPA path');
+  const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',settings:{capturePerformance:true}});await e.start();e.emitPerformance({name:'LCP',value:1});await e.drain();const nav=e.performancePayloads[0].navigationId;
+  e.history.pushState({},'','/dashboard?utm_source=private#secret');e.history.replaceState({},'','/dashboard?other=1');e.dispatch('popstate');e.emitPerformance({name:'LCP',value:2});await e.drain();assert.equal(e.performancePayloads.length,2);assert.equal(e.performancePayloads[1].navigationId,nav);assert.equal(e.payloads.length,1);
+  e.flags.hold=true;e.emitPerformance({name:'CLS',value:0.1});await e.drain();const signal=e.performanceCalls().at(-1)!.options.signal;e.history.pushState({},'','/next');assert.equal(signal.aborted,true);e.flags.hold=false;await e.complete();
+  const sent=e.performancePayloads.length;e.emitPerformance({name:'CLS',value:0.2});e.history.replaceState({},'','/dashboard');e.emitPerformance({name:'LCP',value:3});await e.drain();assert.equal(e.performancePayloads.length,sent);assert.equal(e.performanceCallbacks.length,1,'SPA back-to-origin must not register a second document observer');
+});
+
+test('current identity reset withdrawal privacy expiry and epoch stop performance until a genuinely eligible bfcache restore', async () => {
+  for(const action of ['reset','identify','withdraw','opt-out','privacy','configuration-expiry','epoch']){
+    const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',settings:{capturePerformance:true}});await e.start();e.emitPerformance({name:'LCP',value:1});await e.drain();const nav=e.performancePayloads[0].navigationId;
+    e.flags.hold=true;e.emitPerformance({name:'LCP',value:2});await e.drain();const signal=e.performanceCalls().at(-1)!.options.signal;e.flags.hold=false;
+    if(action==='reset')assert.equal(e.sandbox.ten98.resetIdentity(scope(e)).ok,true);
+    if(action==='identify')assert.equal((await identify(e,{plan:'private'},'changed-identity')).status,'accepted');
+    if(action==='withdraw')await e.grant(DENIED);
+    if(action==='opt-out')assert.equal(e.sandbox.ten98.setAnalyticsOptOut(true,scope(e,{acknowledgeReload:true})).ok,true);
+    if(action==='privacy'){e.sandbox.navigator.globalPrivacyControl=true;e.emitPerformance({name:'CLS',value:0.2});e.sandbox.navigator.globalPrivacyControl=false;}
+    if(action==='configuration-expiry'){e.advance(60001);e.sandbox.ten98.track('trigger_expiry');await e.runTimers(30000);}
+    if(action==='epoch'){e.flags.config={consentEpoch:SECOND_SITE};await e.runTimers(30000);}
+    assert.equal(signal.aborted,true,action+' aborts an owned performance request');await e.complete();const count=e.performancePayloads.length;e.emitPerformance({name:'LCP',value:3});await e.drain();assert.equal(e.performancePayloads.length,count,action);
+    if(action==='opt-out')assert.equal(e.sandbox.ten98.setAnalyticsOptOut(false,scope(e,{acknowledgeReload:true})).ok,true);
+    await e.grant();e.emitPerformance({name:'LCP',value:4});await e.drain();assert.equal(e.performancePayloads.length,count,'Fresh permission does not replay stopped original-document samples: '+action);
+    e.dispatch('pagehide',{persisted:true});e.dispatch('pageshow',{persisted:true,timeStamp:2000});await e.drain();assert.equal(e.performancePayloads.length,count,'Restore alone fabricates no measurement');
+    e.emitPerformance({name:'LCP',value:5,navigationType:'back-forward-cache',navigationStartTime:2000});await e.drain();assert.equal(e.performancePayloads.length,count+1,action+' preserves its existing registration for fresh authorized restore');assert.notEqual(e.performancePayloads.at(-1)!.navigationId,nav);assert.deepEqual(e.performancePayloads.at(-1)!.consent,{analytics:true,epoch:action==='epoch'?SECOND_SITE:EPOCH});assert.equal(e.performanceCallbacks.length,1);
+    await e.grant(DENIED);e.dispatch('pagehide',{persisted:true});e.dispatch('pageshow',{persisted:true,timeStamp:3000});e.emitPerformance({name:'LCP',value:6,navigationType:'back-forward-cache',navigationStartTime:3000});await e.drain();assert.equal(e.performancePayloads.length,count+1,'A current refusal cannot be overridden by restoration: '+action);
+  }
+});
+
+test('started bfcache captures use a fresh UUID and accept only vendor callbacks from that exact native restore window', async () => {
+  const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',settings:{capturePerformance:true}});await e.start();e.emitPerformance({name:'LCP',value:1,navigationType:'navigate',navigationStartTime:0});await e.drain();const original=e.performancePayloads[0].navigationId;
+  e.dispatch('pageshow',{persisted:false,timeStamp:99});e.emitPerformance({name:'LCP',value:2,navigationType:'navigate',navigationStartTime:0});await e.drain();assert.equal(e.performancePayloads[1].navigationId,original);
+  e.dispatch('pageshow',{persisted:true,timeStamp:100});await e.drain();const count=e.performancePayloads.length;assert.equal(count,2,'pageshow is not a metric');
+  for(const metric of [{name:'CLS',value:0,navigationType:'navigate',navigationStartTime:0},{name:'LCP',value:3,navigationType:'back-forward-cache',navigationStartTime:99},{name:'LCP',value:3,navigationType:'soft-navigation',navigationStartTime:100},{name:'LCP',value:3}])e.emitPerformance(metric);
+  await e.drain();assert.equal(e.performancePayloads.length,count,'Queued original and foreign-window callbacks cannot be relabeled by a mutable capture');e.emitPerformance({name:'LCP',value:4,navigationType:'back-forward-cache',navigationStartTime:100});await e.drain();const restored=e.performancePayloads.at(-1)!;assert.notEqual(restored.navigationId,original);assert.equal(restored.revision,1);
+  e.dispatch('pageshow',{persisted:true,timeStamp:101});e.emitPerformance({name:'LCP',value:5,navigationType:'back-forward-cache',navigationStartTime:101});await e.drain();assert.equal(e.performancePayloads.length,count+1,'Duplicate pageshow does not change the active native window');
+  e.dispatch('pagehide',{persisted:true});e.dispatch('pageshow',{persisted:true,timeStamp:200});e.emitPerformance({name:'CLS',value:0.1,navigationType:'back-forward-cache',navigationStartTime:100});await e.drain();assert.equal(e.performancePayloads.length,count+1);e.emitPerformance({name:'CLS',value:0,navigationType:'back-forward-cache',navigationStartTime:200});await e.drain();assert.equal(e.performancePayloads.length,count+2);assert.notEqual(e.performancePayloads.at(-1)!.navigationId,restored.navigationId);assert.equal(e.performancePayloads.at(-1)!.revision,1);assert.equal(e.performanceCallbacks.length,1,'Fresh restores reuse the one original adapter registration');
+});
+
+test('pending performance loader resolution before and after restore never duplicates setup or reconstructs missed samples', async () => {
+  const before=makeEnv({performanceObserver:true,performanceAdapter:'delayed',settings:{capturePerformance:true}});await before.start();assert.equal(before.performanceCallbacks.length,0);await before.loadPerformance();assert.equal(before.performanceCallbacks.length,1);before.emitPerformance({name:'LCP',value:1});await before.drain();before.dispatch('pageshow',{persisted:true,timeStamp:500});await before.drain();assert.equal(before.performancePayloads.length,1);before.emitPerformance({name:'LCP',value:2,navigationType:'back-forward-cache',navigationStartTime:500});await before.drain();assert.equal(before.performancePayloads.length,2);await before.loadPerformance();assert.equal(before.performanceCallbacks.length,1);
+  for(const transition of ['restore-before-load','inactive-before-load','loader-error','loader-timeout']){
+    const e=makeEnv({performanceObserver:true,performanceAdapter:'delayed',settings:{capturePerformance:true}});await e.start();assert.equal(e.performanceCallbacks.length,0);
+    if(transition==='restore-before-load')e.dispatch('pageshow',{persisted:true,timeStamp:600});
+    if(transition==='inactive-before-load'){await e.grant(DENIED);await e.grant();}
+    if(transition==='loader-error')await e.loadPerformance(false);
+    if(transition==='loader-timeout')await e.runTimers(5000);
+    await e.loadPerformance();assert.equal(e.performanceCallbacks.length,0,transition+' must not initialize buffered original-navigation data after the capture became ineligible');e.dispatch('pagehide',{persisted:true});e.dispatch('pageshow',{persisted:true,timeStamp:700});await e.drain();assert.equal(e.performanceCallbacks.length,0);assert.equal(e.performancePayloads.length,0,'No callback means no invented metric');assert.equal(e.scripts.filter(script=>new URL(script.src).pathname==='/performance.js').length,1,'Failed or missed adapter load is not implicitly retried');
+  }
+});
+
+test('tracker propagates a nonempty CSP nonce to both local loaders without inventing an absent or empty nonce', async () => {
+  for(const nonce of [undefined,'','trusted-document-nonce']){
+    const e=makeEnv({scriptNonce:nonce,performanceObserver:true,performanceAdapter:'delayed',settings:{capturePerformance:true}});await e.start();
+    const coordinator=e.scripts.filter(script=>new URL(script.src).pathname==='/destinations.js'),performance=e.scripts.filter(script=>new URL(script.src).pathname==='/performance.js');assert.equal(coordinator.length,1);assert.equal(performance.length,1);
+    for(const loader of [...coordinator,...performance]){assert.equal(loader.nonce,nonce||undefined);assert.equal(new URL(loader.src).origin,'https://analytics.example.com');assert.equal(loader.referrerPolicy,'no-referrer');assert.equal(loader.crossOrigin,undefined,'Nonce propagation must not broaden script CORS');}
+    await e.loadPerformance();assert.equal(e.performanceCallbacks.length,1);assert.equal(e.performancePayloads.length,0,'Loading with a nonce does not fabricate a metric');
+  }
 });

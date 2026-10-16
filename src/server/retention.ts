@@ -95,8 +95,12 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     await client.query('SAVEPOINT estimate');
     try {
       await client.query("SET LOCAL statement_timeout='2s'");
-      const sample = await client.query(`SELECT pg_column_size(e)::integer AS bytes FROM project p JOIN event e ON e.project_id=p.id
-        WHERE p.workspace_id=$1 AND e.received_at<$2 ORDER BY p.id,e.received_at,e.id LIMIT 10001`, [workspaceId, cutoff]);
+      const sample = await client.query(`SELECT bytes FROM (
+        SELECT pg_column_size(e)::integer AS bytes,p.id AS project_id,e.received_at AS at,e.id::text AS id,'event' AS kind
+          FROM project p JOIN event e ON e.project_id=p.id WHERE p.workspace_id=$1 AND e.received_at<$2
+        UNION ALL SELECT pg_column_size(v)::integer,p.id,v.created_at,v.navigation_id::text||v.metric,'performance'
+          FROM project p JOIN web_performance v ON v.project_id=p.id WHERE p.workspace_id=$1 AND v.created_at<$2
+        ) raw ORDER BY project_id,at,id,kind LIMIT 10001`, [workspaceId, cutoff]);
       estimate = { status: 'available', rows: Math.min(sample.rows.length, 10000), atLeast: sample.rows.length > 10000,
         logicalBytes: sample.rows.slice(0, 10000).reduce((sum, row) => sum + row.bytes, 0) };
       const profiles=await client.query(`SELECT s.property_key FROM project p JOIN analytics_session_property s ON s.project_id=p.id
@@ -216,6 +220,10 @@ export async function runRetentionBatch(projectId?: string) {
     const deleted = await client.query(`WITH expired AS (
       SELECT id FROM event WHERE project_id=$1 AND received_at<$2 ORDER BY received_at,id LIMIT 1000 FOR UPDATE
     ) DELETE FROM event e USING expired WHERE e.project_id=$1 AND e.id=expired.id RETURNING e.visitor_id`, [selected, cutoff]);
+    const performance=await client.query(`WITH expired AS (
+      SELECT navigation_id,metric FROM web_performance WHERE project_id=$1 AND created_at<$2
+      ORDER BY created_at,navigation_id,metric LIMIT 1000 FOR UPDATE
+    ) DELETE FROM web_performance v USING expired e WHERE v.project_id=$1 AND v.navigation_id=e.navigation_id AND v.metric=e.metric`,[selected,cutoff]);
     const affected = [...new Set(deleted.rows.map(row => row.visitor_id).filter(Boolean))];
     if (affected.length) {
       await client.query(`UPDATE analytics_visitor v SET (first_seen_at,last_seen_at)=(
@@ -228,6 +236,7 @@ export async function runRetentionBatch(projectId?: string) {
       ORDER BY v.last_seen_at,v.id LIMIT 1000
     ) DELETE FROM analytics_visitor v USING expired WHERE v.project_id=$1 AND v.id=expired.id`, [selected, cutoff]);
     const pending = await client.query(`SELECT EXISTS(SELECT 1 FROM event WHERE project_id=$1 AND received_at<$2)
+      OR EXISTS(SELECT 1 FROM web_performance WHERE project_id=$1 AND created_at<$2)
       OR EXISTS(SELECT 1 FROM analytics_visitor v WHERE v.project_id=$1 AND v.last_seen_at<$2
         AND NOT EXISTS(SELECT 1 FROM event e WHERE e.project_id=v.project_id AND e.visitor_id=v.id)) AS pending`, [selected, cutoff]);
     const profiles=await expireSessionProperties(client,selected!,state.cutoff,state.profile_as_of);
@@ -248,7 +257,7 @@ export async function runRetentionBatch(projectId?: string) {
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
-    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedPerformance:performance.rowCount??0, deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
       expiredDomainResearchResults:domainResearch.expiredDomainResearchResults,
       expiredSuggestionResults:suggestions.expiredSuggestionResults,expiredSuggestionInputs:suggestions.expiredSuggestionInputs,
       expiredAiSearchResults:aiSearch.expiredAiSearchResults,expiredAiSearchInputs:aiSearch.expiredAiSearchInputs,expiredAiSearchQuotes:aiSearch.expiredAiSearchQuotes,

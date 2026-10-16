@@ -8,6 +8,18 @@ import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
+test('performance routes retain their exact applied scope across copies and reject unrelated or duplicate capabilities',()=>{
+ const target={workspace,project,view:'performance',performanceQuery:'from=2026-10-01&to=2026-10-07&metric=cls&percentile=95&breakdown=path&path=%2Fcheckout'} as const;
+ const wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView('performance'),true);
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('performance',role,false),true);
+ assert.equal(allowedView('performance',undefined,false),false);
+ for(const raw of [{...target,analyticsBrowser:'Chrome'},{...target,project:undefined},{...target,performanceQuery:[]},{...target,performanceQuery:'a\0b'},{...target,performanceInvalid:'1'}])assert.equal(parseNavigation(raw).performanceInvalid,'1');
+ assert.equal(canonicalNavigation(wire+'&performanceQuery=other',target),false);assert.notEqual(navigationKey(target),navigationKey({...target,performanceQuery:'metric=inp'}));
+ for(const performanceQuery of ['path=%2F%ED%A0%80','path=%2F%GG','path=%2F%FF','path=%2F%'])assert.equal(parseNavigation({...target,performanceQuery}).performanceInvalid,'1');
+ for(const performanceQuery of ['path=%2F100%25','path=%2F%EF%BF%BD'])assert.equal(parseNavigation({...target,performanceQuery}).performanceQuery,performanceQuery);
+ const invalid={workspace,project,view:'performance',performanceInvalid:'1'} as const;assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(invalid))),invalid);
+});
+
 test('returned Analytics population uses the existing scalar serializer without Explore or Compare presentation',()=>{
  const predicates={version:1,match:'all',fields:[{field:'path',operator:'eq',value:''},{field:'eventName',operator:'exists'},{field:'campaignName',operator:'eq',value:'null'}],properties:[]},analyticsSelection=new URLSearchParams({predicates:JSON.stringify(predicates)}).toString();
  const target={workspace,project,view:'project',analyticsFrom:'2026-10-01',analyticsTo:'2026-10-07',analyticsBrowser:'not-recorded',analyticsSelection} as const;
@@ -402,4 +414,16 @@ test('Domain SEO is a project Research view distinct from serving-domain configu
  assert.equal(allowedView('domain-seo',undefined,false),false);assert.equal(allowedView('domains','viewer',false),false);
  assert.deepEqual(parseNavigation({...target,target:'example.com',scope:'domain',quoteId:workspace,requestKey:project}),target,'Paid drafts/quotes never become URL authority.');
  assert.notEqual(navigationKey(target),navigationKey({...target,view:'domains'}));
+});
+
+
+test('Context fallback preserves invalid scoped links instead of reading another project',async()=>{
+ const{resolveNavigation}=await import('../src/lib/navigation.ts');
+ const performance={workspace,project,view:'performance' as const,performanceQuery:'metric=lcp'};
+ assert.deepEqual(resolveNavigation(performance,workspace,project,'performance'),performance);
+ for(const target of [{workspace,project:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},{workspace:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',project}])assert.equal(resolveNavigation(performance,target.workspace,target.project,'performance').performanceInvalid,'1');
+ assert.equal(resolveNavigation(parseNavigation({view:'performance',performanceQuery:'metric=inp'}),workspace,project,'performance').performanceInvalid,'1');
+ const analytics=parseNavigation({workspace,project,view:'project',analyticsFrom:'2026-10-01',analyticsTo:'2026-10-02'});assert.equal(resolveNavigation(analytics,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','project').analyticsInvalid,'1');
+ const session=parseNavigation({workspace,project,view:'sessions',visitorKey:'a'.repeat(64)});assert.equal(resolveNavigation(session,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','sessions').sessionInvalid,'1');
+ assert.deepEqual(resolveNavigation({view:'project'},workspace,project,'project'),{workspace,project,view:'project'});
 });

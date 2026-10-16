@@ -229,9 +229,10 @@
       ![2, 3].includes(value.schemaVersion) || value.siteKey !== state.siteKey || value.environment !== state.environment || value.origin !== location.origin ||
       typeof value.validUntil !== 'string' || !configuration(value.configuration)) return false;
     var settings = value.nativeTracking;
-    if (!keys(settings, ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths', 'linkIdentities'].concat(value.schemaVersion === 3 ? ['collectionMode'] : []), ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths'].concat(value.schemaVersion === 3 ? ['collectionMode'] : [])) ||
+    if (!keys(settings, ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths', 'linkIdentities', 'capturePerformance'].concat(value.schemaVersion === 3 ? ['collectionMode'] : []), ['enabled', 'consentMode', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots', 'excludedPaths'].concat(value.schemaVersion === 3 ? ['collectionMode'] : [])) ||
       (value.schemaVersion === 3 && !['cookieless', 'consent-first'].includes(settings.collectionMode)) ||
       (Object.prototype.hasOwnProperty.call(settings,'linkIdentities') && typeof settings.linkIdentities !== 'boolean') ||
+      (Object.prototype.hasOwnProperty.call(settings,'capturePerformance') && typeof settings.capturePerformance !== 'boolean') ||
       !['builtin', 'external'].includes(settings.consentMode) || ['enabled', 'captureReferrer', 'captureCampaigns', 'captureScreen', 'excludeBots'].some(function (key) { return typeof settings[key] !== 'boolean'; }) ||
       !Array.isArray(settings.excludedPaths) || settings.excludedPaths.length > 50 || settings.excludedPaths.some(function (path) { return typeof path !== 'string' || path.length > 256 || !exact(/^\/[^?#\u0000-\u001f]*$/, path); })) return false;
     var expiry = Date.parse(value.validUntil);
