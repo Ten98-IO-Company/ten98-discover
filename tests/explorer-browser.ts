@@ -80,6 +80,8 @@ try{
   const responseForTuple=()=>page.waitForResponse((response:any)=>new URL(response.url()).pathname===`/api/projects/${otherId}/explore`&&response.request().method()==='GET').then(async(response:any)=>{assert.equal(response.status(),200);return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await response.body()));});
   let tuplePending=responseForTuple();await page.getByRole('button',{name:'Apply filters',exact:true}).click();const actualTuple=await tuplePending;await page.getByRole('button',{name:'Download CSV'}).waitFor();assert.equal(tupleRequests,1);assert.equal(actualTuple.totals.events,9);assert.equal(actualTuple.breakdown.totalGroups,6);assert.deepEqual(actualTuple.query.fields,['campaignSource','campaignMedium','campaignName']);
   const tupleTable=page.getByRole('region',{name:'Breakdown data, scroll horizontally for all columns'});assert.equal(await tupleTable.getByRole('row').count(),7);assert.equal(await tupleTable.getByRole('columnheader',{name:'Campaign source',exact:true}).count(),1);
+  for(const name of ['Page views','Visitors (all events)','Estimated visitors (page views)','Visits (page views)','Bounce rate','Average observed visit duration'])assert.equal(await tupleTable.getByRole('columnheader',{name,exact:true}).count(),1);
+  assert.equal(actualTuple.breakdown.groups.every((row:any)=>row.pageViews>=0&&row.estimatedVisitors===null&&row.visits===null&&row.bounceRate===null&&row.averageVisitSeconds===null),true,'Native anonymous page views stay counted while key metrics are unknown.');
   let tupleDownload=page.waitForEvent('download');await page.getByRole('button',{name:'Download CSV'}).click();assert.equal(await readFile(await(await tupleDownload).path(),'utf8'),actualTuple.csv);
   const beforePreset=tupleRequests;await page.getByRole('button',{name:'Stage source × medium × campaign',exact:true}).click();assert.equal(await page.getByLabel('Show',{exact:true}).inputValue(),'pageviews');assert.equal(tupleRequests,beforePreset);await unapplied.waitFor();
   tuplePending=responseForTuple();await page.getByRole('button',{name:'Apply filters',exact:true}).click();const actualCampaign=await tuplePending;await page.getByRole('button',{name:'Download CSV'}).waitFor();assert.equal(actualCampaign.totals.events,7);assert.equal(tupleRequests,beforePreset+1);
@@ -91,7 +93,10 @@ try{
     (value:any)=>{for(const key of Object.keys(value.totals))value.totals[key]=null;value.breakdown={groups:[],totalGroups:null,returnedGroupEvents:null,truncated:false};value.properties={keys:[],truncated:false};for(const day of value.daily)for(const key of ['events','pageViews','customEvents'])day[key]=null;},
     (value:any)=>{value.daily=null;},(value:any)=>{value.properties=null;},
     (value:any)=>{value.daily[0].pageViews++;},(value:any)=>{value.daily.pop();},
-    (value:any)=>{value.range.start='not a timestamp';},(value:any)=>{value.properties.keys=[null];}
+    (value:any)=>{value.range.start='not a timestamp';},(value:any)=>{value.properties.keys=[null];},
+    (value:any)=>{value.breakdown.groups[0].pageViews=value.breakdown.groups[0].events+1;},
+    (value:any)=>{value.breakdown.groups[0].estimatedVisitors=1;value.breakdown.groups[0].visits=1;value.breakdown.groups[0].bounceRate=100;value.breakdown.groups[0].averageVisitSeconds=0;},
+    (value:any)=>{delete value.breakdown.groups[0].averageVisitSeconds;}
   );
   for(const [index,mutate]of invalidTuples.entries()){const malformed=structuredClone(actualCampaign);mutate(malformed);await page.route(`**/api/projects/${otherId}/explore?*`,(route:any)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(malformed)}),{times:1});await page.getByRole('button',{name:index===0?'Refresh':'Retry',exact:true}).click();await page.getByRole('button',{name:'Retry',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Download CSV'}).count(),0,'Synthetic contradictory tuple responses must withhold downloadable data.');}
   await page.getByRole('button',{name:'Retry',exact:true}).click();await page.getByRole('button',{name:'Download CSV'}).waitFor();
