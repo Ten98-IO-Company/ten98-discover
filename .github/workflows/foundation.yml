@@ -99,6 +99,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_session_replay_ci');
             await client.query('CREATE DATABASE ten98_replay_heatmaps_ci');
             await client.query('CREATE DATABASE ten98_boards_ci');
+            await client.query('CREATE DATABASE ten98_tracked_assets_ci');
             await client.query('CREATE DATABASE ten98_domain_research_ci');
             await client.query('CREATE DATABASE ten98_backlink_research_ci');
             await client.query('CREATE DATABASE ten98_explorer_ci');
@@ -176,6 +177,7 @@ jobs:
               ['ten98_session_replay_ci', [['tests/session-replay-integration.ts']], { TEN98_SESSION_REPLAY_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_replay_heatmaps_ci', [['tests/replay-heatmaps-integration.ts']], { TEN98_REPLAY_HEATMAPS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_boards_ci', [['tests/boards-integration.ts']], { TEN98_CUSTOM_BOARDS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_tracked_assets_ci', [['tests/tracked-assets-integration.ts']], { TEN98_TRACKED_ASSETS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_explorer_ci', [['src/server/cli.ts', 'migrate'], ['tests/explorer-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_gsc_inspection_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-inspection-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_prompt_insights_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-insights-integration.ts']], { TEN98_PROMPT_INSIGHTS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],

@@ -99,6 +99,8 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       const sample = await client.query(`SELECT bytes FROM (
         SELECT pg_column_size(e)::integer AS bytes,p.id AS project_id,e.received_at AS at,e.id::text AS id,'event' AS kind
           FROM project p JOIN event e ON e.project_id=p.id WHERE p.workspace_id=$1 AND e.received_at<$2
+        UNION ALL SELECT pg_column_size(e)::integer,a.id::text,e.received_at,e.id::text,'tracked-asset'
+          FROM tracked_asset a JOIN tracked_asset_event e ON e.asset_id=a.id WHERE a.workspace_id=$1 AND e.received_at<$2
         UNION ALL SELECT pg_column_size(v)::integer,p.id,v.created_at,v.navigation_id::text||v.metric,'performance'
           FROM project p JOIN web_performance v ON v.project_id=p.id WHERE p.workspace_id=$1 AND v.created_at<$2
         UNION ALL SELECT pg_column_size(h)::integer,p.id,h.received_at,h.request_id::text,'heatmap'
@@ -185,6 +187,7 @@ export async function saveRetention(workspaceId: string, userId: string, raw: un
       to_char((instant-$2::integer*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ai_search_cutoff
       FROM (SELECT clock_timestamp() AS instant) clock`,[Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays),Math.min(rows[0].raw_provider_evidence_days,s.rawProviderEvidenceDays)])).rows[0];
     const saveNow=saveClock.now as Date;
+    await client.query('UPDATE tracked_asset SET retained_from=GREATEST(retained_from,$2::timestamptz),next_cleanup_at=clock_timestamp() WHERE workspace_id=$1',[workspaceId,saveClock.link_cutoff]);
     await client.query('UPDATE project SET replay_retained_from=GREATEST(replay_retained_from,$2::timestamptz) WHERE workspace_id=$1',[workspaceId,new Date(saveNow.getTime()-Math.min(rows[0].replay_days,s.replayDays)*86400000)]);
     await latchSessionPropertyRetention(client,projects.rows.map(p=>p.id),new Date(saveNow.getTime()-Math.min(rows[0].raw_analytics_days,s.rawAnalyticsDays)*86_400_000),saveNow);
     await latchIdentityLinkRetention(client,projects.rows.map(p=>p.id),saveClock.link_cutoff,saveClock.link_as_of);
