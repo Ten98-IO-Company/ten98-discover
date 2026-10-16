@@ -452,3 +452,17 @@ test('workspace Boards preserve applied scope without a fake anchor project and 
  const fallback=resolveNavigation({...target,boardInvalid:'1'},'d0000000-0000-4000-8000-000000000004',undefined,'boards');assert.equal(fallback.boardInvalid,'1');assert.equal(fallback.project,undefined);assert.equal(fallback.boardQuery,undefined);
  assert.equal(parseNavigation({workspace,view:'preferences',boardQuery}).boardQuery,undefined);
 });
+
+test('Heatmap navigation preserves a bounded independent page/layout range and invalid ownership without collector capabilities',async()=>{
+ const{resolveNavigation}=await import('../src/lib/navigation.ts');
+ const base={workspace,project,view:'heatmaps'} as const;
+ for(const heatmapQuery of [undefined,'from=2026-10-01&to=2026-10-07&mode=pages','mode=geometries&origin=https%3A%2F%2Fexample.org&path=%2Fcheckout','x'.repeat(6144)]){
+  const target={...base,...heatmapQuery?{heatmapQuery}:{}};const wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);
+ }
+ assert.equal(projectView('heatmaps'),true);for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('heatmaps',role,false),true);assert.equal(allowedView('heatmaps',undefined,false),false);
+ for(const heatmapQuery of ['',null,1,true,{},['mode=pages'],'x'.repeat(6145),'path=%GG','path=%FF','path=%ED%A0%80','path=x\0'])assert.equal(parseNavigation({...base,heatmapQuery}).heatmapInvalid,'1');
+ for(const patch of [{workspace:undefined},{project:undefined},{token:'capture-capability'},{mode:'click'},{heatmapInvalid:'1'}])assert.equal(parseNavigation({...base,...patch}).heatmapInvalid,'1');
+ assert.notEqual(navigationKey(base),navigationKey({...base,heatmapQuery:'mode=scroll'}));assert.equal(canonicalNavigation(defaultStringifySearch(base)+'&view=heatmaps',base),false);
+ const scoped=parseNavigation({...base,heatmapQuery:'mode=pages'});assert.equal(resolveNavigation(scoped,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','heatmaps').heatmapInvalid,'1');
+ assert.deepEqual(parseNavigation({...base,view:'project',heatmapQuery:'mode=pages'}),{workspace,project,view:'project'});
+});

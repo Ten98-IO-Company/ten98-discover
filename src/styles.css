@@ -456,3 +456,15 @@ td select { min-width: 7rem; } tbody tr:last-child td { border-bottom: 0; }
 
 .board-week .sr-only{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .boards-panel label:has(>input[type='checkbox']){min-height:var(--control-touch);display:flex;align-items:center;gap:8px}
+.heatmaps-panel,.heatmaps-panel .stack,.saved-replay-controls{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;min-width:0;overflow-wrap:anywhere}
+.heatmap-filters,.saved-replay-search{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;align-items:end;min-width:0}
+.heatmaps-panel label,.saved-replay-controls label,.saved-replay-search label{display:grid;gap:6px;min-width:0}
+.heatmaps-panel input:not([type='checkbox']):not([type='radio']),.saved-replay-controls input:not([type='checkbox']):not([type='radio']),.saved-replay-search input:not([type='checkbox']):not([type='radio']){width:100%;min-width:0;max-width:100%;min-height:44px}
+.heatmaps-panel .btn,.saved-replay-controls .btn,.saved-replay-search .btn{min-width:0;max-width:100%;min-height:44px;white-space:normal;overflow-wrap:anywhere}
+.heatmap-choices{list-style:none;padding:0;margin:0;display:grid;gap:8px;min-width:0}
+.heatmap-choices li{min-width:0}
+.heatmap-choices .btn{width:100%;display:flex;gap:12px;align-items:center;justify-content:space-between;text-align:start;flex-wrap:wrap}
+.heatmap-choices small{display:block;color:var(--muted);font-weight:normal}
+.heatmap-plane{display:block;width:100%;height:min(60vh,560px);min-width:0;border:1px solid var(--line);border-radius:8px}
+.heatmaps-panel .table-wrap{min-width:0;max-width:100%}
+.heatmaps-panel table{min-width:540px}

@@ -78,6 +78,8 @@ import {getPromptCitationSpecializations,exportPromptCitationSpecializations} fr
 import {nativeOpenApi} from './openapi.ts';
 import {beginSessionReplay,uploadSessionReplay,listSessionReplays,getSessionReplay} from './session-replay.ts';
 import {replayBegin,replayUpload} from '../lib/session-replay.ts';
+import {beginHeatmap,collectHeatmap,projectHeatmaps,listSavedReplays,getSavedReplay,saveReplay} from './replay-heatmaps.ts';
+import {heatmapBegin,heatmapBatch} from '../lib/replay-heatmaps.ts';
 
 const id = '[0-9a-f-]{36}';
 function json(body: unknown, status = 200, additional?: HeadersInit) {
@@ -172,7 +174,7 @@ export async function handleApi(request: Request): Promise<Response> {
       const { rows } = await getDatabase().pool.query("SELECT claimed FROM installation WHERE id='instance'");
       return json({ configured: rows[0]?.claimed === true, appUrl: config.appUrl });
     }
-    if (path === '/api/collect' || path === '/api/tracking-config' || path === '/api/replay/begin' || path === '/api/replay/chunks') {
+    if (path === '/api/collect' || path === '/api/tracking-config' || path === '/api/replay/begin' || path === '/api/replay/chunks'||path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches') {
       const origin = request.headers.get('origin');
       if (!origin) throw new FoundationError(403, 'A configured website origin is required.');
       await limit('collector:global', 6000);
@@ -180,6 +182,11 @@ export async function handleApi(request: Request): Promise<Response> {
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405, cors);
+      if(path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches'){
+        if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Heatmap collection has no query parameters.');
+        const begin=path.endsWith('/begin'),raw=await readJson(request,begin?8192:32768),input=begin?heatmapBegin.parse(raw):heatmapBatch.parse(raw);await limit(`heatmap:${input.siteKey}`,3000);
+        return json(begin?await beginHeatmap(request,input):await collectHeatmap(request,input),202,cors);
+      }
       if(path==='/api/replay/begin'||path==='/api/replay/chunks'){
         if(url.search)throw new FoundationError(400,'Replay collection has no query parameters.');
         const raw=await readJson(request,path.endsWith('/begin')?8192:360448),input=path.endsWith('/begin')?replayBegin.parse(raw):replayUpload.parse(raw);
@@ -303,6 +310,15 @@ export async function handleApi(request: Request): Promise<Response> {
       }
       return json({error:'Method not allowed.'},405);
     }
+    const savedReplayRoute=path.match(new RegExp('^/api/projects/('+id+')/replays/(saved|('+id+')/saved)$','i'));
+    if(savedReplayRoute){
+      await limit('saved-replays:'+user.id+':'+request.method,request.method==='GET'?60:30);
+      if(request.method==='GET'){if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Saved replay reads do not accept a body.');if(savedReplayRoute[3]&&request.url.includes('?'))throw new FoundationError(400,'Saved replay point reads have no query.');if(request.url.includes('#'))throw new FoundationError(400,'Saved replay reads have no fragment.');return json(savedReplayRoute[3]?await getSavedReplay(savedReplayRoute[1],user.id,savedReplayRoute[3]):await listSavedReplays(savedReplayRoute[1],user.id,url.search.slice(1)));}
+      if(request.method==='POST'&&savedReplayRoute[3]){if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Saved replay writes have no query.');return json(await saveReplay(savedReplayRoute[1],user.id,savedReplayRoute[3],await readJson(request,8192)));}
+      return json({error:'Method not allowed.'},405);
+    }
+    const heatmapRoute=path.match(new RegExp('^/api/projects/('+id+')/heatmaps$','i'));
+    if(heatmapRoute){if(request.method!=='GET')return json({error:'Method not allowed.'},405);if(request.url.includes('#')||request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Heatmap reads require supported query filters and no body.');await limit('heatmap-read:'+user.id,60);return json(await projectHeatmaps(heatmapRoute[1],user.id,url.search.slice(1)));}
     const replayRoute=path.match(new RegExp('^/api/projects/('+id+')/replays(?:/('+id+')(?:/(chunks))?)?$','i'));
     if(replayRoute){
       if(request.method!=='GET')return json({error:'Method not allowed.'},405);
