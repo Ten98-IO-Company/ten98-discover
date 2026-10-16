@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import { toUSVString } from 'node:util';
 import { FoundationError } from './auth.ts';
+import { googleDecimalPlain } from '../lib/google-report-display.ts';
 
 export const googleScopes = { gsc: 'https://www.googleapis.com/auth/webmasters.readonly', ga4: 'https://www.googleapis.com/auth/analytics.readonly', ads: 'https://www.googleapis.com/auth/adwords' } as const;
 export const googleAdsVersion = 'v26';
 export const googleAdsCustomerId = z.string().regex(/^[1-9]\d{9}$(?![\s\S])/);
+const organicMetrics = ['sessions', 'activeUsers', 'engagedSessions', 'engagementRate', 'keyEvents', 'transactions', 'purchaseRevenue'] as const;
 export const googleReports = {
   gsc_daily: { provider: 'gsc', dimensions: ['date'], metrics: ['clicks', 'impressions', 'ctr', 'position'] },
   gsc_queries: { provider: 'gsc', dimensions: ['date', 'query'], metrics: ['clicks', 'impressions', 'ctr', 'position'] },
@@ -14,12 +16,18 @@ export const googleReports = {
   ga4_pages: { provider: 'ga4', dimensions: ['date', 'unifiedPagePathScreen'], metrics: ['screenPageViews', 'activeUsers', 'userEngagementDuration', 'eventCount', 'keyEvents', 'totalRevenue'] },
   ga4_acquisition: { provider: 'ga4', dimensions: ['date', 'sessionSource', 'sessionMedium', 'sessionCampaignName'], metrics: ['sessions', 'engagedSessions', 'totalUsers', 'eventCount', 'keyEvents', 'totalRevenue'] },
   ga4_key_events: { provider: 'ga4', dimensions: ['date', 'eventName', 'isKeyEvent'], metrics: ['eventCount', 'keyEvents', 'totalUsers', 'totalRevenue'] },
+  ga4_organic_landing: { provider: 'ga4', dimensions: ['hostName', 'landingPage'], metrics: [...organicMetrics.slice(0, 5), 'sessionKeyEventRate', 'transactions', 'purchaseRevenue'] },
+  ga4_organic_daily: { provider: 'ga4', dimensions: ['date'], metrics: organicMetrics },
+  ga4_organic_weekly: { provider: 'ga4', dimensions: ['yearWeek'], metrics: organicMetrics },
   ads_daily: { provider: 'ads', dimensions: ['date', 'customerId'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
   ads_campaigns: { provider: 'ads', dimensions: ['date', 'customerId', 'campaignId', 'campaignName', 'campaignStatus'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
   ads_ad_groups: { provider: 'ads', dimensions: ['date', 'customerId', 'campaignId', 'campaignName', 'adGroupId', 'adGroupName', 'adGroupStatus'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
 } as const;
 export type GoogleReport = keyof typeof googleReports;
 export const ga4InventoryReports: readonly GoogleReport[] = ['ga4_pages', 'ga4_acquisition', 'ga4_key_events'];
+export const ga4OrganicReports: readonly GoogleReport[] = ['ga4_organic_landing', 'ga4_organic_daily', 'ga4_organic_weekly'];
+export const isOrganicOverview = (report: string) => report === 'ga4_organic_daily' || report === 'ga4_organic_weekly';
+export type OrganicStage = 'current' | 'previous' | 'trend';
 export type GoogleProvider = keyof typeof googleScopes;
 export type ReportRow = { dimensions: Record<string, string>; metrics: Record<string, string | null> };
 export type ReportPage = { rows: ReportRow[]; rowCount: number | null; complete?: boolean; quality: { warnings: string[]; metadata: Record<string, unknown> } };
@@ -38,6 +46,28 @@ export function googleInput<T extends z.ZodType>(schema: T, value: unknown): z.o
   return parsed.data;
 }
 
+export function organicPreviousRange(from: string, to: string) {
+  googleInput(googleDate, from); googleInput(googleDate, to);
+  const days = (Date.parse(to) - Date.parse(from)) / 86400000 + 1;
+  const previousFrom = new Date(Date.parse(from) - days * 86400000).toISOString().slice(0, 10), previousTo = new Date(Date.parse(from) - 86400000).toISOString().slice(0, 10);
+  if (days < 1 || days > 366 || previousFrom < '0001-01-01' || !googleDate.safeParse(previousFrom).success) throw new FoundationError(400, 'Choose up to 366 days with a representable previous period.');
+  return { from: previousFrom, to: previousTo };
+}
+export function validateOrganicDates(from: string, to: string, timeZone: string | null, now = new Date()) {
+  organicPreviousRange(from, to);
+  let today: string;
+  try { if (!timeZone) throw Error(); const parts = new Intl.DateTimeFormat('en', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now); today = ['year', 'month', 'day'].map(key => parts.find(part => part.type === key)!.value).join('-'); }
+  catch { throw new FoundationError(409, 'The property timezone is unavailable. Reconnect the source.'); }
+  if (to >= today) throw new FoundationError(400, 'Organic reports require completed days in the property timezone. Choose an earlier end date.');
+}
+
+// Google calendar weeks start Sunday; Jan 1 belongs to week01, not the ISO week-year.
+export function organicWeek(date: string) {
+  googleInput(googleDate, date); const year = date.slice(0, 4), start = new Date(year + '-01-01T00:00:00Z');
+  const week = Math.min(53, Math.floor(((Date.parse(date) - start.getTime()) / 86400000 + start.getUTCDay()) / 7) + 1);
+  return year + String(week).padStart(2, '0');
+}
+
 type GoogleReportRequest =
   | {
     query: string; searchSettings: { returnTotalResultsCount: true };
@@ -51,12 +81,14 @@ type GoogleReportRequest =
   | {
     dateRanges: Array<{ startDate: string; endDate: string }>; dimensions: Array<{ name: string }>; metrics: Array<{ name: string }>;
     orderBys: Array<{ dimension: { dimensionName: string; orderType?: 'ALPHANUMERIC' } }>; offset: string; limit: '1000'; returnPropertyQuota: true; keepEmptyRows: true;
-    dimensionFilter?: { filter: { fieldName: 'isKeyEvent'; stringFilter: { matchType: 'EXACT'; value: 'true'; caseSensitive: true } } };
+    dimensionFilter?: { filter: { fieldName: 'isKeyEvent' | 'sessionDefaultChannelGroup'; stringFilter: { matchType: 'EXACT'; value: 'true' | 'Organic Search'; caseSensitive: true } } };
     query?: never; searchSettings?: never; startDate?: never; endDate?: never; type?: never; dataState?: never; aggregationType?: never; rowLimit?: never; startRow?: never;
   };
 
-export function googleReportRequest(report: GoogleReport, from: string, to: string, offset: number): GoogleReportRequest {
-  const definition = googleReports[report];
+export function googleReportRequest(report: GoogleReport, from: string, to: string, offset: number, stage: OrganicStage = 'trend'): GoogleReportRequest {
+  const definition = googleReports[report], aggregate = isOrganicOverview(report) && stage !== 'trend';
+  if (stage !== 'trend' && !isOrganicOverview(report)) throw new FoundationError(400, 'Select an organic overview.');
+  if (stage === 'previous') { const previous = organicPreviousRange(from, to); from = previous.from; to = previous.to; }
   if (definition.provider === 'ads') {
     googleInput(googleDate, from); googleInput(googleDate, to);
     if (offset !== 0) throw new FoundationError(400, 'Google Ads imports fetch one bounded provider page. Choose a smaller range for a partial snapshot.');
@@ -67,25 +99,27 @@ export function googleReportRequest(report: GoogleReport, from: string, to: stri
   if (definition.provider === 'gsc') return { startDate: from, endDate: to, dimensions: definition.dimensions, type: 'web', dataState: 'final', aggregationType: 'auto', rowLimit: 1000, startRow: offset };
   const keyEventFilter: { dimensionFilter?: { filter: { fieldName: 'isKeyEvent'; stringFilter: { matchType: 'EXACT'; value: 'true'; caseSensitive: true } } } } = {};
   if (report === 'ga4_key_events') keyEventFilter.dimensionFilter = { filter: { fieldName: 'isKeyEvent', stringFilter: { matchType: 'EXACT', value: 'true', caseSensitive: true } } };
-  return { dateRanges: [{ startDate: from, endDate: to }], dimensions: definition.dimensions.map(name => ({ name })), metrics: definition.metrics.map(name => ({ name })),
-    orderBys: definition.dimensions.map(dimensionName => ({ dimension: { dimensionName, ...(ga4InventoryReports.includes(report) ? { orderType: 'ALPHANUMERIC' } : {}) } })), offset: String(offset), limit: '1000', returnPropertyQuota: true, keepEmptyRows: true,
-    ...keyEventFilter };
+  const dimensions = aggregate ? [] : definition.dimensions;
+  return { dateRanges: [{ startDate: from, endDate: to }], dimensions: dimensions.map(name => ({ name })), metrics: definition.metrics.map(name => ({ name })),
+    orderBys: dimensions.map(dimensionName => ({ dimension: { dimensionName, ...(ga4InventoryReports.includes(report) || ga4OrganicReports.includes(report) ? { orderType: 'ALPHANUMERIC' } : {}) } })), offset: String(offset), limit: '1000', returnPropertyQuota: true, keepEmptyRows: true,
+    ...keyEventFilter, ...(ga4OrganicReports.includes(report) ? { dimensionFilter: { filter: { fieldName: 'sessionDefaultChannelGroup' as const, stringFilter: { matchType: 'EXACT' as const, value: 'Organic Search' as const, caseSensitive: true as const } } } } : {}) };
 }
 
-export function googleCompatibilityRequest(report: GoogleReport, from: string, to: string) {
-  if (!ga4InventoryReports.includes(report)) throw new FoundationError(400, 'Select a detailed GA4 report.');
-  const request = googleReportRequest(report, from, to, 0);
+export function googleCompatibilityRequest(report: GoogleReport, from: string, to: string, stage: OrganicStage = 'trend') {
+  if (!ga4InventoryReports.includes(report) && !ga4OrganicReports.includes(report)) throw new FoundationError(400, 'Select a detailed GA4 report.');
+  const request = googleReportRequest(report, from, to, 0, stage);
   return { dimensions: request.dimensions, metrics: request.metrics, ...(request.dimensionFilter ? { dimensionFilter: request.dimensionFilter } : {}) };
 }
 
-export function normalizeGoogleCompatibility(report: GoogleReport, value: unknown): void {
-  if (!ga4InventoryReports.includes(report)) throw new FoundationError(400, 'Select a detailed GA4 report.');
+export function normalizeGoogleCompatibility(report: GoogleReport, value: unknown, stage: OrganicStage = 'trend'): void {
+  if (!ga4InventoryReports.includes(report) && !ga4OrganicReports.includes(report)) throw new FoundationError(400, 'Select a detailed GA4 report.');
   try {
     const metadata = z.object({ apiName: safeGoogleString(120) });
     // Google returns an inventory, not just requested fields. The transport caps
     // the complete body at 2 MiB; inspect requested names once without selecting extras.
-    const data = z.object({ dimensionCompatibilities: z.array(z.object({ dimensionMetadata: metadata, compatibility: z.unknown().optional() })), metricCompatibilities: z.array(z.object({ metricMetadata: metadata, compatibility: z.unknown().optional() })) }).parse(value);
-    for (const [kind, expected] of [['dimension', googleReports[report].dimensions], ['metric', googleReports[report].metrics]] as const) {
+    const dimensions = z.array(z.object({ dimensionMetadata: metadata, compatibility: z.unknown().optional() }));
+    const data = z.object({ dimensionCompatibilities: isOrganicOverview(report) && stage !== 'trend' ? dimensions.default([]) : dimensions, metricCompatibilities: z.array(z.object({ metricMetadata: metadata, compatibility: z.unknown().optional() })) }).parse(value);
+    for (const [kind, expected] of [['dimension', isOrganicOverview(report) && stage !== 'trend' ? [] : googleReports[report].dimensions], ['metric', googleReports[report].metrics]] as const) {
       const entries = kind === 'dimension' ? data.dimensionCompatibilities.map(entry => ({ name: entry.dimensionMetadata.apiName, compatibility: entry.compatibility })) : data.metricCompatibilities.map(entry => ({ name: entry.metricMetadata.apiName, compatibility: entry.compatibility }));
       const requested = new Set<string>(expected), seen = new Set<string>();
       for (const entry of entries) if (requested.has(entry.name)) { if (seen.has(entry.name) || entry.compatibility !== 'COMPATIBLE') throw new Error(); seen.add(entry.name); }
@@ -100,9 +134,11 @@ const numeric = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$(
 function malformed(): never { throw new FoundationError(502, 'Google returned a report that could not be safely interpreted.'); }
 // Provider dimensions/metrics are explicitly selected above. No arbitrary query,
 // source payload or user-level export is persisted or exposed through this adapter.
-export function normalizeGoogleReport(report: GoogleReport, value: unknown, from: string, to: string, customerId?: string): ReportPage {
+export function normalizeGoogleReport(report: GoogleReport, value: unknown, from: string, to: string, customerId?: string, stage: OrganicStage = 'trend'): ReportPage {
   try {
-    const definition = googleReports[report];
+    const organic = ga4OrganicReports.includes(report), overview = isOrganicOverview(report), aggregate = overview && stage !== 'trend';
+    if (stage !== 'trend' && !overview) malformed();
+    const definition = aggregate ? { ...googleReports[report], dimensions: [] as readonly string[] } : googleReports[report];
     let rows: ReportRow[], rowCount: number | null;
     const warnings: string[] = [], metadata: Record<string, unknown> = {};
     let complete: boolean | undefined;
@@ -139,7 +175,7 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
       const restriction = z.object({ metricName: safeGoogleString(120), restrictedMetricTypes: z.array(safeGoogleString(80)).max(10).default([]) });
       const data = z.object({
         dimensionHeaders: z.array(z.object({ name: safeGoogleString(120) })).optional(), metricHeaders: z.array(z.object({ name: safeGoogleString(120) })).optional(),
-        rows: z.array(z.object({ dimensionValues: z.array(z.object({ value: text })), metricValues: z.array(z.object({ value: numeric })) })).max(1000).default([]), rowCount: count.optional(),
+        rows: z.array(z.object({ dimensionValues: aggregate ? z.array(z.object({ value: text })).default([]) : z.array(z.object({ value: text })), metricValues: z.array(z.object({ value: numeric })) })).max(1000).default([]), rowCount: count.optional(),
         metadata: z.object({ timeZone: safeGoogleString(120).optional(), currencyCode: z.string().regex(/^[A-Z]{3}$(?![\s\S])/).optional(), emptyReason: safeGoogleString(1000).optional(),
           dataLossFromOtherRow: z.boolean().optional(), subjectToThresholding: z.boolean().optional(), samplingMetadatas: z.array(z.object({ samplesReadCount: z.string().regex(/^\d+$(?![\s\S])/).max(30), samplingSpaceSize: z.string().regex(/^\d+$(?![\s\S])/).max(30) })).max(5).optional(),
           schemaRestrictionResponse: z.object({ activeMetricRestrictions: z.array(restriction).max(30).optional() }).optional(),
@@ -149,7 +185,7 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
         propertyQuota: z.record(safeGoogleString(100), z.object({ consumed: count.optional(), remaining: count.optional() })).optional(),
       }).parse(value);
       const headerlessEmpty = data.dimensionHeaders === undefined && data.metricHeaders === undefined && !data.rows.length && !data.rowCount;
-      if (!headerlessEmpty && (JSON.stringify(data.dimensionHeaders?.map(h => h.name)) !== JSON.stringify(definition.dimensions) || JSON.stringify(data.metricHeaders?.map(h => h.name)) !== JSON.stringify(definition.metrics))) malformed();
+      if (!headerlessEmpty && (JSON.stringify(aggregate ? data.dimensionHeaders?.map(h => h.name) ?? [] : data.dimensionHeaders?.map(h => h.name)) !== JSON.stringify(definition.dimensions) || JSON.stringify(data.metricHeaders?.map(h => h.name)) !== JSON.stringify(definition.metrics))) malformed();
       if (data.rows.length && (data.rowCount === undefined || data.rowCount < data.rows.length)) malformed();
       const restricted = new Set(data.metadata?.schemaRestrictionResponse?.activeMetricRestrictions?.map(item => item.metricName));
       rows = data.rows.map(row => {
@@ -158,6 +194,13 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
           metrics: Object.fromEntries(definition.metrics.map((name, i) => [name, restricted.has(name) ? null : row.metricValues[i].value])) };
       });
       rowCount = data.rowCount ?? rows.length;
+      if (organic) {
+        for (const row of rows) for (const [name, value] of Object.entries(row.metrics)) if (value !== null && (googleDecimalPlain(value) === null || name !== 'purchaseRevenue' && (Number(value) < 0 || (name === 'engagementRate' || name === 'sessionKeyEventRate') && Number(value) > 1))) malformed();
+        if (rows.length && (!data.metadata?.timeZone || rows.some(row => row.metrics.purchaseRevenue !== null) && !data.metadata.currencyCode)) malformed();
+        if (overview && (rowCount !== rows.length || rows.length > (aggregate ? 1 : report === 'ga4_organic_daily' ? 366 : 54))) malformed();
+        if (aggregate && !rows.length && !headerlessEmpty && rowCount !== 0) malformed();
+        if (report === 'ga4_organic_weekly' && !aggregate && rows.some(row => !/^\d{4}(?:0[1-9]|[1-4]\d|5[0-3])$/.test(row.dimensions.yearWeek) || row.dimensions.yearWeek < organicWeek(from) || row.dimensions.yearWeek > organicWeek(to))) malformed();
+      }
       if (report === 'ga4_key_events' && rows.some(row => row.dimensions.isKeyEvent !== 'true')) malformed();
       if (ga4InventoryReports.includes(report) && rows.length && (!data.metadata?.timeZone || rows.some(row => row.metrics.totalRevenue !== null) && !data.metadata.currencyCode)) malformed();
       Object.assign(metadata, data.metadata ?? {}, { quota: data.propertyQuota ?? null });
@@ -168,7 +211,7 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
       if (data.metadata?.dataTruncationReasons?.length) warnings.push('Google reports data truncation.');
       if (data.metadata?.emptyReason) warnings.push('Google supplied an empty-report reason; see report metadata.');
     }
-    for (const row of rows) if (!googleDate.safeParse(row.dimensions.date).success || row.dimensions.date < from || row.dimensions.date > to) malformed();
+    if (!aggregate && report !== 'ga4_organic_landing' && report !== 'ga4_organic_weekly') for (const row of rows) if (!googleDate.safeParse(row.dimensions.date).success || row.dimensions.date < from || row.dimensions.date > to) malformed();
     const keys = rows.map(row => JSON.stringify(definition.provider === 'ads'
       ? ['date', 'customerId', ...(report === 'ads_daily' ? [] : ['campaignId']), ...(report === 'ads_ad_groups' ? ['adGroupId'] : [])].map(field => row.dimensions[field])
       : row.dimensions));
