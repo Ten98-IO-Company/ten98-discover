@@ -23,14 +23,15 @@ export function validModelQuoteRoute(v:unknown):v is ModelQuoteRoute{
  if(!object(v)||!keys(v,['model','tag','providerName','promptCapacity','completionCapacity','promptPrice','completionPrice','requestPrice','estimateUsd',...(v.profile===undefined?[]:['profile','contextLength'])])||!openRouterModelId(v.model)||!openRouterProviderTag(v.tag)||!openRouterProviderName(v.providerName)||!capacity(v.promptCapacity)||!capacity(v.completionCapacity)||![v.promptPrice,v.completionPrice,v.requestPrice].every(decimal)||(modelUsdMicros(v.estimateUsd)??0n)<=0n)return false;
  return v.profile===undefined?(v.contextLength===undefined&&(legacyOpenRouterModels as readonly string[]).includes(v.model)&&v.tag==='openai'&&v.providerName==='OpenAI'):(v.profile===openRouterTextProfile&&capacity(v.contextLength)&&v.promptCapacity<=v.contextLength);
 }
-export function validModelReservation(routes:unknown,total:unknown,models:string[],output:number):routes is ModelQuoteRoute[]{
- if(!Array.isArray(routes)||routes.length!==models.length||models.length<1||models.length>2||new Set(models).size!==models.length||!Number.isInteger(output)||output<16||output>4096||modelUsdMicros(total,2_000_000_000_000n)===null)return false;
+export function validModelReservation(routes:unknown,total:unknown,models:string[],output:number,maximum:1|2|4=2):routes is ModelQuoteRoute[]{
+ const totalLimit=BigInt(maximum)*1_000_000_000_000n;
+ if(!Array.isArray(routes)||routes.length!==models.length||models.length<1||models.length>maximum||new Set(models).size!==models.length||!Number.isInteger(output)||output<16||output>4096||modelUsdMicros(total,totalLimit)===null)return false;
  let sum=0n;for(const [i,r]of routes.entries()){
   if(!validModelQuoteRoute(r)||r.model!==models[i]||output>r.completionCapacity||r.profile!==undefined&&output>=r.contextLength!)return false;
   const terms=[[r.promptPrice,r.promptCapacity],[r.completionPrice,output],[r.requestPrice,1]] as const;
   const parts=terms.map(([price,count])=>({coefficient:BigInt(price.replace('.','')),scale:price.split('.')[1]?.length??0,count:BigInt(count)})),scale=Math.max(6,...parts.map(p=>p.scale)),divisor=10n**BigInt(scale-6);
   const amount=(parts.reduce((n,p)=>n+p.coefficient*p.count*10n**BigInt(scale-p.scale),0n)+divisor-1n)/divisor;if(amount!==modelUsdMicros(r.estimateUsd))return false;sum+=amount;
- }return sum===modelUsdMicros(total,2_000_000_000_000n);
+ }return sum===modelUsdMicros(total,totalLimit);
 }
 
 // Same complete-response boundary as AIQueryAnalysisPanel; kept in this shared
@@ -51,17 +52,17 @@ export async function modelApi<T=unknown>(path:string,opts:{method?:string;body?
  }catch(error){if(!response.ok)throw Object.assign(new ApiError(error instanceof Error?error.message:'The model request failed.'),{status:response.status});if(signal.aborted)throw error;throw new ModelResponseError(error instanceof Error?error.message:'The model response could not be verified.',(opts.method??'GET')==='GET');}
 }
 
-type Props={catalog:OpenRouterCatalog|null;selected:string[];maximum:1|2;structured?:boolean;disabled:boolean;refreshing:boolean;canRefresh:boolean;onChange:(models:string[])=>void;onRefresh:()=>void};
+type Props={catalog:OpenRouterCatalog|null;selected:string[];maximum:1|2|4;structured?:boolean;disabled:boolean;refreshing:boolean;canRefresh:boolean;onChange:(models:string[])=>void;onRefresh:()=>void};
 export function OpenRouterModelPicker({catalog,selected,maximum,structured=false,disabled,refreshing,canRefresh,onChange,onRefresh}:Props){
  const uid=useId(),[search,setSearch]=useState(''),[sort,setSort]=useState('asc'),[unsupported,setUnsupported]=useState(false);
  const reason=(m:OpenRouterCatalog['models'][number])=>modelUnavailableReason(m,structured);
  const selectedRows=selected.map(id=>({id,row:catalog?.models.find(m=>m.id===id)}));
  const rows=(catalog?.models??[]).filter(m=>(unsupported||!reason(m))&&(m.name+' '+m.id).toLowerCase().includes(search.toLowerCase())).sort((a,b)=>(a.name.localeCompare(b.name)||a.id.localeCompare(b.id))*(sort==='asc'?1:-1));
  const money=(v:string|null)=>v===null?'Unknown':'USD '+v;
- return <fieldset disabled={disabled} className="stack" onKeyDown={e=>{if(e.key==='Enter'&&e.target instanceof HTMLInputElement)e.preventDefault();}} style={{minWidth:0,border:0,padding:0,margin:0}}><legend>Models — choose {maximum===1?'one':'up to two'}</legend>
+ return <fieldset disabled={disabled} className="stack" onKeyDown={e=>{if(e.key==='Enter'&&e.target instanceof HTMLInputElement)e.preventDefault();}} style={{minWidth:0,border:0,padding:0,margin:0}}><legend>Models — choose {maximum===1?'one':maximum===2?'up to two':'up to four'}</legend>
   <p className="hint">Listed prices are not a quote. Exact serving routes and maximum reservations are checked when you get a quote.</p>
   <div className="row"><span role="status">{catalog?.status==='fresh'?'Catalog checked':catalog?.status==='stale'?'Saved catalog — stale':'Catalog unavailable'}{catalog?.fetchedAt&&<> · <time dateTime={catalog.fetchedAt}>{new Date(catalog.fetchedAt).toLocaleString()}</time></>}</span><button type="button" className="btn" style={{minHeight:44}} disabled={disabled||refreshing||!canRefresh} onClick={onRefresh}>{refreshing?'Refreshing models…':'Refresh models (free metadata)'}</button></div>
-  <p>{selected.length} of {maximum} selected. {maximum===2?'Two models create two separately charged requests.':'Evaluation only; model quality has not been benchmarked here.'}</p>
+  <p>{selected.length} of {maximum} selected. {maximum===1?'Evaluation only; model quality has not been benchmarked here.':`${selected.length} selected models create ${selected.length} separately charged requests after you explicitly start.`}</p>
   {selectedRows.map(({id,row})=><div key={id}><bdi dir="ltr" style={{overflowWrap:'anywhere'}}>{id}</bdi> <button type="button" className="btn ghost" style={{minHeight:44,maxWidth:'100%',whiteSpace:'normal',overflowWrap:'anywhere'}} onClick={()=>onChange(selected.filter(x=>x!==id))}>Remove <bdi dir="ltr">{id}</bdi></button>{(!row||reason(row))&&<p role="status">{row?reason(row):'Selected model is not in the saved catalog.'} Choose another model before requesting a new quote.</p>}</div>)}
   <label htmlFor={uid+'search'}>Search model names or IDs</label><input id={uid+'search'} type="search" value={search} maxLength={256} onKeyDown={e=>{if(e.key==='Enter')e.preventDefault();}} onChange={e=>setSearch(e.target.value)} style={{minHeight:44,width:'100%'}}/>
   <label htmlFor={uid+'sort'}>Sort models</label><select id={uid+'sort'} value={sort} onChange={e=>setSort(e.target.value)} style={{minHeight:44}}><option value="asc">Name A–Z</option><option value="desc">Name Z–A</option></select>
