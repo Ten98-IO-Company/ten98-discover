@@ -29,7 +29,7 @@ const reports=Object.keys(profiles) as Report[];
 export async function runGoogleCommerceChecks() {
   assert.equal(process.env.TEN98_GOOGLE_COMMERCE_INTEGRATION,'1');
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.ANALYTICS_NETWORK_MODE,'off');
-  assert.equal((await migrationSources()).at(-1)?.filename,'0058_tracked_assets.sql','Integrate registered0052 through0057 first; no private migration bypass.');
+  assert.equal((await migrationSources()).at(-1)?.filename,'0059_heatmap_backgrounds.sql','Integrate registered0052 through0059 first; no private migration bypass.');
   let commerce:Awaited<ReturnType<typeof commerceChecks>>|undefined;
   const original=await runGoogleGa4Checks(async fixture=>{commerce=await commerceChecks(fixture);});
   assert.ok(commerce);assert.equal(commerce.groups.length,8);

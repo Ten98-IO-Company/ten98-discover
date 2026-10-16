@@ -17733,6 +17733,8 @@ if (mode === 'record') {
         maskTextSelector:strict ? '*' : '.rr-mask',maskTextFn:replayMask,slimDOMOptions:'all',
         inlineStylesheet:true,recordCanvas:false,recordCrossOriginIframes:false,collectFonts:false,inlineImages:false,
         sampling:{mousemove:100,scroll:150,input:'last'},plugins:[],errorHandler:function () { close(); emit(null); return true; }});
+      hub.takeReplaySnapshot=function(){if(!alive||starting||activeRecorder!==owner)return false;try{core.takeFullSnapshot();return true;}catch(_){close();emit(null);return false;}};
+      hub.takeReplaySnapshot.protocolVersion=1;
       starting = false;
       if (!alive || typeof stop !== 'function') { close(); return null; }
       return close;
@@ -17741,19 +17743,89 @@ if (mode === 'record') {
   hub.startReplayRecorder.protocolVersion = 1;
 } else if (mode === 'player' && window.parent !== window) {
   var port = null, player = null, ticker = null, duration = 0, playing = false, pausedOffset = 0, initialized = false;
+  var heatmap = null, heatmapObserver = null, heatmapFrame = null, heatmapAttempts = 0, heatmapPaint = null, heatmapExtent = null;
   function send(value) { if (port) port.postMessage(value); }
-  function destroy() { playing = false; clearInterval(ticker); ticker = null; if (player) { player.destroy(); player = null; } }
+  function destroy() { playing = false; heatmapPaint = null; if(heatmapExtent){heatmapExtent.release();heatmapExtent=null;} if(heatmapObserver)heatmapObserver.disconnect();heatmapObserver=null;if(heatmapFrame!==null)cancelAnimationFrame(heatmapFrame);heatmapFrame=null;clearInterval(ticker); ticker = null; if (player) { player.destroy(); player = null; } }
   function fail() { destroy(); send({type:'error',message:'This recording could not be played safely.'}); }
   function position() { return player ? playing ? Math.max(0,Math.min(duration,player.getCurrentTime())) : pausedOffset : 0; }
   // rrweb 2.1.7 pauses before equal-timestamp events; recorded timestamps are integer ms.
   function pauseAt(offset) { pausedOffset = offset; player.pause(Math.floor(offset) + 1); }
-  function scale() { if (!player) return; var width = Number(player.iframe.width); if (!Number.isFinite(width) || width <= 0) return; player.wrapper.style.transformOrigin = 'top left'; player.wrapper.style.transform = 'scale(' + Math.min(1,innerWidth / width) + ')'; }
+  function scale() { if (!player) return; var width = Number(player.iframe.width); if (!Number.isFinite(width) || width <= 0) return; player.wrapper.style.transformOrigin = 'top left'; player.wrapper.style.transform = 'scale(' + Math.min(1,innerWidth / width,heatmap?innerHeight / Number(player.iframe.height):1) + ')'; }
   addEventListener('resize',scale);
+  function heatmapRootSupported(doc,view,g){
+    var root=doc.scrollingElement;
+    return root===doc.documentElement&&doc.compatMode==='CSS1Compat'&&!!doc.body&&root.clientWidth===g.viewportWidth&&root.clientHeight===g.viewportHeight&&view.getComputedStyle(root).direction===g.direction&&[root,doc.body].every(function(node){var s=view.getComputedStyle(node);return s.writingMode==='horizontal-tb'&&['transform','perspective','rotate','scale','translate'].every(function(key){return s[key]==='none';});});
+  }
+  function preserveHeatmapExtent(doc,view,g){
+    var root=doc.scrollingElement;
+    if(root.scrollWidth>g.pageWidth||root.scrollHeight>g.pageHeight)return false;
+    if(root.scrollWidth===g.pageWidth&&root.scrollHeight===g.pageHeight)return true;
+    // ponytail: cap restoration calibration/resize observation at 20k nodes; unsupported CSS fails closed instead of continuous layout reconciliation.
+    var nodes=Array.from(doc.querySelectorAll('*')),marker=null,resize=null,mutations=null,active=true;
+    if(nodes.length>20000||nodes.some(function(node){return!!node.shadowRoot;}))return false;
+    function release(){if(!active)return;active=false;if(resize)resize.disconnect();if(mutations)mutations.disconnect();if(marker)marker.remove();marker=null;removeEventListener('pagehide',destroy);removeEventListener('unload',destroy);}
+    function size(node,r){r=r||node.getBoundingClientRect();return[r.width,r.height,node.clientWidth,node.clientHeight,node===root?0:node.scrollWidth,node===root?0:node.scrollHeight];}
+    function layout(){return JSON.stringify([view.scrollX,view.scrollY,nodes.map(function(node){var r=node.getBoundingClientRect(),s=view.getComputedStyle(node),values=[r.left,r.top].concat(size(node,r));if(!values.every(Number.isFinite)||s.writingMode!=='horizontal-tb'||['transform','perspective','rotate','scale','translate'].some(function(key){return s[key]!=='none';})||s.animationName!=='none'||s.transitionDuration.split(',').some(function(value){return parseFloat(value)!==0;}))throw Error('Unsupported layout.');return values;})]);}
+    try{
+      var natural=layout();
+      marker=doc.createElement('div');marker.setAttribute('aria-hidden','true');marker.setAttribute('data-ten98-heatmap-extent','');
+      marker.style.cssText='all:initial!important;position:absolute!important;left:0!important;top:0!important;width:1px!important;height:1px!important;display:block!important;margin:0!important;padding:0!important;border:0!important;box-sizing:border-box!important;visibility:hidden!important;pointer-events:none!important;transform:none!important;zoom:1!important;';
+      root.appendChild(marker);if(layout()!==natural)throw Error('Layout changed.');
+      function box(){var r=marker.getBoundingClientRect();return{left:r.left+view.scrollX,top:r.top+view.scrollY,width:r.width,height:r.height};}
+      var zero=box();marker.style.setProperty('left','1px','important');var x=box();marker.style.setProperty('left','0px','important');marker.style.setProperty('top','1px','important');var y=box(),dx=x.left-zero.left,dy=y.top-zero.top;
+      if(![zero.left,zero.top,zero.width,zero.height,dx,dy].every(Number.isFinite)||dx<=0||dy<=0||x.top!==zero.top||y.left!==zero.left||zero.width!==dx||zero.height!==dy)throw Error('Unmeasurable axes.');
+      var left=g.direction==='rtl'?g.viewportWidth-g.pageWidth:g.pageWidth-1,top=g.pageHeight-1;
+      marker.style.setProperty('left',String((left-zero.left)/dx)+'px','important');marker.style.setProperty('top',String((top-zero.top)/dy)+'px','important');marker.style.setProperty('width',String(1/dx)+'px','important');marker.style.setProperty('height',String(1/dy)+'px','important');
+      var placed=box();
+      if(placed.left!==left||placed.top!==top||placed.width!==1||placed.height!==1||layout()!==natural||!heatmapRootSupported(doc,view,g)||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight)throw Error('Inexact extent.');
+      var sizes=new Map(nodes.map(function(node){return[node,JSON.stringify(size(node))];})),bodySize=sizes.get(doc.body);
+      heatmapExtent={release:release,check:function(){return active&&marker.parentNode===root&&JSON.stringify(size(doc.body))===bodySize;}};
+      resize=new ResizeObserver(function(entries){if(!active)return;for(var entry of entries)if(JSON.stringify(size(entry.target))!==sizes.get(entry.target)){fail();return;}});
+      nodes.forEach(function(node){resize.observe(node);});
+      // rrweb Finish repeats the existing paused root class; only that exact no-op write is harmless.
+      mutations=new MutationObserver(function(records){if(!active)return;for(var record of records)if(record.type!=='attributes'||record.target!==root||record.attributeName!=='class'||record.oldValue!==root.getAttribute('class')){fail();return;}});
+      mutations.observe(root,{subtree:true,attributes:true,attributeOldValue:true,childList:true,characterData:true});
+      addEventListener('pagehide',destroy,{once:true});addEventListener('unload',destroy,{once:true});return true;
+    }catch(_){release();return false;}
+  }
+  function prepareHeatmap(){
+    if(!player||!heatmap)return;
+    var g=heatmap.geometry,doc=player.iframe.contentDocument,view=player.iframe.contentWindow,root=doc&&doc.scrollingElement;
+    if(doc&&view&&root&&doc.body&&player.getMirror().getId(doc)!==-1&&(!heatmapRootSupported(doc,view,g)||!preserveHeatmapExtent(doc,view,g))){fail();return;}
+    if(!doc||!view||!root||!doc.body||player.getMirror().getId(doc)===-1||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight||root.clientWidth!==g.viewportWidth||root.clientHeight!==g.viewportHeight||view.getComputedStyle(root).direction!==g.direction){
+      if(++heatmapAttempts<120){heatmapFrame=requestAnimationFrame(prepareHeatmap);return;}fail();return;
+    }
+    player.wrapper.style.position='relative';var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox','0 0 '+g.viewportWidth+' '+g.viewportHeight);svg.setAttribute('width',String(g.viewportWidth));svg.setAttribute('height',String(g.viewportHeight));
+    svg.style.cssText='position:absolute;left:0;top:0;pointer-events:none;z-index:2147483647;direction:ltr';svg.setAttribute('aria-hidden','true');player.wrapper.appendChild(svg);
+    function paint(){
+      if(!player)return;
+      if(!heatmapRootSupported(doc,view,g)||heatmapExtent&&!heatmapExtent.check()||root.scrollWidth!==g.pageWidth||root.scrollHeight!==g.pageHeight||root.clientWidth!==g.viewportWidth||root.clientHeight!==g.viewportHeight||view.getComputedStyle(root).direction!==g.direction){fail();return;}
+      var left=view.scrollX+(g.direction==='rtl'?g.pageWidth-g.viewportWidth:0),top=view.scrollY;
+      if(!Number.isFinite(left)||!Number.isFinite(top)||left<0||left>g.pageWidth-g.viewportWidth&&!(g.direction==='rtl'&&view.scrollX>0&&view.scrollX<=1)||top<0||top>g.pageHeight-g.viewportHeight){fail();return;}
+      svg.replaceChildren();
+      if(heatmap.mode==='click'){
+        var max=Math.max(1,...heatmap.points.map(function(p){return p.count;}));
+        heatmap.points.forEach(function(p){var circle=document.createElementNS('http://www.w3.org/2000/svg','circle');circle.setAttribute('cx',String(p.x-left));circle.setAttribute('cy',String(p.y-top));circle.setAttribute('r','12');circle.setAttribute('fill','#c2410c');circle.setAttribute('fill-opacity',String(.15+.7*Math.sqrt(p.count/max)));svg.appendChild(circle);});
+      }else heatmap.bands.forEach(function(band,i){var rect=document.createElementNS('http://www.w3.org/2000/svg','rect');rect.setAttribute('x','0');rect.setAttribute('y',String(i*g.pageHeight/10-top));rect.setAttribute('width',String(g.viewportWidth));rect.setAttribute('height',String(g.pageHeight/10));rect.setAttribute('fill','#1d4ed8');rect.setAttribute('fill-opacity',String(heatmap.captures===0?0:.5*band.captures/heatmap.captures));svg.appendChild(rect);});
+    }
+    ['click','submit','beforeinput'].forEach(function(type){doc.addEventListener(type,function(e){e.preventDefault();e.stopImmediatePropagation();},true);});
+    heatmapPaint=paint;doc.addEventListener('scroll',paint,true);heatmapObserver=new ResizeObserver(paint);heatmapObserver.observe(root);if(doc.body)heatmapObserver.observe(doc.body);
+    view.scrollTo(g.direction==='rtl'?-(g.pageWidth-g.viewportWidth):0,0);paint();if(player)send({type:'ready',duration:duration});
+  }
+  function validHeatmap(h){
+    if(!h||typeof h!=='object'||Array.isArray(h)||!h.geometry)return false;
+    var g=h.geometry,names=['basis','direction','pageWidth','pageHeight','viewportWidth','viewportHeight'];
+    if(Object.keys(g).length!==names.length||!names.every(function(k){return Object.prototype.hasOwnProperty.call(g,k);})||g.basis!=='document-css-v1'||!['ltr','rtl'].includes(g.direction)||
+     !['pageWidth','pageHeight','viewportWidth','viewportHeight'].every(function(k){return Number.isFinite(g[k])&&g[k]>0&&g[k]<=(k.startsWith('viewport')?20000:10000000);})||g.pageWidth<g.viewportWidth||g.pageHeight<g.viewportHeight)return false;
+    if(h.mode==='click')return Object.keys(h).sort().join(',')==='geometry,mode,points'&&Array.isArray(h.points)&&h.points.length<=5000&&h.points.every(function(p){return p&&Object.keys(p).sort().join(',')==='count,x,y'&&Number.isFinite(p.x)&&p.x>=0&&p.x<=g.pageWidth&&Number.isFinite(p.y)&&p.y>=0&&p.y<=g.pageHeight&&Number.isSafeInteger(p.count)&&p.count>0;});
+    return h.mode==='scroll'&&Object.keys(h).sort().join(',')==='bands,captures,geometry,mode'&&Number.isSafeInteger(h.captures)&&h.captures>=0&&Array.isArray(h.bands)&&h.bands.length===10&&h.bands.every(function(b,i){return b&&Object.keys(b).sort().join(',')==='captures,depth'&&b.depth===(i+1)*10&&Number.isSafeInteger(b.captures)&&b.captures>=0&&b.captures<=h.captures&&(i===0||b.captures<=h.bands[i-1].captures);});
+  }
   addEventListener('message',function (event) {
     if (initialized || event.source !== parent || !event.data || event.data.type !== 'ten98-replay-init' || event.data.protocol !== 1 || event.ports.length !== 1) return;
     initialized = true; port = event.ports[0];
     try {
-      var events = event.data.events;
+      var events = event.data.events;heatmap=event.data.heatmap??null;if(heatmap&&(!validHeatmap(heatmap)||events.length!==2||events[0].type!==4||events[1].type!==2||events[0].data.width<heatmap.geometry.viewportWidth||events[0].data.height<heatmap.geometry.viewportHeight))throw Error('Invalid background.');
       if (!Array.isArray(events) || events.length < 2 || events.length > 204800 || new TextEncoder().encode(JSON.stringify(events)).length > 67108864) throw Error('Invalid replay.');
       var snapshots = false, meta = false, first = Infinity, last = 0;
       for (var item of events) {
@@ -17767,22 +17839,22 @@ if (mode === 'record') {
       if (!snapshots || !meta || last - first > 1200000) throw Error('Invalid recording.');
       document.body.style.margin = '0'; document.body.style.overflow = 'hidden';
       player = new core.Replayer(events,{root:document.body,speed:1,showWarning:false,showDebug:false,skipInactive:false,mouseTail:false,triggerFocus:false,UNSAFE_replayCanvas:false});
-      player.disableInteract(); duration = Math.max(0,player.getMetaData().totalTime); player.on('resize',scale); pauseAt(0); scale();
+      player.disableInteract(); duration = Math.max(0,player.getMetaData().totalTime); player.on('resize',scale); pauseAt(heatmap?duration:0);if(heatmap)player.enableInteract();scale();
       // Recorded links/forms must never navigate even inside the isolated frame.
       player.iframe.addEventListener('load',function () { try { var doc = player.iframe.contentDocument; ['click','submit'].forEach(function (type) { doc.addEventListener(type,function (e) { e.preventDefault(); e.stopImmediatePropagation(); },true); }); } catch (_) {} });
-      player.on('finish',function () { playing = false; pausedOffset = duration; send({type:'ended'}); });
+      player.on('finish',function () { if(heatmap)return; playing = false; pausedOffset = duration; send({type:'ended'}); });
       port.onmessage = function (message) {
         try {
           var command = message.data;
           if (!command || typeof command !== 'object') return;
           if (command.type === 'destroy') { destroy(); port.close(); port = null; return; }
           if (!player) return;
+          if(heatmap){if(command.type==='heatmap-position'&&Object.keys(command).sort().join(',')==='axis,type,value'&&['x','y'].includes(command.axis)&&Number.isFinite(command.value)){var g=heatmap.geometry,max=command.axis==='x'?g.pageWidth-g.viewportWidth:g.pageHeight-g.viewportHeight;if(command.value<0||command.value>max)throw Error('Invalid position.');var view=player.iframe.contentWindow;view.scrollTo(command.axis==='x'?command.value-(g.direction==='rtl'?g.pageWidth-g.viewportWidth:0):view.scrollX,command.axis==='y'?command.value:view.scrollY);if(heatmapPaint)heatmapPaint();}return;}
           if (command.type === 'speed' && [.5,1,1.5,2].includes(command.value)) player.setConfig({speed:command.value});
           else if (['play','pause'].includes(command.type) && Number.isFinite(command.offset) && command.offset >= 0 && command.offset <= duration) { playing = command.type === 'play'; if (playing) player.play(command.offset); else pauseAt(command.offset); send({type:'tick',time:position(),playing:playing}); }
         } catch (_) { fail(); }
       };
-      port.start(); ticker = setInterval(function () { try { send({type:'tick',time:position(),playing:playing}); } catch (_) { fail(); } },250);
-      send({type:'ready',duration:duration});
+      port.start();if(heatmap){heatmapFrame=requestAnimationFrame(prepareHeatmap);}else{ticker=setInterval(function(){try{send({type:'tick',time:position(),playing:playing});}catch(_){fail();}},250);send({type:'ready',duration:duration});}
     } catch (_) { fail(); }
   });
 }

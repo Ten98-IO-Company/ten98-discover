@@ -3,10 +3,11 @@ import {z} from 'zod';
 import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
 import {contentCursor,readContentCursor,contentReceipt} from './project-context.ts';
-import {readScope,summary,transaction} from './session-replay.ts';
+import {readScope,summary,transaction,readToken as readReplayToken,readReplayReference} from './session-replay.ts';
+import {replayChunkDto,readReplayChunk} from '../lib/session-replay.ts';
 import {nativeCollectionPolicy,publicAnalyticsSettings,trackingConsentEpoch} from './native-analytics.ts';
 import {eventPath} from './validation.ts';
-import {heatmapBegin,heatmapBatch,heatmapPlane,heatmapDepth,heatmapLimits,readHeatmapQuery,replayHeatmapParams,defaultHeatmapSettings,savedReplay,savedReplayWrite,savedReplayAck,savedReplayPoint,savedReplayList,heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll} from '../lib/replay-heatmaps.ts';
+import {heatmapBackgroundUpload,heatmapBackgroundPage,heatmapBackgroundReference,heatmapBegin,heatmapBatch,heatmapPlane,heatmapDepth,heatmapLimits,readHeatmapQuery,replayHeatmapParams,defaultHeatmapSettings,savedReplay,savedReplayWrite,savedReplayAck,savedReplayPoint,savedReplayList,heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll} from '../lib/replay-heatmaps.ts';
 
 const invalid=()=>new FoundationError(400,'Check the saved replay or heatmap request.');
 const absent=()=>new FoundationError(404,'Recording or project not found or unavailable.');
@@ -75,3 +76,67 @@ export async function projectHeatmaps(projectId:string,userId:string,params:URLS
  }
  const checked=({pages:heatmapPages,geometries:heatmapGeometries,click:heatmapClicks,scroll:heatmapScroll}[query.mode]).parse(result);if(Buffer.byteLength(JSON.stringify(checked))>2097152)throw new FoundationError(503,'The heatmap response is too large.');return checked;
  });}
+
+export async function associateHeatmapBackground(request:Request,raw:unknown){
+ const parsed=heatmapBackgroundUpload.safeParse(raw);if(!parsed.success)throw invalid();const input=parsed.data,hcap=readToken(input.heatmapToken),rcap=readReplayToken(input.replayToken);
+ const changed=()=>new FoundationError(409,'This historical background cannot be associated with the current retained captures.');
+ return transaction(async client=>{
+  await client.query('SELECT id FROM project WHERE public_key=$1 FOR SHARE',[input.siteKey]);
+  const policy=await nativeCollectionPolicy(client,request,input.siteKey,input,'replay'),settings=policy.project?publicAnalyticsSettings(policy.project.analytics_settings):null;
+  if(policy.reason||policy.basis!=='consent'||!settings?.heatmap?.enabled||!settings.replay?.enabled)throw new FoundationError(403,'Both current Analytics and replay permissions are required.');
+  const projectId=policy.project.id,epoch=trackingConsentEpoch(policy.project.analytics_epoch,policy.project.destination_epoch),url=new URL(input.url),path=eventPath(input.url),plane=heatmapPlane(input.geometry);
+  const capture=(await client.query('SELECT * FROM heatmap_capture WHERE project_id=$1 AND id=$2 FOR UPDATE',[projectId,input.captureId])).rows[0];
+  const recording=(await client.query('SELECT * FROM session_recording WHERE project_id=$1 AND id=$2 FOR UPDATE',[projectId,input.recordingId])).rows[0];
+  const clock=(await client.query(`WITH clock AS MATERIALIZED(SELECT clock_timestamp()AS at)SELECT c.at::text AS at,
+   GREATEST(p.analytics_retained_from,c.at-w.raw_analytics_days*interval '24 hours')::text AS heatmap_cutoff,
+   r.created_at<GREATEST(p.replay_retained_from,c.at-w.replay_days*interval '24 hours')AS replay_expired,
+   c.at>=LEAST(h.upload_until,r.upload_until,timestamptz 'epoch'+LEAST($4::bigint,$5::bigint)*interval '1 millisecond')AS upload_expired
+   FROM project p JOIN workspace w ON w.id=p.workspace_id
+   JOIN heatmap_capture h ON h.project_id=p.id AND h.id=$2 JOIN session_recording r ON r.project_id=p.id AND r.id=$3
+   CROSS JOIN clock c WHERE p.id=$1`,[projectId,input.captureId,input.recordingId,hcap.until,rcap.until])).rows[0];
+  if(!capture||!recording||!capture.sampled||!recording.sampled||capture.path!==path||recording.entry_path===null||capture.origin!==url.origin||recording.origin!==url.origin||
+   hcap.id!==capture.id||rcap.id!==recording.id||hcap.projectId!==projectId||rcap.projectId!==projectId||hcap.origin!==url.origin||rcap.origin!==url.origin||
+   hcap.epoch!==epoch||rcap.epoch!==epoch||capture.epoch!==epoch||recording.epoch!==epoch||hcap.settingsHash!==capture.settings_hash||rcap.settingsHash!==recording.settings_hash||
+   capture.settings_hash!==hash(settings.heatmap)||recording.settings_hash!==hash(settings.replay)||
+   hcap.until!==capture.upload_until.getTime()||rcap.until!==recording.upload_until.getTime()||clock.upload_expired||
+   clock.replay_expired||recording.first_event_timestamp===null||hash(plane)!==input.geometryKey)throw changed();
+  const batch=(await client.query('SELECT * FROM heatmap_batch WHERE project_id=$1 AND request_id=$2 AND capture_id=$3 AND geometry_key=$4 AND received_at>=$5 AND received_at<$6',[projectId,input.batchRequestId,input.captureId,input.geometryKey,clock.heatmap_cutoff,clock.at])).rows[0];
+  if(!batch||batch.origin!==url.origin||batch.path!==path||hash(heatmapPlane(batch.geometry))!==input.geometryKey)throw changed();
+  const meta=await readReplayReference(client,recording.id,input.meta),snapshot=await readReplayReference(client,recording.id,input.snapshot);
+  if(meta.event.type!==4||snapshot.event.type!==2||meta.event.data.href!==input.url||meta.event.timestamp>snapshot.event.timestamp||
+   snapshot.event.timestamp<Number(recording.first_event_timestamp)||snapshot.event.timestamp-Number(recording.first_event_timestamp)>recording.settings.maxDurationMs||
+   Number(meta.event.data.width)<plane.viewportWidth||Number(meta.event.data.height)<plane.viewportHeight)throw changed();
+  const sequences=[...new Set([...meta.sequences,...snapshot.sequences])].sort((a,b)=>a-b),payloadHash=hash(input),observedAt=new Date(snapshot.event.timestamp);
+  // One immutable sample per capture/layout, bounded by the existing256 actual batch geometries.
+  const inserted=await client.query(`INSERT INTO heatmap_background(project_id,capture_id,geometry_key,request_id,request_hash,batch_request_id,recording_id,geometry,heatmap_offset_ms,replay_offset_ms,meta,snapshot,sequences,observed_at,accepted_at)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)ON CONFLICT DO NOTHING`,[projectId,input.captureId,input.geometryKey,input.requestId,payloadHash,input.batchRequestId,recording.id,JSON.stringify(plane),input.heatmapOffsetMs,snapshot.event.timestamp-Number(recording.first_event_timestamp),JSON.stringify(input.meta),JSON.stringify(input.snapshot),sequences,observedAt,clock.at]);
+  const prior=(await client.query('SELECT request_hash FROM heatmap_background WHERE project_id=$1 AND request_id=$2',[projectId,input.requestId])).rows[0];
+  if(!prior||prior.request_hash!==payloadHash)throw changed();
+  return{accepted:true,duplicate:!inserted.rowCount,requestId:input.requestId};
+ });
+}
+
+export async function getHeatmapBackground(projectId:string,userId:string,raw:URLSearchParams|string){
+ let query:ReturnType<typeof readHeatmapQuery>,after=-1;
+ try{const p=replayHeatmapParams(raw);if(p.has('after')){const a=p.get('after')!;if(p.getAll('after').length!==1||!/^(0|[1-9]\d{0,3})$/.test(a)||Number(a)>1023)throw invalid();after=Number(a);p.delete('after');}query=readHeatmapQuery(p);if(!['click','scroll'].includes(query.mode))throw invalid();}catch{throw invalid();}
+ return readScope(projectId,userId,async(client,scope)=>{
+  const blank={version:1 as const,projectId,role:scope.role,query,asOf:scope.at,reference:null,item:null,chunks:[],nextAfter:null};
+  const start=query.from+'T00:00:00Z',end=new Date(Date.parse(query.to+'T00:00:00Z')+86400000).toISOString();
+  const ref=(await client.query(`SELECT b.*,c.epoch AS capture_epoch FROM heatmap_background b JOIN heatmap_batch h ON h.project_id=b.project_id AND h.request_id=b.batch_request_id
+   JOIN heatmap_capture c ON c.project_id=b.project_id AND c.id=b.capture_id
+   WHERE b.project_id=$1 AND b.geometry_key=$2 AND h.origin=$3 AND h.path=$4 AND c.path=$4
+   AND h.received_at>=GREATEST($5::timestamptz,$7::timestamptz)AND h.received_at<LEAST($6::timestamptz,$8::timestamptz)
+   ORDER BY b.accepted_at DESC,b.capture_id LIMIT 1`,[projectId,query.geometry,query.origin,query.path,start,end,scope.heatmapCutoff,scope.at])).rows[0];
+  if(!ref)return heatmapBackgroundPage.parse({...blank,state:'missing'});
+  const recording=(await client.query('SELECT *,created_at<$3::timestamptz AS result_expired FROM session_recording WHERE project_id=$1 AND id=$2 AND sampled',[projectId,ref.recording_id,scope.cutoff])).rows[0];
+  if(!recording||recording.result_expired||recording.entry_path===null)return heatmapBackgroundPage.parse({...blank,state:'expired'});
+  if(recording.origin!==query.origin||recording.epoch!==ref.capture_epoch)throw invalid();
+  const inventory=(await client.query<{sequence:number}>('SELECT sequence FROM session_recording_chunk WHERE recording_id=$1 AND sequence=ANY($2::integer[]) ORDER BY sequence',[recording.id,ref.sequences])).rows;
+  if(inventory.length!==ref.sequences.length)return heatmapBackgroundPage.parse({...blank,state:'incomplete'});
+  // Every page rechecks both current retentions; at most4 original chunks are read, never the whole recording.
+  const visible=(await client.query<{sequence:number;final:boolean;sha256:string;payload:Buffer}>('SELECT sequence,final,sha256,payload FROM session_recording_chunk WHERE recording_id=$1 AND sequence=ANY($2::integer[]) AND sequence>$3 ORDER BY sequence LIMIT 5',[recording.id,ref.sequences,after])).rows;
+  const chunks=visible.slice(0,4).map(c=>replayChunkDto.parse({sequence:c.sequence,final:c.final,sha256:c.sha256,bytes:c.payload.length,parts:readReplayChunk(c.payload.toString('base64url')).parts}));
+  const reference=heatmapBackgroundReference.parse({captureId:ref.capture_id,recordingId:ref.recording_id,geometryKey:ref.geometry_key,geometry:ref.geometry,heatmapOffsetMs:ref.heatmap_offset_ms,replayOffsetMs:ref.observed_at.getTime()-Number(recording.first_event_timestamp),meta:ref.meta,snapshot:ref.snapshot,observedAt:ref.observed_at.toISOString(),sequences:ref.sequences});
+  return heatmapBackgroundPage.parse({...blank,state:'available',reference,item:summary(recording),chunks,nextAfter:visible.length>4?chunks.at(-1)!.sequence:null});
+ });
+}

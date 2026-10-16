@@ -7,6 +7,7 @@ import {FoundationError} from './auth.ts';
 import {analyticsPathExcluded,nativeCollectionPolicy,publicAnalyticsSettings,trackingConsentEpoch} from './native-analytics.ts';
 import {contentCursor,readContentCursor} from './project-context.ts';
 import {eventPath} from './validation.ts';
+import type {ReplayEventLocator} from '../lib/replay-heatmaps.ts';
 import {replayBegin,replayUpload,replaySettings,defaultReplaySettings,replayLimits,replaySummary,replayChunkDto,readReplayChunk,reassembleReplay,type ReplayBegin,type ReplayPart,type ReplaySettings} from '../lib/session-replay.ts';
 
 const invalid=()=>new FoundationError(400,'Check the replay request and bounded chunk bytes.');
@@ -16,9 +17,9 @@ const digest=(value:Uint8Array|string)=>createHash('sha256').update(value).diges
 const epochToken=z.object({version:z.literal(1),id:z.uuid(),projectId:z.uuid(),origin:z.string().max(2048),epoch:z.uuid(),settingsHash:z.string().regex(/^[a-f0-9]{64}$/),until:z.number().int().nonnegative()}).strict();
 function sign(body:string){return createHmac('sha256',getConfig().authSecret).update('ten98.replay-upload.v1:'+body).digest('hex');}
 function token(row:Row){const body=Buffer.from(JSON.stringify({version:1,id:row.id,projectId:row.project_id,origin:row.origin,epoch:row.epoch,settingsHash:row.settings_hash,until:row.upload_until.getTime()})).toString('base64url');return body+'.'+sign(body);}
-function readToken(value:string){try{if(!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(value))throw changed();const[body,signature]=value.split('.');if(!timingSafeEqual(Buffer.from(signature,'hex'),Buffer.from(sign(body),'hex')))throw changed();const raw=Buffer.from(body,'base64url');if(raw.toString('base64url')!==body)throw changed();return epochToken.parse(JSON.parse(raw.toString('utf8')));}catch{throw changed();}}
+export function readToken(value:string){try{if(!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(value))throw changed();const[body,signature]=value.split('.');if(!timingSafeEqual(Buffer.from(signature,'hex'),Buffer.from(sign(body),'hex')))throw changed();const raw=Buffer.from(body,'base64url');if(raw.toString('base64url')!==body)throw changed();return epochToken.parse(JSON.parse(raw.toString('utf8')));}catch{throw changed();}}
 type Row={id:string;project_id:string;request_id:string;request_hash:string;origin:string;entry_path:string|null;epoch:string;settings:ReplaySettings;settings_hash:string;sampled:boolean;created_at:Date;deadline_at:Date;upload_until:Date;chunk_count:number;byte_count:number;last_sequence:number|null;first_event_timestamp:string|null;last_event_timestamp:string|null;complete:boolean;missing_fragments:number|null};
-type Scope={role:'owner'|'admin'|'editor'|'viewer';cutoff:string;at:string};
+type Scope={role:'owner'|'admin'|'editor'|'viewer';cutoff:string;heatmapCutoff:string;at:string};
 export function summary(row:Row,expired=false){return replaySummary.parse({id:row.id,createdAt:row.created_at.toISOString(),deadlineAt:row.deadline_at.toISOString(),origin:row.origin,entryPath:expired?null:row.entry_path,settings:row.settings,chunkCount:expired?0:row.chunk_count,bytes:expired?0:row.byte_count,lastSequence:expired?null:row.last_sequence,complete:!expired&&row.complete,missingChunks:expired||row.last_sequence===null?null:row.last_sequence+1-row.chunk_count,missingFragments:expired?null:row.missing_fragments,resultExpired:expired});}
 export async function transaction<T>(work:(client:PoolClient)=>Promise<T>){const client=await getDatabase().pool.connect();try{await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");const result=await work(client);await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Replay is temporarily unavailable. Retry only the same recording or chunk.');throw error;}finally{client.release();}}
 async function collection<T>(request:Request,input:ReplayBegin|z.infer<typeof replayUpload>,work:(client:PoolClient,projectId:string,settings:ReplaySettings,epoch:string,at:Date)=>Promise<T>){return transaction(async client=>{
@@ -69,9 +70,11 @@ export async function uploadSessionReplay(request:Request,raw:unknown){const inp
 export async function readScope<T>(projectId:string,userId:string,work:(client:PoolClient,scope:Scope)=>Promise<T>){if(!z.uuid().safeParse(projectId).success)throw invalid();return transaction(async client=>{
  const hint=(await client.query('SELECT workspace_id FROM project WHERE id=$1',[projectId])).rows[0]?.workspace_id;if(!hint)throw absent();
  await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[hint]);
+ await client.query('SELECT id FROM project WHERE id=$1 FOR SHARE',[projectId]);
  const scope=(await client.query<Scope>(`WITH clock AS MATERIALIZED(SELECT clock_timestamp() AS at) SELECT m.role,
  to_char(c.at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,
  to_char(GREATEST(p.replay_retained_from,c.at-w.replay_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff
+, to_char(GREATEST(p.analytics_retained_from,c.at-w.raw_analytics_days*interval '24 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "heatmapCutoff"
  FROM project p JOIN workspace w ON w.id=p.workspace_id JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 CROSS JOIN clock c WHERE p.id=$1 AND m.role IN('owner','admin','editor','viewer')`,[projectId,userId])).rows[0];if(!scope)throw absent();
  const result=await work(client,scope);if(Buffer.byteLength(JSON.stringify(result),'utf8')>2097152)throw new FoundationError(503,'The replay page is too large.');return result;
  });}
@@ -93,3 +96,23 @@ export async function getSessionReplay(projectId:string,userId:string,recordingI
  const visible=stored.slice(0,4).map(v=>replayChunkDto.parse({sequence:v.sequence,final:v.final,sha256:v.sha256,bytes:v.payload.length,parts:readReplayChunk(v.payload.toString('base64url')).parts}));
  return{role:scope.role,asOf:scope.at,item,chunks:visible,nextAfter:stored.length>4?visible.at(-1)!.sequence:null};
  });}
+
+// Resolve only the explicitly referenced event. Never scan a whole recording for a background.
+export async function readReplayReference(client:PoolClient,recordingId:string,locator:ReplayEventLocator){
+ type Chunk={sequence:number;sha256:string;payload:Buffer};
+ const rows=locator.kind==='event'?(await client.query<Chunk>('SELECT sequence,sha256,payload FROM session_recording_chunk WHERE recording_id=$1 AND sequence=$2',[recordingId,locator.sequence])).rows:
+  (await client.query<Chunk>('SELECT sequence,sha256,payload FROM session_recording_chunk WHERE recording_id=$1 AND fragment_ids @> ARRAY[$2]::uuid[] ORDER BY sequence LIMIT 65',[recordingId,locator.fragmentId])).rows;
+ if(rows.length===0||rows.length>64)throw changed();
+ let event:ReturnType<typeof reassembleReplay>['events'][number];
+ if(locator.kind==='event'){
+  if(rows[0].sha256!==locator.chunkSha256)throw changed();
+  const part=readReplayChunk(rows[0].payload.toString('base64url')).parts[locator.index];
+  if(!part||part.type==='fragment')throw changed();event=part;
+ }else{
+  const parts=rows.flatMap(row=>readReplayChunk(row.payload.toString('base64url')).parts).filter(p=>p.type==='fragment'&&p.id===locator.fragmentId);
+  const assembled=reassembleReplay(parts);
+  if(assembled.missingFragments.length||assembled.events.length!==1)throw changed();event=assembled.events[0];
+ }
+ if(digest(JSON.stringify(event))!==locator.eventSha256)throw changed();
+ return{event,sequences:rows.map(row=>row.sequence)};
+}
