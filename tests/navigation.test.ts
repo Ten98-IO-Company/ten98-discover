@@ -442,3 +442,13 @@ test('Context fallback preserves invalid scoped links instead of reading another
  const session=parseNavigation({workspace,project,view:'sessions',visitorKey:'a'.repeat(64)});assert.equal(resolveNavigation(session,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','sessions').sessionInvalid,'1');
  assert.deepEqual(resolveNavigation({view:'project'},workspace,project,'project'),{workspace,project,view:'project'});
 });
+test('workspace Boards preserve applied scope without a fake anchor project and reject invalid ownership',async()=>{
+ const {boardNavigation,resolveNavigation}=await import('../src/lib/navigation.ts');
+ const id='c0000000-0000-4000-8000-000000000003',scope='from=2026-10-01&to=2026-10-07&timeZone=UTC&path=',boardQuery=new URLSearchParams({board:id,scope}).toString(),target={workspace,view:'boards',boardQuery} as const;
+ const wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView('boards'),false);
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('boards',role,false),true);assert.equal(allowedView('boards',undefined,false),false);
+ for(const raw of [{...target,project},{...target,workspace:undefined},{...target,boardQuery:[]},{...target,boardQuery:['board='+id,'new=1']},{...target,boardQuery:'bad=%ED%A0%80'},{...target,boardQuery:'bad=%GG'},{...target,boardQuery:'a'.repeat(24001)},{...target,boardInvalid:'1'},{...target,token:'not-a-board-capability'}])assert.equal(boardNavigation(raw).boardInvalid,'1');
+ assert.notEqual(navigationKey(target),navigationKey({...target,boardQuery:'new=1'}));assert.equal(canonicalNavigation(wire+'&boardQuery=other',target),false);
+ const fallback=resolveNavigation({...target,boardInvalid:'1'},'d0000000-0000-4000-8000-000000000004',undefined,'boards');assert.equal(fallback.boardInvalid,'1');assert.equal(fallback.project,undefined);assert.equal(fallback.boardQuery,undefined);
+ assert.equal(parseNavigation({workspace,view:'preferences',boardQuery}).boardQuery,undefined);
+});

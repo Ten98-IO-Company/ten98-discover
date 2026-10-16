@@ -24,6 +24,8 @@ import { exploreAnalytics } from './explorer.ts';
 import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
 import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAnnotation} from './annotations.ts';
 import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
+import {listBoards,getBoard,saveBoard,cloneBoard,deleteBoard,readBoardCard} from './boards.ts';
+import {boardLimits} from '../lib/boards.ts';
 import {listCohorts,getCohort,saveCohort,deleteCohort} from './cohorts.ts';
 import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
@@ -261,6 +263,23 @@ export async function handleApi(request: Request): Promise<Response> {
       return json({ error: 'Authentication route unavailable.' }, 404);
     }
     const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
+    const boardRoute=path.match(new RegExp('^/api/workspaces/('+id+')/boards(?:/('+id+')(?:/(update|clone|delete)|/cards/('+id+'))?)?$','i'));
+    if(boardRoute){
+      const[,workspaceId,boardId,action,cardId]=boardRoute;
+      await limit('boards:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?120:30);
+      if(request.method==='GET'){
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Board reads do not accept a body.');
+        if(cardId)return json(await readBoardCard(workspaceId,user.id,boardId,cardId,url.search.slice(1)));
+        if(!boardId)return json(await listBoards(workspaceId,user.id,url.search.slice(1)));
+        if(!action){if(url.search)throw new FoundationError(400,'Board details do not accept query parameters.');return json(await getBoard(workspaceId,user.id,boardId));}
+      }
+      if(request.method==='POST'&&!cardId&&(!boardId||action)){
+        if(url.search)throw new FoundationError(400,'Board changes do not accept query parameters.');
+        const body=await readJson(request,boardLimits.bodyBytes);
+        return json(action==='clone'?await cloneBoard(workspaceId,user.id,boardId,body):action==='delete'?await deleteBoard(workspaceId,user.id,boardId,body):await saveBoard(workspaceId,user.id,body,boardId));
+      }
+      return json({error:'Method not allowed.'},405);
+    }
     if (/^\/api\/projects\/[^/]+\/(reports|report-templates)(\/|$)/.test(path)) {
       await limit(`reports:${user.id}:${request.method === 'GET' ? 'read' : 'write'}`, request.method === 'GET' ? 120 : 30);
       const response = await handleReports(request, user.id);
