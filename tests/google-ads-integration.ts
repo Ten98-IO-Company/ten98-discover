@@ -22,7 +22,7 @@ export async function runGoogleAdsChecks(){
  assert.equal(new URL(config.databaseUrl).port,'55501');assert.match(new URL(config.databaseUrl).pathname,/^\/ten98_google_ads_[a-f0-9]{12}$/);
  }
  for(const value of [config.appUrl,config.databaseUrl])assert.ok(['127.0.0.1','localhost','[::1]'].includes(new URL(value).hostname));
- await assertSchema();assert.equal((await migrationSources()).at(-1)?.version,'0048');
+ await assertSchema();assert.equal((await migrationSources()).at(-1)?.version,'0049');
  const finance=async()=>createHash('sha256').update(JSON.stringify((await pool.query('SELECT to_jsonb(p) AS row FROM provider_request p ORDER BY id')).rows)).digest('hex'),financialBefore=await finance();
  const password=randomBytes(24).toString('base64url'),secret=randomBytes(24).toString('base64url'),developer=randomBytes(24).toString('base64url'),access=randomBytes(24).toString('base64url'),refresh=randomBytes(24).toString('base64url');
  const actors=[];for(const role of ['owner','admin','editor','viewer','foreign'] as const){const id:string=randomUUID(),email=id+'@google-ads.integration.test';await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)',[id,'Synthetic Ads '+role,email]);await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),id,await hashPassword(password)]);actors.push({id,email,role,cookies:new Map<string,string>()});}
