@@ -38,7 +38,24 @@ export function googleInput<T extends z.ZodType>(schema: T, value: unknown): z.o
   return parsed.data;
 }
 
-export function googleReportRequest(report: GoogleReport, from: string, to: string, offset: number) {
+type GoogleReportRequest =
+  | {
+    query: string; searchSettings: { returnTotalResultsCount: true };
+    startDate?: never; endDate?: never; dimensions?: never; type?: never; dataState?: never; aggregationType?: never; rowLimit?: never; startRow?: never;
+    dateRanges?: never; metrics?: never; orderBys?: never; offset?: never; limit?: never; returnPropertyQuota?: never; keepEmptyRows?: never; dimensionFilter?: never;
+  }
+  | {
+    startDate: string; endDate: string; dimensions: readonly string[]; type: 'web'; dataState: 'final'; aggregationType: 'auto'; rowLimit: 1000; startRow: number;
+    query?: never; searchSettings?: never; dateRanges?: never; metrics?: never; orderBys?: never; offset?: never; limit?: never; returnPropertyQuota?: never; keepEmptyRows?: never; dimensionFilter?: never;
+  }
+  | {
+    dateRanges: Array<{ startDate: string; endDate: string }>; dimensions: Array<{ name: string }>; metrics: Array<{ name: string }>;
+    orderBys: Array<{ dimension: { dimensionName: string; orderType?: 'ALPHANUMERIC' } }>; offset: string; limit: '1000'; returnPropertyQuota: true; keepEmptyRows: true;
+    dimensionFilter?: { filter: { fieldName: 'isKeyEvent'; stringFilter: { matchType: 'EXACT'; value: 'true'; caseSensitive: true } } };
+    query?: never; searchSettings?: never; startDate?: never; endDate?: never; type?: never; dataState?: never; aggregationType?: never; rowLimit?: never; startRow?: never;
+  };
+
+export function googleReportRequest(report: GoogleReport, from: string, to: string, offset: number): GoogleReportRequest {
   const definition = googleReports[report];
   if (definition.provider === 'ads') {
     googleInput(googleDate, from); googleInput(googleDate, to);
@@ -48,9 +65,11 @@ export function googleReportRequest(report: GoogleReport, from: string, to: stri
     return { query: `SELECT ${fields.join(', ')} FROM ${resource} WHERE segments.date BETWEEN '${from}' AND '${to}' ORDER BY segments.date${resource === 'customer' ? '' : ', campaign.id'}${resource === 'ad_group' ? ', ad_group.id' : ''}`, searchSettings: { returnTotalResultsCount: true } };
   }
   if (definition.provider === 'gsc') return { startDate: from, endDate: to, dimensions: definition.dimensions, type: 'web', dataState: 'final', aggregationType: 'auto', rowLimit: 1000, startRow: offset };
+  const keyEventFilter: { dimensionFilter?: { filter: { fieldName: 'isKeyEvent'; stringFilter: { matchType: 'EXACT'; value: 'true'; caseSensitive: true } } } } = {};
+  if (report === 'ga4_key_events') keyEventFilter.dimensionFilter = { filter: { fieldName: 'isKeyEvent', stringFilter: { matchType: 'EXACT', value: 'true', caseSensitive: true } } };
   return { dateRanges: [{ startDate: from, endDate: to }], dimensions: definition.dimensions.map(name => ({ name })), metrics: definition.metrics.map(name => ({ name })),
     orderBys: definition.dimensions.map(dimensionName => ({ dimension: { dimensionName, ...(ga4InventoryReports.includes(report) ? { orderType: 'ALPHANUMERIC' } : {}) } })), offset: String(offset), limit: '1000', returnPropertyQuota: true, keepEmptyRows: true,
-    ...(report === 'ga4_key_events' ? { dimensionFilter: { filter: { fieldName: 'isKeyEvent', stringFilter: { matchType: 'EXACT', value: 'true', caseSensitive: true } } } } : {}) };
+    ...keyEventFilter };
 }
 
 export function googleCompatibilityRequest(report: GoogleReport, from: string, to: string) {
