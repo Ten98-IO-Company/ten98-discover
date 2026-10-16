@@ -1,6 +1,36 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {googleAdsColumnLabel,googleAdsCost,googleGa4ColumnLabel,googleGa4MetricValue,googleDecimalPlain,googleOrganicChange,googleOrganicChangeValue,organicOverviewMetrics,readOrganicOverview} from '../src/lib/google-report-display.ts';
+import {googleAdsColumnLabel,googleAdsCost,googleGa4ColumnLabel,googleGa4MetricValue,googleDecimalPlain,googleLastCompletedDay,googleCalendarWeek,googleOrganicCalendar,googleOrganicChange,googleOrganicChangeValue,organicOverviewMetrics,readOrganicOverview} from '../src/lib/google-report-display.ts';
+
+test('completed-day bounds use the property calendar across UTC offsets, DST, leap days and year changes',()=>{
+  for(const[zone,now,expected]of [
+    ['America/Los_Angeles','2026-01-01T00:30:00Z','2025-12-30'],
+    ['Pacific/Kiritimati','2026-01-01T00:30:00Z','2025-12-31'],
+    ['Pacific/Kiritimati','2026-01-01T10:30:00Z','2026-01-01'],
+    ['America/New_York','2026-03-08T07:30:00Z','2026-03-07'],
+    ['America/New_York','2026-11-01T05:30:00Z','2026-10-31'],
+    ['UTC','2024-03-01T00:00:00Z','2024-02-29'],
+  ])assert.equal(googleLastCompletedDay(zone,new Date(now)),expected);
+  for(const zone of [null,'','No/Such_Zone'])assert.equal(googleLastCompletedDay(zone,new Date()),null);
+  assert.equal(googleLastCompletedDay('UTC',new Date('invalid')),null);
+});
+
+test('organic trend slots keep calendar gaps and split Sunday Google weeks at January 1',()=>{
+  assert.deepEqual(googleOrganicCalendar('2024-02-28','2024-03-01',false),[
+    {key:'2024-02-28',from:'2024-02-28',to:'2024-02-28'},
+    {key:'2024-02-29',from:'2024-02-29',to:'2024-02-29'},
+    {key:'2024-03-01',from:'2024-03-01',to:'2024-03-01'},
+  ]);
+  assert.deepEqual(googleOrganicCalendar('2025-12-28','2026-01-04',true),[
+    {key:'202553',from:'2025-12-28',to:'2025-12-31'},
+    {key:'202601',from:'2026-01-01',to:'2026-01-03'},
+    {key:'202602',from:'2026-01-04',to:'2026-01-04'},
+  ]);
+  assert.equal(googleOrganicCalendar('2024-01-01','2024-12-31',false).length,366);
+  assert.equal(googleCalendarWeek('2026-01-01'),'202601');
+  for(const[from,to]of [['2026-02-30','2026-03-01'],['2026-03-01','2026-02-28'],['2024-01-01','2025-01-01']])assert.throws(()=>googleOrganicCalendar(from,to,false));
+  assert.throws(()=>googleCalendarWeek('2026-02-30'));
+});
 
 test('Ads cost uses exact account-currency micros beyond safe Number precision',()=>{
   assert.equal(googleAdsCost('9007199254740993','AED'),'AED 9,007,199,254.740993');

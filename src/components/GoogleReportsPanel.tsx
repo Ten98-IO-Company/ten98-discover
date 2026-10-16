@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
-import { googleAdsColumnLabel, googleAdsCost, googleGa4ColumnLabel, googleGa4MetricValue, googleDecimalPlain, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, type OrganicOverview } from '../lib/google-report-display';
-import { propertyDecimalScale } from '../lib/property-visuals';
+import { googleAdsColumnLabel, googleAdsCost, googleGa4ColumnLabel, googleGa4MetricValue, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, type OrganicOverview } from '../lib/google-report-display';
+import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
 
 const BTN = { minHeight: 44 };
@@ -108,10 +108,10 @@ async function organicSnapshot(path: string, imp: ImportDto, conn: Connection, o
     if (!readable && (value.rows.length || value.nextOffset !== null || overview && (quality.warnings.length || Object.keys(quality.metadata).length))) throw Error('Unavailable organic data was returned. Refresh status.');
     if (overview && readable) { const observation = readOrganicOverview(quality.metadata.organic, imp.from, imp.to, imp.report === 'ga4_organic_weekly'); if (!sameKeys(quality.metadata, ['organic']) || !observation || receipt.status !== 'completed' || receipt.pages !== 3 || value.nextOffset !== null || value.rows.length !== receipt.rowCount || observation.trend.rowCount !== value.rows.length) throw Error('The complete organic overview could not be verified.'); }
     if (!overview && readable && (offset + value.rows.length > receipt.rowCount || value.nextOffset !== (offset + value.rows.length < receipt.rowCount ? offset + 50 : null))) throw Error('Organic pagination could not be verified.');
-    const seen = new Set<string>();
+    const seen = new Set<string>(),calendarKeys=overview&&readable?new Set(googleOrganicCalendar(imp.from,imp.to,imp.report==='ga4_organic_weekly').map(bucket=>bucket.key)):null;
     for (const row of value.rows) {
       if (!sameKeys(row, ['dimensions','metrics']) || !sameKeys(row.dimensions, dimensions) || !sameKeys(row.metrics, metrics) || !Object.values(row.dimensions).every(v => typeof v === 'string' && v.length <= 4096 && !v.includes('\0') && new TextDecoder().decode(new TextEncoder().encode(v)) === v) || !Object.entries(row.metrics).every(([key,v]) => v === null || googleDecimalPlain(v) !== null && (key === 'purchaseRevenue' || Number(v) >= 0 && (!['engagementRate','sessionKeyEventRate'].includes(key) || Number(v) <= 1)))) throw Error('Organic row values could not be verified.');
-      if (imp.report === 'ga4_organic_daily' && (!/^\d{4}-\d\d-\d\d$/.test(row.dimensions.date) || !Number.isFinite(Date.parse(row.dimensions.date)) || new Date(row.dimensions.date).toISOString().slice(0,10) !== row.dimensions.date || row.dimensions.date < imp.from || row.dimensions.date > imp.to) || imp.report === 'ga4_organic_weekly' && (!/^\d{4}(?:0[1-9]|[1-4]\d|5[0-3])$/.test(row.dimensions.yearWeek) || row.dimensions.yearWeek.slice(0,4) < imp.from.slice(0,4) || row.dimensions.yearWeek.slice(0,4) > imp.to.slice(0,4))) throw Error('Organic calendar labels could not be verified.');
+      if (calendarKeys&&!calendarKeys.has(row.dimensions[dimensions[0]])) throw Error('Organic calendar labels could not be verified.');
       const key = JSON.stringify(dimensions.map(name => row.dimensions[name])); if (seen.has(key)) throw Error('Organic rows were repeated.'); seen.add(key);
     }
     return value as Snapshot;
@@ -120,14 +120,17 @@ async function organicSnapshot(path: string, imp: ImportDto, conn: Connection, o
 
 function OrganicSummary({ overview, rows, currency, timeZone }: { overview: OrganicOverview; rows: Snapshot['rows']; currency: string | null; timeZone: string | null }) {
   const [metric, setMetric] = useState<string>('sessions');
-  const scale = propertyDecimalScale(rows.map(row => googleDecimalPlain(row.metrics[metric])));
+  const calendar=googleOrganicCalendar(overview.current.from,overview.current.to,overview.interval==='weekly'),byKey=new Map(rows.map(row=>[row.dimensions.date??row.dimensions.yearWeek,row]));
+  const values=calendar.map(bucket=>googleDecimalPlain(byKey.get(bucket.key)?.metrics[metric])),scale=propertyDecimalScale(values);
+  const peak=values.reduce<string>((largest,value)=>{const absolute=value?.replace(/^-/,'')??'0';return comparePropertyDecimals(absolute,largest)>0?absolute:largest;},'0');
   return <section className="stack" aria-label="Organic range comparison">
-    <h4>Organic Search · complete range comparison</h4>
+    <h4>Organic Search · imported period comparison</h4>
+    <div className="stack" aria-label="Measurement quality by period">{(['current','previous','trend'] as const).map(stage=><div key={stage} className={overview[stage].quality.warnings.length?'banner':'hint'}><strong>{stage==='current'?'Current period':stage==='previous'?'Previous period':'Trend'}:</strong> {overview[stage].quality.warnings.length?<ul>{overview[stage].quality.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>:'No quality warning reported by Google.'}</div>)}<p className="hint">A completed import does not guarantee complete measurement. Sampling, privacy thresholds and restricted metrics can affect comparisons.</p></div>
     <p className="hint">Current and previous values are separate dimensionless Google reports. Users, rates and revenue are not summed from trend rows. A missing or restricted aggregate is unavailable, never zero. Percent changes use the absolute previous value and are truncated to two decimals; a zero previous value has no percentage change.</p>
     <div className="table-wrap" style={{ overflowX:'auto', maxWidth:'100%' }}><table style={{ minWidth:'36rem' }}><thead><tr><th scope="col">Metric</th><th scope="col">Current: {overview.current.from} to {overview.current.to}</th><th scope="col">Previous: {overview.previous.from} to {overview.previous.to}</th><th scope="col">Change</th><th scope="col">Change %</th></tr></thead><tbody>{organicOverviewMetrics.map(name => { const current = overview.current.values?.[name], previous = overview.previous.values?.[name], change = googleOrganicChange(current, previous); return <tr key={name}><th scope="row">{googleGa4ColumnLabel(name)}</th><td><bdi dir="ltr">{googleGa4MetricValue(name,current,currency)}</bdi></td><td><bdi dir="ltr">{googleGa4MetricValue(name,previous,currency)}</bdi></td><td><bdi dir="ltr">{googleOrganicChangeValue(change.absolute,name === 'purchaseRevenue' ? currency : undefined)}</bdi></td><td><bdi dir="ltr">{change.percent === null ? 'Unavailable' : change.percent + '%'}</bdi></td></tr>; })}</tbody></table></div>
     <label>Trend metric<select aria-label="Trend metric" style={{ minHeight:44 }} value={metric} onChange={e=>setMetric(e.target.value)}>{organicOverviewMetrics.map(name=><option key={name} value={name}>{googleGa4ColumnLabel(name)}</option>)}</select></label>
     <p className="hint">{overview.interval === 'weekly' ? 'Google calendar weeks start Sunday; January 1 is in week 01. Boundary weeks may cover only the selected days. These are not ISO week-years.' : 'Daily values use the property calendar.'} Time zone: {timeZone ?? 'Unavailable'}. The exact retained trend is in the table below; absent dates and restricted values are not filled with zero.</p>
-    {scale.some(value=>value!==null) ? <svg viewBox="0 0 720 180" role="img" aria-label={`${googleGa4ColumnLabel(metric)} organic ${overview.interval} trend`} style={{ width:'100%', maxWidth:'100%', minWidth:0 }}><title>{googleGa4ColumnLabel(metric)} — separate observed {overview.interval} values, exact values in the following table</title><line x1="10" y1="90" x2="710" y2="90" stroke="currentColor" opacity="0.3"/>{scale.map((value,index)=>value===null?null:<rect key={index} x={10+index*700/Math.max(1,scale.length)} y={value>=0?90-value*80:90} width={Math.max(.5,700/Math.max(1,scale.length)-1)} height={Math.max(value===0?1:0,Math.abs(value)*80)} fill="currentColor"><title>{rows[index].dimensions.date ?? rows[index].dimensions.yearWeek}: {googleGa4MetricValue(metric,rows[index].metrics[metric],currency)}</title></rect>)}</svg> : <p className="dim">This trend metric is unavailable. No zero-valued chart is inferred.</p>}
+    {scale.some(value=>value!==null) ? <><p className="hint" style={{overflowWrap:'anywhere'}}>Baseline: 0. Height is relative to the largest absolute observation: <bdi dir="ltr">{googleOrganicChangeValue(peak,metric==='purchaseRevenue'?currency:undefined)}</bdi>. {values.filter(value=>value===null).length} calendar intervals have no observed value for this metric; gaps are not zero.</p><svg viewBox="0 0 720 180" role="img" aria-label={`${googleGa4ColumnLabel(metric)} organic ${overview.interval} trend`} style={{ width:'100%', maxWidth:'100%', minWidth:0 }}><title>{googleGa4ColumnLabel(metric)} — calendar intervals with missing values left as gaps; exact values in the following table</title><line x1="10" y1="90" x2="710" y2="90" stroke="currentColor" opacity="0.3"/>{scale.map((value,index)=>value===null?null:<rect key={calendar[index].key} x={10+index*700/scale.length} y={value>=0?90-value*80:90} width={Math.max(.5,700/scale.length-1)} height={Math.max(value===0?1:0,Math.abs(value)*80)} fill="currentColor"><title>{calendar[index].from} to {calendar[index].to}: {googleGa4MetricValue(metric,byKey.get(calendar[index].key)?.metrics[metric],currency)}</title></rect>)}</svg><div className="row between hint" role="group" aria-label="Trend calendar range"><time dateTime={overview.current.from}>From {overview.current.from}</time><time dateTime={overview.current.to}>To {overview.current.to}</time></div></> : <p className="dim">This trend metric is unavailable. No zero-valued chart is inferred.</p>}
     <details><summary>Quality and request provenance for all three stages</summary><p className="hint">Counts below describe successfully committed observations. Failed or retried requests can consume additional quota; this receipt is not a durable attempt counter.</p>{(['current','previous','trend'] as const).map(stage=><section key={stage}><h5>{stage}</h5><p>Committed observation: {overview[stage].reportRequests} report response · {overview[stage].compatibilityRequests} compatibility checks · {overview[stage].from} to {overview[stage].to}</p>{overview[stage].quality.warnings.map((warning,index)=><p className="hint" key={index}>{warning}</p>)}<pre style={{ whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>{JSON.stringify(overview[stage].quality.metadata,null,2)}</pre></section>)}</details>
   </section>;
 }
@@ -387,6 +390,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
   const [report, setReport] = useState<ReportKind>(conn.provider === 'gsc' ? 'gsc_daily' : conn.provider === 'ads' ? 'ads_daily' : 'ga4_traffic');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const maxImportDay=organicReport(report)?googleLastCompletedDay(conn.timeZone):new Date().toISOString().slice(0,10);
   const [snapshotChoice, setSnapshotChoice] = useState(() => (conn.imports.find(retained) ?? conn.imports[0])?.id ?? '');
   const resultHeading = useRef<HTMLHeadingElement>(null);
   const focusResult = useRef(false);
@@ -515,6 +519,8 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
 
   const queueImport = () => {
     if (from === '' || to === '') { setErr('Choose a start and an end date.'); return; }
+    if(from>to||Date.parse(to)-Date.parse(from)>=366*86400000){setErr('Choose a start on or before the end, covering no more than 366 days.');return;}
+    if(organicReport(report)){const lastDay=googleLastCompletedDay(conn.timeZone);if(!lastDay){setErr('The property time zone is unavailable. Reconnect this source before importing.');return;}if(to>lastDay){setErr(`Choose completed days in ${conn.timeZone}; the latest end date is ${lastDay}.`);return;}}
     void run(async (serial, c) => {
       let accepted = false;
       try {
@@ -706,11 +712,11 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
           <div className="row">
             <div className="field">
               <label htmlFor={`from-${conn.id}`}>Start date</label>
-              <input id={`from-${conn.id}`} type="date" disabled={busy} max={new Date().toISOString().slice(0, 10)} value={from} onChange={e => { setFrom(e.target.value); attempt.current = null; }} />
+              <input id={`from-${conn.id}`} type="date" disabled={busy} max={maxImportDay??undefined} value={from} onChange={e => { setFrom(e.target.value); attempt.current = null; }} />
             </div>
             <div className="field">
               <label htmlFor={`to-${conn.id}`}>End date</label>
-              <input id={`to-${conn.id}`} type="date" disabled={busy} min={from || undefined} max={new Date().toISOString().slice(0, 10)} value={to} onChange={e => { setTo(e.target.value); attempt.current = null; }} />
+              <input id={`to-${conn.id}`} type="date" disabled={busy} min={from || undefined} max={maxImportDay??undefined} value={to} onChange={e => { setTo(e.target.value); attempt.current = null; }} />
             </div>
           </div>
           <p className="hint">Dates are inclusive, up to 366 days, and cannot be in the future. Each import is a separate snapshot.{conn.provider === 'ads' ? ' Ads dates use the account time zone. One provider page is imported, up to 10,000 rows and 2 MiB; continuation means partial. For a size refusal or partial snapshot, choose a smaller range.' : ''}</p>
