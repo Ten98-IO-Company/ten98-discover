@@ -6,8 +6,8 @@ import { getDatabase } from './db.ts';
 import { getBoss } from './jobs.ts';
 import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection, googleAdsConfigured, googleAdsHeaders, googleAdsCustomer } from './google.ts';
 import { GoogleRequestError, googleRequest } from './google-http.ts';
-import { googleImportInput, googleInput, googleReportRequest, googleReports, googleAdsVersion, ga4InventoryReports, ga4OrganicReports, isOrganicOverview, organicPreviousRange, validateOrganicDates, googleCompatibilityRequest, normalizeGoogleCompatibility, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
-import { readOrganicOverview } from '../lib/google-report-display.ts';
+import { googleImportInput, googleInput, googleReportRequest, googleReports, googleAdsVersion, isDetailedGa4Report, ga4OrganicReports, isOrganicOverview, organicPreviousRange, validateOrganicDates, googleCompatibilityRequest, normalizeGoogleCompatibility, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
+import { isGa4CommerceReport, readOrganicOverview } from '../lib/google-report-display.ts';
 
 export const googleQueue = 'google-report-import';
 type ImportRow = { id: string; connection_id: string; project_id: string; user_id: string; request_id: string; connection_revision: number; app_revision: number; report: GoogleReport; date_from: string; date_to: string; status: string; pages: number; row_count: number; provider_row_count: number | null; source: Record<string, unknown>; quality: { warnings: string[]; metadata: Record<string, unknown> }; diagnostic: string | null; created_at: Date; completed_at: Date | null; data_expired_at: Date | null };
@@ -69,14 +69,15 @@ export async function readGoogleImport(projectId: string, userId: string, import
     if (overview && offset !== 0) throw new FoundationError(400, 'Organic overviews are returned as one complete snapshot.');
     const page = readable ? await client.query<{ row: ReportRow }>(`SELECT item.value AS row FROM google_import_page p CROSS JOIN LATERAL jsonb_array_elements(p.rows) WITH ORDINALITY AS item(value,n)
       WHERE import_id=$1 ORDER BY p.page,item.n LIMIT $3 OFFSET $2`, [row.id, offset, limit + 1]) : { rows: [] };
-    // Overview aggregates are observations too: an unfinished/expired report exposes none of its stages.
-    const quality = overview && !readable ? { warnings: [], metadata: {} } : row.quality;
+    // Overview aggregates and range-report metadata are observations too.
+    const quality = (overview || isGa4CommerceReport(row.report)) && !readable ? { warnings: [], metadata: {} } : row.quality;
     if (overview && readable) {
       const observations = readOrganicOverview(quality.metadata.organic, row.date_from, row.date_to, row.report === 'ga4_organic_weekly');
       if (row.status !== 'completed' || row.pages !== 3 || page.rows.length !== row.row_count || !observations || observations.trend.rowCount !== row.row_count) throw new FoundationError(503, 'The complete organic overview is unavailable. Import a fresh snapshot.');
     }
     const result = { import: googleImportDto(row), source: row.source, dimensions: definition.dimensions, metrics: definition.metrics, rows: page.rows.slice(0, limit).map(item => item.row), quality, nextOffset: page.rows.length > limit ? offset + limit : null };
     if (ga4OrganicReports.includes(row.report) && Buffer.byteLength(JSON.stringify(result), 'utf8') > 2097152) throw new FoundationError(503, 'The complete organic report is too large. Choose a smaller date range.');
+    if (isGa4CommerceReport(row.report) && Buffer.byteLength(JSON.stringify(result), 'utf8') > 2097152) throw new FoundationError(503, 'The complete GA4 report is too large. Choose a smaller date range.');
     return result;
   });
 }
@@ -87,7 +88,8 @@ export async function runGoogleImport(importId: string): Promise<void> {
   if (!initial || !['queued', 'running'].includes(initial.status)) return;
   try {
     for (;;) {
-      await refreshGoogleConnection(initial.project_id, initial.user_id, initial.connection_id);
+      // Reject obsolete work before opening or refreshing a replacement grant.
+      await refreshGoogleConnection(initial.project_id, initial.user_id, initial.connection_id, undefined, { revision: initial.connection_revision, appRevision: initial.app_revision, propertyId: typeof initial.source.propertyId === 'string' ? initial.source.propertyId : '' });
       // ponytail: a GSC/legacy GA4 page holds the workspace lock for one bounded 15s
       // request; detailed GA4 first-page attempts and Ads use two independently
       // bounded reads (compatibility/customer verification, then report). Organic
@@ -142,7 +144,7 @@ export async function runGoogleImport(importId: string): Promise<void> {
           await client.query(`UPDATE google_import SET status=$2,pages=$3,row_count=$4,provider_row_count=$4,quality=$5,diagnostic=NULL,completed_at=CASE WHEN $2='completed' THEN clock_timestamp() ELSE NULL END WHERE id=$1`, [row.id, stage === 'trend' ? 'completed' : 'running', row.pages + 1, stage === 'trend' ? page.rows.length : 0, quality]);
           return stage === 'trend';
         }
-        if (connection.provider === 'ga4' && (ga4InventoryReports.includes(row.report) || ga4OrganicReports.includes(row.report)) && row.pages === 0) {
+        if (connection.provider === 'ga4' && isDetailedGa4Report(row.report) && row.pages === 0) {
           const compatibility = await googleRequest(`https://analyticsdata.googleapis.com/v1beta/${connection.property_id}:checkCompatibility`, accessToken, googleCompatibilityRequest(row.report, row.date_from, row.date_to));
           normalizeGoogleCompatibility(row.report, compatibility);
         }

@@ -40,18 +40,33 @@ export function googleAdsCost(micros: unknown, currency: unknown): string {
   return typeof currency === 'string' && currencies.has(currency) ? `${currency} ${amount}` : `${amount} (currency unavailable)`;
 }
 
+// Fixed range reports share their exact field contract with the native importer.
+// Google field meanings: https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema
+export const ga4CommerceReports = {
+  ga4_ecommerce_items: { provider: 'ga4', label: 'Ecommerce items', description: 'All traffic, grouped by item name and ID over the selected range. Item counts are quantities, not events. Item revenue includes refunds and excludes tax and shipping. Ecommerce events and item parameters must be collected in GA4.', dimensions: ['itemName', 'itemId'], metrics: ['itemsViewed', 'itemsAddedToCart', 'itemsPurchased', 'itemRevenue'] },
+  ga4_ecommerce_landing: { provider: 'ga4', label: 'Ecommerce landing pages', description: 'All traffic, grouped by hostname and landing path over the selected range. Sessions, transactions and purchase revenue are reported by GA4. Purchase revenue includes refunds; it is distinct from item revenue.', dimensions: ['hostName', 'landingPage'], metrics: ['sessions', 'transactions', 'purchaseRevenue'] },
+  ga4_site_search: { provider: 'ga4', label: 'Site search terms', description: 'Site search events only: view_search_results with a reported search term other than (not set). Requires search_term collection, such as enabled GA4 enhanced measurement. Search events are not search-result clicks. The (not set) term is excluded; missing rows are not zero.', dimensions: ['searchTerm'], metrics: ['eventCount', 'activeUsers', 'sessions', 'engagedSessions', 'engagementRate'] },
+  ga4_audience_device: { provider: 'ga4', label: 'Audience by device', description: 'All traffic, grouped by device category over the selected range. These are aggregate report rows, not a user list or saved GA4 audience membership. Users can appear in multiple rows; do not sum active users or average the rates.', dimensions: ['deviceCategory'], metrics: ['activeUsers', 'sessions', 'engagementRate', 'keyEvents'] },
+  ga4_audience_country: { provider: 'ga4', label: 'Audience by country', description: 'All traffic, grouped by GA4-reported country over the selected range. These are aggregate report rows, not a user list or saved GA4 audience membership. Users can appear in multiple rows; do not sum active users or average the rates.', dimensions: ['country'], metrics: ['activeUsers', 'sessions', 'engagementRate', 'keyEvents'] },
+  ga4_audience_returning: { provider: 'ga4', label: 'New and returning visitors', description: 'All traffic, grouped by whether a previous session was recorded: new or returning. A person can appear in both groups during the range; do not add active users to obtain a unique total. This is not a cohort or retention report.', dimensions: ['newVsReturning'], metrics: ['activeUsers', 'sessions', 'engagementRate', 'keyEvents'] },
+} as const;
+export type Ga4CommerceReport = keyof typeof ga4CommerceReports;
+export const isGa4CommerceReport = (report: string): report is Ga4CommerceReport => Object.hasOwn(ga4CommerceReports, report);
+
 const ga4Labels: Record<string, string> = {
   date: 'Date', unifiedPagePathScreen: 'Page path and screen class', sessionSource: 'Session source', sessionMedium: 'Session medium',
   sessionCampaignName: 'Session campaign', sessionDefaultChannelGroup: 'Session default channel group', eventName: 'Event name', isKeyEvent: 'Is key event',
   screenPageViews: 'Views', activeUsers: 'Active users', totalUsers: 'Total users', userEngagementDuration: 'Engagement time (seconds)',
   sessions: 'Sessions', engagedSessions: 'Engaged sessions', eventCount: 'Event count', keyEvents: 'Key events', totalRevenue: 'Total revenue',
   hostName: 'Hostname', landingPage: 'Landing page', yearWeek: 'Google calendar week', engagementRate: 'Engagement rate (fraction)', sessionKeyEventRate: 'Session key-event rate (fraction)', transactions: 'Transactions', purchaseRevenue: 'Purchase revenue',
+  itemName: 'Item name', itemId: 'Item ID', itemsViewed: 'Item units viewed', itemsAddedToCart: 'Item units added to cart', itemsPurchased: 'Item units purchased', itemRevenue: 'Item revenue',
+  searchTerm: 'Search term', deviceCategory: 'Device category', country: 'Country', newVsReturning: 'New or returning',
 };
 export const googleGa4ColumnLabel = (field: string) => Object.hasOwn(ga4Labels, field) ? ga4Labels[field] : field;
 /** GA4 decimals stay exactly as reported, including fractional key-event credit. */
 export function googleGa4MetricValue(field: string, value: unknown, currency: unknown): string {
   if (typeof value !== 'string' || value.length > 100 || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$(?![\s\S])/.test(value)) return 'Unavailable';
-  return field !== 'totalRevenue' && field !== 'purchaseRevenue' ? value : typeof currency === 'string' && currencies.has(currency) ? `${currency} ${value}` : `${value} (currency unavailable)`;
+  return !['totalRevenue', 'purchaseRevenue', 'itemRevenue'].includes(field) ? value : typeof currency === 'string' && currencies.has(currency) ? `${currency} ${value}` : `${value} (currency unavailable)`;
 }
 
 export const organicOverviewMetrics = ['sessions','activeUsers','engagedSessions','engagementRate','keyEvents','transactions','purchaseRevenue'] as const;
@@ -62,6 +77,14 @@ export function googleDecimalPlain(value: unknown): string | null {
   const negative = mantissa.startsWith('-'), unsigned = negative ? mantissa.slice(1) : mantissa, [whole, fraction = ''] = unsigned.split('.'), digits = whole + fraction, point = whole.length + shift;
   const plain = point <= 0 ? '0.' + '0'.repeat(-point) + digits : point >= digits.length ? digits + '0'.repeat(point - digits.length) : digits.slice(0, point) + '.' + digits.slice(point);
   return (negative ? '-' : '') + plain.replace(/^0+(?=\d)/, '');
+}
+/** Compare exact expanded decimals; Number can round above-one rates or underflow negatives. */
+export function googleGa4MetricInRange(field: string, value: unknown): boolean {
+  if (value === null) return true;
+  const plain = googleDecimalPlain(value); if (plain === null) return false;
+  if (field === 'purchaseRevenue' || field === 'itemRevenue') return true;
+  if (plain.startsWith('-') && /[1-9]/.test(plain)) return false;
+  return !['engagementRate','sessionKeyEventRate'].includes(field) || /^(?:-?0(?:\.\d+)?|1(?:\.0+)?)$/.test(plain);
 }
 export function googleOrganicChange(current: unknown, previous: unknown) {
   const a = googleDecimalPlain(current), b = googleDecimalPlain(previous); if (a === null || b === null) return { absolute: null, percent: null };
@@ -91,7 +114,7 @@ export function readOrganicOverview(value: unknown, from: string, to: string, we
   const count = (v: unknown) => Number.isSafeInteger(v) && Number(v) >= 0;
   for (const stage of ['current','previous','trend'] as const) {
     const part = value[stage]; if (!record(part) || !keys(part, ['from','to','values','rowCount','quality','reportRequests','compatibilityRequests']) || part.from !== (stage === 'previous' ? previousFrom : from) || part.to !== (stage === 'previous' ? previousTo : to) || part.reportRequests !== 1 || part.compatibilityRequests !== (stage === 'previous' ? 0 : 1) || !Number.isInteger(part.rowCount) || part.rowCount < 0 || part.rowCount > (stage === 'trend' ? weekly ? 54 : days : 1)) return null;
-    if (stage === 'trend' ? part.values !== null : part.rowCount === 0 ? part.values !== null : !record(part.values) || !keys(part.values, organicOverviewMetrics) || !Object.entries(part.values).every(([key,v]) => v === null || googleDecimalPlain(v) !== null && (key === 'purchaseRevenue' || Number(v) >= 0 && (key !== 'engagementRate' || Number(v) <= 1)))) return null;
+    if (stage === 'trend' ? part.values !== null : part.rowCount === 0 ? part.values !== null : !record(part.values) || !keys(part.values, organicOverviewMetrics) || !Object.entries(part.values).every(([key,v]) => googleGa4MetricInRange(key,v))) return null;
     if (!record(part.quality) || !keys(part.quality, ['warnings','metadata']) || !Array.isArray(part.quality.warnings) || part.quality.warnings.length > 30 || !part.quality.warnings.every((v: unknown) => typeof v === 'string' && v.length <= 2048) || !record(part.quality.metadata)) return null;
     if (Object.keys(part.quality.metadata).some(key => !['timeZone','currencyCode','emptyReason','dataLossFromOtherRow','subjectToThresholding','samplingMetadatas','schemaRestrictionResponse','dataTruncationReasons','quota'].includes(key))) return null;
     const m = part.quality.metadata;
