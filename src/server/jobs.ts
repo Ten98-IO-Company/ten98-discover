@@ -5,6 +5,7 @@ import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
 import { registerResourceCleanup } from './resource-cleanup.ts';
 import { runRetentionBatch } from './retention.ts';
+import {runTrackedAssetRetention} from './tracked-assets.ts';
 import { googleQueue, reconcileGoogleImports, startGoogleImportWorker } from './google-jobs.ts';
 import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs} from './keyword-research.ts';
 import {domainResearchQueue,executeDomainResearch,reconcileDomainResearchJobs} from './domain-research.ts';
@@ -204,7 +205,7 @@ export function startWorker(): Promise<void> {
         if (!heartbeatTask) heartbeatTask = heartbeat()
           .catch(() => console.error('Worker heartbeat failed; check database availability.'))
           .finally(() => { heartbeatTask = undefined; });
-        if (!retentionTask) retentionTask = runRetentionBatch()
+        if (!retentionTask) retentionTask = runRetentionBatch().then(()=>runTrackedAssetRetention())
           .catch(() => console.error('Retention cleanup failed; inspect retention status and database availability.'))
           .finally(() => { retentionTask = undefined; });
         if (!metaDeletionTask) metaDeletionTask = runMetaDeletionBatch().then(() => expireMetaFlows()).then(() => expireMetaImportPages()).then(() => expireMetaInventoryPages()).then(() => reconcileMetaImports()).then(() => reconcileMetaInventories())

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { analyticsDay, applyGeographyFilter, geographyNavigationNames, auditCoverages, auditIssueCodes, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView, explorerNavigation } from '../src/lib/navigation.ts'
+import { analyticsDay, applyGeographyFilter, geographyNavigationNames, auditCoverages, auditIssueCodes, views, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView, explorerNavigation } from '../src/lib/navigation.ts'
 import {geographyFields,serializeGeographyKey} from '../src/lib/analytics-geography.ts'
 import {environmentCatalog,environmentFields} from '../src/lib/analytics-environment.ts'
 import {defaultParseSearch,defaultStringifySearch} from '@tanstack/react-router'
@@ -441,4 +441,39 @@ test('Context fallback preserves invalid scoped links instead of reading another
  const analytics=parseNavigation({workspace,project,view:'project',analyticsFrom:'2026-10-01',analyticsTo:'2026-10-02'});assert.equal(resolveNavigation(analytics,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','project').analyticsInvalid,'1');
  const session=parseNavigation({workspace,project,view:'sessions',visitorKey:'a'.repeat(64)});assert.equal(resolveNavigation(session,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','sessions').sessionInvalid,'1');
  assert.deepEqual(resolveNavigation({view:'project'},workspace,project,'project'),{workspace,project,view:'project'});
+});
+
+test('workspace Links and Tracking images preserve their scoped intent without a website',async()=>{
+ const {resolveNavigation}=await import('../src/lib/navigation.ts');
+ const report=new URLSearchParams({from:'2026-10-01',to:'2026-10-07',timeZone:'Asia/Dubai',dimension:'country',limit:'10',country:serializeGeographyKey('country',{state:'known',country:'AE'})!}).toString();
+ for(const view of ['links','pixels'] as const){
+  const base={workspace,view},assetQuery=new URLSearchParams({asset:project,report,tab:'shares'}).toString(),target={...base,assetQuery},wire=defaultStringifySearch(target);
+  assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.deepEqual(parseNavigation(parseNavigation(target)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView(view),false);
+  assert.deepEqual(resolveNavigation(target,workspace,undefined,view),target);assert.equal(resolveNavigation(target,'cccccccc-cccc-4ccc-8ccc-cccccccccccc',undefined,view).assetInvalid,'1');
+  assert.notEqual(navigationKey(target),navigationKey(base));assert.notEqual(navigationKey(target),navigationKey({...target,view:view==='links'?'pixels':'links'}));
+  for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView(view,role,false),true);assert.equal(allowedView(view,undefined,false),false);
+  for(const assetQuery of ['',null,1,true,{},['new=1'],'x'.repeat(26001),'asset=%','asset=%GG','asset=%FF','asset=%ED%A0%80','asset=x\0','asset=x\ud800'])assert.equal(parseNavigation({...base,assetQuery}).assetInvalid,'1');
+  for(const patch of [{workspace:undefined},{project},{token:'private-share-token'},{from:'2026-01-01'},{assetInvalid:'1'}]){const invalid=parseNavigation({...target,...patch});assert.equal(invalid.assetInvalid,'1');assert.equal(invalid.project,undefined);assert.equal(invalid.assetQuery,undefined);assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(invalid))),invalid);}
+  assert.equal(canonicalNavigation(wire+'&assetQuery=new%3D1',target),false);assert.equal(canonicalNavigation(wire+'&project='+project,target),false);
+  for(const assetQuery of ['report=literal%25','report=literal%EF%BF%BD'])assert.equal(parseNavigation({...base,assetQuery}).assetQuery,assetQuery);
+  assert.deepEqual(parseNavigation({...target,view:'project',project}),{workspace,project,view:'project'});
+ }
+ assert.equal(projectView('tracked-share'),false);assert.deepEqual(parseNavigation({view:'tracked-share',project,token:'private'}),{view:'tracked-share'});
+});
+test('public shared-link intent stays rejected through initial router canonicalization instead of booting the private default',()=>{
+ const invalid={view:'tracked-share',trackedShareInvalid:'1'} as const;
+ for(const wire of ['?view=tracked-share&view=links','?view=links&view=tracked-share','?view='+encodeURIComponent('["tracked-share","links"]'),'?view='+encodeURIComponent('["links","tracked-share"]'),'?view='+encodeURIComponent('["tracked-share"]')+'&view=links','?view=tracked-share-invalid']){
+  let raw=defaultParseSearch(wire);
+  for(let pass=0;pass<2;pass++){
+   const validated=parseNavigation(raw);assert.deepEqual(validated,invalid);
+   // Installed Transitioner applies validateSearch over the original search before rendering RouteEntry.
+   const canonical=defaultStringifySearch({...raw,...validated}),params=new URLSearchParams(canonical);
+   assert.deepEqual(params.getAll('view'),['tracked-share']);assert.equal(params.get('trackedShareInvalid'),JSON.stringify('1'));assert.notEqual(params.size,1,'The existing closed public-share query must still reject this link');
+   raw=defaultParseSearch(canonical);assert.deepEqual(parseNavigation(raw),invalid);
+  }
+ }
+ const valid={view:'tracked-share'} as const;assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(valid))),valid);assert.equal(new URLSearchParams(defaultStringifySearch(valid)).size,1);
+ assert.deepEqual(parseNavigation({...invalid,trackedShareInvalid:['1']}),invalid);
+ for(const view of views.filter(view=>view!=='tracked-share')){const value=parseNavigation({workspace,project,view,trackedShareInvalid:'1'});assert.deepEqual(value,parseNavigation({workspace,project,view,unrelatedUnknown:'1'}),'An unrelated private view keeps its existing unknown-query policy');assert.equal(value.trackedShareInvalid,undefined);}
+ assert.deepEqual(parseNavigation({view:['project','links']}),{view:'project'});
 });

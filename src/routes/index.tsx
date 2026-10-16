@@ -6,6 +6,7 @@ import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsP
 import { RealtimePanel } from '../components/RealtimePanel'
 import { WebPerformancePanel } from '../components/WebPerformancePanel'
 import { SessionReplayPanel } from '../components/SessionReplayPanel'
+import {TrackedAssetsPanel,SharedTrackedAssetPanel} from '../components/TrackedAssetsPanel'
 import { SessionExplorerPanel } from '../components/SessionExplorerPanel'
 import { JourneysPanel } from '../components/JourneysPanel'
 import { RevenuePanel } from '../components/RevenuePanel'
@@ -61,7 +62,14 @@ import { ConversionsPanel } from '../components/ConversionsPanel'
 import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, performanceNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, resolveNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
-export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: App })
+export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: RouteEntry })
+
+function RouteEntry(){
+  const location=useLocation(),raw=new URLSearchParams(location.searchStr)
+  // Router normalizes duplicate/JSON view values; public-share intent must never boot private APIs.
+  const shared=raw.getAll('view').some(value=>value.includes('tracked-share'))
+  return shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>
+}
 
 type Status = { configured: boolean; appUrl: string }
 type Workspace = { id: string; name: string; role: string }
@@ -162,7 +170,7 @@ function App() {
   }
 
   function target(view: AppView, project = activeProject.current): NavigationSearch {
-    return { ...(activeWorkspace.current ? { workspace: activeWorkspace.current } : {}), ...(project && view !== 'new-project' ? { project } : {}), view }
+    return { ...(activeWorkspace.current ? { workspace: activeWorkspace.current } : {}), ...(project && !['new-project','links','pixels','tracked-share'].includes(view) ? { project } : {}), view }
   }
 
   function applyCallback(m: Me) {
@@ -570,7 +578,7 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
-  const pageTitles: Record<AppView, string> = {replays:'Session replay',performance:'Web performance',revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageTitles: Record<AppView, string> = {links:'Links',pixels:'Tracking images','tracked-share':'Shared report',replays:'Session replay',performance:'Web performance',revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', meta: 'Meta ads', 'meta-app': 'Meta app setup', 'meta-reports': 'Meta reports', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
     if(next==='project'&&view==='explore'&&search.workspace===workspaceId&&search.project===project?.id)return {...target(next),...explorerAnalyticsNavigation(search,analyticsApplied!==null&&analyticsApplied.userId===me?.user.id&&analyticsApplied.projectId===project?.id&&analyticsApplied.explorerEntry===routeLocation.state.__TSR_key?analyticsApplied:undefined)};
@@ -627,6 +635,7 @@ function App() {
             <Link className={view === 'workspace' ? 'proj active' : 'proj'} aria-current={view === 'workspace' ? 'page' : undefined} to='/' search={target('workspace')}>Create workspace</Link>
           </nav>
         </details>
+        {workspace&&<nav aria-label='Workspace measurement'><Link className={view==='links'?'proj active':'proj'} aria-current={view==='links'?'page':undefined} to='/' search={target('links')}>Links</Link><Link className={view==='pixels'?'proj active':'proj'} aria-current={view==='pixels'?'page':undefined} to='/' search={target('pixels')}>Tracking images</Link></nav>}
         </div>
         <nav aria-label='Projects'>
           <p className='side-label'>Projects</p>
@@ -732,6 +741,7 @@ function App() {
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {(view==='links'||view==='pixels')&&workspace&&me&&<TrackedAssetsPanel workspaceId={workspaceId} userId={me.user.id} role={workspace.role} kind={view==='links'?'link':'pixel'} appUrl={appUrl} query={search.assetInvalid?'unsupported=1':search.assetQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.view===view&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={(query,kind)=>go({workspace:workspaceId,view:kind==='pixel'?'pixels':kind==='link'?'links':view,...query?{assetQuery:query}:{}})} onUnauthorized={unauthorized}/>}
         {view === 'collection' && project && me && <AnalyticsSettingsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'campaigns' && project && me && <UtmPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} search={search} onAppliedRange={rememberAnalyticsRange} onNavigate={value=>go({...target('explore'),...value})} onUnauthorized={unauthorized} />}
