@@ -166,7 +166,7 @@ try {
   console.log('PASS navigation: malformed, foreign and forbidden targets canonicalize before protected panels mount.')
 
   const families = ['Measure', 'Research', 'Connect']
-  const commonSections = ['Analytics', 'Realtime', 'Compare', 'Explore', 'Sessions', 'Attribution', 'Journeys', 'Retention', 'Revenue', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'Keywords', 'Rank tracking', 'Google connections', 'Meta ads', 'Meta reports', 'Install tracker', 'Collection and privacy']
+  const commonSections = ['Analytics', 'Realtime', 'Compare', 'UTM campaigns', 'Explore', 'Sessions', 'Attribution', 'Journeys', 'Retention', 'Revenue', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'AI search', 'Keywords', 'Domain SEO', 'Rank tracking', 'Meta ads', 'Meta reports', 'Install tracker', 'Collection and privacy']
   for (const [workspace, projectId, isOwner] of [[a.id, a1, true], [b.id, b1, false]] as const) {
     await page.goto(href(workspace, projectId, 'events')); await heading('Recent events'); await menu()
     const sections = page.getByRole('navigation', { name: 'Project sections', exact: true })
@@ -175,7 +175,7 @@ try {
     assert.deepEqual(await sections.getByRole('link', { includeHidden: true }).allTextContents(), expected)
     assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Recent events'])
     assert.deepEqual(await page.getByRole('navigation', { name: 'Workspace settings', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), isOwner ? ['Manage team', 'ten98 API access', 'AI and search providers', 'Data retention', 'Create workspace'] : ['Data retention', 'Create workspace'])
-    assert.deepEqual(await page.getByRole('navigation', { name: 'Account', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), ['Account security', 'Identity sign-in'])
+    assert.deepEqual(await page.getByRole('navigation', { name: 'Account', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), ['Profile and appearance', 'Account security', 'Identity sign-in'])
     assert.equal(await page.getByRole('navigation', { name: 'Instance settings', includeHidden: true }).count(), 0)
     assert.equal(await page.getByRole('link', { name: '+ New project', exact: true, includeHidden: true }).count(), isOwner ? 1 : 0)
     assert.equal(await sections.locator(':scope > details').count(), 0, 'Project sections are flat and always exposed.')

@@ -1,7 +1,8 @@
 import {analyticsFieldLimit} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type AdvancedRow,type AdvancedDraft,type AdvancedIssue,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {useBlocker} from '@tanstack/react-router';
+import {useBlocker,useLocation} from '@tanstack/react-router';
+import {explorerNavigation,sessionNavigation,canonicalNavigation,navigationKey,parseNavigation,type NavigationSearch,type ExplorerNavigation} from '../lib/navigation';
 import {api,ApiError,errMsg} from '../lib/api';
 import {useAnnotations} from './AnnotationsPanel';
 import type {AdvancedPredicates} from '../server/advanced-predicate-input';
@@ -16,7 +17,7 @@ import {propertyWeekdays,propertyDecimal,comparePropertyDecimals,propertyDecimal
 type Coverage='complete'|'partial'|'unavailable';
 
 
-interface ExploreResult{
+export interface ExploreResult{
   propertyReport?:PropertyReport;
   range:{from:string;to:string;timeZone:string;start:string;end:string};
   query:{from:string;to:string;timeZone:string;kind:string;groupBy?:string;groupProperty?:string|null;fields?:string[];filters:Record<string,string>;property:{key:string;type:string;value:unknown}|null;cohort?:CohortRef;predicates?:AdvancedPredicates};
@@ -51,7 +52,34 @@ function combinationParams(draft:Draft,cohort:CohortRef|null,fields:string[]|nul
   const p=new URLSearchParams(result.qs);p.delete('groupBy');p.delete('groupProperty');p.set('fields',JSON.stringify(fields));
   return p.toString().length>20000?{error:'These filters are too large. Shorten values or remove conditions.'}:{qs:p.toString()};
 }
-function validReportBase(result:ExploreResult,params:URLSearchParams):boolean{
+/** Restore one complete applied report; property pagination is deliberately snapshot-local. */
+export function readExplorerScope(query?:string){
+  let draft=initialDraft(),fields:string[]|null=null,cohort:CohortRef|null=null,propertyDetails=false;
+  if(query!==undefined){
+    if(!clean(query,20000)||!query)return null;
+    try{decodeURIComponent(query);}catch{return null;}
+    const p=new URLSearchParams(query),allowed=new Set(['from','to','timeZone','kind','groupBy','groupProperty','fields','propertyView','cohortId','cohortRevision','propertyKey','propertyType','propertyValue','predicates',...FILTERS.map(([key])=>key)]);
+    for(const key of p.keys())if(!allowed.has(key)||p.getAll(key).length!==1)return null;
+    if(['from','to','timeZone'].some(key=>!p.has(key)))return null;
+    const dates=sessionNavigation(Object.fromEntries(['from','to','timeZone','cohortId','cohortRevision'].filter(key=>p.has(key)).map(key=>[key,p.get(key)])));
+    if(dates.sessionInvalid||!dates.from)return null;
+    const today=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:dates.timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(part=>[part.type,part.value]));
+    if(dates.to!>`${today.year}-${today.month}-${today.day}`)return null;
+    if(dates.cohortId)cohort={id:dates.cohortId,revision:Number(dates.cohortRevision)};
+    if(p.has('fields')){fields=tupleFields(p.get('fields'));if(!fields||p.has('groupBy')||p.has('groupProperty'))return null;}
+    const groupBy=fields?'event':p.get('groupBy');if(!GROUPS.some(([key])=>key===groupBy)||p.has('groupProperty')!==(groupBy==='property'))return null;
+    const groupProperty=p.get('groupProperty')??'';if(groupBy==='property'&&(!clean(groupProperty,320)||!groupProperty))return null;
+    if(p.has('propertyView')){if(p.get('propertyView')!=='details'||groupBy!=='property'||fields)return null;propertyDetails=true;}
+    for(const key of ['from','to','timeZone','groupBy','groupProperty','fields','propertyView','cohortId','cohortRevision'])p.delete(key);
+    const filters=savedPredicates(p.toString());if(!filters)return null;
+    if(filters.filters.origin.on&&'error'in buildAdvanced({...emptyAdvanced(),fields:[{id:'origin',field:'origin',operator:'eq',type:'',value:filters.filters.origin.value}]}))return null;
+    if(filters.prop.on&&'error'in buildAdvanced({...emptyAdvanced(),properties:[{id:'property',field:filters.prop.key,operator:filters.prop.type==='missing'?'missing':'eq',type:filters.prop.type,value:filters.prop.value}]}))return null;
+    draft={...draft,...filters,from:dates.from,to:dates.to!,timeZone:dates.timeZone!,groupBy:groupBy!,groupProperty};
+  }
+  const built=combinationParams(draft,cohort,fields,propertyDetails);
+  return 'error'in built?null:{draft,fields,cohort,propertyDetails,qs:built.qs};
+}
+export function validReportBase(result:ExploreResult,params:URLSearchParams):boolean{
   if(!record(result)||!record(result.query)||!record(result.totals)||!record(result.breakdown)||!record(result.coverage)||!['complete','partial','unavailable'].includes(result.coverage.status)||!Array.isArray(result.breakdown.groups)||!clean(result.csv,2097152))return false;
   for(const key of ['from','to','kind']as const)if(result.query[key]!==params.get(key))return false;
   try{if(new Intl.DateTimeFormat('en-US',{timeZone:result.query.timeZone}).resolvedOptions().timeZone!==new Intl.DateTimeFormat('en-US',{timeZone:params.get('timeZone')!}).resolvedOptions().timeZone)return false;}catch{return false;}
@@ -76,7 +104,7 @@ function validReportBase(result:ExploreResult,params:URLSearchParams):boolean{
     else{if(!count(day.events)||!count(day.pageViews)||!count(day.customEvents)||day.pageViews+day.customEvents!==day.events||day.skipped&&day.events!==0||result.query.kind==='pageviews'&&day.customEvents!==0||result.query.kind==='custom'&&day.pageViews!==0)return false;dailyEvents+=day.events;dailyViews+=day.pageViews;dailyCustom+=day.customEvents;}
   }
   if(Object.keys(result.totals).sort().join(',')!=='customEvents,events,identifiedEvents,pageViews,unidentifiedEvents,visitors,visits'||!Object.values(result.totals).every(value=>value===null||count(value)))return false;
-  if(result.totals.events===null)return (result.coverage.status==='unavailable'||selectionUnavailable)&&Object.values(result.totals).every(value=>value===null)&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===null&&result.breakdown.returnedGroupEvents===null&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;
+  if(result.totals.events===null){const empty=(params.has('fields')||params.has('propertyView')||selectionUnavailable)?null:0;return (result.coverage.status==='unavailable'||selectionUnavailable)&&Object.values(result.totals).every(value=>value===null)&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===empty&&result.breakdown.returnedGroupEvents===empty&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;}
   if(selectionUnavailable||dailyEvents!==result.totals.events||dailyViews!==result.totals.pageViews||dailyCustom!==result.totals.customEvents)return false;
   if(result.coverage.status==='unavailable'||!count(result.totals.identifiedEvents)||result.totals.identifiedEvents>result.totals.events||!count(result.totals.unidentifiedEvents)||result.totals.identifiedEvents+result.totals.unidentifiedEvents!==result.totals.events||!count(result.totals.pageViews)||!count(result.totals.customEvents)||result.totals.pageViews+result.totals.customEvents!==result.totals.events||(result.totals.identifiedEvents===0?result.totals.visitors!==null:!count(result.totals.visitors)||result.totals.visitors<1||result.totals.visitors>result.totals.identifiedEvents)||result.totals.visits!==null&&(!count(result.totals.visits)||result.totals.visits<1||result.totals.visits>result.totals.events)||!count(result.breakdown.totalGroups)||result.breakdown.totalGroups>result.totals.events||result.breakdown.groups.length!==Math.min(params.has('fields')?500:100,result.breakdown.totalGroups)||result.breakdown.truncated!==(result.breakdown.totalGroups>(params.has('fields')?500:100)))return false;
   return true;
@@ -109,7 +137,7 @@ export function validTupleResult(result:ExploreResult,params:URLSearchParams):bo
   }
   return result.breakdown.returnedGroupEvents===events&&events<=result.totals.events&&identified<=result.totals.identifiedEvents&&views<=result.totals.pageViews&&identifiedViews<=result.totals.identifiedEvents&&(result.breakdown.truncated||events===result.totals.events&&identified===result.totals.identifiedEvents&&views===result.totals.pageViews);
 }
-async function readCombination(path:string,signal:AbortSignal):Promise<ExploreResult>{
+export async function readCombination(path:string,signal:AbortSignal):Promise<ExploreResult>{
   const response=await fetch(path,{credentials:'same-origin',redirect:'error',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)])});
   const failure=(message:string)=>{const error=new ApiError(message);error.status=response.status;return error;};
   if([401,403,404].includes(response.status)){void response.body?.cancel();throw failure(response.status===401?'Your session has expired. Sign in again.':'This project is unavailable.');}
@@ -123,7 +151,7 @@ async function readCombination(path:string,signal:AbortSignal):Promise<ExploreRe
   return value as ExploreResult;
 }
 function redactedReport(result:ExploreResult){return Object.values(result.totals).every(n=>n===null)&&result.daily.every(day=>day.events===null&&day.pageViews===null&&day.customEvents===null)&&result.numeric===null&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===null&&result.breakdown.returnedGroupEvents===null&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;}
-function validCohortResult(result:ExploreResult,params:URLSearchParams,projectId:string){
+export function validCohortResult(result:ExploreResult,params:URLSearchParams,projectId:string){
   if(params.has('propertyView')&&!validPropertyReport(result,params))return false;
   const fields=params.has('fields')?tupleFields(params.get('fields')):null;
   if(params.has('fields')&&!validTupleResult(result,params))return false;
@@ -181,14 +209,14 @@ function validPropertyReport(result:ExploreResult,params:URLSearchParams){
   const last=p.events.at(-1);if(next&&(!last||next.last.at!==last.receivedAt||next.last.id!==last.id)||cursor&&p.events.some(e=>e.receivedAt>cursor.last.at||e.receivedAt===cursor.last.at&&e.id>=cursor.last.id))return false;
   return p.events.every((e,index)=>stamp(e.receivedAt)&&e.receivedAt<p.snapshot&&Date.parse(e.receivedAt)>=Date.parse(result.range.start)&&Date.parse(e.receivedAt)<Date.parse(result.range.end)&&(index===0||p.events[index-1].receivedAt>e.receivedAt||p.events[index-1].receivedAt===e.receivedAt&&p.events[index-1].id>e.id)&&uuid(e.id)&&clean(e.eventName,320)&&clean(e.path,2048)&&typeof e.receivedAt==='string'&&Number.isFinite(Date.parse(e.receivedAt))&&record(e.properties)&&Object.entries(e.properties).every(([key,value])=>key.length<=320&&record(value)&&atom(value.type,value.value)));
 }
-function PropertyShares({items,total,label}:{items:{key:string;label:string;count:number}[];total:number|null;label:string}){
+export function PropertyShares({items,total,label,noun}:{items:{key:string;label:string;count:number}[];total:number|null;label:string;noun?:string}){
   const pattern=useId().replaceAll(':',''),returned=items.reduce((sum,item)=>sum+item.count,0),first=items.slice(0,8),rest=returned-first.reduce((sum,item)=>sum+item.count,0);
   const slices=[...first,...(rest>0?[{key:'returned',label:'Other returned values',count:rest}]:[]),...(total!==null&&total>returned?[{key:'omitted',label:'Values omitted from the exact table',count:total-returned}]:[])];
   const color=(key:string)=>{if(key==='returned'||key==='omitted')return `url(#${pattern}-${key})`;let hash=0;for(const char of key)hash=(Math.imul(hash,31)+char.codePointAt(0)!)>>>0;return `var(--color-chart-${hash%4+1})`;};
   let offset=0;
-  return <div className="stack">{total!==null&&total>0?<svg viewBox="0 0 180 180" style={{width:'100%',maxWidth:240,height:180,alignSelf:'center'}} role="img" aria-label={`${label}: share of ${total} observed ${label==='Array occurrence shares'?'occurrences':'samples'}`}>
+  return <div className="stack">{total!==null&&total>0?<svg viewBox="0 0 180 180" style={{width:'100%',maxWidth:240,height:180,alignSelf:'center'}} role="img" aria-label={`${label}: share of ${total} observed ${noun??(label==='Array occurrence shares'?'occurrences':'samples')}`}>
     <defs><pattern id={`${pattern}-returned`} width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--color-chart-5)"/><path d="M0 0L6 6" stroke="var(--color-surface)" strokeWidth="2"/></pattern><pattern id={`${pattern}-omitted`} width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--color-text-muted)"/><circle cx="3" cy="3" r="1.5" fill="var(--color-surface)"/></pattern></defs>
-    <title>{label}; counts and exact denominator in the adjacent table</title>{slices.map(slice=>{const share=slice.count/total*100,start=offset;offset+=share;return <circle key={slice.key} cx="90" cy="90" r="65" pathLength="100" fill="none" stroke={color(slice.key)} strokeWidth="28" strokeDasharray={`${share} ${100-share}`} strokeDashoffset={-start} transform="rotate(-90 90 90)"><title>{slice.label}: {slice.count} of {total} ({share.toFixed(1)}%)</title></circle>;})}</svg>:<p className="hint">{total===null?'Share distribution unavailable.':'No observed samples for this distribution.'}</p>}
+    <title>{label}; counts and exact denominator in the adjacent table</title>{slices.map(slice=>{const share=slice.count/total*100,start=offset;offset+=share;return <circle key={slice.key} cx="90" cy="90" r="65" pathLength="100" fill="none" stroke={color(slice.key)} strokeWidth="28" strokeDasharray={`${share} ${100-share}`} strokeDashoffset={-start} transform="rotate(-90 90 90)"><title>{slice.label}: {slice.count} of {total} ({share.toFixed(1)}%)</title></circle>;})}</svg>:<p className="hint">{total===null?'Share distribution unavailable.':`No observed ${noun??'samples'} for this distribution.`}</p>}
     <div className="table-wrap" tabIndex={0} role="region" aria-label={label}><table><thead><tr><th>Value</th><th>Count</th><th>Share of observed total</th></tr></thead><tbody>{slices.map(slice=><tr key={slice.key}><td><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{marginInlineEnd:6}}><rect x="1" y="1" width="10" height="10" fill={color(slice.key)} stroke="var(--color-text)"/></svg><bdi>{slice.label}</bdi></td><td>{slice.count}</td><td>{total===null?'Unavailable':total===0?'No samples':`${(slice.count/total*100).toFixed(1)}%`}</td></tr>)}</tbody><tfoot><tr><th>Observed total</th><td>{num(total)}</td><td>{total===null?'Unavailable':total===0?'No samples':'100%'}</td></tr></tfoot></table></div>
   </div>;
 }
@@ -199,8 +227,8 @@ function PropertyDetails({report,days,timeZone,totalEvents,onNext,onFirst,tab,se
   const coordinates=propertyDecimalScale(report.numbers.flatMap(n=>[n.sum,n.average])),dates=report.dateSummary,dateMax=Math.max(1,...dates.histogram.map(bucket=>bucket.count));
   const weekdayMax=dates.weekdays?Math.max(...dates.weekdays):0,topWeekday=weekdayMax>0?dates.weekdays!.indexOf(weekdayMax):null;
   return <section className="card stack" aria-label="Property analysis"><h3>Property analysis: <bdi>{report.key}</bdi></h3>
-    <p className="hint">{report.countsAreLowerBounds?'Observed counts are lower bounds because some selection or history is unavailable.':'Counts use the applied event population.'} Missing, null and different types stay separate. Array charts count occurrences, including repeated elements.</p><p className="hint">The first page excludes later arrivals. Each page rechecks current retention, cohort and session-property selection, so eligible events and counts can change between pages.</p>
-    <div className="row" role="group" aria-label="Property analysis views">{[['values','Values over time'],['numbers','Numeric series'],['dates','Date values'],['arrays','Array occurrences'],['events','Event properties']].map(([key,label])=><button className="btn" type="button" key={key} aria-pressed={tab===key} onClick={()=>setTab(key)}>{label}</button>)}</div>
+    <p className="hint">{report.countsAreLowerBounds?'Observed counts are lower bounds because some selection or history is unavailable.':'Counts use the applied event population.'}</p><details><summary>How property data is counted</summary><p className="hint">Missing, null and different types stay separate. Array charts count occurrences, including repeated elements.</p><p className="hint">The first page excludes later arrivals. Each page rechecks current retention, cohort and session-property selection, so eligible events and counts can change between pages.</p></details>
+    <div className="row explorer-property-views" role="group" aria-label="Property analysis views">{[['values','Values over time'],['numbers','Numeric series'],['dates','Date values'],['arrays','Array occurrences'],['events','Event properties']].map(([key,label])=><button className="btn" type="button" key={key} aria-pressed={tab===key} onClick={()=>setTab(key)}>{label}</button>)}</div>
     {(tab==='values'||tab==='arrays')&&<><p className="hint">Chart shows the first {shown.length} returned series. The table includes every returned series. {tab==='arrays'?`${num(report.arrays.samples)} array samples · ${num(report.arrays.occurrences)} element occurrences. `:''}{tab==='arrays'&&report.arrays.truncated?'Array values truncated at100; narrow filters for the rest.':''}</p>
       <svg className="analytics-chart" style={{display:'block',width:'100%',height:180,minWidth:0}} preserveAspectRatio="none" viewBox={`0 0 ${Math.max(1,days.length)*12} 180`} role="img" aria-label="Typed property occurrences by local event day; exact counts and coverage in the table below">{days.map((day,i)=>{let offset=0;return <g key={day.date}>{shown.map((s,j)=>{const value=s.counts[i];if(value===null)return null;const height=value/max*160,y=170-offset-height;offset+=height;return <rect key={j} x={i*12+1} y={y} width={10} height={height} fill="currentColor" opacity={(j+1)/9}><title>{day.date}: {s.type} {JSON.stringify(s.value)} — {value} ({day.coverage})</title></rect>;})}</g>;})}</svg>
       <PropertyShares items={series.map(s=>({key:JSON.stringify([s.type,s.value]),label:`${s.type}: ${s.type==='missing'?'Missing / uncollected':JSON.stringify(s.value)}`,count:s.total}))} total={tab==='arrays'?report.arrays.occurrences:totalEvents} label={tab==='arrays'?'Array occurrence shares':'Typed property value shares'}/>
@@ -217,7 +245,7 @@ function PropertyDetails({report,days,timeZone,totalEvents,onNext,onFirst,tab,se
       <div className="table-wrap" tabIndex={0} role="region" aria-label="Property weekday distribution"><table><thead><tr><th>Weekday</th><th>Occurrences</th><th>Share</th></tr></thead><tbody>{propertyWeekdays.map((day,i)=><tr key={day}><td>{day}</td><td>{num(dates.weekdays?.[i]??null)}</td><td>{dates.samples===null?'Unavailable':dates.samples===0?'No samples':`${(dates.weekdays![i]/dates.samples*100).toFixed(1)}%`}</td></tr>)}</tbody></table></div>
       <PropertyShares items={dates.weekdays===null?[]:propertyWeekdays.map((label,i)=>({key:label,label,count:dates.weekdays![i]}))} total={dates.samples} label="Property weekday shares"/>
       <div className="table-wrap" tabIndex={0} role="region" aria-label="Date property distribution"><table><thead><tr><th>Property date (UTC)</th><th>Occurrences</th></tr></thead><tbody>{report.dates.values.map(d=><tr key={d.value}><td><time dateTime={d.value}>{d.value}</time></td><td>{d.count}</td></tr>)}</tbody></table></div></>}
-    {tab==='events'&&<><p className="hint">Up to50 matching events, including events without visitor identifiers. Missing properties differ from explicit null. {allKeys.length>100?'First100 property columns shown; CSV preserves every returned event property.':''}</p><div className="table-wrap" tabIndex={0} role="region" aria-label="Event property pivot"><table><thead><tr><th>Received at (UTC)</th><th>Event</th><th>Path</th>{pivotKeys.map(key=><th key={key}><bdi>{key}</bdi></th>)}</tr></thead><tbody>{report.events.map(e=><tr key={e.id}><td>{e.receivedAt}</td><td><bdi>{e.eventName}</bdi></td><td><bdi>{e.path}</bdi></td>{pivotKeys.map(key=>{const value=e.properties[key];return <td key={key}><bdi>{value?`${value.type} ${JSON.stringify(value.value)}`:'Missing / uncollected'}</bdi></td>;})}</tr>)}</tbody></table></div><div className="row"><button className="btn" type="button" onClick={onFirst}>First events</button><button className="btn" type="button" disabled={!report.nextCursor} onClick={onNext}>Next50 events</button></div></>}
+    {tab==='events'&&<><p className="hint">Up to50 matching events, including events without visitor identifiers. Missing properties differ from explicit null. {allKeys.length>100?'First100 property columns shown; CSV preserves every returned event property.':''}</p><div className="table-wrap explorer-property-pivot" tabIndex={0} role="region" aria-label="Event property pivot"><table><thead><tr><th>Received at (UTC)</th><th>Event</th><th>Path</th>{pivotKeys.map(key=><th key={key}><bdi>{key}</bdi></th>)}</tr></thead><tbody>{report.events.map(e=><tr key={e.id}><td>{e.receivedAt}</td><td><bdi>{e.eventName}</bdi></td><td><bdi>{e.path}</bdi></td>{pivotKeys.map(key=>{const value=e.properties[key];return <td key={key}><bdi>{value?`${value.type} ${JSON.stringify(value.value)}`:'Missing / uncollected'}</bdi></td>;})}</tr>)}</tbody></table></div><div className="row"><button className="btn" type="button" onClick={onFirst}>First events</button><button className="btn" type="button" disabled={!report.nextCursor} onClick={onNext}>Next50 events</button></div></>}
   </section>;
 }
 
@@ -232,22 +260,29 @@ function groupValue(type:string,value:unknown,field?:string):string{
 }
 const groupType=(type:string)=>type?type.charAt(0).toUpperCase()+type.slice(1):'Unknown';
 
-type Props={projectId:string;userId:string;onUnauthorized:()=>void};
+type Props={projectId:string;userId:string;onUnauthorized:()=>void;search?:NavigationSearch;onNavigate?:(value:ExplorerNavigation)=>void};
 export function ExplorerPanel(props:Props){
   return <ExplorerInner key={`${props.userId}:${props.projectId}`} {...props}/>;
 }
-function ExplorerInner({projectId,userId,onUnauthorized}:Props){
-  const uid=useId();
+function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate}:Props){
+  const uid=useId(),filterDialog=useRef<HTMLDialogElement>(null),filterButton=useRef<HTMLButtonElement>(null);
+  const location=useLocation(),controlled=!!search&&!!onNavigate,nav:ExplorerNavigation=controlled?explorerNavigation(search!):{},navText=JSON.stringify(nav),entry=location.state.__TSR_key;
+  const restored=nav.exploreInvalid?null:readExplorerScope(nav.exploreQuery),invalidLink=controlled&&!restored;
+  const routeReady=!controlled||location.pathname==='/'&&!location.hash&&search!.view==='explore'&&search!.project===projectId&&navigationKey(parseNavigation(location.search))===navigationKey(search!)&&canonicalNavigation(location.searchStr,search!);
+  const routeScope=controlled?`${entry}:${location.href}:${navText}`:'local',currentRoute=useRef('');currentRoute.current=routeReady?routeScope:'';
   const unauthRef=useRef(onUnauthorized);
   unauthRef.current=onUnauthorized;
 
-  const [draft,setDraft]=useState<Draft>(initialDraft);
-  const [combined,setCombined]=useState(false),[fields,setFields]=useState<string[]>(['campaignSource','campaignMedium']);
-  const [propertyDetails,setPropertyDetails]=useState(false);
+  const [draft,setDraft]=useState<Draft>(()=>restored?.draft??initialDraft());
+  const [combined,setCombined]=useState(!!restored?.fields),[fields,setFields]=useState<string[]>(()=>restored?.fields??['campaignSource','campaignMedium']);
+  const [propertyDetails,setPropertyDetails]=useState(restored?.propertyDetails??false);
   const [propertyTab,setPropertyTab]=useState('values');
-  const [applied,setApplied]=useState<string>(()=>{const r=buildParams(initialDraft());return 'qs'in r?r.qs:'';});
+  const [applied,setApplied]=useState<string>(()=>restored?.qs??''),[appliedNavigation,setAppliedNavigation]=useState(navText);
+  const appliedRoot=new URLSearchParams(applied);appliedRoot.delete('propertyCursor');
+  const scopeReady=routeReady&&!invalidLink&&(!controlled||appliedNavigation===navText&&(nav.exploreQuery===undefined||restored?.qs===appliedRoot.toString()));
   const [attempt,setAttempt]=useState(0);
-  const [result,setResult]=useState<ExploreResult|null>(null);
+  const [snapshot,setResult]=useState<ExploreResult|null>(null),acceptedRoute=useRef('');
+  const result=scopeReady&&(!controlled||acceptedRoute.current===routeScope)?snapshot:null;
   const [phase,setPhase]=useState<'loading'|'ok'|'error'|'unavailable'|'denied'>('loading');
   const [message,setMessage]=useState('');
   const [formError,setFormError]=useState('');
@@ -259,22 +294,22 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   const savedOp=useRef<AbortController|null>(null),savedRoleRef=useRef<Role|null>(null),pendingRef=useRef<SaveAttempt|null>(null),deletedIds=useRef(new Set<string>());
   const cohortBase=`/api/projects/${encodeURIComponent(projectId)}/cohorts`;
   const [cohortItems,setCohortItems]=useState<SavedFilter[]>([]),[cohortCursor,setCohortCursor]=useState<string|null>(null),[cohortSelected,setCohortSelected]=useState<SavedFilter|null>(null),[cohortSelectedId,setCohortSelectedId]=useState('');
-  const [cohortDraft,setCohortDraft]=useState<(CohortRef&{definition?:Definition})|null>(null),[cohortEditor,setCohortEditor]=useState<CohortEditor|null>(null),[cohortRole,setCohortRole]=useState<Role|null>(null);
+  const [cohortDraft,setCohortDraft]=useState<(CohortRef&{definition?:Definition})|null>(()=>restored?.cohort??null),[cohortEditor,setCohortEditor]=useState<CohortEditor|null>(null),[cohortRole,setCohortRole]=useState<Role|null>(null);
   const [cohortBusy,setCohortBusy]=useState(false),[cohortError,setCohortError]=useState(''),[cohortNotice,setCohortNotice]=useState(''),[cohortPending,setCohortPending]=useState<SaveAttempt|null>(null);
   const cohortOp=useRef<AbortController|null>(null),cohortRoleRef=useRef<Role|null>(null),cohortPendingRef=useRef<SaveAttempt|null>(null),cohortDeleted=useRef(new Set<string>()),cohortInvalid=useRef(new Set<string>()),cohortManager=useRef<HTMLDetailsElement>(null);
   function clearCohortData(){cohortOp.current?.abort();cohortOp.current=null;setCohortBusy(false);setCohortItems([]);setCohortCursor(null);setCohortSelected(null);setCohortSelectedId('');setCohortEditor(null);setCohortRole(null);cohortRoleRef.current=null;setCohortNotice('');setCohortDraft(old=>old?{id:old.id,revision:old.revision}:null);}
   function purgeAccess(status:number,notice?:string,keepAttempt:SaveAttempt|null=pendingRef.current){
-    accessEpoch.current++;accessDenied.current=true;analyticsRead.current?.abort();savedOp.current?.abort();savedOp.current=null;
+    filterDialog.current?.close();accessEpoch.current++;accessDenied.current=true;analyticsRead.current?.abort();savedOp.current?.abort();savedOp.current=null;
     clearCohortData();
     setResult(null);setDraft(initialDraft());setCombined(false);setFields(['campaignSource','campaignMedium']);setFormError('');setSavedItems([]);setSavedCursor(null);setSavedLoaded(false);setSelected(null);setSelectedId('');setSavedName('');setSavedRole(null);savedRoleRef.current=null;setSavedBusy(false);setSavedError('');setSavedNotice('');pendingRef.current=keepAttempt;setPending(keepAttempt);
-    const initial=buildParams(initialDraft());if('qs'in initial)setApplied(old=>{const previous=new URLSearchParams(old),next=new URLSearchParams(initial.qs);for(const key of ['cohortId','cohortRevision'])if(previous.has(key))next.set(key,previous.get(key)!);return next.toString();});
+    const initial=buildParams(initialDraft());if(!controlled&&'qs'in initial)setApplied(old=>{const previous=new URLSearchParams(old),next=new URLSearchParams(initial.qs);for(const key of ['cohortId','cohortRevision'])if(previous.has(key))next.set(key,previous.get(key)!);return next.toString();});
     setPhase(status===401?'denied':'unavailable');setMessage(notice??(status===401?'Your session has ended. Sign in again to continue.':'This project is unavailable. It may have been removed or you may not have access.'));
     if(status===401)unauthRef.current();
   }
   function acceptCohortRole(value:unknown){if(!roleValue(value)){purgeAccess(403,'Cohort access could not be verified. Reload cohort access before continuing.',pendingRef.current);throw new Error('Cohort access could not be verified.');}cohortRoleRef.current=value;setCohortRole(value);return value;}
   async function readCohorts(id?:string,mode:'inspect'|'load'|'edit'='inspect',cursor?:string,recover=false){
     if(accessDenied.current&&!recover||cohortPendingRef.current&&(cohortOp.current||mode!=='inspect'))return;
-    cohortOp.current?.abort();const op=new AbortController(),generation=accessEpoch.current;cohortOp.current=op;setCohortBusy(true);setCohortError('');cohortRoleRef.current=null;
+    cohortOp.current?.abort();const op=new AbortController(),generation=accessEpoch.current,owner=currentRoute.current;cohortOp.current=op;setCohortBusy(true);setCohortError('');cohortRoleRef.current=null;
     try{
       const data=await api<unknown>(id?`${cohortBase}/${encodeURIComponent(id)}`:cohortBase+(cursor?'?'+new URLSearchParams({cursor}):''),{signal:AbortSignal.any([op.signal,AbortSignal.timeout(20000)])});
       if(!alive.current||op.signal.aborted||generation!==accessEpoch.current)return;
@@ -282,7 +317,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
       if(id){
         if(!validCohort(data.item,projectId)||data.item.id!==id||cohortDeleted.current.has(id))throw new Error('This cohort could not be verified. Refresh cohorts.');
         const item=data.item;setCohortSelected(item);setCohortSelectedId(id);setCohortItems(old=>[...new Map([...old,item].map(v=>[v.id,v])).values()]);
-        if(mode==='load'){setCohortDraft({id:item.id,revision:item.revision,definition:item.definition});cohortInvalid.current.delete(`${item.id}:${item.revision}`);setCohortNotice('Cohort loaded into your draft. Apply filters to update results and CSV.');}
+        if(mode==='load'&&owner===currentRoute.current){setCohortDraft({id:item.id,revision:item.revision,definition:item.definition});cohortInvalid.current.delete(`${item.id}:${item.revision}`);setCohortNotice('Cohort loaded into your draft. Apply filters to update results and CSV.');}
         if(mode==='edit'&&canSave(role)){setCohortEditor({item,name:item.definition.name,draft:qualificationDraft(item.definition.query)!});if(cohortManager.current)cohortManager.current.open=true;}
       }else{
         if(!Array.isArray(data.items)||data.items.length>50||!data.items.every(v=>validCohort(v,projectId))||new Set(data.items.map(v=>v.id)).size!==data.items.length||data.nextCursor!==null&&(!clean(data.nextCursor,4096)||!data.nextCursor))throw new Error('Cohorts could not be verified. Refresh cohorts.');
@@ -341,7 +376,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   function acceptRole(value:unknown){if(!roleValue(value)){purgeAccess(403,'Project access could not be verified. Reload access before confirming any pending save.',pendingRef.current);throw new Error('Project access could not be verified.');}savedRoleRef.current=value;setSavedRole(value);return value;}
   async function readSaved(id?:string,loadDraft=false,cursor?:string,recover=false){
     if(accessDenied.current&&!recover||pendingRef.current&&loadDraft)return;
-    savedOp.current?.abort();const op=new AbortController(),generation=accessEpoch.current;savedOp.current=op;setSavedBusy(true);setSavedError('');savedRoleRef.current=null;
+    savedOp.current?.abort();const op=new AbortController(),generation=accessEpoch.current,owner=currentRoute.current;savedOp.current=op;setSavedBusy(true);setSavedError('');savedRoleRef.current=null;
     try{
       const data=await api<unknown>(id?`${base}/${encodeURIComponent(id)}`:base+(cursor?'?'+new URLSearchParams({cursor}):''),{signal:AbortSignal.any([op.signal,AbortSignal.timeout(20000)])});
       if(!alive.current||op.signal.aborted||generation!==accessEpoch.current||savedOp.current!==op)return;
@@ -349,7 +384,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
       if(id){
         if(!validSaved(data.item,projectId)||data.item.id!==id||deletedIds.current.has(id))throw new Error('This saved filter is no longer available. Refresh the saved list.');
         const item=data.item;setSelected(item);setSelectedId(id);setSavedName(item.definition.name);setSavedItems(old=>old.map(value=>value.id===id?item:value));
-        if(loadDraft){const predicates=savedPredicates(item.definition.query)!;setDraft(old=>({...old,...predicates}));setFormError('');setSavedNotice('Saved filters loaded into your draft. Apply filters to update results and CSV.');}
+        if(loadDraft&&owner===currentRoute.current){const predicates=savedPredicates(item.definition.query)!;setDraft(old=>({...old,...predicates}));setFormError('');setSavedNotice('Saved filters loaded into your draft. Apply filters to update results and CSV.');}
       }else{
         if(!Array.isArray(data.items)||data.items.length>50||!data.items.every(value=>validSaved(value,projectId))||new Set(data.items.map(value=>value.id)).size!==data.items.length||data.nextCursor!==null&&!clean(data.nextCursor,4096))throw new Error('Saved filters could not be verified. Refresh the saved list.');
         const items=(data.items as SavedFilter[]).filter(value=>!deletedIds.current.has(value.id));
@@ -415,15 +450,26 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   useEffect(()=>{alive.current=true;void readSaved();return()=>{alive.current=false;accessEpoch.current++;savedOp.current?.abort();pendingRef.current=null;};},[]);
 
   useEffect(()=>{
-    if(accessDenied.current)return;
+    if(!controlled)return;
+    analyticsRead.current?.abort();acceptedRoute.current='';setResult(null);propertyCursorStale.current=false;filterDialog.current?.close();setFormError('');setAppliedNavigation(navText);
+    // Library reads and saved-write receipts belong to this identity, not a report route.
+    const value=nav.exploreInvalid?null:readExplorerScope(nav.exploreQuery);
+    setDraft(value?.draft??initialDraft());setCombined(!!value?.fields);setFields(value?.fields??['campaignSource','campaignMedium']);setPropertyDetails(value?.propertyDetails??false);setPropertyTab('values');setCohortDraft(value?.cohort??null);setApplied(value?.qs??'');
+    if(!value){setPhase('error');setMessage('This Explore link contains unsupported or invalid filters. No report was loaded. Reset the report to choose a valid scope.');}
+    else if(accessDenied.current){setPhase('unavailable');setMessage('Project access must be rechecked. Refresh the applied report to try again.');}
+  },[controlled,navText,entry]);
+
+  useEffect(()=>{
+    if(accessDenied.current||!scopeReady||!applied)return;
     const ctrl=new AbortController();
-    const generation=accessEpoch.current;analyticsRead.current=ctrl;
+    const generation=accessEpoch.current,owner=routeScope;analyticsRead.current=ctrl;
+    const current=()=>!ctrl.signal.aborted&&generation===accessEpoch.current&&currentRoute.current===owner;
     setResult(null);setPhase('loading');setMessage('');
     const path=`/api/projects/${encodeURIComponent(projectId)}/explore?${applied}`;
-    (new URLSearchParams(applied).has('fields')||new URLSearchParams(applied).has('propertyView')?readCombination(path,ctrl.signal):api<ExploreResult>(path,{signal:ctrl.signal}))
-      .then(r=>{if(!ctrl.signal.aborted&&generation===accessEpoch.current){if(!validCohortResult(r,new URLSearchParams(applied),projectId))throw new Error('The applied report filters could not be verified. Reload before applying again.');setResult(r);setPhase('ok');}})
+    (controlled||new URLSearchParams(applied).has('fields')||new URLSearchParams(applied).has('propertyView')?readCombination(path,ctrl.signal):api<ExploreResult>(path,{signal:ctrl.signal}))
+      .then(r=>{if(current()){const params=new URLSearchParams(applied);if(controlled&&(!validReportBase(r,params)||!params.has('fields')&&(r.query.groupBy!==params.get('groupBy')||r.query.groupProperty!==(params.get('groupProperty')??null)))||!validCohortResult(r,params,projectId))throw new Error('The applied report filters could not be verified. Reload before applying again.');acceptedRoute.current=owner;setResult(r);setPhase('ok');}})
       .catch(e=>{
-        if(ctrl.signal.aborted||generation!==accessEpoch.current)return;
+        if(!current())return;
         setResult(null);
         const params=new URLSearchParams(applied),cohortId=params.get('cohortId');
         if(params.has('propertyCursor')&&e instanceof ApiError&&e.status===409&&e.message==='Retention settings changed. Reload property events.'){
@@ -447,17 +493,18 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
         }
       });
     return()=>ctrl.abort();
-  },[applied,attempt,projectId]);
+  },[applied,attempt,projectId,scopeReady,routeScope]);
 
-  const refresh=()=>{if(propertyCursorStale.current){propertyCursorStale.current=false;setApplied(old=>{const p=new URLSearchParams(old);p.delete('propertyCursor');return p.toString();});}if(accessDenied.current){accessDenied.current=false;void readSaved();void readCohorts();}setResult(null);setPhase('loading');setMessage('');setAttempt(a=>a+1);};
+  const refresh=()=>{if(!scopeReady)return;if(propertyCursorStale.current){propertyCursorStale.current=false;setApplied(old=>{const p=new URLSearchParams(old);p.delete('propertyCursor');return p.toString();});}if(accessDenied.current){accessDenied.current=false;void readSaved();void readCohorts();}setResult(null);setPhase('loading');setMessage('');setAttempt(a=>a+1);};
 
   const apply=(e:FormEvent)=>{
     e.preventDefault();
-    if(accessDenied.current)return;
+    if(accessDenied.current||!routeReady||invalidLink)return;
     if(cohortDraft&&(cohortDeleted.current.has(cohortDraft.id)||cohortInvalid.current.has(`${cohortDraft.id}:${cohortDraft.revision}`))){setFormError('Clear the unavailable cohort or load its current definition before applying.');return;}
     const r=combinationParams(draft,cohortDraft,combined?fields:null,propertyDetails);
     if('error'in r){setFormError(r.error);if(r.advanced)focusAdvanced(`${uid}-report-advanced`,r.advanced);return;}
-    setFormError('');setApplied(r.qs);refresh();
+    if(controlled){if(!readExplorerScope(r.qs)){setFormError('Check the report dates, time zone and filters before applying.');return;}if(nav.exploreQuery!==r.qs){setFormError('');onNavigate!({exploreQuery:r.qs});return;}}
+    setFormError('');setApplied(r.qs);refresh();filterDialog.current?.close();
   };
 
   const download=()=>{
@@ -482,14 +529,28 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
   const appliedDates=new URLSearchParams(applied);
   const cohortLocked=cohortBusy||!!cohortPending,qualification=cohortEditor?.draft,cohortMembershipUnavailable=result?.cohort?.membership.status==='unavailable',sessionUnavailable=result?.sessionProperties?.selection.status==='unavailable'||result?.cohort?.sessionProperties?.selection.status==='unavailable';
   function patchQualification(patch:Partial<Draft>){setCohortEditor(old=>old?{...old,draft:{...old.draft,...patch}}:old);}
-  const annotations=useAnnotations({projectId,userId,range:accessDenied.current?null:{from:appliedDates.get('from')!,to:appliedDates.get('to')!,timeZone:result?.range.timeZone??appliedDates.get('timeZone')!},onUnauthorized,onAccessLost:status=>purgeAccess(status)});
+  const annotations=useAnnotations({projectId,userId,readOwner:controlled?routeScope:undefined,readEnabled:scopeReady,range:accessDenied.current||invalidLink||!applied?null:{from:appliedDates.get('from')!,to:appliedDates.get('to')!,timeZone:result?.range.timeZone??appliedDates.get('timeZone')!},onUnauthorized,onAccessLost:status=>purgeAccess(status)});
 
   return(
     <section className="explorer stack" aria-labelledby={`${uid}-h`} style={{'--control-md':'var(--control-touch)'} as import('react').CSSProperties}>
       <h2 id={`${uid}-h`}>Explore</h2>
+      {controlled&&<p className="hint">Explore uses one applied date range. Analytics filters carry over in UTC; comparison periods and ranking displays stay in Compare. Applied filters are stored in this page's link; drafts are not.</p>}
+      {invalidLink&&<div className="alert" role="alert"><p>This Explore link contains unsupported or invalid filters. No report was loaded.</p><button className="btn" type="button" onClick={()=>onNavigate!({exploreQuery:readExplorerScope()!.qs})}>Reset report scope</button></div>}
 
-      <form className="card stack" onSubmit={apply}>
+      <div className="explorer-applied-bar">
+        <div><strong>{invalidLink?'No applied report':'Applied report'}</strong>{applied&&<p className="hint"><bdi>{appliedDates.get('from')} to {appliedDates.get('to')}</bdi> · <bdi>{appliedDates.get('timeZone')}</bdi><br/>{labelOf(KINDS,appliedDates.get('kind')??'all')} · {appliedDates.has('fields')?'Combined fields':labelOf(GROUPS,appliedDates.get('groupBy')??'event')}{appliedDates.get('groupProperty')&&<>: <bdi>{appliedDates.get('groupProperty')}</bdi></>}</p>}</div>
+        <div className="row"><button ref={filterButton} className="btn" type="button" onClick={()=>filterDialog.current?.showModal()}>Edit filters</button><button className="btn" type="button" disabled={phase==='loading'||!scopeReady} onClick={refresh}>Refresh</button>{phase==='ok'&&result&&<button className="btn" type="button" onClick={download}>Download CSV</button>}</div>
+      </div>
+      {phase==='ok'&&result&&<p className="hint dim">CSV downloads the current bounded table, daily data and scope — it is not a complete data export.</p>}
+      {unapplied&&!invalidLink&&<p className="hint" role="status">You have unapplied changes. Apply filters to update the results and CSV.</p>}
+      {(pending||cohortPending)&&<p className="alert" role="status">A saved action still needs confirmation. Open Edit filters to review and retry that same request.</p>}
+      {(savedError||cohortError)&&<p className="alert" role="status">Saved-filter or cohort access needs attention. Open Edit filters to review the message.</p>}
+      <dialog ref={filterDialog} className="analytics-environment-dialog explorer-filter-dialog" aria-labelledby={`${uid}-filters-title`} onClose={()=>filterButton.current?.focus()}>
+        <div className="row between analytics-environment-dialog-heading"><h2 id={`${uid}-filters-title`}>Explore filters</h2><button className="btn" type="button" autoFocus onClick={()=>filterDialog.current?.close()}>Close filters</button></div>
+        <p className="hint">Edits and loaded presets remain a draft. Apply filters to update the report and CSV.</p>
+      <form className="stack" onSubmit={apply}>
         <fieldset className="stack" disabled={phase==='denied'||phase==='unavailable'} style={{border:0,padding:0,margin:0,minWidth:0}}>
+        <details className="explorer-presets"><summary>Saved filters and cohorts</summary><div className="stack">
         <section className="stack" aria-label="Saved filters" style={{minWidth:0,overflowWrap:'anywhere'}}>
           <div className="row" style={{alignItems:'end'}}>
             <div style={{flex:'1 1 240px',minWidth:0}}><label htmlFor={`${uid}-saved`}>Saved filters</label><select id={`${uid}-saved`} style={{width:'100%',minWidth:0}} disabled={savedBusy||!!pending||!savedRole} value={selectedId} onChange={e=>{const id=e.target.value;setSelectedId(id);setSelected(null);setSavedName('');setSavedNotice('');if(id)void readSaved(id);}}><option value="">Choose a saved filter</option>{savedItems.map(item=><option key={item.id} value={item.id}>{item.definition.name}</option>)}</select></div>
@@ -524,6 +585,7 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
           {cohortDraft?.definition&&<p className="hint">Qualification dates: {new URLSearchParams(cohortDraft.definition.query).get('from')} to {new URLSearchParams(cohortDraft.definition.query).get('to')} ({new URLSearchParams(cohortDraft.definition.query).get('timeZone')})</p>}
           {cohortSelected&&<details><summary>Selected qualification</summary><p>{cohortSelected.definition.name} · Revision {cohortSelected.revision}</p><p><strong>Required filters — all</strong></p>{[...new URLSearchParams(cohortSelected.definition.query)].filter(([key])=>key!=='predicates').map(([key,value])=><p className="hint" key={key}>{labelOf([...FILTERS,['from','Qualification from'],['to','Qualification to'],['timeZone','Qualification time zone'],['kind','Qualifying event kind'],['propertyKey','Property key'],['propertyType','Property type'],['propertyValue','Property value']],key)}: {key==='kind'?labelOf(KINDS,value):fieldValueLabel(key,value)}</p>)}<AdvancedSummary draft={qualificationDraft(cohortSelected.definition.query)!.advanced} zone={qualificationDraft(cohortSelected.definition.query)!.timeZone}/></details>}
         </section>
+        </div></details>
         <div className="explorer-toolbar">
           <div>
           <label htmlFor={`${uid}-from`}>From</label>
@@ -565,14 +627,10 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
 
         <AdvancedControls id={`${uid}-report-advanced`} label="Advanced filters" draft={draft.advanced} zone={draft.timeZone} error={formError||savedError} onChange={advanced=>patch({advanced})}/>
         <div className="row">
-          <button className="btn primary" type="submit">Apply filters</button>
-          <button className="btn" type="button" disabled={phase==='loading'} onClick={refresh}>Refresh</button>
-          {phase==='ok'&&result&&<button className="btn" type="button" onClick={download}>Download CSV</button>}
+          <button className="btn primary" type="submit" disabled={invalidLink||!routeReady}>Apply filters</button>
         </div>
         {!combined&&draft.groupBy==='property'&&<label><input type="checkbox" checked={propertyDetails} onChange={e=>setPropertyDetails(e.target.checked)}/> Property analysis and event properties</label>}
-        {unapplied&&<p className="hint" role="status">You have unapplied changes. Apply filters to update the results and CSV.</p>}
         {formError&&<p className="alert" role="alert">{formError}</p>}
-        {phase==='ok'&&result&&<p className="hint dim">CSV downloads the current bounded table, daily data and scope — it is not a complete data export.</p>}
         </fieldset>
       </form>
 
@@ -604,39 +662,22 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
         </div></details>
       </section>
 
+      </dialog>
+
       <p role="status" aria-live="polite" className={phase==='loading'||phase==='ok'?'hint dim':'alert'}>
         {phase==='loading'?'Loading explore data…':message}
       </p>
       {(phase==='error'||phase==='unavailable')&&(accessDenied.current&&pending?<button className="btn" type="button" disabled={savedBusy} onClick={()=>void readSaved(undefined,false,undefined,true)}>Reload saved-filter access</button>:<button className="btn" type="button" onClick={refresh}>Retry</button>)}
 
-      {phase==='ok'&&result&&t&&(<><GeographyAttribution/>{result.geographyProvenance&&<p className="hint">Location source builds across matching report events: {num(result.geographyProvenance.databaseCount)}{result.geographyProvenance.oldestDatabaseBuild?` · oldest ${new Date(result.geographyProvenance.oldestDatabaseBuild*1000).toISOString().slice(0,10)}`:''}{result.geographyProvenance.newestDatabaseBuild?` · newest ${new Date(result.geographyProvenance.newestDatabaseBuild*1000).toISOString().slice(0,10)}`:''}. This uses retained report events, not the cohort qualification period or current database file.</p>}
-        <p className="hint dim">
-          {result.range.from} to {result.range.to} ({result.range.timeZone}) · {labelOf(KINDS,result.query.kind)} · grouped by {result.query.fields?result.query.fields.map(field=>labelOf(GROUPS,field)).join(' × '):labelOf(GROUPS,result.query.groupBy??'')}{result.query.groupProperty?`: ${result.query.groupProperty}`:''}
-        </p>
-        <details className="explorer-scope"><summary>Applied filters and boundaries</summary>
-          <p className="hint">UTC bounds: {result.range.start} (inclusive) to {result.range.end} (exclusive). Only instants within the selected local dates are included.</p>
-          <p><strong>Required filters — all</strong></p>
-          {Object.entries(result.query.filters).map(([key,value])=><p key={key}>{labelOf(FILTERS,key)} equals {fieldValueLabel(key,value)}</p>)}
-          {result.query.property&&<p>Property {JSON.stringify(result.query.property.key)}: {result.query.property.type}{result.query.property.type!=='missing'?` equals ${JSON.stringify(result.query.property.value)}`:''}</p>}
-          {!Object.keys(result.query.filters).length&&!result.query.property&&<p className="hint">No additional filters.</p>}
-          {result.query.predicates&&<AdvancedSummary draft={readAdvanced(result.query.predicates)!} zone={result.range.timeZone}/>}
-        </details>
-        {result.cohort&&<section className="card stack cohort-controls" aria-label="Applied cohort">
-          <h3>Applied cohort: {result.cohort.item.definition.name} · Revision {result.cohort.item.revision}</h3>
-          {[...new URLSearchParams(result.cohort.item.definition.query)].filter(([key])=>key==='path'||key==='eventName').map(([key,value])=><p className="hint" key={key}>Qualifying action: {labelOf(FILTERS,key)} equals {fieldValueLabel(key,value)}.</p>)}
-          {cohortDeleted.current.has(result.cohort.item.id)&&<p className="alert">This cohort was deleted. These results remain a snapshot; clear the draft reference or load another cohort before applying.</p>}
-          <div className="row"><p className="cohort-field">Report dates: {result.range.from} to {result.range.to} ({result.range.timeZone})<br/><span className="hint">Report coverage: {result.coverage.status}</span></p><p className="cohort-field">Qualification dates: {result.cohort.range.from} to {result.cohort.range.to} ({result.cohort.range.timeZone})<br/><span className="hint">Qualification coverage: {result.cohort.coverage.status}</span></p></div>
-          <p className={cohortMembershipUnavailable?'alert':result.cohort.membership.countsAreLowerBounds?'banner':'hint'} role="status">{cohortMembershipUnavailable?<><strong>Membership unavailable.</strong> {result.cohort.sessionProperties?.selection.status==='unavailable'?sessionReason(result.cohort.sessionProperties):result.cohort.coverage.status==='unavailable'?'The qualification period is no longer retained.':'Qualifying events have no visitor identifiers.'} Cohort report counts are unavailable.</>:result.cohort.membership.countsAreLowerBounds?<><strong>Observed lower bounds.</strong> Some qualifying history, session-property evidence or visitor identifiers are unavailable. Counts include only the membership we can observe.</>:result.cohort.coverage.status==='complete'&&result.cohort.identity.identifiedEvents===0&&result.cohort.identity.unidentifiedEvents===0?<><strong>No qualifying events.</strong> No events matched this qualification in the fully retained period.</>:<strong>Observed membership available.</strong>}</p>
-          <p className="hint">Membership uses observed visitor identifiers. They reset each UTC month and can change when identity settings or the signing secret change. Activity cannot be linked across those changes.</p>
-          <details><summary>Qualification details</summary><div className="stack"><p className="hint">Qualification retained from: {result.cohort.coverage.retainedFrom??'No retention boundary'}. Identifier coverage: {result.cohort.identity.status}.</p><p className="hint">Qualifying events with identifiers: {num(result.cohort.identity.identifiedEvents)} · without identifiers: {num(result.cohort.identity.unidentifiedEvents)} · observed member keys: {num(result.cohort.identity.observedMemberKeys)}.</p><p className="hint">Qualification UTC bounds: {result.cohort.range.start} (inclusive) to {result.cohort.range.end} (exclusive).</p>{[...new URLSearchParams(result.cohort.item.definition.query)].filter(([key])=>!['from','to','timeZone','predicates'].includes(key)).map(([key,value])=><p className="hint" key={key}>{key==='kind'?'Qualifying event kind':key==='propertyKey'?'Property key':key==='propertyType'?'Property type':key==='propertyValue'?'Property value':labelOf(FILTERS,key)}: {fieldValueLabel(key,value)}</p>)}<AdvancedSummary draft={qualificationDraft(result.cohort.item.definition.query)!.advanced} zone={result.cohort.range.timeZone}/><p className="hint">{result.cohort.limitation}</p></div></details>
-        </section>}
+      {phase==='ok'&&result&&t&&(<>
+        {result.cohort&&(cohortMembershipUnavailable||result.cohort.membership.countsAreLowerBounds||cohortDeleted.current.has(result.cohort.item.id))&&<p className={cohortMembershipUnavailable?'alert':'banner'} role="status">{cohortDeleted.current.has(result.cohort.item.id)?'The applied cohort was deleted. Review its details before applying again.':cohortMembershipUnavailable?'Membership evidence is unavailable. Report counts below are unavailable.':'Some membership evidence is missing. Report counts below are observed lower bounds.'}</p>}
         {result.sessionProperties&&<SessionStatus scope={result.sessionProperties} label="Report session properties"/>}
         {result.cohort?.sessionProperties&&<SessionStatus scope={result.cohort.sessionProperties} label="Qualification session properties"/>}
         {result.coverage.status!=='complete'&&(
           <p className="hint">Coverage is {result.coverage.status}: results include retained observations only{result.coverage.retainedFrom?` from ${result.coverage.retainedFrom}`:''}.</p>
         )}
 
-        <div className="metric-grid">
+        <div className="metric-grid explorer-summary-metrics" aria-label="Explore summary">
           <div className="card">
             <div className={`metric-value${t.events===null?' is-unavailable':''}`}>{num(t.events)}</div>
             <div className="metric-label">Events</div>
@@ -656,6 +697,8 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
             <div className="hint dim">{t.visitors==null?'Visitor estimate unavailable':`${num(t.visits)} visits`}</div>
           </div>
         </div>
+
+        {result.propertyReport&&<PropertyDetails report={result.propertyReport} days={result.daily} timeZone={result.range.timeZone} totalEvents={result.totals.events} tab={propertyTab} setTab={setPropertyTab} onFirst={()=>{const p=new URLSearchParams(applied);p.delete('propertyCursor');setApplied(p.toString());refresh();}} onNext={()=>{if(result.propertyReport?.nextCursor){const p=new URLSearchParams(applied);p.set('propertyCursor',result.propertyReport.nextCursor);setApplied(p.toString());}}}/>}
 
         <div className="card stack">
           <h3>Breakdown</h3>{(isGeo(result.query.groupBy??'')||result.query.fields?.some(isGeo))&&<p className="hint">Select a location to add a required draft filter. Apply filters to update results and CSV. Names include their country and region; location is approximate.</p>}
@@ -688,6 +731,23 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
           )}
         </div>
 
+        {result.cohort&&<section className="card stack cohort-controls" aria-label="Applied cohort">
+          <h3>Applied cohort: {result.cohort.item.definition.name} · Revision {result.cohort.item.revision}</h3>
+          {cohortDeleted.current.has(result.cohort.item.id)&&<p className="alert">This cohort was deleted. These results remain a snapshot; clear the draft reference or load another cohort before applying.</p>}
+          <p className={cohortMembershipUnavailable?'alert':result.cohort.membership.countsAreLowerBounds?'banner':'hint'} role="status">{cohortMembershipUnavailable?<><strong>Membership unavailable.</strong> {result.cohort.sessionProperties?.selection.status==='unavailable'?sessionReason(result.cohort.sessionProperties):result.cohort.coverage.status==='unavailable'?'The qualification period is no longer retained.':'Qualifying events have no visitor identifiers.'} Cohort report counts are unavailable.</>:result.cohort.membership.countsAreLowerBounds?<><strong>Observed lower bounds.</strong> Some qualifying history, session-property evidence or visitor identifiers are unavailable. Counts include only the membership we can observe.</>:result.cohort.coverage.status==='complete'&&result.cohort.identity.identifiedEvents===0&&result.cohort.identity.unidentifiedEvents===0?<><strong>No qualifying events.</strong> No events matched this qualification in the fully retained period.</>:<strong>Observed membership available.</strong>}</p>
+          {[...new URLSearchParams(result.cohort.item.definition.query)].filter(([key])=>key==='path'||key==='eventName').map(([key,value])=><p className="hint" key={key}>Qualifying action: {labelOf(FILTERS,key)} equals {fieldValueLabel(key,value)}.</p>)}
+          <div className="row"><p className="cohort-field">Report dates: {result.range.from} to {result.range.to} ({result.range.timeZone})<br/><span className="hint">Report coverage: {result.coverage.status}</span></p><p className="cohort-field">Qualification dates: {result.cohort.range.from} to {result.cohort.range.to} ({result.cohort.range.timeZone})<br/><span className="hint">Qualification coverage: {result.cohort.coverage.status}</span></p></div>
+          <p className="hint">Membership uses observed visitor identifiers. They reset each UTC month and can change when identity settings or the signing secret change. Activity cannot be linked across those changes.</p>
+          <details><summary>Qualification details</summary><div className="stack"><p className="hint">Qualification retained from: {result.cohort.coverage.retainedFrom??'No retention boundary'}. Identifier coverage: {result.cohort.identity.status}.</p><p className="hint">Qualifying events with identifiers: {num(result.cohort.identity.identifiedEvents)} · without identifiers: {num(result.cohort.identity.unidentifiedEvents)} · observed member keys: {num(result.cohort.identity.observedMemberKeys)}.</p><p className="hint">Qualification UTC bounds: {result.cohort.range.start} (inclusive) to {result.cohort.range.end} (exclusive).</p>{[...new URLSearchParams(result.cohort.item.definition.query)].filter(([key])=>!['from','to','timeZone','predicates'].includes(key)).map(([key,value])=><p className="hint" key={key}>{key==='kind'?'Qualifying event kind':key==='propertyKey'?'Property key':key==='propertyType'?'Property type':key==='propertyValue'?'Property value':labelOf(FILTERS,key)}: {fieldValueLabel(key,value)}</p>)}<AdvancedSummary draft={qualificationDraft(result.cohort.item.definition.query)!.advanced} zone={result.cohort.range.timeZone}/><p className="hint">{result.cohort.limitation}</p></div></details>
+        </section>}
+        <details className="explorer-scope"><summary>Applied filters and boundaries</summary>
+          <p className="hint">UTC bounds: {result.range.start} (inclusive) to {result.range.end} (exclusive). Only instants within the selected local dates are included.</p>
+          <p><strong>Required filters — all</strong></p>
+          {Object.entries(result.query.filters).map(([key,value])=><p key={key}>{labelOf(FILTERS,key)} equals {fieldValueLabel(key,value)}</p>)}
+          {result.query.property&&<p>Property {JSON.stringify(result.query.property.key)}: {result.query.property.type}{result.query.property.type!=='missing'?` equals ${JSON.stringify(result.query.property.value)}`:''}</p>}
+          {!Object.keys(result.query.filters).length&&!result.query.property&&<p className="hint">No additional filters.</p>}
+          {result.query.predicates&&<AdvancedSummary draft={readAdvanced(result.query.predicates)!} zone={result.range.timeZone}/>}
+        </details>
         <details className="card">
           <summary>Daily data ({result.daily.length} {result.daily.length===1?'day':'days'})</summary>
           <div className="table-wrap" tabIndex={0} role="region" aria-label="Daily data, scroll horizontally for all columns">
@@ -718,11 +778,11 @@ function ExplorerInner({projectId,userId,onUnauthorized}:Props){
             </table>
           </div>
         </details>
+        <GeographyAttribution/>{result.geographyProvenance&&<p className="hint">Location source builds across matching report events: {num(result.geographyProvenance.databaseCount)}{result.geographyProvenance.oldestDatabaseBuild?` · oldest ${new Date(result.geographyProvenance.oldestDatabaseBuild*1000).toISOString().slice(0,10)}`:''}{result.geographyProvenance.newestDatabaseBuild?` · newest ${new Date(result.geographyProvenance.newestDatabaseBuild*1000).toISOString().slice(0,10)}`:''}. This uses retained report events, not the cohort qualification period or current database file.</p>}
       </>)}
       <div className="card">{annotations.panel}</div>
       {phase==='ok'&&result&&(<>
 
-        {result.propertyReport&&<PropertyDetails report={result.propertyReport} days={result.daily} timeZone={result.range.timeZone} totalEvents={result.totals.events} tab={propertyTab} setTab={setPropertyTab} onFirst={()=>{const p=new URLSearchParams(applied);p.delete('propertyCursor');setApplied(p.toString());refresh();}} onNext={()=>{if(result.propertyReport?.nextCursor){const p=new URLSearchParams(applied);p.set('propertyCursor',result.propertyReport.nextCursor);setApplied(p.toString());}}}/>}
         {result.numeric&&(
           <div className="card stack">
             <h3>Property values</h3>

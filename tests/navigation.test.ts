@@ -1,12 +1,29 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { analyticsDay, applyGeographyFilter, geographyNavigationNames, auditCoverages, auditIssueCodes, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView } from '../src/lib/navigation.ts'
+import { analyticsDay, applyGeographyFilter, geographyNavigationNames, auditCoverages, auditIssueCodes, allowedView, canonicalNavigation, navigationKey, parseCallback, parseNavigation, projectView, explorerNavigation } from '../src/lib/navigation.ts'
 import {geographyFields,serializeGeographyKey} from '../src/lib/analytics-geography.ts'
 import {environmentCatalog,environmentFields} from '../src/lib/analytics-environment.ts'
 import {defaultParseSearch,defaultStringifySearch} from '@tanstack/react-router'
 import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
+
+test('Explore keeps one bounded project-scoped query through router reload and history',()=>{
+ const base={workspace,project,view:'explore'} as const,query=new URLSearchParams({from:'2026-10-01',to:'2026-10-07',timeZone:'Asia/Dubai',kind:'all',groupBy:'event',path:'/مرحبا?literal=true',browser:'not-recorded'}).toString();
+ for(const exploreQuery of [query,'from=2026-10-01&to=2026-10-07&timeZone=UTC&kind=all&fields=%5B%22campaignSource%22%2C%22campaignMedium%22%5D']){
+  const target={...base,exploreQuery},wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.notEqual(navigationKey(target),navigationKey(base));assert.equal(canonicalNavigation(wire+'&exploreQuery=x',target),false);assert.deepEqual(parseNavigation({...target,view:'project'}),{workspace,project,view:'project'});
+ }
+ assert.deepEqual(explorerNavigation(base),{});for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('explore',role,false),true);assert.equal(allowedView('explore',undefined,false),false);
+});
+
+test('invalid or legacy Explore scope becomes an explicit stable sentinel instead of a broader report',()=>{
+ const base={workspace,project,view:'explore'} as const,invalid={...base,exploreInvalid:'1'} as const;
+ for(const exploreQuery of ['',null,1,true,{},['kind=all'],'x'.repeat(20001),'x\0','x\ud800'])assert.deepEqual(parseNavigation({...base,exploreQuery}),invalid);
+ for(const extra of [{from:'2026-10-01'},{analyticsFrom:'2026-10-01'},{analyticsSelection:'path=x'},{propertyCursor:'old-snapshot'},{unknown:'x'}])assert.deepEqual(parseNavigation({...base,...extra}),invalid);
+ assert.deepEqual(parseNavigation(invalid),invalid);const wire=defaultStringifySearch(invalid);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),invalid);assert.equal(canonicalNavigation(wire,invalid),true);
+ assert.equal(parseNavigation({...base,project:undefined,exploreQuery:'kind=all'}).exploreInvalid,'1');assert.equal(parseNavigation({...base,workspace:undefined,exploreQuery:'kind=all'}).exploreInvalid,'1');
+ assert.deepEqual(parseNavigation({...base,exploreQuery:'x'.repeat(20000)}),{...base,exploreQuery:'x'.repeat(20000)},'nested semantics are checked by the existing Explorer controls before a report read');
+});
 
 test('AI search preserves exact nested analysis/capture scope through the installed router without leaking to sibling views',()=>{
  const intent=readAISearchIntent()!,base={workspace,project,view:'ai-search'} as const;
@@ -36,7 +53,7 @@ test('visitor retention keeps an explicit applied month and nested typed entry s
   const base={workspace,project,view:'visitor-retention'} as const,entry=new URLSearchParams({kind:'custom',path:'/café %_\\',propertyKey:'done',propertyType:'boolean',propertyValue:'false',city:serializeGeographyKey('city',{state:'known',country:'US',region:{kind:'code',value:'US-IL'},city:'Springfield'})!}).toString(),applied={...base,retentionMonth:'2024-03',retentionTimeZone:'UTC',retentionEntry:entry};
   assert.deepEqual(parseNavigation(base),base);assert.deepEqual(parseNavigation(applied),applied);assert.equal(canonicalNavigation('?'+new URLSearchParams(applied),applied),true);assert.deepEqual(parseNavigation(Object.fromEntries(new URLSearchParams(new URLSearchParams(applied).toString()))),applied);
   for(const [key,value]of [['retentionMonth','2024-02'],['retentionTimeZone','Asia/Dubai'],['retentionEntry','kind=all']] as const)assert.notEqual(navigationKey(applied),navigationKey({...applied,[key]:value}));
-  for(const view of ['project','retention','explore'] as const)assert.deepEqual(parseNavigation({...applied,view}),{workspace,project,view});assert.equal(projectView('visitor-retention'),true);assert.equal(projectView('retention'),false);for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('visitor-retention',role,false),true);
+  for(const view of ['project','retention','explore'] as const)assert.deepEqual(parseNavigation({...applied,view}),{workspace,project,view,...view==='explore'?{exploreInvalid:'1'}:{}});assert.equal(projectView('visitor-retention'),true);assert.equal(projectView('retention'),false);for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('visitor-retention',role,false),true);
 });
 test('visitor retention navigation rejects unknown, partial, future and nonscalar intent without silently broadening it',()=>{
   const base={workspace,project,view:'visitor-retention',retentionMonth:'2024-03',retentionTimeZone:'UTC',retentionEntry:'kind=all'} as const,invalid={workspace,project,view:'visitor-retention',retentionInvalid:'1'};
@@ -50,7 +67,7 @@ test('Journeys keeps a scalar nested applied scope only in its own project read 
  for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('journeys',role,false),true);assert.equal(allowedView('journeys',undefined,false),false);
  for(const bad of [null,1,true,{},[journeyQuery],'',journeyQuery+'\0','x'.repeat(65537)])assert.equal(parseNavigation({...base,journeyQuery:bad}).journeyInvalid,'1');
  for(const patch of [{workspace:undefined},{project:undefined},{from:'2026-01-01'}])assert.equal(parseNavigation({...value,...patch}).journeyInvalid,'1');
- assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});assert.deepEqual(parseNavigation({...value,view:'explore'}),{workspace,project,view:'explore'});
+ assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});assert.deepEqual(parseNavigation({...value,view:'explore'}),{workspace,project,view:'explore',exploreInvalid:'1'});
 });
 
 test('location filters retain canonical composite identity, report intent and strict scalar scope',()=>{
@@ -64,7 +81,7 @@ test('location filters retain canonical composite identity, report intent and st
   assert.equal(parsed.analyticsCountry,serializeGeographyKey('country',{state:'known',country:'US'}));
   assert.equal(parsed.analyticsRegion,serializeGeographyKey('region',{state:'known',country:'US',region:city.region}));
   for(const field of geographyFields){const name=geographyNavigationNames[field],value=chosen[name]!;for(const invalid of [[value],{value},JSON.stringify(JSON.parse(value),null,1),value.replace('"US"','"us"'),'not-recorded','{"state":"known","country":"US","extra":1}'])assert.equal(parseNavigation({...base,...scope,[name]:invalid}).analyticsInvalid,'1');}
-  assert.deepEqual(parseNavigation({...parsed,view:'explore'}),{workspace,project,view:'explore'});
+  assert.deepEqual(parseNavigation({...parsed,view:'explore'}),{workspace,project,view:'explore',exploreInvalid:'1'});
   assert.notEqual(navigationKey(parsed),navigationKey({...parsed,analyticsCity:undefined}));
   const unknown=applyGeographyFilter(chosen,'city',{state:'unknown'});assert.equal(unknown.analyticsCountry,chosen.analyticsCountry);assert.equal(unknown.analyticsRegion,chosen.analyticsRegion);
   const noRegion=applyGeographyFilter(chosen,'city',{...city,region:null});assert.equal(noRegion.analyticsRegion,'{"state":"unknown"}');
@@ -90,7 +107,7 @@ test('Compare is a project read view with an optional strict mode and the same a
     assert.notEqual(navigationKey(search),navigationKey(parseNavigation({...base,...values})));
   }
   assert.notEqual(navigationKey({...base,analyticsCompare:'prev'}),navigationKey({...base,analyticsCompare:'yoy'}));
-  assert.deepEqual(parseNavigation({...base,view:'explore',...values,analyticsCompare:'yoy'}),{workspace,project,view:'explore'});
+  assert.deepEqual(parseNavigation({...base,view:'explore',...values,analyticsCompare:'yoy'}),{workspace,project,view:'explore',exploreInvalid:'1'});
 });
 
 test('Compare links reject ambiguous mode/scope and never enable comparison in the ordinary overview',()=>{
@@ -244,7 +261,7 @@ test('analytics links preserve the applied UTC range and all three closed enviro
   }
   assert.equal(analyticsDay('2024-02-29'),Date.parse('2024-02-29T00:00:00Z'));
   assert.equal(analyticsDay('2026-02-29'),null);
-  assert.deepEqual(parseNavigation({...base,view:'explore',...values}),{...base,view:'explore'});
+  assert.deepEqual(parseNavigation({...base,view:'explore',...values}),{...base,view:'explore',exploreInvalid:'1'});
 });
 
 test('analytics links fail closed for ambiguous scope, unsupported families and malformed dates', () => {
@@ -338,7 +355,7 @@ test('Attribution keeps a scalar nested applied scope only in its own project re
  for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('attribution',role,false),true);assert.equal(allowedView('attribution',undefined,false),false);
  for(const bad of [null,1,true,{},[attributionQuery],'',attributionQuery+'\0','x'.repeat(65537)])assert.equal(parseNavigation({...base,attributionQuery:bad}).attributionInvalid,'1');
  for(const patch of [{workspace:undefined},{project:undefined},{from:'2026-01-01'}])assert.equal(parseNavigation({...value,...patch}).attributionInvalid,'1');
- assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});assert.deepEqual(parseNavigation({...value,view:'explore'}),{workspace,project,view:'explore'});
+ assert.deepEqual(parseNavigation({...value,view:'project'}),{workspace,project,view:'project'});assert.deepEqual(parseNavigation({...value,view:'explore'}),{workspace,project,view:'explore',exploreInvalid:'1'});
 });
 test('comparison dimension namespace and selection shape remain scope-bound',()=>{
  const base={workspace,project,view:'compare'} as const,selection=new URLSearchParams({path:'/pricing'}).toString();

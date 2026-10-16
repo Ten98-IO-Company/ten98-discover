@@ -210,6 +210,16 @@ function selectionFrom(query:string|undefined):{draft:ReturnType<typeof emptyAdv
     const built=buildAdvanced(draft);return 'predicates'in built&&built.predicates?{draft,query:new URLSearchParams({predicates:JSON.stringify(built.predicates)}).toString()}:null;
   }catch{return null;}
 }
+/** Carry the applied population, not date/selection drafts or comparison presentation. */
+export function analyticsExplorerQuery(search:NavigationSearch):string|null{
+  const intent=analyticsNavigation(search),selection=selectionFrom(intent.analyticsSelection);
+  if(intent.analyticsInvalid||!intent.analyticsFrom||!intent.analyticsTo||!selection)return null;
+  const params=new URLSearchParams({from:intent.analyticsFrom,to:intent.analyticsTo,timeZone:'UTC',kind:'all',groupBy:'event'});
+  for(const field of environmentFields){const value=intent[analyticsNavigationNames[field]];if(value!==undefined)params.set(field,value);}
+  for(const field of geographyFields){const value=intent[geographyNavigationNames[field]];if(value!==undefined)params.set(field,value);}
+  if(selection.query)params.set('predicates',new URLSearchParams(selection.query).get('predicates')!);
+  return params.toString().length<=20000?params.toString():null;
+}
 const dimensionMetricNames=['pageViews','customEvents','identifiedPageViews','visitors','visits','bounceRate','averageVisitSeconds'] as const;
 function validDimension(data:Analytics,field:AnalyticsDimension|undefined,selection:string|undefined):boolean{
   if(data.selection!==selection)return false;
