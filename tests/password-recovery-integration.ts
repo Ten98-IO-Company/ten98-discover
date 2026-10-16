@@ -13,7 +13,14 @@ test('password recovery transaction and public-boundary checks', { timeout: 120_
   let config: ReturnType<typeof getConfig>;
   try { config = getConfig(); } catch { throw new Error('Isolated recovery configuration is invalid; values are redacted.'); }
   const local = new Set(['localhost', '127.0.0.1', '[::1]']);
-  assert.ok(local.has(new URL(config.appUrl).hostname) && local.has(new URL(config.databaseUrl).hostname), 'Only loopback application/database configuration is allowed.');
+  const app = new URL(config.appUrl), database = new URL(config.databaseUrl);
+  assert.ok(local.has(app.hostname) && local.has(database.hostname), 'Only loopback application/database configuration is allowed.');
+  assert.ok(!database.search && !database.hash, 'Database query and fragment overrides are not allowed.');
+  if (process.env.TEN98_ISOLATED_CI_DATABASE === '1') {
+    assert.equal(database.protocol, 'postgres:'); assert.equal(database.hostname, '127.0.0.1'); assert.equal(database.port, '5432');
+    assert.equal(database.pathname, '/ten98_password_recovery_ci'); assert.equal(app.origin, 'http://127.0.0.1:3111');
+    assert.equal(process.env.ANALYTICS_NETWORK_MODE, 'off');
+  }
   const { getDatabase, closeDatabase, assertSchema } = await import('../src/server/db.ts');
   const { pool } = getDatabase();
   t.after(closeDatabase);
