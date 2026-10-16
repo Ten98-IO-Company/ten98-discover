@@ -409,3 +409,15 @@ td select { min-width: 7rem; } tbody tr:last-child td { border-bottom: 0; }
 .preferences-preview dl { margin: 0; }
 .preferences-preview dt { color: var(--muted); font-size: var(--text-xs); }
 .preferences-preview dd { margin: 0 0 var(--space-2); }
+
+/* Explorer keeps applied results primary; editing uses the existing native dialog. */
+.explorer-applied-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); overflow-wrap: anywhere; }
+.explorer-applied-bar p { margin-block: var(--space-1) 0; }
+.explorer-filter-dialog .explorer-toolbar { grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); }
+.explorer-filter-dialog .btn, .explorer-filter-dialog input, .explorer-filter-dialog select, .explorer-filter-dialog summary { min-block-size: var(--control-touch); }
+.explorer .explorer-summary-metrics { grid-template-columns: repeat(auto-fit,minmax(min(100%,110px),1fr)); gap: var(--space-2); }
+.explorer .explorer-summary-metrics .card { padding: var(--space-3); }
+.explorer .explorer-property-views { flex-wrap: nowrap; overflow-x: auto; max-inline-size: 100%; padding-block: var(--space-1); }
+.explorer-property-views .btn { flex: 0 0 auto; }
+.explorer .explorer-property-pivot { max-block-size: min(60dvh,30rem); overflow: auto; }
+.explorer-property-pivot th { position: sticky; inset-block-start: 0; background: var(--color-surface); z-index: 1; }
