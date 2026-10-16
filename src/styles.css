@@ -456,3 +456,37 @@ td select { min-width: 7rem; } tbody tr:last-child td { border-bottom: 0; }
 .tracked-assets .analytics-stat { border: 0; padding: var(--space-3); background: var(--color-surface-subtle); border-radius: var(--radius-sm); }
 .tracked-assets .big-num { margin-inline: 0; letter-spacing: normal; }
 .tracked-shared { inline-size: min(70rem,100%); margin-inline: auto; padding: var(--space-4); }
+.boards-panel{container-type:inline-size;min-width:0;overflow-wrap:anywhere}
+.boards-panel.stack,.boards-panel .stack{grid-template-columns:minmax(0,1fr);min-width:0}
+.board-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:var(--space-4);align-items:start;min-width:0}
+.boards-panel label{display:grid;gap:6px;min-width:0}
+.boards-panel input:not([type='checkbox']):not([type='radio']),.boards-panel select,.boards-panel textarea{min-width:0;max-width:100%;min-height:var(--control-touch)}
+.boards-panel .btn,.board-open,.boards-panel summary{min-height:var(--control-touch);max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.boards-panel fieldset{min-width:0}
+.boards-panel progress{inline-size:100%;max-inline-size:100%;min-inline-size:0}
+.board-list{list-style:none;margin:0;padding:0;display:grid;gap:var(--space-4)}
+.board-open{font:inherit;text-align:start;color:var(--blue);background:none;border:0;padding:0;cursor:pointer}
+.board-row{display:grid;gap:var(--space-4);min-width:0;align-items:stretch}
+.board-columns-1{grid-template-columns:var(--board-tracks,minmax(0,1fr))}.board-columns-2{grid-template-columns:var(--board-tracks,repeat(2,minmax(0,1fr)))}.board-columns-3{grid-template-columns:var(--board-tracks,repeat(3,minmax(0,1fr)))}.board-columns-4{grid-template-columns:var(--board-tracks,repeat(4,minmax(0,1fr)))}
+.board-row>.card{min-width:0;align-content:start;overflow-wrap:anywhere}
+.board-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,130px),1fr));gap:var(--space-4);margin:0}
+.board-stats dt{font-size:var(--text-sm);color:var(--muted)}.board-stats dd{font-size:1.5rem;font-weight:650;margin:4px 0 0}
+.boards-panel .table-wrap{min-width:0;max-width:100%;overflow:auto}.boards-panel table{min-width:560px}
+.board-week-scroll{max-inline-size:100%;min-inline-size:0;overflow:auto}.board-week{display:grid;grid-template-columns:40px repeat(7,minmax(0,1fr));gap:3px;min-inline-size:280px;align-items:center}.board-week>strong{text-align:center;font-size:var(--text-sm)}.board-week-cell{position:relative;display:block;min-height:16px;border:1px solid var(--line)}.board-preview{min-width:0}.board-preview .card{min-width:0;overflow-wrap:anywhere}
+.board-chart-legend{list-style:none;display:flex;flex-wrap:wrap;gap:12px;padding:0}.board-chart-legend span{display:inline-block;width:12px;height:12px;margin-inline-end:6px;border-radius:2px}
+@container (max-width:720px){.board-row{grid-template-columns:minmax(0,1fr)}}
+
+.board-week .sr-only{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.boards-panel label:has(>input[type='checkbox']){min-height:var(--control-touch);display:flex;align-items:center;gap:8px}
+.heatmaps-panel,.heatmaps-panel .stack,.saved-replay-controls{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;min-width:0;overflow-wrap:anywhere}
+.heatmap-filters,.saved-replay-search{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px;align-items:end;min-width:0}
+.heatmaps-panel label,.saved-replay-controls label,.saved-replay-search label{display:grid;gap:6px;min-width:0}
+.heatmaps-panel input:not([type='checkbox']):not([type='radio']),.saved-replay-controls input:not([type='checkbox']):not([type='radio']),.saved-replay-search input:not([type='checkbox']):not([type='radio']){width:100%;min-width:0;max-width:100%;min-height:44px}
+.heatmaps-panel .btn,.saved-replay-controls .btn,.saved-replay-search .btn{min-width:0;max-width:100%;min-height:44px;white-space:normal;overflow-wrap:anywhere}
+.heatmap-choices{list-style:none;padding:0;margin:0;display:grid;gap:8px;min-width:0}
+.heatmap-choices li{min-width:0}
+.heatmap-choices .btn{width:100%;display:flex;gap:12px;align-items:center;justify-content:space-between;text-align:start;flex-wrap:wrap}
+.heatmap-choices small{display:block;color:var(--muted);font-weight:normal}
+.heatmap-plane{display:block;width:100%;height:min(60vh,560px);min-width:0;border:1px solid var(--line);border-radius:8px}
+.heatmaps-panel .table-wrap{min-width:0;max-width:100%}
+.heatmaps-panel table{min-width:540px}

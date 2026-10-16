@@ -477,3 +477,27 @@ test('public shared-link intent stays rejected through initial router canonicali
  for(const view of views.filter(view=>view!=='tracked-share')){const value=parseNavigation({workspace,project,view,trackedShareInvalid:'1'});assert.deepEqual(value,parseNavigation({workspace,project,view,unrelatedUnknown:'1'}),'An unrelated private view keeps its existing unknown-query policy');assert.equal(value.trackedShareInvalid,undefined);}
  assert.deepEqual(parseNavigation({view:['project','links']}),{view:'project'});
 });
+test('workspace Boards preserve applied scope without a fake anchor project and reject invalid ownership',async()=>{
+ const {boardNavigation,resolveNavigation}=await import('../src/lib/navigation.ts');
+ const id='c0000000-0000-4000-8000-000000000003',scope='from=2026-10-01&to=2026-10-07&timeZone=UTC&path=',boardQuery=new URLSearchParams({board:id,scope}).toString(),target={workspace,view:'boards',boardQuery} as const;
+ const wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView('boards'),false);
+ for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('boards',role,false),true);assert.equal(allowedView('boards',undefined,false),false);
+ for(const raw of [{...target,project},{...target,workspace:undefined},{...target,boardQuery:[]},{...target,boardQuery:['board='+id,'new=1']},{...target,boardQuery:'bad=%ED%A0%80'},{...target,boardQuery:'bad=%GG'},{...target,boardQuery:'a'.repeat(24001)},{...target,boardInvalid:'1'},{...target,token:'not-a-board-capability'}])assert.equal(boardNavigation(raw).boardInvalid,'1');
+ assert.notEqual(navigationKey(target),navigationKey({...target,boardQuery:'new=1'}));assert.equal(canonicalNavigation(wire+'&boardQuery=other',target),false);
+ const fallback=resolveNavigation({...target,boardInvalid:'1'},'d0000000-0000-4000-8000-000000000004',undefined,'boards');assert.equal(fallback.boardInvalid,'1');assert.equal(fallback.project,undefined);assert.equal(fallback.boardQuery,undefined);
+ assert.equal(parseNavigation({workspace,view:'preferences',boardQuery}).boardQuery,undefined);
+});
+
+test('Heatmap navigation preserves a bounded independent page/layout range and invalid ownership without collector capabilities',async()=>{
+ const{resolveNavigation}=await import('../src/lib/navigation.ts');
+ const base={workspace,project,view:'heatmaps'} as const;
+ for(const heatmapQuery of [undefined,'from=2026-10-01&to=2026-10-07&mode=pages','mode=geometries&origin=https%3A%2F%2Fexample.org&path=%2Fcheckout','x'.repeat(6144)]){
+  const target={...base,...heatmapQuery?{heatmapQuery}:{}};const wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);
+ }
+ assert.equal(projectView('heatmaps'),true);for(const role of ['owner','admin','editor','viewer'])assert.equal(allowedView('heatmaps',role,false),true);assert.equal(allowedView('heatmaps',undefined,false),false);
+ for(const heatmapQuery of ['',null,1,true,{},['mode=pages'],'x'.repeat(6145),'path=%GG','path=%FF','path=%ED%A0%80','path=x\0'])assert.equal(parseNavigation({...base,heatmapQuery}).heatmapInvalid,'1');
+ for(const patch of [{workspace:undefined},{project:undefined},{token:'capture-capability'},{mode:'click'},{heatmapInvalid:'1'}])assert.equal(parseNavigation({...base,...patch}).heatmapInvalid,'1');
+ assert.notEqual(navigationKey(base),navigationKey({...base,heatmapQuery:'mode=scroll'}));assert.equal(canonicalNavigation(defaultStringifySearch(base)+'&view=heatmaps',base),false);
+ const scoped=parseNavigation({...base,heatmapQuery:'mode=pages'});assert.equal(resolveNavigation(scoped,workspace,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','heatmaps').heatmapInvalid,'1');
+ assert.deepEqual(parseNavigation({...base,view:'project',heatmapQuery:'mode=pages'}),{workspace,project,view:'project'});
+});

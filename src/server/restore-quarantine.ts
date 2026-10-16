@@ -26,8 +26,8 @@ export async function quarantineRestoredSpending() {
     // Replay grants are browser-held capabilities: restoring the same signing key must not revive them.
     await client.query("UPDATE tracked_asset SET active=false,collection_enabled=false,revision=LEAST(revision::bigint+1,2147483647)::integer,updated_at=clock_timestamp() WHERE active OR collection_enabled");
     await client.query('UPDATE tracked_asset_share SET revoked_at=clock_timestamp(),revision=LEAST(revision::bigint+1,2147483647)::integer WHERE revoked_at IS NULL');
-    await client.query(`UPDATE project SET analytics_settings=jsonb_set(analytics_settings,'{replay,enabled}','false'::jsonb),
-      analytics_epoch=gen_random_uuid(),analytics_revision=LEAST(analytics_revision::bigint+1,2147483647)::integer WHERE analytics_settings?'replay'`);
+    await client.query(`UPDATE project SET analytics_settings=jsonb_set(jsonb_set(analytics_settings,'{replay,enabled}','false'::jsonb),'{heatmap,enabled}','false'::jsonb),
+      analytics_epoch=gen_random_uuid(),analytics_revision=LEAST(analytics_revision::bigint+1,2147483647)::integer WHERE analytics_settings?'replay' OR analytics_settings?'heatmap'`);
     await client.query('COMMIT');
     return { pausedBudgets: budgets.rowCount ?? 0, cancelledReservations: cancelled.rowCount ?? 0, disabledSchedules: (schedules.rowCount??0)+(promptSchedules.rowCount??0) };
   } catch (error) {

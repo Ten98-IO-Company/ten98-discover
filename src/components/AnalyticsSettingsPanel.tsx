@@ -2,6 +2,7 @@ import {useEffect, useId, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
 import type {GeographyReadiness} from '../lib/analytics-geography';
 import {defaultReplaySettings,replaySettings,type ReplaySettings} from '../lib/session-replay';
+import {defaultHeatmapSettings,heatmapSettings} from '../lib/replay-heatmaps';
 
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 type NetworkMode = 'off' | 'direct' | 'proxy';
@@ -16,6 +17,7 @@ interface Settings {
   captureGeography?: boolean;
   capturePerformance?: boolean;
   replay?: ReplaySettings;
+  heatmap?: ReturnType<typeof heatmapSettings.parse>;
   excludeBots: boolean;
   linkIdentities?: boolean;
   excludedPaths: string[];
@@ -133,6 +135,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
       .then((d) => {
         if (!alive || ctrl.signal.aborted || gen !== genRef.current) return;
         if(d.settings.replay!==undefined)replaySettings.parse(d.settings.replay);
+        if(d.settings.heatmap!==undefined)heatmapSettings.parse(d.settings.heatmap);
         setData({...d,geography:locationReadiness(d.geography)});
         setDraft(d.settings);
         setPathsText(d.settings.excludedPaths.join('\n'));
@@ -176,12 +179,14 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
   let replayError='';
   if(draft?.replay){if(!replaySettings.safeParse(draft.replay).success)replayError='Choose valid replay settings.';else if(replay.blockSelector)try{document.querySelector(replay.blockSelector);}catch{replayError='Enter a valid CSS selector for blocked sections.';}}
   const setReplay=(patch:Partial<ReplaySettings>)=>set('replay',{...replay,...patch});
+  const heatmap=draft?.heatmap??defaultHeatmapSettings,heatmapError=draft?.heatmap&&!heatmapSettings.safeParse(draft.heatmap).success?'Choose valid heatmap settings.':'';
+  const setHeatmap=(patch:Partial<NonNullable<Settings['heatmap']>>)=>set('heatmap',{...heatmap,...patch});
   const current: Settings | null = draft ? {...draft, excludedPaths: draftPaths} : null;
   // ponytail: JSON.stringify dirty check; swap for a structural compare if settings ever grow nesting.
   const dirty = !!data && !!current && JSON.stringify(current) !== JSON.stringify(data.settings);
   const canEdit = data?.role === 'owner' || data?.role === 'admin';
   const inputsDisabled = pending || loading || !canEdit;
-  const canSave = canEdit && dirty && pathErrors.length === 0 && !replayError && !pending && !loading;
+  const canSave = canEdit && dirty && pathErrors.length === 0 && !replayError && !heatmapError && !pending && !loading;
 
   const cancel = () => {
     if (!data || lockRef.current || readBusyRef.current) return;
@@ -210,6 +215,7 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
       });
       if (!mountedRef.current || ctrl.signal.aborted || gen !== genRef.current) return;
       if(res.settings.replay!==undefined)replaySettings.parse(res.settings.replay);
+      if(res.settings.heatmap!==undefined)heatmapSettings.parse(res.settings.heatmap);
       // Retain the last confirmed role/networkMode; no refetch after save.
       setData({settings: res.settings, revision: res.revision, role: data.role, networkMode: data.networkMode,geography:locationReadiness(res.geography)});
       setDraft(res.settings);
@@ -399,6 +405,16 @@ function PanelInner({projectId, onUnauthorized}: {projectId: string; onUnauthori
           Language is included with accepted events. Third-party vendor SDKs have their own data collection behavior,
           which these settings do not change.
         </p>
+      </fieldset>
+
+      <fieldset disabled={inputsDisabled} className="stack" aria-describedby={`${uid}-heatmap-help`}>
+        <legend>Heatmaps</legend>
+        <label className="row"><input type="checkbox" style={{width:'auto',flexShrink:0}} checked={heatmap.enabled} onChange={e=>setHeatmap({enabled:e.target.checked})}/>Enable click and scroll heatmaps after analytics consent</label>
+        <p className="hint" id={`${uid}-heatmap-help`}>Heatmaps use analytics permission, independently of session replay. Enabling one never enables the other. Do Not Track, Global Privacy Control, configured bot exclusion and excluded paths apply. Only numeric click and scroll observations are collected, not page text or form values.</p>
+        <label htmlFor={`${uid}-heatmap-sample`}>Sample {new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(heatmap.sampleRate*100)}% of eligible documents</label>
+        <input id={`${uid}-heatmap-sample`} type="range" min="0" max="100" step="1" value={heatmap.sampleRate*100} onChange={e=>setHeatmap({sampleRate:Number(e.target.value)/100})}/>
+        <p className="hint">The decision is made once per document. A sample rate of 0% collects nothing. Each capture ends after its original five-minute limit; later activity needs a new document capture.</p>
+        {heatmapError&&<p className="alert" role="alert">{heatmapError}</p>}
       </fieldset>
 
       <fieldset disabled={inputsDisabled} className="stack" aria-describedby={`${uid}-replay-help`}>

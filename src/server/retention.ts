@@ -103,6 +103,10 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
           FROM tracked_asset a JOIN tracked_asset_event e ON e.asset_id=a.id WHERE a.workspace_id=$1 AND e.received_at<$2
         UNION ALL SELECT pg_column_size(v)::integer,p.id,v.created_at,v.navigation_id::text||v.metric,'performance'
           FROM project p JOIN web_performance v ON v.project_id=p.id WHERE p.workspace_id=$1 AND v.created_at<$2
+        UNION ALL SELECT pg_column_size(h)::integer,p.id,h.received_at,h.request_id::text,'heatmap'
+          FROM project p JOIN heatmap_batch h ON h.project_id=p.id WHERE p.workspace_id=$1 AND h.received_at<GREATEST(p.analytics_retained_from,$2::timestamptz)
+        UNION ALL SELECT pg_column_size(c)::integer,p.id,c.created_at,c.id::text,'heatmap-capture'
+          FROM project p JOIN heatmap_capture c ON c.project_id=p.id WHERE p.workspace_id=$1 AND c.path IS NOT NULL AND c.created_at<GREATEST(p.analytics_retained_from,$2::timestamptz)
         ) raw ORDER BY project_id,at,id,kind LIMIT 10001`, [workspaceId, cutoff]);
       estimate = { status: 'available', rows: Math.min(sample.rows.length, 10000), atLeast: sample.rows.length > 10000,
         logicalBytes: sample.rows.slice(0, 10000).reduce((sum, row) => sum + row.bytes, 0) };
@@ -256,6 +260,11 @@ export async function runRetentionBatch(projectId?: string) {
       SELECT navigation_id,metric FROM web_performance WHERE project_id=$1 AND created_at<$2
       ORDER BY created_at,navigation_id,metric LIMIT 1000 FOR UPDATE
     ) DELETE FROM web_performance v USING expired e WHERE v.project_id=$1 AND v.navigation_id=e.navigation_id AND v.metric=e.metric`,[selected,cutoff]);
+    // Each batch is <=32KiB;64 rows add at most2MiB to the existing bounded pass.
+    const heatmapBatches=await client.query(`WITH expired AS(SELECT h.request_id FROM heatmap_batch h JOIN project p ON p.id=h.project_id WHERE h.project_id=$1 AND h.received_at<GREATEST(p.analytics_retained_from,$2::timestamptz) ORDER BY h.received_at,h.request_id LIMIT 64 FOR UPDATE OF h)DELETE FROM heatmap_batch h USING expired e WHERE h.project_id=$1 AND h.request_id=e.request_id`,[selected,cutoff]);
+    const heatmapPaths=await client.query(`WITH expired AS(SELECT c.id FROM heatmap_capture c JOIN project p ON p.id=c.project_id WHERE c.project_id=$1 AND c.path IS NOT NULL AND c.created_at<GREATEST(p.analytics_retained_from,$2::timestamptz) ORDER BY c.created_at,c.id LIMIT 1000 FOR UPDATE OF c)UPDATE heatmap_capture c SET path=NULL FROM expired e WHERE c.project_id=$1 AND c.id=e.id`,[selected,cutoff]);
+    const heatmapCaptures=await client.query(`WITH expired AS(SELECT c.id FROM heatmap_capture c WHERE c.project_id=$1 AND c.created_at<LEAST($2::timestamptz,$3::timestamptz)AND c.path IS NULL AND NOT EXISTS(SELECT 1 FROM heatmap_batch b WHERE b.project_id=c.project_id AND b.capture_id=c.id)ORDER BY c.created_at,c.id LIMIT 1000 FOR UPDATE)DELETE FROM heatmap_capture c USING expired e WHERE c.project_id=$1 AND c.id=e.id`,[selected,cutoff,state.derived_cutoff]);
+    const heatmapPending=(await client.query(`SELECT EXISTS(SELECT 1 FROM heatmap_batch h JOIN project p ON p.id=h.project_id WHERE h.project_id=$1 AND h.received_at<GREATEST(p.analytics_retained_from,$2::timestamptz))OR EXISTS(SELECT 1 FROM heatmap_capture c JOIN project p ON p.id=c.project_id WHERE c.project_id=$1 AND(c.created_at<LEAST($2::timestamptz,$3::timestamptz)OR(c.path IS NOT NULL AND c.created_at<GREATEST(p.analytics_retained_from,$2::timestamptz))))AS pending`,[selected,cutoff,state.derived_cutoff])).rows[0].pending;
     const affected = [...new Set(deleted.rows.map(row => row.visitor_id).filter(Boolean))];
     if (affected.length) {
       await client.query(`UPDATE analytics_visitor v SET (first_seen_at,last_seen_at)=(
@@ -283,13 +292,13 @@ export async function runRetentionBatch(projectId?: string) {
     const redirects=await expireDomainRedirectEvidence(client,selected!,state.raw_evidence_cutoff);
     const audits = await expireSiteAuditData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
     const ranks = await expireRankData(client, selected!, { rawCutoff: state.raw_evidence_cutoff, derivedCutoff: state.derived_cutoff });
-    const complete = !replayPending && !domainResearch.pending && !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
+    const complete = !heatmapPending && !replayPending && !domainResearch.pending && !contentSupport.pending && !aiSearch.pending && !links.pending && !profiles.pending && !suggestions.pending && !ranks.pending && !pending.rows[0].pending && !imported.pending && !keywords.pending && !prompts.pending && !redirects.pending && !audits.pending;
     await client.query(`UPDATE project SET analytics_retained_from=GREATEST(analytics_retained_from,$2::timestamptz),
       retention_policy_revision=$3,retention_cutoff=CASE WHEN $4 THEN NULL ELSE $2::timestamptz END,
       retention_next_run_at=clock_timestamp()+CASE WHEN $4 THEN interval '1 hour' ELSE interval '10 seconds' END,
       retention_last_completed_at=CASE WHEN $4 THEN clock_timestamp() ELSE retention_last_completed_at END,retention_error=NULL WHERE id=$1`, [selected, cutoff, state.retention_revision, complete]);
     await client.query('COMMIT');
-    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedPerformance:performance.rowCount??0, clearedReplayPaths:replayPaths.rowCount??0,clearedReplayMetadata:replayMetadata.rowCount??0,deletedReplayChunks:replayChunks.rowCount??0,deletedReplayRecordings:replayRecordings.rowCount??0,deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
+    return { projectId: selected, deletedEvents: deleted.rowCount ?? 0, deletedPerformance:performance.rowCount??0,deletedHeatmapBatches:heatmapBatches.rowCount??0,clearedHeatmapPaths:heatmapPaths.rowCount??0,deletedHeatmapCaptures:heatmapCaptures.rowCount??0, clearedReplayPaths:replayPaths.rowCount??0,clearedReplayMetadata:replayMetadata.rowCount??0,deletedReplayChunks:replayChunks.rowCount??0,deletedReplayRecordings:replayRecordings.rowCount??0,deletedVisitors: removedVisitors.rowCount ?? 0, expiredGoogleImports: imported.expiredImports, expiredKeywordResults: keywords.expiredKeywordResults, expiredSavedKeywordMetrics: keywords.expiredSavedKeywordMetrics, expiredPromptResults: prompts.expiredPromptResults, expiredPromptInputs: prompts.expiredPromptInputs, expiredDomainRedirects:redirects.expiredDomainRedirects,
       expiredDomainResearchResults:domainResearch.expiredDomainResearchResults,
       expiredSuggestionResults:suggestions.expiredSuggestionResults,expiredSuggestionInputs:suggestions.expiredSuggestionInputs,
       expiredAiSearchResults:aiSearch.expiredAiSearchResults,expiredAiSearchInputs:aiSearch.expiredAiSearchInputs,expiredAiSearchQuotes:aiSearch.expiredAiSearchQuotes,
