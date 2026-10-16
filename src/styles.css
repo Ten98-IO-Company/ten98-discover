@@ -82,9 +82,11 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; text
 .proj-head h1 { margin-bottom: 6px; overflow-wrap: anywhere; }
 .card { min-width: 0; margin-bottom: 20px; padding: var(--space-4); background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-panel); }
 .card h2 { margin-bottom: 12px; }
+/* Numeric dates follow the charts' increasing horizontal time axis in every UI direction. */
+.annotation-dates, .analytics-axis { direction: ltr; }
 .annotation-dates { display: flex; gap: var(--space-2); overflow-x: auto; padding-block: var(--space-2); margin-block-end: var(--space-4); }
-.annotation-date { display: grid; gap: var(--space-1); flex-shrink: 0; text-align: center; }
-.annotation-day { min-block-size: var(--control-touch); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.annotation-date { min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; display: grid; gap: var(--space-1); flex-shrink: 0; text-align: center; }
+.annotation-day { min-inline-size: 0; max-inline-size: 100%; min-block-size: var(--control-touch); white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .annotations, .annotations .stack { display: grid; gap: var(--space-3); min-width: 0; }
 .annotations p, .annotations h3, .annotations h4 { margin: 0; }
 .annotations > details { border-block-start: 1px solid var(--line); }
