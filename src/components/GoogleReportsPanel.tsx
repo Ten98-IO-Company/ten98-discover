@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
-import { googleAdsColumnLabel, googleAdsCost, googleGa4ColumnLabel, googleGa4MetricValue } from '../lib/google-report-display';
+import { googleAdsColumnLabel, googleAdsCost, googleGa4ColumnLabel, googleGa4MetricValue, googleDecimalPlain, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, type OrganicOverview } from '../lib/google-report-display';
+import { propertyDecimalScale } from '../lib/property-visuals';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
 
 const BTN = { minHeight: 44 };
 
 type Provider = 'gsc' | 'ga4' | 'ads';
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
-type ReportKind = 'gsc_daily' | 'gsc_queries' | 'gsc_pages' | 'ga4_traffic' | 'ga4_events' | 'ga4_pages' | 'ga4_acquisition' | 'ga4_key_events' | 'ads_daily' | 'ads_campaigns' | 'ads_ad_groups';
+type ReportKind = 'gsc_daily' | 'gsc_queries' | 'gsc_pages' | 'ga4_traffic' | 'ga4_events' | 'ga4_pages' | 'ga4_acquisition' | 'ga4_key_events' | 'ga4_organic_landing' | 'ga4_organic_daily' | 'ga4_organic_weekly' | 'ads_daily' | 'ads_campaigns' | 'ads_ad_groups';
 
 interface ImportDto {
   id: string;
@@ -69,6 +70,9 @@ const REPORT_OPTIONS: Record<Provider, Array<{ kind: ReportKind; label: string }
     { kind: 'ga4_pages', label: 'Pages and screens' },
     { kind: 'ga4_acquisition', label: 'Traffic acquisition' },
     { kind: 'ga4_key_events', label: 'Key events' },
+    { kind: 'ga4_organic_landing', label: 'Organic landing pages' },
+    { kind: 'ga4_organic_daily', label: 'Organic overview by day' },
+    { kind: 'ga4_organic_weekly', label: 'Organic overview by week' },
   ],
   ads: [
     { kind: 'ads_daily', label: 'Ads account by day' },
@@ -76,6 +80,57 @@ const REPORT_OPTIONS: Record<Provider, Array<{ kind: ReportKind; label: string }
     { kind: 'ads_ad_groups', label: 'Ads ad groups by day' },
   ],
 };
+
+const organicReport = (report: string) => ['ga4_organic_landing', 'ga4_organic_daily', 'ga4_organic_weekly'].includes(report);
+// Same bounded fatal UTF-8 reader used for indexed inspection. This is a retained
+// native GET only; no provider request or import is triggered by viewing a report.
+async function organicSnapshot(path: string, imp: ImportDto, conn: Connection, offset: number, signal: AbortSignal): Promise<Snapshot> {
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+  const response = await fetch(path, { credentials: 'same-origin', redirect: 'error', signal: deadline });
+  try {
+    if (response.url !== new URL(path, window.location.origin).href || !response.body) { await response.body?.cancel(); throw Error('The organic report response could not be verified.'); }
+    const reader = response.body.getReader(), parts: Uint8Array[] = []; let size = 0;
+    const abort = () => { void reader.cancel().catch(() => {}); }; deadline.addEventListener('abort', abort, { once: true });
+    try { for (;;) { deadline.throwIfAborted(); const part = await reader.read(); deadline.throwIfAborted(); if (part.done) break; size += part.value.byteLength; if (size > (response.ok ? 2097152 : 8192)) throw Error('The complete organic report is too large. Choose a smaller date range.'); parts.push(part.value); } }
+    finally { deadline.removeEventListener('abort', abort); await reader.cancel().catch(() => {}); reader.releaseLock(); }
+    const length = response.headers.get('content-length'), encoding = response.headers.get('content-encoding');
+    if ((!encoding || encoding === 'identity') && length !== null && (!/^\d+$/.test(length) || Number(length) !== size)) throw Error('The organic report response was incomplete.');
+    const bytes = new Uint8Array(size); let at = 0; for (const part of parts) { bytes.set(part, at); at += part.length; }
+    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    if (!response.ok) throw Error(typeof value?.error === 'string' ? value.error : 'Organic report unavailable.');
+    if (response.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw Error('The organic report response type could not be verified.');
+    const sameKeys = (v: unknown, keys: readonly string[]) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).sort().join(',') === [...keys].sort().join(',');
+    const overview = imp.report !== 'ga4_organic_landing', dimensions = overview ? [imp.report === 'ga4_organic_weekly' ? 'yearWeek' : 'date'] : ['hostName', 'landingPage'];
+    const metrics: readonly string[] = overview ? organicOverviewMetrics : ['sessions','activeUsers','engagedSessions','engagementRate','keyEvents','sessionKeyEventRate','transactions','purchaseRevenue'];
+    const receipt = value?.import, source = value?.source, quality = value?.quality;
+    if (!receipt || receipt.id !== imp.id || receipt.report !== imp.report || receipt.from !== imp.from || receipt.to !== imp.to || !['queued','running','completed','partial','failed','denied'].includes(receipt.status) || !['available','expired'].includes(receipt.dataStatus) || !Number.isSafeInteger(receipt.rowCount) || receipt.rowCount < 0 || receipt.rowCount > 10000 || !Number.isSafeInteger(receipt.pages) || receipt.pages < 0 || receipt.pages > 10 || typeof receipt.createdAt !== 'string' || !Number.isFinite(Date.parse(receipt.createdAt)) || !(receipt.completedAt === null || typeof receipt.completedAt === 'string' && Number.isFinite(Date.parse(receipt.completedAt))) || !(receipt.diagnostic === null || typeof receipt.diagnostic === 'string' && receipt.diagnostic.length <= 2048) || source?.provider !== 'ga4' || source.propertyId !== conn.propertyId || source.timeZone !== conn.timeZone || source.currencyCode !== conn.currencyCode || !(source.propertyName === null || typeof source.propertyName === 'string' && source.propertyName.length <= 512) || JSON.stringify(value.dimensions) !== JSON.stringify(dimensions) || JSON.stringify(value.metrics) !== JSON.stringify(metrics) || !Array.isArray(value.rows) || value.rows.length > (overview ? 366 : 50) || !sameKeys(quality, ['warnings','metadata']) || !Array.isArray(quality.warnings) || quality.warnings.length > 100 || !quality.warnings.every((v: unknown) => typeof v === 'string' && v.length <= 2048) || quality.metadata === null || typeof quality.metadata !== 'object' || Array.isArray(quality.metadata)) throw Error('The organic snapshot does not match this source and request. Refresh status before trying again.');
+    const readable = receipt.dataStatus === 'available' && ['completed','partial'].includes(receipt.status);
+    if (!readable && (value.rows.length || value.nextOffset !== null || overview && (quality.warnings.length || Object.keys(quality.metadata).length))) throw Error('Unavailable organic data was returned. Refresh status.');
+    if (overview && readable) { const observation = readOrganicOverview(quality.metadata.organic, imp.from, imp.to, imp.report === 'ga4_organic_weekly'); if (!sameKeys(quality.metadata, ['organic']) || !observation || receipt.status !== 'completed' || receipt.pages !== 3 || value.nextOffset !== null || value.rows.length !== receipt.rowCount || observation.trend.rowCount !== value.rows.length) throw Error('The complete organic overview could not be verified.'); }
+    if (!overview && readable && (offset + value.rows.length > receipt.rowCount || value.nextOffset !== (offset + value.rows.length < receipt.rowCount ? offset + 50 : null))) throw Error('Organic pagination could not be verified.');
+    const seen = new Set<string>();
+    for (const row of value.rows) {
+      if (!sameKeys(row, ['dimensions','metrics']) || !sameKeys(row.dimensions, dimensions) || !sameKeys(row.metrics, metrics) || !Object.values(row.dimensions).every(v => typeof v === 'string' && v.length <= 4096 && !v.includes('\0') && new TextDecoder().decode(new TextEncoder().encode(v)) === v) || !Object.entries(row.metrics).every(([key,v]) => v === null || googleDecimalPlain(v) !== null && (key === 'purchaseRevenue' || Number(v) >= 0 && (!['engagementRate','sessionKeyEventRate'].includes(key) || Number(v) <= 1)))) throw Error('Organic row values could not be verified.');
+      if (imp.report === 'ga4_organic_daily' && (!/^\d{4}-\d\d-\d\d$/.test(row.dimensions.date) || !Number.isFinite(Date.parse(row.dimensions.date)) || new Date(row.dimensions.date).toISOString().slice(0,10) !== row.dimensions.date || row.dimensions.date < imp.from || row.dimensions.date > imp.to) || imp.report === 'ga4_organic_weekly' && (!/^\d{4}(?:0[1-9]|[1-4]\d|5[0-3])$/.test(row.dimensions.yearWeek) || row.dimensions.yearWeek.slice(0,4) < imp.from.slice(0,4) || row.dimensions.yearWeek.slice(0,4) > imp.to.slice(0,4))) throw Error('Organic calendar labels could not be verified.');
+      const key = JSON.stringify(dimensions.map(name => row.dimensions[name])); if (seen.has(key)) throw Error('Organic rows were repeated.'); seen.add(key);
+    }
+    return value as Snapshot;
+  } catch (error) { if (!response.ok) throw Object.assign(new ApiError(error instanceof Error ? error.message : 'Organic report failed.'), { status: response.status }); throw error; }
+}
+
+function OrganicSummary({ overview, rows, currency, timeZone }: { overview: OrganicOverview; rows: Snapshot['rows']; currency: string | null; timeZone: string | null }) {
+  const [metric, setMetric] = useState<string>('sessions');
+  const scale = propertyDecimalScale(rows.map(row => googleDecimalPlain(row.metrics[metric])));
+  return <section className="stack" aria-label="Organic range comparison">
+    <h4>Organic Search · complete range comparison</h4>
+    <p className="hint">Current and previous values are separate dimensionless Google reports. Users, rates and revenue are not summed from trend rows. A missing or restricted aggregate is unavailable, never zero. Percent changes use the absolute previous value and are truncated to two decimals; a zero previous value has no percentage change.</p>
+    <div className="table-wrap" style={{ overflowX:'auto', maxWidth:'100%' }}><table style={{ minWidth:'36rem' }}><thead><tr><th scope="col">Metric</th><th scope="col">Current: {overview.current.from} to {overview.current.to}</th><th scope="col">Previous: {overview.previous.from} to {overview.previous.to}</th><th scope="col">Change</th><th scope="col">Change %</th></tr></thead><tbody>{organicOverviewMetrics.map(name => { const current = overview.current.values?.[name], previous = overview.previous.values?.[name], change = googleOrganicChange(current, previous); return <tr key={name}><th scope="row">{googleGa4ColumnLabel(name)}</th><td><bdi dir="ltr">{googleGa4MetricValue(name,current,currency)}</bdi></td><td><bdi dir="ltr">{googleGa4MetricValue(name,previous,currency)}</bdi></td><td><bdi dir="ltr">{googleOrganicChangeValue(change.absolute,name === 'purchaseRevenue' ? currency : undefined)}</bdi></td><td><bdi dir="ltr">{change.percent === null ? 'Unavailable' : change.percent + '%'}</bdi></td></tr>; })}</tbody></table></div>
+    <label>Trend metric<select aria-label="Trend metric" style={{ minHeight:44 }} value={metric} onChange={e=>setMetric(e.target.value)}>{organicOverviewMetrics.map(name=><option key={name} value={name}>{googleGa4ColumnLabel(name)}</option>)}</select></label>
+    <p className="hint">{overview.interval === 'weekly' ? 'Google calendar weeks start Sunday; January 1 is in week 01. Boundary weeks may cover only the selected days. These are not ISO week-years.' : 'Daily values use the property calendar.'} Time zone: {timeZone ?? 'Unavailable'}. The exact retained trend is in the table below; absent dates and restricted values are not filled with zero.</p>
+    {scale.some(value=>value!==null) ? <svg viewBox="0 0 720 180" role="img" aria-label={`${googleGa4ColumnLabel(metric)} organic ${overview.interval} trend`} style={{ width:'100%', maxWidth:'100%', minWidth:0 }}><title>{googleGa4ColumnLabel(metric)} — separate observed {overview.interval} values, exact values in the following table</title><line x1="10" y1="90" x2="710" y2="90" stroke="currentColor" opacity="0.3"/>{scale.map((value,index)=>value===null?null:<rect key={index} x={10+index*700/Math.max(1,scale.length)} y={value>=0?90-value*80:90} width={Math.max(.5,700/Math.max(1,scale.length)-1)} height={Math.max(value===0?1:0,Math.abs(value)*80)} fill="currentColor"><title>{rows[index].dimensions.date ?? rows[index].dimensions.yearWeek}: {googleGa4MetricValue(metric,rows[index].metrics[metric],currency)}</title></rect>)}</svg> : <p className="dim">This trend metric is unavailable. No zero-valued chart is inferred.</p>}
+    <details><summary>Quality and request provenance for all three stages</summary><p className="hint">Counts below describe successfully committed observations. Failed or retried requests can consume additional quota; this receipt is not a durable attempt counter.</p>{(['current','previous','trend'] as const).map(stage=><section key={stage}><h5>{stage}</h5><p>Committed observation: {overview[stage].reportRequests} report response · {overview[stage].compatibilityRequests} compatibility checks · {overview[stage].from} to {overview[stage].to}</p>{overview[stage].quality.warnings.map((warning,index)=><p className="hint" key={index}>{warning}</p>)}<pre style={{ whiteSpace:'pre-wrap', overflowWrap:'anywhere' }}>{JSON.stringify(overview[stage].quality.metadata,null,2)}</pre></section>)}</details>
+  </section>;
+}
 
 function retained(imp: ImportDto): boolean {
   return imp.dataStatus === 'available' && (imp.status === 'completed' || imp.status === 'partial');
@@ -500,7 +555,8 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
 
   const openSnap = (imp: ImportDto) => run(async (serial, c) => {
     try {
-      const r = await api<Snapshot>(`/api/projects/${projectId}/google/imports/${imp.id}?offset=0`, { signal: c.signal });
+      const path = `/api/projects/${projectId}/google/imports/${imp.id}?offset=0`;
+      const r = organicReport(imp.report) ? await organicSnapshot(path, imp, conn, 0, c.signal) : await api<Snapshot>(path, { signal: c.signal });
       if (!ops.alive(serial, c)) return;
       focusResult.current = true;
       setSnap({ id: imp.id, imp: r.import, source: r.source, dimensions: r.dimensions, metrics: r.metrics, rows: r.import.dataStatus === 'expired' ? [] : r.rows, warnings: r.quality.warnings, metadata: r.quality.metadata, next: r.import.dataStatus === 'expired' ? null : r.nextOffset });
@@ -514,7 +570,8 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
     const offset = snap ? snap.next : null;
     if (!snap || offset === null) return;
     try {
-      const r = await api<Snapshot>(`/api/projects/${projectId}/google/imports/${snap.id}?offset=${offset}`, { signal: c.signal });
+      const path = `/api/projects/${projectId}/google/imports/${snap.id}?offset=${offset}`;
+      const r = organicReport(snap.imp.report) ? await organicSnapshot(path, snap.imp, conn, offset, c.signal) : await api<Snapshot>(path, { signal: c.signal });
       if (!ops.alive(serial, c)) return;
       setSnap(prev => prev && prev.id === snap.id
         ? { ...prev, imp: r.import, rows: r.import.dataStatus === 'expired' ? [] : [...prev.rows, ...r.rows], warnings: r.quality.warnings, metadata: r.quality.metadata, next: r.import.dataStatus === 'expired' ? null : r.nextOffset }
@@ -556,7 +613,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
         <div className="stack google-snapshot" role="region" aria-labelledby={'snapshot-heading-' + conn.id}>
           <h3 id={'snapshot-heading-' + conn.id} ref={resultHeading} tabIndex={-1}>Snapshot: {reportLabel(snap.imp.report)} · {snap.imp.from} to {snap.imp.to}</h3>
           <p className="hint">Showing snapshot requested {new Date(snap.imp.createdAt).toLocaleString()}{snapshotChoice !== snap.id ? ' · The selection above has changed. Choose View snapshot to replace these results.' : ''}</p>
-          {snap.source.provider === 'ga4' && <p className="hint">Daily Google Analytics property measurements. User counts are non-additive; no whole-range user total is calculated from these rows. Engagement time is total seconds, not an average. Key events remain separate from advertising conversions and native analytics.</p>}
+          {snap.source.provider === 'ga4' && <p className="hint">{organicReport(snap.imp.report) ? 'Organic Search session-channel measurements. Landing-page users and trend users are non-additive; only the separate dimensionless overview reports establish whole-range aggregates.' : 'Daily Google Analytics property measurements. User counts are non-additive; no whole-range user total is calculated from these rows. Engagement time is total seconds, not an average.'} Key events remain separate from advertising conversions and native analytics.</p>}
           <p>Snapshot status: {impStatus(snap.imp.status)}</p>
           {snap.imp.diagnostic && <p role="status" className="hint">{snap.imp.diagnostic}</p>}
           <p className="dim">
@@ -567,6 +624,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
           {snap.warnings.length > 0 && (
             <ul className="hint">{snap.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
           )}
+          {snap.imp.dataStatus === 'available' && snap.imp.status === 'completed' && (snap.imp.report === 'ga4_organic_daily' || snap.imp.report === 'ga4_organic_weekly') && (() => { const overview = readOrganicOverview(snap.metadata.organic, snap.imp.from, snap.imp.to, snap.imp.report === 'ga4_organic_weekly'); return overview ? <OrganicSummary key={snap.id} overview={overview} rows={snap.rows} currency={snap.source.currencyCode} timeZone={snap.source.timeZone} /> : <p role="alert">The complete organic overview is unavailable. Import a fresh snapshot.</p>; })()}
           {snap.imp.dataStatus === 'expired' ? (
             <p role="status" className="alert">Report data expired under this workspace’s retention policy. The import outcome and recorded row count remain as a receipt; the original report rows are unavailable.</p>
           ) : snap.rows.length === 0 ? (
@@ -644,6 +702,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
             </select>
           </div>
           {conn.provider === 'ga4' && <p className="hint">{report === 'ga4_pages' ? 'Daily views and engagement by page path or app screen class.' : report === 'ga4_acquisition' ? 'Daily acquisition by session source, medium and campaign; this is not first-user attribution.' : report === 'ga4_key_events' ? 'Daily events Google marked as key at collection time. Key events are not Google Ads conversions.' : 'Daily property measurements reported by Google Analytics.'} Dates use {conn.timeZone ?? 'the property time zone'}. User counts are specific to each row; do not add them across dates or dimensions.</p>}
+          {organicReport(report) && <p className="hint">Organic Search only. Choose completed days in the property timezone; today is excluded. {report === 'ga4_organic_landing' ? 'Landing pages are grouped by hostname and landing path over the whole selected range, up to 10,000 rows. A partial import is explicitly incomplete.' : 'Three report requests capture the current range, an equal-length preceding range, and the selected daily or weekly trend. Nothing is shown until all three finish. Two compatibility checks verify the exact fields; Google quota use and quality remain separate for each stage.'}</p>}
           <div className="row">
             <div className="field">
               <label htmlFor={`from-${conn.id}`}>Start date</label>
