@@ -38,14 +38,14 @@ export function parseKeywordMarkets(response:{httpStatus:number;body:unknown}):K
   if(!markets.length||markets.length>5000)invalid();
   return markets.sort((a,b)=>a.locationName.localeCompare(b.locationName)||a.languageName.localeCompare(b.languageName));
 }
-type LabsPriceMode=KeywordMode|'ranked_keywords'|'domain_rank_overview'|'relevant_pages'|'competitors_domain';
+type LabsPriceMode=KeywordMode|'ranked_keywords'|'domain_rank_overview'|'relevant_pages'|'competitors_domain'|'backlinks_summary'|'backlinks_profile';
 export function parseKeywordAccount(response:{httpStatus:number;body:unknown},mode?:LabsPriceMode,binding={key:getConfig().authSecret,version:1 as 1|2}) {
   const result=successfulFree(response);if(result.length!==1||!object(result[0])||!validText(result[0].login,254))invalid();
   const row=result[0];
   const fingerprint=createHmac('sha256',binding.key).update(`ten98.dataforseo.account.v${binding.version}:`+row.login.trim().toLowerCase()).digest('hex');
   if(!mode)return {fingerprint,perTask:0n,perItem:0n};
   const endpoint=mode==='overview'?'keyword_overview':mode==='ideas'?'keyword_ideas':mode;
-  const prices=row.price?.dataforseo_labs?.[endpoint]?.live?.priority_normal;
+  const prices=mode==='backlinks_summary'||mode==='backlinks_profile'?row.price?.backlinks?.[mode==='backlinks_summary'?'summary':'backlinks']?.live?.priority_normal:row.price?.dataforseo_labs?.[endpoint]?.live?.priority_normal;
   if(!Array.isArray(prices)||prices.length!==2)invalid();
   const units=new Map<string,bigint>();
   for(const price of prices){if(!object(price)||!['per_request','per_result'].includes(price.cost_type)||units.has(price.cost_type))invalid();units.set(price.cost_type,providerMicros(price.cost));}
