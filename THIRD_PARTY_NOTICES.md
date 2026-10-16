@@ -2,6 +2,30 @@
 
 The application includes the attributed Elmo adaptations recorded below. Statements describing an empty application import ledger refer to the earlier planning/foundation stage.
 
+## Transactional SMTP transport
+
+SMTP delivery uses exactly [Nodemailer 10.1.1](https://github.com/nodemailer/nodemailer/tree/v10.1.1), MIT No Attribution (MIT-0), with no runtime dependencies. Its published package integrity is pinned in pnpm-lock.yaml. Node provides sockets and TLS, but does not provide a high-level authenticated SMTP/MIME sender. Cloudflare REST uses native fetch separately; no Cloudflare SDK is added. Configuration alone does not verify sending entitlement or mailbox delivery.
+
+### Nodemailer 10.1.1 — MIT-0
+
+```text
+Copyright (c) 2011-2023 Andris Reinman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Local geography reader and separately supplied data
 
 The optional local geography reader uses exactly [mmdb-lib 3.0.3](https://registry.npmjs.org/mmdb-lib/3.0.3), MIT, without runtime dependencies. Its exact published integrity is in pnpm-lock.yaml. No database is bundled in this repository or application image. Operator-supplied [DB-IP City Lite](https://db-ip.com/db/download/ip-to-city-lite) data is separately licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the application's MIT license does not relicense that data. Results carry the linked “IP location data by DB-IP” attribution. Lite data has reduced accuracy and monthly builds; approximate location is not a verified visitor address.

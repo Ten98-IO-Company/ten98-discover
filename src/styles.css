@@ -255,10 +255,11 @@ input:not([type='checkbox']):not([type='radio']), select, textarea { width: 100%
 textarea { resize: vertical; line-height: 1.6; }
 input[type='checkbox'], input[type='radio'] { accent-color: var(--blue); }
 input:focus, select:focus, textarea:focus { border-color: var(--color-focus); }
-.center { display: grid; place-items: center; min-height: 100vh; padding: var(--space-6); background: var(--color-surface-subtle); }
-.auth { width: min(450px,100%); padding: 34px; box-shadow: var(--shadow-dialog); }
+.center { display: grid; place-items: center; min-height: 100vh; padding: min(var(--space-6),5%); background: var(--color-surface-subtle); }
+.auth { --control-md: var(--control-touch); width: min(450px,100%); padding: min(34px,8%); overflow-wrap: anywhere; box-shadow: var(--shadow-dialog); }
 .auth h1 { font-size: var(--text-2xl); margin-bottom: 20px; }
 .auth .btn.primary { width: 100%; }
+.auth > .btn { margin-block-start: var(--space-3); }
 .auth-brand { font-size: 15px; font-weight: 700; color: var(--blue); margin-bottom: 30px; }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .explorer .stack { display: grid; gap: 14px; }

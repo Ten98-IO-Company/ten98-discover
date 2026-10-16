@@ -220,6 +220,15 @@ export type CallbackIntent =
   | { kind: 'invite'; token: string }
   | { kind: 'invalid' }
 
+// Recovery capabilities are consumed before the ordinary OAuth/invitation callbacks.
+// Accept only the exact fragment emitted by the server; never reinterpret query values.
+export function parsePasswordResetFragment(hash: string): { token: string | null } | null {
+  if (!hash || hash.length > 4096) return hash.includes('password-reset') ? { token: null } : null
+  if (!new URLSearchParams(hash.replace(/^#/, '')).has('password-reset')) return null
+  const match = /^#password-reset=([A-Za-z0-9]{24})$/.exec(hash)
+  return { token: match?.[0] === hash ? match[1] : null }
+}
+
 // Read the raw browser fragment once. Router location.hash is already decoded.
 export function parseCallback(hash: string): CallbackIntent | null {
   if (!hash) return null
