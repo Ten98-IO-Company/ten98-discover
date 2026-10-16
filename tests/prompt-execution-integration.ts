@@ -386,6 +386,75 @@ export async function runPromptExecutionChecks(){
   assert.deepEqual((await pool.query('SELECT status,count(*)::int AS count,sum(actual_micros)::text AS actual FROM provider_request WHERE workspace_id=ANY($1::text[]) GROUP BY status ORDER BY status',[[four.workspace,one.workspace,failedFour.workspace,uncertainFour.workspace,cited.workspace]])).rows,[{status:'cancelled',count:3,actual:null},{status:'settled',count:11,actual:'143'},{status:'uncertain',count:1,actual:null}]);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM pgboss.job WHERE id=ANY($1::uuid[])',[[fourStart.comparison.id,oneStart.comparison.id,failedStart.comparison.id,uncertainStart.comparison.id,citedStart.comparison.id]])).rows[0].n,5);
   console.log('PASS expanded legal citations preserve bounded answer text and all ordered sources, native aggregate413, fresh page retention/access and exact additional charges');
+
+  // Separate cache fixture: all original twelve groups/financial assertions above remain exact.
+  loseFour=false; // New independent cache fixture; no counter or rate bucket is reset.
+  const cached=await fixture(),cacheOwner=randomUUID();await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Cache owner\',$2)',[cacheOwner,cacheOwner+'@execution.integration.test']);
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[cached.workspace,cacheOwner]);
+  const cachePaidBefore=fourPaid,cacheQuote=async(ids:string[],reuseCached=true)=>quotePromptExecution(cached.project,cacheOwner,{...cached.request,models:ids,reuseCached},sendFour);
+  const cacheStart=async(q:Awaited<ReturnType<typeof cacheQuote>>)=>startPromptExecution(cached.project,cacheOwner,{quoteId:q.quote.id,requestKey:randomUUID()});
+  const firstCache=await cacheStart(await cacheQuote(selected.slice(0,2)));await executePromptComparison(firstCache.comparison.id,sendFour);assert.equal(fourPaid-cachePaidBefore,2);
+  // Replay only the actual cache candidate query's clock bind at fixed DST anchors;
+  // real locks, candidate rows, predicates and all original three binds still execute.
+  const cacheDstId=firstCache.comparison.runs[0].id,cacheDstBefore=(await pool.query("SELECT completed_at::text AS at,w.raw_provider_evidence_days AS days FROM prompt_execution r JOIN workspace w ON w.id=r.workspace_id WHERE r.id=$1",[cacheDstId])).rows[0];
+  const cacheDstConnect=pool.connect.bind(pool);let cacheDstAt='2026-03-12T16:30:00Z',cacheDstSql:string|undefined,cacheDstQueries=0;
+  pool.connect=(async(...args:any[])=>{if(args.length)return (cacheDstConnect as any)(...args);const client=await cacheDstConnect(),query=client.query.bind(client),release=client.release.bind(client);
+    client.query=(async(...values:any[])=>{const sql=String(values[0]);if(sql==='BEGIN'){const result=await (query as any)(...values);await query("SET LOCAL TimeZone='America/New_York'");return result;}
+      if(sql.startsWith('WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at)')&&sql.includes('SELECT DISTINCT ON(r.cache_key)')){
+        assert.equal(values.length,2);assert.equal(values[1].length,3);assert.equal(values[1][0],cached.project);assert.ok(values[1][2]===null);assert.equal(sql.split('clock_timestamp()').length,2);
+        if(cacheDstSql===undefined)cacheDstSql=sql;else assert.equal(sql,cacheDstSql);cacheDstQueries++;assert.equal(sql.split("interval '168 hours'").length,3);
+        const replay=sql.replace('clock_timestamp() AS at','$4::timestamptz AS at'),binds=[...values[1],cacheDstAt],oldDays=await query(replay.replaceAll("interval '168 hours'","interval '7 days'"),binds);
+        if(cacheDstAt==='2026-03-12T16:30:00Z')assert.equal(oldDays.rows.length,0,'The old calendar-day cutoff incorrectly rejects this167.5-hour spring source.');
+        else{assert.equal(oldDays.rows.length,1,'The old fall cutoff still accepts the168.5-hour expired source.');assert.equal(new Date(oldDays.rows[0].eligibleUntil).toISOString(),'2026-11-05T17:00:00.000Z','The old calendar-day expiry is169 elapsed hours across fall DST.');}
+        values=[replay,binds];
+      }return (query as any)(...values);}) as typeof client.query;
+    client.release=((...args:any[])=>{client.query=query;return (release as any)(...args);}) as typeof client.release;return client;
+  }) as typeof pool.connect;
+  try{
+    await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[cached.workspace]);
+    await pool.query("UPDATE prompt_execution SET completed_at='2026-03-05T17:00:00Z' WHERE id=$1",[cacheDstId]);
+    const spring=await cacheQuote([selected[0]]);assert.equal(spring.quote.cacheReused,true);assert.equal(new Date(spring.quote.cache!.items[0].eligibleUntil!).toISOString(),'2026-03-12T17:00:00.000Z');
+    await pool.query("UPDATE prompt_execution SET completed_at='2026-10-29T16:00:00Z' WHERE id=$1",[cacheDstId]);cacheDstAt='2026-11-05T15:30:00Z';
+    const fallFresh=await cacheQuote([selected[0]]);assert.equal(fallFresh.quote.cacheReused,true);assert.equal(new Date(fallFresh.quote.cache!.items[0].eligibleUntil!).toISOString(),'2026-11-05T16:00:00.000Z');
+    cacheDstAt='2026-11-05T16:30:00Z';assert.equal((await cacheQuote([selected[0]])).quote.cacheReused,false);assert.equal(cacheDstQueries,3);assert.ok(cacheDstSql);
+  }finally{pool.connect=cacheDstConnect;await pool.query('UPDATE prompt_execution SET completed_at=$2::timestamptz WHERE id=$1',[cacheDstId,cacheDstBefore.at]);await pool.query('UPDATE workspace SET raw_provider_evidence_days=$2 WHERE id=$1',[cached.workspace,cacheDstBefore.days]);}
+  const sourceLedger=(await pool.query('SELECT id,md5(to_jsonb(p)::text) AS hash FROM provider_request p WHERE workspace_id=$1 ORDER BY id',[cached.workspace])).rows;
+  await saveBudget(cached.workspace,cacheOwner,{paused:true});
+  const reversedQuote=await cacheQuote([selected[1],selected[0]]);assert.equal(reversedQuote.quote.estimateUsd,'0.000000');assert.equal(reversedQuote.quote.cacheReused,true);
+  const reverseKey=randomUUID(),reversed=await startPromptExecution(cached.project,cacheOwner,{quoteId:reversedQuote.quote.id,requestKey:reverseKey});
+  assert.deepEqual(reversed.comparison.runs.map(r=>r.model),[selected[1],selected[0]]);assert.equal(reversed.comparison.runs.every(r=>r.reuse&&r.chargeStatus===null&&r.actualUsd===null),true);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM pgboss.job WHERE id=$1',[reversed.comparison.id])).rows[0].n,0);
+  assert.deepEqual((await pool.query('SELECT id,md5(to_jsonb(p)::text) AS hash FROM provider_request p WHERE workspace_id=$1 ORDER BY id',[cached.workspace])).rows,sourceLedger);
+  assert.equal((await startPromptExecution(cached.project,cacheOwner,{quoteId:reversedQuote.quote.id,requestKey:reverseKey})).comparison.id,reversed.comparison.id);
+  const missQuote=await cacheQuote([selected[1],selected[2],selected[0]]);await assert.rejects(cacheStart(missQuote),{status:409});assert.equal(fourPaid-cachePaidBefore,2);
+  assert.equal((await pool.query('SELECT id FROM prompt_comparison WHERE quote_id=$1',[missQuote.quote.id])).rowCount,0,'A mixed miss refusal rolls back cached links and the comparison too.');
+  await saveBudget(cached.workspace,cacheOwner,{paused:false});
+  const overlap=await cacheStart(missQuote);await executePromptComparison(overlap.comparison.id,sendFour);assert.equal(fourPaid-cachePaidBefore,3);
+  const fourCache=await cacheStart(await cacheQuote([selected[3],selected[0],selected[2],selected[1]]));await executePromptComparison(fourCache.comparison.id,sendFour);assert.equal(fourPaid-cachePaidBefore,4);
+  const cacheSummary=(await getPromptComparisonSummary(cached.project,viewer,fourCache.comparison.id)).comparison;
+  assert.deepEqual(cacheSummary.runs.map(r=>r.model),[selected[3],selected[0],selected[2],selected[1]]);assert.equal(cacheSummary.runs.filter(r=>r.reuse).length,3);
+  const retained=await getPromptExecutionResult(cached.project,viewer,reversed.comparison.runs[0].id);assert.equal(retained.comparisonId,reversed.comparison.id);assert.equal(retained.run.result.text,largeText);assert.ok(retained.run.reuse);assert.equal(retained.run.reuse.sourceRunId,firstCache.comparison.runs[1].id);
+  assert.ok(Buffer.byteLength(JSON.stringify(retained))<=2097152);assert.equal((await getPromptExecutionCitations(cached.project,viewer,retained.run.id,new URLSearchParams({offset:'0'}))).total,0);
+  const cachedApi=`${config.appUrl}/api/projects/${cached.project}/prompt-executions`;
+  for(const path of ['/comparisons/'+reversed.comparison.id+'/summary','/runs/'+retained.run.id,'/runs/'+retained.run.id+'/citations?offset=0']){const response=await handleApi(new Request(cachedApi+path,{headers:{cookie}}));assert.equal(response.status,200);const bytes=new Uint8Array(await response.arrayBuffer());assert.ok(bytes.byteLength<=2097152);const wire=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(bytes));assert.equal(wire.role,'owner');assert.equal(wire.comparison?.id??wire.comparisonId,reversed.comparison.id);}
+  console.log('PASS per-model cache reorders and overlaps one through four models without new cached charges/jobs, including paused all-hit reuse');
+
+  const sourceA=firstCache.comparison.runs[0].id;await pool.query("UPDATE prompt_execution SET completed_at=clock_timestamp()-interval '168 hours'+interval '1 second' WHERE id=$1",[sourceA]);
+  const nearExpiry=await cacheQuote([selected[0]]);assert.equal(nearExpiry.quote.cacheReused,true);
+  await assert.rejects(heldRead(cached.workspace,()=>cacheStart(nearExpiry),async gate=>{const until=Date.now()+2500;while((await gate.query("SELECT completed_at+interval '168 hours'>clock_timestamp() AS fresh FROM prompt_execution WHERE id=$1",[sourceA])).rows[0].fresh){assert.ok(Date.now()<until);await new Promise(resolve=>setTimeout(resolve,10));}}),{status:409});
+  assert.equal(fourPaid-cachePaidBefore,4);assert.equal((await getPromptExecutionResult(cached.project,viewer,firstCache.comparison.runs[0].id)).run.resultExpired,false,'Cache TTL does not shorten retained history.');
+  const freshQuote=await cacheQuote([selected[0]],false);assert.equal(freshQuote.quote.cacheReused,false);const freshCache=await cacheStart(freshQuote);await executePromptComparison(freshCache.comparison.id,sendFour);assert.equal(fourPaid-cachePaidBefore,5);
+  const purgedQuote=await cacheQuote([selected[1]]);await pool.query('UPDATE prompt_execution SET result=NULL,result_purged_at=clock_timestamp() WHERE id=$1',[firstCache.comparison.runs[1].id]);await assert.rejects(cacheStart(purgedQuote),{status:409});
+  const purged=await getPromptExecutionResult(cached.project,viewer,reversed.comparison.runs[0].id);assert.equal(purged.run.result,null);assert.equal(purged.run.resultExpired,true);assert.equal(purged.citations.count,null);
+  await assert.rejects(heldRead(cached.workspace,()=>getPromptExecutionResult(cached.project,viewer,reversed.comparison.runs[0].id),async gate=>{await gate.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[cached.workspace,viewer]);}),{status:404});
+  assert.deepEqual((await pool.query('SELECT status,count(*)::int AS n,sum(actual_micros)::text AS micros FROM provider_request WHERE workspace_id=$1 GROUP BY status',[cached.workspace])).rows,[{status:'settled',n:5,micros:'65'}]);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='prompt-execution' AND id IN(SELECT id FROM prompt_comparison WHERE workspace_id=$1)",[cached.workspace])).rows[0].n,4);
+  const revokedHit=await cacheQuote([selected[3]]);assert.equal(revokedHit.quote.cacheReused,true);await revokeProvider(cached.workspace,cacheOwner,cached.connectionId);await assert.rejects(cacheStart(revokedHit),{status:404});
+  const cacheUnknown=await fixture(),unknownQuote=(await quotePromptExecution(cacheUnknown.project,owner,{...cacheUnknown.request,reuseCached:true},sendFour)).quote;
+  const unknownCacheStart=await startPromptExecution(cacheUnknown.project,owner,{quoteId:unknownQuote.id,requestKey:randomUUID()});loseFour=true;await executePromptComparison(unknownCacheStart.comparison.id,sendFour);loseFour=false;
+  const noUnknownHit=await quotePromptExecution(cacheUnknown.project,owner,{...cacheUnknown.request,reuseCached:true},sendFour);assert.equal(noUnknownHit.quote.cacheReused,false);await assert.rejects(startPromptExecution(cacheUnknown.project,owner,{quoteId:noUnknownHit.quote.id,requestKey:randomUUID()}),{status:409});
+  assert.equal(fourPaid-cachePaidBefore,6);assert.deepEqual((await pool.query('SELECT status,count(*)::int AS n,sum(actual_micros)::text AS micros FROM provider_request WHERE workspace_id=$1 GROUP BY status ORDER BY status',[cacheUnknown.workspace])).rows,[{status:'cancelled',n:1,micros:null},{status:'uncertain',n:1,micros:null}]);
+  console.log('PASS pinned cache expiry after actual workspace wait refuses paid fallback, explicit fresh work, purge/current-role enforcement and separate source accounting');
  }finally{try{await stopJobs();}finally{globalThis.fetch=originalFetch;}}
 }
 if(import.meta.main){try{await runPromptExecutionChecks();}finally{await closeDatabase();}}
