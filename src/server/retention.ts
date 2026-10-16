@@ -235,7 +235,7 @@ export async function runRetentionBatch(projectId?: string) {
     const imported = await expireGoogleImportPages(client, selected!, state.derived_cutoff);
     const keywords = await expireKeywordResults(client, selected!, state.derived_cutoff);
     const domainResearch=await expireDomainResearch(client,selected!,state.derived_cutoff);
-    const prompts=await expirePromptResults(client,selected!,state.raw_evidence_cutoff);
+    const prompts=await expirePromptResults(client,selected!,state.raw_evidence_cutoff,state.derived_cutoff);
     const suggestions=await expireAiSuggestions(client,selected!,state.raw_evidence_cutoff);
     const aiSearch=await expireAiSearch(client,selected!,state.raw_evidence_cutoff);
     const contentSupport=await expireContentSupport(client,selected!);
