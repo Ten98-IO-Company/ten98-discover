@@ -4,7 +4,7 @@ The application includes the attributed Elmo and OpenSEO adaptations recorded be
 
 ## OpenSEO domain scope filters
 
-`src/server/domain-research-input.ts` adapts the hostname/path LIKE-filter pattern from OpenSEO0.1.12, commit `89e5a00717cdf049b7c2b4e29646edb3a7d4995b`, [researchScopeFilters.ts](https://github.com/every-app/open-seo/blob/89e5a00717cdf049b7c2b4e29646edb3a7d4995b/src/server/lib/dataforseo/researchScopeFilters.ts). The bounded fixed profiles add query-string variants, independent returned-URL checks and native quote/job accounting; no upstream cache, billing system, branding or dataset is copied. The source retains MIT copyright2026 Ben Senescu.
+`src/server/domain-research-input.ts` and `src/server/backlink-research-input.ts` adapt the hostname/path LIKE-filter pattern from OpenSEO0.1.12, commit `89e5a00717cdf049b7c2b4e29646edb3a7d4995b`, [researchScopeFilters.ts](https://github.com/every-app/open-seo/blob/89e5a00717cdf049b7c2b4e29646edb3a7d4995b/src/server/lib/dataforseo/researchScopeFilters.ts). The bounded fixed profiles add query-string variants, independent returned-URL checks and native quote/job accounting; backlink folders retain their explicit scheme and hostname. No upstream cache, billing system, branding or dataset is copied. The source retains MIT copyright2026 Ben Senescu.
 
 ```text
 MIT License
