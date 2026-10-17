@@ -104,7 +104,7 @@ export function createNativeMcpServer(token:string,state:McpRequestState,limit:M
           const {projectId,...input}=raw as Record<string,unknown>;
           const saved=await updateProjectContext(projectId,principal.userId,input,token);
           state.committed=true;
-          return mcpResult({committed:true,requestId:args.requestId,replayed:saved.replayed,revision:saved.revision});
+          return mcpResult({committed:true,requestId:args.requestId,replayed:saved.replayed===true,revision:saved.revision});
         }
         case 'ten98_create_prompts':case 'ten98_update_prompt':case 'ten98_archive_prompt':case 'ten98_restore_prompt':{
           const {projectId,promptId,...input}=raw as Record<string,unknown>;

@@ -864,8 +864,8 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method==='GET'&&contextRoute[2]==='research-log') return json(await getContextResearch(contextRoute[1],user.id,url.searchParams,apiToken??undefined));
       if(request.method==='POST'&&contextRoute[2]==='update'&&!url.search) {
         // A bearer caller gets the bounded receipt; context:write does not imply context:read at the data level either.
-        const {replayed,...saved}=await updateProjectContext(contextRoute[1],user.id,await readJson(request,262144),apiToken??undefined);
-        return json(apiToken?{revision:saved.revision,replayed}:saved);
+        const saved=await updateProjectContext(contextRoute[1],user.id,await readJson(request,262144),apiToken??undefined);
+        return json(apiToken?{revision:saved.revision,replayed:saved.replayed===true}:saved);
       }
       return json({error:'Method or parameters not allowed.'},405);
     }

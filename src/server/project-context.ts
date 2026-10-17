@@ -111,7 +111,8 @@ export async function updateProjectContext(projectId:unknown,userId:unknown,raw:
   const input=parse(contextPatch,raw),uid=parse(z.uuid(),userId);
   return withContentProject(projectId,uid,true,async(client,project)=>{
     const receipt=await contentReceipt(client,project.id,input.requestId,'context.update',input);
-    if(receipt.replayed) return {...await contextDto(client,project),replayed:true};
+    // Only token-bearing callers learn whether the receipt replayed; cookie and direct callers keep the unchanged DTO.
+    if(receipt.replayed) return {...await contextDto(client,project),...(apiToken===undefined?{}:{replayed:true})};
     await client.query('INSERT INTO project_context(project_id,brand_name) VALUES($1,$2) ON CONFLICT(project_id) DO NOTHING',[project.id,project.name]);
     const profile=await contentProfile(client,project);
     if(profile.revision!==input.revision) throw new FoundationError(409,'Project context changed. Review the latest saved data before saving again.');
@@ -169,6 +170,6 @@ export async function updateProjectContext(projectId:unknown,userId:unknown,raw:
       }
     }
     await client.query('UPDATE project_context SET revision=revision+1 WHERE project_id=$1',[project.id]);
-    await receipt.save({});return {...await contextDto(client,project),replayed:false};
+    await receipt.save({});return {...await contextDto(client,project),...(apiToken===undefined?{}:{replayed:false})};
   },apiToken,false,'context:write');
 }
