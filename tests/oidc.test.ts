@@ -10,7 +10,7 @@ test('OIDC pins approved endpoints and verifies signed issuer, audience, nonce a
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'fixture', use: 'sig', alg: 'RS256' };
   let origin = '', redirectTargetCalls = 0, tokenBody = '';
-  let tokenAuthorization: string | undefined;
+  let tokenAuthorization: string | undefined, endSession: unknown;
   const jwt = (claims: Record<string, unknown> = {}, key = privateKey) => {
     const now = Math.floor(Date.now() / 1000);
     const unsigned = [Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture' })).toString('base64url'),
@@ -21,7 +21,7 @@ test('OIDC pins approved endpoints and verifies signed issuer, audience, nonce a
   const server = createServer(async (request, response) => {
     response.setHeader('content-type', 'application/json');
     if (request.url === '/.well-known/openid-configuration') response.end(JSON.stringify({ issuer: origin,
-      authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`, jwks_uri: `${origin}/keys`, id_token_signing_alg_values_supported: ['RS256'] }));
+      authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`, jwks_uri: `${origin}/keys`, id_token_signing_alg_values_supported: ['RS256'], end_session_endpoint: endSession }));
     else if (request.url === '/keys') response.end(JSON.stringify({ keys: [jwk] }));
     else if (request.url === '/token') {
       tokenBody = ''; tokenAuthorization = request.headers.authorization;
@@ -42,6 +42,12 @@ test('OIDC pins approved endpoints and verifies signed issuer, audience, nonce a
     const raw = { name: 'Local fixture', issuer: origin, clientId: 'fixture-client', allowedAddresses: ['127.0.0.1'] };
     assert.throws(() => validateOidcSettings({ ...raw, allowedAddresses: [] }));
     const settings = await discoverOidc(raw);
+    assert.equal(Object.hasOwn(settings.metadata, 'end_session_endpoint'), false, 'A provider without RP-initiated sign-out still discovers.');
+    // An end-session endpoint is optional: kept only inside the approved origins, otherwise ignored rather than refusing the provider.
+    for (const [value, kept] of [[`${origin}/logout`, true], ['https://elsewhere.example.test/logout', false], [`${origin}/logout#fragment`, false], [null, false], [7, false]] as const) {
+      endSession = value; assert.equal((await discoverOidc(raw)).metadata.end_session_endpoint, kept ? value : undefined, String(value));
+    }
+    endSession = undefined;
     const claims = await verifyOidcIdentity(settings, jwt(), 'fixture-nonce');
     assert.equal(claims.subject, 'fixture-subject'); assert.equal(claims.email, 'member@example.test'); assert.equal(claims.emailVerified, true);
     for (const invalid of [{ iss: 'https://other.example.test' }, { aud: 'other-client' }, { nonce: 'other-nonce' },
