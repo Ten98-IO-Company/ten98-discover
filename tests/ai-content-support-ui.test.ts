@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {contentSupportQueryId} from '../src/server/ai-content-support-input.ts';
 import {contentSupportQuoteInputSchema,contentSupportQuoteDtoSchema} from '../src/lib/ai-content-support.ts';
-import {supportQueryId,normalizeSupportCeiling,readSupportQuote,readSupportRun,readSupportList,supportReceipt,sameSupportReceipt,quoteCurrent} from '../src/components/ai-content-support-ui.ts';
+import {supportQueryId,readSupportQuote,readSupportRun,readSupportList,supportReceipt,sameSupportReceipt,quoteCurrent} from '../src/components/ai-content-support-ui.ts';
 // Four exact DTOs captured by the passed native lifecycle run7f4126a1e75d.
 // Source whole-artifact SHA256 ba7d0a5643318674ef2d45b124a6f33b9428a6535c1868dcd1ddb0fc89da64d7. No live provider calls.
 const golden = {
@@ -309,22 +309,26 @@ const golden = {
   }
 };
 
-const q=contentSupportQuoteDtoSchema.parse((({replayed,...body})=>body)(golden.quote)),input=contentSupportQuoteInputSchema.parse(q.quote.input),queryKeys=q.quote.selection!.queries.map(row=>row.key);
+// The golden quote is the pre-D3 capture. Since owner decision D3 the server strips the recorded ceiling from the quote and its input.
+const {maxSpendUsd:_ceiling,input:{maxSpendUsd:_inputCeiling,...currentInput},...currentQuote}=golden.quote.quote,current={...golden.quote,quote:{...currentQuote,input:currentInput}};
+const q=contentSupportQuoteDtoSchema.parse((({replayed,...body})=>body)(current)),input=contentSupportQuoteInputSchema.parse(q.quote.input),queryKeys=q.quote.selection!.queries.map(row=>row.key);
 test('browser WebCrypto query IDs equal the native canonical identities, including exact Unicode forms',async()=>{
  for(const key of ['query 29','café','cafe\u0301','الطاقة الشمسية','solar 😀 batteries','a"b\\c'])assert.equal(await supportQueryId(key),contentSupportQueryId(key));
  assert.notEqual(await supportQueryId('café'),await supportQueryId('cafe\u0301'));
  for(const key of ['', ' Uppercase ', 'UPPER', 'x\0', '\ud800'])await assert.rejects(supportQueryId(key));
 });
-test('actual native quote and exact replay preserve source/model/ceiling/query bindings',()=>{
- assert.equal(readSupportQuote(golden.quote,q.projectId,input,queryKeys).quote.id,q.quote.id);
- assert.equal(readSupportQuote({...golden.quote,replayed:true},q.projectId,input,queryKeys).replayed,true);
- assert.equal(normalizeSupportCeiling('0.03'),'0.030000');assert.equal(normalizeSupportCeiling('1000000'),'1000000.000000');
- for(const value of ['0','-1','1e-2','0.0000001','1000001'])assert.throws(()=>normalizeSupportCeiling(value));
- assert.throws(()=>readSupportQuote(golden.quote,crypto.randomUUID(),input,queryKeys));
- for(const changed of [{...input,requestId:crypto.randomUUID()},{...input,model:'other/valid-model'},{...input,maxSpendUsd:'0.040000'},{...input,expectedQueryReceiptHash:'0'.repeat(64)},{...input,selectedPageIds:[crypto.randomUUID()]}])assert.throws(()=>readSupportQuote(golden.quote,q.projectId,changed,queryKeys));
- assert.throws(()=>readSupportQuote(golden.quote,q.projectId,input,['different query']));
- assert.throws(()=>readSupportQuote({...golden.quote,role:'viewer'},q.projectId,input,queryKeys));
- assert.throws(()=>readSupportQuote({...golden.quote,unexpected:true},q.projectId,input,queryKeys));
+test('actual native quote and exact replay preserve source/model/query bindings with no ceiling (D3)',()=>{
+ assert.equal(readSupportQuote(current,q.projectId,input,queryKeys).quote.id,q.quote.id);
+ assert.equal(readSupportQuote({...current,replayed:true},q.projectId,input,queryKeys).replayed,true);
+ assert.equal(Object.hasOwn(q.quote,'maxSpendUsd'),false);assert.equal(Object.hasOwn(input,'maxSpendUsd'),false);
+ // A DTO or a sent quote body that still names a ceiling is refused, the exact pre-D3 capture included.
+ for(const ceiling of [golden.quote,{...current,quote:{...current.quote,maxSpendUsd:'0.030000'}},{...current,quote:{...current.quote,input:{...current.quote.input,maxSpendUsd:'0.030000'}}}])assert.throws(()=>readSupportQuote(ceiling,q.projectId,input,queryKeys));
+ assert.equal(contentSupportQuoteInputSchema.safeParse({...input,maxSpendUsd:'0.030000'}).success,false);
+ assert.throws(()=>readSupportQuote(current,crypto.randomUUID(),input,queryKeys));
+ for(const changed of [{...input,requestId:crypto.randomUUID()},{...input,connectionId:crypto.randomUUID()},{...input,model:'other/valid-model'},{...input,maxSpendUsd:'0.030000'},{...input,expectedQueryReceiptHash:'0'.repeat(64)},{...input,selectedPageIds:[crypto.randomUUID()]}])assert.throws(()=>readSupportQuote(current,q.projectId,changed,queryKeys));
+ assert.throws(()=>readSupportQuote(current,q.projectId,input,['different query']));
+ assert.throws(()=>readSupportQuote({...current,role:'viewer'},q.projectId,input,queryKeys));
+ assert.throws(()=>readSupportQuote({...current,unexpected:true},q.projectId,input,queryKeys));
  assert.equal(quoteCurrent(q.quote,new Date(q.quote.createdAt)),true);assert.equal(quoteCurrent(q.quote,new Date(Date.parse(q.quote.expiresAt)+1)),false);assert.equal(quoteCurrent({...q.quote,inputExpired:true,input:null,selection:null},new Date(q.quote.createdAt)),false);
 });
 test('actual completed/uncertain/expired reads preserve unknown versus known cost and reject foreign or changed identities',()=>{

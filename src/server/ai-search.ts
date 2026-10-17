@@ -7,7 +7,7 @@ import {getBoss} from './jobs.ts';
 import {decryptCredentials} from './credential-vault.ts';
 import {canonicalHash,contextHost,parse} from './context-input.ts';
 import {contentReceipt,contentCursor,readContentCursor,contentProfile} from './project-context.ts';
-import {moneyInput,usd,usdMicros} from './providers.ts';
+import {moneyInput,usd} from './providers.ts';
 import {reserveSpendInTransaction,dispatchSpend,settleSpend} from './spending.ts';
 import {getProviderAccountIdentityKey} from './provider-account-identity.ts';
 import {dataforseoJson} from './dataforseo-transport.ts';
@@ -57,7 +57,7 @@ async function preflight(projectId:string,conn:any,send:typeof fetch){
   return {fingerprint:account.fingerprint,countries,languages,countriesHash,languagesHash,revision,preparedAt:new Date().toISOString()};
  }finally{preflightBusy=false;}
 }
-function snapshot(raw:unknown,hash?:string):AiSearchSnapshot{const value=aiSearchSnapshotSchema.safeParse(raw);if(!value.success||hash&&canonicalHash(value.data)!==hash)throw changed();moneyInput.parse(value.data.maxSpendUsd);return value.data;}
+function snapshot(raw:unknown,hash?:string):AiSearchSnapshot{const value=aiSearchSnapshotSchema.safeParse(raw);if(!value.success||hash&&canonicalHash(value.data)!==hash)throw changed();if(value.data.maxSpendUsd!==undefined)moneyInput.parse(value.data.maxSpendUsd);return value.data;}
 async function quoteRow(c:PoolClient,pid:string,id:string){const row=(await c.query(`SELECT q.*,q.expires_at<=clock_timestamp() AS quote_expired FROM ai_search_quote q WHERE q.project_id=$1 AND q.id=$2 FOR UPDATE`,[pid,id])).rows[0];if(!row)throw unavailable();return row;}
 function quoteDto(q:any):AiSearchQuoteDto{let input=null,state:AiSearchQuoteDto['rawState']=q.raw_expired_at||q.input_purged_at?'expired':'not_recorded';if(state!=='expired'&&q.input!==null)try{input=snapshot(q.input,q.input_hash);state='retained';}catch{state='invalid';}
  return {id:q.id,requestId:q.request_id,projectId:q.project_id,promptId:q.prompt_id,versionId:q.version_id,connectionId:q.connection_id,connectionRevision:q.connection_revision,createdAt:iso(q.created_at)!,expiresAt:iso(q.expires_at)!,inputHash:q.input_hash,rawState:state,input,price:aiSearchPriceEvidence()};}
@@ -151,12 +151,12 @@ export async function refreshAiSearchCatalog(projectId:string,userId:string,raw:
  return projectGate(projectId,userId,true,async(c,p)=>{await connection(c,p.workspace_id,input.connectionId,saved.revision);return {role:p.role,profileId:aiSearchProfileId,price:aiSearchPriceEvidence(),catalog:{connectionId:input.connectionId,connectionRevision:saved.revision,countries:catalog.countries,languages:catalog.languages,revision:catalog.revision,observedAt:catalog.preparedAt}};});
 }
 export async function quoteAiSearch(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
- const input=parse(aiSearchQuoteInput,raw);moneyInput.parse(input.maxSpendUsd);const receiptInput={actorUserId:userId,input};
+ const input=parse(aiSearchQuoteInput,raw);const receiptInput={actorUserId:userId,input};
  const first=await projectGate(projectId,userId,true,async(c,p)=>{const receipt=await contentReceipt(c,p.id,input.requestId,'ai-search.quote',receiptInput);if(receipt.replayed)return {replayed:true as const,role:p.role,quote:quoteDto(await quoteRow(c,p.id,receipt.result.quoteId))};return {replayed:false as const,connection:await connection(c,p.workspace_id,input.connectionId),text:await prompt(c,p.id,input.promptId,input.versionId)};});
  if(first.replayed)return first;
- const catalog=await preflight(projectId,first.connection,send);if(catalog.revision!==input.expectedCatalogRevision||4000n>usdMicros(input.maxSpendUsd))throw changed();
+ const catalog=await preflight(projectId,first.connection,send);if(catalog.revision!==input.expectedCatalogRevision)throw changed();
  const request=assertAiSearchMarket({profileId:aiSearchProfileId,capturedPrompt:first.text,locationCode:input.locationCode,languageCode:input.languageCode},catalog.countries,catalog.languages),price=aiSearchPriceEvidence();
- const captured=snapshot({version:1,request,promptId:input.promptId,versionId:input.versionId,maxSpendUsd:input.maxSpendUsd,country:catalog.countries.find(v=>v.code===input.locationCode)!,language:catalog.languages.find(v=>v.code===input.languageCode)!,catalogRevision:catalog.revision,countriesHash:catalog.countriesHash,languagesHash:catalog.languagesHash,preparedAt:catalog.preparedAt,price});
+ const captured=snapshot({version:1,request,promptId:input.promptId,versionId:input.versionId,country:catalog.countries.find(v=>v.code===input.locationCode)!,language:catalog.languages.find(v=>v.code===input.languageCode)!,catalogRevision:catalog.revision,countriesHash:catalog.countriesHash,languagesHash:catalog.languagesHash,preparedAt:catalog.preparedAt,price});
  return projectGate(projectId,userId,true,async(c,p)=>{const receipt=await contentReceipt(c,p.id,input.requestId,'ai-search.quote',receiptInput);if(receipt.replayed)return {role:p.role,replayed:true,quote:quoteDto(await quoteRow(c,p.id,receipt.result.quoteId))};await connection(c,p.workspace_id,input.connectionId,first.connection.revision);if(await prompt(c,p.id,input.promptId,input.versionId)!==first.text)throw changed();
   const id=randomUUID();await c.query(`INSERT INTO ai_search_quote(id,workspace_id,project_id,user_id,request_id,prompt_id,version_id,connection_id,connection_revision,account_fingerprint,account_fingerprint_version,input_hash,profile_id,price_version,price_mode,price_source,price_checked_on,estimate_micros,input,expires_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,2,$11,$12,$13,$14,$15,$16,4000,$17,clock_timestamp()+interval '5 minutes')`,[id,p.workspace_id,p.id,userId,input.requestId,input.promptId,input.versionId,input.connectionId,first.connection.revision,catalog.fingerprint,canonicalHash(captured),aiSearchProfileId,price.version,price.mode,price.sourceUrl,price.checkedOn,JSON.stringify(captured)]);await receipt.save({actorUserId:userId,quoteId:id,operation:'quote'});return {role:p.role,replayed:false,quote:quoteDto(await quoteRow(c,p.id,id))};
  });

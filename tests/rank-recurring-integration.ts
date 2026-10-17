@@ -38,7 +38,7 @@ export async function runRankRecurringChecks(){
       return Response.json({status_code:20000,cost:.001,tasks_count:1,tasks:[{...saved,status_code:20000,cost:.001,path:['v3','serp','google','organic','task_get','advanced',id],data:{...saved.data,function:'task_get'},result_count:1,result:[{keyword:decodeURIComponent(saved.data.keyword.replace(/\+/g,' ')),type:'organic',location_code:saved.data.location_code,language_code:saved.data.language_code,datetime:new Date().toISOString(),pages_count:1,items_count:1,item_types:['organic'],items:[{type:'organic',rank_group:1,rank_absolute:1,page:1,url:'https://example.com/result',domain:'example.com',title:'Synthetic recurring result'}]}]}]});
     };return {state,send};
   }
-  async function fixture(net:ReturnType<typeof transport>,count=2,ceiling='1.000000'){
+  async function fixture(net:ReturnType<typeof transport>,count=2){
     const f={workspace:randomUUID(),project:randomUUID(),tracker:randomUUID(),connection:'',quote:''};
     await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Recurring acceptance')",[f.workspace]);
     for(const [user,role]of [[owner,'owner'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[f.workspace,user,role]);
@@ -47,7 +47,7 @@ export async function runRankRecurringChecks(){
     await pool.query("INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages) VALUES($1,$2,$3,'Recurring acceptance','example.com',2840,'US','Country',2840,'US','en','English',clock_timestamp(),'desktop',100,1)",[f.tracker,f.workspace,f.project]);
     await changeRankKeywords(f.project,owner,f.tracker,'add',{requestId:randomUUID(),revision:1,keywords:Array.from({length:count},(_,i)=>'C++ %20 '+i),matchCase:true});
     const t=(await getRankTracker(f.project,owner,f.tracker)).tracker,q=await quoteRankCheck(f.project,owner,f.tracker,{requestId:randomUUID(),connectionId:f.connection,revision:t.revision,keywordsRevision:t.keywordsRevision,method:'queued'},net.send);assert.ok(q);f.quote=q.run.id;
-    await approveRankSchedule(f.project,owner,f.tracker,{requestId:randomUUID(),revision:t.authoredRevision,quoteId:f.quote,maximumUsd:ceiling,interval:'daily',timezone:'UTC',hour:9,minute:0});return f;
+    await approveRankSchedule(f.project,owner,f.tracker,{requestId:randomUUID(),revision:t.authoredRevision,quoteId:f.quote,interval:'daily',timezone:'UTC',hour:9,minute:0});return f;
   }
   type Fixture=Awaited<ReturnType<typeof fixture>>;
   const raw=(f:Fixture)=>pool.query('SELECT * FROM rank_config WHERE id=$1',[f.tracker]).then(r=>r.rows[0]);
@@ -86,15 +86,19 @@ export async function runRankRecurringChecks(){
     }
     console.log('PASS real queue insert rollback, invariant409 propagation and all-child rollback through the real uncertain-charge gate before one durable skip (D3)');
 
-    for(const why of ['provider','price','account','paused','overlap'] as const){
-      const n=transport(),x=await fixture(n,2,'0.002000');if(why==='overlap'){await due(x);assert.equal((await claimDueRankOccurrence(n.send)).status,'started');}
-      const when=await due(x),calls=n.state.free;if(why==='price')n.state.base=.002;if(why==='account')n.state.account='different@integration.test';if(why==='paused')await saveBudget(x.workspace,owner,{paused:true});
+    for(const why of ['provider','account','paused','overlap'] as const){
+      const n=transport(),x=await fixture(n,2);if(why==='overlap'){await due(x);assert.equal((await claimDueRankOccurrence(n.send)).status,'started');}
+      const when=await due(x),calls=n.state.free;if(why==='account')n.state.account='different@integration.test';if(why==='paused')await saveBudget(x.workspace,owner,{paused:true});
       const result=await claimDueRankOccurrence(why==='provider'?async()=>{throw new Error('Synthetic unavailable response.');}:n.send);assert.equal(result.status,'skipped');const skipped=JSON.parse(JSON.stringify((await getRankRun(x.project,viewer,result.runId!)).run));
       assert.equal(skipped.status,'skipped');assert.equal(skipped.taskCount,0);assert.equal(skipped.estimateUsd,'0.000000');assert.equal(skipped.canStart,false);assert.equal(skipped.priceAsOf,null);assert.equal(skipped.scheduledFor,new Date(when).toISOString());assert.deepEqual(skipped.tasks,[]);assert.deepEqual(skipped.quotedTasks,[]);assert.deepEqual(skipped.dispatches,[]);assert.equal(skipped.costStatus,'not_started');assert.equal(n.state.paid,0);if(why==='overlap')assert.equal(n.state.free,calls);
       const summary=(await listRankRuns(x.project,viewer,x.tracker,new URLSearchParams())).runs.find(r=>r.id===result.runId);assert.ok(summary);assert.equal(summary.scheduledFor,new Date(when).toISOString());assert.equal(summary.taskCount,0);assert.equal(summary.estimateUsd,'0.000000');
       assert.equal((await raw(x)).schedule_enabled,why!=='account');if(why!=='account')await disable(x);
     }
-    console.log('PASS unavailable account, price ceiling, account change, paused budget and overlap produce honest zero-child skipped receipts');
+    // Owner decision D3: no standing per-check ceiling. A dearer current price no longer skips; the occurrence starts at that price with every child reserved.
+    const dear=transport(),d=await fixture(dear,2),approvedTotal=BigInt((await raw(d)).approval_max_micros);await due(d);dear.state.base=.002;const dearer=await claimDueRankOccurrence(dear.send);assert.equal(dearer.status,'started');
+    const dearRun=(await pool.query('SELECT estimate_micros FROM rank_run WHERE id=$1',[dearer.runId])).rows[0],dearReserved=(await pool.query("SELECT sum(estimate_micros)::text AS total FROM provider_request WHERE workspace_id=$1 AND status='reserved'",[d.workspace])).rows[0].total;
+    assert.ok(BigInt(dearRun.estimate_micros)>approvedTotal,'The current plan exceeds the approved quote total.');assert.equal(dearReserved,dearRun.estimate_micros);assert.deepEqual(await counts(d),{runs:1,ledger:1,dispatch:1,tasks:2});assert.equal(dear.state.paid,0);await disable(d);
+    console.log('PASS unavailable account, account change, paused budget and overlap produce honest zero-child skipped receipts; a dearer current price starts with every child reserved (D3)');
 
     for(const mutation of ['role','credentials','definition','disable_reapprove','metadata'] as const){
       const n=transport(),x=await fixture(n),gate=latch();await due(x);n.state.accountHook=gate.hold;const pending=claimDueRankOccurrence(n.send);await reached(gate.entered);
@@ -102,7 +106,7 @@ export async function runRankRecurringChecks(){
         if(mutation==='role')await setRole(x,'editor');
         if(mutation==='credentials')await saveProvider(x.workspace,owner,{name:'Changed synthetic connection',credentials:{login:'recurring@integration.test',password:'different-never-live'}},x.connection);
         if(mutation==='definition'){const detail=await getRankTracker(x.project,owner,x.tracker),removed=await changeRankKeywords(x.project,owner,x.tracker,'remove',{requestId:randomUUID(),revision:detail.tracker.authoredRevision,keywordIds:[detail.keywords[0].id]});await changeRankKeywords(x.project,owner,x.tracker,'add',{requestId:randomUUID(),revision:removed.tracker.authoredRevision,keywords:[detail.keywords[0].keyword],matchCase:true});}
-        if(mutation==='disable_reapprove'){await disable(x);await approveRankSchedule(x.project,owner,x.tracker,{requestId:randomUUID(),revision:(await getRankSchedule(x.project,owner,x.tracker)).authoredRevision,quoteId:x.quote,maximumUsd:'1',interval:'daily',timezone:'UTC',hour:9,minute:0});}
+        if(mutation==='disable_reapprove'){await disable(x);await approveRankSchedule(x.project,owner,x.tracker,{requestId:randomUUID(),revision:(await getRankSchedule(x.project,owner,x.tracker)).authoredRevision,quoteId:x.quote,interval:'daily',timezone:'UTC',hour:9,minute:0});}
         if(mutation==='metadata'){const {tracker:t,keywords}=await getRankTracker(x.project,owner,x.tracker);await updateRankTracker(x.project,owner,x.tracker,{requestId:randomUUID(),revision:t.authoredRevision,name:'Metadata only',devices:t.devices,depth:t.depth,maxCrawlPages:t.maxCrawlPages});await changeRankKeywords(x.project,owner,x.tracker,'pin',{requestId:randomUUID(),revision:(await getRankSchedule(x.project,owner,x.tracker)).authoredRevision,keywordIds:[keywords[0].id],pinned:true});}
       }finally{gate.release();}const result=await pending;assert.equal(result.status,mutation==='metadata'?'started':['role','credentials'].includes(mutation)?'skipped':'superseded');assert.equal((await counts(x)).ledger,mutation==='metadata'?1:0);if(mutation==='role')await setRole(x,'owner');await disable(x);
     }
