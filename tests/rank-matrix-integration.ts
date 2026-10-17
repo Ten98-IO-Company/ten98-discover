@@ -97,6 +97,9 @@ export async function runRankMatrixChecks(){
     assert.equal((await handleApi(new Request(config.appUrl+path+'/matrix?device=desktop'))).status,401);assert.equal((await handleApi(new Request(config.appUrl+path+'/matrix/export',{method:'POST',headers:{cookie,origin:'https://foreign.invalid','content-type':'application/json'},body:'{"device":"desktop"}'}))).status,403);
     assert.equal((await handleApi(new Request(config.appUrl+'/api/projects/'+f.project+'/rank-trackers/'+csv.tracker+'/matrix?device=desktop',{headers:{cookie}}))).status,404);
     const apiKey=(await createApiKey(csv.workspace,owner,{name:'No rank export capability',scopes:['projects:read']})).token;assert.equal((await handleApi(new Request(config.appUrl+path+'/matrix?device=desktop',{headers:{authorization:'Bearer '+apiKey}}))).status,403);
+    const rankReader=(await createApiKey(csv.workspace,owner,{name:'Rank reader',scopes:['rank:read']})).token,bearerMatrix=await handleApi(new Request(config.appUrl+path+'/matrix?device=desktop',{headers:{authorization:'Bearer '+rankReader}}));assert.equal(bearerMatrix.status,200);
+    const comparable=(value:any)=>({...value,asOf:null,role:null});assert.deepEqual(comparable(await bearerMatrix.json()),comparable(await(await request('/matrix?device=desktop')).json()),'The bearer matrix equals the cookie matrix apart from the per-call clock and the caller role.');
+    assert.equal((await handleApi(new Request(config.appUrl+path+'/matrix/export',{method:'POST',headers:{authorization:'Bearer '+rankReader,'content-type':'application/json'},body:'{"device":"desktop"}'}))).status,403,'The CSV export stays cookie-only.');
     const rateClient=await pool.connect(),originalQuery=pool.query,reportKey='rank-report:'+viewer,exportKey='rank-report-export:'+viewer;
     try{
       // PostgreSQL now() stays fixed throughout this synthetic rate-check transaction.

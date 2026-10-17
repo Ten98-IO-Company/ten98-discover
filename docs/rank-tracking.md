@@ -80,4 +80,6 @@ The runnable browser checks are `tests/rank-tracking-browser.mjs`, `tests/rank-c
 
 The distribution and recent-check matrix reuse existing retained rank observations. Distribution partitions every captured keyword/device pair, including never-checked, limited, incompatible, expired and failed states. The matrix shows recent full started checks without dropping failed or pending columns. It separates organic and absolute positions, compares only the immediately older compatible readable observation, and opens existing receipts or keyword history. The scoped CSV includes every filtered row rather than just the visible page; formula-like cells are escaped. No reporting action contacts a provider or changes a schedule.
 
+Tracker list and detail, the distribution and the matrix also accept an API key holding `rank:read` and back the four `ten98_*_rank_*` MCP tools (see [native API](native-api.md)). Under a key the tracker list omits `vaultConfigured` and the provider-connection metadata. Catalog, locations, create, update, archive, keyword changes, quotes, schedules, the matrix CSV export and the runs/results/history readers stay cookie-only; the readers wait on a bounded lock wait for the exclusive project gate before admission.
+
 Returning to detail now clears protected cached content before rechecking access while keeping Back available.

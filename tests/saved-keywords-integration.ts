@@ -247,6 +247,9 @@ export async function runSavedKeywordChecks(){
     const endpoint=config.appUrl+'/api/projects/'+f.project+'/saved-keywords';assert.equal((await handleApi(new Request(endpoint))).status,401);
     const read=await handleApi(new Request(endpoint,{headers:{cookie}}));assert.equal(read.status,200);const text=await read.text();assert.ok(!text.includes('synthetic-rotated')&&!text.includes('account_fingerprint')&&!text.includes('encrypted_credentials'));
     const token=(await createApiKey(f.workspace,owner,{name:'No implicit keyword grant',scopes:['analytics:read']})).token;assert.equal((await handleApi(new Request(endpoint,{headers:{authorization:'Bearer '+token}}))).status,403);
+    const keywordsToken=(await createApiKey(f.workspace,owner,{name:'Saved keyword reader',scopes:['keywords:read']})).token,bearer=(suffix:string,body?:string)=>handleApi(new Request(endpoint+suffix,{method:body===undefined?'GET':'POST',headers:{authorization:'Bearer '+keywordsToken,...(body===undefined?{}:{'content-type':'application/json'})},body}));
+    const bearerList=await bearer('/list','{}');assert.equal(bearerList.status,200);assert.deepEqual(await bearerList.json(),JSON.parse(text));assert.equal((await bearer('/tags/list','{}')).status,200);
+    assert.equal((await bearer('')).status,403,'The collection GET stays cookie-only.');assert.equal((await bearer('/export',JSON.stringify({selection:{type:'filtered',filters:{}},format:'csv'}))).status,403);assert.equal((await bearer('','{}')).status,403,'keywords:read admits no save');
     assert.equal((await handleApi(new Request(endpoint+'/save',{method:'POST',headers:{cookie,origin:'https://foreign.integration.test','content-type':'application/json'},body:'{}'}))).status,403);
     console.log('PASS cookie-only saved-keyword API, Origin enforcement and secret-free metadata');
     assert.equal(accidentalRequests,0);

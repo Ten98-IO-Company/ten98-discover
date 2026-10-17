@@ -88,8 +88,8 @@ async function matrix(client:PoolClient,role:string,projectId:string,trackerId:s
   return {role,trackerId,source:{provider:'dataforseo',engine:'google',report:'organic_search'},target,enabledDevices,asOf,filters,keywordCount,columns,rows,nextCursor};
 }
 
-export async function getRankMatrix(projectId:string,userId:string,trackerId:string,params=new URLSearchParams()):Promise<RankMatrix>{
-  trackerId=parse(z.uuid(),trackerId);const input=query(params);return withContentProject(projectId,userId,false,(client,p)=>matrix(client,p.role,p.id,trackerId,input)).catch(queryError);
+export async function getRankMatrix(projectId:string,userId:string,trackerId:string,params=new URLSearchParams(),apiToken?:string):Promise<RankMatrix>{
+  trackerId=parse(z.uuid(),trackerId);const input=query(params);return withContentProject(projectId,userId,false,(client,p)=>matrix(client,p.role,p.id,trackerId,input),apiToken,false,'rank:read').catch(queryError);
 }
 export async function exportRankMatrix(projectId:string,userId:string,trackerId:string,raw:unknown,signal?:AbortSignal){
   trackerId=parse(z.uuid(),trackerId);const input=parse(z.object(filterShape).strict(),raw),started=Date.now();

@@ -342,12 +342,15 @@ function asCpc(v: unknown): { text: string; micros: bigint } {
   return { text: `${micros / MICROS_PER_USD}.${fraction}`, micros }; // six decimal places
 }
 
+// The closed filter key set; the MCP wire schema and OpenAPI document derive from it instead of copying it.
+export const savedKeywordFilterKeys = [
+  'search', 'includeTerms', 'excludeTerms', 'locationCode', 'languageCode', 'tagIds',
+  'minVolume', 'maxVolume', 'minDifficulty', 'maxDifficulty', 'minCpcUsd', 'maxCpcUsd',
+  'metrics', 'sort', 'order',
+] as const;
+
 export function parseSavedKeywordFilters(raw: unknown): SavedKeywordFilters {
-  const m = asObject(raw, [
-    'search', 'includeTerms', 'excludeTerms', 'locationCode', 'languageCode', 'tagIds',
-    'minVolume', 'maxVolume', 'minDifficulty', 'maxDifficulty', 'minCpcUsd', 'maxCpcUsd',
-    'metrics', 'sort', 'order',
-  ]);
+  const m = asObject(raw, savedKeywordFilterKeys);
   const minVolume = m.has('minVolume') ? asInt(required(m, 'minVolume'), 0, Number.MAX_SAFE_INTEGER) : null;
   const maxVolume = m.has('maxVolume') ? asInt(required(m, 'maxVolume'), 0, Number.MAX_SAFE_INTEGER) : null;
   if (minVolume !== null && maxVolume !== null && minVolume > maxVolume) bad();

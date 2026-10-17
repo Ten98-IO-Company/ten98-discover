@@ -42,7 +42,7 @@ async function bump(client:PoolClient,current:any,paid=false,keywords=false){
 }
 function paramsObject(params:URLSearchParams,allowed:string[]){const value:Record<string,string>={};for(const [key,val]of params){if(!allowed.includes(key)||Object.hasOwn(value,key))throw new FoundationError(400,'Check the tracker filters and page.');value[key]=val;}return value;}
 
-export async function listRankTrackers(projectId:string,userId:string,params=new URLSearchParams()){
+export async function listRankTrackers(projectId:string,userId:string,params=new URLSearchParams(),apiToken?:string){
   const input=parse(z.object({archived:z.enum(['active','archived','all']).default('active'),cursor:z.string().max(512).optional()}).strict(),paramsObject(params,['archived','cursor']));
   return withContentProject(projectId,userId,false,async(client,p)=>{
     const scope={projectId:p.id,list:'rank-trackers',archived:input.archived},cursor=readContentCursor(input.cursor??null,scope);
@@ -52,10 +52,11 @@ export async function listRankTrackers(projectId:string,userId:string,params=new
     const connections=(await client.query(`SELECT c.id,c.name,c.check_status AS "checkStatus" FROM provider_connection c JOIN project p ON p.workspace_id=c.workspace_id WHERE p.id=$1 AND c.provider='dataforseo' AND c.revoked_at IS NULL ORDER BY c.created_at,c.id`,[p.id])).rows;
     // Preserve SQL microseconds in the page anchor; JS Date would skip nearby rows.
     const last=rows[49],nextCursor=rows.length>50?Buffer.from(JSON.stringify({scope:canonicalHash(scope),at:last.cursor_at,id:last.id})).toString('base64url'):null;
-    return {role:p.role,vaultConfigured:credentialKeys()!==null,connections,trackers:rows.slice(0,50).map(tracker),nextCursor};
-  });
+    // A bearer or MCP caller never sees vault state or provider-connection metadata.
+    return {role:p.role,...(apiToken===undefined?{vaultConfigured:credentialKeys()!==null,connections}:{}),trackers:rows.slice(0,50).map(tracker),nextCursor};
+  },apiToken,false,'rank:read');
 }
-export async function getRankTracker(projectId:string,userId:string,id:string){id=parse(z.uuid(),id);return withContentProject(projectId,userId,false,(client,p)=>detail(client,p,id));}
+export async function getRankTracker(projectId:string,userId:string,id:string,apiToken?:string){id=parse(z.uuid(),id);return withContentProject(projectId,userId,false,(client,p)=>detail(client,p,id),apiToken,false,'rank:read');}
 
 async function catalogBefore(projectId:string,userId:string,connectionId:string){return withContentProject(projectId,userId,true,async(client,p)=>{const connection=await keywordConnection(client,await workspace(client,p.id),connectionId);return {revision:connection.revision,credentials:keywordCredentials(connection)};});}
 async function catalogLoad(credentials:unknown,send:typeof fetch){

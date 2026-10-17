@@ -17,7 +17,7 @@ const unavailable=()=>new FoundationError(404,'Saved filter not found or unavail
 function dto(row:Row):SegmentItem{return {id:row.id,projectId:row.project_id,revision:row.revision,definition:{schemaVersion:row.schema_version,name:row.name,query:row.query},createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()};}
 async function find(client:PoolClient,projectId:string,id:string){return (await client.query<Row>(`SELECT ${columns} FROM analytics_segment WHERE project_id=$1 AND id=$2`,[projectId,id])).rows[0];}
 
-export async function listSegments(projectId:unknown,userId:unknown,params:URLSearchParams){
+export async function listSegments(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string){
   if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one saved-filter list cursor.');
   return withContentProject(projectId,userId,false,async(client,project)=>{
     const scope={projectId:project.id,list:'segments'},after=readContentCursor(params.get('cursor'),scope);
@@ -25,13 +25,13 @@ export async function listSegments(projectId:unknown,userId:unknown,params:URLSe
       AND ($2::timestamptz IS NULL OR (created_at,id)<($2::timestamptz,$3::uuid))
       ORDER BY created_at DESC,id DESC LIMIT 51`,[project.id,after?.at??null,after?.id??null]);
     return {role:project.role,items:rows.slice(0,50).map(dto),nextCursor:rows.length>50?contentCursor({id:rows[49].id,createdAt:rows[49].created_at},scope):null};
-  });
+  },apiToken,false,'segments:read');
 }
-export async function getSegment(projectId:unknown,userId:unknown,segmentId:unknown){
+export async function getSegment(projectId:unknown,userId:unknown,segmentId:unknown,apiToken?:string){
   const id=parse(z.uuid(),segmentId);
   return withContentProject(projectId,userId,false,async(client,project)=>{
     const row=await find(client,project.id,id);if(!row)throw unavailable();return {role:project.role,item:dto(row)};
-  });
+  },apiToken,false,'segments:read');
 }
 export async function saveSegment(projectId:unknown,userId:unknown,raw:unknown,segmentId?:unknown){
   const id=segmentId===undefined?null:parse(z.uuid(),segmentId),uid=parse(z.uuid(),userId);

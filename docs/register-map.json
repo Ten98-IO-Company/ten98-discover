@@ -41,23 +41,36 @@
     "createProject",
     "createPrompts",
     "exploreAnalytics",
+    "listAnnotations",
+    "listCohorts",
     "listContextResearch",
     "listProjects",
     "listPromptVersions",
     "listPrompts",
+    "listRankTrackers",
     "listRecentEvents",
     "listRevenueSessions",
+    "listSavedKeywordTags",
+    "listSegments",
     "listSessions",
+    "querySavedKeywords",
     "readAnalytics",
+    "readAnnotation",
+    "readAnnotationTimeline",
     "readAttribution",
+    "readCohort",
     "readContext",
     "readJourneys",
     "readLinkedActivity",
     "readPrompt",
+    "readRankDistribution",
+    "readRankMatrix",
+    "readRankTracker",
     "readRealtime",
     "readRetentionReport",
     "readRevenue",
     "readRevenueSession",
+    "readSegment",
     "readSession",
     "readTeam",
     "readWebPerformance",
@@ -80,15 +93,24 @@
    "operations": [
     "archivePrompt",
     "createPrompts",
+    "listAnnotations",
+    "listCohorts",
     "listContextResearch",
     "listPromptVersions",
     "listPrompts",
+    "listRankTrackers",
+    "listSavedKeywordTags",
+    "listSegments",
     "listSessions",
+    "querySavedKeywords",
     "readAnalytics",
     "readAttribution",
     "readContext",
     "readJourneys",
     "readPrompt",
+    "readRankDistribution",
+    "readRankMatrix",
+    "readRankTracker",
     "readRealtime",
     "readRetentionReport",
     "readSession",
@@ -99,9 +121,15 @@
    "mcpTools": [
     "ten98_archive_prompt",
     "ten98_create_prompts",
+    "ten98_list_annotations",
+    "ten98_list_cohorts",
     "ten98_list_context_research",
     "ten98_list_prompt_versions",
     "ten98_list_prompts",
+    "ten98_list_rank_trackers",
+    "ten98_list_saved_keyword_tags",
+    "ten98_list_saved_keywords",
+    "ten98_list_segments",
     "ten98_list_sessions",
     "ten98_read_analytics",
     "ten98_read_attribution",
@@ -109,6 +137,9 @@
     "ten98_read_journeys",
     "ten98_read_linked_activity",
     "ten98_read_prompt",
+    "ten98_read_rank_distribution",
+    "ten98_read_rank_matrix",
+    "ten98_read_rank_tracker",
     "ten98_read_realtime",
     "ten98_read_retention",
     "ten98_read_session",
@@ -354,6 +385,20 @@
    ]
   },
   "P35": {
+   "operations": [
+    "listAnnotations",
+    "listCohorts",
+    "listSegments",
+    "readAnnotation",
+    "readAnnotationTimeline",
+    "readCohort",
+    "readSegment"
+   ],
+   "mcpTools": [
+    "ten98_list_annotations",
+    "ten98_list_cohorts",
+    "ten98_list_segments"
+   ],
    "migrations": [
     "0033_analytics_segments",
     "0034_analytics_annotations",
@@ -513,6 +558,14 @@
    ]
   },
   "P48": {
+   "operations": [
+    "listSavedKeywordTags",
+    "querySavedKeywords"
+   ],
+   "mcpTools": [
+    "ten98_list_saved_keyword_tags",
+    "ten98_list_saved_keywords"
+   ],
    "migrations": [
     "0021_saved_keywords",
     "0022_provider_account_identity"
@@ -534,12 +587,28 @@
    ]
   },
   "P50": {
+   "operations": [
+    "listRankTrackers",
+    "readRankTracker"
+   ],
+   "mcpTools": [
+    "ten98_list_rank_trackers",
+    "ten98_read_rank_tracker"
+   ],
    "migrations": [
     "0023_rank_tracking",
     "0024_rank_authored_revision"
    ]
   },
   "P51": {
+   "operations": [
+    "readRankDistribution",
+    "readRankMatrix"
+   ],
+   "mcpTools": [
+    "ten98_read_rank_distribution",
+    "ten98_read_rank_matrix"
+   ],
    "migrations": [
     "0023_rank_tracking"
    ]
@@ -607,23 +676,36 @@
     "createProject",
     "createPrompts",
     "exploreAnalytics",
+    "listAnnotations",
+    "listCohorts",
     "listContextResearch",
     "listProjects",
     "listPromptVersions",
     "listPrompts",
+    "listRankTrackers",
     "listRecentEvents",
     "listRevenueSessions",
+    "listSavedKeywordTags",
+    "listSegments",
     "listSessions",
+    "querySavedKeywords",
     "readAnalytics",
+    "readAnnotation",
+    "readAnnotationTimeline",
     "readAttribution",
+    "readCohort",
     "readContext",
     "readJourneys",
     "readLinkedActivity",
     "readPrompt",
+    "readRankDistribution",
+    "readRankMatrix",
+    "readRankTracker",
     "readRealtime",
     "readRetentionReport",
     "readRevenue",
     "readRevenueSession",
+    "readSegment",
     "readSession",
     "readTeam",
     "readWebPerformance",
@@ -635,9 +717,15 @@
    "mcpTools": [
     "ten98_archive_prompt",
     "ten98_create_prompts",
+    "ten98_list_annotations",
+    "ten98_list_cohorts",
     "ten98_list_context_research",
     "ten98_list_prompt_versions",
     "ten98_list_prompts",
+    "ten98_list_rank_trackers",
+    "ten98_list_saved_keyword_tags",
+    "ten98_list_saved_keywords",
+    "ten98_list_segments",
     "ten98_list_sessions",
     "ten98_read_analytics",
     "ten98_read_attribution",
@@ -645,6 +733,9 @@
     "ten98_read_journeys",
     "ten98_read_linked_activity",
     "ten98_read_prompt",
+    "ten98_read_rank_distribution",
+    "ten98_read_rank_matrix",
+    "ten98_read_rank_tracker",
     "ten98_read_realtime",
     "ten98_read_retention",
     "ten98_read_session",

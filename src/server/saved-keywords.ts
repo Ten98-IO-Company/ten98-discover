@@ -118,18 +118,18 @@ async function tagPage(client:PoolClient,projectId:string,s:State,cursor:string|
     FROM saved_keyword_tag t WHERE t.project_id=$1 AND ($2::uuid IS NULL OR (t.normalized_name,t.id)>(SELECT normalized_name,id FROM saved_keyword_tag WHERE project_id=$1 AND id=$2)) ORDER BY t.normalized_name,t.id LIMIT 251`,[projectId,anchor])).rows;
   return {tags:tags.slice(0,250),nextCursor:tags.length>250?cursorFor(tags[249].id,projectId,{tags:true},s):null};
 }
-export async function listSavedKeywordTags(projectId:unknown,userId:unknown,raw:unknown){
+export async function listSavedKeywordTags(projectId:unknown,userId:unknown,raw:unknown,apiToken?:string){
   const input=parse(z.object({cursor:z.string().min(1).max(512).optional()}).strict(),raw);
-  return withContentProject(projectId,userId,false,async(client,p)=>{await client.query("SET LOCAL statement_timeout='5s'");const s=await state(client,p.id);return {role:p.role,revision:s.revision,metricRevision:s.metricRevision,...await tagPage(client,p.id,s,input.cursor??null)};}).catch(queryError);
+  return withContentProject(projectId,userId,false,async(client,p)=>{await client.query("SET LOCAL statement_timeout='5s'");const s=await state(client,p.id);return {role:p.role,revision:s.revision,metricRevision:s.metricRevision,...await tagPage(client,p.id,s,input.cursor??null)};},apiToken,false,'keywords:read').catch(queryError);
 }
-export async function listSavedKeywords(projectId:unknown,userId:unknown,raw:unknown){
+export async function listSavedKeywords(projectId:unknown,userId:unknown,raw:unknown,apiToken?:string){
   const input=parseSavedKeywordList(raw);
   return withContentProject(projectId,userId,false,async(client,p)=>{
     await client.query("SET LOCAL statement_timeout='5s'");const s=await state(client,p.id);await assertIds(client,p.id,input.filters.tagIds,true);
     const anchor=readCursor(input.cursor,p.id,input.filters,s),found=await rows(client,p.id,input.filters,s,input.pageSize+1,anchor),page=found.slice(0,input.pageSize),tags=await tagPage(client,p.id,s);
     return {role:p.role,revision:s.revision,metricRevision:s.metricRevision,filters:input.filters,total:await count(client,p.id,input.filters,s),rows:await rowDtos(client,p.id,page),tags:tags.tags,tagsNextCursor:tags.nextCursor,tagsTruncated:tags.nextCursor!==null,
       nextCursor:found.length>input.pageSize?cursorFor(page.at(-1)!.id,p.id,input.filters,s):null};
-  }).catch(queryError);
+  },apiToken,false,'keywords:read').catch(queryError);
 }
 
 async function revision(client:PoolClient,projectId:string,expected:number){const s=await state(client,projectId);if(s.revision!==expected)conflict('The saved keyword list changed. Reload before applying these changes.');return s;}

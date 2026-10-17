@@ -30,7 +30,7 @@ export async function resolveCohort(client:PoolClient,projectId:string,userId:st
   return dto(row);
 }
 
-export async function listCohorts(projectId:unknown,userId:unknown,params:URLSearchParams){
+export async function listCohorts(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string){
   if([...params.keys()].some(key=>key!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one cohort list cursor.');
   return withContentProject(projectId,userId,false,async(client,project)=>{
     await client.query("SET LOCAL statement_timeout='5s'");
@@ -39,14 +39,14 @@ export async function listCohorts(projectId:unknown,userId:unknown,params:URLSea
       AND ($2::timestamptz IS NULL OR (created_at,id)<($2::timestamptz,$3::uuid))
       ORDER BY created_at DESC,id DESC LIMIT 51`,[project.id,after?.at??null,after?.id??null]);
     return {role:project.role,items:rows.slice(0,50).map(dto),nextCursor:rows.length>50?contentCursor({id:rows[49].id,createdAt:rows[49].created_at},scope):null};
-  }).catch(handleError);
+  },apiToken,false,'segments:read').catch(handleError);
 }
-export async function getCohort(projectId:unknown,userId:unknown,cohortId:unknown){
+export async function getCohort(projectId:unknown,userId:unknown,cohortId:unknown,apiToken?:string){
   const id=parse(z.uuid(),cohortId);
   return withContentProject(projectId,userId,false,async(client,project)=>{
     await client.query("SET LOCAL statement_timeout='5s'");
     const row=await find(client,project.id,id);if(!row)throw unavailable();return {role:project.role,item:dto(row)};
-  }).catch(handleError);
+  },apiToken,false,'segments:read').catch(handleError);
 }
 export async function saveCohort(projectId:unknown,userId:unknown,raw:unknown,cohortId?:unknown){
   const id=cohortId===undefined?null:parse(z.uuid(),cohortId),uid=parse(z.uuid(),userId);

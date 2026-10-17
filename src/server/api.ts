@@ -171,10 +171,14 @@ export async function handleApi(request: Request): Promise<Response> {
       const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
       // Content families admitted by scope; method and scope are explicit per row, nothing else matches.
-      // The segments/cohorts, annotations, rank and saved-keyword rows land in the next slices.
+      // Rank catalog/locations/schedule/runs/results/history/keywords and every saved-keyword write, export or refresh never match.
       const scopedRoutes:[RegExp,'GET'|'POST',ApiKeyScope][]=[
         [new RegExp(`^/api/projects/(${id})/context(?:/research-log)?$`,'i'),'GET','context:read'],
         [new RegExp(`^/api/projects/(${id})/context/update$`,'i'),'POST','context:write'],
+        [new RegExp(`^/api/projects/(${id})/(?:segments|cohorts)(?:/${id})?$`,'i'),'GET','segments:read'],
+        [new RegExp(`^/api/projects/(${id})/annotations(?:/timeline|/${id})?$`,'i'),'GET','annotations:read'],
+        [new RegExp(`^/api/projects/(${id})/rank-trackers(?:/${id}(?:/distribution|/matrix)?)?$`,'i'),'GET','rank:read'],
+        [new RegExp(`^/api/projects/(${id})/saved-keywords/(?:list|tags/list)$`,'i'),'POST','keywords:read'],
       ];
       const scoped=scopedRoutes.find(([route,method])=>request.method===method&&route.test(path));
       if(promptApiRoute&&(promptRead||promptWrite)) {
@@ -359,10 +363,10 @@ export async function handleApi(request: Request): Promise<Response> {
       await limit('annotations:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?60:30);
       if(request.method==='GET'){
         if(action)return json({error:'Method not allowed.'},405);
-        if(target==='timeline')return json(await annotationTimeline(pid,user.id,url.searchParams));
-        if(!target)return json(await listAnnotations(pid,user.id,url.searchParams));
+        if(target==='timeline')return json(await annotationTimeline(pid,user.id,url.searchParams,apiToken??undefined));
+        if(!target)return json(await listAnnotations(pid,user.id,url.searchParams,apiToken??undefined));
         if(url.search)throw new FoundationError(400,'This annotation read has no query parameters.');
-        return json(await getAnnotation(pid,user.id,target));
+        return json(await getAnnotation(pid,user.id,target,apiToken??undefined));
       }
       if(request.method==='POST'&&target!=='timeline'&&(!target||action==='update'||action==='delete')){
         if(url.search)throw new FoundationError(400,'Annotation writes have no query parameters.');
@@ -398,8 +402,8 @@ export async function handleApi(request: Request): Promise<Response> {
       const [,projectId,cohortId,action]=cohortRoute;
       await limit('cohorts:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?60:30);
       if(request.method==='GET'){
-        if(!cohortId)return json(await listCohorts(projectId,user.id,url.searchParams));
-        if(!action){if(url.search)throw new FoundationError(400,'Cohort details do not accept query parameters.');return json(await getCohort(projectId,user.id,cohortId));}
+        if(!cohortId)return json(await listCohorts(projectId,user.id,url.searchParams,apiToken??undefined));
+        if(!action){if(url.search)throw new FoundationError(400,'Cohort details do not accept query parameters.');return json(await getCohort(projectId,user.id,cohortId,apiToken??undefined));}
       }
       if(request.method==='POST'){
         if(url.search)throw new FoundationError(400,'Cohort changes do not accept query parameters.');
@@ -415,8 +419,8 @@ export async function handleApi(request: Request): Promise<Response> {
       const [,projectId,segmentId,action]=segmentRoute;
       await limit('segments:'+user.id+':'+(request.method==='GET'?'read':'write'),request.method==='GET'?60:30);
       if(request.method==='GET'){
-        if(!segmentId)return json(await listSegments(projectId,user.id,url.searchParams));
-        if(!action){if(url.search)throw new FoundationError(400,'Saved filter details do not accept query parameters.');return json(await getSegment(projectId,user.id,segmentId));}
+        if(!segmentId)return json(await listSegments(projectId,user.id,url.searchParams,apiToken??undefined));
+        if(!action){if(url.search)throw new FoundationError(400,'Saved filter details do not accept query parameters.');return json(await getSegment(projectId,user.id,segmentId,apiToken??undefined));}
       }
       if(request.method==='POST'){
         if(url.search)throw new FoundationError(400,'Saved filter changes do not accept query parameters.');
@@ -621,7 +625,7 @@ export async function handleApi(request: Request): Promise<Response> {
         const input=await readJson(request,!action?1_048_576:131_072);
         if(!targetId&&!operation){
           if(!action)return json(await saveSavedKeywords(projectId,user.id,input));
-          if(action==='list')return json(await listSavedKeywords(projectId,user.id,input));
+          if(action==='list')return json(await listSavedKeywords(projectId,user.id,input,apiToken??undefined));
           if(action==='bulk-tags')return json(await changeSavedKeywordTags(projectId,user.id,input));
           if(action==='remove')return json(await removeSavedKeywords(projectId,user.id,input));
           if(action==='refresh-quote'){await limit(`saved-keyword-quote:${user.id}`,10);return json(await quoteSavedKeywordRefresh(projectId,user.id,input));}
@@ -631,7 +635,7 @@ export async function handleApi(request: Request): Promise<Response> {
             return new Response(result.body,{headers:{'content-type':result.contentType,'content-disposition':`attachment; filename="${result.filename}"`,'x-export-row-count':String(result.rowCount),'cache-control':'no-store','x-content-type-options':'nosniff'}});
           }
         }
-        if(action==='tags'&&targetId==='list'&&!operation)return json(await listSavedKeywordTags(projectId,user.id,input));
+        if(action==='tags'&&targetId==='list'&&!operation)return json(await listSavedKeywordTags(projectId,user.id,input,apiToken??undefined));
         if(action==='tags'&&targetId&&targetId!=='list'){
           if(operation==='update')return json(await updateSavedKeywordTag(projectId,user.id,targetId,input));
           if(operation==='delete')return json(await deleteSavedKeywordTag(projectId,user.id,targetId,input));
@@ -680,8 +684,8 @@ export async function handleApi(request: Request): Promise<Response> {
       await projectAccess(projectId,user.id);
       await limit(`rank-report:${user.id}`,30);
       if(request.method==='GET'&&!exportPath)return json(report==='distribution'
-        ?await getRankDistribution(projectId,user.id,trackerId,url.searchParams)
-        :await getRankMatrix(projectId,user.id,trackerId,url.searchParams));
+        ?await getRankDistribution(projectId,user.id,trackerId,url.searchParams,apiToken??undefined)
+        :await getRankMatrix(projectId,user.id,trackerId,url.searchParams,apiToken??undefined));
       if(request.method==='POST'&&report==='matrix'&&exportPath){
         if(url.searchParams.size)throw new FoundationError(400,'Put rank export filters in the request body.');
         await limit(`rank-report-export:${user.id}`,6);
@@ -705,11 +709,11 @@ export async function handleApi(request: Request): Promise<Response> {
       const [,projectId,target,action,keywordAction]=rankRoute;
       await projectAccess(projectId,user.id,request.method!=='GET'||target==='locations');
       await limit(`rank-read:${user.id}`,120);
-      if(request.method==='GET'&&!target)return json(await listRankTrackers(projectId,user.id,url.searchParams));
+      if(request.method==='GET'&&!target)return json(await listRankTrackers(projectId,user.id,url.searchParams,apiToken??undefined));
       if(request.method==='GET'&&target==='locations'&&!action){await limit(`rank-catalog:${user.id}`,30);return json(await searchRankLocations(projectId,user.id,url.searchParams));}
       if(request.method==='GET'&&target&&target!=='catalog'&&!action){
         if(url.searchParams.size)throw new FoundationError(400,'This tracker detail does not accept filters.');
-        return json(await getRankTracker(projectId,user.id,target));
+        return json(await getRankTracker(projectId,user.id,target,apiToken??undefined));
       }
       if(request.method==='POST'){
         if(url.searchParams.size)throw new FoundationError(400,'Put tracker changes in the request body.');

@@ -55,7 +55,7 @@ function summarize(cells:Cell[],requestedDepth:number):Totals{
  * All counters partition each selected device and the total. No raw SERP, actor,
  * connection, provider task ID, or credential is returned. No provider is called.
  */
-export async function getRankDistribution(projectId:string,userId:string,trackerId:string,params=new URLSearchParams()):Promise<RankDistribution>{
+export async function getRankDistribution(projectId:string,userId:string,trackerId:string,params=new URLSearchParams(),apiToken?:string):Promise<RankDistribution>{
   trackerId=parse(z.uuid(),trackerId);const raw:Record<string,string>={};
   for(const [key,value]of params){if(!['device','runId'].includes(key)||Object.hasOwn(raw,key))throw new FoundationError(400,'Check the rank distribution filters.');raw[key]=value;}
   const input=parse(z.object({device:z.enum(['desktop','mobile','both']).default('both'),runId:z.uuid().optional()}).strict(),raw);
@@ -135,5 +135,5 @@ export async function getRankDistribution(projectId:string,userId:string,tracker
     return {role,trackerId,mode:input.runId?'run':'latest',source:{provider:'dataforseo',engine:'google',report:'organic_search'},target,
       enabledDevices:enabled,selectedDevices:selected,asOf,run,keywordCount,observationDates:{earliestObservedAt,latestObservedAt,earliestRetrievedAt,latestRetrievedAt},
       totals:summarize(cells,target.depth),byDevice:selected.map(device=>({device,...summarize(cells.filter(cell=>cell.device===device),target.depth)}))};
-  }).catch((error:unknown)=>{if(error&&typeof error==='object'&&'code'in error&&error.code==='57014')throw new FoundationError(503,'The rank distribution took too long. Try one device or a saved check.');throw error;});
+  },apiToken,false,'rank:read').catch((error:unknown)=>{if(error&&typeof error==='object'&&'code'in error&&error.code==='57014')throw new FoundationError(503,'The rank distribution took too long. Try one device or a saved check.');throw error;});
 }

@@ -7,10 +7,11 @@ import {mcpTools,availableTools,mcpResult,mcpResponseBytes,mcpToolError,createNa
 import {handleMcp,mcpOriginAllowed} from '../src/server/mcp.ts';
 import {apiKeyScopes,type ApiKeyPrincipal} from '../src/server/api-keys.ts';
 import {contextOp} from '../src/server/context-input.ts';
+import {savedKeywordFilterKeys} from '../src/server/saved-keyword-input.ts';
 
 const principal:ApiKeyPrincipal={id:randomUUID(),userId:randomUUID(),workspaceId:randomUUID(),role:'owner',scopes:[...apiKeyScopes]};
 test('fixed native catalog, strict bounded schemas and scope separation',()=>{
-  assert.equal(mcpTools.length,19);assert.equal(new Set(mcpTools.map(t=>t.name)).size,19);
+  assert.equal(mcpTools.length,28);assert.equal(new Set(mcpTools.map(t=>t.name)).size,28);
   const original=['ten98_whoami','ten98_read_analytics','ten98_read_realtime','ten98_list_sessions','ten98_read_session','ten98_read_linked_activity','ten98_list_prompts','ten98_read_prompt','ten98_list_prompt_versions','ten98_create_prompts','ten98_update_prompt','ten98_archive_prompt','ten98_restore_prompt'];
   assert.deepEqual(mcpTools.filter(tool=>original.includes(tool.name)).map(tool=>tool.name),original);
   assert.equal(availableTools({...principal,scopes:['analytics:read']}).length,9);
@@ -18,8 +19,14 @@ test('fixed native catalog, strict bounded schemas and scope separation',()=>{
   assert.equal(availableTools({...principal,scopes:['prompts:write']}).length,5);
   assert.equal(availableTools({...principal,scopes:['context:read']}).length,3);
   assert.equal(availableTools({...principal,scopes:['context:write']}).length,2);
-  // No retrogrant at discovery: the seven pre-increment scopes still reach exactly the sixteen pre-increment tools.
+  assert.equal(availableTools({...principal,scopes:['segments:read']}).length,3);
+  assert.equal(availableTools({...principal,scopes:['annotations:read']}).length,2);
+  assert.equal(availableTools({...principal,scopes:['rank:read']}).length,5);
+  assert.equal(availableTools({...principal,scopes:['keywords:read']}).length,3);
+  // No retrogrant at discovery: the seven pre-increment scopes still reach exactly the sixteen pre-increment tools, and the context slice's nine reach nineteen.
   assert.equal(availableTools({...principal,scopes:['projects:read','projects:write','analytics:read','events:write','team:read','prompts:read','prompts:write']}).length,16);
+  assert.equal(availableTools({...principal,scopes:['projects:read','projects:write','analytics:read','events:write','team:read','prompts:read','prompts:write','context:read','context:write']}).length,19);
+  for(const tool of mcpTools)if(tool.scope!==null)assert.equal(availableTools({...principal,scopes:[tool.scope]}).every(item=>item.scope===null||item.scope===tool.scope),true,tool.name);
   assert.deepEqual(availableTools({...principal,scopes:[]}).map(t=>t.name),['ten98_whoami']);
   for(const tool of mcpTools)assert.equal(tool.schema.safeParse({execute:true,token:'not accepted'}).success,false);
   const bulk=mcpTools.find(t=>t.name==='ten98_create_prompts')!.schema;
@@ -31,6 +38,13 @@ test('fixed native catalog, strict bounded schemas and scope separation',()=>{
   const context={projectId:input.projectId,requestId:randomUUID(),revision:1,updates:Array.from({length:50},(_,i)=>({kind:kinds[i%kinds.length],anyField:i}))};
   assert.equal(update.safeParse(context).success,true);
   for(const bad of [{...context,updates:[]},{...context,updates:[...context.updates,{kind:'research',summary:'51'}]},{...context,updates:[{kind:'delete-everything'}]},{...context,updates:[{summary:'no kind'}]},{...context,execute:true},{...context,revision:0},{...context,revision:2147483647}])assert.equal(update.safeParse(bad).success,false);
+  // The saved-keyword filter keys derive from the native parser; the matrix requires its device and keeps runLimit a native wire string.
+  const savedKeywords=mcpTools.find(t=>t.name==='ten98_list_saved_keywords')!.schema as any,matrix=mcpTools.find(t=>t.name==='ten98_read_rank_matrix')!.schema as any,trackerId=randomUUID();
+  assert.deepEqual(Object.keys(savedKeywords.shape.filters.unwrap().shape),[...savedKeywordFilterKeys]);assert.equal(savedKeywordFilterKeys.length,15);
+  assert.equal(savedKeywords.safeParse({projectId:input.projectId,filters:{search:'x',tagIds:[]},pageSize:250,cursor:'c'}).success,true);
+  for(const bad of [{projectId:input.projectId,pageSize:25},{projectId:input.projectId,filters:{unknown:1}},{projectId:input.projectId,cursor:'c'.repeat(513)},{projectId:input.projectId,requestId:randomUUID()}])assert.equal(savedKeywords.safeParse(bad).success,false);
+  assert.equal(matrix.safeParse({projectId:input.projectId,trackerId,query:{device:'desktop',runLimit:'26',pinned:'true',search:'',cursor:'c'}}).success,true);
+  for(const bad of [{projectId:input.projectId,trackerId},{projectId:input.projectId,trackerId,query:{}},{projectId:input.projectId,trackerId,query:{device:'both'}},{projectId:input.projectId,trackerId,query:{device:'desktop',runLimit:12}},{projectId:input.projectId,trackerId,query:{device:'desktop',runLimit:'0'}},{projectId:input.projectId,trackerId,query:{device:'desktop',runLimit:'100'}}])assert.equal(matrix.safeParse(bad).success,false);
 });
 test('every scoped tool has its own explicit case and the switch default throws instead of routing',()=>{
   const source=readFileSync(new URL('../src/server/mcp-tools.ts',import.meta.url),'utf8');
@@ -60,7 +74,7 @@ test('official SDK emits finite modern and legacy catalog responses without sess
       const response=await handler.fetch(new Request('http://127.0.0.1:3111/api/mcp',{method:'POST',headers,body:JSON.stringify(body)}));
       assert.equal(response.status,200);assert.equal(response.headers.has('mcp-session-id'),false);
       const text=await response.text(),wire=JSON.parse(modern?text:text.split('\n').find(line=>line.startsWith('data: {'))!.slice(6));
-      assert.equal(wire.result.tools.length,19);assert.ok(wire.result.tools.every((tool:any)=>tool.annotations.openWorldHint===false));
+      assert.equal(wire.result.tools.length,28);assert.ok(wire.result.tools.every((tool:any)=>tool.annotations.openWorldHint===false));
       assert.ok(wire.result.tools.every((tool:any)=>tool.inputSchema.additionalProperties===false));
     }finally{await handler.close();}
   }

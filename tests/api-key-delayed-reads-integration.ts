@@ -97,10 +97,10 @@ export async function runDelayedApiKeyReadChecks(){
       assert.equal((await http(path,{authorization:'Bearer '+all.token,cookie})).status,400);
       assert.equal((await http(path)).status,401);
     }
-    const stronger=['/analytics?'+dates,'/realtime','/sessions?'+dates+'&timeZone=UTC','/sessions/'+visitor+'?'+dates+'&timeZone=UTC','/sessions/'+visitor+'/linked-activity?'+dates+'&timeZone=UTC','/context'];
+    const stronger=['/analytics?'+dates,'/realtime','/sessions?'+dates+'&timeZone=UTC','/sessions/'+visitor+'?'+dates+'&timeZone=UTC','/sessions/'+visitor+'/linked-activity?'+dates+'&timeZone=UTC','/context','/segments'];
     for(const suffix of stronger){const path='/api/projects/'+project+suffix,result=await http(path,{authorization:'Bearer '+all.token});assert.equal(result.status,200,suffix);assert.equal((await http(path,{authorization:'Bearer '+limited.token})).status,403);assert.equal((await http(path,{authorization:'Bearer '+foreign.token})).status,404);}
     await revokeApiKey(workspace,ownerId,all.key.id);for(const suffix of stronger)assert.equal((await http('/api/projects/'+project+suffix,{authorization:'Bearer '+all.token})).status,401);
-    console.log('PASS exact scope, tenant and credential boundaries; existing analytics/realtime/session readers and the context reader retain their authority gates');
+    console.log('PASS exact scope, tenant and credential boundaries; existing analytics/realtime/session readers and the context and segments readers retain their authority gates');
     await runApiKeyChecks({baseUrl:origin,appUrl:origin,ownerCookie:cookie,ownerId,workspaceId:workspace});
     console.log('PASS all original API-key integration oracles preserved unchanged');
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);

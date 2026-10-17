@@ -145,12 +145,12 @@ Choose **API keys** as a workspace owner or administrator. Select only the requi
 | `prompts:write` | Atomic 1–100 prompt creation, update, archive and restore |
 | `context:read` | `GET /api/projects/:projectId/context`, `GET /api/projects/:projectId/context/research-log` |
 | `context:write` | `POST /api/projects/:projectId/context/update`; one atomic batch of 1–50 operations at the current revision |
-| `segments:read` | Grantable; admits no route until the saved filters and cohorts slice lands |
-| `annotations:read` | Grantable; admits no route until the annotations slice lands |
-| `rank:read` | Grantable; admits no route until the rank readers slice lands |
-| `keywords:read` | Grantable; admits no route until the saved keywords slice lands |
+| `segments:read` | `GET /api/projects/:projectId/segments`, `…/segments/:segmentId`, `…/cohorts`, `…/cohorts/:cohortId` |
+| `annotations:read` | `GET /api/projects/:projectId/annotations`, `…/annotations/timeline`, `…/annotations/:annotationId` |
+| `rank:read` | `GET /api/projects/:projectId/rank-trackers`, `…/rank-trackers/:trackerId`, `…/distribution`, `…/matrix`; no catalog, locations, schedule, runs, results or history |
+| `keywords:read` | `POST /api/projects/:projectId/saved-keywords/list` and `…/saved-keywords/tags/list`; no save, tag, removal, export or refresh |
 
-Send exactly one `Authorization: Bearer <token>` header without cookies or alternate API-key headers. Tokens cannot manage authentication, credentials, budgets or other keys. Removing membership deletes its keys; rejoining does not revive them. The [native API contract](native-api.md) documents the public static OpenAPI document, complete supported bearer inventory and existing atomic prompt and context batches. Still outside the bearer and MCP inventory: Google saved snapshots, site audits, the domains registry and rank runs/results/history, each waiting on a named lock fix; the saved filters/cohorts, annotations, rank reader and saved-keyword routes land in the next slices; compatibility access remains outstanding.
+Send exactly one `Authorization: Bearer <token>` header without cookies or alternate API-key headers. Tokens cannot manage authentication, credentials, budgets or other keys. Removing membership deletes its keys; rejoining does not revive them. The [native API contract](native-api.md) documents the public static OpenAPI document, complete supported bearer inventory and existing atomic prompt and context batches. Still outside the bearer and MCP inventory: Google saved snapshots, site audits, the domains registry and rank runs/results/history, each waiting on a named lock fix; compatibility access remains outstanding.
 
 Choose **AI and search providers** as a workspace owner. A saved connection starts **untested**. **Run check** contacts only the provider's documented read-only account endpoint: [OpenRouter current key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key) or [DataForSEO user data](https://docs.dataforseo.com/v3/appendix-user-data/). Acceptance of credentials does not prove paid endpoint permissions or sufficient credit. Diagnostics never display the provider's response body or submitted credentials.
 
