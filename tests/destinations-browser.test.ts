@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
+import { CANONICAL_EVENTS, catalog, type CanonicalEvent } from '../src/server/destinations.ts';
 
 const source = readFileSync(new URL('../public/destinations.js', import.meta.url), 'utf8');
 const siteKey = '11111111-1111-4111-8111-111111111111';
@@ -151,6 +152,39 @@ test('all ten providers map original events using their bounded native contracts
   assert.equal(cf.attributes.type, 'module'); assert.equal(JSON.parse(cf.attributes['data-cf-beacon']).spa, true);
   assert.equal(f.status().routes.find((r: any) => r.provider === 'cloudflare').state, 'ready');
   assert.equal(f.calls.find(c => c[0] === 'snapchat' && c[1] === 'track')?.[3].price, '49.95');
+});
+
+// catalog is FIXED_TARGETS projected per provider (src/server/destinations.ts:33-44, :241-254); public/destinations.js:10-18 must mirror it.
+const perEvent: Record<string, (event: CanonicalEvent) => string> = { google_ads: e => `label_${e}`, linkedin: e => String(CANONICAL_EVENTS.indexOf(e) + 1), x: e => `tw-pixel1-${e.replace(/_/g, '')}` };
+const mapping = (provider: string, event: CanonicalEvent) => ({ event, ...(perEvent[provider] ? { target: perEvent[provider](event) } : {}) });
+const google = (f: any) => Array.from(f.context.ten98DataLayer, (args: any) => Array.from(args)) as any[][];
+// The target as each SDK stub received it, in call order (public/destinations.js invoke functions).
+const received: Record<string, (f: any) => unknown[]> = {
+  meta: f => f.calls.filter((c: any[]) => c[0] === 'meta' && c[1] === 'trackSingle').map((c: any[]) => c[3]),
+  ga4: f => google(f).filter(c => c[0] === 'event' && c[2].send_to === assets.ga4).map(c => c[1]),
+  google_ads: f => google(f).filter(c => c[0] === 'event' && c[2].send_to !== assets.ga4).map(c => [c[1], c[2].send_to]),
+  cloudflare: () => [], // The beacon owns its page observations; the loader never invokes it.
+  tiktok: f => f.calls.filter((c: any[]) => c[0] === 'tiktok.page' || c[0] === 'tiktok.track').map((c: any[]) => c[0] === 'tiktok.page' ? 'Pageview' : c[1]), // ttq.page() is the Pageview call.
+  linkedin: f => f.calls.filter((c: any[]) => c[0] === 'linkedin').map((c: any[]) => String(c[2].conversion_id)),
+  microsoft_ads: f => f.calls.filter((c: any[]) => c[0] === 'uet' && c[1] === 'event').map((c: any[]) => c[2]),
+  pinterest: f => f.calls.filter((c: any[]) => c[0] === 'pinterest' && c[1] === 'track').map((c: any[]) => c[2]),
+  snapchat: f => f.calls.filter((c: any[]) => c[0] === 'snapchat' && c[1] === 'track').map((c: any[]) => c[2]),
+  x: f => f.calls.filter((c: any[]) => c[0] === 'x' && c[1] === 'event').map((c: any[]) => c[2]),
+};
+
+test('every catalog mapping reaches its SDK stub as the mapped target; unmapped canonical events are refused', async () => {
+  const f = await fixture(catalog.map(c => ({ ...destination(c.provider), mappings: c.events.map(e => mapping(c.provider, e.event)) })));
+  f.grant(); for (const name of CANONICAL_EVENTS) f.event({ ...purchase(), name });
+  for (const script of f.scripts) await f.load(script);
+  assert.equal(f.status().ready, true);
+  for (const { provider, events } of catalog) {
+    const expected = events.map(({ event, target }) => provider === 'google_ads' ? [target, `${assets.google_ads}/${perEvent.google_ads(event)}`] : perEvent[provider]?.(event) ?? target);
+    assert.deepEqual(received[provider](f), provider === 'cloudflare' ? [] : expected, provider);
+    for (const event of CANONICAL_EVENTS.filter(name => !events.some(e => e.event === name))) {
+      const refused = await fixture([{ ...destination(provider), mappings: [mapping(provider, event)] }]);
+      assert.equal(refused.status().ready, false, `${provider} ${event}`);
+    }
+  }
 });
 
 test('withdrawal persists denial before reload and ignores all later events', async () => {

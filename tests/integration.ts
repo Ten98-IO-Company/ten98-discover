@@ -210,6 +210,22 @@ try {
   }
   console.log('PASS workspace isolation and viewer write restrictions');
 
+  stage = 'documented GET operations without paywalls';
+  // Free, fully featured: every GET the served OpenAPI document lists must answer a viewer
+  // with an ordinary outcome, never 402 or a server error. Writes keep their role checks above.
+  const spec = await expectStatus('/api/openapi.json', 200);
+  const pathIds: Record<string, string> = { workspaceId: workspaceA, projectId: projectA.id, visitorKey: randomBytes(32).toString('hex') };
+  const documentedGets = Object.keys(spec.body.paths).filter((template) => spec.body.paths[template].get).length;
+  let exercisedGets = 0;
+  for (const template of Object.keys(spec.body.paths)) {
+    if (!spec.body.paths[template].get) continue;
+    const { response } = await request(template.replace(/\{(\w+)\}/g, (_, name) => pathIds[name] ?? randomUUID()), { cookie: viewer.cookie });
+    assert.ok(response.status !== 402 && response.status < 500, `${stage}: GET ${template} answered ${response.status}`);
+    exercisedGets += 1;
+  }
+  assert.ok(documentedGets > 0 && exercisedGets >= documentedGets, `${stage}: exercised ${exercisedGets} of ${documentedGets} documented GET operations`);
+  console.log(`PASS ${exercisedGets} documented GET operations answer the viewer without 402 or 5xx`);
+
   stage = 'public collector isolation, CORS and privacy';
   const eventId = randomUUID();
   const tracking = await expectStatus('/api/tracking-config', 200, { method: 'POST', origin: originA, body: { siteKey: projectA.publicKey, environment: 'live' } });
