@@ -1,5 +1,5 @@
 import {FoundationError} from './auth.ts';
-import {dataforseoJson} from './dataforseo-transport.ts';
+import {dataforseoJson,dataforseoRefusal,dataforseoRefusalEvidence,dataforseoRefusalMessage} from './dataforseo-transport.ts';
 import {keywordReconcileEndpoint,microUsd,providerMicros,validText} from './keyword-research-input.ts';
 import {domainEndpoint,domainEndpointName,domainPayload,domainTarget,domainUrlMatches,matchesDomainPayload,type DomainRequest,type DomainReportResult,type DomainRow,type DomainOrganicMetrics,type DomainPageRow,type DomainCompetitorRow} from './domain-research-input.ts';
 import {normalizePublicHostname} from './domains.ts';
@@ -38,6 +38,7 @@ export type DomainOutcome={cost:string|null;reference:string|null;result:DomainR
 const final=new Set([20000,40102,40103,40106,40501,40502,40503,40504,40505,40506]);
 export function parseDomainOutcome(response:{httpStatus:number;body:unknown},request:DomainRequest,id:string,now=new Date()):DomainOutcome{
  const outcome:DomainOutcome={cost:null,reference:null,result:null,diagnostic:'The provider charge is unknown. Reconcile it before spending again.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
+ const refused=dataforseoRefusal(response);if(refused)return {...outcome,cost:'0.000000',diagnostic:dataforseoRefusalMessage[refused],evidence:dataforseoRefusalEvidence(response)};
  try{
   const b=response.body;if(!object(b))invalid();outcome.evidence.reportedCost=b.cost;outcome.evidence.statusCode=typeof b.status_code==='number'?b.status_code:null;
   if(response.httpStatus!==200||b.status_code!==20000||b.tasks_count!==1||!Array.isArray(b.tasks)||b.tasks.length!==1||!object(b.tasks[0]))invalid();

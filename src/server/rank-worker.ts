@@ -154,7 +154,8 @@ async function applyOutcome(client:PoolClient,row:RankDispatchSnapshot,outcome:R
     const deadline=(await client.query('SELECT collect_deadline>clock_timestamp() AS valid FROM rank_dispatch WHERE id=$1',[row.id])).rows[0]?.valid;
     if(!deadline){await markUncertain(client,{...row,ledger_status:final?'settled':row.ledger_status,actual_micros:final?sum.toString():row.actual_micros});return;}
     await client.query("UPDATE rank_dispatch SET phase='collecting',completed_at=NULL,diagnostic=NULL WHERE id=$1",[row.id]);await queuePoll(client,row.id);
-  }else await client.query("UPDATE rank_dispatch SET phase='finished',completed_at=COALESCE(completed_at,clock_timestamp()),lease_owner=NULL,lease_expires_at=NULL,next_poll_at=NULL,diagnostic=NULL WHERE id=$1",[row.id]);
+  }else // A wallet refusal's text shows on its finished dispatch (D3); saved final receipts supersede an uncertain-evidence text.
+    await client.query("UPDATE rank_dispatch SET phase='finished',completed_at=COALESCE(completed_at,clock_timestamp()),lease_owner=NULL,lease_expires_at=NULL,next_poll_at=NULL,diagnostic=$2 WHERE id=$1",[row.id,outcome.tasks.some(task=>task.state==='uncertain')?null:outcome.diagnostic]);
   await aggregateRankRun(client,row.run_id);
 }
 

@@ -2,7 +2,7 @@ import {createHmac} from 'node:crypto';
 import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
 import {getProviderAccountIdentityKey} from './provider-account-identity.ts';
-import {dataforseoJson} from './dataforseo-transport.ts';
+import {dataforseoJson,dataforseoRefusal,dataforseoRefusalEvidence,dataforseoRefusalMessage} from './dataforseo-transport.ts';
 import {keywordAccountEndpoint,keywordCatalogEndpoint,keywordEndpoints,keywordPayload,keywordReconcileEndpoint,matchesKeywordPayload,microUsd,providerMicros,validText,type KeywordMarket,type KeywordMode,type KeywordRequest,type KeywordResult,type KeywordRow} from './keyword-research-input.ts';
 
 type ObjectValue=Record<string,any>;
@@ -73,6 +73,7 @@ export type KeywordOutcome={cost:string|null;reference:string|null;result:Keywor
 export function parseKeywordOutcome(response:{httpStatus:number;body:unknown},request:KeywordRequest,id:string,now=new Date()):KeywordOutcome {
   const outcome:KeywordOutcome={cost:null,reference:null,result:null,diagnostic:'The provider response could not be verified. Reconcile the charge before requesting again.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
   try{
+    const refused=dataforseoRefusal(response);if(refused)return {...outcome,cost:'0.000000',diagnostic:dataforseoRefusalMessage[refused],evidence:dataforseoRefusalEvidence(response)};
     const {body,task}=taskEnvelope(response.body);
     if(!validText(task.id,128)||!matchesKeywordPayload(task.data,request,id)||!Array.isArray(task.path)||task.path.join('/')!==new URL(keywordEndpoints[request.mode]).pathname.slice(1))return outcome;
     outcome.reference=task.id;outcome.evidence={httpStatus:response.httpStatus,statusCode:body.status_code,taskStatus:Number.isInteger(task.status_code)?task.status_code:null,reportedCost:typeof body.cost==='number'&&Number.isFinite(body.cost)?body.cost:null,taskCost:typeof task.cost==='number'&&Number.isFinite(task.cost)?task.cost:null};

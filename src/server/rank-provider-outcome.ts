@@ -1,5 +1,6 @@
 import {isDeepStrictEqual} from 'node:util';
 import {providerMicros} from './keyword-research-input.ts';
+import {dataforseoRefusal,dataforseoRefusalMessage,dataforseoWalletCodes} from './dataforseo-transport.ts';
 import {rankSerpEndpoints,rankSerpPayload,rankTaskTag,type RankSerpRequest} from './rank-serp-input.ts';
 import {parseRankObservation,type RankObservation} from './rank-observation.ts';
 
@@ -47,6 +48,11 @@ export function parseRankDispatchOutcome(response:{httpStatus:number;body:unknow
   const tags=new Map<string,RankExpectedTask>();
   for(const task of expected){const tag=rankTaskTag(task.id);rankSerpPayload(task.request,task.id,phase==='live'?'live':'queued');if(tags.has(tag)||(phase==='get'&&!providerId(task.providerTaskId)))invalid();tags.set(tag,task);}
   const uncertain=():RankDispatchOutcome=>({tasks:expected.map(unknownTask),provisionalMicros:null,finalMicros:null,diagnostic:unknown});
+  // Owner decision D3: a whole paid response refused for wallet reasons at an explicit zero cost
+  // fails every task at a final $0. Free task_get polling is never classified.
+  const refused=phase==='get'?null:dataforseoRefusal(response);
+  if(refused){const diagnostic=dataforseoRefusalMessage[refused];
+    return {tasks:expected.map(task=>({...unknownTask(task),state:'failed',finalMicros:'0',diagnostic})),provisionalMicros:phase==='post'?'0':null,finalMicros:'0',diagnostic};}
   try{
     const body=response.body;
     if(response.httpStatus!==200||!object(body)||body.status_code!==20000||!Array.isArray(body.tasks)||body.tasks.length!==expected.length||body.tasks_count!==expected.length)invalid();
@@ -66,6 +72,9 @@ export function parseRankDispatchOutcome(response:{httpStatus:number;body:unknow
       }else if(phase==='get'&&waitingStatuses.has(raw.status_code)){
         // A polling acknowledgement does not prove a refund or final charge.
         outcome.state='pending';outcome.provisionalMicros=cost.toString();outcome.diagnostic=null;
+      }else if(phase!=='get'&&dataforseoWalletCodes.has(raw.status_code)&&raw.cost===0){
+        // One task of a paid batch refused for wallet reasons at an explicit zero cost; its siblings proceed.
+        outcome.state='failed';outcome.finalMicros='0';outcome.diagnostic=dataforseoRefusalMessage[dataforseoWalletCodes.get(raw.status_code)!];
       }else if(finalStatuses.has(raw.status_code)){
         outcome.finalMicros=cost.toString();outcome.state='failed';outcome.diagnostic='The provider finished without a usable observation. Its final charge is recorded.';
         if(raw.status_code===20000||raw.status_code===40106){

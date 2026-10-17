@@ -4,7 +4,7 @@ import {backlinkTarget,backlinkPayload,backlinkUrlMatches,backlinkEndpoint,backl
 import {parseBacklinkOutcome,parseBacklinkReconciliation,requestBacklinkResearch,reconcileBacklinkCharge} from '../src/server/dataforseo-backlinks.ts';
 import {parseKeywordAccount} from '../src/server/dataforseo-keywords.ts';
 import {domainReportCsv} from '../src/server/domain-research.ts';
-import {dataforseoJson} from '../src/server/dataforseo-transport.ts';
+import {dataforseoJson,dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 const id='00000000-0000-4000-8000-000000000001';
 const profile:Extract<BacklinkRequest,{report:'backlinks_profile_v1'}>={report:'backlinks_profile_v1',connectionId:id,target:'example.com',scope:'subdomains',status:'live',limit:25,offset:0,follow:'all',order:'rank_desc'};
 const overview:BacklinkRequest={report:'backlinks_overview_v1',connectionId:id,target:'example.com',scope:'domain',status:'all',limit:1};
@@ -61,6 +61,18 @@ test('out-of-scope/filter/invalid/duplicate rows retain verified charge but expo
 });
 test('wrong envelope identity/path/accounting never becomes a zero-priced success',()=>{
  for(const change of ['path','tag','cost','scale','offset'] as const){const r=response(profile);if(change==='path')r.body.tasks[0].path=['v3','dataforseo_labs','google','ranked_keywords','live'];if(change==='tag')r.body.tasks[0].data.tag='wrong';if(change==='cost')r.body.cost=0;if(change==='scale')r.body.tasks[0].data.rank_scale='one_thousand';if(change==='offset')r.body.tasks[0].data.offset=25;const out=parseBacklinkOutcome(r,profile,id);assert.equal(out.result,null);assert.equal(out.cost,null);assert.equal(out.reference,null);}
+});
+test('wallet refusals with an explicit zero cost settle $0 with the fixed text; charged or other refusals stay unknown (D3)',async()=>{
+ for(const r of [profile,overview]){
+  const top=parseBacklinkOutcome({httpStatus:200,body:{status_code:40203,cost:0,tasks_count:0,tasks:null}},r,id);
+  assert.deepEqual(top,{cost:'0.000000',reference:null,result:null,diagnostic:dataforseoRefusalMessage.cost_limit,evidence:{httpStatus:200,statusCode:40203,taskStatus:null,reportedCost:0,taskCost:null}});
+  const task=parseBacklinkOutcome({httpStatus:200,body:{status_code:20000,cost:0,tasks_count:1,tasks:[{id:'synthetic-backlink-task',status_code:40210,cost:0}]}},r,id);
+  assert.equal(task.cost,'0.000000');assert.equal(task.reference,null);assert.equal(task.diagnostic,dataforseoRefusalMessage.payment);assert.deepEqual(task.evidence,{httpStatus:200,statusCode:20000,taskStatus:40210,reportedCost:0,taskCost:0});
+  for(const body of [{status_code:40210,cost:0.024036,tasks:null},{status_code:40210,tasks:null},{status_code:40209,cost:0,tasks:null},{status_code:20000,cost:0,tasks:[{status_code:40210,cost:0},{status_code:40203,cost:0}]}]){const out=parseBacklinkOutcome({httpStatus:200,body},r,id);assert.equal(out.cost,null,JSON.stringify(body));assert.equal(out.result,null);}
+ }
+ let calls=0;const reply=(value:unknown,status:number):typeof fetch=>async()=>{calls++;return Response.json(value,{status});};
+ const http=await requestBacklinkResearch({login:'synthetic',password:'synthetic'},profile,id,reply({cost:0,tasks:null},402));assert.equal(http.cost,'0.000000');assert.equal(http.evidence.httpStatus,402);assert.equal(http.evidence.statusCode,null);assert.equal(http.diagnostic,dataforseoRefusalMessage.payment);
+ assert.equal((await requestBacklinkResearch({login:'synthetic',password:'synthetic'},profile,id,reply({status_code:40201,cost:0,tasks:null},402))).cost,null);assert.equal(calls,2);
 });
 test('reconciliation binds exact Backlinks path/profile/page/tag and rejects ambiguous or truncated evidence',()=>{
  const receipt={id:'synthetic-backlink-task',url:'v3/backlinks/backlinks/live',metadata:backlinkPayload(profile,id),status:'20000',cost:0.024036};const free=(rows:unknown[])=>({httpStatus:200,body:{status_code:20000,cost:0,tasks_count:1,tasks:[{status_code:20000,cost:0,result:rows}]}});

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {domainPayload,domainTarget,domainUrlMatches,parseDomainRequest,matchesDomainPayload,domainEndpointName,type DomainRequest,type DomainReport} from '../src/server/domain-research-input.ts';
-import {parseDomainOutcome,parseDomainReconciliation} from '../src/server/dataforseo-domains.ts';
+import {parseDomainOutcome,parseDomainReconciliation,requestDomainResearch} from '../src/server/dataforseo-domains.ts';
+import {dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 import {parseKeywordAccount} from '../src/server/dataforseo-keywords.ts';
 import {domainReportCsv} from '../src/server/domain-research.ts';
 
@@ -44,6 +45,16 @@ test('known charge survives malformed count, out-of-scope URLs, duplicate and in
 });
 test('foreign task identity and inconsistent billing stay unknown rather than free',()=>{
  for(const kind of ['tag','path','cost'] as const){const value=response();if(kind==='tag')value.body.tasks[0].data.tag='foreign';if(kind==='path')value.body.tasks[0].path[3]='keyword_ideas';if(kind==='cost')value.body.tasks[0].cost=0;const out=parseDomainOutcome(value,request,id);assert.equal(out.cost,null);assert.equal(out.result,null);}
+});
+test('wallet refusals with an explicit zero cost settle $0 with the fixed text; charged or other refusals stay unknown (D3)',async()=>{
+ const top=parseDomainOutcome({httpStatus:200,body:{status_code:40210,cost:0,tasks_count:0,tasks:null}},request,id);
+ assert.deepEqual(top,{cost:'0.000000',reference:null,result:null,diagnostic:dataforseoRefusalMessage.payment,evidence:{httpStatus:200,statusCode:40210,taskStatus:null,reportedCost:0,taskCost:null}});
+ const task=parseDomainOutcome({httpStatus:200,body:{status_code:20000,cost:0,tasks_count:1,tasks:[{id:'synthetic-task',status_code:40203,cost:0}]}},request,id);
+ assert.equal(task.cost,'0.000000');assert.equal(task.reference,null);assert.equal(task.diagnostic,dataforseoRefusalMessage.cost_limit);assert.deepEqual(task.evidence,{httpStatus:200,statusCode:20000,taskStatus:40203,reportedCost:0,taskCost:0});
+ for(const body of [{status_code:40210,cost:0.01,tasks:null},{status_code:40210,tasks:null},{status_code:40204,cost:0,tasks:null},{status_code:20000,cost:0,tasks:[{status_code:40210,cost:0},{status_code:20000,cost:0}]}]){const out=parseDomainOutcome({httpStatus:200,body},request,id);assert.equal(out.cost,null,JSON.stringify(body));assert.equal(out.result,null);}
+ let calls=0;const reply=(value:unknown,status:number):typeof fetch=>async()=>{calls++;return Response.json(value,{status});};
+ const http=await requestDomainResearch({login:'synthetic',password:'synthetic'},request,id,reply({status_code:40200,cost:0,tasks:null},402));assert.equal(http.cost,'0.000000');assert.equal(http.evidence.httpStatus,402);assert.equal(http.diagnostic,dataforseoRefusalMessage.payment);
+ assert.equal((await requestDomainResearch({login:'synthetic',password:'synthetic'},request,id,async()=>{calls++;return new Response('Payment Required',{status:402});})).cost,null);assert.equal(calls,2);
 });
 test('reconciliation requires one complete exact tagged final receipt, including charge zero',()=>{
  const receipt={id:'synthetic-task',url:'v3/dataforseo_labs/google/ranked_keywords/live',metadata:domainPayload(request,id),status:'20000',cost:0};

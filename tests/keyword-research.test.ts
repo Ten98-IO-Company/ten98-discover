@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import {parseKeywordRequest,providerMicros,microUsd,keywordPayload,keywordEndpoints,keywordAccountEndpoint,keywordCatalogEndpoint} from '../src/server/keyword-research-input.ts';
 import {parseKeywordAccount,parseKeywordMarkets,parseKeywordOutcome,parseKeywordReconciliation,requestKeywordResearch,keywordProviderJson} from '../src/server/dataforseo-keywords.ts';
+import {dataforseoRefusal,dataforseoRefusalMessage,dataforseoWalletCodes} from '../src/server/dataforseo-transport.ts';
 
 process.env.AUTH_SECRET='keyword-test-only-auth-secret-'.repeat(2);
 process.env.BOOTSTRAP_TOKEN='keyword-test-only-bootstrap-'.repeat(2);
@@ -82,4 +83,40 @@ test('provider transport has fixed hosts, bounded bodies and one send without au
  await assert.rejects(keywordProviderJson('https://example.test',secret,undefined,send));assert.equal(calls,1);
  const oversized=await requestKeywordResearch(secret,request,id,async()=>new Response('x'.repeat(4_194_305)));assert.equal(oversized.cost,null);
  let freeCalls=0;await keywordProviderJson(keywordAccountEndpoint,secret,undefined,async(url,init)=>{freeCalls++;assert.equal(init?.method,'GET');assert.equal(url,keywordAccountEndpoint);return Response.json({});});await keywordProviderJson(keywordCatalogEndpoint,secret,undefined,async()=>{freeCalls++;return Response.json({});});assert.equal(freeCalls,2);
+});
+// Owner decision D3: DataForSEO appendix/errors wallet refusals (checked 2026-10-18) with an explicit zero cost everywhere are a known $0 outcome.
+test('DataForSEO refusal matrix recognises only explicit zero-cost wallet shapes',()=>{
+ const r=(body:unknown,httpStatus=200)=>dataforseoRefusal({httpStatus,body});
+ assert.deepEqual([...dataforseoWalletCodes],[[40200,'payment'],[40210,'payment'],[40203,'cost_limit']]);
+ assert.deepEqual(dataforseoRefusalMessage,{payment:'DataForSEO refused this request because the account balance is too low (payment required or insufficient funds). No charge was recorded. Add funds in DataForSEO, then prepare a new quote.',
+  cost_limit:'DataForSEO refused this request because the daily cost limit set in your DataForSEO account was reached. No charge was recorded. Raise the limit in DataForSEO or wait for it to reset, then prepare a new quote.'});
+ for(const [body,status,kind] of [
+  [{status_code:40210,status_message:'x',cost:0,tasks_count:0,tasks:null},200,'payment'],[{status_code:40200,cost:0,tasks:null},200,'payment'],[{status_code:40200,cost:0},200,'payment'],[{status_code:40203,cost:0,tasks:[]},200,'cost_limit'],
+  [{status_code:20000,cost:0,tasks_count:1,tasks:[{id:'t',status_code:40210,cost:0}]},200,'payment'],[{status_code:20000,cost:0,tasks:[{status_code:40203,cost:0},{status_code:40203,cost:0}]},200,'cost_limit'],
+  [{status_code:20000,cost:0,tasks:[{status_code:40200,cost:0},{status_code:40210,cost:0}]},200,'payment'],[{status_code:40200,cost:0,tasks:[{status_code:40210,cost:0}]},200,'payment'],
+  [{status_code:40200,cost:0,tasks:null},402,'payment'],[{status_code:40203,cost:0,tasks:null},402,'cost_limit'],[{cost:0},402,'payment'],[{status_code:null,cost:0,tasks:null},402,'payment'],[{status_code:402,cost:0,tasks:[]},402,'payment'],
+ ] as [unknown,number,string][])assert.equal(r(body,status),kind,JSON.stringify([body,status]));
+ for(const [body,status] of [
+  [{status_code:40210,cost:0.01,tasks:null},200],[{status_code:40210,tasks:null},200],[{status_code:40210,cost:'0',tasks:null},200],[{status_code:40210,cost:null},200],[{status_code:40210,cost:-0.01},200],
+  [{status_code:40201,cost:0,tasks:null},200],[{status_code:40202,cost:0,tasks:null},200],[{status_code:40204,cost:0,tasks:null},200],[{status_code:40209,cost:0,tasks:null},200],
+  [{status_code:40201,cost:0,tasks:null},402],[{status_code:40202,cost:0},402],[{status_code:40204,cost:0},402],[{status_code:40209,cost:0},402],[{status_code:50000,cost:0},402],[{status_code:20000,cost:0,tasks:[]},402],[{status_code:402,cost:0,tasks:[{status_code:40210,cost:0}]},402],
+  [{status_code:20000,cost:0,tasks:[{status_code:40210,cost:0},{status_code:20000,cost:0}]},200],[{status_code:20000,cost:0,tasks:[{status_code:40210,cost:0},{status_code:40203,cost:0}]},200],
+  [{status_code:20000,cost:0,tasks:[{status_code:40210}]},200],[{status_code:20000,cost:0,tasks:[{status_code:40210,cost:0.01}]},200],[{status_code:20000,cost:0.01,tasks:[{status_code:40210,cost:0}]},200],
+  [{status_code:20000,cost:0,tasks:[]},200],[{status_code:20000,cost:0,tasks:null},200],[{status_code:40203,cost:0,tasks:[{status_code:40210,cost:0}]},200],[{status_code:40210,cost:0,tasks:[{status_code:20000,cost:0}]},200],
+  [{status_code:40210,cost:0,tasks:{}},200],[{status_code:40210,cost:0,tasks:[null]},200],[{status_code:'40210',cost:0},200],[{cost:0},200],
+  [{status_code:40210,cost:0,tasks:null},500],[{status_code:40210,cost:0,tasks:null},401],[{status_code:40210,cost:0,tasks:null},403],[[{status_code:40210,cost:0}],200],[null,402],['payment',402],
+ ] as [unknown,number][])assert.equal(r(body,status),null,JSON.stringify([body,status]));
+});
+test('keyword refusals settle a known $0 with the fixed text; a positive cost, other codes or a non-JSON 402 stay unknown',async()=>{
+ const top=parseKeywordOutcome({httpStatus:200,body:{status_code:40210,cost:0,tasks_count:0,tasks:null}},request,id);
+ assert.deepEqual(top,{cost:'0.000000',reference:null,result:null,diagnostic:dataforseoRefusalMessage.payment,evidence:{httpStatus:200,statusCode:40210,taskStatus:null,reportedCost:0,taskCost:null}});
+ const task=parseKeywordOutcome({httpStatus:200,body:{status_code:20000,cost:0,tasks_count:1,tasks:[{id:'t',status_code:40203,cost:0}]}},request,id);
+ assert.equal(task.cost,'0.000000');assert.equal(task.diagnostic,dataforseoRefusalMessage.cost_limit);assert.deepEqual(task.evidence,{httpStatus:200,statusCode:20000,taskStatus:40203,reportedCost:0,taskCost:0});
+ const http=parseKeywordOutcome({httpStatus:402,body:{status_code:40200,cost:0,tasks:null}},request,id);assert.equal(http.cost,'0.000000');assert.equal(http.evidence.httpStatus,402);assert.equal(http.diagnostic,dataforseoRefusalMessage.payment);
+ for(const body of [{status_code:40210,cost:0.01,tasks:null},{status_code:40210,tasks:null},{status_code:40201,cost:0,tasks:null},{status_code:20000,cost:0,tasks:[{status_code:40210,cost:0},{status_code:20000,cost:0}]}])assert.equal(parseKeywordOutcome({httpStatus:200,body},request,id).cost,null,JSON.stringify(body));
+ let calls=0;const secret={login:'synthetic@example.test',password:'synthetic-never-live'},reply=(value:unknown,status:number):typeof fetch=>async()=>{calls++;return Response.json(value,{status});};
+ assert.equal((await requestKeywordResearch(secret,request,id,reply({status_code:40200,cost:0,tasks:null},402))).cost,'0.000000');
+ assert.equal((await requestKeywordResearch(secret,request,id,reply({status_code:20000,cost:0,tasks_count:1,tasks:[{id:'t',status_code:40210,cost:0}]},200))).cost,'0.000000');
+ assert.equal((await requestKeywordResearch(secret,request,id,reply({status_code:40210,cost:0.01,tasks:null},200))).cost,null);
+ assert.equal((await requestKeywordResearch(secret,request,id,async()=>{calls++;return new Response('Payment Required',{status:402});})).cost,null);assert.equal(calls,4);
 });

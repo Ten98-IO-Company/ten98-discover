@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {parseRankDispatchOutcome,parseRankReconciliation,matchesRankPayload,type RankExpectedTask,type RankProviderPhase} from '../src/server/rank-provider-outcome.ts';
 import {rankSerpPayload} from '../src/server/rank-serp-input.ts';
+import {dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 
 const now=new Date('2026-10-13T09:00:00Z');
 const expected:RankExpectedTask={id:randomUUID(),request:{keyword:'C++ %20',domain:'example.com',locationCode:2840,languageCode:'en',device:'desktop',depth:100,maxCrawlPages:3}};
@@ -156,4 +157,35 @@ test('money evidence remains provisional or unknown across mixed, malformed and 
   assert.equal(parseRankReconciliation(recoveryPage([wrong]),'live',[known],dispatched,now).finalMicros,null);
   const earlier=recoveryRow();earlier.datetime_posted='2026-02-30 08:59:00 +00:00';
   assert.equal(parseRankReconciliation(recoveryPage([earlier]),'live',[expected],dispatched,now).finalMicros,null);
+});
+
+// Owner decision D3: DataForSEO wallet refusals at an explicit zero cost are a final $0, never an uncertain charge.
+test('live and task_post wallet refusals of the whole response fail every task at a final $0 with the fixed text',()=>{
+  const other={...expected,id:randomUUID(),request:{...expected.request,device:'mobile' as const}};
+  for(const [phase,list,kind,httpStatus,body] of [
+    ['live',[expected],'payment',200,{status_code:40210,status_message:'Insufficient funds.',cost:0,tasks_count:0,tasks_error:0,tasks:null}],
+    ['post',[expected,other],'payment',402,{status_code:40200,cost:0,tasks:null}],
+    ['post',[expected,other],'cost_limit',200,{status_code:20000,cost:0,tasks_count:2,tasks:[{status_code:40203,cost:0},{status_code:40203,cost:0}]}],
+  ] as [RankProviderPhase,RankExpectedTask[],'payment'|'cost_limit',number,unknown][]){
+    const out=parseRankDispatchOutcome({httpStatus,body},phase,list,now),diagnostic=dataforseoRefusalMessage[kind];
+    assert.deepEqual(out,{provisionalMicros:phase==='post'?'0':null,finalMicros:'0',diagnostic,
+      tasks:list.map(t=>({id:t.id,providerTaskId:null,statusCode:null,state:'failed',provisionalMicros:null,finalMicros:'0',observation:null,diagnostic}))});
+  }
+});
+test('a refused task inside a paid batch is final $0 while its sibling proceeds; charged, mis-summed, foreign or polled refusals stay uncertain',()=>{
+  const other={...expected,id:randomUUID(),request:{...expected.request,device:'mobile' as const}};
+  const pending=task(expected,'post',20100,0.0006),refused=task(other,'post',40210,0);refused.result=null;refused.result_count=0;
+  const mixed=parseRankDispatchOutcome(response([pending,refused],0.0006),'post',[expected,other],now);
+  assert.equal(mixed.provisionalMicros,'600');assert.equal(mixed.finalMicros,null);assert.equal(mixed.diagnostic,null);
+  assert.deepEqual(mixed.tasks.map(t=>[t.state,t.provisionalMicros,t.finalMicros,t.providerTaskId,t.statusCode,t.diagnostic]),[['pending','600',null,pending.id,20100,null],['failed',null,'0',refused.id,40210,dataforseoRefusalMessage.payment]]);
+  const charged=parseRankDispatchOutcome(response([pending,{...refused,cost:0.0006}],0.0012),'post',[expected,other],now);
+  assert.equal(charged.tasks[1].state,'uncertain');assert.equal(charged.tasks[1].finalMicros,null);assert.equal(charged.finalMicros,null);assert.match(charged.diagnostic!,/could not prove/);
+  for(const tasks of [[pending,refused],[pending,{...refused,data:{...refused.data,tag:'foreign'}}]]){
+    const out=parseRankDispatchOutcome(response(tasks,tasks[1]===refused?0.0012:0.0006),'post',[expected,other],now);
+    assert.ok(out.tasks.every(t=>t.state==='uncertain'&&t.finalMicros===null));assert.equal(out.provisionalMicros,null);assert.equal(out.finalMicros,null);
+  }
+  const known={...expected,providerTaskId:randomUUID()},polled={...task(known,'get',40210,0),result:null,result_count:0};
+  for(const body of [{status_code:40210,cost:0,tasks_count:0,tasks:null},{status_code:20000,cost:0,tasks_count:1,tasks:[polled]}]){
+    const get=parseRankDispatchOutcome({httpStatus:200,body},'get',[known],now);assert.equal(get.tasks[0].state,'uncertain');assert.equal(get.tasks[0].finalMicros,null);assert.equal(get.finalMicros,null);
+  }
 });
