@@ -29,7 +29,7 @@ export const oidcSettingsInput = z.object({
   trustVerifiedEmail: z.boolean().default(false),
 }).strict();
 export type OidcSettings = z.infer<typeof oidcSettingsInput>;
-type Metadata = { issuer: string; authorization_endpoint: string; token_endpoint: string; jwks_uri: string; id_token_signing_alg_values_supported: string[] };
+type Metadata = { issuer: string; authorization_endpoint: string; token_endpoint: string; jwks_uri: string; end_session_endpoint?: string; id_token_signing_alg_values_supported: string[] };
 type DiscoveredSettings = OidcSettings & { metadata: Metadata };
 type Claims = { issuer: string; subject: string; email: string | null; emailVerified: boolean; name: string; authTime: number | null };
 const algorithms = ['RS256', 'PS256', 'ES256'] as const;
@@ -124,14 +124,18 @@ export async function requestOidcJson(raw: string, settings: OidcSettings, post?
 export async function discoverOidc(value: unknown): Promise<DiscoveredSettings> {
   const settings = validateOidcSettings(value);
   const result = await requestOidcJson(`${settings.issuer.replace(/\/$/, '')}/.well-known/openid-configuration`, settings);
-  const metadata = input(z.object({
+  const { end_session_endpoint: endSession, ...metadata } = input(z.object({
     issuer: z.string(), authorization_endpoint: z.string(), token_endpoint: z.string(), jwks_uri: z.string(),
+    end_session_endpoint: z.unknown().optional(),
     id_token_signing_alg_values_supported: z.array(z.string()).min(1).max(32),
   }), result);
   if (metadata.issuer !== settings.issuer) unavailable('Discovery returned a different issuer.');
   for (const url of [metadata.authorization_endpoint, metadata.token_endpoint, metadata.jwks_uri]) endpoint(url, settings);
   if (!metadata.id_token_signing_alg_values_supported.some((algorithm) => algorithms.includes(algorithm as typeof algorithms[number]))) unavailable('This provider does not advertise a supported asymmetric ID-token signature algorithm.');
-  return { ...settings, metadata };
+  // Optional RP-initiated sign-out: an end-session endpoint outside the approved HTTPS origins is ignored, never a reason to refuse the provider.
+  let signOut: string | undefined;
+  try { if (typeof endSession === 'string') signOut = endpoint(endSession, settings).href; } catch { signOut = undefined; }
+  return { ...settings, metadata: { ...metadata, ...(signOut ? { end_session_endpoint: signOut } : {}) } };
 }
 
 export async function verifyOidcIdentity(settings: DiscoveredSettings, idToken: string, nonce: string): Promise<Claims> {
@@ -172,6 +176,22 @@ export async function exchangeOidcCode(settings: DiscoveredSettings, clientSecre
     options: { clientId: settings.clientId, clientSecret }, authentication: settings.authentication, tokenEndpoint: settings.metadata.token_endpoint });
   const tokens = input(z.object({ id_token: z.string().min(1).max(32_000) }), await requestOidcJson(settings.metadata.token_endpoint, settings, request));
   return verifyOidcIdentity(settings, tokens.id_token, nonce);
+}
+
+/**
+ * RP-initiated sign-out target for a session that an enabled provider's sign-in created: its advertised
+ * end-session endpoint with client_id only. ponytail: no ID token is kept, so there is no id_token_hint and
+ * no post_logout_redirect_uri (Authentik honours a return address only with the hint) and the browser stays on
+ * the provider's signed-out page; the upgrade path is storing the ID token encrypted with the session.
+ */
+export async function oidcSignOutUrl(request: Request): Promise<string | null> {
+  const current = await getAuth().api.getSession({ headers: request.headers, query: { disableRefresh: true } });
+  if (!current) return null;
+  const active = (await getDatabase().pool.query<{ active: DiscoveredSettings | null }>('SELECT p.active FROM session s JOIN oidc_provider p ON p.id=s."oidcProviderId" WHERE s.id=$1 AND p.enabled', [current.session.id])).rows[0]?.active;
+  if (!active?.metadata?.end_session_endpoint) return null;
+  const url = new URL(active.metadata.end_session_endpoint);
+  url.searchParams.set('client_id', active.clientId);
+  return url.href;
 }
 
 type Provider = {

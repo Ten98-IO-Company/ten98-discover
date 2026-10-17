@@ -39,7 +39,7 @@ import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitati
 import { handleAccountSecurity } from './account-security.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
-import { assertOidcCredentialsReadable, handleOidc } from './oidc.ts';
+import { assertOidcCredentialsReadable, handleOidc, oidcSignOutUrl } from './oidc.ts';
 import { isInstanceOperator } from './instance-operators.ts';
 import { handleReports } from './reports.ts';
 import { handleGoogle } from './google-api.ts';
@@ -303,7 +303,11 @@ export async function handleApi(request: Request): Promise<Response> {
     if (path.startsWith('/api/auth/')) {
       if (request.method === 'POST' && path === '/api/auth/sign-out') {
         const body = z.object({}).strict().parse(await readJson(request));
-        return getAuth().handler(authRequest(request, JSON.stringify(body)));
+        const providerSignOutUrl = await oidcSignOutUrl(request).catch(() => null); // never blocks ending the local session
+        const signedOut = await getAuth().handler(authRequest(request, JSON.stringify(body)));
+        if (!providerSignOutUrl || !signedOut.ok) return signedOut;
+        const headers = new Headers(signedOut.headers); headers.delete('content-length');
+        return new Response(JSON.stringify({ ...await signedOut.json(), providerSignOutUrl }), { status: signedOut.status, headers });
       }
       return json({ error: 'Authentication route unavailable.' }, 404);
     }
