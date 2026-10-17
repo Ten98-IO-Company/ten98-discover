@@ -186,7 +186,7 @@ async function readSessions(projectId:string,authority:SessionReadAuthority,para
         CROSS JOIN session_clock c CROSS JOIN key_authority k WHERE k.valid)`},
       selected AS MATERIALIZED (SELECT s.* FROM ${population} s WHERE (${keySlot}::text IS NULL OR s.visitor_id=${keySlot}::text)),
       selected_candidates AS MATERIALIZED (SELECT s.* FROM ${reportCandidates??population} s WHERE (${keySlot}::text IS NULL OR s.visitor_id=${keySlot}::text))${pageSql}
-      SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT analytics_retained_from FROM target) AS retained_from,
+      SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,
         (SELECT valid FROM key_authority) AS key_valid,
         (SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,
         ${stamp('c.as_of')} AS clock,${stamp('b.event_before')} AS event_before,b.event_before<=c.as_of AS bound_valid,

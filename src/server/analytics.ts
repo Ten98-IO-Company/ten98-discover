@@ -95,12 +95,12 @@ export function analyticsQuery(params:URLSearchParams,now=new Date()) {
 export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string):Promise<AnalyticsReport> {
   const {range,filters,geographyFilters,compare,detail,dimension,selection,selectionQuery} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
   if(compare&&!derived)throw new InputError(400,'Choose a later start date so the comparison stays on or after 1970-01-01.');
-  const client=compare||detail||selection?await getDatabase().pool.connect():null;
+  const client=await getDatabase().pool.connect();
   const values:unknown[]=[projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters),detail?JSON.stringify(detail):null,dimension??null];
   const predicate=advancedPredicateSql(selection,value=>{values.push(value);return '$'+values.length;},'UTC');
   try{
   if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");}
-  if(client&&(dimension||selection)){
+  if(client){
     const hint=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id;
     if(!hint)throw new FoundationError(404,'Project not found or unavailable.');
     // Publication gate shared with native report reads. The aggregation clock and
@@ -184,7 +184,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
           'visitors',m.visitors,'visits',m.visits,'bounceRate',m.bounce_rate,'averageVisitSeconds',m.duration) AS row
       FROM environment_counts c LEFT JOIN environment_measurement m ON c.field=m.field AND c.value IS NOT DISTINCT FROM m.value
     )${geographyAggregateCtes}
-    SELECT ${geographyDetailSql} AS geography_detail,(SELECT analytics_retained_from FROM target) AS retained_from,(SELECT analytics_settings FROM target) AS analytics_settings,
+    SELECT ${geographyDetailSql} AS geography_detail,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,(SELECT analytics_settings FROM target) AS analytics_settings,
       EXISTS(SELECT 1 FROM target) AS allowed,json_build_object(
       'totals',${analyticsSummarySql.totals},
       'collection',json_build_object('captureCoverage','unknown','pageViews',json_build_object(
@@ -251,7 +251,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
   const result={...current,...comparison?{comparison}:{},...geographyDetail?{geographyDetail}:{},...dimensionComparison?{dimensionComparison}:{},...selectionQuery?{selection:selectionQuery}:{}};
   if((dimension||selection)&&Buffer.byteLength(JSON.stringify(result),'utf8')>2*1024*1024)throw new FoundationError(503,'This comparison is too large. Choose a shorter date range or more filters.');
   if(client)await client.query('COMMIT');return result;
-  }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if((compare||detail||selection)&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,detail?'Location search took too long. Choose a shorter date range.':'Comparison took too long. Choose a shorter date range.');throw error;}
+  }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,detail?'Location search took too long. Choose a shorter date range.':compare?'Comparison took too long. Choose a shorter date range.':'Analytics took too long. Choose a shorter date range.');throw error;}
   finally{client?.release();}
 }
 type RawAnalyticsReport=Omit<AnalyticsPeriodReport,'range'|'coverage'|'daily'>&{daily:{date:string;pageViews:number;customEvents:number}[]};

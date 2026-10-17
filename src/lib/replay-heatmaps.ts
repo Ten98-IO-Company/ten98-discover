@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {analyticsDay} from './navigation.ts';
-import {replaySummary} from './session-replay.ts';
+import {replaySummary,replayChunkDto} from './session-replay.ts';
 
 const clean=(value:string)=>!/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(value);
 const name=z.string().trim().min(1).max(100).refine(clean),revision=z.number().int().min(0).max(2147483647);
@@ -26,6 +26,22 @@ const origin=z.string().max(2048).refine(v=>{try{const u=new URL(v);return ['htt
 export const heatmapBegin=z.object({siteKey:z.uuid(),requestId:z.uuid(),url:z.string().max(4096).url().refine(v=>{try{const u=new URL(v);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password&&!/[?#]/.test(v)&&clean(v)&&path.safeParse(u.pathname).success;}catch{return false;}}),consent:z.object({analytics:z.literal(true),epoch:z.uuid()}).strict()}).strict();
 export const heatmapBatch=heatmapBegin.extend({captureId:z.uuid(),token:z.string().min(1).max(4096),geometry:heatmapGeometry,observations:z.array(heatmapObservation).min(1).max(heatmapLimits.observations)}).strict().superRefine((v,c)=>{let previous=0;for(const p of v.observations){if(p.offsetMs<previous)c.addIssue({code:'custom',message:'Observation offsets must be monotonic.'});previous=p.offsetMs;if(p.scrollY>Math.max(0,v.geometry.pageHeight-v.geometry.viewportHeight)+1)c.addIssue({code:'custom',message:'Scroll coordinates must use the declared document plane.'});if(p.kind==='click'&&(p.x>v.geometry.pageWidth||p.y>v.geometry.pageHeight))c.addIssue({code:'custom',message:'Click coordinates must use the declared document plane.'});}if(new TextEncoder().encode(JSON.stringify(v)).length>heatmapLimits.batchBytes)c.addIssue({code:'custom',message:'Heatmap batch exceeds its disclosed byte limit.'});});
 export type HeatmapBatch=z.infer<typeof heatmapBatch>;
+// References only: DOM remains in the original replay chunks and has its own retention.
+export const replayEventLocator=z.discriminatedUnion('kind',[
+ z.object({kind:z.literal('event'),sequence:z.number().int().min(0).max(1023),index:z.number().int().min(0).max(199),chunkSha256:z.string().regex(/^[a-f0-9]{64}$/),eventSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+ z.object({kind:z.literal('fragment'),fragmentId:z.uuid(),eventSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict()
+]);
+export type ReplayEventLocator=z.infer<typeof replayEventLocator>;
+export const heatmapBackgroundUpload=heatmapBegin.extend({
+ consent:z.object({analytics:z.literal(true),replay:z.literal(true),epoch:z.uuid()}).strict(),
+ captureId:z.uuid(),heatmapToken:z.string().min(1).max(4096),recordingId:z.uuid(),replayToken:z.string().min(1).max(4096),
+ batchRequestId:z.uuid(),geometryKey:z.string().regex(/^[a-f0-9]{64}$/),geometry:heatmapGeometry,
+ heatmapOffsetMs:offsetMs,meta:replayEventLocator,snapshot:replayEventLocator
+}).strict().refine(v=>new TextEncoder().encode(JSON.stringify(v)).length<=4096);
+export const heatmapBackgroundReference=z.object({captureId:z.uuid(),recordingId:z.uuid(),geometryKey:z.string().regex(/^[a-f0-9]{64}$/),geometry:heatmapGeometry,
+ heatmapOffsetMs:offsetMs,replayOffsetMs:z.number().int().min(0).max(1200000),meta:replayEventLocator,snapshot:replayEventLocator,
+ observedAt:z.string().datetime(),sequences:z.array(z.number().int().min(0).max(1023)).min(1).max(128)
+}).strict().refine(v=>v.sequences.every((n,i)=>i===0||n>v.sequences[i-1]));
 export function heatmapPlane(g:z.infer<typeof heatmapGeometry>){return{basis:g.basis,direction:g.direction,pageWidth:g.pageWidth,pageHeight:g.pageHeight,viewportWidth:g.viewportWidth,viewportHeight:g.viewportHeight};}
 export function heatmapDepth(g:z.infer<typeof heatmapGeometry>,scrollY:number){return Math.min(100,100*(scrollY+g.viewportHeight)/g.pageHeight);}
 export type HeatmapQuery={from:string;to:string;mode:'pages'|'geometries'|'click'|'scroll';origin?:string;path?:string;geometry?:string;cursor?:string};
@@ -54,3 +70,24 @@ export const heatmapClicks=z.object({...reportBase,geometry:heatmapGeometry.null
  if(g&&v.points.some(p=>p.x>g.pageWidth||p.y>g.pageHeight||p.count===0)||new Set(v.points.map(p=>JSON.stringify([p.x,p.y]))).size!==v.points.length||t.observations!==null&&(t.observations<v.points.reduce((n,p)=>n+p.count,0)||!t.limited&&t.observations!==v.points.reduce((n,p)=>n+p.count,0)))c.addIssue({code:'custom',message:'Invalid grouped heatmap points.'});
 });
 export const heatmapScroll=z.object({...reportBase,geometry:heatmapGeometry.nullable(),captures:count.nullable(),bands:z.array(z.object({depth:z.number().int().min(10).max(100),captures:count.nullable()}).strict()).length(10)}).strict().refine(v=>v.query.mode==='scroll'&&v.bands.every((b,i)=>b.depth===(i+1)*10&&(v.geometry===null||v.coverage==='unavailable'?v.captures===null&&b.captures===null:v.captures!==null&&b.captures!==null&&b.captures<=v.captures&&(i===0||b.captures<=(v.bands[i-1].captures??-1)))));
+
+export const heatmapBackgroundPage=z.object({version:z.literal(1),projectId:z.uuid(),role,query:queryShape,asOf:instant,
+ state:z.enum(['available','missing','expired','incomplete','unsupported']),
+ reference:heatmapBackgroundReference.nullable(),item:replaySummary.nullable(),
+ chunks:z.array(replayChunkDto).max(4),nextAfter:z.number().int().min(0).max(1023).nullable()
+}).strict().superRefine((v,c)=>{
+ if(!['click','scroll'].includes(v.query.mode)||v.query.cursor!==undefined)c.addIssue({code:'custom',message:'Choose one exact geometry.'});
+ if(v.state!=='available'){
+  if(v.reference!==null||v.item!==null||v.chunks.length||v.nextAfter!==null)c.addIssue({code:'custom',message:'Unavailable backgrounds cannot reveal content references.'});
+  return;
+ }
+ const r=v.reference,item=v.item;
+ if(!r||!item||item.resultExpired||item.id!==r.recordingId||item.origin!==v.query.origin||item.entryPath===null||r.geometryKey!==v.query.geometry||
+   v.chunks.some((chunk,i)=>!r.sequences.includes(chunk.sequence)||i>0&&chunk.sequence<=v.chunks[i-1].sequence)||
+   v.nextAfter!==null&&(v.chunks.length!==4||v.nextAfter!==v.chunks.at(-1)?.sequence))c.addIssue({code:'custom',message:'Background pages must bind one retained recording and geometry.'});
+});
+
+export type HeatmapOverlay={geometry:z.infer<typeof heatmapGeometry>} & (
+ {mode:'click';points:{x:number;y:number;count:number}[]} |
+ {mode:'scroll';captures:number;bands:{depth:number;captures:number}[]}
+);

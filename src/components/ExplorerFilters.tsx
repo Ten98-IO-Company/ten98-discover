@@ -8,7 +8,7 @@ import {geographyLabel} from './GeographyCard';
 type SessionSelection={method:'current-retained-session-properties-v1';asOf:string;retainedFrom:string;evidence:{lost:boolean;lostAt:string|null;expiredValuesPresent:boolean};candidates:{identifiedEvents:number|null;unidentifiedEvents:number|null};selection:{status:'available'|'unavailable';countsAreLowerBounds:boolean;reason:'missing_evidence_lost'|'identity_unavailable'|'candidate_scope_unavailable'|null};limitation:string};
 const KINDS=[['all','All events'],['pageviews','Page views'],['custom','Custom events']] as const;
 
-const FILTERS=[['eventName','Event name'],['path','Path'],['origin','Origin'],['referrer','Referrer'],['language','Language'],['browser','Browser'],['os','OS'],['device','Device'],['country','Country'],['region','Region'],['city','City'],['campaignSource','Campaign source'],['campaignMedium','Campaign medium'],['campaignName','Campaign name'],['campaignTerm','Campaign term'],['campaignContent','Campaign content']] as const;
+const FILTERS=[['eventName','Event name'],['path','Path'],['origin','Origin'],['referrer','Referrer'],['language','Language'],['browser','Browser'],['os','OS'],['device','Device'],['country','Country'],['region','Region'],['city','City'],['campaignSource','Campaign source'],['campaignMedium','Campaign medium'],['campaignName','Campaign name'],['campaignTerm','Campaign term'],['campaignContent','Campaign content'],['hostname','Hostname'],['screen','Recorded screen'],['channel','Recorded channel']] as const;
 const PROP_TYPES=['missing','string','number','boolean','null','date','array'] as const;
 const TIMEZONES=['UTC','America/New_York','America/Chicago','America/Los_Angeles','Europe/London','Europe/Berlin','Asia/Dubai','Asia/Tokyo','Australia/Sydney'];
 

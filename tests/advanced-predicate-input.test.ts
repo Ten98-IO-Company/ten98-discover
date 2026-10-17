@@ -104,3 +104,10 @@ test('data-only parsing rejects sparse arrays and hooks without invoking them',(
 });
 
 test('referrer predicates preserve the accepted2048-character normalizer bound',()=>{const input={version:1,match:'all',fields:[{field:'referrer',operator:'eq',value:'a'.repeat(2048)}],properties:[]};assert.equal(parseAdvancedPredicates(input).fields.length,1);assert.throws(()=>parseAdvancedPredicates({...input,fields:[{...input.fields[0],value:'a'.repeat(2049)}]}),{status:400});});
+
+test('recorded dimension predicates share exact, presence and bounded text operators',()=>{
+ for(const [name,value]of [['hostname','www.example.com'],['screen','720x320'],['channel','not_recorded']]as const){
+  for(const operator of ['eq','neq','contains','prefix','suffix','regex'])assert.deepEqual(parseAdvancedPredicates(group([{field:name,operator,value}])).fields,[{field:name,operator,value}]);
+  for(const operator of ['exists','missing'])assert.deepEqual(parseAdvancedPredicates(group([{field:name,operator}])).fields,[{field:name,operator}]);
+ }
+});

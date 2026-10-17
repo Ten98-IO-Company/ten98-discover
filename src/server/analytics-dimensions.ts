@@ -1,8 +1,17 @@
+import {revenueChannelRules} from '../lib/revenue.ts';
 import {geographyKeySql} from './geography-sql.ts';
 
-/** Fixed projection shared by Explorer and comparison; selectors and aliases are internal constants. */
+/** Closed projections of existing stored observations; aliases are internal SQL identifiers only. */
+export function recordedDimensionSql(field:'hostname'|'screen'|'channel',alias:string){
+ if(field==='hostname')return `substring(${alias}.dimensions->>'origin' from '^https?://(\\[[0-9a-f:.]+\\]|[a-z0-9.-]+)(?::[0-9]{1,5})?$')`;
+ if(field==='screen')return `CASE WHEN jsonb_typeof(${alias}.dimensions->'screenWidth')='number' AND jsonb_typeof(${alias}.dimensions->'screenHeight')='number'
+  AND ${alias}.dimensions->>'screenWidth' ~ '^([1-9][0-9]{0,3}|10000)$' AND ${alias}.dimensions->>'screenHeight' ~ '^([1-9][0-9]{0,3}|10000)$'
+  THEN (${alias}.dimensions->>'screenWidth')||'x'||(${alias}.dimensions->>'screenHeight') END`;
+ return "CASE "+revenueChannelRules.map(([name,tokens])=>"WHEN lower("+alias+".dimensions->'campaign'->>'medium')=ANY(ARRAY["+tokens.map(token=>"'"+token+"'").join(',')+"])THEN '"+name+"'").join(' ')
+  +" WHEN NULLIF("+alias+".dimensions->'campaign'->>'medium','')IS NOT NULL OR NULLIF("+alias+".dimensions->'campaign'->>'source','')IS NOT NULL THEN 'other_tagged' WHEN NULLIF("+alias+".dimensions->>'referrerHost','')IS NOT NULL THEN 'referrer_only' ELSE 'not_recorded' END";
+}
 export function analyticsDimensionValueSql(selector:string,alias:string){
- return `CASE ${selector} WHEN 'event' THEN to_jsonb(${alias}.event_name) WHEN 'path' THEN to_jsonb(${alias}.path) WHEN 'origin' THEN to_jsonb(${alias}.origin)
+ return `CASE ${selector} WHEN 'hostname' THEN to_jsonb(${recordedDimensionSql('hostname',alias)}) WHEN 'screen' THEN to_jsonb(${recordedDimensionSql('screen',alias)}) WHEN 'channel' THEN to_jsonb(${recordedDimensionSql('channel',alias)}) WHEN 'event' THEN to_jsonb(${alias}.event_name) WHEN 'path' THEN to_jsonb(${alias}.path) WHEN 'origin' THEN to_jsonb(${alias}.origin)
  WHEN 'country' THEN ${geographyKeySql('country',`${alias}.geography`)} WHEN 'region' THEN ${geographyKeySql('region',`${alias}.geography`)} WHEN 'city' THEN ${geographyKeySql('city',`${alias}.geography`)}
  WHEN 'referrer' THEN ${alias}.dimensions->'referrerHost' WHEN 'language' THEN ${alias}.dimensions->'language'
  WHEN 'browser' THEN ${alias}.dimensions->'browser' WHEN 'os' THEN ${alias}.dimensions->'os' WHEN 'device' THEN ${alias}.dimensions->'device'

@@ -20,6 +20,8 @@ Open the configured address and use the privately generated bootstrap token to c
 
 ## Code and contribution
 
+For the owner-requested continuation, read [Claude handoff](CLAUDE.md). This branch preserves incomplete work and its known failures.
+
 - [Contributor ownership and guardrails](AGENTS.md), [Kimi/GPT workflow](docs/kimi-workflow.md).
 - [Implementation and security contracts](docs), including [tracking and measurement](docs/tracking.md), [Google imports](docs/google-reports.md), [Meta imports](docs/meta-reports.md), [rank tracking](docs/rank-tracking.md) and [AI insights](docs/ai-insights.md).
 - [Third-party provenance and complete license notices](THIRD_PARTY_NOTICES.md). This is an independent combined project, not an official product of the upstream projects.

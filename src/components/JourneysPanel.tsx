@@ -29,7 +29,7 @@ function paramsFrom(draft:JourneyDraft):{qs:string}|{error:string}{
  if(draft.cohort){p.set('cohortId',draft.cohort.id);p.set('cohortRevision',String(draft.cohort.revision));}if(p.toString().length>journeysLimits.queryCharacters||!draftFrom(p.toString()))return{error:'These journey filters could not be verified. Check the dates and values.'};return{qs:p.toString()};
 }
 const number=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),nullable=number.nullable(),time=z.string().refine(value=>Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value);
-const coverage=z.object({status:z.enum(['complete','partial','unavailable']),retainedFrom:time.nullable()}).strict();
+const coverage=z.object({status:z.enum(['complete','partial','unavailable']),retainedFrom:z.union([time,z.iso.datetime({precision:6})]).nullable()}).strict();
 const range=z.object({from:z.string(),to:z.string(),timeZone:z.string().max(80),start:time,end:time}).strict();
 const item=z.object({id:z.uuid(),projectId:z.uuid(),revision:number.min(1).max(2147483647),definition:z.object({schemaVersion:z.literal(1),name:z.string().max(200),query:z.string().max(20000)}).strict(),createdAt:time,updatedAt:time}).strict();
 const cohortSchema=z.object({item,range,coverage,identity:z.object({status:z.enum(['complete','partial','unavailable']),identifiedEvents:nullable,unidentifiedEvents:nullable,observedMemberKeys:nullable}).strict(),membership:z.object({status:z.enum(['available','unavailable']),countsAreLowerBounds:z.boolean()}).strict(),limitation:z.string().max(2000),predicateMethod:z.unknown().optional(),sessionProperties:z.unknown().optional()}).strict();

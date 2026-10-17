@@ -2,9 +2,10 @@ import type {PoolClient} from 'pg';
 import {FoundationError} from './auth.ts';
 import type {AdvancedPredicates,AdvancedPropertyPredicate} from './advanced-predicate-input.ts';
 import {geographyFields,type GeoField} from '../lib/analytics-geography.ts';
+import {recordedDimensionSql} from './analytics-dimensions.ts';
 import {geographyKeySql} from './geography-sql.ts';
 
-const fields={eventName:'s.event_name',path:'s.path',origin:'s.origin',referrer:"s.dimensions->>'referrerHost'",language:"s.dimensions->>'language'",
+const fields={hostname:recordedDimensionSql('hostname','s'),screen:recordedDimensionSql('screen','s'),channel:recordedDimensionSql('channel','s'),eventName:'s.event_name',path:'s.path',origin:'s.origin',referrer:"s.dimensions->>'referrerHost'",language:"s.dimensions->>'language'",
   browser:"s.dimensions->>'browser'",os:"s.dimensions->>'os'",device:"s.dimensions->>'device'",
   campaignSource:"s.dimensions->'campaign'->>'source'",campaignMedium:"s.dimensions->'campaign'->>'medium'",campaignName:"s.dimensions->'campaign'->>'campaign'",
   campaignTerm:"s.dimensions->'campaign'->>'term'",campaignContent:"s.dimensions->'campaign'->>'content'"} as const;

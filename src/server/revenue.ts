@@ -1,3 +1,4 @@
+import {boardShareSqlBudget,type BoardShareReadContext} from './analytics-scope.ts';
 import {z} from 'zod';
 import {deriveAnalyticsComparison} from '../lib/analytics-comparison.ts';
 import {getDatabase} from './db.ts';
@@ -45,20 +46,24 @@ const add=(a:RevenueTotals,b:RevenueTotals):RevenueTotals=>({sales:revenueDecima
 export const projectRevenue=(projectId:string,authority:SessionReadAuthority,params:URLSearchParams)=>readRevenue(projectId,authority,params,'report',null);
 export const listRevenueSessions=(projectId:string,authority:SessionReadAuthority,params:URLSearchParams)=>readRevenue(projectId,authority,params,'sessions',null);
 export const getRevenueSession=(projectId:string,key:string,authority:SessionReadAuthority,params:URLSearchParams)=>readRevenue(projectId,authority,params,'detail',key);
-async function readRevenue(projectId:string,authority:SessionReadAuthority,params:URLSearchParams,route:'report'|'sessions'|'detail',visitorKey:string|null):Promise<RevenueResult>{
+export async function readBoardShareRevenue(client:import('pg').PoolClient,context:BoardShareReadContext,params:URLSearchParams){
+ const input=revenueQuery(params);if(context.entityKind!=='website'||input.query.cohort||input.query.predicates||input.compare)throw invalid();
+ return readRevenue(context.entityId,null,params,'report',null,{client,context});
+}
+async function readRevenue(projectId:string,authority:SessionReadAuthority|null,params:URLSearchParams,route:'report'|'sessions'|'detail',visitorKey:string|null,borrowed?:{client:import('pg').PoolClient;context:BoardShareReadContext}):Promise<RevenueResult>{
  if(!z.uuid().safeParse(projectId).success)throw invalid();projectId=projectId.toLowerCase();const input=revenueQuery(params,route,visitorKey),{query,currency,cursor,pageSize,search,compare}=input;
  const derived=compare?deriveAnalyticsComparison(query,compare)!:null,previousQuery=derived?{...query,from:derived.range.from,to:derived.range.to}:null;
  const scopeHash=canonicalHash(['revenue-page-v1',projectId,query,currency,search,visitorKey]);if(cursor&&(cursor.projectId!==projectId||cursor.scope!==scopeHash||cursor.pageSize!==pageSize))throw invalid();
- const client=await getDatabase().pool.connect();
+ const client=borrowed?.client??await getDatabase().pool.connect();
  try{
-  await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");
-  const preliminary=authority.kind==='api-key'?await authenticateApiKey(authority.token,client):null;let userId=authority.kind==='session'?authority.userId:preliminary!.userId;
-  const workspace=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
+  if(!borrowed)await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');if(borrowed)await boardShareSqlBudget(client,borrowed.context);else await client.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='5s'");
+  const preliminary=authority?.kind==='api-key'?await authenticateApiKey(authority.token,client):null;let userId=borrowed?JSON.stringify(borrowed.context):authority?.kind==='session'?authority.userId:preliminary!.userId;
+  const workspace=borrowed?.context.workspaceId??(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
   if(!workspace||preliminary&&preliminary.workspaceId!==workspace)throw missing();await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[workspace]);
-  const key=authority.kind==='api-key'?await authorizeApiKey(authority.token,workspace,'analytics:read',client):null;if(key)userId=key.userId;
+  const key=authority?.kind==='api-key'?await authorizeApiKey(authority.token,workspace,'analytics:read',client):null;if(key)userId=key.userId;
   const item=query.cohort?await resolveCohort(client,projectId,userId,query.cohort.id,query.cohort.revision):null,qualification=item?explorerQuery(new URLSearchParams(item.definition.query)):null;
   await validateAdvancedRegex(client,query.predicates,qualification?.predicates);for(const zone of new Set([query.timeZone,...qualification?[qualification.timeZone]:[]]))if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[zone])).rowCount)throw invalid();
-  const{ctes,values,population,reportCandidates,qualificationCandidates}=analyticsPopulation(projectId,userId,query,qualification,false,cursor?.eventBefore??null,compare?'revenue-comparison':undefined);
+  const{ctes,values,population,reportCandidates,qualificationCandidates}=analyticsPopulation(projectId,userId,query,qualification,false,cursor?.eventBefore??null,compare?'revenue-comparison':undefined,borrowed?.context);
   const bind=(value:unknown)=>{values.push(value);return`$${values.length}`;};
   const currencySlot=bind(currency),atSlot=bind(cursor?.last.at??null),lastSlot=bind(cursor?.last.key??null),limitSlot=bind(pageSize+1),searchSlot=bind(search),visitorSlot=bind(visitorKey);
   const env=(field:'browser'|'os'|'device')=>`CASE WHEN dimensions->>'environmentVersion'='${environmentVersion}' AND dimensions->>'${field}'=ANY(ARRAY[${environmentCatalog[field].map(value=>"'"+value.replaceAll("'","''")+"'").join(',')}]) THEN dimensions->>'${field}' END`;
@@ -102,7 +107,7 @@ async function readRevenue(projectId:string,authority:SessionReadAuthority,param
    dimension_rank AS(SELECT *,row_number()OVER(PARTITION BY field ORDER BY(totals->>'net')::numeric DESC,(CASE WHEN field IN('countries','regions') THEN ${geographyKeyOrderSql('key')} ELSE key::text END)COLLATE "C" ASC NULLS FIRST)AS rank FROM dimension_groups),
    event_names AS MATERIALIZED(SELECT event_name,row_number()OVER(ORDER BY sum(CASE WHEN revenue_kind='sale' THEN amount ELSE -amount END)DESC,event_name COLLATE "C")AS rank FROM revenue WHERE ${currentOnly} GROUP BY event_name),
    trend AS MATERIALIZED(SELECT c.day::date::text AS date,CASE WHEN n.rank<=10 THEN r.event_name END AS name,${totals('r')}AS totals FROM calendar c JOIN revenue r ON r.received_at>=c.start AND r.received_at<c.finish JOIN event_names n USING(event_name)WHERE c.finish IS NOT NULL GROUP BY c.day,CASE WHEN n.rank<=10 THEN r.event_name END)
-   SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT analytics_retained_from FROM target) AS retained_from,(SELECT start FROM bounds)AS start,(SELECT finish FROM bounds)AS finish,
+   SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,(SELECT start FROM bounds)AS start,(SELECT finish FROM bounds)AS finish,
     ${stamp('c.as_of')} AS clock,${stamp('p.event_before')} AS event_before,p.event_before<=c.as_of AS bound_valid,c.policy_revision,c.raw_days,${stamp('c.event_watermark')}AS watermark,${stamp('c.lost_at')}AS lost,
     json_build_object('asOf',c.as_of,'cutoff',c.cutoff,'lostAt',c.lost_at,'expiredValuesPresent',c.expired_values_present)AS session_context,
     ${reportCandidates?`(SELECT json_build_object('identified',count(visitor_id),'unidentified',count(*)FILTER(WHERE visitor_id IS NULL))FROM ${reportCandidates})`:'null'} AS report_candidates,
@@ -124,8 +129,8 @@ async function readRevenue(projectId:string,authority:SessionReadAuthority,param
    FROM session_context c CROSS JOIN session_page p${compare?")report ORDER BY CASE revenue_period.name WHEN 'current' THEN 0 ELSE 1 END":''}`,values);
   const row=rows[0];if(!row?.allowed||compare&&!rows[1]?.allowed)throw missing();if(!row.bound_valid||compare&&!rows[1].bound_valid)throw invalid();
   // Recheck authority using a fresh raw database clock after the actual report/event-lock wait.
-  if(authority.kind==='api-key')await authorizeApiKey(authority.token,workspace,'analytics:read',client);
-  if(!(await client.query('SELECT 1 FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rowCount)throw missing();
+  if(authority?.kind==='api-key')await authorizeApiKey(authority.token,workspace,'analytics:read',client);
+  if(!borrowed&&!(await client.query('SELECT 1 FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rowCount)throw missing();
   function formatPeriod(row:typeof rows[number],query:typeof input.query,summaryOnly:boolean):RevenueResult|RevenueComparisonSummary{
   const policyHash=canonicalHash(['revenue-retention-policy-v1',row.policy_revision,row.raw_days]),evidenceHash=canonicalHash(['revenue-retention-evidence-v1',row.watermark,row.lost,row.session_context.expiredValuesPresent]);
   if(cursor&&(cursor.policyHash!==policyHash||cursor.evidenceHash!==evidenceHash))throw new FoundationError(409,'Revenue retention evidence changed. Reload this report.');
@@ -156,6 +161,6 @@ async function readRevenue(projectId:string,authority:SessionReadAuthority,param
   }
   const result=formatPeriod(rows[0],query,false) as RevenueResult;
   if(compare&&derived&&previousQuery){const summary=formatPeriod(rows[1],previousQuery,true) as RevenueComparisonSummary;const state=(value:RevenueComparisonSummary)=>Date.parse(value.range.start)>=Date.parse(value.asOf)?'future' as const:value.calendar.provisional?'partial' as const:'complete' as const;result.comparison={version:'native-revenue-comparison-v1',mode:compare,summary,calendar:{current:state(result),comparison:state(summary)},periods:{currentDays:derived.alignment.currentDays,comparisonDays:derived.alignment.comparisonDays,overlapDays:derived.alignment.overlapDays},change:revenueComparisonChanges(result,summary)};}
-  if(Buffer.byteLength(JSON.stringify(result))>revenueReportLimits.responseBytes)throw large();await client.query('COMMIT');return result;
- }catch(error){await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03','22003'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'This revenue query exceeded its limits. Choose a shorter range or more filters.');throw error;}finally{client.release();}
+  if(Buffer.byteLength(JSON.stringify(result))>revenueReportLimits.responseBytes)throw large();if(!borrowed)await client.query('COMMIT');return result;
+ }catch(error){if(!borrowed)await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03','22003'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'This revenue query exceeded its limits. Choose a shorter range or more filters.');throw error;}finally{if(!borrowed)client.release();}
 }

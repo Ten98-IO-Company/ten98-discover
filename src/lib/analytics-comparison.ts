@@ -27,3 +27,11 @@ export function deriveAnalyticsComparison(current:{from:string;to:string},mode:A
  return {range:{from:new Date(comparisonStart).toISOString().slice(0,10),to:new Date(comparisonEnd-dayMs).toISOString().slice(0,10),timeZone:'UTC' as const,start:new Date(comparisonStart).toISOString(),end:new Date(comparisonEnd).toISOString()},
   alignment:{method:'ordinal-calendar-day' as const,currentDays,comparisonDays,slots:Math.max(currentDays,comparisonDays),overlapDays:Math.max(0,Math.min(end,comparisonEnd)-Math.max(start,comparisonStart))/dayMs}};
 }
+
+// Preserve database microseconds. A Date contains only known milliseconds; never invent its lost fraction.
+export function retentionCoverage(start:string,end:string,retainedFrom:string|Date|null):AnalyticsCoverage{
+ const iso=(value:string|Date)=>{const date=new Date(value).toISOString(),fraction=typeof value==='string'?/\.(\d{4,6})(?:Z|[+-]\d{2}(?::?\d{2})?)$/.exec(value)?.[1]:undefined;return fraction&&/[1-9]/.test(fraction.slice(3))?date.slice(0,-4)+fraction.padEnd(6,'0')+'Z':date;};
+ const micros=(value:string)=>BigInt(Date.parse(value))*1000n+BigInt((/\.(\d{4,6})Z$/.exec(value)?.[1]??'').padEnd(6,'0').slice(3));
+ const boundary=retainedFrom===null?null:iso(retainedFrom);
+ return {status:boundary===null||micros(iso(start))>=micros(boundary)?'complete':micros(iso(end))<=micros(boundary)?'unavailable':'partial',retainedFrom:boundary};
+}

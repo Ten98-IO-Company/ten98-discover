@@ -4,6 +4,8 @@ Read [README](README.md), the [accepted brief](https://wiki.ten98.io/s/ten98-doc
 
 ## Ownership
 
+Owner-requested continuation, 2026-10-17: Claude may take over the lead responsibilities assigned to GPT below. Read CLAUDE.md for the exact development snapshot, failed checks and next actions. The same scope, independent-review, paid-work, credential and publication guardrails continue; this handoff is not a release approval.
+
 - GPT owns planning, architecture, product/visual design, complex or security-sensitive work, and independent final validation.
 - Kimi K3 implements bounded routine tasks, documentation and tests against GPT-approved criteria. It may suggest questions but cannot alter accepted requirements or approve its own work.
 - Full V1 parity across the pinned references is required. Internal milestones cannot remove first-release functions.

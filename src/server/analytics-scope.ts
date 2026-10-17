@@ -1,4 +1,7 @@
+import type {PoolClient} from 'pg';
+import {FoundationError} from './auth.ts';
 import type { explorerQuery } from './explorer-input.ts';
+import {recordedDimensionSql} from './analytics-dimensions.ts';
 import {geographyProjectionSql,geographyFilterSql} from './geography-sql.ts';
 
 // Shared event population and local-calendar boundaries for analytics reports.
@@ -29,8 +32,8 @@ function calendarSql(from:string,to:string){return `raw_days AS (
     )`;}
 export const analyticsCalendarSql=calendarSql('$3::date','$4::date');
 
-function scopeSql(calendar:string,from:string,to:string){return `WITH RECURSIVE target AS MATERIALIZED (
-      SELECT p.id,p.origin,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1
+function scopeSql(calendar:string,from:string,to:string,shared=false){return `WITH RECURSIVE target AS MATERIALIZED (
+      ${shared?boardShareProjectTargetSql:'SELECT p.id,p.origin,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1'}
     ), ${calendar}, geography_candidates AS MATERIALIZED (
       SELECT e.*,g.geography,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN target p ON p.id=e.project_id CROSS JOIN bounds b CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
       WHERE e.received_at>=b.start AND e.received_at<b.finish AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
@@ -39,6 +42,9 @@ function scopeSql(calendar:string,from:string,to:string){return `WITH RECURSIVE 
         AND (NOT $7::jsonb ? 'eventName' OR e.event_name=$7::jsonb->>'eventName')
         AND (NOT $7::jsonb ? 'path' OR e.path=$7::jsonb->>'path')
         AND (NOT $7::jsonb ? 'origin' OR COALESCE(e.dimensions->>'origin',p.origin)=$7::jsonb->>'origin')
+        AND (NOT $7::jsonb ? 'hostname' OR ${recordedDimensionSql('hostname','e')}=$7::jsonb->>'hostname')
+        AND (NOT $7::jsonb ? 'screen' OR ${recordedDimensionSql('screen','e')}=$7::jsonb->>'screen')
+        AND (NOT $7::jsonb ? 'channel' OR ${recordedDimensionSql('channel','e')}=$7::jsonb->>'channel')
         AND (NOT $7::jsonb ? 'referrer' OR e.dimensions->>'referrerHost'=$7::jsonb->>'referrer')
         AND (NOT $7::jsonb ? 'language' OR e.dimensions->>'language'=$7::jsonb->>'language')
         AND (NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
@@ -57,4 +63,29 @@ export const analyticsRevenuePeriodScopeSql=scopeSql(calendarSql('revenue_period
 
 export function analyticsScopeValues(projectId:string,userId:string,query:ReturnType<typeof explorerQuery>):unknown[] {
   return [projectId,userId,query.from,query.to,query.timeZone,query.kind,JSON.stringify(query.filters),query.property?.key??null,query.property?.type??null,JSON.stringify(query.property?.value??null)];
+}
+
+// Only the locked board-share reader constructs this context. It is not a session/API-key principal.
+// SQL repeats the current grant/card/entity binding; a structural TS value is not authority.
+export type BoardShareReadContext={workspaceId:string;boardId:string;boardRevision:number;shareId:string;grantRevision:number;
+ cardId:string;cardType:string;entityId:string;entityKind:'website'|'link'|'pixel'|'none';tokenHash:string;deadline:number;analysisId?:string;analysisRevision?:number};
+export const boardShareProjectTargetSql=`SELECT p.id,p.origin,p.analytics_settings,p.analytics_retained_from,w.raw_analytics_days
+ FROM project p JOIN workspace w ON w.id=p.workspace_id JOIN custom_board b ON b.workspace_id=w.id
+ JOIN board_share g ON g.board_id=b.id
+ CROSS JOIN LATERAL jsonb_array_elements(b.definition->'rows') r
+ CROSS JOIN LATERAL jsonb_array_elements(r->'cards') card
+ CROSS JOIN LATERAL(SELECT COALESCE(NULLIF(card->'entity','null'::jsonb),b.definition->'defaultEntity') AS value) ref
+ WHERE p.id=$1 AND p.workspace_id=$2::jsonb->>'workspaceId'
+ AND b.id=($2::jsonb->>'boardId')::uuid AND b.revision=($2::jsonb->>'boardRevision')::integer
+ AND g.id=($2::jsonb->>'shareId')::uuid AND g.revision=($2::jsonb->>'grantRevision')::integer
+ AND g.board_revision=b.revision AND g.token_hash=$2::jsonb->>'tokenHash'
+ AND g.revoked_at IS NULL AND g.expires_at>clock_timestamp()
+ AND card->>'id'=$2::jsonb->>'cardId' AND(card->>'id')::uuid=ANY(g.selected_card_ids)
+ AND card->>'type'=$2::jsonb->>'cardType' AND(card->>'type' NOT IN('Goal','Funnel')OR(card->>'analysisId'=$2::jsonb->>'analysisId' AND card->>'analysisRevision'=$2::jsonb->>'analysisRevision')) AND ref.value->>'kind'='website'
+ AND ref.value->>'id'=p.id AND $2::jsonb->>'entityKind'='website' AND $2::jsonb->>'entityId'=p.id`;
+export const boardShareAnalyticsScopeSql=scopeSql(analyticsCalendarSql,'$3::date','$4::date',true);
+/** Trusted caller deadline; no HTTP input or membership substitute. The outer transaction owns the hard total. */
+export async function boardShareSqlBudget(client:PoolClient,context:BoardShareReadContext){
+ const remaining=context.deadline-Date.now();if(!Number.isSafeInteger(remaining)||remaining<=0)throw new FoundationError(503,'This shared read exceeded its time limit.');
+ await client.query("SELECT set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)",[Math.min(5000,remaining)+'ms']);
 }

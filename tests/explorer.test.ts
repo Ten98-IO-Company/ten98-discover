@@ -127,10 +127,11 @@ test('compound grouping keeps scalar input and exact scope unchanged without mut
   const params=new URLSearchParams({fields:'[ "campaignSource", "campaignMedium", "campaignName" ]',campaignName:'',from:'2026-03-08',to:'2026-03-08',timeZone:'America/New_York'}),before=params.toString();
   const result=explorerGroupingQuery(params,now);assert.deepEqual(result.fields,['campaignSource','campaignMedium','campaignName']);assert.equal(result.scope.filters.campaignName,'');assert.equal(result.scope.groupBy,'event');assert.equal(params.toString(),before);
   assert.deepEqual(explorerGroupingQuery(new URLSearchParams({fields:'["screenWidth","city"]'}),now).fields,['screenWidth','city']);
+  assert.deepEqual(explorerGroupingQuery(new URLSearchParams({fields:'["path"]'}),now).fields,['path']);
 });
 
 test('compound grouping refuses ambiguous, repeated, unsupported and oversized inputs',()=>{
-  for(const fields of ['{','null','{}','[]','["path"]','["path","path"]','["path","property"]','["path",1]','["path","future"]','["path","origin","language","device"]'])assert.throws(()=>explorerGroupingQuery(new URLSearchParams({fields})),{status:400},fields);
+  for(const fields of ['{','null','{}','[]','["path","path"]','["path","property"]','["path",1]','["path","future"]','["path","origin","language","device"]'])assert.throws(()=>explorerGroupingQuery(new URLSearchParams({fields})),{status:400},fields);
   for(const extra of Array.of<Record<string,string>>({groupBy:'path'},{groupProperty:'x'},{future:'x'}))assert.throws(()=>explorerGroupingQuery(new URLSearchParams({fields:'["path","origin"]',...extra})),{status:400});
   assert.throws(()=>explorerGroupingQuery(new URLSearchParams('fields=%5B%22path%22%2C%22origin%22%5D&fields=%5B%22path%22%2C%22origin%22%5D')),{status:400});
   const now=new Date('2026-10-14T12:00:00Z'),params=new URLSearchParams({fields:'["path","origin"]',path:'中'.repeat(2048),eventName:'中'.repeat(140),language:''}),normalized=new URLSearchParams(params);

@@ -386,9 +386,9 @@ test('Attribution keeps a scalar nested applied scope only in its own project re
 });
 test('comparison dimension namespace and selection shape remain scope-bound',()=>{
  const base={workspace,project,view:'compare'} as const,selection=new URLSearchParams({path:'/pricing'}).toString();
- for(const analyticsDimension of ['path','referrer','browser','os','device','country','region','city','language','event','campaignSource','campaignMedium','campaignName','campaignContent','campaignTerm'] as const){const value={...base,analyticsDimension,analyticsSelection:selection};assert.deepEqual(parseNavigation(value),value);assert.notEqual(navigationKey(value),navigationKey(base));}
+ for(const analyticsDimension of ['path','referrer','browser','os','device','country','region','city','language','event','campaignSource','campaignMedium','campaignName','campaignContent','campaignTerm','hostname','screen','channel'] as const){const value={...base,analyticsDimension,analyticsSelection:selection};assert.deepEqual(parseNavigation(value),value);assert.notEqual(navigationKey(value),navigationKey(base));}
  assert.deepEqual(parseNavigation({...base,view:'project',analyticsSelection:selection}),{...base,view:'project',analyticsSelection:selection});
- for(const analyticsDimension of ['channel','screen','hostname','distinctId','tag','',null,['path'],{value:'path'}])assert.equal(parseNavigation({...base,analyticsDimension}).analyticsInvalid,'1');
+ for(const analyticsDimension of ['distinctId','tag','',null,['path'],{value:'path'}])assert.equal(parseNavigation({...base,analyticsDimension}).analyticsInvalid,'1');
  assert.equal(parseNavigation({...base,view:'project',analyticsDimension:'path'}).analyticsInvalid,'1');
  for(const analyticsSelection of ['',null,['path=x'],{path:'x'},'x'.repeat(20001),'x\0','x\ud800'])assert.equal(parseNavigation({...base,analyticsSelection}).analyticsInvalid,'1');
  for(const view of ['explore','sessions','realtime'])assert.equal(parseNavigation({...base,view,analyticsDimension:'path',analyticsSelection:selection}).analyticsSelection,undefined);

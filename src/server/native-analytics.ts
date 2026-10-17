@@ -39,8 +39,8 @@ export function trackingConsentEpoch(nativeEpoch: string, destinationEpoch: stri
   const hex = bytes.toString('hex'); return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 function digest(value: unknown, secret = getConfig().authSecret) { return createHmac('sha256', secret).update(JSON.stringify(value)).digest('hex'); }
-type Context = { version: 1; project: string; visitor: string; visit: string; issued: number };
-const contextInput = z.object({ version: z.literal(1), project: z.uuid(), visitor: z.string().regex(/^[a-f0-9]{64}$/), visit: z.string().regex(/^[a-f0-9]{64}$/), issued: z.number().int().nonnegative() }).strict();
+type Context = { version: 1; project: string; visitor: string; visit: string; issued: number; epoch?:string };
+const contextInput = z.object({ version: z.literal(1), project: z.uuid(), visitor: z.string().regex(/^[a-f0-9]{64}$/), visit: z.string().regex(/^[a-f0-9]{64}$/), issued: z.number().int().nonnegative(),epoch:z.uuid().optional() }).strict();
 function signContext(value: Context, secret: string): string {
   const body = Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${body}.${digest(['ten98.analytics.context.v1', body], secret)}`;
@@ -57,7 +57,7 @@ function readContext(value: unknown, secret: string): Context | null {
 // Pinned Umami overview semantics: monthly visitor rotation, hourly-derived visits,
 // with a browser-held signed context whose original issuance lasts at most 30 minutes.
 // This is deliberately not described as sliding inactivity sessions or unique people.
-export function analyticsIdentity(input: { projectId: string; ip: string | null; userAgent: string; distinctId?: string; context?: string; now?: Date; secret?: string; collectionBasis?:'consent'|'cookieless' }) {
+export function analyticsIdentity(input: { projectId: string; ip: string | null; userAgent: string; distinctId?: string; context?: string; now?: Date; secret?: string; epoch?:string; collectionBasis?:'consent'|'cookieless' }) {
   if(input.collectionBasis==='cookieless'&&input.distinctId!==undefined)throw new InputError(400,'Basic analytics cannot include an explicit identifier.');
   if (!input.ip || !input.userAgent || input.userAgent.length > 1024) return null;
   const now = input.now ?? new Date(), secret = input.secret ?? getConfig().authSecret;
@@ -65,8 +65,8 @@ export function analyticsIdentity(input: { projectId: string; ip: string | null;
     ?['ten98.analytics.basic.visitor.v1',input.projectId,now.toISOString().slice(0,7),input.ip,input.userAgent]
     :['ten98.analytics.visitor.v1', input.projectId, now.toISOString().slice(0, 7), input.ip, input.userAgent, input.distinctId ?? null], secret);
   const prior = readContext(input.context, secret);
-  const cached = prior && prior.project === input.projectId && prior.visitor === visitor && prior.issued <= now.getTime() && now.getTime() - prior.issued <= 1_800_000 ? prior : null;
-  const value: Context = cached ?? { version: 1, project: input.projectId, visitor, visit: digest(['ten98.analytics.visit.v1', visitor, now.toISOString().slice(0, 13)], secret), issued: now.getTime() };
+  const cached = prior && prior.project === input.projectId && prior.visitor === visitor && prior.epoch===input.epoch && prior.issued <= now.getTime() && now.getTime() - prior.issued <= 1_800_000 ? prior : null;
+  const value: Context = cached ?? { version: 1, project: input.projectId, visitor, visit: digest(['ten98.analytics.visit.v1', visitor, now.toISOString().slice(0, 13)], secret), issued: now.getTime(),...input.epoch===undefined?{}:{epoch:input.epoch} };
   return { visitor: value.visitor, visit: value.visit, context: signContext(value, secret), metricVersion: 'umami-3.4-hour-cache-v1' };
 }
 
@@ -131,7 +131,7 @@ async function writeObservation(client: PoolClient, project: Project, input: Obs
     [input.eventId, project.id, input.name, eventPath(input.url), now, identity?.visitor ?? null, identity?.visit ?? null,
       JSON.stringify(properties), JSON.stringify({ ...dimensions, ...environment,...geography?{geography}:{}, origin: new URL(input.url).origin }), source, identity?.metricVersion ?? 'observations-v2',identityEvidence,basis]);
   if (inserted.rowCount && identity) await client.query(`INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,$3,$3)
-    ON CONFLICT(project_id,id) DO UPDATE SET first_seen_at=LEAST(analytics_visitor.first_seen_at,excluded.first_seen_at),last_seen_at=GREATEST(analytics_visitor.last_seen_at,excluded.last_seen_at)`, [project.id, identity.visitor, now]);
+    ON CONFLICT(project_id,id) DO UPDATE SET first_seen_at=CASE WHEN analytics_visitor.first_seen_at<(SELECT analytics_retained_from FROM project WHERE id=$1) THEN excluded.first_seen_at ELSE LEAST(analytics_visitor.first_seen_at,excluded.first_seen_at) END,last_seen_at=GREATEST(analytics_visitor.last_seen_at,excluded.last_seen_at)`, [project.id, identity.visitor, now]);
   return { accepted: true, duplicate: !inserted.rowCount, ...(inserted.rowCount && identity ? { context: identity.context } : {}) };
 }
 
@@ -152,8 +152,8 @@ export async function collectNative(request: Request, siteKey: string, input: Ob
     if(reason){await client.query('COMMIT');return {accepted:false,reason};}
     // Preserve one database acceptance instant through the event/link fence;
     // Date is used only for monthly key/context derivation, never the fence.
-    const now:Date|string=dimensions.distinctId===undefined?new Date():(await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at`)).rows[0].accepted_at;
-    const address=resolveAnalyticsNetwork(request,peerAddress),identity = analyticsIdentity({ projectId: project.id, ip: address, userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now:new Date(now),collectionBasis:basis! });
+    const now:string=(await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at`)).rows[0].accepted_at;
+    const address=resolveAnalyticsNetwork(request,peerAddress),identity = analyticsIdentity({ projectId: project.id, ip: address, userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now:new Date(now),epoch:project.analytics_epoch,collectionBasis:basis! });
     const eligible=basis==='consent'&&identity!==null&&dimensions.distinctId!==undefined&&project.analytics_settings.linkIdentities===true;
     const environment=analyticsEnvironment(ua, project.analytics_settings.captureScreen ? dimensions.screenWidth : undefined);
     const response = await writeObservation(client, project, input, 'browser', identity, now,eligible?1:null,basis,environment,project.analytics_settings.captureGeography===true?collectGeography(address):null);
@@ -176,5 +176,6 @@ export async function insertApiObservation(client: PoolClient, projectId: string
   if (!project || !await collectionOriginAllowed(client, new URL(input.url).origin, project)) throw new FoundationError(400, 'Event URL must use an allowed project origin.');
   const settings = publicAnalyticsSettings(project.analytics_settings);
   if (!settings.enabled || analyticsPathExcluded(new URL(input.url).pathname, settings.excludedPaths)) return { accepted: false, reason: 'collection_disabled' };
-  return writeObservation(client, project, input, 'api', null, new Date(),null,null);
+  const now=(await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`)).rows[0].at as string;
+  return writeObservation(client, project, input, 'api', null, now,null,null);
 }

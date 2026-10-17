@@ -1,3 +1,4 @@
+import {boardShareSqlBudget,boardShareProjectTargetSql,type BoardShareReadContext} from './analytics-scope.ts';
 import {z} from 'zod';
 import {getDatabase} from './db.ts';
 import {FoundationError} from './auth.ts';
@@ -17,19 +18,21 @@ export function realtimeProject(projectId:string,params:URLSearchParams){
  return projectId.toLowerCase();
 }
 
-export async function projectRealtime(projectId:string,authority:SessionReadAuthority,params:URLSearchParams):Promise<RealtimeSnapshot>{
+export async function projectRealtime(projectId:string,authority:SessionReadAuthority,params:URLSearchParams):Promise<RealtimeSnapshot>{return readRealtime(projectId,authority,params);}
+export async function readBoardShareRealtime(client:import('pg').PoolClient,context:BoardShareReadContext){if(context.entityKind!=='website')throw missing();return readRealtime(context.entityId,null,new URLSearchParams(),{client,context});}
+async function readRealtime(projectId:string,authority:SessionReadAuthority|null,params:URLSearchParams,borrowed?:{client:import('pg').PoolClient;context:BoardShareReadContext}):Promise<RealtimeSnapshot>{
  projectId=realtimeProject(projectId,params);
- const client=await getDatabase().pool.connect();
+ const client=borrowed?.client??await getDatabase().pool.connect();
  try{
-  await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
-  await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'; SET LOCAL TIME ZONE 'UTC'");
-  const preliminary=authority.kind==='api-key'?await authenticateApiKey(authority.token,client):null;
-  let userId=authority.kind==='session'?authority.userId:preliminary!.userId;
-  const hint=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
+  if(!borrowed)await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+  if(borrowed)await boardShareSqlBudget(client,borrowed.context);else await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'; SET LOCAL TIME ZONE 'UTC'");
+  const preliminary=authority?.kind==='api-key'?await authenticateApiKey(authority.token,client):null;
+  let userId=borrowed?JSON.stringify(borrowed.context):authority?.kind==='session'?authority.userId:preliminary!.userId;
+  const hint=borrowed?.context.workspaceId??(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id as string|undefined;
   if(!hint||preliminary&&preliminary.workspaceId!==hint)throw missing();
   // Same short workspace read gate as session reports; refresh authority after any wait.
   await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[hint]);
-  const currentKey=authority.kind==='api-key'?await authorizeApiKey(authority.token,hint,'analytics:read',client):null;
+  const currentKey=authority?.kind==='api-key'?await authorizeApiKey(authority.token,hint,'analytics:read',client):null;
   if(currentKey)userId=currentKey.userId;
   // ponytail: scan the indexed, fixed 30-minute retained population directly; introduce rollups only after measured query cost requires them.
   const {rows}=await client.query(`WITH clock AS MATERIALIZED (SELECT at AS authority_at,date_trunc('milliseconds',at) AS as_of FROM (SELECT clock_timestamp() AS at) instant),
@@ -37,9 +40,9 @@ export async function projectRealtime(projectId:string,authority:SessionReadAuth
     JOIN project p ON p.workspace_id=k.workspace_id AND p.id=$1 CROSS JOIN clock c
     WHERE k.id=$3::uuid AND k.issuer_user_id=$2 AND m.role IN('owner','admin','editor','viewer') AND 'analytics:read'=ANY(k.scopes)
       AND k.revoked_at IS NULL AND k.expires_at>c.authority_at) AS valid),
-   target AS MATERIALIZED (SELECT p.id,p.origin,p.analytics_settings,p.analytics_retained_from,w.raw_analytics_days
+   target AS MATERIALIZED (${borrowed?boardShareProjectTargetSql:`SELECT p.id,p.origin,p.analytics_settings,p.analytics_retained_from,w.raw_analytics_days
     FROM project p JOIN workspace w ON w.id=p.workspace_id JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
-    CROSS JOIN key_authority k WHERE p.id=$1 AND k.valid),
+    CROSS JOIN key_authority k WHERE p.id=$1 AND k.valid`}),
    context AS MATERIALIZED (SELECT t.*,c.as_of,c.as_of-interval '30 minutes' AS start,c.as_of-interval '5 minutes' AS active_start,
     GREATEST(t.analytics_retained_from,c.as_of-t.raw_analytics_days*interval '24 hours') AS cutoff FROM target t CROSS JOIN clock c),
    observations AS MATERIALIZED (SELECT e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.source,e.collection_basis,${geographyProjectionSql('e')} AS geography,
@@ -60,7 +63,7 @@ export async function projectRealtime(projectId:string,authority:SessionReadAuth
    pages AS (SELECT path,count(*) AS pageviews FROM observations WHERE event_name='page_view' GROUP BY path ORDER BY count(*) DESC,path COLLATE "C" ASC LIMIT 15),
    referrers AS (SELECT referrer_host,count(*) AS pageviews FROM observations WHERE event_name='page_view' GROUP BY referrer_host ORDER BY count(*) DESC,referrer_host COLLATE "C" ASC NULLS LAST LIMIT 15),
    recent AS (SELECT * FROM observations ORDER BY received_at DESC,id DESC LIMIT 100)${realtimeGeographyCtes}
-   SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT valid FROM key_authority) AS key_valid,c.as_of,c.start,c.active_start,c.cutoff,c.analytics_settings,
+   SELECT EXISTS(SELECT 1 FROM target) AS allowed,(SELECT valid FROM key_authority) AS key_valid,c.as_of,c.start,c.active_start,to_char(c.cutoff AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff,c.analytics_settings,
     json_build_object('pageViews',count(*) FILTER(WHERE event_name='page_view'),'customEvents',count(*) FILTER(WHERE event_name<>'page_view'),
      'estimatedVisitors',CASE WHEN count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NOT NULL)>0 THEN count(DISTINCT visitor_id) FILTER(WHERE event_name='page_view') END) AS totals,
     json_build_object('identifiedPageViews',count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NOT NULL),'unidentifiedPageViews',count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NULL)) AS measurement,
@@ -79,7 +82,7 @@ export async function projectRealtime(projectId:string,authority:SessionReadAuth
    FROM context c LEFT JOIN observations o ON true GROUP BY c.as_of,c.start,c.active_start,c.cutoff,c.analytics_settings`,
    [projectId,userId,currentKey?.id??null,environmentVersion,environmentCatalog.browser,environmentCatalog.os,environmentCatalog.device]);
   const row=rows[0];if(currentKey&&!row?.key_valid)throw new FoundationError(401,'The API key is invalid, expired or unavailable.');if(!row?.allowed)throw missing();
-  const start=(row.start as Date).toISOString(),end=(row.as_of as Date).toISOString(),activeStart=(row.active_start as Date).toISOString(),cutoff=(row.cutoff as Date).toISOString();
+  const start=(row.start as Date).toISOString(),end=(row.as_of as Date).toISOString(),activeStart=(row.active_start as Date).toISOString(),cutoff=row.cutoff as string;
   const coverage=retentionCoverage(start,end,cutoff),activeCoverage=retentionCoverage(activeStart,end,cutoff),unavailable=coverage.status==='unavailable';
   const result:RealtimeSnapshot={version:'native-realtime-v1',projectId,asOf:end,range:{start,end,timeZone:'UTC',seconds:1800},activeWindow:{start:activeStart,end,seconds:300},coverage,
    collection:{mode:publicAnalyticsSettings(row.analytics_settings).collectionMode??'consent-first',captureCoverage:'unknown',pageViews:unavailable?{cookieless:null,consent:null,unknown:null}:row.collection},
@@ -90,7 +93,7 @@ export async function projectRealtime(projectId:string,authority:SessionReadAuth
    pages:row.pages,referrers:row.referrers,referrerCoverage:unavailable?{recordedPageViews:null,notRecordedPageViews:null}:row.referrer_coverage,
    activity:{limit:100,totalEvents:unavailable?null:Number(row.total_events),sampled:!unavailable&&Number(row.total_events)>realtimeLimits.activity,rows:row.activity},
    geography:applyRealtimeGeographyCoverage(row.geography,coverage.status)};
-  await client.query('COMMIT');return result;
- }catch(error){await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Live traffic is temporarily unavailable. Try again.');throw error;}
- finally{client.release();}
+  if(!borrowed)await client.query('COMMIT');return result;
+ }catch(error){if(!borrowed)await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Live traffic is temporarily unavailable. Try again.');throw error;}
+ finally{if(!borrowed)client.release();}
 }

@@ -5,7 +5,7 @@ import {FoundationError} from './auth.ts';
 import {parse} from './context-input.ts';
 import {contentCursor,contentReceipt,readContentCursor,withContentProject} from './project-context.ts';
 import {explorerFilters,explorerQuery} from './explorer-input.ts';
-import {analyticsScopeSql,analyticsScopeValues} from './analytics-scope.ts';
+import {analyticsScopeSql,analyticsScopeValues,boardShareAnalyticsScopeSql,boardShareProjectTargetSql,boardShareSqlBudget,type BoardShareReadContext} from './analytics-scope.ts';
 import {retentionCoverage} from './retention.ts';
 import {parseAnalysisDefinition,type AnalysisDefinition,type Match,type PropertyPredicate} from './funnel-input.ts';
 
@@ -112,10 +112,10 @@ function propertyPredicate(filter:PropertyPredicate,bind:(value:unknown)=>string
 }
 export type AnalysisEvidence={id:string;eventName:string;path:string;origin:string;receivedAt:string};
 type Evidence=AnalysisEvidence;
-type QueryRow={retained_from:Date|null;start:Date;finish:Date;generated_at:Date;events:string;identified:string;visitors:string;counts:number[];witnesses:{id:string;at:string;events:Evidence[]}[];anchor_found:boolean};
+type QueryRow={retained_from:string|null;start:Date;finish:Date;generated_at:Date;events:string;identified:string;visitors:string;counts:number[];witnesses:{id:string;at:string;events:Evidence[]}[];anchor_found:boolean};
 type ScopeQuery=ReturnType<typeof explorerQuery>;
-async function calculate(client:PoolClient,projectId:string,userId:string,definition:AnalysisDefinition,query:ScopeQuery,step:number,cursorId:string|null,witness:boolean){
-  const values=analyticsScopeValues(projectId,userId,query),bind=(value:unknown)=>{values.push(value);return `$${values.length}`;};
+async function calculate(client:PoolClient,projectId:string,userId:string,definition:AnalysisDefinition,query:ScopeQuery,step:number,cursorId:string|null,witness:boolean,share?:BoardShareReadContext){
+  const values=analyticsScopeValues(projectId,share?JSON.stringify(share):userId,query),bind=(value:unknown)=>{values.push(value);return `$${values.length}`;};
   const steps=definition.kind==='funnel'?definition.steps:[definition.condition],levels:string[]=[];
   const window=definition.kind==='funnel'?bind(definition.windowMinutes):null;
   for(let i=0;i<steps.length;i++){
@@ -153,8 +153,8 @@ async function calculate(client:PoolClient,projectId:string,userId:string,defini
       SELECT w.id,w.received_at,json_agg(json_build_object('id',s.id,'eventName',s.event_name,'path',s.path,'origin',COALESCE(s.dimensions->>'origin',(SELECT origin FROM target)),'receivedAt',s.received_at) ORDER BY c.position) AS events
       FROM witness_page w CROSS JOIN LATERAL unnest(w.chain) WITH ORDINALITY c(id,position) JOIN event s ON s.id=c.id AND s.project_id=$1 GROUP BY w.id,w.received_at
     )`:'';
-  const {rows}=await client.query<QueryRow>(`${analyticsScopeSql},${levels.join(',')}${witnessSql}
-    SELECT (SELECT analytics_retained_from FROM target) AS retained_from,(SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,
+  const {rows}=await client.query<QueryRow>(`${share?boardShareAnalyticsScopeSql:analyticsScopeSql},${levels.join(',')}${witnessSql}
+    SELECT (SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,(SELECT start FROM bounds) AS start,(SELECT finish FROM bounds) AS finish,
       statement_timestamp() AS generated_at,(SELECT count(*) FROM scope) AS events,(SELECT count(visitor_id) FROM scope) AS identified,
       (SELECT count(DISTINCT visitor_id) FROM scope) AS visitors,json_build_array(${countSql}) AS counts,
       ${witness?`${anchor}::uuid IS NULL OR EXISTS(SELECT 1 FROM anchor)`:'true'} AS anchor_found,
@@ -166,26 +166,33 @@ export function runAnalysis(projectId:unknown,userId:unknown,kind:AnalysisKind,a
 export function runAnalysis(projectId:unknown,userId:unknown,kind:AnalysisKind,analysisId:unknown,params:URLSearchParams,witness:true):Promise<AnalysisWitnessResult>;
 export function runAnalysis(projectId:unknown,userId:unknown,kind:AnalysisKind,analysisId:unknown,params:URLSearchParams,witness:boolean):Promise<AnalysisResult|AnalysisWitnessResult>;
 export async function runAnalysis(projectId:unknown,userId:unknown,kind:AnalysisKind,analysisId:unknown,params:URLSearchParams,witness=false):Promise<AnalysisResult|AnalysisWitnessResult>{
-  kind=kindValue(kind);const id=parse(z.uuid(),analysisId),uid=parse(z.uuid(),userId),input=queryInput(params,witness);
-  try{return await withContentProject(projectId,uid,false,async(client,project)=>{
-    await client.query("SET LOCAL statement_timeout='5s'");
-    const saved=await find(client,project.id,kind,id);if(!saved)unavailable();
+ kind=kindValue(kind);const id=parse(z.uuid(),analysisId),uid=parse(z.uuid(),userId),input=queryInput(params,witness);
+ try{return await withContentProject(projectId,uid,false,async(client,project)=>({role:project.role,...await readAnalysisCore(client,project.id,uid,kind,id,input,witness)}),undefined,true);}
+ catch(error){if((error as{code?:string}).code==='57014')throw new FoundationError(503,'This analysis took too long. Choose a shorter date range or more filters.');throw error;}
+}
+export async function readBoardShareAnalysis(client:PoolClient,context:BoardShareReadContext,kind:AnalysisKind,analysisId:string,params:URLSearchParams){
+ await boardShareSqlBudget(client,context);const input=queryInput(params,false);if(context.entityKind!=='website'||context.analysisId!==analysisId||context.analysisRevision!==input.revision||context.cardType!==(kind==='goal'?'Goal':'Funnel'))unavailable();
+ const permitted=(await client.query(`SELECT EXISTS(SELECT 1 FROM(${boardShareProjectTargetSql})p)AS allowed`,[context.entityId,JSON.stringify(context)])).rows[0]?.allowed;if(!permitted)unavailable();
+ return readAnalysisCore(client,context.entityId,JSON.stringify(context),kind,analysisId,input,false,context);
+}
+async function readAnalysisCore(client:PoolClient,projectId:string,uid:string,kind:AnalysisKind,id:string,input:ReturnType<typeof queryInput>,witness:boolean,share?:BoardShareReadContext){if(share)await boardShareSqlBudget(client,share);else await client.query("SET LOCAL statement_timeout='5s'");
+    const saved=await find(client,projectId,kind,id);if(!saved)unavailable();
     if(saved.revision!==input.revision)throw new FoundationError(409,'This analysis changed. Reload its saved definition before running it.');
     if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[input.query.timeZone])).rowCount)bad('The database does not support this timezone.');
     const definition=saved.definition,max=definition.kind==='funnel'?definition.steps.length:1,step=input.step??max;
     if(witness&&definition.kind==='funnel'&&input.step===null)bad('Choose the funnel step whose evidence you want to inspect.');
     if(step>max)bad('This analysis has no such step.');
     // Bind the full PostgreSQL timestamp precision; Date would truncate microseconds.
-    const retained=(await client.query<{retained_marker:string|null}>('SELECT extract(epoch FROM analytics_retained_from)::text AS retained_marker FROM project WHERE id=$1',[project.id])).rows[0].retained_marker;
-    const cursorScope={projectId:project.id,kind,id,revision:saved.revision,query:input.query,step,retainedFrom:retained};
+    const retained=(await client.query<{retained_marker:string|null}>('SELECT extract(epoch FROM analytics_retained_from)::text AS retained_marker FROM project WHERE id=$1',[projectId])).rows[0].retained_marker;
+    const cursorScope={projectId:projectId,kind,id,revision:saved.revision,query:input.query,step,retainedFrom:retained};
     const after=readContentCursor(input.cursor,cursorScope);
-    const row=await calculate(client,project.id,uid,definition,input.query,step,after?.id??null,witness);
+    const row=await calculate(client,projectId,uid,definition,input.query,step,after?.id??null,witness,share);
     if(!row.anchor_found)throw new FoundationError(409,'The matching evidence changed. Reload this result before continuing.');
     const start=row.start.toISOString(),end=row.finish.toISOString(),coverage=retentionCoverage(start,end,row.retained_from);
     const events=Number(row.events),identified=Number(row.identified),population=Number(row.visitors);
     const known=coverage.status!=='unavailable'&&identified>0,rates=known&&coverage.status==='complete';
     const counts=row.counts.map(Number),first=counts[0];
-    const result:AnalysisResult={role:project.role,item:dto(saved),range:{from:input.query.from,to:input.query.to,timeZone:input.query.timeZone,start,end},query:input.query,
+    const result:Omit<AnalysisResult,'role'>={item:dto(saved),range:{from:input.query.from,to:input.query.to,timeZone:input.query.timeZone,start,end},query:input.query,
       generatedAt:row.generated_at.toISOString(),method:analysisMethod,coverage:{...coverage,countsAreLowerBounds:coverage.status==='partial'},
       identity:{status:!known?'unavailable':identified<events?'partial':'complete',identifiedEvents:coverage.status==='unavailable'?null:identified,unidentifiedEvents:coverage.status==='unavailable'?null:events-identified,visitors:known?population:null},
       steps:definition.kind==='funnel'?counts.map((count,i)=>({step:i+1,visitors:known?count:null,dropped:rates&&i>0?counts[i-1]-count:null,
@@ -194,8 +201,5 @@ export async function runAnalysis(projectId:unknown,userId:unknown,kind:Analysis
     if(!witness)return result;
     const visible=known?row.witnesses.slice(0,50):[],last=visible.at(-1);
     return {...result,step,witnesses:visible.map(item=>({events:item.events})),nextCursor:known&&row.witnesses.length>50&&last?contentCursor({id:last.id,createdAt:last.at},cursorScope):null};
-  });}catch(error){
-    if((error as {code?:string}).code==='57014')throw new FoundationError(503,'This analysis took too long. Choose a shorter date range or more filters.');
-    throw error;
-  }
+
 }

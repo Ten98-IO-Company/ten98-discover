@@ -16,6 +16,52 @@
   // CSS zoom; the RTL offset follows the retained Edge geometry calibration.
   var heatmapLimits = {batchBytes:32768,observations:20,captureBatches:256,captureBytes:8388608,captureMs:300000,drainMs:60000,extent:10000000,viewport:20000,pageSize:20,points:5000};
 
+  function backgroundHash(bytes, done) {
+    crypto.subtle.digest('SHA-256',bytes).then(function(value){done(Array.from(new Uint8Array(value),function(n){return n.toString(16).padStart(2,'0');}).join(''));},function(){done(null);});
+  }
+  function backgroundLocator(ref) {
+    if(!ref || !ref.hash || !ref.location || ref.acks!==ref.total)return null;
+    return Object.assign({},ref.location,{eventSha256:ref.hash});
+  }
+  function backgroundSnapshot(c,event,bytes) {
+    var h=c.state.heatmapCapture;
+    if(!h || !h.reply || !h.reply.accepted || !heatmapCurrent(h,false) || !replayCurrent(c,false) || c.epoch!==h.epoch)return null;
+    if(event.type!==4&&event.type!==2)return null;
+    var ref={hash:null,location:null,acks:0,total:1};
+    backgroundHash(new TextEncoder().encode(JSON.stringify({type:event.type,timestamp:event.timestamp,data:event.data})),function(value){ref.hash=value;if(value)void heatmapBackgroundPump(h);});
+    if(event.type===4){c.backgroundMeta={ref:ref,href:event.data.href,width:event.data.width,height:event.data.height,timestamp:event.timestamp};return ref;}
+    var meta=c.backgroundMeta,fact=heatmapGeometry(),offset=performance.now()-h.start;
+    if(!meta||meta.href!==h.url||meta.timestamp>event.timestamp||!fact||![meta.width,meta.height].every(function(value){return Number.isInteger(value)&&value>=1&&value<=heatmapLimits.viewport;})||meta.width!==window.innerWidth||meta.height!==window.innerHeight||meta.width<fact.geometry.viewportWidth||meta.height<fact.geometry.viewportHeight||!Number.isFinite(offset)||offset<0||offset>300000)return ref;
+    var plane=JSON.stringify(fact.geometry);
+    if(h.backgroundPlans.length>=256||h.backgroundPlans.some(function(p){return p.plane===plane;}))return ref;
+    var plan={requestId:uuid(),replay:c,meta:meta.ref,snapshot:ref,geometry:fact.geometry,plane:plane,geometryKey:null,offset:offset,sent:false};
+    h.backgroundPlans.push(plan);backgroundHash(new TextEncoder().encode(plane),function(key){plan.geometryKey=key;if(key)void heatmapBackgroundPump(h);});
+    return ref;
+  }
+  function requestHeatmapSnapshot(h,plane) {
+    var r=h.state.replayCapture,shared=hub();
+    if(!r||!r.started||!replayCurrent(r,false)||!heatmapCurrent(h,false)||r.epoch!==h.epoch||h.backgroundRequested[plane]||
+      h.backgroundPlans.some(function(p){return p.plane===plane;})||!shared||!shared.takeReplaySnapshot||shared.takeReplaySnapshot.protocolVersion!==1)return;
+    h.backgroundRequested[plane]=true; // At most one real rrweb checkout per accepted capture/layout.
+    shared.takeReplaySnapshot();
+  }
+  async function heatmapBackgroundPump(h) {
+    if(h.sending||h.backgroundSending||h.queue.length||!heatmapCurrent(h,false))return;
+    var plan=h.backgroundPlans.find(function(p){return !p.sent&&p.geometryKey&&h.backgroundBatches[p.plane]&&backgroundLocator(p.meta)&&backgroundLocator(p.snapshot)&&replayCurrent(p.replay,false);});
+    if(!plan)return;h.backgroundSending=true;plan.sent=true;
+    try{
+      var r=plan.replay,body=JSON.stringify({siteKey:h.state.siteKey,requestId:plan.requestId,url:h.url,consent:{analytics:true,replay:true,epoch:h.epoch},
+        captureId:h.reply.captureId,heatmapToken:h.reply.token,recordingId:r.record.reply.recordingId,replayToken:r.record.reply.token,batchRequestId:h.backgroundBatches[plan.plane],
+        geometryKey:plan.geometryKey,geometry:plan.geometry,heatmapOffsetMs:plan.offset,meta:backgroundLocator(plan.meta),snapshot:backgroundLocator(plan.snapshot)});
+      if(new TextEncoder().encode(body).length>4096)return;
+      for(var attempt=0;attempt<2&&heatmapCurrent(h,false)&&replayCurrent(r,false);attempt++){
+        var result;try{result=await heatmapRequest(h,'/api/heatmaps/backgrounds',body);}catch(_){continue;}
+        if(result.status===202&&replayKeys(result.value,['accepted','duplicate','requestId'])&&result.value.accepted===true&&typeof result.value.duplicate==='boolean'&&result.value.requestId===plan.requestId)break;
+        if([400,401,403,409,413].includes(result.status))break;
+      }
+    }catch(_){/* An optional background failure never stops independent numeric collection. */}
+    finally{h.backgroundSending=false;if(h.active&&h.queue.length)void heatmapPump(h);else if(h.active)void heatmapBackgroundPump(h);}
+  }
   function heatmapCurrent(c, drain) {
     return c.active && c.state.heatmapCapture === c && !c.state.heatmapHidden && c.state.nativeGeneration === c.generation && c.state.config && c.state.config.consentEpoch === c.epoch &&
       c.state.config.nativeTracking.heatmap && c.state.config.nativeTracking.heatmap.enabled === true && c.state.config.nativeTracking.heatmap.sampleRate === c.settings.sampleRate &&
@@ -31,7 +77,7 @@
     if (!c || expected && state.heatmapCapture !== expected) return;
     c.active = false; heatmapUnlisten(c); clearInterval(c.flushTimer); clearTimeout(c.endTimer);
     if (c.controller) c.controller.abort(); c.queue.length = c.parts.length = 0; c.queuedBytes = 0;
-    c.reply = null; // Keep the terminal sampling marker, never its upload capability.
+    c.backgroundPlans=[];c.backgroundBatches={};c.backgroundRequested={};c.reply = null; // Keep the terminal sampling marker, never its upload capability.
   }
   function heatmapGeometry() {
     var root = document.scrollingElement, style = root && getComputedStyle(root), visual = window.visualViewport;
@@ -39,7 +85,8 @@
     var w=root.scrollWidth,h=root.scrollHeight,vw=root.clientWidth,vh=root.clientHeight,sx=window.scrollX,sy=window.scrollY;
     if (![w,h,vw,vh,sx,sy].every(Number.isFinite) || w<1 || h<1 || w>10000000 || h>10000000 || vw<1 || vh<1 || vw>20000 || vh>20000 || w<vw || h<vh || sy<0 || sy>h-vh) return null;
     var left=sx+(style.direction==='rtl'?w-vw:0);
-    if (left<0 || left>w-vw) return null;
+    // Retain the measured Edge RTL root-zoom endpoint, including its physical one-pixel offset.
+    if (left<0 || left>w-vw && !(style.direction==='rtl' && sx>0 && sx<=1)) return null;
     return {geometry:{basis:'document-css-v1',direction:style.direction,pageWidth:w,pageHeight:h,viewportWidth:vw,viewportHeight:vh},scrollX:sx,scrollY:sy,left:left};
   }
   async function heatmapRequest(c,path,body) {
@@ -61,10 +108,10 @@
     if(!c.parts.length)return;
     var requestId=uuid(),body=JSON.stringify({siteKey:c.state.siteKey,requestId:requestId,url:c.url,consent:{analytics:true,epoch:c.epoch},captureId:c.reply.captureId,token:c.reply.token,geometry:c.geometry,observations:c.parts}),bytes=new TextEncoder().encode(body).length;
     if(bytes>32768 || c.queuedBytes+bytes>8388608 || c.usedBytes+c.queuedBytes+bytes>8388608 || c.usedBatches+c.queue.length>=256)throw new Error('Heatmap capacity reached.');
-    c.queue.push({body:body,bytes:bytes,requestId:requestId});c.queuedBytes+=bytes;c.parts=[];
+    c.queue.push({body:body,bytes:bytes,requestId:requestId,geometry:c.geometry});c.queuedBytes+=bytes;c.parts=[];
   }
   async function heatmapPump(c) {
-    if(c.sending || !c.reply || !c.queue.length || !heatmapCurrent(c,c.ending))return;
+    if(c.sending || c.backgroundSending || !c.reply || !heatmapCurrent(c,c.ending))return;if(!c.queue.length){void heatmapBackgroundPump(c);return;}
     c.sending=true;
     try{
       var entry=c.queue[0],accepted=false;
@@ -74,9 +121,9 @@
         if([400,401,403,409,413].includes(result.status))break;
       }
       if(!accepted || !heatmapCurrent(c,c.ending))throw new Error('Heatmap outcome is unknown.');
-      c.queue.shift();c.queuedBytes-=entry.bytes;c.usedBytes+=entry.bytes;c.usedBatches++;
+      c.queue.shift();c.queuedBytes-=entry.bytes;c.usedBytes+=entry.bytes;c.usedBatches++;var plane=JSON.stringify(entry.geometry);c.backgroundBatches[plane]=entry.requestId;requestHeatmapSnapshot(c,plane);
     }catch(_){stopHeatmap(c.state,c);}finally{c.sending=false;}
-    if(c.active&&c.queue.length)void heatmapPump(c);
+    if(c.active&&c.queue.length)void heatmapPump(c);else if(c.active&&!c.ending)void heatmapBackgroundPump(c);
     else if(c.active&&c.ending){var next=c.nextUrl;stopHeatmap(c.state,c);if(next===currentUrl()&&!c.state.heatmapRestartRequired){c.state.heatmapCapture=null;startHeatmap(c.state);}}
   }
   function heatmapFinish(c,nextUrl) {
@@ -108,7 +155,7 @@
     if(fresh&&state.heatmapCapture&&!state.heatmapCapture.active)state.heatmapCapture=null; // Only an explicit new grant clears a revoked capture.
     if(!h || !settings || settings.enabled!==true || !nativeReady(state,true) || state.heatmapCapture || state.heatmapRestartRequired || state.heatmapHidden || typeof performance==='undefined' || typeof performance.now!=='function' || typeof fetch!=='function' || typeof TextEncoder!=='function' || typeof TextDecoder!=='function' || typeof ReadableStream!=='function' || typeof AbortController!=='function')return;
     if(!heatmapGeometry())return;
-    var c={state:state,url:currentUrl(),epoch:state.config.consentEpoch,generation:state.nativeGeneration,settings:{enabled:true,sampleRate:settings.sampleRate},start:performance.now(),active:true,queue:[],parts:[],queuedBytes:0,usedBytes:0,usedBatches:0,lastOffset:0,sending:false,ending:false,reply:null};state.heatmapCapture=c;
+    var c={state:state,url:currentUrl(),epoch:state.config.consentEpoch,generation:state.nativeGeneration,settings:{enabled:true,sampleRate:settings.sampleRate},start:performance.now(),active:true,queue:[],parts:[],queuedBytes:0,usedBytes:0,usedBatches:0,lastOffset:0,sending:false,ending:false,reply:null,backgroundPlans:[],backgroundBatches:{},backgroundRequested:{},backgroundSending:false};state.heatmapCapture=c;
     (async function(){try{
       var body=JSON.stringify({siteKey:state.siteKey,requestId:uuid(),url:c.url,consent:{analytics:true,epoch:c.epoch}}),result;
       for(var attempt=0;attempt<2&&heatmapCurrent(c,false);attempt++){try{result=await heatmapRequest(c,'/api/heatmaps/begin',body);}catch(_){result=null;}if(result&&(result.status===202&&heatmapReply(result.value,c)||[400,401,403,409,413].includes(result.status)))break;result=null;}
@@ -144,7 +191,7 @@
       if (c.controller) c.controller.abort();
       var stop = c.stop; c.stop = null; try { if (stop) stop(); } catch (_) {}
       if (hub() && hub().replayOwner === c) hub().replayOwner = null;
-      c.queue.length = 0; c.parts.length = 0; c.queuedBytes = c.partBytes = 0; c.partNodes = 1;
+      c.queue.length = 0; c.parts.length = 0;c.partReferences.length=0;c.backgroundMeta=null;c.queuedBytes = c.partBytes = 0; c.partNodes = 1;
       if (terminal && c.record) try { c.record.terminal = true; if (c.record.reply && typeof c.record.reply==='object') c.record.reply.token = null; replaySave(c); } catch (_) {}
     }
     if (erase) { if (c) try { sessionStorage.removeItem(c.key); } catch (_) {} state.replayCapture = null; state.replayResumeRequest = null; }
@@ -185,7 +232,7 @@
   function replayFlush(c) {
     if (!c.parts.length) return;
     var bytes = new TextEncoder().encode('[' + c.parts.join(',') + ']');
-    c.parts.length = 0; c.partBytes = 0; c.partNodes = 1; c.queue.push({bytes:bytes,final:false}); c.queuedBytes += bytes.length;
+    var references=c.partReferences.splice(0);c.parts.length = 0; c.partBytes = 0; c.partNodes = 1; c.queue.push({bytes:bytes,final:false,references:references}); c.queuedBytes += bytes.length;
   }
   async function replayPump(c) {
     if (c.sending || !c.started || !c.queue.length || !replayCurrent(c,c.finishing)) return;
@@ -205,19 +252,19 @@
         if ([400,403,409,413].includes(result.status)) break;
       }
       if (!accepted || !replayCurrent(c,c.finishing)) throw new Error('Replay chunk outcome is incomplete.');
-      c.queue.shift(); c.queuedBytes -= chunk.bytes.length;
+      (chunk.references||[]).forEach(function(part){part.ref.acks++;if(!part.ref.location)part.ref.location={kind:'event',sequence:sequence,index:part.index,chunkSha256:hash};});c.queue.shift(); c.queuedBytes -= chunk.bytes.length;var heat=c.state.heatmapCapture;if(heat)void heatmapBackgroundPump(heat);
       if (chunk.final) { stopReplay(c.state,false,true); return; }
     } catch (_) { if (c.active) replayFail(c); }
     finally { c.sending = false; }
     if (c.active) void replayPump(c);
   }
-  function replayPart(c, text) {
+  function replayPart(c, text, reference) {
     var size = new TextEncoder().encode(text).length, pending = [{value:JSON.parse(text),depth:1}], nodes = 0;
     if (size + 2 > 262144) return false;
     while (pending.length) { var item = pending.pop(); if (++nodes + 1 > replayLimits.nodes || item.depth > replayLimits.depth) return false; if (item.value && typeof item.value === 'object') Object.keys(item.value).forEach(function (key) { pending.push({value:item.value[key],depth:item.depth+1}); }); }
     if (c.parts.length >= 200 || c.partBytes + size + c.parts.length + 2 > 262144 || c.partNodes + nodes > replayLimits.nodes) replayFlush(c);
     if (c.queuedBytes + (c.partBytes + size + c.parts.length + 2) * 2 > replayMemoryLimit) throw new Error('Replay memory queue is full.');
-    c.parts.push(text); c.partBytes += size; c.partNodes += nodes; return true;
+    if(reference)c.partReferences.push({ref:reference,index:c.parts.length});c.parts.push(text); c.partBytes += size; c.partNodes += nodes; return true;
   }
   function replayEmit(c, event) {
     try {
@@ -225,10 +272,10 @@
       if (!replayCurrent(c,false)) { if (c.active) { if (Date.now() >= c.record.localDeadline) finishReplay(c); else replayFail(c); } return; }
       if (!replayKeys(event,['type','timestamp','data']) || !Number.isInteger(event.type) || event.type < 0 || event.type > 4 || !Number.isSafeInteger(event.timestamp) || event.timestamp < 0 || event.timestamp > 8640000000000000 || !event.data || typeof event.data !== 'object' || Array.isArray(event.data)) throw new Error('Invalid recorder event.');
       if (event.type === 4) { var u = new URL(event.data.href); if (u.origin !== location.origin || /[?#]/.test(event.data.href)) throw new Error('Invalid recorder URL.'); }
-      var text = JSON.stringify(event), bytes = new TextEncoder().encode(text);
-      if (bytes.length > 4194304) throw new Error('Replay event is too large.');
-      if (bytes.length + 2 > 262144 || !replayPart(c,text))
-      { var id = uuid(), size = 180000, total = Math.ceil(bytes.length/size); if (total > 64) throw new Error('Too many replay fragments.'); for (var i=0;i<total;i++) if(!replayPart(c,JSON.stringify({type:'fragment',id:id,index:i,total:total,data:replayBase64(bytes.subarray(i*size,(i+1)*size))}))) throw new Error('Replay fragment exceeds chunk limits.'); }
+      var text = JSON.stringify(event), bytes = new TextEncoder().encode(text),reference=null;
+      if (bytes.length > 4194304) throw new Error('Replay event is too large.');reference=backgroundSnapshot(c,event,bytes);
+      if (bytes.length + 2 > 262144 || !replayPart(c,text,reference))
+      { var id = uuid(), size = 180000, total = Math.ceil(bytes.length/size); if (total > 64) throw new Error('Too many replay fragments.');if(reference){reference.total=total;reference.location={kind:'fragment',fragmentId:id};} for (var i=0;i<total;i++) if(!replayPart(c,JSON.stringify({type:'fragment',id:id,index:i,total:total,data:replayBase64(bytes.subarray(i*size,(i+1)*size))}),reference)) throw new Error('Replay fragment exceeds chunk limits.'); }
       if (c.parts.length >= 200) replayFlush(c);
       void replayPump(c);
     } catch (_) { replayFail(c); }
@@ -268,7 +315,7 @@
     if (!h || !h.replayAllowed || h.replayAllowed.protocolVersion !== 3 || !h.replayAllowed(state) || !nativeReady(state,true) || state.replayCapture || state.replayDocumentBlocked || state.replayRestartRequired || state.replayOwnerSkipped || typeof crypto==='undefined' || !crypto.subtle || typeof btoa !== 'function' || typeof TextEncoder!=='function' || typeof TextDecoder!=='function' || typeof AbortController!=='function' || typeof ReadableStream!=='function' || typeof fetch!=='function') return;
     // ponytail: rrweb owns one document mirror; one authorized site records, other sites keep analytics only until a new document.
     if (h.replayOwner && h.replayOwner.active) { state.replayOwnerSkipped = true; return; }
-    var c = {state:state,generation:state.nativeGeneration,epoch:state.config.consentEpoch,key:'ten98:replay:v1:'+state.origin+':'+state.siteKey+':'+state.environment,active:true,queue:[],parts:[],partBytes:0,partNodes:1,queuedBytes:0,started:false,sending:false,finishing:false};
+    var c = {state:state,generation:state.nativeGeneration,epoch:state.config.consentEpoch,key:'ten98:replay:v1:'+state.origin+':'+state.siteKey+':'+state.environment,active:true,queue:[],parts:[],partReferences:[],partBytes:0,partNodes:1,queuedBytes:0,started:false,sending:false,finishing:false};
     state.replayCapture = c; h.replayOwner = c;
     try {
       var stored = sessionStorage.getItem(c.key);

@@ -20,3 +20,18 @@ test('retention validates complete bounded integer policies without coercion or 
   assert.equal(retentionSettingsInput.safeParse({ rawAnalyticsDays: 90 }).success, false);
   for (const edge of [1, 3650]) assert.equal(retentionSettingsInput.safeParse({ ...valid, rawAnalyticsDays: edge }).success, true);
 });
+
+test('retention keeps microsecond cutoffs across UTC day and equal boundaries',()=>{
+ const cutoff='2026-01-01T00:00:00.000900Z',before='2026-01-01T00:00:00.000899Z',after='2026-01-01T00:00:00.000901Z',end='2026-01-02T00:00:00.000Z';
+ assert.deepEqual(retentionCoverage('2026-01-01T00:00:00.000Z',end,cutoff),{status:'partial',retainedFrom:cutoff});
+ assert.equal(retentionCoverage(before,end,cutoff).status,'partial');
+ assert.equal(retentionCoverage(cutoff,end,cutoff).status,'complete');
+ assert.equal(retentionCoverage(after,end,cutoff).status,'complete');
+ assert.equal(retentionCoverage('2025-12-31T00:00:00.000Z',before,cutoff).status,'unavailable');
+ assert.equal(retentionCoverage('2025-12-31T00:00:00.000Z',cutoff,cutoff).status,'unavailable');
+ assert.equal(retentionCoverage('2025-12-31T00:00:00.000Z',after,cutoff).status,'partial');
+ assert.deepEqual(retentionCoverage('2026-01-01T00:00:00.000Z',end,'2026-01-01T04:00:00.000900+04:00'),{status:'partial',retainedFrom:cutoff});
+ assert.equal(retentionCoverage('2026-01-01T00:00:00.000Z',end,new Date(cutoff)).status,'complete','A Date cannot recover a discarded fractional component.');
+ assert.equal(retentionCoverage('2026-01-01T00:00:00.000Z',end,'2026-01-01T00:00:00.000000Z').retainedFrom,'2026-01-01T00:00:00.000Z','Exact millisecond wire values retain their original format.');
+ assert.equal(retentionCoverage('1969-12-31T23:59:59.999899Z','1970-01-01T00:00:00.000Z','1969-12-31T23:59:59.999900Z').status,'partial');
+});
