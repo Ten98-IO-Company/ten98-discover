@@ -463,7 +463,12 @@
       var consented = hub().nativeConsentAllowed(state), dimensions = {}, epoch = config.consentEpoch, generation = state.nativeGeneration;
       if (!performanceEvent && consented && state.nativeIdentifier !== undefined) dimensions.distinctId = state.nativeIdentifier;
       if (!performanceEvent && navigator.language) dimensions.language = navigator.language;
-      if (!performanceEvent && settings.captureReferrer && document.referrer) dimensions.referrer = new URL(document.referrer).origin;
+      // The first page view this site sends keeps the document's referrer, even when consent or configuration arrives after an
+      // in-app navigation. Each later page view for another path reports the previous sent in-app page, whose origin is this page's own
+      // (a self-referral, as pinned Umami sends it); custom events follow the page they occur on. Only an origin is ever sent.
+      if (event.name === PAGE_VIEW && state.nativePageObservation && state.nativePageObservation.sent && state.nativePageObservation.url !== event.url) state.referrerOrigin = location.origin;
+      var referrer = state.referrerOrigin || document.referrer;
+      if (!performanceEvent && settings.captureReferrer && referrer) dimensions.referrer = new URL(referrer).origin;
       if (settings.captureScreen && window.screen) dimensions.screen = {width: screen.width, height: screen.height};
       if (!performanceEvent && settings.captureCampaigns) {
         var query = new URL(location.href).searchParams, campaign = {};
