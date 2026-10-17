@@ -43,7 +43,7 @@ export function RankCheckResults(p:RankCheckResultsProps):React.JSX.Element{
      <div className="row between"><span className="pill">{r.status}</span><span className="dim">{r.method} · {r.selection}</span></div>
      <p>{r.target}</p>
      <div style={{display:'flex',flexWrap:'wrap',gap:'var(--space-3)'}}><span>{r.status==='skipped'?'No quote applied':'Quoted maximum $'+r.estimateUsd}</span><span>Known charges ${r.knownChargeUsd}</span><span>Charge status {r.costStatus}</span></div>
-     {r.costStatus==='uncertain'&&<p className="alert" role="alert">Some charges are unresolved. Known charges are not the final total. Recovery does not submit another paid check or unpause spending.</p>}
+     {r.costStatus==='uncertain'&&<p className="alert" role="alert">Some charges are unresolved. Known charges are not the final total. Recovery does not submit another paid check; new paid work stays blocked until the charge is reconciled.</p>}
      {r.costStatus==='pending'&&<p className="hint">The provider is still processing work or confirming charges. Known charges are not the final total.</p>}
      {r.costStatus==='not_started'&&<p className="hint">{r.status==='skipped'?'No paid check started.':'This check has not started.'}</p>}
      {r.diagnostic!==null&&<p className="alert" role="alert">{r.diagnostic}</p>}

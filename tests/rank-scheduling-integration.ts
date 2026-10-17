@@ -28,7 +28,7 @@ export async function runRankSchedulingChecks(){
     await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Approval acceptance')",[f.workspace]);
     for(const [uid,role]of [[owner,'owner'],[secondOwner,'owner'],[admin,'admin'],[editor,'editor'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[f.workspace,uid,role]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Approval acceptance','https://example.com',$3,'infinity')",[f.project,f.workspace,randomUUID()]);
-    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic schedule account',credentials:{login:'schedule@integration.test',password:'never-live'},monthlyLimitUsd:'0'})).connection.id;
+    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic schedule account',credentials:{login:'schedule@integration.test',password:'never-live'}})).connection.id;
     await pool.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages) VALUES($1,$2,$3,'Approval acceptance','example.com',2840,'US','Country',2840,'US','en','English',clock_timestamp(),'both',100,1)`,[f.tracker,f.workspace,f.project]);
     await changeRankKeywords(f.project,owner,f.tracker,'add',{requestId:randomUUID(),revision:1,keywords:['C++ %20','Apple'],matchCase:true});return f;
   }
@@ -92,7 +92,7 @@ export async function runRankSchedulingChecks(){
     const stale=await fixture(),staleQuote=await quote(stale);await approve(stale,await body(stale,staleQuote.id));
     await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[stale.workspace,owner]);assert.ok((await current(stale,viewer)).schedule.staleReasons.includes('approver_no_longer_owner'));
     await pool.query("UPDATE membership SET role='owner' WHERE workspace_id=$1 AND user_id=$2",[stale.workspace,owner]);
-    await saveProvider(stale.workspace,owner,{name:'Rotated',credentials:{login:'schedule@integration.test',password:'changed-never-live'},monthlyLimitUsd:'0'},stale.connection);assert.ok((await current(stale,viewer)).schedule.staleReasons.includes('connection_changed'));await assert.rejects(approve(stale,await body(stale,staleQuote.id)),fails(409));
+    await saveProvider(stale.workspace,owner,{name:'Rotated',credentials:{login:'schedule@integration.test',password:'changed-never-live'}},stale.connection);assert.ok((await current(stale,viewer)).schedule.staleReasons.includes('connection_changed'));await assert.rejects(approve(stale,await body(stale,staleQuote.id)),fails(409));
     await revokeProvider(stale.workspace,owner,stale.connection);assert.ok((await current(stale)).schedule.approvalStale);
     console.log('PASS demoted approver and rotated/revoked credentials mark retained grants stale without decrypting');
 

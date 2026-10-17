@@ -38,7 +38,7 @@ import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promp
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
-import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider, saveProviderLimit } from './providers.ts';
+import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
 import { assertOidcCredentialsReadable, handleOidc, oidcSignOutUrl } from './oidc.ts';
 import { isInstanceOperator } from './instance-operators.ts';
 import { handleReports } from './reports.ts';
@@ -939,12 +939,6 @@ export async function handleApi(request: Request): Promise<Response> {
         return json(await (retentionRoute[2] === 'preview' ? previewRetention : saveRetention)(retentionRoute[1], user.id, input));
       }
       return json({ error: 'Method not allowed.' }, 405);
-    }
-    const providerLimit = path.match(new RegExp(`^/api/workspaces/(${id})/providers/(${id})/limit$`, 'i'));
-    if (providerLimit) {
-      if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
-      await limit(`settings:${user.id}`, 60);
-      return json(await saveProviderLimit(providerLimit[1], user.id, providerLimit[2], await readJson(request)));
     }
     let management = path.match(new RegExp(`^/api/workspaces/(${id})/(api-keys|providers|budget)$`, 'i'));
     if (management) {

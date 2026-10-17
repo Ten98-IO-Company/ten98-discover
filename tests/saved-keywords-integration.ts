@@ -4,7 +4,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs} from '../src/server/jobs.ts';
-import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
+import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {keywordAccountEndpoint,keywordCatalogEndpoint,keywordEndpoints,keywordReconcileEndpoint,keywordPayload,type KeywordRow} from '../src/server/keyword-research-input.ts';
@@ -53,7 +53,7 @@ export async function runSavedKeywordChecks(){
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Saved keywords','https://'||$1||'.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
     const value:Fixture={workspace,project,connectionId:null};if(withProvider)await provider(value);return value;
   }
-  async function provider(f:Fixture){if(!f.connectionId){f.connectionId=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic provider',credentials:{login:account,password:'synthetic-never-live'},monthlyLimitUsd:'10'})).connection.id;await saveBudget(f.workspace,owner,{monthlyLimitUsd:'10',paused:false});await refreshKeywordMarkets(f.project,owner,{connectionId:f.connectionId},send);}return f.connectionId;}
+  async function provider(f:Fixture){if(!f.connectionId){f.connectionId=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic provider',credentials:{login:account,password:'synthetic-never-live'}})).connection.id;await saveBudget(f.workspace,owner,{paused:false});await refreshKeywordMarkets(f.project,owner,{connectionId:f.connectionId},send);}return f.connectionId;}
   const list=(f:Fixture,raw:unknown={},user=owner)=>listSavedKeywords(f.project,user,raw);
   const selection=(ids:string[])=>({type:'ids',keywordIds:ids});
   async function manual(f:Fixture,keywords:string[],extra:Record<string,unknown>={}){return saveSavedKeywords(f.project,owner,{requestId:randomUUID(),revision:(await list(f)).revision,source:{type:'manual',keywords,locationCode:2840,languageCode:'en'},...extra});}
@@ -178,14 +178,23 @@ export async function runSavedKeywordChecks(){
     const rollbackKey=randomUUID();try{await assert.rejects(start(rollback,rollbackQuote.id,owner,rollbackKey));}finally{boss.send=originalSend;}
     assert.equal(queuedIds.length,2);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=ANY($1::uuid[])',[queuedIds])).rowCount,0);assert.equal((await childRuns(rollbackQuote.id)).length,0);
     assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,rollbackQuote.id)).plan.startedAt,null);
-    await saveProviderLimit(rollback.workspace,owner,rollback.connectionId!,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.025'});await assert.rejects(start(rollback,rollbackQuote.id),failed(409));assert.equal((await childRuns(rollbackQuote.id)).length,0);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);
-    await saveProviderLimit(rollback.workspace,owner,rollback.connectionId!,{revision:1,expectedMonthlyLimitUsd:'0.025',monthlyLimitUsd:'10'});const cancel=(await start(rollback,rollbackQuote.id)).plan;const noDispatch=paidCalls;await cancelSavedKeywordRefresh(rollback.project,owner,cancel.id,{});for(const child of cancel.children)await executeKeywordResearch(child.runId!,send);assert.equal(paidCalls,noDispatch);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,cancel.id)).plan.status,'cancelled');
-    console.log('PASS actual queue insert rollback, all-child budget atomicity and undispatched cancellation');
+    // Owner decision D3: no connection cap. A test-only trigger records an uncertain sentinel charge after the first child's reservation (N=1),
+    // so the second child meets the real ledger gate (409 SPENDING_BUDGET) and the whole start rolls back, sentinel included.
+    await pool.query(`CREATE FUNCTION d3_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.operation<>'test.sentinel' AND NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
+        INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,connection_revision,status,budget_month)
+        VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,NEW.connection_revision,'uncertain',NEW.budget_month);
+      END IF; RETURN NULL; END $$`);
+    await pool.query(`CREATE TRIGGER d3_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION d3_sentinel('${rollback.workspace}','1')`);
+    try{await assert.rejects(start(rollback,rollbackQuote.id),(error:any)=>failed(409)(error)&&error.code==='SPENDING_BUDGET'&&/uncertain charge/.test(error.message));}finally{await pool.query('DROP TRIGGER d3_sentinel ON provider_request');await pool.query('DROP FUNCTION d3_sentinel()');}
+    assert.equal((await childRuns(rollbackQuote.id)).length,0);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);
+    const cancel=(await start(rollback,rollbackQuote.id)).plan;const noDispatch=paidCalls;await cancelSavedKeywordRefresh(rollback.project,owner,cancel.id,{});for(const child of cancel.children)await executeKeywordResearch(child.runId!,send);assert.equal(paidCalls,noDispatch);assert.equal((await getSavedKeywordRefresh(rollback.project,owner,cancel.id)).plan.status,'cancelled');
+    console.log('PASS actual queue insert rollback, all-child reservation atomicity and undispatched cancellation');
 
     const invalid=await fixture(true),invalidIds=(await manual(invalid,['allowed','x'.repeat(81)])).ids;
     await assert.rejects(quote(invalid,invalidIds),failed(409));const allowed=(await list(invalid)).rows.find(row=>row.keyword==='allowed')!.id;
     const expiredQuote=(await quote(invalid,[allowed])).quote;await pool.query("UPDATE saved_keyword_refresh_plan SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[expiredQuote.id]);await assert.rejects(start(invalid,expiredQuote.id),failed(409));
-    const changed=(await quote(invalid,[allowed])).quote;await saveProvider(invalid.workspace,owner,{name:'Rotated synthetic',credentials:{login:account,password:'synthetic-rotated'},monthlyLimitUsd:'10'},invalid.connectionId!);await assert.rejects(start(invalid,changed.id),failed(409));
+    const changed=(await quote(invalid,[allowed])).quote;await saveProvider(invalid.workspace,owner,{name:'Rotated synthetic',credentials:{login:account,password:'synthetic-rotated'}},invalid.connectionId!);await assert.rejects(start(invalid,changed.id),failed(409));
     const queuedExpiry=(await start(invalid,(await quote(invalid,[allowed])).quote.id)).plan;await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE saved_refresh_plan_id=$1",[queuedExpiry.id]);const expiryPaid=paidCalls;await executeKeywordResearch(queuedExpiry.children[0].runId!,send);assert.equal(paidCalls,expiryPaid);assert.equal((await charge(queuedExpiry.children[0].runId!)).status,'cancelled');
     const removed=(await start(invalid,(await quote(invalid,[allowed])).quote.id)).plan;await removeSavedKeywords(invalid.project,owner,{requestId:randomUUID(),revision:(await list(invalid)).revision,keywordIds:[allowed]});const replacement=(await manual(invalid,['allowed'])).ids[0];await executeKeywordResearch(removed.children[0].runId!,send);assert.equal(paidCalls,expiryPaid);assert.equal((await charge(removed.children[0].runId!)).status,'cancelled');assert.equal((await list(invalid)).rows.find(row=>row.id===replacement)!.metrics.status,'unavailable');
     console.log('PASS unsupported refresh, expired/rotated quote and exact target deletion before paid dispatch');
@@ -211,7 +220,8 @@ export async function runSavedKeywordChecks(){
     assert.equal((await charge(during.children[0].runId!)).status,'settled');assert.equal((await list(access)).rows[0].metrics.status,'unavailable');
     const uncertain=await fixture(true),uncertainId=(await manual(uncertain,['lost result'])).ids[0],uncertainPlan=(await start(uncertain,(await quote(uncertain,[uncertainId])).quote.id)).plan,uncertainRun=uncertainPlan.children[0].runId!;
     mode='unknown';await executeKeywordResearch(uncertainRun,send);mode='ok';const uncertainPaid=paidCalls;assert.equal((await charge(uncertainRun)).status,'uncertain');await executeKeywordResearch(uncertainRun,send);assert.equal(paidCalls,uncertainPaid);
-    await saveBudget(uncertain.workspace,owner,{monthlyLimitUsd:'10',paused:false});await assert.rejects(start(uncertain,(await quote(uncertain,[uncertainId])).quote.id),failed(409));
+    // Owner decision D3: the uncertain charge blocks Start through the ledger; the workspace was never paused, so there is no unpause step.
+    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[uncertain.workspace])).rows[0].paused,false);await assert.rejects(start(uncertain,(await quote(uncertain,[uncertainId])).quote.id),failed(409));
     await pool.query("UPDATE keyword_research_run SET completed_at=clock_timestamp()-interval '366 days' WHERE id=$1",[uncertainRun]);
     const originalCompletedAt=(await pool.query('SELECT completed_at::text AS at FROM keyword_research_run WHERE id=$1',[uncertainRun])).rows[0].at;
     const originalRequest=(await getKeywordRun(uncertain.project,owner,uncertainRun)).run.request;

@@ -343,7 +343,7 @@ export async function runMcpChecks(){
           const rp=await makeProject(),rankKey=await makeKey(ru,['rank:read']),keywordsKey=await makeKey(ru,['keywords:read']),trackerId=randomUUID(),runId=randomUUID(),tagId=randomUUID(),keywordId=randomUUID();
           assert.deepEqual((await rpc('tools/list',{},rankKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_rank_trackers','ten98_read_rank_tracker','ten98_read_rank_distribution','ten98_read_rank_matrix']);
           assert.deepEqual((await rpc('tools/list',{},keywordsKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_saved_keywords','ten98_list_saved_keyword_tags']);
-          const connection=(await saveProvider(rw,ru,{provider:'dataforseo',name:'MCP synthetic rank account',credentials:{login:'rank@mcp-report.test',password:'synthetic-never-live'},monthlyLimitUsd:'0'})).connection.id;
+          const connection=(await saveProvider(rw,ru,{provider:'dataforseo',name:'MCP synthetic rank account',credentials:{login:'rank@mcp-report.test',password:'synthetic-never-live'}})).connection.id;
           await pool.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages)
             VALUES($1,$2,$3,'MCP tracker','example.com',2840,'United States','Country',2840,'US','en','English',clock_timestamp(),'desktop',100,1)`,[trackerId,rw,rp]);
           const keywords=[{id:randomUUID(),keyword:'mcp rank one',matchCase:false},{id:randomUUID(),keyword:'mcp rank two',matchCase:false}];

@@ -86,8 +86,8 @@ async function markUncertain(client:PoolClient,row:RankDispatchSnapshot,message=
     await client.query("UPDATE rank_dispatch SET phase='finished',generation=generation+1,lease_owner=NULL,lease_expires_at=NULL,next_poll_at=NULL,completed_at=COALESCE(completed_at,clock_timestamp()),diagnostic=$2 WHERE id=$1",[row.id,diagnostic]);
     await client.query("UPDATE rank_task SET result_status='unavailable',diagnostic=$2 WHERE dispatch_id=$1 AND result_status IN('pending','uncertain','unavailable')",[row.id,diagnostic]);await aggregateRankRun(client,row.run_id);return;
   }
+  // A conflicting final charge keeps the immutable settled receipt and only flags the dispatch for owner review (owner decision D3).
   if(['dispatched','uncertain'].includes(row.ledger_status))await settleSpend(client,row.workspace_id,row.id,null);
-  else await client.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[row.workspace_id]);
   await client.query("UPDATE rank_dispatch SET phase='uncertain',generation=generation+1,lease_owner=NULL,lease_expires_at=NULL,next_poll_at=NULL,completed_at=COALESCE(completed_at,clock_timestamp()),diagnostic=$2 WHERE id=$1",[row.id,message]);
   await client.query("UPDATE rank_task SET result_status='uncertain',diagnostic=$2 WHERE dispatch_id=$1 AND final_micros IS NULL AND result_status='pending'",[row.id,message]);await aggregateRankRun(client,row.run_id);
 }
@@ -119,7 +119,7 @@ async function applyOutcome(client:PoolClient,row:RankDispatchSnapshot,outcome:R
   const retention=(await client.query(`SELECT clock_timestamp()-raw_provider_evidence_days*interval '24 hours' AS raw_cutoff,clock_timestamp()-derived_history_days*interval '24 hours' AS derived_cutoff FROM workspace WHERE id=$1`,[row.workspace_id])).rows[0];
   for(const item of outcome.tasks){
     const old=(await client.query('SELECT * FROM rank_task WHERE id=$1 AND dispatch_id=$2',[item.id,row.id])).rows[0];
-    if(old.final_micros!==null&&item.finalMicros!==null&&item.finalMicros!==old.final_micros){await markUncertain(client,row,'The provider reported conflicting final charge evidence. An owner must review the saved charge; spending is paused.',true);return;}
+    if(old.final_micros!==null&&item.finalMicros!==null&&item.finalMicros!==old.final_micros){await markUncertain(client,row,'The provider reported conflicting final charge evidence. An owner must review the saved charge.',true);return;}
     const start=row.run_started_at??row.run_created_at,anchor=new Date(Math.min(start.getTime(),item.observation?new Date(item.observation.observedAt).getTime():start.getTime(),old.observed_at?new Date(old.observed_at).getTime():start.getTime()));
     const derivedExpired=!!old.data_expired_at||!!row.run_data_expired_at||anchor<retention.derived_cutoff,rawExpired=derivedExpired||!!old.raw_expired_at||!!row.run_raw_expired_at||anchor<retention.raw_cutoff;
     const priorObservation=['ranked','not_found'].includes(old.result_status),observation=priorObservation?null:item.observation;
@@ -141,7 +141,6 @@ async function applyOutcome(client:PoolClient,row:RankDispatchSnapshot,outcome:R
   }
   const all=(await client.query('SELECT final_micros,provisional_micros,result_status,provider_task_id,data_expired_at FROM rank_task WHERE dispatch_id=$1',[row.id])).rows;
   const final=all.every(task=>task.final_micros!==null),sum=all.reduce((total,task)=>total+BigInt(task.final_micros??task.provisional_micros??0),0n);
-  if(sum>BigInt(row.estimate_micros))await client.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[row.workspace_id]);
   if(final){
     if(row.ledger_status==='settled'&&row.actual_micros!==sum.toString()){await markUncertain(client,row,uncertainMessage,true);return;}
     const settled=await settleSpend(client,row.workspace_id,row.id,microUsd(sum));

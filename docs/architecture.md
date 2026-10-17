@@ -40,12 +40,12 @@ Domains have canonical/serving/redirect roles. HTTP-only aliases use configured 
 ## Money and execution correctness
 
 1. Prepare a quote using current provider prices, prompt/keyword count, engines, repeats, rendering and schedule frequency. Store quote source/time and upper-bound assumptions. Missing price blocks automatic paid execution.
-2. In one database transaction lock relevant account/workspace budget rows in a stable order, check spent plus outstanding reservations, reserve the upper bound, and enqueue a unique request.
+2. In one database transaction lock the workspace row, check the manual pause and uncertain charges, record the quoted upper bound as the request's idempotent ledger reservation and enqueue the unique request.
 3. Dispatch once with provider idempotency/task identity where supported. Scheduling leases and unique period keys prevent overlap after restart or DST changes.
 4. Persist results and settlement with unique provider/request identifiers. Release only unused known reservation. Preserve failed-billable and uncertain charges.
-5. Reconcile timeouts through provider task lookup before resubmission. If the provider cannot determine whether it charged, pause for review. Bounded retries apply only to safely retryable failures.
+5. Reconcile timeouts through provider task lookup before resubmission. If the provider cannot determine whether it charged, the row stays uncertain and blocks new paid work until reconciled. Bounded retries apply only to safely retryable failures.
 
-Budgets cover the app's dispatches, not activity from other clients sharing the provider account. Show balance age and available-vs-reserved estimates; insufficient provider credit pauses affected work. A hard application limit does not guarantee a provider never changes pricing or charges outside the quote. Configure provider-side caps where available.
+The ledger covers only this app's dispatches, not activity from other clients sharing the provider account. Show balance age and available-vs-reserved estimates. There is no per-connection or workspace monetary limit in the app (owner decision D3) and nothing pauses automatically; provider-side budgets are the monetary caps, so configure them where available. A quote does not guarantee a provider never changes pricing or charges outside it.
 
 ## Metric contract
 

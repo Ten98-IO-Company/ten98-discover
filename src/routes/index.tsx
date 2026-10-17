@@ -734,7 +734,7 @@ function App() {
         </header>}
         {!projectView && view !== 'workspace' && view !== 'new-project' && <header className='proj-head'><h1>{pageTitles[view]}</h1>
           {view === 'keys' && <p className='dim'>Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.</p>}
-          {view === 'providers' && <p className='dim'>Manage provider credentials and spending limits for this workspace.</p>}
+          {view === 'providers' && <p className='dim'>Manage provider credentials and the paid-work pause for this workspace.</p>}
         </header>}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}

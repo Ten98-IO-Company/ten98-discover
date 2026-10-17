@@ -21,7 +21,7 @@ export async function runProviderChecks(options: Options) {
   const { pool } = getDatabase();
   const owner = options.ownerId;
   const secret = `synthetic-${randomBytes(24).toString('base64url')}`;
-  const input = { name: 'Synthetic provider', provider: 'openrouter', credentials: { apiKey: secret }, monthlyLimitUsd: '10' };
+  const input = { name: 'Synthetic provider', provider: 'openrouter', credentials: { apiKey: secret } };
   const workspace = async () => (await createWorkspace(owner, { name: 'Provider integration checks' })).workspace.id;
   const request = (connectionId: string, estimateUsd = '6') => ({ connectionId, estimateUsd, requestKey: randomUUID(), operation: 'fixture.test', inputHash: requestHash('synthetic bounded input') });
   const settle = async (wid: string, id: string, amount: string | null, reference: string | null = null) => {
@@ -46,15 +46,15 @@ export async function runProviderChecks(options: Options) {
   const route = `/api/workspaces/${wid}`;
   await http(`${route}/providers`, 401, undefined, '');
   await http(`${route}/providers`, 403, input, options.ownerCookie, 'https://foreign.integration.test');
-  await http(`${route}/providers`, 400, { ...input, monthlyLimitUsd: 'NaN' });
+  await http(`${route}/providers`, 400, { ...input, monthlyLimitUsd: '10' }); // Owner decision D3: the cap field is removed.
   const oversized = { ...input, provider: 'dataforseo', credentials: { login: 'test@integration.test', password: '\u0000'.repeat(4096) } };
   await http(`${route}/providers`, 413, oversized);
   await assert.rejects(saveProvider(wid, owner, oversized), {name:'ZodError'}, 'Internal callers reject control characters before encryption or persistence.');
   const connection = (await http(`${route}/providers`, 201, input)).body.connection;
   assert.equal(connection.checkStatus, 'untested', 'Saving must never call the provider.');
   const initial = (await http(`${route}/providers`, 200)).body;
-  assert.equal(initial.budget.paused, true);
-  assert.equal(initial.budget.monthlyLimitUsd, '0.000000');
+  assert.equal(initial.budget.paused, false);
+  assert.equal(Object.hasOwn(initial.budget, 'monthlyLimitUsd'), false);
   assert.equal(initial.budget.spentUsd, '0.000000');
   const stored = (await pool.query('SELECT encrypted_credentials FROM provider_connection WHERE id=$1', [connection.id])).rows[0].encrypted_credentials;
   assert.ok(!JSON.stringify(stored).includes(secret), 'Stored JSON must not contain plaintext credentials.');
@@ -69,16 +69,23 @@ export async function runProviderChecks(options: Options) {
   const editor = (await pool.query('SELECT id FROM "user" WHERE email=$1', [email])).rows[0].id;
   const memberCookie = (await http('/api/auth/sign-in/email', 200, { email, password }, '')).cookie;
   await http(`${route}/providers`, 404, undefined, memberCookie);
-  await http(`${route}/budget`, 404, { monthlyLimitUsd: '100', paused: false }, memberCookie);
+  await http(`${route}/budget`, 404, { paused: false }, memberCookie);
   await http(`/api/workspaces/${randomUUID()}/providers/${connection.id}/revoke`, 404, {});
-  await rejects(reserveSpend(wid, owner, request(connection.id)), 409, 'Spending starts paused.');
-  await http(`${route}/budget`, 200, { monthlyLimitUsd: '10', paused: false });
+  // Owner decision D3: new workspaces start unpaused; only the owner's manual pause stops new paid work.
+  const unpaused = await reserveSpend(wid, owner, request(connection.id));
+  assert.equal(unpaused.created, true, 'New workspaces start unpaused (D3).');
+  await cancelReservation(wid, owner, unpaused.id);
+  await http(`${route}/budget`, 200, { paused: true });
+  await rejects(reserveSpend(wid, owner, request(connection.id)), 409, 'The manual pause refuses new paid work.');
+  await http(`${route}/budget`, 400, { monthlyLimitUsd: '10', paused: false });
+  await http(`${route}/budget`, 200, { paused: false });
   const concurrent = await Promise.allSettled([reserveSpend(wid, owner, request(connection.id)), reserveSpend(wid, owner, request(connection.id))]);
-  assert.equal(concurrent.filter(value => value.status === 'fulfilled').length, 1, 'Concurrent requests must share one budget.');
-  const denied = concurrent.find(value => value.status === 'rejected') as PromiseRejectedResult;
-  assert.ok(denied.reason instanceof FoundationError && denied.reason.status === 409);
-  const successful = concurrent.find(value => value.status === 'fulfilled') as PromiseFulfilledResult<{ id: string }>;
-  await cancelReservation(wid, owner, successful.value.id);
+  assert.equal(concurrent.filter(value => value.status === 'fulfilled').length, 2, 'Without an app cap, concurrent requests with distinct keys both commit (D3).');
+  const sameKey = request(connection.id);
+  const twins = await Promise.all([reserveSpend(wid, owner, sameKey), reserveSpend(wid, owner, sameKey)]);
+  assert.equal(twins[0].id, twins[1].id);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request WHERE workspace_id=$1 AND request_key=$2', [wid, sameKey.requestKey])).rows[0].n, 1, 'Concurrent requests with one key share one row.');
+  for (const saved of [...concurrent.map(value => (value as PromiseFulfilledResult<{ id: string }>).value), twins[0]]) await cancelReservation(wid, owner, saved.id);
   const fixed = request(connection.id, '2'); let enqueues = 0;
   const first = await reserveSpend(wid, owner, fixed, async () => { enqueues++; });
   await rejects(cancelReservation(wid, editor, first.id), 409, 'Administrators cannot cancel another issuer\'s reservation.');
@@ -95,7 +102,7 @@ export async function runProviderChecks(options: Options) {
   await settle(wid, first.id, '1.250001', 'synthetic-reference');
   await rejects(settle(wid, first.id, '1.25', 'synthetic-reference'), 409, 'Settlement cannot silently change a recorded charge.');
   assert.equal((await listProviders(wid, owner)).budget.spentUsd, '1.250001');
-  console.log('PASS provider HTTP privacy, owner access, exact budgets, concurrent reservations, idempotency and rollback');
+  console.log('PASS provider HTTP privacy, owner access, unpaused new workspace and manual pause (D3), exact ledger totals, concurrent reservations, idempotency and rollback');
 
   await changeRole(wid, owner, editor, { role: 'editor' });
   const stale = await reserveSpend(wid, editor, request(connection.id, '1'));
@@ -103,20 +110,21 @@ export async function runProviderChecks(options: Options) {
   await rejects(dispatchSpend(wid, editor, stale.id), 404, 'Revoked editors cannot dispatch reserved work.');
   await cancelReservation(wid, owner, stale.id);
   const rotation = await reserveSpend(wid, owner, request(connection.id, '1'));
-  const updated = (await http(`${route}/providers/${connection.id}/update`, 200, { name: 'Rotated synthetic provider', credentials: { apiKey: secret }, monthlyLimitUsd: '10' })).body.connection;
+  const updated = (await http(`${route}/providers/${connection.id}/update`, 200, { name: 'Rotated synthetic provider', credentials: { apiKey: secret } })).body.connection;
   assert.equal(updated.revision, 2);
   await rejects(dispatchSpend(wid, owner, rotation.id), 409, 'Old quotes must not silently use new credentials.');
   await cancelReservation(wid, owner, rotation.id);
   const uncertain = await reserveSpend(wid, owner, request(connection.id, '1'));
   await dispatchSpend(wid, owner, uncertain.id);
   await settle(wid, uncertain.id, null);
-  assert.equal((await listProviders(wid, owner)).budget.paused, true);
-  await saveBudget(wid, owner, { monthlyLimitUsd: '10', paused: false });
-  await rejects(reserveSpend(wid, owner, request(connection.id, '1')), 409, 'Unpausing cannot bypass unresolved charges.');
+  // Owner decision D3: an unknown or overrun charge pauses nothing; the uncertain ledger row alone blocks new work.
+  assert.equal((await listProviders(wid, owner)).budget.paused, false);
+  await rejects(reserveSpend(wid, owner, request(connection.id, '1')), 409, 'Uncertain charges block new paid work without pausing.');
   await settle(wid, uncertain.id, '1.5');
-  assert.equal((await listProviders(wid, owner)).budget.paused, true, 'A charge exceeding the quote pauses spending.');
-  await saveBudget(wid, owner, { monthlyLimitUsd: '100', paused: false });
-  await rejects(reserveSpend(wid, owner, request(connection.id, '8')), 409, 'Connection caps apply independently of the legacy workspace monetary amount.');
+  assert.equal((await listProviders(wid, owner)).budget.paused, false, 'An overrun is recorded, not paused.');
+  assert.equal((await pool.query('SELECT actual_micros FROM provider_request WHERE id=$1', [uncertain.id])).rows[0].actual_micros, '1500000');
+  const uncapped = await reserveSpend(wid, owner, request(connection.id, '8'));
+  assert.equal(uncapped.created, true, 'An $8 reservation succeeds; there is no app cap (D3).');
   const reserved = await reserveSpend(wid, owner, request(connection.id, '1'));
   const inFlight = await reserveSpend(wid, owner, request(connection.id, '1'));
   await dispatchSpend(wid, owner, inFlight.id);
@@ -126,14 +134,18 @@ export async function runProviderChecks(options: Options) {
   assert.equal(afterRevoke.find(row => row.id === inFlight.id).status, 'dispatched');
   assert.equal((await pool.query('SELECT encrypted_credentials FROM provider_connection WHERE id=$1', [connection.id])).rows[0].encrypted_credentials, null);
   await settle(wid, inFlight.id, '0.5');
-  console.log('PASS revocation, stale credentials, owner cancellation and uncertain/over-estimate reconciliation');
+  console.log('PASS revocation, stale credentials, owner cancellation and uncertain/over-estimate reconciliation without automatic pause (D3)');
 
   const rolloverWorkspace = await workspace();
   const rollConnection = (await saveProvider(rolloverWorkspace, owner, input)).connection.id;
-  await saveBudget(rolloverWorkspace, owner, { monthlyLimitUsd: '10', paused: false });
+  await saveBudget(rolloverWorkspace, owner, { paused: false });
   const old = await reserveSpend(rolloverWorkspace, owner, request(rollConnection, '6'));
   await pool.query("UPDATE provider_request SET budget_month=(date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')-interval '1 month')::date WHERE id=$1", [old.id]);
-  await rejects(reserveSpend(rolloverWorkspace, owner, request(rollConnection, '5')), 409, 'Prior-month outstanding work must still consume available budget.');
+  // Owner decision D3: prior-month outstanding work still counts in current usage, but no cap refuses the next reservation.
+  assert.equal((await listProviders(rolloverWorkspace, owner)).budget.reservedUsd, '6.000000', 'Prior-month outstanding work stays in current usage.');
+  const later = await reserveSpend(rolloverWorkspace, owner, request(rollConnection, '5'));
+  assert.equal(later.created, true);
+  await cancelReservation(rolloverWorkspace, owner, later.id);
   await dispatchSpend(rolloverWorkspace, owner, old.id);
   const currentMonth = await pool.query("SELECT budget_month=date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')::date AS current FROM provider_request WHERE id=$1", [old.id]);
   assert.equal(currentMonth.rows[0].current, true, 'Dispatch must move its charge period to the actual month.');
@@ -146,8 +158,7 @@ export async function runProviderChecks(options: Options) {
   await settle(rolloverWorkspace, overflow.id, null);
   const overflowRow = (await pool.query('SELECT status,actual_micros,provider_reference FROM provider_request WHERE id=$1', [overflow.id])).rows[0];
   assert.deepEqual(overflowRow, { status: 'uncertain', actual_micros: null, provider_reference: 'synthetic-overflow' });
-  assert.equal((await listProviders(rolloverWorkspace, owner)).budget.paused, true);
-  await saveBudget(rolloverWorkspace, owner, { monthlyLimitUsd: '10', paused: false });
+  assert.equal((await listProviders(rolloverWorkspace, owner)).budget.paused, false, 'An oversized report stays uncertain without pausing (D3).');
   await rejects(reserveSpend(rolloverWorkspace, owner, request(rollConnection, '1')), 409, 'An oversized reported charge must block further spending.');
   await rejects(cancelReservation(rolloverWorkspace, owner, overflow.id), 409, 'An owner cannot cancel an uncertain charge.');
 
@@ -185,5 +196,5 @@ export async function runProviderChecks(options: Options) {
     }
   }
   await assertCredentialKeys();
-  console.log('PASS month rollover, encrypted persistence, missing keys and atomic key rotation; no provider traffic');
+  console.log('PASS outstanding month reporting without a cap (D3), encrypted persistence, missing keys and atomic key rotation; no provider traffic');
 }

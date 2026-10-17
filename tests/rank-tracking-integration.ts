@@ -44,7 +44,7 @@ export async function runRankTrackingChecks(){
     const workspace=randomUUID(),project=randomUUID();await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Rank management fixture')",[workspace]);
     for(const [uid,role]of [[owner,'owner'],[admin,'admin'],[editor,'editor'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[workspace,uid,role]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Rank management','https://example.com',$3,'infinity')",[project,workspace,randomUUID()]);
-    const connection=(await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic catalog',credentials:{login:'rank@example.com',password:'synthetic-never-live'},monthlyLimitUsd:'0'})).connection.id;
+    const connection=(await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic catalog',credentials:{login:'rank@example.com',password:'synthetic-never-live'}})).connection.id;
     return {workspace,project,connection};
   }
   const creation=(f:Fixture,extra:Record<string,unknown>={})=>({requestId:randomUUID(),connectionId:f.connection,name:'Example tracking',domain:'Example.COM.',countryCode:2840,locationCode:2840,languageCode:'en',devices:'both',depth:100,maxCrawlPages:1,...extra});
@@ -68,7 +68,7 @@ export async function runRankTrackingChecks(){
     // Run before a successful catalog is cached: the free fetch must not carry stale authorization across its await.
     await heldCatalog(f,()=>role(f,editor,'viewer'),404);await role(f,editor,'editor');
     await heldCatalog(revoked,()=>revokeProvider(revoked.workspace,owner,revoked.connection),404);
-    await heldCatalog(f,()=>saveProvider(f.workspace,owner,{name:'Rotated synthetic catalog',credentials:{login:'rank@example.com',password:'replacement-never-live'},monthlyLimitUsd:'0'},f.connection),409);
+    await heldCatalog(f,()=>saveProvider(f.workspace,owner,{name:'Rotated synthetic catalog',credentials:{login:'rank@example.com',password:'replacement-never-live'}},f.connection),409);
     await assert.rejects(getRankCatalog(f.project,viewer,{connectionId:f.connection},send),failed(404));
     await assert.rejects(getRankCatalog(f.project,owner,{connectionId:foreign.connection},send),failed(404));
     console.log('PASS free catalog awaits recheck live role, connection revocation and workspace binding');

@@ -126,7 +126,7 @@ export async function getContentSupport(projectId:string,userId:string,params=ne
  if([...params.keys()].some(k=>k!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one content assessment cursor.');
  return withSupportProject(projectId,userId,false,async(c,p)=>{const scope={projectId,list:'ai-content-support'},cursor=readContentCursor(params.get('cursor'),scope),rows=(await c.query('SELECT id,created_at FROM ai_content_support_run WHERE project_id=$1 AND($2::timestamptz IS NULL OR(created_at,id)<($2::timestamptz,$3::uuid))ORDER BY created_at DESC,id DESC LIMIT 21',[p.id,cursor?.at??null,cursor?.id??null])).rows;
   const runs=[];for(const row of rows.slice(0,20))runs.push((await detail(c,p,row.id)).run);
-  const connections=(await c.query("SELECT id,name,revision,check_status AS \"checkStatus\",monthly_limit_micros FROM provider_connection WHERE workspace_id=$1 AND provider='openrouter' AND revoked_at IS NULL ORDER BY created_at,id",[p.workspaceId])).rows.map(({monthly_limit_micros,...v})=>({...v,monthlyLimitUsd:usd(monthly_limit_micros)}));
+  const connections=(await c.query("SELECT id,name,revision,check_status AS \"checkStatus\" FROM provider_connection WHERE workspace_id=$1 AND provider='openrouter' AND revoked_at IS NULL ORDER BY created_at,id",[p.workspaceId])).rows;
   return boundedSupport({version:'ai-content-support-list-v1',role:p.role,projectId,canQuote:p.role==='owner',admission:'owner-evaluation',semanticConclusions:'unverified',connections,runs,nextCursor:rows.length>20?contentCursor({id:rows[19].id,createdAt:rows[19].created_at},scope):null});
  });
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { credentialKeys, decryptCredentials, encryptCredentials } from '../src/server/credential-vault.ts';
-import { providerAccountCheck, saveProviderLimit, usd, usdMicros } from '../src/server/providers.ts';
+import { providerAccountCheck, saveBudget, saveProvider, usd, usdMicros } from '../src/server/providers.ts';
 import { reserveSpend, settleSpend } from '../src/server/spending.ts';
 
 test('versioned authenticated encryption rejects tampering, missing keys and cross-resource substitution', () => {
@@ -61,14 +61,15 @@ test('reservation validation rejects malformed and zero estimates before touchin
   }
 });
 
-test('cap edits reject malformed revisions, amounts and extra credential fields before database access', async () => {
-  const valid = { revision: 1, expectedMonthlyLimitUsd: '1.000000', monthlyLimitUsd: '0' };
-  for (const input of [
-    { ...valid, revision: 0 }, { ...valid, revision: 1.5 }, { ...valid, revision: 2_147_483_648 },
-    { ...valid, expectedMonthlyLimitUsd: 'NaN' }, { ...valid, monthlyLimitUsd: '1e3' },
-    { ...valid, monthlyLimitUsd: '1000000.000001' }, { ...valid, credentials: { apiKey: 'never-read' } },
-    { revision: 1, monthlyLimitUsd: '1' }, { ...valid, monthlyLimitUsd: null },
-  ]) await assert.rejects(saveProviderLimit(randomUUID(), randomUUID(), randomUUID(), input), { name: 'ZodError' });
+// Owner decision D3: the cap route and fields are gone; strict schemas refuse them instead of ignoring them.
+test('removed cap fields and malformed pause bodies are refused before database access', async () => {
+  const connection = { name: 'Synthetic', credentials: { apiKey: 'never-read' } };
+  for (const amount of ['0', '10', '1e3', null]) {
+    await assert.rejects(saveProvider(randomUUID(), randomUUID(), { ...connection, provider: 'openrouter', monthlyLimitUsd: amount }), { name: 'ZodError' });
+    await assert.rejects(saveProvider(randomUUID(), randomUUID(), { ...connection, monthlyLimitUsd: amount }, randomUUID()), { name: 'ZodError' });
+    await assert.rejects(saveBudget(randomUUID(), randomUUID(), { paused: true, monthlyLimitUsd: amount }), { name: 'ZodError' });
+  }
+  for (const input of [{ paused: 'yes' }, { paused: false, extra: true }, {}, null]) await assert.rejects(saveBudget(randomUUID(), randomUUID(), input), { name: 'ZodError' });
 });
 
 test('provider account checks use fixed read-only URLs, reject redirects, bound responses and redact errors', async () => {

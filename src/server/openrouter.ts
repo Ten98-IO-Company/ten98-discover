@@ -94,9 +94,10 @@ export async function readOpenRouterRoutes(credentials:unknown,models:PromptMode
 export async function readSuggestionRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch,profile?:OpenRouterRequestProfile,pinnedTag?:string){return (await readRoutes(credentials,[model],suggestionOutputTokens,send,true,profile,pinnedTag?[pinnedTag]:undefined))[0];}
 export async function readContentSupportRoute(credentials:unknown,model:OpenRouterModel,send:typeof fetch=fetch,pinnedTag?:string){return (await readRoutes(credentials,[model],contentSupportLimits.outputTokens,send,true,openRouterTextProfile,pinnedTag?[pinnedTag]:undefined))[0];}
 export type ExecutionResult={text:string;resolvedModel:string;provider:string;finishReason:string;citations:{url:string;title:string|null}[];promptTokens:number|null;completionTokens:number|null;receivedAt:string};
-export type ExecutionOutcome={cost:string|null;reference:string|null;result:ExecutionResult|null;diagnostic:string|null;pause:boolean;evidence:Record<string,unknown>};
+// Owner decision D3: an outcome never pauses spending; an unknown cost settles uncertain and that ledger row blocks new work.
+export type ExecutionOutcome={cost:string|null;reference:string|null;result:ExecutionResult|null;diagnostic:string|null;evidence:Record<string,unknown>};
 export function unknownExecution(reference:string|null=null,diagnostic='The provider charge is unresolved. Reconcile this request before spending again.'):ExecutionOutcome{
-  return {cost:null,reference,result:null,diagnostic,pause:true,evidence:{source:'response',generationId:reference,reportedCost:null}};
+  return {cost:null,reference,result:null,diagnostic,evidence:{source:'response',generationId:reference,reportedCost:null}};
 }
 function costValue(value:unknown){if(!(value instanceof ExactCost))invalid();const micros=decimalSumMicros([{price:value.source,count:1}]);return {reported:value.source,cost:micros>1_000_000_000_000n?null:usd(micros)};}
 const finalReasons=new Set(['stop','length','content_filter','tool_calls','error']);
@@ -122,8 +123,8 @@ export function parseExecutionOutcome(body:unknown,httpStatus:number,headerId:st
     outcome.evidence={source:'response',generationId:body.id,model:body.model,provider:body.provider,created:body.created,httpStatus,reportedCost:charge.reported,isByok:usage.is_byok,
       upstreamReportedCost:usage.cost_details?.upstream_inference_cost instanceof ExactCost?usage.cost_details.upstream_inference_cost.source:null};
     if(!Array.isArray(body.choices)||body.choices.length!==1||!object(body.choices[0])||!finalReason(body.choices[0].finish_reason))invalid();
-    outcome.cost=charge.cost;outcome.pause=usage.is_byok||charge.cost===null;
-    outcome.diagnostic=usage.is_byok?'Upstream BYOK was used unexpectedly. The recorded credit charge excludes the provider invoice; spending is paused.':charge.cost===null?'The reported charge exceeds supported accounting limits.':null;
+    outcome.cost=charge.cost;
+    outcome.diagnostic=usage.is_byok?'Upstream BYOK was used unexpectedly. The recorded credit charge excludes the provider invoice.':charge.cost===null?'The reported charge exceeds supported accounting limits.':null;
     const choice=body.choices[0],message=choice.message;
     if(httpStatus!==200||!object(message)||typeof message.content!=='string'||message.content.length>250_000||!safeText(message.content)||message.tool_calls?.length||!['stop','length','content_filter'].includes(choice.finish_reason)){
       outcome.diagnostic??='The provider charged this request but did not return a supported text answer.';return outcome;
@@ -159,7 +160,7 @@ export async function reconcileOpenRouter(credentials:unknown,id:string,route:Ro
     const {data}=await read('/generation?id='+encodeURIComponent(id),credentials,send);
     if(!object(data)||data.id!==id||data.model!==route.model||data.provider_name!==route.providerName||data.session_id!==runId||data.external_user!==actor||typeof data.created_at!=='string'||!Number.isFinite(Date.parse(data.created_at))||Math.abs(Date.parse(data.created_at)-dispatchedAt.getTime())>60_000||!finalReason(data.finish_reason)||typeof data.is_byok!=='boolean')invalid();
     const charge=costValue(data.total_cost);
-    return {cost:charge.cost,reference:id,result:null,pause:data.is_byok||charge.cost===null,diagnostic:data.is_byok?'The recovered credit charge used unsupported upstream BYOK. External provider billing is separate.':null,
+    return {cost:charge.cost,reference:id,result:null,diagnostic:data.is_byok?'The recovered credit charge used unsupported upstream BYOK. External provider billing is separate.':null,
       evidence:{source:'generation',generationId:id,reportedCost:charge.reported,model:data.model,provider:data.provider_name,createdAt:data.created_at,finishReason:data.finish_reason,isByok:data.is_byok,upstreamReportedCost:data.upstream_inference_cost instanceof ExactCost?data.upstream_inference_cost.source:null,checkedAt:new Date().toISOString()}};
   }catch{throw new FoundationError(409,'Provider evidence is unavailable, unfinished or does not match this request. Its charge remains unresolved.');}
 }

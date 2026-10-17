@@ -54,9 +54,9 @@ try {
   const replayEpoch=(await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[project])).rows[0].analytics_epoch,replayConsent={analytics:true as const,replay:true as const,epoch:trackingConsentEpoch(replayEpoch,null)},replayRequest=new Request(replayOrigin,{headers:{origin:replayOrigin,'user-agent':'Restore acceptance browser'}}),recording=await beginSessionReplay(replayRequest,{siteKey:replayKey,requestId:randomUUID(),url:replayOrigin+'/',consent:replayConsent});assert.ok(recording.token);
   const disabledReplayProject=randomUUID();await pool.query(`INSERT INTO project(id,workspace_id,name,origin,public_key,analytics_settings,retention_next_run_at)SELECT $1,workspace_id,'Disabled restored replay','https://disabled-restore.integration.test',$2,jsonb_set(analytics_settings,'{replay,enabled}','false'::jsonb),'infinity' FROM project WHERE id=$3`,[disabledReplayProject,randomUUID(),project]);
   const disabledReplayEpoch=(await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[disabledReplayProject])).rows[0].analytics_epoch;
-  const connection = (await saveProvider(workspace, owner, { name: 'Synthetic only', provider: 'openrouter', credentials: { apiKey: 'synthetic-never-live' }, monthlyLimitUsd: '10' })).connection.id;
+  const connection = (await saveProvider(workspace, owner, { name: 'Synthetic only', provider: 'openrouter', credentials: { apiKey: 'synthetic-never-live' } })).connection.id;
   await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1", [connection]);
-  await saveBudget(workspace, owner, { monthlyLimitUsd: '10', paused: false });
+  await saveBudget(workspace, owner, { paused: false });
   const reservation = () => ({ connectionId: connection, requestKey: randomUUID(), operation: 'restore.fixture', estimateUsd: '0.01', inputHash: 'a'.repeat(64) });
   const request = reservation(), reserved = await reserveSpend(workspace, owner, request);
   const protectedIds: string[] = [];
@@ -109,7 +109,7 @@ try {
   const renewedEpoch=(await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[project])).rows[0].analytics_epoch,renewedConsent={...replayConsent,epoch:trackingConsentEpoch(renewedEpoch,null)};await assert.rejects(uploadSessionReplay(replayRequest,{...oldUpload,consent:renewedConsent}),{status:409});assert.equal((await beginSessionReplay(replayRequest,{siteKey:replayKey,requestId:randomUUID(),url:replayOrigin+'/',consent:renewedConsent})).accepted,true);assert.equal((await pool.query('SELECT count(*)::int AS n FROM session_recording WHERE id=$1',[recording.recordingId])).rows[0].n,1);
   console.log('PASS restore disables enabled and disabled replay configurations, revokes old capabilities and requires fresh explicit consent without deleting history');
 
-  await saveBudget(workspace, owner, { monthlyLimitUsd: '10', paused: false });
+  await saveBudget(workspace, owner, { paused: false });
   await assert.rejects(dispatchSpend(workspace, owner, reserved.id), { status: 409 });
   assert.equal((await reserveSpend(workspace, owner, request)).status, 'cancelled', 'Same request receipt cannot regain authorization.');
   await executeKeywordResearch(reserved.id, send);
