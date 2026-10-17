@@ -1,6 +1,6 @@
 # Domain SEO reports
 
-This P49 increment adds manual organic domain overview, top pages and organic competitors to the existing ranked-keyword lookup. It is separate from serving-domain configuration and native Google imports. [Backlink research](backlink-research.md) adds two separate DataForSEO profiles through the same native receipt flow; their URL scope rules differ from organic research. Optional Ahrefs rating, unrestricted upstream datasets and the remaining P49/P52 acceptance are still required. No score is inferred from keyword or traffic estimates. This is not complete OpenSEO parity.
+This P49 increment adds manual organic domain overview, top pages and organic competitors to the existing ranked-keyword lookup. It is separate from serving-domain configuration and native Google imports. [Backlink research](backlink-research.md) adds two separate DataForSEO profiles through the same native receipt flow; their URL scope rules differ from organic research. By the owner's decision D4 (2026-10-17) there is no Ahrefs connector: the DataForSEO0–100 rank is the only domain and link rating, and every panel label that shows it names DataForSEO. Unrestricted upstream datasets and the remaining P49/P52 acceptance are still required. No score is inferred from keyword or traffic estimates. This is not complete OpenSEO parity.
 
 ## Scope and display
 
