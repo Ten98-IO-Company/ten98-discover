@@ -43,7 +43,8 @@ try {
     {kind:'research',summary:'Research note, no provider purchase.'},
   ]};
   const replies=await Promise.all([updateProjectContext(project,editor,request),updateProjectContext(project,editor,request)]);
-  context=replies[0];assert.equal(replies[1].revision,2);assert.equal(context.researchLog.length,1);assert.equal(context.researchLog[0].createdBy,editor);
+  context=replies[0];assert.equal(replies[1].revision,2);
+  for(const reply of replies)assert.equal(Object.hasOwn(reply,'replayed'),false,'Direct and cookie callers keep the unchanged DTO; only token-bearing callers see replayed.');assert.equal(context.researchLog.length,1);assert.equal(context.researchLog[0].createdBy,editor);
   assert.equal(context.competitors[0].primaryDomain,'xn--bcher-kva.example.com');assert.equal(context.competitors[0].domains.length,2);
   assert.equal(context.keyPages[0].url,'http://www.example.com/pricing?plan=team');assert.equal(context.sections[0].content,'Original <script>text only</script>');
   assert.equal(context.researchLog[0].entryDate,new Date().toISOString().slice(0,10));
