@@ -1,6 +1,6 @@
 # Native tracked links and pixels
 
-This implementation uses four workspace-owned tables in migration0058, independent of website projects and browser tracking. The migration must follow the actual0056/0057 prefix before registration and execution. Source preparation alone does not demonstrate acceptance or complete P44/P45.
+This implementation uses four workspace-owned tables in migration0058, independent of website projects and browser tracking. Migration0058 is registered after the0056/0057 prefix; the native checks run in the foundation workflow as the `ten98_tracked_assets_ci` lane and the browser harness remains opt-in. Vanity slug editing and the wider P45 sharing scope remain open.
 
 `src/lib/tracked-assets.ts` is the closed request/result contract. `src/server/tracked-assets.ts` owns validation, current authorization, HTTP collection and retained reports. There are no provider calls, destination fetches, third-party pixels, browser DOM access or new dependencies.
 
