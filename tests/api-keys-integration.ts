@@ -156,7 +156,13 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
   assert.equal(report.body.totals.customEvents, 1);
   await http(`/api/workspaces/${workspaceId}/team`, 200, bearer);
   await http(`/api/projects/${project.id}/context`, 403, { token: reader.token });
-  for (const path of ['/api/me', '/api/account/sessions', `/api/workspaces/${workspaceId}/providers`, `/api/projects/${project.id}/jobs`, `/api/projects/${project.id}/segments`]) {
+  const segmentsKey = await createApiKey(workspaceId, options.ownerId, { name: 'Saved filter reader', scopes: ['segments:read'] });
+  await http(`/api/projects/${project.id}/segments`, 200, { token: segmentsKey.token });
+  await http(`/api/projects/${project.id}/segments`, 200, bearer);
+  await http(`/api/projects/${project.id}/analytics`, 403, { token: segmentsKey.token });
+  await http(`/api/projects/${project.id}/segments`, 403, bearer, { requestId: randomUUID(), definition: { schemaVersion: 1, name: 'Never saved', query: '' } });
+  await http(`/api/projects/${project.id}/saved-keywords/list`, 403, bearer);
+  for (const path of ['/api/me', '/api/account/sessions', `/api/workspaces/${workspaceId}/providers`, `/api/projects/${project.id}/jobs`]) {
     await http(path, 403, bearer);
   }
   await http('/api/auth/sign-out', 403, bearer, {});

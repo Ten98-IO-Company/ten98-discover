@@ -65,7 +65,7 @@ Authored keyword/tag/assignment records survive raw/derived expiry until explici
 
 ## Minimum implementation seams
 
-New pure input module, new saved-keyword server module, additive migration, small existing keyword worker/publication/retention seams, Saved tab/table and existing Research row-selection action. No separate job runner, provider adapter or design framework. API routes under `/api/projects/:projectId/saved-keywords`: list, save, bulk-tags, remove, tag update/delete, export; refresh quote/start/detail/cancel/reconcile can use one narrow parent wrapper over current keyword children. All carry fresh role and revision metadata. REST/MCP release mapping remains required in P05/P06/P63, not implicitly completed by cookie UI routes.
+New pure input module, new saved-keyword server module, additive migration, small existing keyword worker/publication/retention seams, Saved tab/table and existing Research row-selection action. No separate job runner, provider adapter or design framework. API routes under `/api/projects/:projectId/saved-keywords`: list, save, bulk-tags, remove, tag update/delete, export; refresh quote/start/detail/cancel/reconcile can use one narrow parent wrapper over current keyword children. All carry fresh role and revision metadata. The two readers, `POST …/saved-keywords/list` and `POST …/saved-keywords/tags/list`, also accept an API key holding `keywords:read` and back the `ten98_list_saved_keywords` and `ten98_list_saved_keyword_tags` MCP tools (register rows P05/P06/P63); the collection GET, save, tag, removal, export and every refresh route stay cookie-only.
 
 ## Acceptance and ownership
 

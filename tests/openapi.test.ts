@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {nativeOpenApi} from '../src/server/openapi.ts';
 import {handleApi} from '../src/server/api.ts';
 import {promptBatch,promptPatch,contextOp} from '../src/server/context-input.ts';
+import {savedKeywordFilterKeys} from '../src/server/saved-keyword-input.ts';
 import {explorerQuery,explorerGroupingQuery} from '../src/server/explorer-input.ts';
 import {analyticsQuery} from '../src/server/analytics.ts';
 import {geographySearch} from '../src/lib/analytics-geography.ts';
@@ -41,16 +42,17 @@ test('Revenue inventory matches the three closed native readers and pinned curre
  }
 });
 
-test('static OpenAPI exposes exactly the supported 28 native operations with local references',()=>{
+test('static OpenAPI exposes exactly the supported 41 native operations with local references',()=>{
  assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
  const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
   assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
   assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
   const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
  }
- assert.equal(ids.length,28);assert.equal(new Set(ids).size,28);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ assert.equal(ids.length,41);assert.equal(new Set(ids).size,41);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
  const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
- const added=['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance','readContext','listContextResearch','updateContext'];
+ const added=['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance','readContext','listContextResearch','updateContext',
+  'listSegments','readSegment','listCohorts','readCohort','listAnnotations','readAnnotationTimeline','readAnnotation','listRankTrackers','readRankTracker','readRankDistribution','readRankMatrix','querySavedKeywords','listSavedKeywordTags'];
  assert.deepEqual(ids.filter(id=>!added.includes(id)).sort(),prior.sort());for(const name of added)assert.equal(ids.filter(id=>id===name).length,1);
  const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
  const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
@@ -78,6 +80,37 @@ test('context operations carry one content scope each, a body only on updateCont
  assert.deepEqual(response(base+'/update','post'),{type:'object',properties:{revision:{type:'integer',minimum:1,maximum:2147483646},replayed:{type:'boolean'}},required:['revision','replayed'],additionalProperties:false});
  assert.equal(response(base,'get').additionalProperties,true);assert.equal(Object.hasOwn(response(base,'get'),'properties'),false);
  assert.equal(response(base+'/research-log','get').properties.entries.items.additionalProperties,true);
+});
+
+test('content read families carry one scope each, a body only on the two saved-keyword readers and parameters mirroring the native parsers',()=>{
+ const base='/api/projects/{projectId}',cases=[
+  ['/segments','listSegments','segments:read',['cursor']],['/segments/{segmentId}','readSegment','segments:read',[]],['/cohorts','listCohorts','segments:read',['cursor']],['/cohorts/{cohortId}','readCohort','segments:read',[]],
+  ['/annotations','listAnnotations','annotations:read',['from','to','timeZone','search','cursor']],['/annotations/timeline','readAnnotationTimeline','annotations:read',['from','to','timeZone']],['/annotations/{annotationId}','readAnnotation','annotations:read',[]],
+  ['/rank-trackers','listRankTrackers','rank:read',['archived','cursor']],['/rank-trackers/{trackerId}','readRankTracker','rank:read',[]],['/rank-trackers/{trackerId}/distribution','readRankDistribution','rank:read',['device','runId']],['/rank-trackers/{trackerId}/matrix','readRankMatrix','rank:read',['device','search','pinned','runLimit','cursor']],
+  ['/saved-keywords/list','querySavedKeywords','keywords:read',[]],['/saved-keywords/tags/list','listSavedKeywordTags','keywords:read',[]],
+ ] as const;
+ for(const[suffix,operationId,scope,queries]of cases){
+  const item=(nativeOpenApi.paths as any)[base+suffix],method=scope==='keywords:read'?'post':'get',op=item[method];
+  assert.deepEqual(Object.keys(item),[method],operationId);assert.equal(op.operationId,operationId);assert.deepEqual(op['x-ten98-scopes'],[scope]);
+  assert.equal(Object.hasOwn(op,'requestBody'),scope==='keywords:read');
+  assert.deepEqual(op.parameters.filter((x:any)=>x.in==='query').map((x:any)=>x.name),queries);
+  for(const parameter of op.parameters.filter((x:any)=>x.name==='cursor'))assert.equal(parameter.schema.maxLength,512);
+  assert.ok(Object.values(op.responses).every((response:any)=>Object.keys(response.content).length===1));
+ }
+ const parameter=(suffix:string,name:string)=>(nativeOpenApi.paths as any)[base+suffix].get.parameters.find((x:any)=>x.name===name);
+ for(const name of ['from','to'])assert.equal(parameter('/annotations/timeline',name).required,true);
+ for(const name of ['from','to','timeZone','search'])assert.equal(parameter('/annotations',name).required,false);
+ assert.deepEqual(parameter('/rank-trackers','archived').schema,{type:'string',enum:['active','archived','all'],default:'active'});
+ assert.deepEqual(parameter('/rank-trackers/{trackerId}/distribution','device').schema,{type:'string',enum:['desktop','mobile','both'],default:'both'});
+ assert.deepEqual(parameter('/rank-trackers/{trackerId}/distribution','runId').schema,{type:'string',format:'uuid'});
+ const matrixDevice=parameter('/rank-trackers/{trackerId}/matrix','device');assert.equal(matrixDevice.required,true);assert.deepEqual(matrixDevice.schema.enum,['desktop','mobile']);
+ assert.deepEqual(parameter('/rank-trackers/{trackerId}/matrix','runLimit').schema,{type:'integer',minimum:1,maximum:26,default:12});assert.equal(parameter('/rank-trackers/{trackerId}/matrix','search').schema.maxLength,200);
+ const list=nativeOpenApi.components.schemas.SavedKeywordList as any;assert.equal(list.additionalProperties,false);assert.deepEqual(list.required,[]);assert.deepEqual(list.properties.pageSize.enum,[50,100,250]);assert.equal(list.properties.cursor.maxLength,512);
+ assert.equal(list.properties.filters.additionalProperties,false);assert.deepEqual(Object.keys(list.properties.filters.properties),[...savedKeywordFilterKeys]);
+ const cursorBody=nativeOpenApi.components.schemas.CursorBody as any;assert.deepEqual(cursorBody.required,[]);assert.equal(cursorBody.properties.cursor.maxLength,512);
+ for(const[suffix,schema]of [['/saved-keywords/list','SavedKeywordList'],['/saved-keywords/tags/list','CursorBody']])assert.deepEqual((nativeOpenApi.paths as any)[base+suffix].post.requestBody.content['application/json'].schema,{$ref:'#/components/schemas/'+schema});
+ // Excluded neighbours never enter the bearer inventory: rank catalog/locations/schedule/runs/results/history/checks, every export or refresh, and every saved-definition write.
+ for(const path of Object.keys(nativeOpenApi.paths))assert.doesNotMatch(path,/rank-trackers\/(?:catalog|locations|\{trackerId\}\/(?:runs|results|schedule|keywords|quote|update|archive))|rank-checks|\/export$|refresh|saved-keywords$|saved-keywords\/(?:remove|bulk-tags|tags\/\{)|(?:segments|cohorts|annotations)\/\{\w+\}\/(?:update|delete)$/,path);
 });
 
 test('retention specification requires month/timezone and preserves closed entry-filter and response bounds',()=>{

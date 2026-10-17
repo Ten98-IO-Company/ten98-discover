@@ -88,7 +88,7 @@ export async function runRankTrackingChecks(){
     const different=await createRankTracker(foreign.project,owner,creation(foreign),send);assert.ok(different);assert.notEqual(different.tracker.id,id);
     assert.equal((await current(f,id,viewer)).role,'viewer');await assert.rejects(current(f,id,outsider),failed(404));await assert.rejects(current(foreign,id),failed(404));
     await assert.rejects(updateRankTracker(f.project,viewer,id,settings((await current(f,id)).tracker,{name:'Forbidden'})),failed(404));
-    const listed=await listRankTrackers(f.project,viewer);assert.equal(listed.trackers.length,2);assert.ok(listed.vaultConfigured);assert.equal(listed.connections.length,1);
+    const listed=await listRankTrackers(f.project,viewer);assert.equal(listed.trackers.length,2);assert.ok(listed.vaultConfigured);assert.equal(listed.connections?.length,1);
     const catalog=await getRankCatalog(f.project,editor,{connectionId:f.connection},send);catalog.catalog.countries[0].name='Mutated caller copy';
     assert.ok(!(await getRankCatalog(f.project,editor,{connectionId:f.connection},send)).catalog.countries.some(c=>c.name==='Mutated caller copy'));
     const locals=await searchRankLocations(f.project,editor,new URLSearchParams({connectionId:f.connection,countryCode:'2840',query:'new'}),send);assert.deepEqual(locals.rows.map(r=>r.code),[1023191]);
@@ -155,6 +155,10 @@ export async function runRankTrackingChecks(){
     assert.equal((await handleApi(new Request(endpoint))).status,401);
     const read=await handleApi(new Request(endpoint,{headers:{cookie}}));assert.equal(read.status,200);const body=await read.text();for(const forbidden of ['synthetic-never-live','encrypted_credentials','account_fingerprint'])assert.ok(!body.includes(forbidden));
     const token=(await createApiKey(f.workspace,owner,{name:'No rank scope',scopes:['projects:read']})).token;assert.equal((await handleApi(new Request(endpoint,{headers:{authorization:'Bearer '+token}}))).status,403);
+    const rankToken=(await createApiKey(f.workspace,owner,{name:'Rank reader',scopes:['rank:read']})).token,bearer=(suffix:string,body?:string)=>handleApi(new Request(endpoint+suffix,{method:body===undefined?'GET':'POST',headers:{authorization:'Bearer '+rankToken,...(body===undefined?{}:{'content-type':'application/json'})},body}));
+    const bearerRead=await bearer('');assert.equal(bearerRead.status,200);const bearerBody=await bearerRead.json();assert.deepEqual(Object.keys(bearerBody).sort(),['nextCursor','role','trackers']);assert.deepEqual(bearerBody.trackers,JSON.parse(body).trackers);
+    for(const forbidden of ['synthetic-never-live','encrypted_credentials','account_fingerprint'])assert.ok(!JSON.stringify(bearerBody).includes(forbidden),forbidden);
+    assert.equal((await bearer('/'+id)).status,200);for(const suffix of ['/locations?connectionId='+f.connection+'&countryCode=2840','/'+id+'/runs','/'+id+'/schedule'])assert.equal((await bearer(suffix)).status,403,suffix);assert.equal((await bearer('/catalog',JSON.stringify({connectionId:f.connection}))).status,403,'rank:read never downloads the catalog');
     assert.equal((await handleApi(new Request(endpoint+'/'+id+'/update',{method:'POST',headers:{cookie,origin:'https://foreign.example.com','content-type':'application/json'},body:'{}'}))).status,403);
     const apiCurrent=await current(f,id),apiBody=settings(apiCurrent.tracker,{name:'Actual API mutation'});
     const write=await handleApi(new Request(endpoint+'/'+id+'/update',{method:'POST',headers:{cookie,origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify(apiBody)}));assert.equal(write.status,200);assert.equal((await write.json()).tracker.name,apiBody.name);

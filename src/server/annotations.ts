@@ -27,7 +27,7 @@ const calendarPrefix=`WITH RECURSIVE target AS (SELECT $1::text AS id,$2::text A
 const population=`selected AS MATERIALIZED (SELECT a.* FROM analytics_annotation a CROSS JOIN target t CROSS JOIN bounds b
   WHERE a.project_id=t.id AND ($3::date IS NULL OR (a.date>=b.start AND a.date<b.finish AND (a.date AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date)))`;
 
-export async function listAnnotations(projectId:unknown,userId:unknown,params:URLSearchParams){
+export async function listAnnotations(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string){
   const input=annotationQuery(params);
   return withContentProject(projectId,userId,false,async(client,p)=>{
     await prepare(client,input.range?.timeZone);const scope={projectId:p.id,list:'annotations',range:input.range,search:input.search},after=readContentCursor(input.cursor,scope);
@@ -35,9 +35,9 @@ export async function listAnnotations(projectId:unknown,userId:unknown,params:UR
       WHERE ($6::text IS NULL OR strpos(lower(note),lower($6))>0) AND ($7::timestamptz IS NULL OR (date,id)<($7::timestamptz,$8::uuid))
       ORDER BY date DESC,id DESC LIMIT 51`,[p.id,userId,input.range?.from??null,input.range?.to??null,input.range?.timeZone??'UTC',input.search,after?.at??null,after?.id??null]);
     return {role:p.role,items:rows.slice(0,50).map(dto),nextCursor:rows.length>50?contentCursor({id:rows[49].id,createdAt:rows[49].date},scope):null};
-  }).catch(handleError);
+  },apiToken,false,'annotations:read').catch(handleError);
 }
-export async function annotationTimeline(projectId:unknown,userId:unknown,params:URLSearchParams){
+export async function annotationTimeline(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string){
   const {range}=annotationQuery(params,true);
   return withContentProject(projectId,userId,false,async(client,p)=>{
     await prepare(client,range!.timeZone);
@@ -47,11 +47,11 @@ export async function annotationTimeline(projectId:unknown,userId:unknown,params
     const days=rows.map(r=>{const count=Number(r.count);if(!Number.isSafeInteger(count))throw new FoundationError(413,'Too many annotations for this timeline.');return {date:r.day,count,previews:r.previews.map(v=>dto({...v,date:new Date(v.date),created_at:new Date(v.created_at),updated_at:new Date(v.updated_at)}))};});
     const totalCount=days.reduce((n,d)=>n+d.count,0);if(!Number.isSafeInteger(totalCount))throw new FoundationError(413,'Too many annotations for this timeline.');
     return {role:p.role,range:range!,days,totalCount};
-  }).catch(handleError);
+  },apiToken,false,'annotations:read').catch(handleError);
 }
-export async function getAnnotation(projectId:unknown,userId:unknown,annotationId:unknown){
+export async function getAnnotation(projectId:unknown,userId:unknown,annotationId:unknown,apiToken?:string){
   const id=parse(z.uuid(),annotationId);
-  return withContentProject(projectId,userId,false,async(client,p)=>{await prepare(client);const row=await find(client,p.id,id);if(!row)throw unavailable();return {role:p.role,item:dto(row)};}).catch(handleError);
+  return withContentProject(projectId,userId,false,async(client,p)=>{await prepare(client);const row=await find(client,p.id,id);if(!row)throw unavailable();return {role:p.role,item:dto(row)};},apiToken,false,'annotations:read').catch(handleError);
 }
 export async function saveAnnotation(projectId:unknown,userId:unknown,raw:unknown,annotationId?:unknown){
   const id=annotationId===undefined?null:parse(z.uuid(),annotationId),uid=parse(z.uuid(),userId);

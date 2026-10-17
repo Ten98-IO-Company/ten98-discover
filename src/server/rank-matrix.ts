@@ -28,8 +28,9 @@ function query(params:URLSearchParams){const input:Record<string,unknown>={};for
 const empty=(runId:string):RankMatrixCell=>({runId,taskId:null,state:'not_in_run',resultStatus:null,position:null,rankBasis:null,absolutePosition:null,rankingUrl:null,checkedDepth:null,returnedItemCount:null,observedAt:null,retrievedAt:null,rawExpiredAt:null,dataExpiredAt:null,change:null});
 function queryError(error:unknown):never{if((error as {code?:string})?.code==='57014')throw new FoundationError(503,'This rank report took too long. Narrow the filters or number of checks.');throw error;}
 
-// One repeatable-read snapshot supplies columns, keyword identities, retention and
-// observations. Reading never reserves charges, acquires a provider key or queues work.
+// Under a cookie one repeatable-read snapshot supplies columns, keyword identities, retention and
+// observations; under an API key the read runs READ COMMITTED holding the workspace SHARE lock, so
+// config and membership writers wait. Reading never reserves charges, acquires a provider key or queues work.
 async function matrix(client:PoolClient,role:string,projectId:string,trackerId:string,input:Filters&{cursor?:string},all=false):Promise<RankMatrix>{
   await client.query("SET LOCAL statement_timeout='5s'");
   const config=(await client.query('SELECT * FROM rank_config WHERE project_id=$1 AND id=$2',[projectId,trackerId])).rows[0];
@@ -88,8 +89,8 @@ async function matrix(client:PoolClient,role:string,projectId:string,trackerId:s
   return {role,trackerId,source:{provider:'dataforseo',engine:'google',report:'organic_search'},target,enabledDevices,asOf,filters,keywordCount,columns,rows,nextCursor};
 }
 
-export async function getRankMatrix(projectId:string,userId:string,trackerId:string,params=new URLSearchParams()):Promise<RankMatrix>{
-  trackerId=parse(z.uuid(),trackerId);const input=query(params);return withContentProject(projectId,userId,false,(client,p)=>matrix(client,p.role,p.id,trackerId,input)).catch(queryError);
+export async function getRankMatrix(projectId:string,userId:string,trackerId:string,params=new URLSearchParams(),apiToken?:string):Promise<RankMatrix>{
+  trackerId=parse(z.uuid(),trackerId);const input=query(params);return withContentProject(projectId,userId,false,(client,p)=>matrix(client,p.role,p.id,trackerId,input),apiToken,false,'rank:read').catch(queryError);
 }
 export async function exportRankMatrix(projectId:string,userId:string,trackerId:string,raw:unknown,signal?:AbortSignal){
   trackerId=parse(z.uuid(),trackerId);const input=parse(z.object(filterShape).strict(),raw),started=Date.now();

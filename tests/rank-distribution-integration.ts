@@ -6,6 +6,7 @@ import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {FoundationError} from '../src/server/auth.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {saveProvider} from '../src/server/providers.ts';
+import {createApiKey} from '../src/server/api-keys.ts';
 import {compileRankPlan,rankGroupPayload,rankPlanTotal,type RankPlan} from '../src/server/rank-execution-plan.ts';
 import {getRankDistribution,type RankDistribution} from '../src/server/rank-distribution.ts';
 
@@ -152,7 +153,10 @@ export async function runRankDistributionChecks(){
     const timeout=await pool.connect();try{await timeout.query('BEGIN');await timeout.query('LOCK TABLE rank_config IN ACCESS EXCLUSIVE MODE');
       await assert.rejects(distribution(f),error=>error instanceof FoundationError&&error.status===503&&error.message==='The rank distribution took too long. Try one device or a saved check.');
     }finally{await timeout.query('ROLLBACK');timeout.release();}
-    assert.equal(calls,0);console.log('PASS current viewer/tenant scope, coherent admitted snapshot across concurrent target/expiry/removal and next-request denial, strict filters and secret-free/no-provider reads');
+    const rankReader=await createApiKey(f.workspace,owner,{name:'Rank reader',scopes:['rank:read']}),noScope=await createApiKey(f.workspace,owner,{name:'No rank scope',scopes:['projects:read']}),comparable=(value:RankDistribution)=>({...value,asOf:null});
+    assert.deepEqual(comparable(await getRankDistribution(f.project,owner,f.tracker,new URLSearchParams(),rankReader.token)),comparable(await getRankDistribution(f.project,owner,f.tracker)),'A rank:read key reads the same distribution as its issuer.');
+    await assert.rejects(getRankDistribution(f.project,owner,f.tracker,new URLSearchParams(),noScope.token),fails(403));await assert.rejects(getRankDistribution(f.project,viewer,f.tracker,new URLSearchParams(),rankReader.token),fails(404),'The key binds its issuer.');
+    assert.equal(calls,0);console.log('PASS current viewer/tenant scope, coherent admitted snapshot across concurrent target/expiry/removal and next-request denial, strict filters, bearer parity and secret-free/no-provider reads');
 
     const perf=await fixture(Array.from({length:1000},(_,index)=>'Distribution load '+index));
     const days=process.env.TEN98_RANK_DISTRIBUTION_SCALE_TEST==='1'?365:20;
