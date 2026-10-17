@@ -4,7 +4,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
-import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
+import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
 import {keywordPayload,keywordEndpoints,keywordAccountEndpoint,keywordCatalogEndpoint,keywordReconcileEndpoint,type KeywordRequest} from '../src/server/keyword-research-input.ts';
 import {refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,executeKeywordResearch,getKeywordRun,getKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch,reconcileKeywordJobs} from '../src/server/keyword-research.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
@@ -46,8 +46,8 @@ export async function runKeywordResearchChecks(){
   const workspace=randomUUID(),project=randomUUID();await pool.query('INSERT INTO workspace(id,name) VALUES($1,\'Keyword integration\')',[workspace]);
   for(const [uid,role] of [[owner,'owner'],[editor,'editor'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[workspace,uid,role]);
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Keywords','https://'||$1||'.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
-  const connection=(await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic only',credentials:{login:accountLogin,password:'synthetic-never-live'},monthlyLimitUsd:'10'})).connection;
-  await saveBudget(workspace,owner,{monthlyLimitUsd:'10',paused:false});
+  const connection=(await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic only',credentials:{login:accountLogin,password:'synthetic-never-live'}})).connection;
+  await saveBudget(workspace,owner,{paused:false});
   await refreshKeywordMarkets(project,owner,{connectionId:connection.id},send);
   return {workspace,project,connectionId:connection.id,request:{connectionId:connection.id,mode:'overview',keywords:['example'],locationCode:2840,languageCode:'en',limit:100}};
  }
@@ -69,30 +69,39 @@ export async function runKeywordResearchChecks(){
   console.log('PASS keyword quote/actor/project ownership, idempotent queued start and single paid dispatch');
 
   const expired=await quote(f);await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[expired.id]);await assert.rejects(startKeywordResearch(f.project,owner,{quoteId:expired.id,requestKey:randomUUID()}),{status:409});
-  const revision=await quote(f);await saveProvider(f.workspace,owner,{name:'Rotated synthetic',credentials:{login:accountLogin,password:'synthetic-rotation'},monthlyLimitUsd:'10'},f.connectionId);await assert.rejects(startKeywordResearch(f.project,owner,{quoteId:revision.id,requestKey:randomUUID()}),{status:409});
+  const revision=await quote(f);await saveProvider(f.workspace,owner,{name:'Rotated synthetic',credentials:{login:accountLogin,password:'synthetic-rotation'}},f.connectionId);await assert.rejects(startKeywordResearch(f.project,owner,{quoteId:revision.id,requestKey:randomUUID()}),{status:409});
   const queue=(await getBoss()),originalSend=queue.send.bind(queue);const rollbackQuote=await quote(f);let queueCalls=0;
   queue.send=(async()=>{queueCalls++;throw new Error('Synthetic enqueue failure.');}) as typeof queue.send;
   const rollbackKey=randomUUID();try{await assert.rejects(startKeywordResearch(f.project,owner,{quoteId:rollbackQuote.id,requestKey:rollbackKey}));}finally{queue.send=originalSend;}
   assert.equal(queueCalls,1);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1 AND request_key=$2',[f.workspace,rollbackKey])).rowCount,0);
-  const budget=await fixture();await saveProviderLimit(budget.workspace,owner,budget.connectionId,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.02'});const bq1=await quote(budget),bq2=await quote(budget);
-  const concurrent=await Promise.allSettled([startKeywordResearch(budget.project,owner,{quoteId:bq1.id,requestKey:randomUUID()}),startKeywordResearch(budget.project,owner,{quoteId:bq2.id,requestKey:randomUUID()})]);assert.equal(concurrent.filter(r=>r.status==='fulfilled').length,1);
-  console.log('PASS keyword expired/revised quote rejection, enqueue rollback and concurrent budget reservation');
+  // Owner decision D3: no app cap, so concurrent starts of different quotes both commit; starts of one quote still serialize to one run.
+  const budget=await fixture(),bq1=await quote(budget),bq2=await quote(budget);
+  const concurrent=await Promise.all([startKeywordResearch(budget.project,owner,{quoteId:bq1.id,requestKey:randomUUID()}),startKeywordResearch(budget.project,owner,{quoteId:bq2.id,requestKey:randomUUID()})]);
+  for(const {run} of concurrent){assert.equal((await pool.query('SELECT id FROM provider_request WHERE id=$1',[run.id])).rowCount,1);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=$1',[run.id])).rowCount,1);}
+  const bq3=await quote(budget),same=await Promise.allSettled([startKeywordResearch(budget.project,owner,{quoteId:bq3.id,requestKey:randomUUID()}),startKeywordResearch(budget.project,owner,{quoteId:bq3.id,requestKey:randomUUID()})]);
+  assert.equal(same.filter(r=>r.status==='fulfilled').length,1);assert.ok(same.some(r=>r.status==='rejected'&&r.reason.status===409&&/This quote already started a run\./.test(r.reason.message)));
+  assert.equal((await pool.query('SELECT id FROM keyword_research_run WHERE quote_id=$1',[bq3.id])).rowCount,1);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,3);
+  console.log('PASS keyword expired/revised quote rejection, enqueue rollback, concurrent reservations without an app cap (D3) and one run per quote');
 
   const removed=await fixture();const removedRun=await start(removed,editor);await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[removed.workspace,editor]);let before=paidCalls;await executeKeywordResearch(removedRun.run.id,send);assert.equal(paidCalls,before);assert.equal((await charge(removedRun.run.id)).status,'cancelled');
   const revoked=await fixture(),revokedRun=await start(revoked);await revokeProvider(revoked.workspace,owner,revoked.connectionId);await executeKeywordResearch(revokedRun.run.id,send);assert.equal((await getKeywordRun(revoked.project,owner,revokedRun.run.id)).run.status,'cancelled');assert.equal(paidCalls,before);
   const cancelled=await start(f);await cancelKeywordResearch(f.project,owner,cancelled.run.id,{});await executeKeywordResearch(cancelled.run.id,send);assert.equal(paidCalls,before);
-  const over=await fixture(),overRun=await start(over);mode='over';await executeKeywordResearch(overRun.run.id,send);assert.equal((await getKeywordRun(over.project,owner,overRun.run.id)).run.actualUsd,'0.030000');assert.equal((await getKeywordResearch(over.project,owner)).spendingPaused,true);
+  const over=await fixture(),overRun=await start(over);mode='over';await executeKeywordResearch(overRun.run.id,send);assert.equal((await getKeywordRun(over.project,owner,overRun.run.id)).run.actualUsd,'0.030000');
+  // Owner decision D3: a reported overrun is recorded as charged and pauses nothing.
+  assert.equal((await getKeywordResearch(over.project,owner)).spendingPaused,false);assert.equal((await start(over)).run.status,'queued');
   const malformed=await fixture(),badRun=await start(malformed);mode='invalid';await executeKeywordResearch(badRun.run.id,send);assert.equal((await getKeywordRun(malformed.project,owner,badRun.run.id)).run.status,'failed');assert.equal((await charge(badRun.run.id)).status,'settled');
-  console.log('PASS keyword revoked/cancelled dispatch prevention, above-estimate pause and charged malformed results');
+  console.log('PASS keyword revoked/cancelled dispatch prevention, above-estimate charge recorded without pausing (D3) and charged malformed results');
 
-  const uncertain=await fixture(),uncertainRun=await start(uncertain);mode='unknown';await executeKeywordResearch(uncertainRun.run.id,send);before=paidCalls;assert.equal((await charge(uncertainRun.run.id)).status,'uncertain');assert.equal((await getKeywordResearch(uncertain.project,owner)).spendingPaused,true);
-  await saveBudget(uncertain.workspace,owner,{monthlyLimitUsd:'10',paused:false});await assert.rejects(start(uncertain),{status:409});await executeKeywordResearch(uncertainRun.run.id,send);assert.equal(paidCalls,before);
+  const uncertain=await fixture(),uncertainRun=await start(uncertain);mode='unknown';await executeKeywordResearch(uncertainRun.run.id,send);before=paidCalls;assert.equal((await charge(uncertainRun.run.id)).status,'uncertain');
+  // Owner decision D3: an uncertain charge blocks new paid work through the ledger without pausing the workspace.
+  assert.equal((await getKeywordResearch(uncertain.project,owner)).spendingPaused,false);await assert.rejects(start(uncertain),{status:409});await executeKeywordResearch(uncertainRun.run.id,send);assert.equal(paidCalls,before);
   await assert.rejects(reconcileKeywordResearch(uncertain.project,editor,uncertainRun.run.id,{connectionId:uncertain.connectionId},send),{status:404});
   const matching={id:'matched-provider-task',url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(uncertain.request,uncertainRun.run.id),status:'20000',cost:0.01212};
   for(const items of [[{...matching,status:'20100',cost:0}],[{...matching,status:'40601',cost:0}],[{...matching,status:'40602',cost:0}],[{...matching,status:'29999',cost:0}],[],[{...matching,metadata:{...matching.metadata,tag:'foreign'}}],[matching,matching],Array(1000).fill(matching)]){reconcileItems=items;assert.equal((await reconcileKeywordResearch(uncertain.project,owner,uncertainRun.run.id,{connectionId:uncertain.connectionId},send)).reconciliation.status,'inconclusive');assert.equal((await charge(uncertainRun.run.id)).status,'uncertain');}
   reconcileItems=[matching];account='different-account@keywords.integration.test';assert.equal((await reconcileKeywordResearch(uncertain.project,owner,uncertainRun.run.id,{connectionId:uncertain.connectionId},send)).reconciliation.status,'inconclusive');account=accountLogin;
-  await saveProvider(uncertain.workspace,owner,{name:'Same-account rotation',credentials:{login:accountLogin,password:'synthetic-rotation'},monthlyLimitUsd:'10'},uncertain.connectionId);
+  await saveProvider(uncertain.workspace,owner,{name:'Same-account rotation',credentials:{login:accountLogin,password:'synthetic-rotation'}},uncertain.connectionId);
   assert.equal((await reconcileKeywordResearch(uncertain.project,owner,uncertainRun.run.id,{connectionId:uncertain.connectionId},send)).reconciliation.status,'matched');assert.equal((await charge(uncertainRun.run.id)).status,'settled');assert.equal((await getKeywordRun(uncertain.project,owner,uncertainRun.run.id)).run.status,'reconciled');assert.equal(paidCalls,before);
+  assert.equal((await getKeywordResearch(uncertain.project,owner)).spendingPaused,false);assert.equal((await start(uncertain)).run.status,'queued');assert.equal(paidCalls,before);
   console.log('PASS keyword uncertain-charge block, no replay and exact owner-only reconciliation including rotated credentials');
 
   mode='ok';const crashed=await fixture(),crashRun=await start(crashed);await pool.query("UPDATE provider_request SET status='dispatched' WHERE id=$1",[crashRun.run.id]);await pool.query("UPDATE keyword_research_run SET status='running',dispatched_at=clock_timestamp()-interval '2 minutes' WHERE id=$1",[crashRun.run.id]);await reconcileKeywordJobs();assert.equal((await charge(crashRun.run.id)).status,'uncertain');assert.equal(paidCalls,before);
@@ -116,7 +125,12 @@ export async function runKeywordResearchChecks(){
   const recorded=(await pool.query('SELECT reconciliation_evidence FROM keyword_research_run WHERE id=$1',[boundRun.run.id])).rows[0];
   reconcileItems=[{...matching,id:'different-task-id',metadata:keywordPayload(bound.request,boundRun.run.id)}];assert.equal((await reconcileKeywordResearch(bound.project,owner,boundRun.run.id,{connectionId:bound.connectionId},send)).reconciliation.status,'inconclusive');assert.equal((await charge(boundRun.run.id)).status,'uncertain');assert.deepEqual((await pool.query('SELECT reconciliation_evidence FROM keyword_research_run WHERE id=$1',[boundRun.run.id])).rows[0],recorded);
   reconcileItems=[{...matching,id:knownReference,metadata:keywordPayload(bound.request,boundRun.run.id)}];assert.equal((await reconcileKeywordResearch(bound.project,owner,boundRun.run.id,{connectionId:bound.connectionId},send)).reconciliation.status,'matched');
-  mode='pending';const pending=await fixture(),pendingRun=await start(pending);await executeKeywordResearch(pendingRun.run.id,send);assert.equal((await charge(pendingRun.run.id)).status,'uncertain');assert.equal((await getKeywordResearch(pending.project,owner)).spendingPaused,true);
+  mode='pending';const pending=await fixture(),pendingRun=await start(pending);await executeKeywordResearch(pendingRun.run.id,send);assert.equal((await charge(pendingRun.run.id)).status,'uncertain');
+  // Owner decision D3: the pending charge blocks Start through the ledger, not a pause, until an owner reconciles it.
+  assert.equal((await getKeywordResearch(pending.project,owner)).spendingPaused,false);await assert.rejects(start(pending),{status:409});
+  const pendingReference=(await pool.query('SELECT provider_reference FROM provider_request WHERE id=$1',[pendingRun.run.id])).rows[0].provider_reference;
+  reconcileItems=[{...matching,id:pendingReference??'pending-provider-task',metadata:keywordPayload(pending.request,pendingRun.run.id)}];assert.equal((await reconcileKeywordResearch(pending.project,owner,pendingRun.run.id,{connectionId:pending.connectionId},send)).reconciliation.status,'matched');
+  assert.equal((await charge(pendingRun.run.id)).status,'settled');assert.equal((await getKeywordResearch(pending.project,owner)).spendingPaused,false);assert.equal((await start(pending)).run.status,'queued');
   console.log('PASS stale crash snapshots cannot overwrite settled or uncertain provider evidence; pending provider cost is not final');
 
   mode='ok';const worker=await fixture(),workerRun=await start(worker);const job=(await pool.query('SELECT retry_limit FROM pgboss.job WHERE id=$1',[workerRun.run.id])).rows[0];assert.equal(job.retry_limit,0);await pool.query('UPDATE pgboss.job SET priority=100 WHERE id=$1',[workerRun.run.id]);

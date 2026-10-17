@@ -27,7 +27,7 @@ export async function runRankMatrixChecks(){
     await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Synthetic rank matrix')",[f.workspace]);
     for(const [id,role]of [[owner,'owner'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[f.workspace,id,role]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Matrix','https://example.com',$3,'infinity')",[f.project,f.workspace,randomUUID()]);
-    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic matrix provider',credentials:{login:'matrix@integration.test',password:'synthetic-only'},monthlyLimitUsd:'100'})).connection.id;
+    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic matrix provider',credentials:{login:'matrix@integration.test',password:'synthetic-only'}})).connection.id;
     await pool.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages)
       VALUES($1,$2,$3,'Matrix','example.com',2840,'United States','Country',2840,'US','en','English',now(),'both',100,1)`,[f.tracker,f.workspace,f.project]);
     await pool.query(`INSERT INTO rank_keyword(id,workspace_id,project_id,config_id,keyword,match_case) SELECT k.id,$2,$3,$4,k.keyword,k."matchCase" FROM jsonb_to_recordset($1::jsonb) AS k(id uuid,keyword text,"matchCase" boolean)`,[JSON.stringify(f.keywords),f.workspace,f.project,f.tracker]);return f;

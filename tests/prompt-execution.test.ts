@@ -42,11 +42,12 @@ test('strict inputs and catalog readiness reject hidden billable options or rout
 test('known terminal charges survive malformed answers; missing finality stays uncertain',()=>{
  const result=parseExecutionOutcome(body(),200,'gen-test-one',route,now);assert.equal(result.cost,'0.000013');assert.equal(result.result?.citations.length,0);assert.equal(result.evidence.reportedCost,'0.000012345');
  for(const malformed of [null,{content:12},{content:'escaped\0NUL'},{content:'lone\ud800'},{content:'x',annotations:[{type:'url_citation',url_citation:{url:'https://example.test',title:'unsafe\0'}}]},{content:'x',annotations:'bad'}]){const value=body();value.choices[0].message=malformed;const out=parseExecutionOutcome(value,200,'gen-test-one',route,now);assert.equal(out.cost,'0.000013');assert.equal(out.result,null);assert.ok(out.diagnostic);}
- for(const reason of [null,'pending','unknown',200]){const value=body();value.choices[0].finish_reason=reason;const out=parseExecutionOutcome(value,200,'gen-test-one',route,now);assert.equal(out.cost,null);assert.equal(out.evidence.reportedCost,'0.000012345');}
+ for(const reason of [null,'pending','unknown',200]){const value=body();value.choices[0].finish_reason=reason;const out=parseExecutionOutcome(value,200,'gen-test-one',route,now);assert.equal(out.cost,null);assert.equal(out.evidence.reportedCost,'0.000012345');assert.ok(!('pause' in out));}
  for(const change of [{model:'other'},{provider:'Other'},{created:0},{id:'gen-other'}])assert.equal(parseExecutionOutcome({...body(),...change},200,'gen-test-one',route,now).cost,null);
  const wrongCost=body();wrongCost.usage.cost='0.1';assert.equal(parseExecutionOutcome(wrongCost,200,null,route,now).cost,null);
- const huge=body();huge.usage.cost=new ExactCost('1000001');const oversized=parseExecutionOutcome(huge,200,null,route,now);assert.equal(oversized.cost,null);assert.equal(oversized.evidence.reportedCost,'1000001');assert.equal(oversized.pause,true);
- const byok=body();byok.usage.is_byok=true;const actual=parseExecutionOutcome(byok,200,null,route,now);assert.equal(actual.cost,'0.000013');assert.equal(actual.pause,true);assert.match(actual.diagnostic!,/invoice/);
+ // Owner decision D3: outcomes carry no pause flag; an unknown cost stays uncertain and the ledger blocks new work.
+ const huge=body();huge.usage.cost=new ExactCost('1000001');const oversized=parseExecutionOutcome(huge,200,null,route,now);assert.equal(oversized.cost,null);assert.equal(oversized.evidence.reportedCost,'1000001');assert.ok(!('pause' in oversized));
+ const byok=body();byok.usage.is_byok=true;const actual=parseExecutionOutcome(byok,200,null,route,now);assert.equal(actual.cost,'0.000013');assert.equal(actual.evidence.isByok,true);assert.ok(!('pause' in actual));assert.match(actual.diagnostic!,/invoice/);assert.doesNotMatch(actual.diagnostic!,/paused/);
  const negative=body();negative.usage.cost=new ExactCost('-1');assert.equal(parseExecutionOutcome(negative,200,null,route,now).cost,null);
 });
 test('only real safe HTTPS citation annotations are retained and truncation preserves Unicode',()=>{

@@ -207,18 +207,19 @@ outside presentation cuts. Quotes do not send an inference.
 ceiling, creates one run and queues one job with retryLimit0. The quote lasts five
 minutes, measured by native SQL time after waits. Current owner/source receipts,
 original source clocks, key identity, connection revision, exact model/provider
-route and conservative prices are rechecked before dispatch. The editable
-connection monthly cap, master pause and any uncertain workspace charge apply;
-there is no additional app-wide cap. `POST /runs/:runId/cancel` takes `requestId`
+route and conservative prices are rechecked before dispatch. The manual pause
+and any uncertain workspace charge apply; there is no per-connection or
+workspace money limit (owner decision D3). `POST /runs/:runId/cancel` takes `requestId`
 and cancels only unsent work. A dispatched request is never automatically retried.
 
 The existing provider transport persists an actual generation header before body
 parsing. Known charges settle even when output is refused, incomplete, too large,
 invalid, or current authority changed. An unknown charge stays `actualUsd:null`,
-marks the run uncertain and pauses further spending. `POST /runs/:runId/reconcile`
+marks the run uncertain and blocks new paid work until it is reconciled.
+`POST /runs/:runId/reconcile`
 with a stable `requestId` reads only the original generation metadata, requiring
 the original key/model/provider/session/actor/time identity. It can reconcile after
-source purge, never recreates text and leaves spending paused for owner review.
+source purge and never recreates text.
 
 Inputs/results inherit the earliest original query-quote and audit completion
 retention clocks; a new quote/response does not renew them. Policy shortening

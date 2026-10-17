@@ -73,7 +73,7 @@ try{
    }
    receipts.set(body.requestId,id);
   }
-  if(path.endsWith('/reconcile'))reconciliation={status:'matched',message:'Matched the saved provider evidence. Spending remains paused.',replayed:!!prior};
+  if(path.endsWith('/reconcile'))reconciliation={status:'matched',message:'Provider task evidence was recovered. Available results can be fetched without submitting another paid check.',replayed:!!prior};
   let data=envelope(id,path.endsWith('/cancel')?undefined:!!prior);if(reconciliation)data.reconciliation=reconciliation;
   if(mode==='drop')return route.abort('failed');
   if(mode==='hold'){held={route,data};return;}
@@ -116,7 +116,7 @@ try{
  const current=runs.get(runId);current.status='partial';current.costStatus='uncertain';current.tasks.forEach(t=>t.status='uncertain');current.dispatches.forEach(d=>{d.phase='uncertain';d.costStatus='uncertain';d.canReconcile=true;d.dispatchedAt=at;});
  await page.getByRole('button',{name:'Refresh check',exact:true}).click();await page.getByText(/Some charges are unresolved/).waitFor();await page.getByText('Known charges $0.000000',{exact:true}).waitFor();assert.equal(await page.getByText('Unconfirmed',{exact:true}).count(),1);
  await page.getByLabel('Recovery DataForSEO connection',{exact:true}).selectOption(cid);nextWrite='drop';await page.getByRole('button',{name:'Recover Request 1',exact:true}).click();await page.getByRole('button',{name:'Retry same request',exact:true}).waitFor();const recovery=structuredClone(posts.at(-1));
- await page.getByRole('button',{name:'Retry same request',exact:true}).click();await page.getByText(/Spending remains paused/).waitFor();assert.deepEqual(posts.at(-1),recovery);assert.equal(starts,1);await page.getByText('Organic rank 3',{exact:true}).waitFor();await page.getByText('Not found in observed coverage',{exact:true}).waitFor();assert.equal(await page.getByRole('link',{name:/example.com/}).count(),0);
+ await page.getByRole('button',{name:'Retry same request',exact:true}).click();await page.getByText(/Provider task evidence was recovered/).waitFor();assert.deepEqual(posts.at(-1),recovery);assert.equal(starts,1);await page.getByText('Organic rank 3',{exact:true}).waitFor();await page.getByText('Not found in observed coverage',{exact:true}).waitFor();assert.equal(await page.getByRole('link',{name:/example.com/}).count(),0);
  console.log('PASS owner-only explicit free recovery, unknown≠zero cost and plain result URL; no paid resend or unpause.');
  const observed=structuredClone(current.tasks[0]);Object.assign(current.tasks[0],{dataExpiredAt:at,position:null,rankBasis:null,absolutePosition:null,rankingUrl:null,serpFeatures:null,checkedDepth:null,returnedItemCount:null});
  await page.getByRole('button',{name:'Refresh check',exact:true}).click();await page.getByRole('region',{name:'Rank observations'}).getByText('Expired',{exact:true}).first().waitFor();current.tasks[0]=observed;

@@ -10,7 +10,7 @@ import {rankDispatchSnapshot,rankRecoveryAvailable,applyReconciledRankOutcome} f
 import {getRankRun} from './rank-execution.ts';
 
 const inputSchema=z.object({requestId:z.uuid(),dispatchId:z.uuid(),connectionId:z.uuid()}).strict();
-const inconclusive='The provider evidence could not uniquely confirm every captured task. The recorded charges and spending pause are unchanged.';
+const inconclusive='The provider evidence could not uniquely confirm every captured task. The recorded charges are unchanged.';
 export async function reconcileRankCheck(projectId:string,userId:string,runId:string,raw:unknown,send:typeof fetch=fetch){
   runId=parse(z.uuid(),runId);const input=parse(inputSchema,raw),operation='rank.reconcile:'+runId,receiptInput={userId,...input};
   const before=await withKeywordProject(projectId,userId,['owner'],async(client,wid)=>{
@@ -52,5 +52,5 @@ export async function reconcileRankCheck(projectId:string,userId:string,runId:st
     await receipt.save({id:runId});return {replayed:false,matched:true};
   });
   return {...await getRankRun(projectId,userId,runId),reconciliation:{status:result.matched?'matched' as const:'inconclusive' as const,
-    message:result.matched?'Provider task evidence was recovered. Available results can be fetched without submitting another paid check. Spending remains subject to the current budget settings.':inconclusive,replayed:result.replayed}};
+    message:result.matched?'Provider task evidence was recovered. Available results can be fetched without submitting another paid check.':inconclusive,replayed:result.replayed}};
 }

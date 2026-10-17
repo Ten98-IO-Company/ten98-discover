@@ -105,10 +105,11 @@ try{
     await panel.getByText('Check provider charge (owner)',{exact:true}).click();await panel.getByRole('button',{name:'Check provider charge',exact:true}).click();
     const selected=panel.locator('[aria-label="Selected run"]');await selected.getByText(/^Reconciled ·/).waitFor();
     assert.match(await selected.innerText(),/Only the cost was reconciled/);assert.match(await selected.innerText(),/\$0\.012120/);
-    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[group.workspace.id])).rows[0].paused,true);
+    // Owner decision D3: the uncertain charge never paused the workspace and reconciliation leaves it unpaused.
+    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[group.workspace.id])).rows[0].paused,false);
     const after=await providerCounts();assert.equal(after['keyword-dispatch']-(before['keyword-dispatch']??0),1);assert.equal(after['keyword-reconcile']-(before['keyword-reconcile']??0),1);
     assert.equal(await panel.getByRole('region',{name:'Keyword data table',exact:true}).count(),0);noBrowserErrors();
-    console.log('PASS owner metadata reconciliation records known cost, retains pause and does not recover/invent a result or rerun paid work.');
+    console.log('PASS owner metadata reconciliation records known cost, leaves the workspace unpaused (D3) and does not recover/invent a result or rerun paid work.');
   }
 
   stage='current403/404 purge cached results and quote';{

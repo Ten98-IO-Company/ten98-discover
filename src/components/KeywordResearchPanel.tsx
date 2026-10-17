@@ -312,7 +312,6 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
       const run=runFrom(response);if(run.id!==id)throw new Error('Reload this run to check its current state.');
       if(!response.reconciliation||!['matched','inconclusive'].includes(response.reconciliation.status)||typeof response.reconciliation.message!=='string')throw new Error('Reload this run to check its current state.');
       showRun(run);setReconMsg(response.reconciliation.message);
-      setSt(s=>s?{...s,spendingPaused:true}:s);
     }catch(e){if(current(op)&&!handleErr(e,op))setErr(errMsg(e));}finally{finish(op);}
   }
   if(!st){
@@ -332,7 +331,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
 
   return <section className="research-panel keyword-research stack" style={{display:'grid',gap:16,minWidth:0}} aria-busy={busy} aria-label="Keyword research">
     <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>AI and search providers</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
-    {!isOwner&&<p className="hint">Ask a workspace owner to manage AI and search providers or spending limits. Your current role can still view saved results.</p>}
+    {!isOwner&&<p className="hint">Ask a workspace owner to manage AI and search providers or the paid-work pause. Your current role can still view saved results.</p>}
     {st.spendingPaused&&<div className="alert" role="alert">Spending is paused for this workspace. Saved history and results below remain available; new paid research is disabled.</div>}
     {msg&&<p role="status">{msg}</p>}
     {(err||loadErr)&&<div className="alert" role="alert">{err||loadErr}</div>}

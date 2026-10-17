@@ -33,7 +33,8 @@ async function finish(id:string,owner:string,outcome:ExecutionOutcome,crashOnly=
   let current=!('refusal'in verified)&&actor.role==='owner'&&ledgerMatches(r,q);
   if(current)try{const conn=await suggestionConnection(c,p.workspaceId,q.connection_id,q.connection_revision);current=keyFingerprint(suggestionCredentials(conn))===q.key_fingerprint;}catch(error){if(!(error instanceof FoundationError))throw error;current=false;}
   if(!current){await markSupportUnavailable(c,q.id,'authority_changed');diagnostic='The charge is retained; current source or execution authority is unavailable.';}
-  if(current&&outcome.cost!==null&&!outcome.pause&&outcome.result){
+  // A BYOK answer is never accepted as a conclusion; oversized costs are already excluded by cost!==null.
+  if(current&&outcome.cost!==null&&outcome.evidence.isByok!==true&&outcome.result){
    try{const payload=readSupportPayload(q);proposal=parseContentSupportProposal(outcome.result.text,payload.snapshot,outcome.result.finishReason);rawResult=outcome.result.text;}
    catch{diagnostic='The charge is recorded, but the complete output failed evidence validation. No usable conclusion is available.';}
   }
@@ -41,7 +42,6 @@ async function finish(id:string,owner:string,outcome:ExecutionOutcome,crashOnly=
   const status=contentSupportDisposition(settled.reconciliationRequired?null:outcome.cost,proposal!==null,current);
   if(status!=='completed'){proposal=null;rawResult=null;}
   await c.query(`UPDATE ai_content_support_run SET status=$2,generation_id=$3,raw_result=$4,proposal=$5,financial_evidence=$6,diagnostic=$7,completed_at=COALESCE(completed_at,clock_timestamp()),lease_owner=NULL,lease_expires_at=NULL,result_purged_at=CASE WHEN $8 THEN COALESCE(result_purged_at,clock_timestamp())ELSE result_purged_at END WHERE id=$1`,[id,status,reference,rawResult,proposal?JSON.stringify(proposal):null,JSON.stringify(outcome.evidence),diagnostic?.slice(0,1000)??null,!current]);
-  if(outcome.pause)await c.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[p.workspaceId]);
  });
 }
 export async function executeContentSupport(id:string,send:typeof fetch=fetch){
@@ -86,8 +86,8 @@ export async function reconcileContentSupport(projectId:string,userId:string,id:
   const receipt=await contentReceipt(c,p.id,input.requestId,'ai.content.reconcile',body);if(receipt.replayed)return;
   const conn=await suggestionConnection(c,p.workspaceId,first.q.connection_id,first.revision);if(keyFingerprint(suggestionCredentials(conn))!==first.q.key_fingerprint)throw changed();
   const r=await supportRunRow(c,p.id,id),q=await supportQuoteRow(c,p.id,r.quote_id);if(r.charge_status!=='uncertain'||r.generation_id!==first.r.generation_id||outcome.reference!==r.generation_id||q.input_hash!==first.q.input_hash||!ledgerMatches(r,q))throw changed();
-  const settled=await settleSpend(c,p.workspaceId,id,outcome.cost,outcome.reference);await c.query("UPDATE ai_content_support_run SET status=$2,financial_evidence=$3,diagnostic='Charge recovery does not recreate content evidence. Spending remains paused for owner review.',completed_at=COALESCE(completed_at,clock_timestamp()),lease_owner=NULL,lease_expires_at=NULL WHERE id=$1",[id,settled.reconciliationRequired?'uncertain':'failed',JSON.stringify(outcome.evidence)]);
-  await c.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[p.workspaceId]);await receipt.save({id});
+  const settled=await settleSpend(c,p.workspaceId,id,outcome.cost,outcome.reference);await c.query("UPDATE ai_content_support_run SET status=$2,financial_evidence=$3,diagnostic='Charge recovery does not recreate content evidence.',completed_at=COALESCE(completed_at,clock_timestamp()),lease_owner=NULL,lease_expires_at=NULL WHERE id=$1",[id,settled.reconciliationRequired?'uncertain':'failed',JSON.stringify(outcome.evidence)]);
+  await receipt.save({id});
  },id);return {...await getContentSupportRun(projectId,userId,id),replayed:false};
 }
 /** Queue/lease repair is local only. It never calls a provider or retries dispatch. */

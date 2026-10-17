@@ -179,7 +179,8 @@
   "P10": {
    "migrations": [
     "0005_provider_core",
-    "0022_provider_account_identity"
+    "0022_provider_account_identity",
+    "0063_no_app_budgets"
    ]
   },
   "P11": {
@@ -754,7 +755,8 @@
     "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/approve"
    ],
    "migrations": [
-    "0005_provider_core"
+    "0005_provider_core",
+    "0063_no_app_budgets"
    ]
   },
   "P66": {

@@ -15,11 +15,9 @@ interface ConnectionMeta {
   lastCheckedAt: string | null
   checkStatus: CheckStatus
   diagnostic: string | null
-  monthlyLimitUsd: string
 }
 
 interface BudgetInfo {
-  monthlyLimitEnforced: false
   paused: boolean
   month: string
   spentUsd: string
@@ -44,33 +42,10 @@ interface ProvidersResponse {
   ledger: LedgerEntry[]
 }
 
-interface CapDraft {
-  id: string
-  revision: number
-  expectedMonthlyLimitUsd: string
-  amount: string
-}
-
 export interface ProviderPanelProps {
   workspaceId: string
   onUnauthorized: () => void
 }
-
-const USD_LIMIT_RE = /^(?:0|[1-9]\d{0,6})(\.\d{1,6})?$/
-
-// 0..1000000 inclusive, max 6 decimals. Rejects scientific notation, negatives,
-// Infinity and inner whitespace; callers trim first.
-function validUsdLimit(value: string): boolean {
-  return USD_LIMIT_RE.test(value) && Number(value) <= 1000000
-}
-
-function normalizedUsdLimit(value: unknown): string | null {
-  if (typeof value !== 'string' || !validUsdLimit(value)) return null
-  const [whole, fraction = ''] = value.split('.')
-  return `${whole}.${fraction.padEnd(6, '0')}`
-}
-
-const USD_LIMIT_HINT = 'Whole or decimal number from 0 to 1000000, up to 6 decimal places.'
 
 function providerLabel(provider: ProviderName): string {
   return provider === 'openrouter' ? 'OpenRouter' : 'DataForSEO'
@@ -97,7 +72,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   const [cApiKey, setCApiKey] = useState('')
   const [cLogin, setCLogin] = useState('')
   const [cPassword, setCPassword] = useState('')
-  const [cLimit, setCLimit] = useState('0')
 
   const [rotateId, setRotateId] = useState<string | null>(null)
   const [rName, setRName] = useState('')
@@ -106,9 +80,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   const [rPassword, setRPassword] = useState('')
 
   const [bPaused, setBPaused] = useState(true)
-  const [capDraft, setCapDraft] = useState<CapDraft | null>(null)
-  // Keep the reload requirement even if the card is cancelled and reopened.
-  const [capNeedsReload, setCapNeedsReload] = useState(false)
 
   const mountedRef = useRef(true)
   const abortRef = useRef<AbortController | null>(null)
@@ -141,8 +112,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     if (e.status === 401) {
       clearSecrets()
       closeRotate()
-      setCapDraft(null)
-      setCapNeedsReload(false)
       setData(null)
       unauthorizedRef.current()
       return true
@@ -150,8 +119,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     if (e.status === 403 || e.status === 404) {
       clearSecrets()
       closeRotate()
-      setCapDraft(null)
-      setCapNeedsReload(false)
       setData(null)
       setError(null)
       setSuccess(null)
@@ -162,7 +129,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     return false
   }, [clearSecrets, closeRotate])
 
-  const load = useCallback(async (refreshCap = false) => {
+  const load = useCallback(async () => {
     const id = ++reqIdRef.current
     abortRef.current?.abort()
     const ctrl = new AbortController()
@@ -174,22 +141,12 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     try {
       const d = await api<ProvidersResponse>(`/api/workspaces/${workspaceId}/providers`, { signal: ctrl.signal })
       if (!current()) return
-      if (d?.budget?.monthlyLimitEnforced !== false || !Array.isArray(d.connections) || d.connections.some(c =>
-        !c || typeof c.id !== 'string' || !Number.isInteger(c.revision) || c.revision < 1 || c.revision > 2147483647 || normalizedUsdLimit(c.monthlyLimitUsd) === null)) {
-        throw new Error('Provider spending settings could not be confirmed. Reload before editing a spending cap.')
+      if (typeof d?.budget?.paused !== 'boolean' || !Array.isArray(d.connections) || d.connections.some(c =>
+        !c || typeof c.id !== 'string' || !Number.isInteger(c.revision) || c.revision < 1 || c.revision > 2147483647)) {
+        throw new Error('Provider settings could not be confirmed. Reload to try again.')
       }
       setData(d)
       setBPaused(d.budget.paused)
-      if (refreshCap) {
-        setCapDraft(previous => {
-          if (!previous) return null
-          const connection = d.connections.find(c => c.id === previous.id)
-          return connection ? { ...previous, revision: connection.revision, expectedMonthlyLimitUsd: normalizedUsdLimit(connection.monthlyLimitUsd)! } : null
-        })
-        setCapNeedsReload(false)
-        setError(null)
-        setSuccess('Spending details reloaded. Review the stored cap before saving your amount.')
-      }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError' && ctrl.signal.aborted) return
       if (!current()) return
@@ -209,10 +166,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     }
   }, [load, clearSecrets])
 
-  useEffect(() => {
-    if (capDraft !== null) document.getElementById('provider-cap-editor')?.focus()
-  }, [capDraft?.id])
-
   // Synchronous ref lock: repeat submits fired before React re-renders are dropped.
   // Each request aborts the previous one; a response only lands while still current,
   // so a slow mutation/refresh can never overwrite another workspace's state.
@@ -220,7 +173,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     fn: (signal: AbortSignal) => Promise<unknown>,
     successMsg: string,
     afterSuccess?: () => void,
-    onFailure?: (error: unknown) => string | undefined,
   ): Promise<void> => {
     if (mutLockRef.current || loading || !data) return
     mutLockRef.current = true
@@ -242,7 +194,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
       if (e instanceof Error && e.name === 'AbortError' && ctrl.signal.aborted) return
       if (!current()) return
       if (e instanceof ApiError && handleAuthFailure(e)) return
-      setError(onFailure?.(e) ?? errMsg(e))
+      setError(errMsg(e))
     } finally {
       mutLockRef.current = false
       if (mountedRef.current) setBusy(false)
@@ -252,7 +204,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   const base = `/api/workspaces/${workspaceId}/providers`
   const vaultOk = data !== null && data.vaultConfigured
   const rotateConn = data !== null ? data.connections.find(c => c.id === rotateId) ?? null : null
-  const capConn = data !== null ? data.connections.find(c => c.id === capDraft?.id) ?? null : null
 
   const connName = (id: string): string =>
     data?.connections.find(c => c.id === id)?.name ?? 'Removed connection'
@@ -261,13 +212,8 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     ev.preventDefault()
     if (mutLockRef.current || busy || !vaultOk || data === null) return
     const name = cName.trim()
-    const limit = cLimit.trim()
     if (name.length === 0 || name.length > 120) {
       setError('Name must be between 1 and 120 characters.')
-      return
-    }
-    if (!validUsdLimit(limit)) {
-      setError(`Monthly limit: ${USD_LIMIT_HINT}`)
       return
     }
     if (cProvider === 'openrouter' && cApiKey === '') {
@@ -281,11 +227,10 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     const credentials = cProvider === 'openrouter' ? { apiKey: cApiKey } : { login: cLogin.trim(), password: cPassword }
     clearSecrets()
     void runMutation(
-      signal => api<unknown>(base, { method: 'POST', body: { name, provider: cProvider, credentials, monthlyLimitUsd: limit }, signal }),
+      signal => api<unknown>(base, { method: 'POST', body: { name, provider: cProvider, credentials }, signal }),
       'Connection saved. It stays untested until you run a check.',
       () => {
         setCName('')
-        setCLimit('0')
         clearSecrets()
       },
     )
@@ -294,7 +239,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   const openRotate = (c: ConnectionMeta) => {
     if (mutLockRef.current || busy || !vaultOk) return
     clearSecrets()
-    setCapDraft(null)
     // Prefill metadata only; credentials are always blank.
     setRotateId(c.id)
     setRName(c.name)
@@ -339,7 +283,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
       'Connection disconnected.',
       () => {
         if (rotateId === c.id) closeRotate()
-        if (capDraft?.id === c.id) setCapDraft(null)
       },
     )
   }
@@ -366,51 +309,8 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     )
   }
 
-  const openCap = (c: ConnectionMeta) => {
-    if (mutLockRef.current || busy) return
-    clearSecrets()
-    closeRotate()
-    setCapDraft(previous => previous?.id === c.id ? previous : { id: c.id, revision: c.revision, expectedMonthlyLimitUsd: normalizedUsdLimit(c.monthlyLimitUsd)!, amount: c.monthlyLimitUsd })
-    setError(null)
-    setSuccess(null)
-  }
-
-  const submitCap = (ev: FormEvent<HTMLFormElement>) => {
-    ev.preventDefault()
-    if (mutLockRef.current || busy || !data || !capDraft || !capConn || capNeedsReload) return
-    const draft = capDraft, amount = draft.amount.trim(), normalized = normalizedUsdLimit(amount)
-    if (normalized === null) {
-      setError(`Monthly spending cap: ${USD_LIMIT_HINT}`)
-      return
-    }
-    void runMutation(
-      async signal => {
-        const response = await api<{ connection: ConnectionMeta }>(`${base}/${draft.id}/limit`, {
-          method: 'POST', body: { revision: draft.revision, expectedMonthlyLimitUsd: draft.expectedMonthlyLimitUsd, monthlyLimitUsd: amount }, signal,
-        })
-        const saved = response?.connection
-        if (!saved || saved.id !== draft.id || saved.revision !== draft.revision || normalizedUsdLimit(saved.monthlyLimitUsd) !== normalized) {
-          throw new Error('The saved spending cap could not be confirmed.')
-        }
-      },
-      'Spending cap saved. Credentials were not replaced and no work was started.',
-      () => { setCapDraft(null); setCapNeedsReload(false) },
-      e => {
-        // Only a known input rejection permits editing without a fresh read.
-        // Access failures are handled before this hook; other outcomes are uncertain.
-        if (!(e instanceof ApiError) || e.status !== 400) {
-          setCapNeedsReload(true)
-          return e instanceof ApiError && e.status === 409
-            ? 'The connection or spending cap changed. Reload the connection and review its stored cap before saving your amount again.'
-            : 'The spending-cap save outcome is unknown. Reload the connection and review its stored cap before saving again.'
-        }
-        return undefined
-      },
-    )
-  }
-
   const retry = (
-    <button type="button" className="btn" onClick={() => { if (!mutLockRef.current) void load(true) }} disabled={loading || busy}>Retry</button>
+    <button type="button" className="btn" onClick={() => { if (!mutLockRef.current) void load() }} disabled={loading || busy}>Retry</button>
   )
 
   return (
@@ -435,7 +335,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
         <>
           {!data.vaultConfigured && (
             <div className="banner">
-              Credential storage is not configured on this server. Ask the installation operator to enable it before saving, rotating or checking connections. You can still edit saved connection caps or pause paid work.
+              Credential storage is not configured on this server. Ask the installation operator to enable it before saving, rotating or checking connections. You can still pause paid work.
             </div>
           )}
           {loadError !== null && (
@@ -457,7 +357,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
             <p className="hint">OpenRouter supplies AI model answers. DataForSEO supplies keyword research and search rankings. These credentials are separate from ten98 API access keys.</p>
             <p className="hint">Run check contacts the provider's read-only account endpoint. It does not start paid work and never runs automatically.</p>
             <p>Paid provider work is {data.budget.paused ? 'paused' : 'not paused'}. <button type="button" className="btn ghost" onClick={() => document.getElementById('provider-budget')?.focus()}>Review spending</button></p>
-            <p className="hint">A passed check does not authorize a paid run. Each run still needs explicit authorization and capacity within its connection's monthly cap. A $0 connection cap blocks positive-cost work. There is no shared workspace monetary cap.</p>
+            <p className="hint">A passed check does not start paid work; each paid run needs its own quote and Start. ten98 sets no spending limit; set budgets and add credits at OpenRouter or DataForSEO.</p>
             {data.connections.length === 0 ? (
               <div className="empty">
                 <p><strong>No provider connections yet.</strong></p>
@@ -470,7 +370,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                     <tr>
                       <th>Name</th>
                       <th>Provider</th>
-                      <th>Connection cap / month</th>
                       <th>Status</th>
                       <th>Last checked</th>
                       <th>Actions</th>
@@ -481,7 +380,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                       <tr key={c.id}>
                         <td style={{ minWidth: '10rem', maxWidth: '18rem', overflowWrap: 'anywhere' }}>{c.name}</td>
                         <td>{providerLabel(c.provider)}</td>
-                        <td className="mono">${c.monthlyLimitUsd}</td>
                         <td style={{ minWidth: '12rem' }}>
                           {c.checkStatus === 'ok' && <span className="pill good">Check passed</span>}
                           {c.checkStatus === 'error' && <span className="pill bad">Check failed</span>}
@@ -493,7 +391,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                           <div className="row">
                             <button type="button" className="btn ghost" disabled={busy || !data.vaultConfigured} onClick={() => checkConn(c)}>Run check</button>
                             <button type="button" className="btn ghost" disabled={busy || !data.vaultConfigured} onClick={() => openRotate(c)}>Rotate credentials</button>
-                            <button id={`provider-cap-${c.id}`} type="button" className="btn ghost" disabled={busy} onClick={() => openCap(c)}>Edit spending cap</button>
                             <button type="button" className="btn ghost" disabled={busy} onClick={() => revokeConn(c)}>Disconnect</button>
                           </div>
                         </td>
@@ -505,32 +402,11 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
             )}
           </div>
 
-          {capDraft !== null && capConn !== null && (
-            <div className="card">
-              <h2 id="provider-cap-editor" tabIndex={-1}>Edit spending cap</h2>
-              <p><strong>{capConn.name}</strong> ({providerLabel(capConn.provider)}) · Stored cap: ${capConn.monthlyLimitUsd} per month.</p>
-              <p className="hint">This cap applies to requests made through this connection by ten98. Changing it does not replace credentials or start work. Other saved connections and spending outside ten98 have separate limits.</p>
-              <form onSubmit={submitCap}>
-                <div className="field" style={{ maxWidth: 280 }}>
-                  <label htmlFor="cap-limit">Monthly spending cap (USD)</label>
-                  <input id="cap-limit" inputMode="decimal" autoComplete="off" value={capDraft.amount} onChange={e => setCapDraft(previous => previous ? { ...previous, amount: e.target.value } : null)} disabled={busy || capNeedsReload} />
-                  <p className="hint">{USD_LIMIT_HINT} Zero blocks positive-cost work. Lowering a cap does not undo incurred charges or cancel dispatched work.</p>
-                </div>
-                {capNeedsReload && <p className="hint">Reload before saving again. Your attempted amount is kept so you can compare it with the current stored cap.</p>}
-                <div className="row">
-                  <button type="submit" className="btn primary" disabled={busy || capNeedsReload}>Save cap</button>
-                  <button type="button" className="btn" onClick={() => { if (!mutLockRef.current && !busy) void load(true) }} disabled={busy}>Reload connection</button>
-                  <button type="button" className="btn" onClick={() => { setCapDraft(null); document.getElementById(`provider-cap-${capDraft.id}`)?.focus() }} disabled={busy}>Cancel cap edit</button>
-                </div>
-              </form>
-            </div>
-          )}
-
           {rotateConn !== null && (
             <div className="card">
               <h2>Rotate credentials</h2>
               <p className="hint">
-                Rotating replaces the stored credentials for <strong>{rotateConn.name}</strong> ({providerLabel(rotateConn.provider)}). The provider cannot be changed. Full new credentials are required and are never displayed again. Saving also updates the name; the spending cap is unchanged.
+                Rotating replaces the stored credentials for <strong>{rotateConn.name}</strong> ({providerLabel(rotateConn.provider)}). The provider cannot be changed. Full new credentials are required and are never displayed again. Saving also updates the name.
               </p>
               <form onSubmit={submitRotate}>
                 <div className="row" style={{ alignItems: 'flex-start' }}>
@@ -597,11 +473,6 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                   </div>
                 </>
               )}
-              <div className="field" style={{ maxWidth: 260 }}>
-                <label htmlFor="pc-limit">Connection monthly limit (USD)</label>
-                <input id="pc-limit" inputMode="decimal" autoComplete="off" value={cLimit} onChange={e => setCLimit(e.target.value)} disabled={busy || !data.vaultConfigured} />
-                <p className="hint">{USD_LIMIT_HINT}</p>
-              </div>
               <button type="submit" className="btn primary" disabled={busy || !data.vaultConfigured}>Save connection</button>
               {!data.vaultConfigured && <p className="hint">Saving is disabled until credential storage is configured.</p>}
             </form>
@@ -610,7 +481,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
           <div className="card">
             <h2 id="provider-budget" tabIndex={-1}>External API spending</h2>
             <p className="hint">
-              Current usage month: {data.budget.month} (UTC). These totals combine this workspace's connections for reporting only; each saved connection has its own monthly cap. Usage here tracks requests this app initiates, not the provider's entire account. Reserved covers queued or in-flight requests; uncertain holds estimated costs until the outcome can be confirmed and blocks new paid work across the workspace.
+              Usage month: {data.budget.month}. Totals of this app's own requests this month (UTC); there is no app spending limit. Uncertain: requests whose charge is unknown; while any exists, new paid work is blocked until an owner reconciles it.
             </p>
             <div className="row" style={{ gap: 32, alignItems: 'baseline' }}>
               <div style={{ minWidth: 0 }}>
@@ -633,10 +504,11 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                     <input id="bl-paused" type="checkbox" style={{ width: 'auto', marginRight: 8 }} checked={bPaused} disabled={busy || (!data.vaultConfigured && bPaused)} onChange={e => setBPaused(e.target.checked)} />
                     Pause paid provider work
                   </label>
+                  <p className="hint">Stops new paid work immediately; off for new workspaces.</p>
                   {!data.vaultConfigured && <p className="hint">Unpausing requires credential storage to be configured.</p>}
                 </div>
               </div>
-              <button type="submit" className="btn primary" disabled={busy}>Save spending controls</button>
+              <button type="submit" className="btn primary" disabled={busy}>Save pause setting</button>
             </form>
           </div>
 

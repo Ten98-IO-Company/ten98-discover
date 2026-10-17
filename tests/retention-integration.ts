@@ -138,7 +138,7 @@ export async function runRetentionChecks({ ownerId }: { ownerId: string }): Prom
   await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,status,budget_month,created_at)
     SELECT gen_random_uuid(),$1,$2,1,$3,gen_random_uuid(),'fixture.retention',$4,10,status,'2000-01-01','2000-01-01'
     FROM unnest(ARRAY['reserved','dispatched','uncertain','cancelled']) status`, [batchWorkspace, providerId, ownerId, 'e'.repeat(64)]);
-  await pool.query("INSERT INTO workspace_budget(workspace_id,monthly_limit_micros) VALUES($1,100)", [batchWorkspace]);
+  await pool.query("INSERT INTO workspace_budget(workspace_id) VALUES($1)", [batchWorkspace]);
   await pool.query("INSERT INTO report(id,project_id,title,source_html,created_at) VALUES($1,$2,'Retained report','<p>Retained source</p>','2000-01-01')", [reportId, target.id]);
   await pool.query("INSERT INTO report_share(id,report_id,token_hash,slug_label,label,snapshot_html,report_revision,expires_at,created_at) VALUES($1,$2,$3,'retained','Retained snapshot','<p>Retained snapshot</p>',1,'2099-01-01','2000-01-01')", [shareId, reportId, createHash('sha256').update(randomUUID()).digest('hex')]);
   await pool.query('INSERT INTO session(id,token,"userId","expiresAt","createdAt") VALUES($1,$2,$3,\'2099-01-01\',\'2000-01-01\')', [sessionId, randomUUID(), memberId]);

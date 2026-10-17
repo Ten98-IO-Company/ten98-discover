@@ -70,7 +70,7 @@ export function PromptRecurringPanel({projectId,userId,role,quote,onUnauthorized
     </div>
     <label>Maximum USD per occurrence<input inputMode="decimal" value={ceiling} onChange={e=>setCeiling(e.target.value)}/></label>
     <label className="row"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>I authorize future fresh requests under this per-occurrence ceiling until paused or approval changes.</label>
-    <p className="hint">The connection’s monthly cap, master pause, current owner/key/model approval and uncertain-charge checks still apply. This is not an overall app budget.</p>
+    <p className="hint">The master pause, current owner/key/model approval and uncertain-charge checks still apply. This is not an overall app budget.</p>
     <button className="btn primary" disabled={!fresh} type="submit">{consent?'Approve and schedule new tracker':'Save disabled tracker'}</button>
    </fieldset>
   </form>}

@@ -143,10 +143,11 @@ try{
     const g=await createPromptCase(phaseLabel('receipt')),p=await begin(g);await review(p,g.prompts.disabled);await prepare(p,g);const before=await providerCounts(),c=await start(p);
     await runPrompt(c.id,'receipt-only');await execution(p).getByRole('button',{name:'Refresh status',exact:true}).click();await execution(p).getByRole('button',{name:'Check charge receipt',exact:true}).click();
     await execution(p).getByText('Only the charge was recovered. A new answer needs a fresh paid quote.',{exact:true}).waitFor();assert.match(await execution(p).innerText(),/Credit charge: USD 0\.000013/);
-    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[g.workspace.id])).rows[0].paused,true);assert.equal((await providerCounts())['prompt-dispatch']-(before['prompt-dispatch']??0),1);browserClean();
+    // Owner decision D3: charge reconciliation never pauses the workspace.
+    assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[g.workspace.id])).rows[0].paused,false);assert.equal((await providerCounts())['prompt-dispatch']-(before['prompt-dispatch']??0),1);browserClean();
     const empty=await createPromptCase(phaseLabel('empty')),ep=await begin(empty);await review(ep,empty.prompts.disabled);await prepare(ep,empty);const ec=await start(ep);await runPrompt(ec.id,'empty');await execution(ep).getByRole('button',{name:'Refresh status',exact:true}).click();
     await execution(ep).getByText('Provider returned an empty answer.',{exact:true}).waitFor();assert.equal(await execution(ep).getByText('No supported answer is available. A failed request may still be charged.',{exact:true}).count(),0);browserClean();
-    console.log('PASS known generation reconciliation retains pause/no invented answer and an observed empty answer is labelled separately.');
+    console.log('PASS known generation reconciliation leaves spending unpaused (D3) with no invented answer and an observed empty answer is labelled separately.');
   }
 }catch(error){await captureFailure(session?.page,error,stage).catch(()=>{});console.error('FAIL prompt UI stage: '+stage+' ('+(error?.name??'Error')+'). Details saved privately.');process.exitCode=1;}
 finally{for(const close of cleanup)await close().catch(()=>{});await session?.browser.close();await stopJobs();await closeDatabase();}
