@@ -15,7 +15,7 @@ concurrency:
 jobs:
   foundation:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
@@ -160,6 +160,25 @@ jobs:
             await client.query('CREATE DATABASE ten98_meta_auth_inventory_worker_ci');
             await client.query('CREATE DATABASE ten98_meta_auth_inventory_boundary_ci');
             await client.query('CREATE DATABASE ten98_meta_callbacks_inventory_ci');
+            await client.query('CREATE DATABASE ten98_journeys_ci');
+            await client.query('CREATE DATABASE ten98_attribution_ci');
+            await client.query('CREATE DATABASE ten98_retention_report_ci');
+            await client.query('CREATE DATABASE ten98_revenue_ci');
+            await client.query('CREATE DATABASE ten98_revenue_report_ci');
+            await client.query('CREATE DATABASE ten98_prompt_api_ci');
+            await client.query('CREATE DATABASE ten98_key_reads_ci');
+            await client.query('CREATE DATABASE ten98_content_coverage_ci');
+            await client.query('CREATE DATABASE ten98_project_content_ci');
+            await client.query('CREATE DATABASE ten98_content_support_ci');
+            await client.query('CREATE DATABASE ten98_dynamic_models_ci');
+            await client.query('CREATE DATABASE ten98_environment_ci');
+            await client.query('CREATE DATABASE ten98_geography_query_ci');
+            await client.query('CREATE DATABASE ten98_session_environment_ci');
+            await client.query('CREATE DATABASE ten98_revenue_comparison_ci');
+            await client.query('CREATE DATABASE ten98_realtime_ci');
+            await client.query('CREATE DATABASE ten98_google_reports_ci');
+            await client.query('CREATE DATABASE ten98_domain_redirects_ci');
+            await client.query('CREATE DATABASE ten98_mcp_ci');
           } catch {
             console.error('Could not prepare the isolated migration test database.');
             process.exitCode = 1;
@@ -239,6 +258,25 @@ jobs:
               ['ten98_meta_auth_inventory_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-worker-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_meta_auth_inventory_boundary_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-boundary-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_meta_callbacks_inventory_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-deletion-integration.ts']], { TEN98_META_CALLBACKS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_journeys_ci', [['tests/journeys-integration.ts']], { TEN98_JOURNEYS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_attribution_ci', [['tests/attribution-integration.ts']], { TEN98_ATTRIBUTION_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_retention_report_ci', [['tests/retention-report-integration.ts']], { TEN98_RETENTION_REPORT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_revenue_ci', [['tests/revenue-integration.ts']], { TEN98_REVENUE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_revenue_report_ci', [['tests/revenue-report-integration.ts']], { TEN98_REVENUE_REPORT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_prompt_api_ci', [['tests/native-prompt-api-integration.ts']], { TEN98_NATIVE_PROMPT_API_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_key_reads_ci', [['src/server/cli.ts', 'migrate'], ['tests/api-key-delayed-reads-integration.ts']], { TEN98_API_KEY_DELAYED_READ_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_content_coverage_ci', [['tests/ai-content-coverage-integration.ts']], { TEN98_CONTENT_COVERAGE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_project_content_ci', [['tests/ai-project-content-coverage-integration.ts']], { TEN98_PROJECT_CONTENT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_content_support_ci', [['src/server/cli.ts', 'migrate'], ['tests/ai-content-support-integration.ts']], { TEN98_CONTENT_SUPPORT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_dynamic_models_ci', [['src/server/cli.ts', 'migrate'], ['tests/openrouter-models-integration.ts']], { TEN98_MODELS_DYNAMIC_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111' }],
+              ['ten98_environment_ci', [['src/server/cli.ts', 'migrate'], ['tests/analytics-environment-integration.ts']], { TEN98_ENVIRONMENT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_geography_query_ci', [['tests/analytics-geography-query-integration.ts']], { TEN98_GEOGRAPHY_QUERY_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_session_environment_ci', [['src/server/cli.ts', 'migrate'], ['tests/session-environment-integration.ts']], { TEN98_SESSION_ENVIRONMENT_TEST: '1', ANALYTICS_NETWORK_MODE: 'direct', TEN98_ISOLATED_CI_DATABASE: '1' }],
+              ['ten98_revenue_comparison_ci', [['tests/revenue-comparison-integration.ts']], { TEN98_REVENUE_COMPARISON_TEST: '1', TEN98_REVENUE_REPORT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_realtime_ci', [['src/server/cli.ts', 'migrate'], ['tests/realtime-integration.ts']], { TEN98_REALTIME_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_google_reports_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_domain_redirects_ci', [['src/server/cli.ts', 'migrate'], ['tests/domain-redirects-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_mcp_ci', [['tests/mcp-integration.ts']], { TEN98_MCP_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off', TEN98_MCP_REPORT_SNAPSHOTS: process.env.ARTIFACT_DIR + '/mcp-report-snapshots.json' }],
             ]) {
               const database = new URL(process.env.DATABASE_URL);
               database.pathname = `/${name}`;
@@ -256,13 +294,15 @@ jobs:
             }
           }
           NODE
-      - name: Retain synthetic AI-search boundary failure evidence
+      - name: Retain synthetic lane failure evidence
         if: ${{ always() && failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         timeout-minutes: 2
         with:
-          name: ai-search-boundaries-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.ARTIFACT_DIR }}/ten98-ai-search-boundaries-*/cases.json
+          name: lane-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.ARTIFACT_DIR }}/ten98-ai-search-boundaries-*/cases.json
+            ${{ env.ARTIFACT_DIR }}/mcp-report-snapshots.json
           if-no-files-found: ignore
           retention-days: 3
           include-hidden-files: false

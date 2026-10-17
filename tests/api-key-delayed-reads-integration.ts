@@ -16,8 +16,8 @@ export async function runDelayedApiKeyReadChecks(){
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
   assert.equal(process.env.TEN98_API_KEY_DELAYED_READ_TEST,'1');
   const config=getConfig(),database=new URL(config.databaseUrl),origin='http://127.0.0.1:3111';
-  assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'55501');
-  assert.match(database.pathname,/^\/ten98_key_reads_[a-f0-9]{12}$/);assert.equal(database.search,'');assert.equal(database.hash,'');
+  assert.equal(database.hostname,'127.0.0.1');const ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&database.pathname==='/ten98_key_reads_ci';assert.equal(database.port,ci?'5432':'55501');
+  if(!ci)assert.match(database.pathname,/^\/ten98_key_reads_[a-f0-9]{12}$/);assert.equal(database.search,'');assert.equal(database.hash,'');
   assert.equal(config.appUrl,origin);
   for(const name of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[name],undefined);
   await assertSchema();const {pool}=getDatabase();

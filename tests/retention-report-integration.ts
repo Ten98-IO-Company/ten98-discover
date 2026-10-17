@@ -16,7 +16,7 @@ import {handleApi} from '../src/server/api.ts';
 
 export async function runRetentionReportChecks(){
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_RETENTION_REPORT_TEST,'1');assert.equal(process.env.ANALYTICS_NETWORK_MODE,'off');
-  const config=getConfig(),url=new URL(config.databaseUrl);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55501');assert.match(url.pathname,/^\/ten98_retention_report_[a-f0-9]{12}$/);assert.equal(url.search,'');assert.equal(url.hash,'');
+  const config=getConfig(),url=new URL(config.databaseUrl);assert.equal(url.hostname,'127.0.0.1');const ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&url.pathname==='/ten98_retention_report_ci';assert.equal(url.port,ci?'5432':'55501');if(!ci)assert.match(url.pathname,/^\/ten98_retention_report_[a-f0-9]{12}$/);assert.equal(url.search,'');assert.equal(url.hash,'');
   for(const name of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[name],undefined);
   const {pool}=getDatabase();assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public'")).rows[0].n,0,'Only a fresh absent owned fixture is allowed.');
   const migration=await pool.connect();try{await migration.query('BEGIN');await migration.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');for(const source of await migrationSources()){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}await migration.query('COMMIT');}catch(error){await migration.query('ROLLBACK');throw error;}finally{migration.release();}

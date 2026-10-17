@@ -10,7 +10,7 @@ import {environmentVersion} from '../src/lib/analytics-environment.ts';
 
 export async function runSessionEnvironmentChecks(){
   assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_SESSION_ENVIRONMENT_TEST,'1');
-  const config=getConfig(),url=new URL(config.databaseUrl);assert.ok(['localhost','127.0.0.1','[::1]'].includes(url.hostname));assert.equal(url.port,'55501');assert.match(url.pathname,/^\/ten98_session_environment_[a-f0-9]{12}$/);assert.equal(url.search,'');assert.equal(url.hash,'');
+  const config=getConfig(),url=new URL(config.databaseUrl);assert.ok(['localhost','127.0.0.1','[::1]'].includes(url.hostname));const ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&url.pathname==='/ten98_session_environment_ci';assert.equal(url.port,ci?'5432':'55501');if(!ci)assert.match(url.pathname,/^\/ten98_session_environment_[a-f0-9]{12}$/);assert.equal(url.search,'');assert.equal(url.hash,'');
   for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[key],undefined);
   assert.equal(process.env.ANALYTICS_NETWORK_MODE,'direct');await assertSchema();const{pool}=getDatabase();assert.equal((await pool.query('SELECT count(*)::int AS n FROM workspace')).rows[0].n,0);
   const owner=randomUUID(),viewer=randomUUID(),workspace=randomUUID(),project=randomUUID(),siteKey=randomUUID(),origin='https://session-environment.test';
