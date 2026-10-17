@@ -77,8 +77,6 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
     let identityLinkEstimate:{status:'available'|'unavailable';links:number|null;atLeast:boolean}={status:'unavailable',links:null,atLeast:false};
     const derivedCutoff = new Date(asOf.getTime() - input.settings.derivedHistoryDays * 86_400_000);
     let derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean } = { status: 'unavailable', imports: null, atLeast: false };
-    let metaEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean } = { status: 'unavailable', imports: null, atLeast: false };
-    let metaInventoryEstimate: { status: 'available' | 'unavailable'; inventories: number | null; atLeast: boolean } = { status: 'unavailable', inventories: null, atLeast: false };
     const rawEvidenceCutoff=new Date(asOf.getTime()-input.settings.rawProviderEvidenceDays*86_400_000);
     let promptEstimate: {status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,atLeast:false};
     let aiSearchEstimate:{status:'available'|'unavailable';results:number|null;inputs:number|null;protected:number|null;atLeast:boolean}={status:'unavailable',results:null,inputs:null,protected:null,atLeast:false};
@@ -127,14 +125,6 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
         WHERE p.workspace_id=$1 AND i.completed_at<$2 AND i.data_expired_at IS NULL
           AND i.status IN ('completed','partial','failed','denied') LIMIT 10001`, [workspaceId, derivedCutoff]);
       derivedEstimate = { status: 'available', imports: Math.min(imports.rows.length, 10000), atLeast: imports.rows.length > 10000 };
-      const metaImports = await client.query(`SELECT id FROM meta_import
-        WHERE workspace_id=$1 AND completed_at IS NOT NULL AND payload_cleanup_completed_at IS NULL
-          AND (data_expired_at IS NOT NULL OR deleted_at IS NOT NULL OR completed_at<=$2) LIMIT 10001`, [workspaceId, derivedCutoff]);
-      metaEstimate = { status: 'available', imports: Math.min(metaImports.rows.length, 10000), atLeast: metaImports.rows.length > 10000 };
-      const metaInventories = await client.query(`SELECT id FROM meta_campaign_inventory
-        WHERE workspace_id=$1 AND completed_at IS NOT NULL AND payload_cleanup_completed_at IS NULL
-          AND (data_expired_at IS NOT NULL OR deleted_at IS NOT NULL OR completed_at<=$2) LIMIT 10001`, [workspaceId, derivedCutoff]);
-      metaInventoryEstimate = { status: 'available', inventories: Math.min(metaInventories.rows.length, 10000), atLeast: metaInventories.rows.length > 10000 };
       const keywords = await client.query(`SELECT id FROM keyword_research_run
         WHERE workspace_id=$1 AND result IS NOT NULL AND completed_at<$2 LIMIT 10001`, [workspaceId, derivedCutoff]);
       keywordEstimate = { status: 'available', results: Math.min(keywords.rows.length, 10000), atLeast: keywords.rows.length > 10000 };
@@ -160,7 +150,7 @@ export async function previewRetention(workspaceId: string, userId: string, raw:
       if (!['57014','55P03'].includes((error as { code?: string }).code ?? '')) throw error;
     }
     await client.query('COMMIT');
-    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, replayEstimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, metaEstimate, metaInventoryEstimate, keywordEstimate, domainResearchEstimate, savedKeywordEstimate, promptEstimate, aiSearchEstimate, contentSupportEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
+    return { ...input, asOf: asOf.toISOString(), cutoff: cutoff.toISOString(), estimate, replayEstimate, profileEstimate, identityLinkEstimate, derivedCutoff: derivedCutoff.toISOString(), derivedEstimate, keywordEstimate, domainResearchEstimate, savedKeywordEstimate, promptEstimate, aiSearchEstimate, contentSupportEstimate, redirectEstimate, auditEstimate, rankEstimate, rawEvidenceCutoff:rawEvidenceCutoff.toISOString(), categories: retentionCategories,
       previewToken: makeToken({ version: 1, workspaceId, userId, ...input, issuedAt: asOf.getTime() }) };
   } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
   finally { client.release(); }

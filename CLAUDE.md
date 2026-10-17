@@ -114,10 +114,21 @@ Full evidence: [implementation audit](docs/audit-2026-10-17.md). Counts over the
   Decided 2026-10-17: (a). Playwright/Chromium in a separate worker image profile (new dependency with provenance review) for rendered mode and Lighthouse; crawl credentials stored encrypted per audit through the credential vault.
 - **D10 (P76, P74, P77)** Which of the six non-Google/Meta platforms (TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat, X) and Cloudflare need V1 reporting imports with OAuth/refresh/quota handling, given only Google and Meta connectors exist? (docs/tracking.md:125; grep of src/server finds adapters only in destinations.ts)
   Options: (a) All six plus Cloudflare, each following the Meta import worker pattern (meta-imports.ts/meta-import-worker.ts); (b) a named subset ranked by owner usage; (c) browser-tag adapters only, imports deferred past V1 with P76/P77 relabelled.
-  Decided 2026-10-17: (a). Reporting imports for TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat, X and Cloudflare, each following the Meta import worker pattern. Each platform needs an owner-registered developer app; the owner supplies those credentials.
+  Decided 2026-10-17: (a), superseded on 2026-10-18.
+  Re-decided 2026-10-18: drop the planned reporting imports for TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X; keep a planned Cloudflare Web Analytics import; add a research item for AEO and GEO ad platforms such as OpenAI's ChatGPT ads (first establish whether a public reporting API exists; no implementation). The existing Meta and Google Ads imports are removed too; see "Owner decisions 2026-10-18" below.
 - **D11 (P27)** SPA referrer: which referrer should a page_view emitted after pushState carry? `document.referrer` does not change on pushState, so the tracker repeats the landing document's referrer origin on every SPA page_view; pinned Umami sends the previous in-app page instead. docs/analytics-measurement.md:43 defines capture scope (hostname only, no query or fragment) but not this. (public/tracker.js:466; tests/tracker.test.ts pins the current behaviour)
   Options: (a) keep repeating the landing referrer origin; (b) send the previous in-app page origin as a self-referral like Umami; (c) omit the referrer on SPA page_views.
   Decided 2026-10-17: (b). A page_view after pushState carries the previous in-app page origin as a self-referral, like pinned Umami; the landing view keeps the external referrer. The tracker test that pins the old behaviour changes with the tracker.
+
+### Owner decisions 2026-10-18 (ad-platform scope)
+
+Recorded verbatim; ad platforms are not relevant to an SEO, AEO and GEO product.
+
+- Keep Google Search Console (queries, pages, rankings, URL inspection) and every GA4 report (organic, landing, weekly/daily, pages, acquisition, key events, site search, commerce).
+- Remove Google Ads imports (report kinds ads, ads_campaigns, ads_ad_groups, ads_daily in src/server/google-reports.ts and every path that fetches, stores, retains, exports or shows them). Do NOT touch DataForSEO keyword endpoints (D5 local keyword metrics use DataForSEO's Google Ads keyword data API, which is unrelated to the Google Ads connection).
+- Remove the whole Meta integration: src/server/meta-*.ts (meta-api, meta-auth, meta-callbacks, meta-campaign-rows, meta-http, meta-import-worker, meta-imports, meta-inventory-worker, meta-inventory, meta-latest, meta-report-rows, meta-signed-request), src/components/Meta*.tsx, their API routes, worker job registrations, OpenAPI browser-inventory entries, docs, tests and the CI lanes for them in .github/workflows/foundation.yml (the ten98_meta_* tuples and CREATE DATABASE lines).
+- Keep all ten browser tags in the destinations tag manager (GA4, Google Ads, Meta Pixel, Cloudflare beacon, TikTok, LinkedIn, Microsoft UET, Pinterest, Snapchat, X): src/server/destinations.ts, public/destinations.js and DestinationsPanel are out of scope.
+- D10 re-decided: drop the planned reporting imports for TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat and X; keep a planned Cloudflare Web Analytics import; add a research item for AEO and GEO ad platforms such as OpenAI's ChatGPT ads (first establish whether a public reporting API exists; no implementation).
 
 ### Roadmap after the decisions (2026-10-17)
 
@@ -140,7 +151,7 @@ The decisions above unblock every register row. Ordered by value and dependency;
 15. Increment 12 and D2 (P12, P26, P17, P20, P13, P19, P24): scheduled DataForSEO ChatGPT captures with market; relabel the provider rows to OpenRouter plus DataForSEO.
 16. D8 (P08): the quoted OpenRouter site-analysis onboarding job with its editable draft.
 17. D9 (P56, P53): Playwright/Chromium worker image profile, rendered audits, Lighthouse and encrypted crawl credentials; provenance review for the new dependency.
-18. D10 (P76, P77, P74): reporting imports for TikTok, LinkedIn, Microsoft Ads, Pinterest, Snapchat, X and Cloudflare on the Meta import worker pattern; each needs an owner-registered developer app.
+18. D10 re-decided 2026-10-18 (P76, P77, P74): a Cloudflare Web Analytics reporting import on the Google import worker pattern (google-jobs.ts); then research whether AEO and GEO ad platforms such as OpenAI's ChatGPT ads offer a public reporting API (research only, no implementation). No other ad-platform reporting import is planned; the Meta and Google Ads imports were removed (see the "Meta and Google Ads removal" validation row).
 
 Each item lands as its own reviewed PR to `dev` with its lanes in the foundation workflow; paid paths use contained transports in tests and are exercised live only within the owner's existing allowance.
 
