@@ -61,7 +61,7 @@ Only the existing board dates/timezone plus compatible referrer, browser, operat
 
 The editor explicitly loads scoped Links/Pixels catalogs in20-row pages to choose actual names. Drafts/catalog paging never save or start paid work. Current read ownership and role apply to catalogs and previews; late identity/route/ABA results cannot republish authority. Existing exact pending-write retry remains separate.
 
-Board native integration now expects the real registered0058 dependency through the separately composed prefix admission. Do not run the mixed cases against schema57 or replace migrationSources. The original8-group52-board/19-receipt checkpoint remains exact; only the two former random missing-pixel dependency assertions are intentionally upgraded to404/current-reference checks. With the separately composed scoped-summary checks, authored totals are11native groups,8pure groups,19synthetic-source browser groups/100contexts/8screens, all unexecuted.
+Board native integration now expects the real registered0058 dependency through the separately composed prefix admission. Do not run the mixed cases against schema57 or replace migrationSources. The original8-group52-board/19-receipt checkpoint remains exact; only the two former random missing-pixel dependency assertions are intentionally upgraded to404/current-reference checks. With the separately composed scoped-summary checks, authored totals are11native groups,8pure groups,19synthetic-source browser groups/100contexts/8screens. The native groups run in the foundation workflow as the `ten98_boards_ci` lane and the pure groups in `pnpm test`; the synthetic-source browser groups remain opt-in and are not executed in CI.
 
 
 ## Scoped website summary (private proposed successor, not executed)

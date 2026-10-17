@@ -1,6 +1,6 @@
 # Saved replay metadata and independent heatmaps
 
-Migration0056 registers saved recording metadata and independent numeric heatmap storage after the replay55 prefix. This code reference describes the implemented contracts; acceptance evidence and the remaining feature roadmap live in Docmost. The private0059 successor below adds historical background references; it remains unregistered and unexecuted until review and the actual0057/0058 prefix. Source authoring is not full visual heatmap acceptance.
+Migration0056 registers saved recording metadata and independent numeric heatmap storage after the replay55 prefix. This code reference describes the implemented contracts; acceptance evidence and the remaining feature roadmap live in Docmost. Migration0059 below adds historical background references; it is registered after the0057/0058 prefix and runs in the `ten98_replay_heatmaps_ci` lane (13 groups) and the migration lane. Source authoring is not full visual heatmap acceptance.
 
 ## Saved recordings
 
@@ -32,9 +32,9 @@ Heatmap payloads/path metadata follow rawAnalyticsDays (default90), independentl
 
 Density coordinates render without replay. The Saved/Heatmaps views and independent collection controls use the existing application routes. Historical page backgrounds require a genuinely matching retained snapshot and must be labelled; no automatic live iframe, server fetch or screenshot worker is introduced. The numeric canvas and readable coordinate table remain usable when historical context is missing. Full visual acceptance additionally requires the actual recorder/player alignment gate below.
 
-## Private0059 successor: retained historical sample
+## Migration0059: retained historical sample
 
-This source draft adds `POST /api/heatmaps/backgrounds` (4096 complete UTF-8 bytes) and cookie-only `GET /api/projects/:project/heatmaps/background`. It does not register0059 ahead of the real0057/0058 prefix. Neither route creates paid work, a job, a DOM copy, a live website request or new retention entitlement.
+This increment adds `POST /api/heatmaps/backgrounds` (4096 complete UTF-8 bytes) and cookie-only `GET /api/projects/:project/heatmaps/background`. Migration0059 is registered after the0057/0058 prefix. Neither route creates paid work, a job, a DOM copy, a live website request or new retention entitlement.
 
 An upload requires both already accepted, purpose-separated replay and heatmap capabilities, explicit current Analytics plus replay permission, current origin/path/epoch/settings and both immutable upload deadlines. The association references one acknowledged numeric batch of the exact geometry and the actual stored rrweb Meta/FullSnapshot. Direct locators bind sequence, index and stored chunk/event SHA256; fragment locators bind an indexed fragment UUID and the reassembled event SHA256. Resolution reads at most64 affected original chunks per locator (up to16MiB intermediate chunk bytes), at most4MiB for the reassembled event. It never scans a whole recording. The replay offset is derived from the genuine Snapshot timestamp minus the recording's persisted first-event timestamp, rather than a caller-supplied clock origin.
 

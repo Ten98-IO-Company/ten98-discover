@@ -1,0 +1,673 @@
+{
+ "note": "Static implementation inventory mapped to the frozen 81-row V1 register (README link). scripts/check-plan.mjs fails when a served OpenAPI operation, public or browser cookie route, MCP tool or migration is missing here, or when a mapped entry vanished from source. Keys: operations = operationId; routes = METHOD path from x-ten98-public-operations and x-ten98-browser-operations; mcpTools = tool name; migrations = file name without .sql. A row may list several requirements; cookie routes the dispatcher serves without an OpenAPI browser entry are not inventoried.",
+ "requirements": {
+  "P01": {
+   "operations": [
+    "createProject",
+    "listProjects"
+   ],
+   "migrations": [
+    "0001_foundation",
+    "0011_domains",
+    "0014_project_context"
+   ]
+  },
+  "P02": {
+   "operations": [
+    "readTeam"
+   ],
+   "migrations": [
+    "0001_foundation",
+    "0002_teams",
+    "0007_oidc"
+   ]
+  },
+  "P03": {
+   "migrations": [
+    "0001_foundation",
+    "0007_oidc",
+    "0009_oidc_account_security"
+   ]
+  },
+  "P04": {
+   "migrations": [
+    "0004_account_security",
+    "0009_oidc_account_security"
+   ]
+  },
+  "P05": {
+   "operations": [
+    "archivePrompt",
+    "createProject",
+    "createPrompts",
+    "exploreAnalytics",
+    "listProjects",
+    "listPromptVersions",
+    "listPrompts",
+    "listRecentEvents",
+    "listRevenueSessions",
+    "listSessions",
+    "readAnalytics",
+    "readAttribution",
+    "readJourneys",
+    "readLinkedActivity",
+    "readPrompt",
+    "readRealtime",
+    "readRetentionReport",
+    "readRevenue",
+    "readRevenueSession",
+    "readSession",
+    "readTeam",
+    "readWebPerformance",
+    "restorePrompt",
+    "updatePrompt",
+    "writeObservation"
+   ],
+   "mcpTools": [
+    "ten98_create_prompts",
+    "ten98_whoami"
+   ],
+   "migrations": [
+    "0006_api_keys",
+    "0041_api_prompt_scopes"
+   ]
+  },
+  "P06": {
+   "operations": [
+    "archivePrompt",
+    "createPrompts",
+    "listPromptVersions",
+    "listPrompts",
+    "listSessions",
+    "readAnalytics",
+    "readAttribution",
+    "readJourneys",
+    "readPrompt",
+    "readRealtime",
+    "readRetentionReport",
+    "readSession",
+    "restorePrompt",
+    "updatePrompt"
+   ],
+   "mcpTools": [
+    "ten98_archive_prompt",
+    "ten98_create_prompts",
+    "ten98_list_prompt_versions",
+    "ten98_list_prompts",
+    "ten98_list_sessions",
+    "ten98_read_analytics",
+    "ten98_read_attribution",
+    "ten98_read_journeys",
+    "ten98_read_linked_activity",
+    "ten98_read_prompt",
+    "ten98_read_realtime",
+    "ten98_read_retention",
+    "ten98_read_session",
+    "ten98_restore_prompt",
+    "ten98_update_prompt",
+    "ten98_whoami"
+   ]
+  },
+  "P07": {
+   "migrations": [
+    "0045_account_preferences"
+   ]
+  },
+  "P08": {
+   "migrations": [
+    "0031_ai_suggestions"
+   ]
+  },
+  "P09": {
+   "migrations": [
+    "0014_project_context",
+    "0030_citation_context"
+   ]
+  },
+  "P10": {
+   "migrations": [
+    "0005_provider_core",
+    "0022_provider_account_identity"
+   ]
+  },
+  "P11": {
+   "operations": [
+    "archivePrompt",
+    "createPrompts",
+    "listPromptVersions",
+    "listPrompts",
+    "readPrompt",
+    "restorePrompt",
+    "updatePrompt"
+   ],
+   "mcpTools": [
+    "ten98_archive_prompt",
+    "ten98_create_prompts",
+    "ten98_list_prompt_versions",
+    "ten98_list_prompts",
+    "ten98_read_prompt",
+    "ten98_restore_prompt",
+    "ten98_update_prompt"
+   ],
+   "migrations": [
+    "0014_project_context",
+    "0041_api_prompt_scopes"
+   ]
+  },
+  "P12": {
+   "routes": [
+    "GET /api/projects/{projectId}/prompt-trackers",
+    "GET /api/projects/{projectId}/prompt-trackers/{trackerId}",
+    "POST /api/projects/{projectId}/prompt-trackers",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/approve",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/archive",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/pause",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/restore",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/run"
+   ],
+   "migrations": [
+    "0051_prompt_recurring",
+    "0052_prompt_tracker_library"
+   ]
+  },
+  "P13": {
+   "migrations": [
+    "0042_ai_search"
+   ]
+  },
+  "P14": {
+   "migrations": [
+    "0017_prompt_execution",
+    "0042_ai_search"
+   ]
+  },
+  "P18": {
+   "migrations": [
+    "0030_citation_context"
+   ]
+  },
+  "P19": {
+   "routes": [
+    "GET /api/projects/{projectId}/ai-content-support",
+    "GET /api/projects/{projectId}/ai-content-support/runs",
+    "GET /api/projects/{projectId}/ai-content-support/runs/{runId}",
+    "POST /api/projects/{projectId}/ai-content-support/quote",
+    "POST /api/projects/{projectId}/ai-content-support/runs",
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/cancel",
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/reconcile"
+   ],
+   "migrations": [
+    "0043_ai_content_support"
+   ]
+  },
+  "P20": {
+   "routes": [
+    "GET /api/projects/{projectId}/ai-content-support",
+    "GET /api/projects/{projectId}/ai-content-support/runs",
+    "GET /api/projects/{projectId}/ai-content-support/runs/{runId}",
+    "POST /api/projects/{projectId}/ai-content-support/quote",
+    "POST /api/projects/{projectId}/ai-content-support/runs",
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/cancel",
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/export",
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/reconcile"
+   ],
+   "migrations": [
+    "0032_site_audit_body",
+    "0042_ai_search",
+    "0043_ai_content_support"
+   ]
+  },
+  "P21": {
+   "migrations": [
+    "0017_prompt_execution"
+   ]
+  },
+  "P23": {
+   "routes": [
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/export"
+   ]
+  },
+  "P25": {
+   "migrations": [
+    "0017_prompt_execution",
+    "0047_prompt_explorer_models",
+    "0050_prompt_explorer_cache"
+   ]
+  },
+  "P26": {
+   "routes": [
+    "GET /api/projects/{projectId}/prompt-trackers",
+    "GET /api/projects/{projectId}/prompt-trackers/{trackerId}",
+    "POST /api/projects/{projectId}/prompt-trackers",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/approve",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/archive",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/pause",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/restore",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/run"
+   ],
+   "migrations": [
+    "0031_ai_suggestions",
+    "0051_prompt_recurring",
+    "0052_prompt_tracker_library"
+   ]
+  },
+  "P27": {
+   "migrations": [
+    "0001_foundation",
+    "0003_analytics",
+    "0012_native_analytics",
+    "0039_cookieless_collection"
+   ]
+  },
+  "P28": {
+   "operations": [
+    "listRecentEvents",
+    "writeObservation"
+   ],
+   "migrations": [
+    "0003_analytics"
+   ]
+  },
+  "P29": {
+   "operations": [
+    "readLinkedActivity"
+   ],
+   "mcpTools": [
+    "ten98_read_linked_activity"
+   ],
+   "migrations": [
+    "0012_native_analytics",
+    "0036_native_identify",
+    "0037_explicit_identity_links",
+    "0038_explicit_identity_event_evidence"
+   ]
+  },
+  "P30": {
+   "mcpTools": [
+    "ten98_read_analytics"
+   ],
+   "migrations": [
+    "0012_native_analytics",
+    "0040_analytics_geography"
+   ]
+  },
+  "P31": {
+   "routes": [
+    "GET /api/track/{kind}/{publicKey}",
+    "HEAD /api/track/{kind}/{publicKey}"
+   ],
+   "migrations": [
+    "0012_native_analytics",
+    "0039_cookieless_collection"
+   ]
+  },
+  "P32": {
+   "operations": [
+    "readAnalytics",
+    "readRealtime"
+   ],
+   "mcpTools": [
+    "ten98_read_analytics",
+    "ten98_read_realtime"
+   ]
+  },
+  "P33": {
+   "operations": [
+    "exploreAnalytics",
+    "listRecentEvents"
+   ]
+  },
+  "P34": {
+   "operations": [
+    "listSessions",
+    "readLinkedActivity",
+    "readSession"
+   ],
+   "mcpTools": [
+    "ten98_list_sessions",
+    "ten98_read_linked_activity",
+    "ten98_read_session"
+   ],
+   "migrations": [
+    "0036_native_identify"
+   ]
+  },
+  "P35": {
+   "migrations": [
+    "0033_analytics_segments",
+    "0034_analytics_annotations",
+    "0035_analytics_cohorts"
+   ]
+  },
+  "P36": {
+   "operations": [
+    "exploreAnalytics"
+   ]
+  },
+  "P37": {
+   "migrations": [
+    "0020_funnels"
+   ]
+  },
+  "P38": {
+   "operations": [
+    "readAttribution",
+    "readJourneys",
+    "readRetentionReport"
+   ],
+   "mcpTools": [
+    "ten98_read_attribution",
+    "ten98_read_journeys",
+    "ten98_read_retention"
+   ]
+  },
+  "P39": {
+   "operations": [
+    "listRevenueSessions",
+    "readRevenue",
+    "readRevenueSession"
+   ]
+  },
+  "P40": {
+   "operations": [
+    "readWebPerformance"
+   ],
+   "migrations": [
+    "0054_web_performance"
+   ]
+  },
+  "P41": {
+   "routes": [
+    "GET /api/projects/{projectId}/replays",
+    "GET /api/projects/{projectId}/replays/saved",
+    "GET /api/projects/{projectId}/replays/{recordingId}",
+    "GET /api/projects/{projectId}/replays/{recordingId}/chunks",
+    "GET /api/projects/{projectId}/replays/{recordingId}/saved",
+    "POST /api/heatmaps/batches",
+    "POST /api/heatmaps/begin",
+    "POST /api/projects/{projectId}/replays/{recordingId}/saved",
+    "POST /api/replay/begin",
+    "POST /api/replay/chunks"
+   ],
+   "migrations": [
+    "0055_session_replay"
+   ]
+  },
+  "P42": {
+   "routes": [
+    "GET /api/projects/{projectId}/heatmaps",
+    "GET /api/projects/{projectId}/replays",
+    "GET /api/projects/{projectId}/replays/saved",
+    "GET /api/projects/{projectId}/replays/{recordingId}",
+    "GET /api/projects/{projectId}/replays/{recordingId}/chunks",
+    "GET /api/projects/{projectId}/replays/{recordingId}/saved",
+    "POST /api/heatmaps/batches",
+    "POST /api/heatmaps/begin",
+    "POST /api/projects/{projectId}/replays/{recordingId}/saved",
+    "POST /api/replay/begin",
+    "POST /api/replay/chunks"
+   ],
+   "migrations": [
+    "0056_replay_heatmaps",
+    "0059_heatmap_backgrounds"
+   ]
+  },
+  "P43": {
+   "routes": [
+    "GET /api/board-shares/{shareId}/manifest",
+    "GET /api/workspaces/{workspaceId}/boards",
+    "GET /api/workspaces/{workspaceId}/boards/{boardId}",
+    "GET /api/workspaces/{workspaceId}/boards/{boardId}/cards/{cardId}",
+    "GET /api/workspaces/{workspaceId}/boards/{boardId}/shares",
+    "GET /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}",
+    "POST /api/board-shares/{shareId}/cards/{cardId}/read",
+    "POST /api/workspaces/{workspaceId}/boards",
+    "POST /api/workspaces/{workspaceId}/boards/preview",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/clone",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/delete",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}/publish",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}/revoke",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/update"
+   ],
+   "migrations": [
+    "0057_custom_boards",
+    "0060_board_shares"
+   ]
+  },
+  "P44": {
+   "routes": [
+    "GET /api/track/{kind}/{publicKey}",
+    "GET /api/tracked-shares/{token}",
+    "GET /api/workspaces/{workspaceId}/tracked-assets",
+    "GET /api/workspaces/{workspaceId}/tracked-assets/{assetId}",
+    "GET /api/workspaces/{workspaceId}/tracked-assets/{assetId}/report",
+    "GET /api/workspaces/{workspaceId}/tracked-assets/{assetId}/shares",
+    "HEAD /api/track/{kind}/{publicKey}",
+    "POST /api/workspaces/{workspaceId}/tracked-assets",
+    "POST /api/workspaces/{workspaceId}/tracked-assets/{assetId}/delete",
+    "POST /api/workspaces/{workspaceId}/tracked-assets/{assetId}/shares",
+    "POST /api/workspaces/{workspaceId}/tracked-assets/{assetId}/shares/{shareId}/revoke",
+    "POST /api/workspaces/{workspaceId}/tracked-assets/{assetId}/update"
+   ],
+   "migrations": [
+    "0058_tracked_assets"
+   ]
+  },
+  "P45": {
+   "routes": [
+    "GET /api/board-shares/{shareId}/manifest",
+    "GET /api/tracked-shares/{token}",
+    "GET /api/workspaces/{workspaceId}/boards/{boardId}/shares",
+    "GET /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}",
+    "GET /api/workspaces/{workspaceId}/tracked-assets/{assetId}/shares",
+    "POST /api/board-shares/{shareId}/cards/{cardId}/read",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}/publish",
+    "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}/revoke",
+    "POST /api/workspaces/{workspaceId}/tracked-assets/{assetId}/shares",
+    "POST /api/workspaces/{workspaceId}/tracked-assets/{assetId}/shares/{shareId}/revoke"
+   ],
+   "migrations": [
+    "0010_reports",
+    "0058_tracked_assets",
+    "0060_board_shares"
+   ]
+  },
+  "P46": {
+   "routes": [
+    "GET /api/projects/{projectId}/analytics-reset",
+    "GET /api/workspaces/{workspaceId}/projects/{projectId}/delete",
+    "POST /api/projects/{projectId}/analytics-reset",
+    "POST /api/projects/{projectId}/analytics/export",
+    "POST /api/workspaces/{workspaceId}/projects/{projectId}/delete"
+   ],
+   "migrations": [
+    "0061_project_deletions"
+   ]
+  },
+  "P47": {
+   "migrations": [
+    "0016_keyword_research"
+   ]
+  },
+  "P48": {
+   "migrations": [
+    "0021_saved_keywords",
+    "0022_provider_account_identity"
+   ]
+  },
+  "P49": {
+   "routes": [
+    "GET /api/projects/{projectId}/domain-research",
+    "GET /api/projects/{projectId}/domain-research/runs/{runId}",
+    "GET /api/projects/{projectId}/domain-research/runs/{runId}/export",
+    "POST /api/projects/{projectId}/domain-research/catalog",
+    "POST /api/projects/{projectId}/domain-research/quote",
+    "POST /api/projects/{projectId}/domain-research/runs",
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/cancel",
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/reconcile"
+   ],
+   "migrations": [
+    "0048_domain_research"
+   ]
+  },
+  "P50": {
+   "migrations": [
+    "0023_rank_tracking",
+    "0024_rank_authored_revision"
+   ]
+  },
+  "P51": {
+   "migrations": [
+    "0023_rank_tracking"
+   ]
+  },
+  "P52": {
+   "routes": [
+    "GET /api/projects/{projectId}/domain-research",
+    "GET /api/projects/{projectId}/domain-research/runs/{runId}",
+    "GET /api/projects/{projectId}/domain-research/runs/{runId}/export",
+    "POST /api/projects/{projectId}/domain-research/catalog",
+    "POST /api/projects/{projectId}/domain-research/quote",
+    "POST /api/projects/{projectId}/domain-research/runs",
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/cancel",
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/reconcile"
+   ],
+   "migrations": [
+    "0048_domain_research"
+   ]
+  },
+  "P53": {
+   "migrations": [
+    "0019_site_audits"
+   ]
+  },
+  "P54": {
+   "migrations": [
+    "0019_site_audits",
+    "0032_site_audit_body"
+   ]
+  },
+  "P55": {
+   "migrations": [
+    "0019_site_audits"
+   ]
+  },
+  "P56": {
+   "migrations": [
+    "0019_site_audits",
+    "0032_site_audit_body"
+   ]
+  },
+  "P57": {
+   "migrations": [
+    "0015_google_imports",
+    "0044_google_ads_imports"
+   ]
+  },
+  "P58": {
+   "migrations": [
+    "0015_google_imports",
+    "0044_google_ads_imports",
+    "0046_ga4_report_inventory",
+    "0049_google_organic_reports",
+    "0053_ga4_commerce_reports"
+   ]
+  },
+  "P62": {
+   "migrations": [
+    "0010_reports"
+   ]
+  },
+  "P64": {
+   "routes": [
+    "POST /api/projects/{projectId}/ai-content-support/quote",
+    "POST /api/projects/{projectId}/ai-content-support/runs",
+    "POST /api/projects/{projectId}/domain-research/quote",
+    "POST /api/projects/{projectId}/domain-research/runs",
+    "POST /api/projects/{projectId}/prompt-trackers/{trackerId}/approve"
+   ],
+   "migrations": [
+    "0005_provider_core"
+   ]
+  },
+  "P66": {
+   "routes": [
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/cancel",
+    "POST /api/projects/{projectId}/ai-content-support/runs/{runId}/reconcile",
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/cancel",
+    "POST /api/projects/{projectId}/domain-research/runs/{runId}/reconcile"
+   ],
+   "migrations": [
+    "0001_foundation",
+    "0029_meta_observed_cooldowns"
+   ]
+  },
+  "P68": {
+   "routes": [
+    "GET /api/projects/{projectId}/analytics-reset",
+    "GET /api/workspaces/{workspaceId}/projects/{projectId}/delete",
+    "POST /api/projects/{projectId}/analytics-reset",
+    "POST /api/projects/{projectId}/analytics/export",
+    "POST /api/workspaces/{workspaceId}/projects/{projectId}/delete"
+   ],
+   "migrations": [
+    "0013_retention",
+    "0061_project_deletions"
+   ]
+  },
+  "P71": {
+   "migrations": [
+    "0008_destinations",
+    "0025_meta_auth"
+   ]
+  },
+  "P72": {
+   "migrations": [
+    "0008_destinations"
+   ]
+  },
+  "P76": {
+   "migrations": [
+    "0015_google_imports",
+    "0025_meta_auth",
+    "0026_meta_imports",
+    "0027_meta_report_profiles",
+    "0028_meta_campaign_inventory",
+    "0029_meta_observed_cooldowns",
+    "0044_google_ads_imports",
+    "0046_ga4_report_inventory",
+    "0049_google_organic_reports",
+    "0053_ga4_commerce_reports"
+   ]
+  },
+  "P77": {
+   "migrations": [
+    "0026_meta_imports",
+    "0027_meta_report_profiles",
+    "0028_meta_campaign_inventory"
+   ]
+  },
+  "P78": {
+   "migrations": [
+    "0008_destinations"
+   ]
+  },
+  "P79": {
+   "migrations": [
+    "0011_domains"
+   ]
+  },
+  "P80": {
+   "migrations": [
+    "0018_domain_redirect_checks"
+   ]
+  },
+  "P81": {
+   "migrations": [
+    "0025_meta_auth"
+   ]
+  }
+ }
+}
