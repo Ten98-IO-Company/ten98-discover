@@ -44,7 +44,7 @@ const prompt=z.strictObject({projectId:id,promptId:id});
 const contextUpdate=z.strictObject({projectId:id,...action,updates:z.array(z.looseObject({kind:z.enum(contextOp.options.map(option=>option.shape.kind.value))})).min(1).max(50)});
 const cursor512=z.string().max(512),cursorQuery=z.strictObject({projectId:id,query:z.strictObject({cursor:cursor512.optional()}).optional()}),tracker=z.strictObject({projectId:id,trackerId:id});
 // Closed key set from the native parser; each value stays with the strict parseSavedKeywordFilters.
-const savedKeywordList=z.strictObject({projectId:id,filters:z.strictObject(Object.fromEntries(savedKeywordFilterKeys.map(name=>[name,z.unknown().optional()]))).optional(),pageSize:z.union([z.literal(50),z.literal(100),z.literal(250)]).optional(),cursor:cursor512.optional()});
+const savedKeywordList=z.strictObject({projectId:id,filters:z.strictObject(Object.fromEntries(savedKeywordFilterKeys.map(name=>[name,z.unknown().optional()]))).optional(),pageSize:z.literal([50,100,250]).optional(),cursor:cursor512.optional()});
 // Wire schemas have no transforms. Native parsers remain authoritative for dates,
 // canonical composite keys, Unicode, predicates, cursor binding and receipt payloads.
 export const mcpTools=[

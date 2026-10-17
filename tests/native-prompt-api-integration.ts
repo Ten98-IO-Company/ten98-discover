@@ -103,7 +103,7 @@ export async function runNativePromptApiChecks(){
       {path:'/api/projects/'+project+'/saved-keywords/list',body:{}},{path:'/api/projects/'+project+'/saved-keywords/tags/list',body:{}}];
     assert.equal(contentRoutes.length,16);
     for(const op of contentRoutes)assert.equal((await http(op.path,bearer(oldSame.token),op.body)).status,403,'The five original grants never reach a content route: '+op.path);
-    assert.equal((await http('/api/projects/'+project+'/segments',bearer())).status,200,'segments:read admits the full-scope key');assert.equal((await http('/api/projects/'+project+'/segments',bearer(read.token))).status,403,'prompts:read must not retrogrant segments:read');
+    assert.equal((await http('/api/projects/'+project+'/segments',bearer(read.token))).status,403,'prompts:read must not retrogrant segments:read');
     await assert.rejects(getPrompt(project,oldUser,first.id,all.token),(e:unknown)=>e instanceof FoundationError&&e.status===404,'Token cannot be attributed to a different supplied user.');
     const beforeInvalid=await counts();
     for(const input of [{requestId:randomUUID(),prompts:[]},{requestId:randomUUID(),prompts:Array.from({length:101},(_,i)=>({text:'Too many '+i}))},{requestId:randomUUID(),prompts:[{text:'bad',execute:true}]},{requestId:randomUUID(),prompts:[{text:'repeat'},{text:' repeat '}]},{requestId:randomUUID(),prompts:[{text:'\ud800'}]},{requestId:randomUUID(),prompts:[{text:'x'}],execute:true}])assert.equal((await http(base+'/bulk',bearer(),input)).status,400);

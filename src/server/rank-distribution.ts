@@ -50,8 +50,10 @@ function summarize(cells:Cell[],requestedDepth:number):Totals{
  * top100Comparable additionally excludes shallow negatives and absolute ranks.
  * Both completeness flags are false for empty sets. Dates cover ONLY the chosen
  * readable observations; a latest-mode distribution is not one complete check.
- * Current membership and every read share one repeatable-read snapshot. A later
- * committed revocation applies to the next request, without blocking writers.
+ * Under a cookie, current membership and every read share one repeatable-read
+ * snapshot and a later committed revocation applies to the next request, without
+ * blocking writers. Under an API key the read runs READ COMMITTED while holding the
+ * workspace SHARE lock, so config and membership writers wait until it publishes.
  * All counters partition each selected device and the total. No raw SERP, actor,
  * connection, provider task ID, or credential is returned. No provider is called.
  */

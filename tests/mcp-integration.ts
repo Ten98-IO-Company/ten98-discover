@@ -288,11 +288,12 @@ export async function runMcpChecks(){
         }
 
         // Additive saved-definition family (P35): three list tools over the same seam; segments:read covers filters and cohorts, annotations:read covers notes.
+        const wire=(value:unknown)=>JSON.parse(JSON.stringify(value));
         {
           const {listSegments,saveSegment}=await import('../src/server/segments.ts');
           const {listCohorts}=await import('../src/server/cohorts.ts');
           const {listAnnotations,saveAnnotation}=await import('../src/server/annotations.ts');
-          const sp=await makeProject(),segmentsKey=await makeKey(ru,['segments:read']),annotationsKey=await makeKey(ru,['annotations:read']),wire=(value:unknown)=>JSON.parse(JSON.stringify(value));
+          const sp=await makeProject(),segmentsKey=await makeKey(ru,['segments:read']),annotationsKey=await makeKey(ru,['annotations:read']);
           assert.deepEqual((await rpc('tools/list',{},segmentsKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_segments','ten98_list_cohorts']);
           assert.deepEqual((await rpc('tools/list',{},annotationsKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_annotations']);
           const segment=await saveSegment(sp,ru,{requestId:randomUUID(),definition:{schemaVersion:1,name:'MCP saved filter',query:'path=/entry'}});assert.ok(segment.item);
@@ -354,7 +355,7 @@ export async function runMcpChecks(){
           await pool.query("INSERT INTO saved_keyword_tag(id,project_id,name,normalized_name) VALUES($1,$2,'MCP Tag','mcp tag')",[tagId,rp]);
           await pool.query("INSERT INTO saved_keyword(id,project_id,keyword,location_code,language_code) VALUES($1,$2,'mcp saved keyword',2840,'en')",[keywordId,rp]);
           await pool.query('INSERT INTO saved_keyword_tag_assignment(project_id,keyword_id,tag_id) VALUES($1,$2,$3)',[rp,keywordId,tagId]);
-          const wire=(value:unknown)=>JSON.parse(JSON.stringify(value)),strip=(value:unknown)=>{const copy=wire(value);if('asOf'in copy){assert.ok(Number.isFinite(Date.parse(copy.asOf)));delete copy.asOf;}return copy;};
+          const strip=(value:unknown)=>{const copy=wire(value);if('asOf'in copy){assert.ok(Number.isFinite(Date.parse(copy.asOf)));delete copy.asOf;}return copy;};
           const matrixQuery={device:'desktop',runLimit:'5'},distributionPath='rank-trackers/'+trackerId+'/distribution',matrixPath='rank-trackers/'+trackerId+'/matrix?'+new URLSearchParams(matrixQuery);
           const seo:{name:string;path:string;key:{token:string};args:Record<string,unknown>;body?:unknown;read:()=>Promise<unknown>}[]=[
             {name:'ten98_list_rank_trackers',path:'rank-trackers',key:rankKey,args:{},read:()=>listRankTrackers(rp,ru,new URLSearchParams(),rankKey.token)},
@@ -387,13 +388,14 @@ export async function runMcpChecks(){
           for(const suffix of ['rank-trackers/locations?connectionId='+connection+'&countryCode=2840','rank-trackers/'+trackerId+'/runs','rank-trackers/'+trackerId+'/results','rank-trackers/'+trackerId+'/schedule','rank-checks/'+runId])assert.equal((await http('/api/projects/'+rp+'/'+suffix,{authorization:'Bearer '+rankKey.token})).status,403,suffix);
           for(const [suffix,body] of [['rank-trackers/catalog',{connectionId:connection}],['rank-trackers/'+trackerId+'/matrix/export',{device:'desktop'}]] as const)assert.equal((await http('/api/projects/'+rp+'/'+suffix,{authorization:'Bearer '+rankKey.token},body)).status,403,suffix);
           assert.equal((await http('/api/projects/'+rp+'/saved-keywords',{authorization:'Bearer '+keywordsKey.token})).status,403,'The saved-keyword collection GET stays cookie-only.');
-          for(const [suffix,body] of [['saved-keywords',{requestId:randomUUID(),revision:0,source:{type:'manual',keywords:['never'],locationCode:2840,languageCode:'en'}}],['saved-keywords/export',{selection:{type:'filtered',filters:{}},format:'csv'}],['saved-keywords/refresh-quote',{}]] as const)assert.equal((await http('/api/projects/'+rp+'/'+suffix,{authorization:'Bearer '+keywordsKey.token},body)).status,403,suffix);
+          for(const [suffix,body] of [['saved-keywords',{requestId:randomUUID(),revision:0,source:{type:'manual',keywords:['never'],locationCode:2840,languageCode:'en'}}],['saved-keywords/export',{selection:{type:'filtered',filters:{}},format:'csv'}],['saved-keywords/refresh-quote',{}],['saved-keywords/LIST',{}],['saved-keywords/tags/LIST',{}]] as const)assert.equal((await http('/api/projects/'+rp+'/'+suffix,{authorization:'Bearer '+keywordsKey.token},body)).status,403,suffix);
           for(const [name,token,args] of [['ten98_read_rank_tracker',rankKey.token,{trackerId}],['ten98_list_saved_keywords',keywordsKey.token,{}]] as const){const foreign=await call(name,{projectId:foreignProject,...args},token);assert.equal(foreign.status,200);assert.equal(foreign.wire.result.structuredContent.error.status,404);assert.equal(JSON.stringify(foreign.wire).includes(foreignProject),false);}
           assert.equal((await call('ten98_read_rank_tracker',{projectId:rp,trackerId:randomUUID()},rankKey.token)).wire.result.structuredContent.error.status,404);
           assert.equal((await call('ten98_read_rank_matrix',{projectId:rp,trackerId,query:{device:'mobile'}},rankKey.token)).wire.result.structuredContent.error.status,400,'mobile is not enabled on this tracker');
-          // Rate parity: the saved-keyword readers carry both native limits; the second is proven before the first so neither hides the other.
+          // Rate parity: the saved-keyword readers carry both native limits. The read limit is proven first while the first limit is far from full, then its saturated row is removed so the first limit is proven on its own.
           const seoActor=await reportActor(),rateRank=await makeKey(seoActor.userId,['rank:read']),rateKeywords=await makeKey(seoActor.userId,['keywords:read']);
           for(const [prefix,maximum,name,path,key,args,body] of [['rank-read:',120,'ten98_list_rank_trackers','rank-trackers',rateRank,{},undefined],['rank-report:',30,'ten98_read_rank_distribution',distributionPath,rateRank,{trackerId},undefined],['saved-keyword-read:',60,'ten98_list_saved_keyword_tags','saved-keywords/tags/list',rateKeywords,{},{}],['saved-keyword:',120,'ten98_list_saved_keywords','saved-keywords/list',rateKeywords,{},{}]] as const){
+            if(prefix==='saved-keyword:')await pool.query('DELETE FROM request_limit WHERE key=$1',['saved-keyword-read:'+seoActor.userId]);
             await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),$2)ON CONFLICT(key,minute)DO UPDATE SET count=$2",[prefix+seoActor.userId,maximum]);
             assert.equal((await call(name,{projectId:rp,...args},key.token)).wire.result.structuredContent.error.status,429,name);assert.equal((await http('/api/projects/'+rp+'/'+path,{authorization:'Bearer '+key.token},body)).status,429,path);
           }

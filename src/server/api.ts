@@ -178,7 +178,8 @@ export async function handleApi(request: Request): Promise<Response> {
         [new RegExp(`^/api/projects/(${id})/(?:segments|cohorts)(?:/${id})?$`,'i'),'GET','segments:read'],
         [new RegExp(`^/api/projects/(${id})/annotations(?:/timeline|/${id})?$`,'i'),'GET','annotations:read'],
         [new RegExp(`^/api/projects/(${id})/rank-trackers(?:/${id}(?:/distribution|/matrix)?)?$`,'i'),'GET','rank:read'],
-        [new RegExp(`^/api/projects/(${id})/saved-keywords/(?:list|tags/list)$`,'i'),'POST','keywords:read'],
+        // Case-sensitive: the handler classifies read-only POSTs by exact lowercase words, so a spelling variant must not pass as a read.
+        [new RegExp(`^/api/projects/(${id})/saved-keywords/(?:list|tags/list)$`),'POST','keywords:read'],
       ];
       const scoped=scopedRoutes.find(([route,method])=>request.method===method&&route.test(path));
       if(promptApiRoute&&(promptRead||promptWrite)) {
