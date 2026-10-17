@@ -203,11 +203,11 @@ export async function startPromptExecution(projectId:string,userId:string,raw:un
     return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)});
   });
 }
-async function cancelChildren(client:PoolClient,id:string,diagnostic:string){
+async function cancelChildren(client:PoolClient,id:string,diagnostic:string,childId:string|null=null){
   await client.query(`UPDATE provider_request p SET status='cancelled',updated_at=clock_timestamp() FROM prompt_execution r
-    WHERE r.comparison_id=$1 AND p.id=r.id AND p.status='reserved'`,[id]);
+    WHERE r.comparison_id=$1 AND p.id=r.id AND p.status='reserved' AND ($2::uuid IS NULL OR r.id=$2)`,[id,childId]);
   await client.query(`UPDATE prompt_execution r SET status='cancelled',diagnostic=$2,completed_at=clock_timestamp() FROM provider_request p
-    WHERE r.comparison_id=$1 AND p.id=r.id AND p.status='cancelled' AND r.status='queued'`,[id,diagnostic]);
+    WHERE r.comparison_id=$1 AND p.id=r.id AND p.status='cancelled' AND r.status='queued' AND ($3::uuid IS NULL OR r.id=$3)`,[id,diagnostic,childId]);
 }
 export async function cancelPromptComparison(projectId:string,userId:string,id:string,raw:unknown){
   z.uuid().parse(id);executionParse(z.object({}).strict(),raw);
@@ -234,41 +234,42 @@ async function finish(row:any,outcome:ExecutionOutcome,crashOnly=false){return w
   // Owner decision D3: nothing pauses automatically; a manual pause stops each sibling at its own dispatch gate.
   if(settled.reconciliationRequired)await cancelChildren(client,current.comparison_id,'Remaining requests were not sent because an earlier charge in this comparison is uncertain. Reconcile it first.');
 });}
+/** Owner decision D3: Start authorized this child; no quote clock or sibling order applies after Start. */
+export async function executePromptExecution(executionId:string,send:typeof fetch=fetch){
+  if(!z.uuid().safeParse(executionId).success)throw new Error('Invalid prompt execution job.');
+  const row=(await getDatabase().pool.query(runSelect+' WHERE r.id=$1',[executionId])).rows[0];if(row?.status!=='queued')return;
+  let secret:unknown,dispatchedAt:Date|undefined;
+  try{
+    const saved=await scoped(row.project_id,row.user_id,writers,async(client,wid)=>{await assertPromptRecurringAuthority(client,row.quote_id);return {credentials:credentials(await connection(client,wid,row.connection_id,row.connection_revision))};});
+    if(keyFingerprint(saved.credentials)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
+    executionRequestBody(row.messages,row.route,row.input.maxCompletionTokens,row.id,row.request_actor);
+    const [fresh]=await readOpenRouterRoutes(saved.credentials,[row.route.model],row.input.maxCompletionTokens,send,row.route.profile,row.route.profile?[row.route.tag]:undefined);
+    if(Object.entries(fresh).some(([key,value])=>row.route[key]!==value))throw new FoundationError(409,'Endpoint prices or capacity changed.');
+    await dispatchSpend(row.workspace_id,row.user_id,row.id,async(client)=>{
+      const live=(await client.query(runSelect+' WHERE r.id=$1',[row.id])).rows[0];
+      if(live.status!=='queued'||live.cancel_requested)throw new FoundationError(409,'Execution authorization changed.');
+      await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[row.project_id]);await promptVersion(client,row.project_id,row.prompt_id,row.version_id);
+      await assertPromptRecurringAuthority(client,row.quote_id,true);
+      secret=credentials(await connection(client,row.workspace_id,row.connection_id,row.connection_revision));if(keyFingerprint(secret)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
+      dispatchedAt=(await client.query("UPDATE prompt_execution SET status='running',dispatched_at=clock_timestamp() WHERE id=$1 RETURNING dispatched_at",[row.id])).rows[0].dispatched_at;
+    });
+  }catch(error){
+    if(error instanceof FoundationError){await workerTransaction(row.comparison_id,async client=>{
+      // A duplicate worker must not cancel this child after another worker advances it.
+      const current=(await client.query('SELECT status FROM prompt_execution WHERE id=$1',[row.id])).rows[0];
+      if(current?.status!=='queued')return;
+      await cancelChildren(client,row.comparison_id,'Not dispatched because the endpoint, permissions, credentials, the paid-work pause or an uncertain charge changed.',row.id);
+    });return;}throw error;
+  }
+  const outcome=await requestPromptExecution(secret,row.messages,row.route,row.input.maxCompletionTokens,row.id,row.request_actor,dispatchedAt!,async generation=>{
+    await workerTransaction(row.comparison_id,async client=>{const live=(await client.query('SELECT generation_id FROM prompt_execution WHERE id=$1',[row.id])).rows[0];if(live.generation_id&&live.generation_id!==generation)throw new Error('Generation receipt conflict.');await client.query('UPDATE prompt_execution SET generation_id=$2 WHERE id=$1',[row.id,generation]);});
+  },send);
+  await finish(row,outcome);
+}
+/** Legacy comparison-keyed jobs (queued before per-child Start) and direct callers run each child in position order. */
 export async function executePromptComparison(id:string,send:typeof fetch=fetch){
   if(!z.uuid().safeParse(id).success)throw new Error('Invalid comparison job.');
-  const children=(await getDatabase().pool.query(runSelect+' WHERE r.comparison_id=$1 ORDER BY r.position',[id])).rows;
-  for(const child of children){
-    const row=(await getDatabase().pool.query(runSelect+' WHERE r.id=$1',[child.id])).rows[0];if(!row)continue;
-    if(row.status==='running'||row.status==='uncertain')return;if(row.status!=='queued')continue;
-    let secret:unknown,dispatchedAt:Date|undefined;
-    try{
-      const saved=await scoped(row.project_id,row.user_id,writers,async(client,wid)=>{await assertPromptRecurringAuthority(client,row.quote_id);return {credentials:credentials(await connection(client,wid,row.connection_id,row.connection_revision))};});
-      if(keyFingerprint(saved.credentials)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
-      executionRequestBody(row.messages,row.route,row.input.maxCompletionTokens,row.id,row.request_actor);
-      const [fresh]=await readOpenRouterRoutes(saved.credentials,[row.route.model],row.input.maxCompletionTokens,send,row.route.profile,row.route.profile?[row.route.tag]:undefined);
-      if(Object.entries(fresh).some(([key,value])=>row.route[key]!==value))throw new FoundationError(409,'Endpoint prices or capacity changed.');
-      await dispatchSpend(row.workspace_id,row.user_id,row.id,async(client)=>{
-        const live=(await client.query(runSelect+' WHERE r.id=$1',[row.id])).rows[0];
-        if(live.status!=='queued'||live.cancel_requested||live.expires_at.getTime()<=Date.now())throw new FoundationError(409,'Execution authorization expired.');
-        if((await client.query("SELECT id FROM prompt_execution WHERE comparison_id=$1 AND position<$2 AND status IN('queued','running','uncertain')",[id,live.position])).rowCount)throw new FoundationError(409,'An earlier comparison request is unfinished.');
-        await client.query('SELECT id FROM project WHERE id=$1 FOR UPDATE',[row.project_id]);await promptVersion(client,row.project_id,row.prompt_id,row.version_id);
-        await assertPromptRecurringAuthority(client,row.quote_id,true);
-        secret=credentials(await connection(client,row.workspace_id,row.connection_id,row.connection_revision));if(keyFingerprint(secret)!==row.key_fingerprint)throw new FoundationError(409,'The key identity changed.');
-        dispatchedAt=(await client.query("UPDATE prompt_execution SET status='running',dispatched_at=clock_timestamp() WHERE id=$1 RETURNING dispatched_at",[row.id])).rows[0].dispatched_at;
-      });
-    }catch(error){
-      if(error instanceof FoundationError){await workerTransaction(id,async client=>{
-        // A duplicate worker must not cancel siblings after another worker advances this child.
-        const current=(await client.query('SELECT status FROM prompt_execution WHERE id=$1',[row.id])).rows[0];
-        if(current?.status!=='queued')return;
-        await cancelChildren(client,id,'Not dispatched because the quote, endpoint, permissions, credentials, the paid-work pause or an uncertain charge changed.');
-      });return;}throw error;
-    }
-    const outcome=await requestPromptExecution(secret,row.messages,row.route,row.input.maxCompletionTokens,row.id,row.request_actor,dispatchedAt!,async generation=>{
-      await workerTransaction(id,async client=>{const live=(await client.query('SELECT generation_id FROM prompt_execution WHERE id=$1',[row.id])).rows[0];if(live.generation_id&&live.generation_id!==generation)throw new Error('Generation receipt conflict.');await client.query('UPDATE prompt_execution SET generation_id=$2 WHERE id=$1',[row.id,generation]);});
-    },send);
-    await finish(row,outcome);
-  }
+  for(const child of (await getDatabase().pool.query('SELECT id FROM prompt_execution WHERE comparison_id=$1 ORDER BY position',[id])).rows)await executePromptExecution(child.id,send);
 }
 // Same-client leaves, reused by recurring authorization without nesting transactions.
 export {scoped as withPromptProject,connection as promptConnection,cancelChildren as cancelPromptChildren};
@@ -295,19 +296,17 @@ export async function reconcilePromptExecution(projectId:string,userId:string,id
     return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,current.comparison_id,userId,role,true,true),reconciliation:{status:settled.reconciliationRequired?'inconclusive':'matched',message:settled.reconciliationRequired?'The charge remains unresolved; new paid work stays blocked until it is reconciled.':'Charge recorded.'}});
   });
 }
+// Per child: quote age never cancels a started child (D3). A live job keyed by the child or, for legacy
+// comparison-keyed jobs, by its comparison covers a queued child.
+const jobless=`NOT EXISTS(SELECT 1 FROM pgboss.job j WHERE j.name=$1 AND j.id IN(r.id,r.comparison_id) AND j.state NOT IN('failed','cancelled','completed'))`;
 export async function reconcilePromptExecutionJobs(){
-  const pending=(await getDatabase().pool.query(`SELECT c.id FROM prompt_comparison c JOIN prompt_execution_quote q ON q.id=c.quote_id
-    LEFT JOIN pgboss.job j ON j.id=c.id AND j.name=$1 WHERE EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id AND r.status IN('queued','running'))
-    AND (q.expires_at<clock_timestamp() OR j.id IS NULL OR j.state IN('failed','cancelled','completed') OR EXISTS(SELECT 1 FROM prompt_execution r WHERE r.comparison_id=c.id AND r.status='running' AND r.dispatched_at<clock_timestamp()-interval '90 seconds'))
-    ORDER BY c.created_at LIMIT 50`,[promptExecutionQueue])).rows;
-  for(const comparison of pending){
-    const running=(await getDatabase().pool.query(runSelect+" WHERE r.comparison_id=$1 AND r.status='running' AND r.dispatched_at<clock_timestamp()-interval '90 seconds'",[comparison.id])).rows;
-    for(const row of running)await finish(row,unknownExecution(row.generation_id,'The worker stopped after dispatch. Reconcile the captured generation receipt; no request will be replayed.'),true);
-    await workerTransaction(comparison.id,async client=>{
-      // Recheck queue/expiry after the gate; a stale sweep must not cancel freshly active work.
-      const stale=(await client.query(`SELECT 1 FROM prompt_comparison c JOIN prompt_execution_quote q ON q.id=c.quote_id LEFT JOIN pgboss.job j ON j.id=c.id AND j.name=$2
-        WHERE c.id=$1 AND (q.expires_at<clock_timestamp() OR j.id IS NULL OR j.state IN('failed','cancelled','completed'))`,[comparison.id,promptExecutionQueue])).rowCount;
-      if(stale)await cancelChildren(client,comparison.id,'The queued comparison did not run. Prepare a new quote to try again.');
+  const pending=(await getDatabase().pool.query(runSelect+` WHERE (r.status='running' AND r.dispatched_at<clock_timestamp()-interval '90 seconds')
+    OR (r.status='queued' AND ${jobless}) ORDER BY c.created_at,r.position LIMIT 50`,[promptExecutionQueue])).rows;
+  for(const row of pending){
+    if(row.status==='running'){await finish(row,unknownExecution(row.generation_id,'The worker stopped after dispatch. Reconcile the captured generation receipt; no request will be replayed.'),true);continue;}
+    await workerTransaction(row.comparison_id,async client=>{
+      // Recheck the queue after the gate; a stale sweep must not cancel freshly active work.
+      if((await client.query(`SELECT 1 FROM prompt_execution r WHERE r.id=$2 AND ${jobless}`,[promptExecutionQueue,row.id])).rowCount)await cancelChildren(client,row.comparison_id,'The queued request did not run. Prepare a new quote to try again.',row.id);
     });
   }
 }

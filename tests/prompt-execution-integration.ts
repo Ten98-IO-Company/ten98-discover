@@ -6,7 +6,7 @@ import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
 import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
 import {createPrompts,updatePrompt,setPromptArchived,listPrompts} from '../src/server/prompts.ts';
-import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,executePromptComparison,reconcilePromptExecution,reconcilePromptExecutionJobs} from '../src/server/prompt-execution.ts';
+import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,executePromptComparison,executePromptExecution,promptExecutionQueue,reconcilePromptExecution,reconcilePromptExecutionJobs} from '../src/server/prompt-execution.ts';
 import {refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
 import {runRetentionBatch,previewRetention,getRetention} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
@@ -20,13 +20,13 @@ export async function runPromptExecutionChecks(){
  for(const user of [owner,editor,viewer,foreign])await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Prompt fixture\',$2)',[user,`${user}@execution.integration.test`]);
  await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),owner,await hashPassword(password)]);
  const mini='openai/gpt-4o-mini' as const,models=[mini,'openai/gpt-4o'] as const;
- let paid=0,free=0,mode:'ok'|'unknown'|'truncated'|'over'|'answer_unknown'|'byok'|'invalid'|'empty'|'pending'='ok',priceChanged=false,receiptChange:Record<string,unknown>={};
+ let paid=0,free=0,mode:'ok'|'unknown'|'truncated'|'over'|'answer_unknown'|'byok'|'invalid'|'empty'|'pending'='ok',priceChanged=false,priceModel:string|null=null,receiptChange:Record<string,unknown>={};
  const receipts=new Map<string,any>(),sent:string[]=[];
  const send:typeof fetch=async(url,init)=>{
   assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);const address=String(url);
   if(address==='https://openrouter.ai/api/v1/models?output_modalities=text&offset=0&limit=500'){free++;const data=['openai/gpt-4o-mini','openai/gpt-4o'].map(model=>({id:model,canonical_slug:model,name:model,architecture:{input_modalities:['text'],output_modalities:['text']},context_length:128000,top_provider:{max_completion_tokens:16384},supported_parameters:['max_tokens'],pricing:{prompt:'0.00000015',completion:'0.0000006',request:'0'}}));return Response.json({data,total_count:data.length,links:{next:null}});}
   if(address==='https://openrouter.ai/api/v1/key'){free++;return Response.json({data:{is_free_tier:false,is_management_key:false}});}
-  if(address.endsWith('/endpoints')){free++;const model=address.includes('gpt-4o-mini')?mini:models[1];return Response.json({data:{id:model,architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens'],pricing:{prompt:priceChanged?'0.00000016':'0.00000015',completion:'0.0000006',input_cache_read:'0.000000075',discount:0}}]}});}
+  if(address.endsWith('/endpoints')){free++;const model=address.includes('gpt-4o-mini')?mini:models[1];return Response.json({data:{id:model,architecture:{input_modalities:['text'],output_modalities:['text']},endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens'],pricing:{prompt:priceChanged||model===priceModel?'0.00000016':'0.00000015',completion:'0.0000006',input_cache_read:'0.000000075',discount:0}}]}});}
   if(address.startsWith('https://openrouter.ai/api/v1/generation?id=')){free++;return Response.json({data:{...receipts.get(new URL(address).searchParams.get('id')!),...receiptChange}});}
   assert.equal(address,'https://openrouter.ai/api/v1/chat/completions');assert.equal(init?.method,'POST');paid++;const input=JSON.parse(String(init?.body));sent.push(input.session_id);assert.deepEqual(input.provider.only,['openai']);assert.equal(input.provider.allow_fallbacks,false);
   if(mode==='unknown')throw new Error('Synthetic unavailable response, never live.');
@@ -133,6 +133,26 @@ export async function runPromptExecutionChecks(){
    if(kind==='over')assert.ok(Number(result.runs[0].actualUsd)>Number(result.runs[0].estimateUsd));
   }
   console.log('PASS live role/archive/key/price/cancel gates, charged malformed or empty answers, overrun/BYOK recorded without stopping remaining children (D3)');
+
+  // Owner decision D3(6): Start authorizes every child. Start still sends the legacy comparison-keyed job here; quote age
+  // after Start, sibling order and one child's refusal stop no sibling, and the sweeper decides per child.
+  mode='ok';const aged=await fixture(),agedRun=await start(aged);
+  await pool.query("UPDATE prompt_execution_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[agedRun.quoteId]);
+  await reconcilePromptExecutionJobs();assert.deepEqual((await detail(aged,agedRun.id)).runs.map((r:any)=>[r.status,r.chargeStatus]),[['queued','reserved'],['queued','reserved']],'A live comparison-keyed job covers its children after the quote ages.');
+  before=paid;await executePromptComparison(agedRun.id,send);assert.deepEqual((await detail(aged,agedRun.id)).runs.map((r:any)=>[r.status,r.chargeStatus]),[['completed','settled'],['completed','settled']]);assert.equal(paid,before+2);
+  const ordered=await fixture(),orderedRun=await start(ordered);before=paid;await executePromptExecution(orderedRun.runs[1].id,send);
+  const halfway=await detail(ordered,orderedRun.id);assert.deepEqual(halfway.runs.map((r:any)=>r.status),['queued','completed']);assert.equal(halfway.canCancel,true);assert.equal(paid,before+1);
+  await executePromptExecution(orderedRun.runs[0].id,send);await executePromptExecution(orderedRun.runs[1].id,send);const orderedDone=await detail(ordered,orderedRun.id);
+  assert.deepEqual(orderedDone.runs.map((r:any)=>r.status),['completed','completed']);assert.equal(orderedDone.canCancel,false);assert.equal(paid,before+2);for(const r of orderedRun.runs)assert.equal(sent.filter(v=>v===r.id).length,1);
+  const drifted=await fixture(),driftRun=await start(drifted);before=paid;priceModel=mini;try{await executePromptComparison(driftRun.id,send);}finally{priceModel=null;}
+  const driftDone=await detail(drifted,driftRun.id);assert.deepEqual(driftDone.runs.map((r:any)=>[r.model,r.status,r.chargeStatus]),[[mini,'cancelled','cancelled'],[models[1],'completed','settled']]);
+  assert.equal(driftDone.runs[0].diagnostic,'Not dispatched because the endpoint, permissions, credentials, the paid-work pause or an uncertain charge changed.');assert.equal(paid,before+1);assert.ok(!sent.includes(driftRun.runs[0].id));
+  // The second child keeps a child-keyed job (the shape per-child Start will send); the worker group below runs it.
+  const swept=await fixture(),sweptRun=await start(swept),sweptChild=sweptRun.runs[1].id;before=paid;await pool.query('DELETE FROM pgboss.job WHERE id=$1',[sweptRun.id]);
+  assert.ok(await boss.send(promptExecutionQueue,{comparisonId:sweptRun.id,executionId:sweptChild},{id:sweptChild,retryLimit:0,expireInSeconds:180}));
+  await reconcilePromptExecutionJobs();const sweptDetail=await detail(swept,sweptRun.id);assert.deepEqual(sweptDetail.runs.map((r:any)=>[r.status,r.chargeStatus]),[['cancelled','cancelled'],['queued','reserved']]);
+  assert.equal(sweptDetail.runs[0].diagnostic,'The queued request did not run. Prepare a new quote to try again.');assert.equal(paid,before);
+  console.log('PASS Start authorizes every child (D3): quote age after Start, sibling order and a price change on one model stop no sibling; the sweeper cancels only a jobless queued child');
 
   mode='ok';const uncertain=await fixture(),uncertainRun=await start(uncertain);mode='truncated';await executePromptComparison(uncertainRun.id,send);const unresolved=await detail(uncertain,uncertainRun.id),child=unresolved.runs[0];assert.equal(child.status,'uncertain');assert.ok(child.generationId);assert.equal(unresolved.runs[1].status,'cancelled');before=paid;await executePromptComparison(uncertainRun.id,send);assert.equal(paid,before);
   // Owner decision D3: the uncertain child cancels its sibling and blocks new work through the ledger, without pausing.
@@ -259,12 +279,17 @@ export async function runPromptExecutionChecks(){
   assert.equal((await detail(raw,rawRun.id)).inputExpired,true);assert.equal((await pool.query('SELECT text FROM prompt_text_version WHERE id=$1',[raw.prompt.currentVersionId])).rows[0].text,'Exact original prompt');
   console.log('PASS stale crash snapshot, payload-only bounded retention, rollback and preserved authored prompts');
 
-  const worker=await fixture(),wr=await start(worker);assert.equal((await pool.query('SELECT retry_limit FROM pgboss.job WHERE id=$1',[wr.id])).rows[0].retry_limit,0);await pool.query('UPDATE pgboss.job SET priority=100 WHERE id=$1',[wr.id]);globalThis.fetch=send;await startWorker();const deadline=Date.now()+15_000;while((await detail(worker,wr.id)).runs.some((r:any)=>['queued','running'].includes(r.status))&&Date.now()<deadline)await new Promise(r=>setTimeout(r,50));await stopJobs();globalThis.fetch=blocked;assert.deepEqual((await detail(worker,wr.id)).runs.map((r:any)=>r.status),['completed','completed']);for(const r of wr.runs)assert.equal(sent.filter(v=>v===r.id).length,1);
+  // The production worker runs the legacy comparison-keyed job Start still sends and routes the child-keyed
+  // {executionId} job kept by the D3 group above to that one child (D3 C1).
+  const worker=await fixture(),wr=await start(worker);assert.equal((await pool.query('SELECT retry_limit FROM pgboss.job WHERE id=$1',[wr.id])).rows[0].retry_limit,0);await pool.query('UPDATE pgboss.job SET priority=100 WHERE id=ANY($1::uuid[])',[[wr.id,sweptChild]]);globalThis.fetch=send;await startWorker();const deadline=Date.now()+15_000;
+  const workerActive=async()=>[...(await detail(worker,wr.id)).runs,...(await detail(swept,sweptRun.id)).runs].some((r:any)=>['queued','running'].includes(r.status));
+  while(await workerActive()&&Date.now()<deadline)await new Promise(r=>setTimeout(r,50));await stopJobs();globalThis.fetch=blocked;assert.deepEqual((await detail(worker,wr.id)).runs.map((r:any)=>r.status),['completed','completed']);for(const r of wr.runs)assert.equal(sent.filter(v=>v===r.id).length,1);
+  assert.deepEqual((await detail(swept,sweptRun.id)).runs.map((r:any)=>r.status),['cancelled','completed']);assert.equal(sent.filter(v=>v===sweptChild).length,1);assert.ok(!sent.includes(sweptRun.runs[0].id));
   const login=await handleApi(new Request(`${config.appUrl}/api/auth/sign-in/email`,{method:'POST',headers:{origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify({email:`${owner}@execution.integration.test`,password})}));assert.equal(login.status,200);const cookie=login.headers.getSetCookie().map(v=>v.split(';')[0]).join('; '),endpoint=`${config.appUrl}/api/projects/${f.project}/prompt-executions`;
   assert.equal((await handleApi(new Request(endpoint))).status,401);const read=await handleApi(new Request(endpoint,{headers:{cookie}}));assert.equal(read.status,200);const text=await read.text();for(const secret of ['synthetic-never-live','key_fingerprint','encrypted_credentials'])assert.ok(!text.includes(secret));assert.equal((await handleApi(new Request(endpoint+'?unexpected=1',{headers:{cookie}}))).status,400);
   assert.equal((await handleApi(new Request(endpoint+'/quote',{method:'POST',headers:{cookie,origin:'https://foreign.test','content-type':'application/json'},body:'{}'}))).status,403);const keyToken=await createApiKey(f.workspace,owner,{name:'No execution permission',scopes:['analytics:read']});assert.equal((await handleApi(new Request(endpoint,{headers:{authorization:'Bearer '+keyToken.token}}))).status,403);
   await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[f.workspace,owner]);assert.equal((await handleApi(new Request(endpoint,{headers:{cookie}}))).status,404);
-  console.log('PASS actual queue worker, cookie/Origin/API-key/current-membership enforcement and secret-free execution metadata');
+  console.log('PASS actual queue worker for legacy comparison and child-keyed jobs (D3), cookie/Origin/API-key/current-membership enforcement and secret-free execution metadata');
 
   // Separate additive fixture: all answers are genuine outputs of the production
   // parser/worker using this fake transport, never rewritten success DTOs.

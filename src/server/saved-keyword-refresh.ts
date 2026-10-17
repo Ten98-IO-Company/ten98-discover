@@ -17,7 +17,7 @@ type RunStatus='queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'
 type ChargeStatus='reserved'|'dispatched'|'uncertain'|'settled'|'cancelled';
 type PlanStatus='quoted'|'expired'|'queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'partial';
 export type SavedRefreshQuoteChild={quoteId:string;request:KeywordRequest;targetIds:string[];estimateUsd:string;priceAsOf:string};
-export type SavedRefreshQuote={id:string;createdAt:string;expiresAt:string;connectionName:string;targetCount:number;estimateUsd:string;dispatchWindowSeconds:300;children:SavedRefreshQuoteChild[]};
+export type SavedRefreshQuote={id:string;createdAt:string;expiresAt:string;connectionName:string;targetCount:number;estimateUsd:string;children:SavedRefreshQuoteChild[]};
 export type SavedRefreshChild=SavedRefreshQuoteChild&{runId:string|null;status:RunStatus|'quoted'|'expired';chargeStatus:ChargeStatus|null;actualUsd:string|null;diagnostic:string|null;resultExpired:boolean;canReconcile:boolean};
 export type SavedRefreshPlan=Omit<SavedRefreshQuote,'children'>&{startedAt:string|null;status:PlanStatus;canCancel:boolean;children:SavedRefreshChild[]};
 
@@ -43,7 +43,7 @@ function quoteChild(row:any):SavedRefreshQuoteChild {
 }
 function quoteDto(row:any,children:any[]):SavedRefreshQuote {
   return {id:row.id,createdAt:iso(row.created_at),expiresAt:iso(row.expires_at),connectionName:row.connection_name,targetCount:row.target_count,
-    estimateUsd:usd(row.estimate_micros),dispatchWindowSeconds:300,children:children.map(quoteChild)};
+    estimateUsd:usd(row.estimate_micros),children:children.map(quoteChild)};
 }
 async function planDto(client:PoolClient,row:any,userId:string,role:string):Promise<SavedRefreshPlan> {
   const rows=await childRows(client,row),expired=row.expires_at.getTime()<=Date.now();
@@ -140,8 +140,8 @@ export async function startSavedKeywordRefresh(projectId:string,userId:string,ra
       const reservation=await reserveSpendInTransaction(client,wid,userId,{connectionId:plan.connection_id,requestKey:child.id,operation:'keyword.overview',
         inputHash:requestHash(JSON.stringify({planId:plan.id,quoteId:child.id,request,targetIds:child.saved_target_ids})),estimateUsd:usd(child.estimate_micros)},async(tx,id)=>{
         await tx.query("INSERT INTO keyword_research_run(id,workspace_id,project_id,user_id,quote_id,status) VALUES($1,$2,$3,$4,$5,'queued')",[id,wid,projectId,userId,child.id]);
-        // Two bounded 30-second requests (free account check, then paid research) fit
-        // inside this child deadline; the original five-minute quote still gates dispatch.
+        // Two bounded 30-second requests (free account check, then paid research) fit inside
+        // this child deadline. Start authorizes each child; its 90 s job bounds execution, not quote age.
         if(!await boss.send(keywordQueue,{runId:id},{id,retryLimit:0,expireInSeconds:90,db:{executeSql:(text,values)=>tx.query(text,values)}}))throw new Error('Saved keyword refresh could not be queued.');
       });
       if(!reservation.created)throw new FoundationError(409,'A child request already identifies different work. Prepare a new quote.');

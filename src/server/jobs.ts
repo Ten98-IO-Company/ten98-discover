@@ -9,7 +9,7 @@ import {runTrackedAssetRetention} from './tracked-assets.ts';
 import { googleQueue, reconcileGoogleImports, startGoogleImportWorker } from './google-jobs.ts';
 import {keywordQueue,executeKeywordResearch,reconcileKeywordJobs} from './keyword-research.ts';
 import {domainResearchQueue,executeDomainResearch,reconcileDomainResearchJobs} from './domain-research.ts';
-import {promptExecutionQueue,executePromptComparison,reconcilePromptExecutionJobs} from './prompt-execution.ts';
+import {promptExecutionQueue,executePromptExecution,executePromptComparison,reconcilePromptExecutionJobs} from './prompt-execution.ts';
 import {suggestionQueue} from './ai-suggestions.ts';
 import {executeAiSuggestion,reconcileAiSuggestionJobs} from './ai-suggestion-worker.ts';
 import {aiSearchQueue,executeAiSearch,reconcileAiSearchJobs} from './ai-search.ts';
@@ -193,7 +193,8 @@ export function startWorker(): Promise<void> {
       await boss.work<{runId:string}>(domainResearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainResearch(job.data?.runId);});
       await boss.work<{dispatchId:string}>(rankQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeRankDispatch(job.data?.dispatchId);});
       await boss.work<{dispatchId:string;generation:string}>(rankPollQueue,{batchSize:1},async jobs=>{for(const job of jobs)await pollRankDispatch(job.data?.dispatchId,job.data?.generation);});
-      await boss.work<{comparisonId:string}>(promptExecutionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executePromptComparison(job.data?.comparisonId);});
+      // ponytail: the comparisonId branch drains jobs queued before per-child Start; remove one release after C2
+      await boss.work<{executionId?:string;comparisonId?:string}>(promptExecutionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await(job.data?.executionId?executePromptExecution(job.data.executionId):executePromptComparison(job.data?.comparisonId as string));});
       await boss.work<{runId:string}>(suggestionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSuggestion(job.data?.runId);});
       await boss.work<{runId:string}>(aiSearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSearch(job.data?.runId);});
       await boss.work<{runId:string}>(contentSupportQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeContentSupport(job.data?.runId);});
