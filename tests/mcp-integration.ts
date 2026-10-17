@@ -43,7 +43,7 @@ export async function runMcpChecks(){
     const data=(response:Awaited<ReturnType<typeof rpc>>)=>{assert.equal(response.status,200,JSON.stringify(response.wire));assert.equal(response.wire.result?.isError,undefined,JSON.stringify(response.wire));assert.ok(response.bytes<=8*1024*1024);assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['mcp-session-id'],undefined);const result=response.wire.result;assert.deepEqual(JSON.parse(result.content[0].text),result.structuredContent);return result.structuredContent;};
     for(const modern of [true,false]){
       const listed=await rpc('tools/list',{},all.token,modern);assert.equal(listed.status,200);assert.deepEqual(listed.wire.result.tools.map((x:any)=>x.name),mcpTools.map(t=>t.name));assert.equal(listed.headers['mcp-session-id'],undefined);
-      const who=data(await call('ten98_whoami',{},all.token,modern));assert.equal(who.workspaceId,workspace);assert.equal(who.userId,ownerId);assert.equal(who.tools.length,16);
+      const who=data(await call('ten98_whoami',{},all.token,modern));assert.equal(who.workspaceId,workspace);assert.equal(who.userId,ownerId);assert.equal(who.tools.length,19);
     }
     const discovery=await rpc('server/discover');assert.equal(discovery.status,200);assert.equal(discovery.wire.result.capabilities.tools.listChanged,false);for(const cap of ['tasks','resources','prompts','sampling'])assert.equal(discovery.wire.result.capabilities[cap],undefined);
     const init=await rpc('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'native-protocol-fixture',version:'1'}},all.token,false);assert.equal(init.status,200);assert.equal(init.wire.result.protocolVersion,'2025-11-25');
@@ -232,7 +232,61 @@ export async function runMcpChecks(){
         const rateKey=await reportActor();for(const spec of cases){const prefix=spec.path==='retention-report'?'retention-report':spec.path;await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),30)ON CONFLICT(key,minute)DO UPDATE SET count=30",[prefix+':'+rateKey.userId]);const denied=await call(spec.name,{projectId:p,query:spec.query},rateKey.token);assert.equal(denied.wire.result.structuredContent.error.status,429);const native=await http('/api/projects/'+p+'/'+spec.path+'?'+new URLSearchParams(spec.query),{authorization:'Bearer '+rateKey.token});assert.equal(native.status,429);}
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
         reportEvidence.large={nativeBytes:Buffer.byteLength(JSON.stringify(large)),nativePaths:large.paths!.length,mcp:'whole-error-no-prefix'};
-        reportEvidence.groups.push('whole-result-cap-shared-native-rates-zero-provider');console.log('PASS additive complete MCP envelope refuses large native report, shared native rate keys and zero provider work');reportEvidence.phase='passed';
+        reportEvidence.groups.push('whole-result-cap-shared-native-rates-zero-provider');console.log('PASS additive complete MCP envelope refuses large native report, shared native rate keys and zero provider work');
+
+        // Additive context family: two read tools and the CAS write over the same seams as prompts; every key and project goes through makeKey/makeProject so the cleanup invariant holds.
+        {
+          const {getProjectContext,getContextResearch}=await import('../src/server/project-context.ts');
+          const cp=await makeProject(),contextKey=await makeKey(ru,['context:read']),contextWriteKey=await makeKey(ru,['context:write']),contextPath='/api/projects/'+cp+'/context';
+          const receipts=async()=>(await pool.query('SELECT count(*)::int AS n FROM project_content_request WHERE project_id=$1',[cp])).rows[0].n as number;
+          const currentRevision=async()=>(await pool.query('SELECT revision FROM project_context WHERE project_id=$1',[cp])).rows[0]?.revision as number|undefined;
+          assert.deepEqual((await rpc('tools/list',{},contextKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_read_context','ten98_list_context_research']);
+          assert.deepEqual((await rpc('tools/list',{},contextWriteKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_update_context']);
+          const initial=data(await call('ten98_read_context',{projectId:cp},contextKey.token));assert.equal(initial.revision,1);assert.deepEqual(initial.sections,[]);assert.equal(await currentRevision(),undefined);
+          const sectionText='MCP authored overview '+randomUUID();
+          const patch={projectId:cp,requestId:randomUUID(),revision:initial.revision,updates:[{kind:'section',key:'business_overview',content:sectionText},{kind:'competitor',primaryDomain:'rival.mcp-fixture.com',name:'Rival'},{kind:'key-page',url:'https://mcp-fixture.com/pricing',role:'money'},{kind:'research',summary:'MCP research note'}]};
+          const committed=await call('ten98_update_context',patch,contextWriteKey.token);
+          assert.deepEqual(data(committed),{committed:true,requestId:patch.requestId,replayed:false,revision:initial.revision+1});assert.equal(JSON.stringify(committed.wire).includes(sectionText),false);assert.equal(await receipts(),1);
+          assert.deepEqual(data(await call('ten98_update_context',patch,contextWriteKey.token,false)),{committed:true,requestId:patch.requestId,replayed:true,revision:initial.revision+1});assert.equal(await receipts(),1);
+          const nativeReplay=await http(contextPath+'/update',{authorization:'Bearer '+contextWriteKey.token},{requestId:patch.requestId,revision:patch.revision,updates:patch.updates});
+          assert.equal(nativeReplay.status,200,JSON.stringify(nativeReplay.wire));assert.deepEqual(nativeReplay.wire,{revision:initial.revision+1,replayed:true});assert.equal(await receipts(),1);
+          assert.equal((await call('ten98_update_context',{...patch,updates:[{kind:'research',summary:'Changed receipt'}]},contextWriteKey.token)).wire.result.structuredContent.error.status,409);
+          assert.equal((await call('ten98_update_context',{...patch,requestId:randomUUID()},contextWriteKey.token)).wire.result.structuredContent.error.status,409);
+          assert.equal(await receipts(),1);assert.equal(await currentRevision(),initial.revision+1);
+          const concurrentPatch={projectId:cp,requestId:randomUUID(),revision:initial.revision+1,updates:[{kind:'research',summary:'MCP concurrent context'}]};
+          const pair=await Promise.all([call('ten98_update_context',concurrentPatch,contextWriteKey.token),call('ten98_update_context',concurrentPatch,contextWriteKey.token)]);
+          assert.deepEqual(pair.map(r=>data(r).replayed).sort(),[false,true]);assert.deepEqual(pair.map(r=>data(r).revision),[initial.revision+2,initial.revision+2]);assert.equal(await receipts(),2);
+          const wire=(value:unknown)=>JSON.parse(JSON.stringify(value));
+          for(const [name,suffix,direct] of [['ten98_read_context','',()=>getProjectContext(cp,ru,contextKey.token)],['ten98_list_context_research','/research-log',()=>getContextResearch(cp,ru,new URLSearchParams(),contextKey.token)]] as const){
+            const expected=wire(await direct()),native=await http(contextPath+suffix,{authorization:'Bearer '+contextKey.token});
+            assert.equal(native.status,200,JSON.stringify(native.wire));assert.equal(native.complete,true);assert.equal(native.headers['cache-control'],'no-store');assert.deepEqual(native.wire,expected);
+            for(const modern of [true,false])assert.deepEqual(data(await call(name,{projectId:cp},contextKey.token,modern)),expected);
+            if(suffix)assert.deepEqual(expected.entries.map((e:any)=>[e.summary,e.createdBy]),[['MCP concurrent context',ru],['MCP research note',ru]]);
+            else{assert.equal(expected.revision,initial.revision+2);assert.deepEqual(expected.sections.map((s:any)=>[s.key,s.content,s.updatedBy]),[['business_overview',sectionText,ru]]);assert.equal(expected.competitors[0].primaryDomain,'rival.mcp-fixture.com');assert.equal(expected.keyPages[0].url,'https://mcp-fixture.com/pricing');assert.equal(expected.researchLog.length,2);}
+          }
+          const rawPatch={requestId:randomUUID(),revision:initial.revision+2,updates:[{kind:'research',summary:'Never saved'}]};
+          for(const [name,token] of [['ten98_read_context',contextWriteKey.token],['ten98_list_context_research',contextWriteKey.token],['ten98_update_context',contextKey.token],['ten98_read_context',reportKey.token],['ten98_list_context_research',reportKey.token],['ten98_update_context',reportKey.token]] as const){const denied=await call(name,{projectId:cp,...name==='ten98_update_context'?rawPatch:{}},token);assert.ok(denied.wire.error);assert.equal(denied.wire.result,undefined);}
+          assert.equal((await http(contextPath,{authorization:'Bearer '+contextWriteKey.token})).status,403);assert.equal((await http(contextPath+'/update',{authorization:'Bearer '+contextKey.token},rawPatch)).status,403);
+          for(const [name,token] of [['ten98_read_context',contextKey.token],['ten98_list_context_research',contextKey.token],['ten98_update_context',contextWriteKey.token]] as const){const foreign=await call(name,{projectId:foreignProject,...name==='ten98_update_context'?rawPatch:{}},token);assert.equal(foreign.status,200);assert.equal(foreign.wire.result.structuredContent.error.status,404);assert.equal(JSON.stringify(foreign.wire).includes(foreignProject),false);}
+          assert.equal((await http('/api/projects/'+foreignProject+'/context',{authorization:'Bearer '+contextKey.token})).status,404);
+          assert.equal(await receipts(),2);assert.equal(await currentRevision(),initial.revision+2);
+          for(const writeMode of [false,true]){
+            const key=await makeKey(ru,[writeMode?'context:write':'context:read']),lock=await pool.connect(),before=await receipts(),revision=await currentRevision();let pending:ReturnType<typeof call>|undefined;
+            try{await lock.query('BEGIN');await lock.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[rw]);
+              pending=call(writeMode?'ten98_update_context':'ten98_read_context',{projectId:cp,...writeMode?{...rawPatch,requestId:randomUUID()}:{}},key.token);void pending.catch(()=>{});await waiting(lock,'SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR % OF w');
+              await pool.query('UPDATE api_key SET revoked_at=clock_timestamp()WHERE id=$1',[key.key.id]);await lock.query('COMMIT');const result=await pending;assert.equal(result.status,401);assert.ok(result.wire.error);assert.equal(result.wire.result,undefined);assert.equal(await receipts(),before);assert.equal(await currentRevision(),revision);
+              reportEvidence.waits.push({tool:writeMode?'ten98_update_context':'ten98_read_context',action:'revocation',status:result.status});persist();
+            }finally{await lock.query('ROLLBACK').catch(()=>{});lock.release();await pending?.catch(()=>{});}
+          }
+          await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),120)ON CONFLICT(key,minute)DO UPDATE SET count=120",['project-content:'+ru]);
+          assert.equal((await call('ten98_read_context',{projectId:cp},contextKey.token)).wire.result.structuredContent.error.status,429);
+          assert.equal((await call('ten98_update_context',{projectId:cp,...rawPatch,requestId:randomUUID()},contextWriteKey.token)).wire.result.structuredContent.error.status,429);
+          assert.equal((await http(contextPath,{authorization:'Bearer '+contextKey.token})).status,429);
+          assert.equal((await http(contextPath+'/update',{authorization:'Bearer '+contextWriteKey.token},{...rawPatch,requestId:randomUUID()})).status,429);
+          assert.equal(await receipts(),2);
+          reportEvidence.groups.push('context-cas-receipts-scopes-tenancy-two-waits-shared-rate');console.log('PASS additive context read/CAS write equivalence, bounded receipts, write-not-read scopes, foreign tenancy, two observed authority waits and the shared native rate key');
+        }
+        reportEvidence.phase='passed';
       }catch(error){reportEvidence.phase='failed';reportEvidence.failure={name:error instanceof Error?error.name:'Error',message:error instanceof Error?error.message.slice(0,2000):'Unknown failure'};throw error;}
       finally{
         try{await pool.query('UPDATE api_key SET revoked_at=COALESCE(revoked_at,clock_timestamp())WHERE id=ANY($1::uuid[])',[keys]);assert.equal((await pool.query('SELECT count(*)::int AS n FROM api_key WHERE id=ANY($1::uuid[])AND revoked_at IS NULL',[keys])).rows[0].n,0);reportEvidence.cleanup.push('all additive keys revoked');

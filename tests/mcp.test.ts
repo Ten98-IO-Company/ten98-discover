@@ -1,25 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {createMcpHandler,PROTOCOL_VERSION_META_KEY,CLIENT_CAPABILITIES_META_KEY} from '@modelcontextprotocol/server';
 import {mcpTools,availableTools,mcpResult,mcpResponseBytes,mcpToolError,createNativeMcpServer} from '../src/server/mcp-tools.ts';
 import {handleMcp,mcpOriginAllowed} from '../src/server/mcp.ts';
 import {apiKeyScopes,type ApiKeyPrincipal} from '../src/server/api-keys.ts';
+import {contextOp} from '../src/server/context-input.ts';
 
 const principal:ApiKeyPrincipal={id:randomUUID(),userId:randomUUID(),workspaceId:randomUUID(),role:'owner',scopes:[...apiKeyScopes]};
 test('fixed native catalog, strict bounded schemas and scope separation',()=>{
-  assert.equal(mcpTools.length,16);assert.equal(new Set(mcpTools.map(t=>t.name)).size,16);
+  assert.equal(mcpTools.length,19);assert.equal(new Set(mcpTools.map(t=>t.name)).size,19);
   const original=['ten98_whoami','ten98_read_analytics','ten98_read_realtime','ten98_list_sessions','ten98_read_session','ten98_read_linked_activity','ten98_list_prompts','ten98_read_prompt','ten98_list_prompt_versions','ten98_create_prompts','ten98_update_prompt','ten98_archive_prompt','ten98_restore_prompt'];
   assert.deepEqual(mcpTools.filter(tool=>original.includes(tool.name)).map(tool=>tool.name),original);
   assert.equal(availableTools({...principal,scopes:['analytics:read']}).length,9);
   assert.equal(availableTools({...principal,scopes:['prompts:read']}).length,4);
   assert.equal(availableTools({...principal,scopes:['prompts:write']}).length,5);
+  assert.equal(availableTools({...principal,scopes:['context:read']}).length,3);
+  assert.equal(availableTools({...principal,scopes:['context:write']}).length,2);
+  // No retrogrant at discovery: the seven pre-increment scopes still reach exactly the sixteen pre-increment tools.
+  assert.equal(availableTools({...principal,scopes:['projects:read','projects:write','analytics:read','events:write','team:read','prompts:read','prompts:write']}).length,16);
   assert.deepEqual(availableTools({...principal,scopes:[]}).map(t=>t.name),['ten98_whoami']);
   for(const tool of mcpTools)assert.equal(tool.schema.safeParse({execute:true,token:'not accepted'}).success,false);
   const bulk=mcpTools.find(t=>t.name==='ten98_create_prompts')!.schema;
   const input={projectId:randomUUID(),requestId:randomUUID(),prompts:Array.from({length:100},(_,i)=>({text:'Prompt '+i}))};
   assert.equal(bulk.safeParse(input).success,true);assert.equal(bulk.safeParse({...input,prompts:[...input.prompts,{text:'101'}]}).success,false);
   assert.equal(mcpTools.find(t=>t.name==='ten98_read_realtime')!.schema.safeParse({projectId:input.projectId,query:{}}).success,false);
+  const update=mcpTools.find(t=>t.name==='ten98_update_context')!.schema as any,kinds=contextOp.options.map(option=>option.shape.kind.value);
+  assert.deepEqual(update.shape.updates.element.shape.kind.options,kinds);assert.equal(kinds.length,11);
+  const context={projectId:input.projectId,requestId:randomUUID(),revision:1,updates:Array.from({length:50},(_,i)=>({kind:kinds[i%kinds.length],anyField:i}))};
+  assert.equal(update.safeParse(context).success,true);
+  for(const bad of [{...context,updates:[]},{...context,updates:[...context.updates,{kind:'research',summary:'51'}]},{...context,updates:[{kind:'delete-everything'}]},{...context,updates:[{summary:'no kind'}]},{...context,execute:true},{...context,revision:0},{...context,revision:2147483647}])assert.equal(update.safeParse(bad).success,false);
+});
+test('every scoped tool has its own explicit case and the switch default throws instead of routing',()=>{
+  const source=readFileSync(new URL('../src/server/mcp-tools.ts',import.meta.url),'utf8');
+  for(const tool of mcpTools)if(tool.scope!==null)assert.ok(source.includes(`case '${tool.name}'`),tool.name);
+  assert.match(source,/default:throw new FoundationError\(500,/);
 });
 test('complete UTF-8 result counts both copies and committed receipt stays small',()=>{
   const result=mcpResult({missing:null,zero:0,text:'🙂é'});assert.deepEqual(JSON.parse((result.content![0]as {text:string}).text),result.structuredContent);
@@ -44,7 +60,7 @@ test('official SDK emits finite modern and legacy catalog responses without sess
       const response=await handler.fetch(new Request('http://127.0.0.1:3111/api/mcp',{method:'POST',headers,body:JSON.stringify(body)}));
       assert.equal(response.status,200);assert.equal(response.headers.has('mcp-session-id'),false);
       const text=await response.text(),wire=JSON.parse(modern?text:text.split('\n').find(line=>line.startsWith('data: {'))!.slice(6));
-      assert.equal(wire.result.tools.length,16);assert.ok(wire.result.tools.every((tool:any)=>tool.annotations.openWorldHint===false));
+      assert.equal(wire.result.tools.length,19);assert.ok(wire.result.tools.every((tool:any)=>tool.annotations.openWorldHint===false));
       assert.ok(wire.result.tools.every((tool:any)=>tool.inputSchema.additionalProperties===false));
     }finally{await handler.close();}
   }

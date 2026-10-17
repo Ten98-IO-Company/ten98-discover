@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createMcpHandler,PROTOCOL_VERSION_META_KEY,CLIENT_CAPABILITIES_META_KEY} from '@modelcontextprotocol/server';
 import {mcpTools,availableTools,createNativeMcpServer} from '../src/server/mcp-tools.ts';
-import type {ApiKeyPrincipal} from '../src/server/api-keys.ts';
+import {apiKeyScopes,type ApiKeyPrincipal} from '../src/server/api-keys.ts';
 import {journeysQuery} from '../src/server/journeys.ts';
 import {retentionReportQuery} from '../src/server/retention-report-input.ts';
 import {attributionQuery} from '../src/server/attribution.ts';
@@ -18,7 +18,7 @@ function query(name:typeof reports[number],value:Record<string,string>){
 
 test('report tools are discoverable only with analytics read and keep strict native wire contracts',()=>{
  assert.deepEqual(availableTools(principal).filter(tool=>reports.includes(tool.name as typeof reports[number])).map(tool=>tool.name),reports);
- for(const scopes of [[],['prompts:read'],['prompts:write'],['events:write']] as ApiKeyPrincipal['scopes'][])
+ for(const scopes of [[],...apiKeyScopes.filter(scope=>scope!=='analytics:read').map(scope=>[scope])] as ApiKeyPrincipal['scopes'][])
   assert.equal(availableTools({...principal,scopes}).some(tool=>reports.includes(tool.name as typeof reports[number])),false);
  for(const name of reports){const schema=mcpTools.find(tool=>tool.name===name)!.schema,base=name==='ten98_read_retention'?{month:'2024-02',timeZone:'UTC'}:name==='ten98_read_attribution'?{conversionKind:'custom',conversionValue:'purchase'}:{};
   assert.equal(schema.safeParse({projectId,query:base}).success,true);

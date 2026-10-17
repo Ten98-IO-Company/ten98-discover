@@ -1,26 +1,44 @@
 # Native bearer API contract
 
-This development increment documents 24 implemented operations: 17 project/team/analytics operations, including Journeys, observed-key Retention, observed Attribution and three current-period Revenue readers, and seven authored-prompt operations. It does not complete the 81-requirement register, expose paid prompt execution, or implement a generic HTTP batch dispatcher. The separately documented MCP transport has its own fixed tool inventory.
+This development increment documents 28 implemented operations: 18 project/team/analytics operations, including Journeys, observed-key Retention, observed Attribution, real-user web performance and three current-period Revenue readers, seven authored-prompt operations and three project-context operations. It does not complete the 81-requirement register, expose paid prompt execution, or implement a generic HTTP batch dispatcher. The separately documented MCP transport has its own fixed tool inventory.
 
 `GET /api/openapi.json` returns a static OpenAPI 3.1.2 document before configuration, database readiness and installation setup checks. It accepts no query or body, uses relative server `/`, and does not reflect request hosts or credentials. Other methods return 405. There is no hosted documentation renderer, CDN or automatic provider request. The document describes bearer access; browser cookie routes and the separate public tracker are not its inventory.
 
 ## Authority
 
-Send one `Authorization: Bearer <token>` header without cookies or alternate key headers. Keys remain tied to their issuer and workspace. Owner/admin can manage keys; effective grants are intersected with current membership. Editors can use prompt read/write grants; viewers can use prompt read only. `prompts:write` does **not** imply `prompts:read`. Existing grants remain unchanged by migration 0041; no saved key receives a new permission automatically.
+Send one `Authorization: Bearer <token>` header without cookies or alternate key headers. Keys remain tied to their issuer and workspace. Owner/admin can manage keys; effective grants are intersected with current membership. Editors can use prompt and context read/write grants; viewers can use read grants only. The viewer projection is an explicit allowlist: a future scope is denied to viewers until it is named there. `prompts:write` does **not** imply `prompts:read`, and `context:write` does **not** imply `context:read`. Existing grants remain unchanged by migrations 0041 and 0062, which only widen the stored-scope check constraint to the current thirteen names; no saved key receives a new permission automatically.
 
 | Scope | Implemented operations |
 |---|---|
 | `projects:read` | List workspace projects |
 | `projects:write` | Create project |
 | `team:read` | Read team; current owner/admin required |
-| `analytics:read` | Recent events, overview/comparison, realtime, Journeys, observed-key Retention, observed Attribution, Revenue summary/key list/key activity, Explorer, sessions, session details and explicitly linked activity |
+| `analytics:read` | Recent events, overview/comparison, realtime, web performance, Journeys, observed-key Retention, observed Attribution, Revenue summary/key list/key activity, Explorer, sessions, session details and explicitly linked activity |
 | `events:write` | Record API observation |
 | `prompts:read` | List/search prompts, read prompt, list text versions |
 | `prompts:write` | Create 1–100 prompts atomically, update, archive, restore |
+| `context:read` | Read project context, list research-log entries |
+| `context:write` | Apply one atomic context batch of 1–50 operations |
+| `segments:read` | Grantable; admits no route until the saved filters and cohorts slice lands |
+| `annotations:read` | Grantable; admits no route until the annotations slice lands |
+| `rank:read` | Grantable; admits no route until the rank readers slice lands |
+| `keywords:read` | Grantable; admits no route until the saved keywords slice lands |
 
-Prompt bearer calls reuse the existing `withContentProject` transaction. They acquire the workspace SHARE lock for reads or UPDATE lock for writes, then reauthorize the token and bind its current issuer to the requested user and workspace. They use READ COMMITTED so the final authorization statement observes current expiry and authority before commit. The existing cookie gate and unrelated content callers are unchanged. Supported key/team mutations use the same workspace lock, and writes additionally lock the project. The final check is a publication/commit decision point; it cannot retract bytes already delivered. A key that expires during a write causes all prompt rows, text versions and receipts in that transaction to roll back.
+Prompt and context bearer calls reuse the existing `withContentProject` transaction, each with its own scope. They acquire the workspace SHARE lock for reads or UPDATE lock for writes, then reauthorize the token for that scope and bind its current issuer to the requested user and workspace. They use READ COMMITTED so the final authorization statement observes current expiry and authority before commit. After a rollback the same fresh check runs again on the same connection before the operation's own error is published, resolving the workspace with a plain lookup when the locked statement never returned, so a key that lost authority while waiting for the lock still receives 401/403/404 rather than the domain's 404/409/503; this also applies to the prompt routes. The existing cookie gate and unrelated content callers are unchanged. Supported key/team mutations use the same workspace lock, and writes additionally lock the project. The final check is a publication/commit decision point; it cannot retract bytes already delivered. A key that expires during a write causes all prompt rows, text versions, context rows and receipts in that transaction to roll back. The context bearer gate first resolves the project to the key's workspace (404 otherwise) and checks the row's scope before the handler runs; the three context routes are the only scoped content routes admitted in this slice, and nothing else under `/context` matches.
 
-Bearer prompt statements and lock waits each have a five-second bound. These are **not** a total-request deadline: a batch executes several statements. A bound failure returns a sanitized 503; retry writes with the same request ID. The existing key rate limit is 120 requests/minute, plus the existing content limit of 120 requests/minute per issuer.
+Bearer content statements and lock waits each have a five-second bound. These are **not** a total-request deadline: a batch executes several statements. A bound failure returns a sanitized 503; retry writes with the same request ID. The existing key rate limit is 120 requests/minute, plus the existing content limit of 120 requests/minute per issuer, shared by the cookie context routes, the prompt routes and the MCP content tools. Bearer reads hold the workspace SHARE lock for at most five seconds each and make exclusive writers wait; this is the exposure prompt bearer reads already carry.
+
+## Project context routes
+
+All routes start with `/api/projects/{projectId}/context`.
+
+| Method and suffix | Contract |
+|---|---|
+| GET (none) | Current context DTO: brand profile and citation identity, standard and custom sections, up to 100 competitors and 100 key pages, the latest 20 research entries with a cursor, 20 report template previews; no query parameters |
+| GET `/research-log` | Research entries, 20/page; only `cursor` |
+| POST `/update` | `{revision,requestId,updates:[…]}`; 1–50 typed operations committed together at the current revision; a bearer caller receives `{revision,replayed}` only, never the context (`context:write` does not imply `context:read` at the data level either; the cookie route keeps its DTO) |
+
+Context writes follow the same receipt contract as prompts: the request ID binds project, operation and normalized payload; an identical retry returns the current revision with `replayed:true` and writes nothing; a changed payload under the same ID or a stale revision returns 409. Receipts are keyed by project and request ID without the actor, so a second issuer replaying another issuer's identical request ID and payload receives the current state rather than a conflict. Context updates record the key's issuer as the editor and never call a provider.
 
 ## Authored prompt routes
 
@@ -75,17 +93,17 @@ Only GET /api/projects/{projectId}/revenue accepts optional compare=prev|yoy; om
 | Source | Contract |
 |---|---|
 | `api.ts`, `api-keys.ts` | Bearer whitelist, mixed-credential refusal, scope/role projection and key storage |
-| `project-context.ts`, `prompts.ts`, `context-input.ts` | Optional prompt bearer gate, receipts, prompt revisions, strict input and paging |
+| `project-context.ts`, `prompts.ts`, `context-input.ts` | Optional scoped bearer gate for prompts and context, receipts, revisions, strict input and paging |
 | `validation.ts`, `native-analytics.ts` | Project input and API observation validation |
 | `analytics.ts`, `analytics-comparison.ts` | Overview filters and paired periods |
 | `realtime.ts`, `explorer-input.ts`, `session-explorer-input.ts` | Fixed live window, exploration and session query rules |
 | `journeys.ts`, `lib/journeys.ts` | Typed observed-visit prefixes, shared population filters and complete-response ceiling |
 | `attribution.ts`, `lib/attribution.ts` | Typed conversion, unfiltered retained touches, one observed-key credit and incomplete-evidence shares |
 
-See [Explorer](explorer.md), [session evidence](session-explorer.md), [tracking](tracking.md) and [prompt execution](prompt-execution.md) for the separate measurement and paid-execution boundaries. Expanded geography search is part of the existing analytics operation; Journeys, Retention and Attribution bring the inventory to21. Compatibility APIs and full upstream MCP tool coverage remain required work.
+See [Explorer](explorer.md), [session evidence](session-explorer.md), [tracking](tracking.md) and [prompt execution](prompt-execution.md) for the separate measurement and paid-execution boundaries. Expanded geography search is part of the existing analytics operation; the inventory stands at 28 operations. Still outside the bearer inventory: Google saved snapshots, site audits, the domains registry and rank runs/results/history (each waits on a named lock fix before admission), the saved filters/cohorts, annotations, rank reader and saved-keyword families (scopes exist, routes land in the next slices), compatibility APIs and upstream-compatibility MCP inventories.
 
 ## Runnable checks
 
 The existing analytics GET also accepts `dimension` (one of15 native choices, requires `compare`) and `selection` (nested exact/presence fields or predicates). Selection permits only Match All with1–9 unique fields from path, eventName, referrer, language and the five campaign fields; operators are eq/exists/missing, without properties or session properties. Exact literals are untrimmed and retain empty versus missing. Canonical selection is echoed. The optional `dimensionComparison` carries two independently ranked top20 lists and full opposite-period counterparts, actual ranges/coverage and current-minus-previous changes. Zero baseline percentages, missing identity and incomplete-retention changes are null. Dimension/selection requests bound the whole encoded query to20,000 characters and the complete UTF-8 response to2MiB; unsafe stored scalar metadata, oversized results and the five-second statement/lock deadlines return a whole503 error. This adds no operation or paid request. See [comparison](analytics-comparison.md); complex response schemas remain intentionally broad in OpenAPI.
 
-Run `node --test tests/openapi.test.ts` and `node node_modules/typescript/bin/tsc --noEmit` with Node 24. `tests/native-prompt-api-integration.ts` requires both `TEN98_INTEGRATION_TEST=1` and `TEN98_NATIVE_PROMPT_API_TEST=1`, an empty owned `ten98_prompt_api_<12hex>` database on `127.0.0.1:55501` (or the workflow's isolated `ten98_prompt_api_ci` database), and `APP_URL=http://127.0.0.1:3111`. It retains fixtures, performs the real 40→41 upgrade, opens its own HTTP server, checks actual PostgreSQL lock waits and rolls back expired writes. It also runs the original API-key integration assertions with that test's original five-grant role fixture. Never point it at saved application data.
+Run `node --test tests/openapi.test.ts` and `node node_modules/typescript/bin/tsc --noEmit` with Node 24. `tests/native-prompt-api-integration.ts` requires both `TEN98_INTEGRATION_TEST=1` and `TEN98_NATIVE_PROMPT_API_TEST=1`, an empty owned `ten98_prompt_api_<12hex>` database on `127.0.0.1:55501` (or the workflow's isolated `ten98_prompt_api_ci` database), and `APP_URL=http://127.0.0.1:3111`. It retains fixtures, performs the real 40→41 upgrade, opens its own HTTP server, checks actual PostgreSQL lock waits and rolls back expired writes. It also runs the original API-key integration assertions with that test's original five-grant role fixture. `tests/project-context-integration.ts` (the workflow's `ten98_context` database) carries the bearer CAS group for the three context routes. Never point either at saved application data.

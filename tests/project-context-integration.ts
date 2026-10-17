@@ -8,7 +8,7 @@ import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
 import {handleApi} from '../src/server/api.ts';
 import {getContextResearch,getProjectContext,updateProjectContext} from '../src/server/project-context.ts';
 import {getPrompt,createPrompts,listPrompts,promptVersions,setPromptArchived,updatePrompt} from '../src/server/prompts.ts';
-import {createApiKey} from '../src/server/api-keys.ts';
+import {createApiKey,revokeApiKey} from '../src/server/api-keys.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
 
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
@@ -132,8 +132,65 @@ try {
   assert.equal((await http(`${root}/prompts/${prompt.id}/versions`)).status,200);
   assert.equal((await http(`${root}/prompts/bulk`,'POST',{requestId:randomUUID(),prompts:[{text:'HTTP creation'}]})).status,201);
   assert.equal((await http(`${root}/prompts/bulk`,'POST',{requestId:randomUUID(),prompts:[{text:'blocked'}]},{origin:'https://untrusted.example.com'})).status,403);
+  // Bearer CAS writes: authorization header only, no cookie, no Origin. Keys are scope-gated at the route and rechecked inside the transaction.
+  const bearer=(token:string,path:string,method='GET',body?:unknown)=>handleApi(new Request(url+path,{method,headers:{authorization:`Bearer ${token}`,...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})}));
   const key=await createApiKey(workspace,owner,{name:'Restricted fixture',scopes:['projects:read'],expiresInDays:1});
-  assert.equal((await handleApi(new Request(url+root+'/context',{headers:{authorization:`Bearer ${key.token}`}}))).status,403);
+  assert.equal((await bearer(key.token,`${root}/context`)).status,403,'A projects:read key never gains context:read.');
+  const readKey=await createApiKey(workspace,owner,{name:'Context reader',scopes:['context:read'],expiresInDays:1});
+  const writeKey=await createApiKey(workspace,owner,{name:'Context writer',scopes:['context:write'],expiresInDays:1});
+  const cookieContext=await (await http(`${root}/context`)).json();
+  const bearerRead=await bearer(readKey.token,`${root}/context`);assert.equal(bearerRead.status,200);assert.deepEqual(await bearerRead.json(),cookieContext);
+  assert.equal((await bearer(writeKey.token,`${root}/context`)).status,403,'context:write does not imply context:read.');
+  assert.equal((await http(`${root}/context`,'GET',undefined,{authorization:`Bearer ${readKey.token}`})).status,400,'Cookie plus bearer is refused.');
+  const receipts=async()=>(await pool.query('SELECT count(*)::int AS count FROM project_content_request WHERE project_id=$1',[project])).rows[0].count;
+  const receiptsBefore=await receipts();
+  const patch={revision:cookieContext.revision,requestId:randomUUID(),updates:[{kind:'section',key:'custom:bearer',title:'Bearer',content:'Written through an API key.'}]};
+  assert.equal((await bearer(readKey.token,`${root}/context/update`,'POST',patch)).status,403);
+  // A bearer write answers the receipt only; the cookie GET keeps returning the DTO (asserted below).
+  const receiptOf=async(response:Response)=>{assert.equal(response.status,200);const body=await response.json();assert.deepEqual(Object.keys(body).sort(),['replayed','revision'],'A bearer write answers exactly {revision, replayed}.');return body as {revision:number;replayed:boolean};};
+  let receipt=await receiptOf(await bearer(writeKey.token,`${root}/context/update`,'POST',patch));assert.equal(receipt.revision,cookieContext.revision+1);assert.equal(receipt.replayed,false);
+  assert.equal((await pool.query("SELECT updated_by FROM context_section WHERE project_id=$1 AND key='custom:bearer'",[project])).rows[0].updated_by,owner,'The section author is the key issuer.');
+  const replayed=await receiptOf(await bearer(writeKey.token,`${root}/context/update`,'POST',patch));assert.equal(replayed.revision,receipt.revision);assert.equal(replayed.replayed,true);assert.equal(await receipts(),receiptsBefore+1,'A replay writes no second receipt.');
+  assert.equal((await bearer(writeKey.token,`${root}/context/update`,'POST',{...patch,updates:[{kind:'research',summary:'changed'}]})).status,409);
+  assert.equal((await bearer(writeKey.token,`${root}/context/update`,'POST',{revision:cookieContext.revision,requestId:randomUUID(),updates:[{kind:'research',summary:'stale'}]})).status,409);
+  assert.equal(await receipts(),receiptsBefore+1,'Refused writes leave no receipt.');
+  // Authority is the issuer's current role at use, not at issue: admin issues, editor still writes, viewer is refused.
+  await pool.query("UPDATE membership SET role='admin' WHERE workspace_id=$1 AND user_id=$2",[workspace,editor]);
+  const demoted=await createApiKey(workspace,editor,{name:'Demoted issuer',scopes:['context:read','context:write'],expiresInDays:1});
+  await pool.query("UPDATE membership SET role='editor' WHERE workspace_id=$1 AND user_id=$2",[workspace,editor]);
+  // Receipts are keyed by project and request ID, not by actor: a second issuer replaying the first issuer's exact request gets its receipt and writes nothing.
+  assert.deepEqual(await receiptOf(await bearer(demoted.token,`${root}/context/update`,'POST',patch)),{revision:receipt.revision,replayed:true});assert.equal(await receipts(),receiptsBefore+1,'A cross-issuer replay writes no second receipt.');
+  receipt=await receiptOf(await bearer(demoted.token,`${root}/context/update`,'POST',{revision:receipt.revision,requestId:randomUUID(),updates:[{kind:'research',summary:'Editor key write'}]}));
+  const afterEditor=await (await http(`${root}/context`)).json();assert.equal(afterEditor.revision,receipt.revision);assert.equal(afterEditor.researchLog[0].createdBy,editor);
+  await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[workspace,editor]);
+  assert.equal((await bearer(demoted.token,`${root}/context/update`,'POST',{revision:receipt.revision,requestId:randomUUID(),updates:[{kind:'research',summary:'denied'}]})).status,403);
+  assert.equal((await bearer(demoted.token,`${root}/context`)).status,200,'A viewer keeps context:read.');
+  const foreignKey=await createApiKey(foreignWorkspace,outsider,{name:'Foreign',scopes:['context:read','context:write'],expiresInDays:1});
+  assert.equal((await bearer(foreignKey.token,`${root}/context`)).status,404);
+  assert.equal((await bearer(foreignKey.token,`${root}/context/update`,'POST',{revision:receipt.revision,requestId:randomUUID(),updates:[{kind:'research',summary:'foreign'}]})).status,404);
+  await revokeApiKey(workspace,owner,writeKey.key.id);
+  assert.equal((await bearer(writeKey.token,`${root}/context/update`,'POST',{revision:receipt.revision,requestId:randomUUID(),updates:[{kind:'research',summary:'revoked'}]})).status,401);
+  assert.equal((await (await http(`${root}/context`)).json()).revision,receipt.revision,'Refused bearer writes never advanced the revision.');
+  // Error-path recheck: a bearer reader that already holds the workspace SHARE lock blocks inside contextDto on project_context (its first read).
+  // Its key is revoked while it waits; whether the table lock is released or the reader's 5 s lock_timeout fires first, the answer is 401,
+  // not the lock mapping's 503. revokeApiKey takes the workspace FOR UPDATE and would queue behind the reader's SHARE lock until that
+  // rollback, so the revocation is committed directly here, which is the state the recheck has to observe.
+  const lockedRead=async(token:string,keyId:string,release:boolean)=>{
+    const locker=await pool.connect();
+    try {
+      await locker.query('BEGIN');await locker.query('LOCK TABLE project_context IN ACCESS EXCLUSIVE MODE');
+      const pendingRead=bearer(token,`${root}/context`);let blocked=false;
+      for(let i=0;i<50;i++) {const waiting=await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT revision,brand_name AS name%' LIMIT 1");if(waiting.rowCount){blocked=true;break;}await new Promise(r=>setTimeout(r,20));}
+      assert.ok(blocked,'The bearer read reached the project_context lock.');
+      await pool.query('UPDATE api_key SET revoked_at=clock_timestamp() WHERE id=$1',[keyId]);
+      if(release)await locker.query('COMMIT');
+      const response=await pendingRead;
+      assert.equal(response.status,401,release?'A revocation committed mid-read is applied after the work.':'Stale authority outranks the lock timeout 503.');
+      assert.deepEqual(Object.keys(await response.json()),['error']);
+    } finally {await locker.query('ROLLBACK').catch(()=>{});locker.release();}
+  };
+  await lockedRead(demoted.token,demoted.key.id,true);
+  const timedOutAt=Date.now();await lockedRead(readKey.token,readKey.key.id,false);console.log(`Bearer read lock_timeout path answered 401 after ${Date.now()-timedOutAt}ms while the table lock was still held.`);
   assert.equal((await http(`${root}/prompts`,'GET',undefined,{cookie:''})).status,401);
   const authoredTables=['project_context','context_section','context_competitor','context_key_page','context_research','project_content_request','project_prompt','prompt_text_version'];
   async function authoredSnapshot(){const result=[];for(const table of authoredTables)result.push((await pool.query(`SELECT count(*)::int AS count,md5(string_agg(row_to_json(t)::text,'' ORDER BY row_to_json(t)::text)) AS digest FROM ${table} t WHERE project_id=$1`,[project])).rows[0]);return result;}
@@ -144,5 +201,5 @@ try {
   assert.equal(fetches,0);assert.equal(dnsLookups,0);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM provider_request')).rows[0].count,0);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM import_probe')).rows[0].count,0);
-  console.log('Project context/prompts integration passed: isolated roles, atomic caps, retries, retained notes, exact metadata, immutable versions, filters/pagination, demotion race, cookie-only HTTP, authored-data retention protection; zero provider/DNS/job activity.');
+  console.log('Project context/prompts integration passed: isolated roles, atomic caps, retries, retained notes, exact metadata, immutable versions, filters/pagination, demotion race, cookie-only HTTP, bearer CAS receipts, cross-issuer replay, error-path authority recheck, authored-data retention protection; zero provider/DNS/job activity.');
 } finally {globalThis.fetch=fetchOriginal;Resolver.prototype.resolveTxt=dnsOriginal;await closeDatabase();}

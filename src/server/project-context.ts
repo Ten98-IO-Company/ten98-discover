@@ -2,24 +2,27 @@ import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
-import {authorizeApiKey} from './api-keys.ts';
+import {authorizeApiKey,type ApiKeyScope} from './api-keys.ts';
 import {getDatabase} from './db.ts';
 import {canonicalHash,contextHost,contextPatch,parse,sectionKeys,type CitationPublisherCategory} from './context-input.ts';
 
 export type ContentProject={id:string;name:string;origin:string;role:'owner'|'admin'|'editor'|'viewer'};
-export async function withContentProject<T>(projectId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,project:ContentProject)=>Promise<T>,promptApiToken?:string,nativeRead=false):Promise<T> {
+export async function withContentProject<T>(projectId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,project:ContentProject)=>Promise<T>,apiToken?:string,nativeRead=false,scope:ApiKeyScope=write?'prompts:write':'prompts:read'):Promise<T> {
   const pid=parse(z.uuid(),projectId),uid=parse(z.uuid(),userId),client=await getDatabase().pool.connect();
+  let workspaceId:string|undefined;
   try {
-    // Prompt bearer calls opt into fresh statement snapshots. Other content callers keep their existing gate.
-    await client.query(promptApiToken!==undefined||nativeRead?'BEGIN ISOLATION LEVEL READ COMMITTED':write?'BEGIN':'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    // Bearer calls opt into fresh statement snapshots. Other content callers keep their existing gate.
+    await client.query(apiToken!==undefined||nativeRead?'BEGIN ISOLATION LEVEL READ COMMITTED':write?'BEGIN':'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     if(nativeRead)await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");
-    let promptWorkspace:string|undefined;
-    if(promptApiToken!==undefined) {
+    if(apiToken!==undefined) {
       await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");
+      // ponytail: bearer reads hold the workspace SHARE lock for a handful of statements, each bounded to 5 s, at 120/min/user and make FOR UPDATE writers
+      // (key revocation, team mutations, content writes) wait; prompts already carry this exposure. Upgrade path if writer
+      // starvation is ever measured: a post-read publication check outside the transaction, as the Explorer routes do.
       const target=await client.query<{id:string}>(`SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR ${write?'UPDATE':'SHARE'} OF w`,[pid]);
-      promptWorkspace=target.rows[0]?.id;
-      if(!promptWorkspace)throw new FoundationError(404,'Project not found or unavailable.');
-      const authority=await authorizeApiKey(promptApiToken,promptWorkspace,write?'prompts:write':'prompts:read',client);
+      workspaceId=target.rows[0]?.id;
+      if(!workspaceId)throw new FoundationError(404,'Project not found or unavailable.');
+      const authority=await authorizeApiKey(apiToken,workspaceId,scope,client);
       if(authority.userId!==uid)throw new FoundationError(404,'Project not found or unavailable.');
     } else if(write||nativeRead) {
       await client.query(`SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR ${write?'UPDATE':'SHARE'} OF w`,[pid]);
@@ -30,14 +33,20 @@ export async function withContentProject<T>(projectId:unknown,userId:unknown,wri
     const project=found.rows[0];
     if(!project||(write&&!['owner','admin','editor'].includes(project.role))) throw new FoundationError(404,'Project not found or unavailable.');
     const result=await work(client,project);
-    if(promptApiToken!==undefined) {
-      const authority=await authorizeApiKey(promptApiToken,promptWorkspace!,write?'prompts:write':'prompts:read',client);
+    if(apiToken!==undefined) {
+      const authority=await authorizeApiKey(apiToken,workspaceId!,scope,client);
       if(authority.userId!==uid)throw new FoundationError(404,'Project not found or unavailable.');
     }
     await client.query('COMMIT');return result;
   } catch(error) {
     await client.query('ROLLBACK').catch(()=>{});
-    if(promptApiToken!==undefined&&['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'The prompt operation is busy. Retry the same request ID for a write.');
+    // Stale key authority outranks the operation's own 404/409/503, as the Explorer routes already rule. The recheck runs
+    // even when the lock wait itself failed, on this connection (idle in autocommit after ROLLBACK), never a second one.
+    if(apiToken!==undefined) {
+      const ws=workspaceId??(await client.query<{workspace_id:string}>('SELECT workspace_id FROM project WHERE id=$1',[pid])).rows[0]?.workspace_id;
+      if(ws!==undefined)await authorizeApiKey(apiToken,ws,scope,client);
+    }
+    if(apiToken!==undefined&&['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'The content operation is busy. Retry the same request ID for a write.');
     throw error;
   } finally {client.release();}
 }
@@ -80,8 +89,8 @@ async function researchPage(client:PoolClient,projectId:string,cursorValue:strin
     ORDER BY created_at DESC,id DESC LIMIT 21`,[projectId,cursor?.at??null,cursor?.id??null]);
   return {entries:rows.slice(0,20),nextCursor:rows.length>20?contentCursor(rows[19],scope):null};
 }
-export async function getContextResearch(projectId:unknown,userId:unknown,params:URLSearchParams) {
-  const cursor=onlyCursor(params);return withContentProject(projectId,userId,false,(client,p)=>researchPage(client,p.id,cursor));
+export async function getContextResearch(projectId:unknown,userId:unknown,params:URLSearchParams,apiToken?:string) {
+  const cursor=onlyCursor(params);return withContentProject(projectId,userId,false,(client,p)=>researchPage(client,p.id,cursor),apiToken,false,'context:read');
 }
 async function contextDto(client:PoolClient,project:ContentProject) {
   const profile=await contentProfile(client,project);
@@ -96,13 +105,13 @@ async function contextDto(client:PoolClient,project:ContentProject) {
     customSections:sections.filter(row=>row.key.startsWith('custom:')),competitors,keyPages,researchLog:research.entries,researchLogNextCursor:research.nextCursor,
     reportTemplates:templates.slice(0,20),reportTemplatesTruncated:templates.length>20};
 }
-export async function getProjectContext(projectId:unknown,userId:unknown) {return withContentProject(projectId,userId,false,contextDto);}
+export async function getProjectContext(projectId:unknown,userId:unknown,apiToken?:string) {return withContentProject(projectId,userId,false,contextDto,apiToken,false,'context:read');}
 
-export async function updateProjectContext(projectId:unknown,userId:unknown,raw:unknown) {
+export async function updateProjectContext(projectId:unknown,userId:unknown,raw:unknown,apiToken?:string) {
   const input=parse(contextPatch,raw),uid=parse(z.uuid(),userId);
   return withContentProject(projectId,uid,true,async(client,project)=>{
     const receipt=await contentReceipt(client,project.id,input.requestId,'context.update',input);
-    if(receipt.replayed) return contextDto(client,project);
+    if(receipt.replayed) return {...await contextDto(client,project),replayed:true};
     await client.query('INSERT INTO project_context(project_id,brand_name) VALUES($1,$2) ON CONFLICT(project_id) DO NOTHING',[project.id,project.name]);
     const profile=await contentProfile(client,project);
     if(profile.revision!==input.revision) throw new FoundationError(409,'Project context changed. Review the latest saved data before saving again.');
@@ -160,6 +169,6 @@ export async function updateProjectContext(projectId:unknown,userId:unknown,raw:
       }
     }
     await client.query('UPDATE project_context SET revision=revision+1 WHERE project_id=$1',[project.id]);
-    await receipt.save({});return contextDto(client,project);
-  });
+    await receipt.save({});return {...await contextDto(client,project),replayed:false};
+  },apiToken,false,'context:write');
 }
