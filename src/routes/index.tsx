@@ -530,9 +530,11 @@ function App() {
     const session = sessionGeneration.current
     setSignOutBusy(true); setAppError('')
     try {
-      await api('/api/auth/sign-out', { method: 'POST', body: {} })
+      const out = await api<{ providerSignOutUrl?: string } | null>('/api/auth/sign-out', { method: 'POST', body: {} })
       if (sessionGeneration.current !== session) return
       resetSession()
+      // Provider sessions also end at the identity provider (RP-initiated sign-out); its page is the last stop.
+      if (out?.providerSignOutUrl &&/^https?:\/\//.test(out.providerSignOutUrl)) { window.location.assign(out.providerSignOutUrl); return }
       go({ view: 'project' }, true)
     } catch (e) { if (sessionGeneration.current === session && !guardAuth(e)) setAppError(`Could not sign out: ${errMsg(e)}`) }
     finally { setSignOutBusy(false) }
