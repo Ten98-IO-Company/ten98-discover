@@ -252,6 +252,35 @@ try {
   assert.equal(betaEvents.body.total, 0, 'Rejected cross-project events must leave no data.');
   console.log('PASS collector CORS, project validation, idempotency and URL privacy');
 
+  stage = 'application document security headers';
+  // Server-rendered documents carry the root-route policy (src/routes/__root.tsx) with a per-request nonce; raw fetch
+  // because `request` JSON-parses bodies, following the router's search canonicalization (`/` answers 307 to `/?view=project`)
+  // to the document a browser lands on. Tag assets served from public/ must stay header-free for customer sites.
+  const document = async (path: string) => { const response = await fetch(new URL(path, base), { signal: AbortSignal.timeout(15_000) }); return { response, text: await response.text() }; };
+  const documentPolicy = /^default-src 'none'; script-src 'self' 'nonce-([A-Za-z0-9+/=_-]{16,})'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' data: about:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'$/;
+  const documentHeaders: Record<string, string> = { 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff', 'cross-origin-opener-policy': 'same-origin', 'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()', 'cache-control': 'no-store' };
+  const expectDocumentHeaders = (path: string, response: Response) => {
+    const nonce = response.headers.get('content-security-policy')?.match(documentPolicy)?.[1];
+    assert.ok(nonce, `${stage}: ${path} must carry the exact document policy, got ${response.headers.get('content-security-policy')}`);
+    for (const [name, value] of Object.entries(documentHeaders)) assert.equal(response.headers.get(name), value, `${stage}: ${path} ${name}`);
+    assert.equal(response.headers.get('strict-transport-security'), null, `${stage}: ${path} must not send HSTS over this http origin`);
+    return nonce;
+  };
+  const landing = await document('/');
+  assert.equal(landing.response.status, 200, `${stage}: GET / answered ${landing.response.status}`);
+  const landingNonce = expectDocumentHeaders('/', landing.response);
+  const scriptTags = landing.text.match(/<script\b[^>]*>/g) ?? [];
+  assert.ok(scriptTags.length >= 2, `${stage}: expected the hydration and module entry script tags, found ${scriptTags.length}`);
+  for (const tag of scriptTags) assert.ok(tag.includes(`nonce="${landingNonce}"`), `${stage}: script tag without the header nonce: ${tag}`);
+  assert.notEqual(expectDocumentHeaders('/', (await document('/')).response), landingNonce, `${stage}: the nonce must change on every request`);
+  expectDocumentHeaders('/share/boards/<unknown>', (await document(`/share/boards/${randomUUID()}`)).response);
+  expectDocumentHeaders('/nope', (await document('/nope')).response);
+  const tracker = await document('/tracker.js');
+  assert.equal(tracker.response.status, 200, `${stage}: GET /tracker.js answered ${tracker.response.status}`);
+  assert.equal(tracker.response.headers.get('content-type'), 'text/javascript; charset=utf-8');
+  for (const name of ['content-security-policy', 'strict-transport-security', 'cross-origin-resource-policy', ...Object.keys(documentHeaders)]) assert.equal(tracker.response.headers.get(name), null, `${stage}: /tracker.js must stay free of ${name}`);
+  console.log('PASS application documents carry the nonce policy and header class; tag assets stay header-free');
+
   stage = 'worker completion and idempotency';
   const requestId = randomUUID();
   const job = await expectStatus(`/api/projects/${projectA.id}/check-worker`, 202, { method: 'POST', cookie: ownerCookie, body: { requestId } });

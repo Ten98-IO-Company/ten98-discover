@@ -10,7 +10,7 @@ This is a source-built development deployment, not the full V1 release or a publ
 | `proxy` | `https://monitor.example.com` | Your existing host reverse proxy forwards to `127.0.0.1:3000` |
 | `caddy` | `https://monitor.example.com` | Bundled Caddy; point DNS at this host and allow inbound TCP 80/443 |
 
-The app port stays on host loopback in every mode. PostgreSQL has no published port. An existing proxy in another container needs a deliberately configured shared network; `127.0.0.1` inside that container is not the Docker host. Public origins must be DNS names, not private IP addresses. A public hostname can still resolve to a private network behind your existing proxy.
+On `https` origins the app itself sends `Strict-Transport-Security` on its application documents (not on report share pages or on redirects), so in `proxy` mode your proxy only needs to terminate TLS and redirect HTTP to HTTPS; `local` mode is plain HTTP and sends none. The app port stays on host loopback in every mode. PostgreSQL has no published port. An existing proxy in another container needs a deliberately configured shared network; `127.0.0.1` inside that container is not the Docker host. Public origins must be DNS names, not private IP addresses. A public hostname can still resolve to a private network behind your existing proxy.
 
 Use Docker Engine 28 or newer with Linux containers, and Compose supporting `up --wait-timeout`. Older Docker versions had a documented exception to localhost port isolation. [Docker port publishing](https://docs.docker.com/engine/network/port-publishing/)
 
@@ -78,6 +78,7 @@ After startup, run `docker compose ps` using the same project and overlay option
 2. Create a test project and explicitly run its worker check.
 3. Embed its tracker on a controlled HTTPS page reachable by that browser. Verify a real event arrives; localhost-only tests do not establish public collection.
 4. With bundled Caddy, verify HTTP redirects to HTTPS. Keep its admin port 2019 unpublished.
+5. `curl -IL https://monitor.example.com/` (your origin) must show `content-security-policy` and `strict-transport-security` on the final page response; the first response is a 307 redirect to `/?view=project` and carries neither.
 
 Public certificate issuance, ARM execution, production capacity and external-proxy platform imports require separate evidence. A successful local readiness check is not a completed public deployment. The current setup work is tracked in [issue #6](https://github.com/Ten98-IO-Company/ten98-monitor/issues/6).
 
