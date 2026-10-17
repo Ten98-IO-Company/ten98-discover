@@ -43,7 +43,7 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
 
   const input = { name: 'Input check', scopes: ['projects:read'] };
   for (const invalid of [null, {}, { ...input, name: ' ' }, { ...input, name: 'x'.repeat(81) }, { ...input, extra: true },
-    { ...input, scopes: [] }, { ...input, scopes: ['projects:read', 'projects:read'] }, { ...input, scopes: ['paid:run'] },
+    { ...input, scopes: [] }, { ...input, scopes: ['projects:read', 'projects:read'] }, { ...input, scopes: ['paid:run'] }, { ...input, scopes: ['audits:read'] }, { ...input, scopes: ['domains:read'] },
     { ...input, expiresInDays: 0 }, { ...input, expiresInDays: 366 }, { ...input, expiresInDays: 1.5 }, { ...input, expiresInDays: null }]) {
     await rejects(createApiKey(workspaceId, options.ownerId, invalid), 400, 'Invalid key fields must be rejected.');
   }
@@ -155,7 +155,8 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
   const report = await http(`/api/projects/${project.id}/analytics`, 200, bearer);
   assert.equal(report.body.totals.customEvents, 1);
   await http(`/api/workspaces/${workspaceId}/team`, 200, bearer);
-  for (const path of ['/api/me', '/api/account/sessions', `/api/workspaces/${workspaceId}/providers`, `/api/projects/${project.id}/jobs`]) {
+  await http(`/api/projects/${project.id}/context`, 403, { token: reader.token });
+  for (const path of ['/api/me', '/api/account/sessions', `/api/workspaces/${workspaceId}/providers`, `/api/projects/${project.id}/jobs`, `/api/projects/${project.id}/segments`]) {
     await http(path, 403, bearer);
   }
   await http('/api/auth/sign-out', 403, bearer, {});

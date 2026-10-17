@@ -11,6 +11,8 @@ import {projectRetentionReport} from './retention-report.ts';
 import {projectAttribution} from './attribution.ts';
 import {listSessions,getSessionDetail,getLinkedSessionActivity} from './session-explorer.ts';
 import {listPrompts,getPrompt,promptVersions,createPrompts,updatePrompt,setPromptArchived} from './prompts.ts';
+import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
+import {contextOp} from './context-input.ts';
 import {explorerFilters} from './explorer-input.ts';
 
 export const mcpResponseBytes=8*1024*1024;
@@ -30,6 +32,8 @@ const promptQuery=z.strictObject({status:z.enum(['active','archived','all']).opt
 const promptFields={text:z.string().min(1).max(2000),topic:z.string().min(1).max(100).optional(),tags:z.array(z.string().min(1).max(80)).max(20).optional(),enabled:z.boolean().optional()};
 const action={requestId:id,revision:z.number().int().min(1).max(2147483646)};
 const prompt=z.strictObject({projectId:id,promptId:id});
+// Closed top level and closed kinds; each op's fields stay with the strict native contextPatch, whose transforms must run once.
+const contextUpdate=z.strictObject({projectId:id,...action,updates:z.array(z.looseObject({kind:z.enum(contextOp.options.map(option=>option.shape.kind.value))})).min(1).max(50)});
 // Wire schemas have no transforms. Native parsers remain authoritative for dates,
 // canonical composite keys, Unicode, predicates, cursor binding and receipt payloads.
 export const mcpTools=[
@@ -49,6 +53,9 @@ export const mcpTools=[
   {name:'ten98_update_prompt',scope:'prompts:write',write:true,description:'Update a saved prompt with current revision and requestId; at least one editable field required. Text changes append a version. No execution. Returns a committed receipt; identical retry replays current state.',schema:prompt.extend({...action,...promptFields,text:promptFields.text.optional()})},
   {name:'ten98_archive_prompt',scope:'prompts:write',write:true,description:'Archive a saved prompt without deleting versions. Requires current revision and requestId. Returns a committed receipt; identical retry replays current state.',schema:prompt.extend(action)},
   {name:'ten98_restore_prompt',scope:'prompts:write',write:true,description:'Restore a saved prompt, refusing an active exact-text collision. Requires current revision and requestId. Returns a committed receipt; no execution.',schema:prompt.extend(action)},
+  {name:'ten98_read_context',scope:'context:read',description:'Read the saved project context: brand profile and citation identity, sections, competitors, key pages, the latest 20 research entries and report template previews. Reads saved data only; no provider call.',schema:z.strictObject({projectId:id})},
+  {name:'ten98_list_context_research',scope:'context:read',description:'List saved research-log entries, 20 per page with a scoped nextCursor. Reads saved data only.',schema:z.strictObject({projectId:id,query:z.strictObject({cursor:z.string().max(512).optional()}).optional()})},
+  {name:'ten98_update_context',scope:'context:write',write:true,description:'Apply 1–50 typed context changes atomically at the current revision with a requestId. An identical retry returns the current revision with replayed:true; a changed payload or stale revision conflicts. Returns a bounded committed receipt, not authored text.',schema:contextUpdate},
 ] as const;
 export function availableTools(principal:ApiKeyPrincipal){return mcpTools.filter(tool=>tool.scope===null||principal.scopes.includes(tool.scope));}
 export function mcpToolError(error:unknown):CallToolResult {
@@ -90,7 +97,16 @@ export function createNativeMcpServer(token:string,state:McpRequestState,limit:M
         case 'ten98_list_prompts':result=await listPrompts(args.projectId,principal.userId,query,token);break;
         case 'ten98_read_prompt':result=await getPrompt(args.projectId,principal.userId,args.promptId,token);break;
         case 'ten98_list_prompt_versions':result=await promptVersions(args.projectId,principal.userId,args.promptId,query,token);break;
-        default:{
+        case 'ten98_read_context':await limit(`project-content:${principal.userId}`,120);result=await getProjectContext(args.projectId,principal.userId,token);break;
+        case 'ten98_list_context_research':await limit(`project-content:${principal.userId}`,120);result=await getContextResearch(args.projectId,principal.userId,query,token);break;
+        case 'ten98_update_context':{
+          await limit(`project-content:${principal.userId}`,120);
+          const {projectId,...input}=raw as Record<string,unknown>;
+          const saved=await updateProjectContext(projectId,principal.userId,input,token);
+          state.committed=true;
+          return mcpResult({committed:true,requestId:args.requestId,replayed:saved.replayed===true,revision:saved.revision});
+        }
+        case 'ten98_create_prompts':case 'ten98_update_prompt':case 'ten98_archive_prompt':case 'ten98_restore_prompt':{
           const {projectId,promptId,...input}=raw as Record<string,unknown>;
           const saved=tool.name==='ten98_create_prompts'?await createPrompts(projectId,principal.userId,input,token):tool.name==='ten98_update_prompt'?await updatePrompt(projectId,principal.userId,promptId,input,token):await setPromptArchived(projectId,principal.userId,promptId,tool.name==='ten98_archive_prompt',input,token);
           // Native transaction already committed with its final authority check. This
@@ -99,6 +115,8 @@ export function createNativeMcpServer(token:string,state:McpRequestState,limit:M
           const items='items'in saved?saved.items:[saved.prompt];
           return mcpResult({committed:true,requestId:args.requestId,replayed:saved.replayed,items:items.map(item=>({id:item.id,revision:item.revision,currentVersionId:item.currentVersionId,archivedAt:item.archivedAt}))});
         }
+        // A catalog entry without its own case must never be routed to another tool's write.
+        default:throw new FoundationError(500,'Unmapped tool.');
       }
       const response=mcpResult(result);
       await authorizeApiKey(token,principal.workspaceId,tool.scope as ApiKeyScope);

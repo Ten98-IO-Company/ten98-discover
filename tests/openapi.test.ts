@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {nativeOpenApi} from '../src/server/openapi.ts';
 import {handleApi} from '../src/server/api.ts';
-import {promptBatch,promptPatch} from '../src/server/context-input.ts';
+import {promptBatch,promptPatch,contextOp} from '../src/server/context-input.ts';
 import {explorerQuery,explorerGroupingQuery} from '../src/server/explorer-input.ts';
 import {analyticsQuery} from '../src/server/analytics.ts';
 import {geographySearch} from '../src/lib/analytics-geography.ts';
@@ -41,16 +41,17 @@ test('Revenue inventory matches the three closed native readers and pinned curre
  }
 });
 
-test('static OpenAPI exposes exactly the supported 25 native operations with local references',()=>{
+test('static OpenAPI exposes exactly the supported 28 native operations with local references',()=>{
  assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
  const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
   assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
   assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
   const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
  }
- assert.equal(ids.length,25);assert.equal(new Set(ids).size,25);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ assert.equal(ids.length,28);assert.equal(new Set(ids).size,28);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
  const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
- assert.deepEqual(ids.filter(id=>!['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance'].includes(id)).sort(),prior.sort());for(const name of ['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance'])assert.equal(ids.filter(id=>id===name).length,1);
+ const added=['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance','readContext','listContextResearch','updateContext'];
+ assert.deepEqual(ids.filter(id=>!added.includes(id)).sort(),prior.sort());for(const name of added)assert.equal(ids.filter(id=>id===name).length,1);
  const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
  const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
  assert.ok(params.some(x=>x.name==='eventName'));assert.ok(!params.some(x=>x.name==='event'||x.name==='screenWidth'));
@@ -58,6 +59,25 @@ test('static OpenAPI exposes exactly the supported 25 native operations with loc
  assert.equal(params.find(x=>x.name==='fields')?.schema.maxLength,20000);
  assert.deepEqual(explorerGroupingQuery(new URLSearchParams({fields:'["path","referrer"]'})).fields,['path','referrer']);
  for(const item of Object.values(nativeOpenApi.paths))for(const op of Object.values(item))if(op.parameters.some((x:any)=>x.name==='fields'))assert.equal(op.operationId,'exploreAnalytics');
+});
+
+test('context operations carry one content scope each, a body only on updateContext and the native op kinds',()=>{
+ const base='/api/projects/{projectId}/context',cases=[[base,'get','readContext','context:read'],[base+'/research-log','get','listContextResearch','context:read'],[base+'/update','post','updateContext','context:write']] as const;
+ for(const[path,method,operationId,scope]of cases){
+  const op=(nativeOpenApi.paths as any)[path][method];assert.equal(op.operationId,operationId);assert.deepEqual(op['x-ten98-scopes'],[scope]);
+  assert.equal(Object.hasOwn(op,'requestBody'),operationId==='updateContext');
+  assert.equal(op.parameters.some((x:any)=>x.in==='query'),operationId==='listContextResearch');
+ }
+ assert.deepEqual((nativeOpenApi.paths as any)[base+'/update'].post.requestBody.content['application/json'].schema,{$ref:'#/components/schemas/ContextPatch'});
+ const patch=nativeOpenApi.components.schemas.ContextPatch as any;assert.equal(patch.additionalProperties,false);assert.deepEqual(patch.required.sort(),['requestId','revision','updates']);
+ assert.equal(patch.properties.updates.minItems,1);assert.equal(patch.properties.updates.maxItems,50);assert.equal(patch.properties.revision.maximum,2147483646);
+ assert.deepEqual(patch.properties.updates.items.properties.kind.enum,contextOp.options.map(option=>option.shape.kind.value));
+ assert.match(nativeOpenApi.components.securitySchemes.bearerAuth.description,/context:write does not imply context:read/);
+ // The bearer update answer is a receipt, never the context; both readers keep the broad native response.
+ const response=(path:string,method:string)=>(nativeOpenApi.paths as any)[path][method].responses['200'].content['application/json'].schema;
+ assert.deepEqual(response(base+'/update','post'),{type:'object',properties:{revision:{type:'integer',minimum:1,maximum:2147483646},replayed:{type:'boolean'}},required:['revision','replayed'],additionalProperties:false});
+ assert.equal(response(base,'get').additionalProperties,true);assert.equal(Object.hasOwn(response(base,'get'),'properties'),false);
+ assert.equal(response(base+'/research-log','get').properties.entries.items.additionalProperties,true);
 });
 
 test('retention specification requires month/timezone and preserves closed entry-filter and response bounds',()=>{

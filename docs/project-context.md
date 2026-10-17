@@ -1,6 +1,6 @@
 # Project context and prompt library
 
-This slice stores project knowledge and a versioned prompt library. Saving either does not call providers, start tracking, create schedules, or authorize spending. It implements part of P09/P11; provider execution and MCP tools remain separate work.
+This slice stores project knowledge and a versioned prompt library. Saving either does not call providers, start tracking, create schedules, or authorize spending. It implements part of P09/P11; provider execution remains separate work. Three MCP tools (`ten98_read_context`, `ten98_list_context_research`, `ten98_update_context`) and the bearer scopes `context:read`/`context:write` expose the context routes; see [native MCP](mcp.md) and the [native API contract](native-api.md).
 
 ## Context
 
@@ -16,7 +16,7 @@ Lists paginate 50 entries and support active/archived/all, literal text search, 
 
 ## API and authorization
 
-All routes below require a current cookie session. Existing API keys cannot access them. Writes recheck current owner/admin/editor membership after obtaining the workspace lock, then lock the project. Reads use a repeatable-read snapshot and always filter by project.
+The context routes accept a cookie session or an API key holding `context:read` (reads) or `context:write` (the CAS batch); `context:write` does not imply `context:read`, and a key issued before migration 0062 gains nothing automatically. Bearer calls hold the workspace SHARE lock for reads or UPDATE lock for the write under READ COMMITTED with five-second statement and lock-wait bounds, and the key's current authority is rechecked before publication or commit and again after a rollback, on the same connection and even when the lock wait itself failed. A bearer POST `/context/update` returns `{revision,replayed}` only; the cookie route keeps the full context DTO. The prompt routes keep their `prompts:read`/`prompts:write` gate. Writes recheck current owner/admin/editor membership after obtaining the workspace lock, then lock the project. Cookie reads use a repeatable-read snapshot; every read always filters by project.
 
 - GET `/api/projects/:id/context`; POST `/context/update`; GET `/context/research-log?cursor=...`.
 - GET `/api/projects/:id/prompts`; POST `/prompts/bulk`.
@@ -26,7 +26,7 @@ Mutation request IDs are bound to the project, operation and normalized payload.
 
 ## Checks
 
-`node --test tests/project-context.test.ts` exercises strict validation, exact host/URL normalization, classification and cursor binding. After migrating a new empty local test database, run `TEN98_INTEGRATION_TEST=1 node --env-file=<test-env> tests/project-context-integration.ts` using the environment syntax for your shell. The integration runner refuses a nonempty user database and remote hosts. It checks roles, lock-time demotion, tenant isolation, atomic caps, replay receipts, retained old research, immutable/version-number history, pagination, cookie-only API access, retention preserving authored data and retry receipts, and zero provider/DNS/job activity. Synthetic records remain in that isolated database.
+`node --test tests/project-context.test.ts` exercises strict validation, exact host/URL normalization, classification and cursor binding. After migrating a new empty local test database, run `TEN98_INTEGRATION_TEST=1 node --env-file=<test-env> tests/project-context-integration.ts` using the environment syntax for your shell. The integration runner refuses a nonempty user database and remote hosts. It checks roles, lock-time demotion, tenant isolation, atomic caps, replay receipts, retained old research, immutable/version-number history, pagination, an unauthenticated prompt read refused (401), retention preserving authored data and retry receipts, and zero provider/DNS/job activity. Its bearer CAS group drives the context routes through `handleApi` with a bearer alone, no cookie and no Origin: a `projects:read` key never gains the context read; a `context:read` key reads the same DTO as the cookie GET while a `context:write`-only key is refused on reads; cookie plus bearer is 400; a `context:read` key is refused on the write; a `context:write` key commits one batch (revision n+1, `replayed:false`, the key's issuer recorded as the section author), replays the identical request ID and body to the same revision with `replayed:true` and no second receipt row, and gets 409 for a changed payload under that request ID and for a stale revision, with no receipt left by refused writes; a key issued by an admin still writes after demotion to editor, is refused on the write after demotion to viewer and keeps the read; a foreign-workspace key sees 404 on both routes; a revoked key is refused with 401 and the revision is unchanged. Synthetic records remain in that isolated database.
 
 Migration 0014 must be applied through the migration runner. Earlier migrations remain unchanged; the integrated migration list applies 0013 retention before 0014.
 

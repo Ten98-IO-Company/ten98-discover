@@ -26,6 +26,12 @@ const SCOPES: { value: string; label: string }[] = [
   { value: 'team:read', label: 'Read team members' },
   { value: 'prompts:read', label: 'Read authored prompts' },
   { value: 'prompts:write', label: 'Create and edit authored prompts' },
+  { value: 'context:read', label: 'Read project context' },
+  { value: 'context:write', label: 'Edit project context' },
+  { value: 'segments:read', label: 'Read saved filters and cohorts' },
+  { value: 'annotations:read', label: 'Read annotations' },
+  { value: 'rank:read', label: 'Read rank trackers and rank reports' },
+  { value: 'keywords:read', label: 'Read saved keywords' },
 ]
 
 export function ApiKeysPanel({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {

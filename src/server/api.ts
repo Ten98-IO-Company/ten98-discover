@@ -37,7 +37,7 @@ import {getProjectContext,getContextResearch,updateProjectContext} from './proje
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
-import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey } from './api-keys.ts';
+import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider, saveProviderLimit } from './providers.ts';
 import { assertOidcCredentialsReadable, handleOidc } from './oidc.ts';
 import { isInstanceOperator } from './instance-operators.ts';
@@ -170,10 +170,21 @@ export async function handleApi(request: Request): Promise<Response> {
       const promptApiRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?$`,'i'));
       const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
+      // Content families admitted by scope; method and scope are explicit per row, nothing else matches.
+      // The segments/cohorts, annotations, rank and saved-keyword rows land in the next slices.
+      const scopedRoutes:[RegExp,'GET'|'POST',ApiKeyScope][]=[
+        [new RegExp(`^/api/projects/(${id})/context(?:/research-log)?$`,'i'),'GET','context:read'],
+        [new RegExp(`^/api/projects/(${id})/context/update$`,'i'),'POST','context:write'],
+      ];
+      const scoped=scopedRoutes.find(([route,method])=>request.method===method&&route.test(path));
       if(promptApiRoute&&(promptRead||promptWrite)) {
         const target=await getDatabase().pool.query('SELECT workspace_id FROM project WHERE id=$1 AND workspace_id=$2',[promptApiRoute[1],principal.workspaceId]);
         if(!target.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
         await authorizeApiKey(apiToken!,target.rows[0].workspace_id,promptWrite?'prompts:write':'prompts:read');
+      } else if(scoped) {
+        const target=await getDatabase().pool.query('SELECT workspace_id FROM project WHERE id=$1 AND workspace_id=$2',[scoped[0].exec(path)![1],principal.workspaceId]);
+        if(!target.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
+        await authorizeApiKey(apiToken!,target.rows[0].workspace_id,scoped[2]);
       } else if (workspaceRoute && (request.method === 'GET' || (request.method === 'POST' && workspaceRoute[2] === 'projects'))) {
         await authorizeApiKey(apiToken!, workspaceRoute[1], workspaceRoute[2] === 'team' ? 'team:read' : request.method === 'GET' ? 'projects:read' : 'projects:write');
       } else if (projectRoute && (request.method === 'GET' || (request.method === 'POST' && projectRoute[2] === 'events'))) {
@@ -849,9 +860,13 @@ export async function handleApi(request: Request): Promise<Response> {
     const contextRoute=path.match(new RegExp(`^/api/projects/(${id})/context(?:/(update|research-log))?$`,'i'));
     if(contextRoute) {
       await limit(`project-content:${user.id}`,120);
-      if(request.method==='GET'&&!contextRoute[2]&&!url.search) return json(await getProjectContext(contextRoute[1],user.id));
-      if(request.method==='GET'&&contextRoute[2]==='research-log') return json(await getContextResearch(contextRoute[1],user.id,url.searchParams));
-      if(request.method==='POST'&&contextRoute[2]==='update'&&!url.search) return json(await updateProjectContext(contextRoute[1],user.id,await readJson(request,262144)));
+      if(request.method==='GET'&&!contextRoute[2]&&!url.search) return json(await getProjectContext(contextRoute[1],user.id,apiToken??undefined));
+      if(request.method==='GET'&&contextRoute[2]==='research-log') return json(await getContextResearch(contextRoute[1],user.id,url.searchParams,apiToken??undefined));
+      if(request.method==='POST'&&contextRoute[2]==='update'&&!url.search) {
+        // A bearer caller gets the bounded receipt; context:write does not imply context:read at the data level either.
+        const saved=await updateProjectContext(contextRoute[1],user.id,await readJson(request,262144),apiToken??undefined);
+        return json(apiToken?{revision:saved.revision,replayed:saved.replayed===true}:saved);
+      }
       return json({error:'Method or parameters not allowed.'},405);
     }
     const promptRoute=path.match(new RegExp(`^/api/projects/(${id})/prompts(?:/(bulk|(${id})(?:/(update|archive|restore|versions))?))?$`,'i'));

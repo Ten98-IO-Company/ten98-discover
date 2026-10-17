@@ -138,13 +138,19 @@ Choose **API keys** as a workspace owner or administrator. Select only the requi
 |---|---|
 | `projects:read` | `GET /api/workspaces/:workspaceId/projects` |
 | `projects:write` | `POST /api/workspaces/:workspaceId/projects` |
-| `analytics:read` | `GET /api/projects/:projectId/analytics`, `GET /api/projects/:projectId/events` |
+| `analytics:read` | Fourteen `GET /api/projects/:projectId/…` readers: `events`, `analytics`, `realtime`, `performance`, `journeys`, `attribution`, `retention-report`, `revenue`, `revenue/sessions`, `revenue/sessions/:visitorKey`, `explore`, `sessions`, `sessions/:visitorKey`, `sessions/:visitorKey/linked-activity` |
 | `events:write` | `POST /api/projects/:projectId/events` with `{eventId,name,url,properties?,dimensions?}`; server observations never claim browser identity |
 | `team:read` | `GET /api/workspaces/:workspaceId/team` |
 | `prompts:read` | List/search/read authored prompts and their text versions |
 | `prompts:write` | Atomic 1–100 prompt creation, update, archive and restore |
+| `context:read` | `GET /api/projects/:projectId/context`, `GET /api/projects/:projectId/context/research-log` |
+| `context:write` | `POST /api/projects/:projectId/context/update`; one atomic batch of 1–50 operations at the current revision |
+| `segments:read` | Grantable; admits no route until the saved filters and cohorts slice lands |
+| `annotations:read` | Grantable; admits no route until the annotations slice lands |
+| `rank:read` | Grantable; admits no route until the rank readers slice lands |
+| `keywords:read` | Grantable; admits no route until the saved keywords slice lands |
 
-Send exactly one `Authorization: Bearer <token>` header without cookies or alternate API-key headers. Tokens cannot manage authentication, credentials, budgets or other keys. Removing membership deletes its keys; rejoining does not revive them. The [native API contract](native-api.md) documents the public static OpenAPI document, complete supported bearer inventory and existing atomic prompt batch. Compatibility access and complete MCP coverage remain outstanding.
+Send exactly one `Authorization: Bearer <token>` header without cookies or alternate API-key headers. Tokens cannot manage authentication, credentials, budgets or other keys. Removing membership deletes its keys; rejoining does not revive them. The [native API contract](native-api.md) documents the public static OpenAPI document, complete supported bearer inventory and existing atomic prompt and context batches. Still outside the bearer and MCP inventory: Google saved snapshots, site audits, the domains registry and rank runs/results/history, each waiting on a named lock fix; the saved filters/cohorts, annotations, rank reader and saved-keyword routes land in the next slices; compatibility access remains outstanding.
 
 Choose **AI and search providers** as a workspace owner. A saved connection starts **untested**. **Run check** contacts only the provider's documented read-only account endpoint: [OpenRouter current key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key) or [DataForSEO user data](https://docs.dataforseo.com/v3/appendix-user-data/). Acceptance of credentials does not prove paid endpoint permissions or sufficient credit. Diagnostics never display the provider's response body or submitted credentials.
 

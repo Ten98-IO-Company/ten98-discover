@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
 
-export const apiKeyScopes = ['projects:read', 'projects:write', 'analytics:read', 'events:write', 'team:read', 'prompts:read', 'prompts:write'] as const;
+export const apiKeyScopes = ['projects:read', 'projects:write', 'analytics:read', 'events:write', 'team:read', 'prompts:read', 'prompts:write', 'context:read', 'context:write', 'segments:read', 'annotations:read', 'rank:read', 'keywords:read'] as const;
 export type ApiKeyScope = typeof apiKeyScopes[number];
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 export type ApiKeyDto = {
@@ -45,11 +45,13 @@ export function parseApiKeyHeaders(headers: Headers): string | null {
   return match[1];
 }
 
+// Explicit allowlist: a future scope is denied to viewers until it is named here.
+const viewerScopes = new Set<ApiKeyScope>(['projects:read', 'analytics:read', 'prompts:read', 'context:read', 'segments:read', 'annotations:read', 'rank:read', 'keywords:read']);
 function allows(role: Role, scope: ApiKeyScope): boolean {
   if (role === 'owner' || role === 'admin') return true;
   if (scope === 'team:read') return false;
   if (role === 'editor') return true;
-  return role === 'viewer' && (scope === 'projects:read' || scope === 'analytics:read' || scope === 'prompts:read');
+  return role === 'viewer' && viewerScopes.has(scope);
 }
 
 async function managed<T>(workspaceId: string, userId: string, run: (client: PoolClient, role: 'owner' | 'admin') => Promise<T>): Promise<T> {

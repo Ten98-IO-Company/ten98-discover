@@ -41,6 +41,7 @@
     "createProject",
     "createPrompts",
     "exploreAnalytics",
+    "listContextResearch",
     "listProjects",
     "listPromptVersions",
     "listPrompts",
@@ -49,6 +50,7 @@
     "listSessions",
     "readAnalytics",
     "readAttribution",
+    "readContext",
     "readJourneys",
     "readLinkedActivity",
     "readPrompt",
@@ -60,6 +62,7 @@
     "readTeam",
     "readWebPerformance",
     "restorePrompt",
+    "updateContext",
     "updatePrompt",
     "writeObservation"
    ],
@@ -69,34 +72,40 @@
    ],
    "migrations": [
     "0006_api_keys",
-    "0041_api_prompt_scopes"
+    "0041_api_prompt_scopes",
+    "0062_api_content_scopes"
    ]
   },
   "P06": {
    "operations": [
     "archivePrompt",
     "createPrompts",
+    "listContextResearch",
     "listPromptVersions",
     "listPrompts",
     "listSessions",
     "readAnalytics",
     "readAttribution",
+    "readContext",
     "readJourneys",
     "readPrompt",
     "readRealtime",
     "readRetentionReport",
     "readSession",
     "restorePrompt",
+    "updateContext",
     "updatePrompt"
    ],
    "mcpTools": [
     "ten98_archive_prompt",
     "ten98_create_prompts",
+    "ten98_list_context_research",
     "ten98_list_prompt_versions",
     "ten98_list_prompts",
     "ten98_list_sessions",
     "ten98_read_analytics",
     "ten98_read_attribution",
+    "ten98_read_context",
     "ten98_read_journeys",
     "ten98_read_linked_activity",
     "ten98_read_prompt",
@@ -104,6 +113,7 @@
     "ten98_read_retention",
     "ten98_read_session",
     "ten98_restore_prompt",
+    "ten98_update_context",
     "ten98_update_prompt",
     "ten98_whoami"
    ]
@@ -119,9 +129,20 @@
    ]
   },
   "P09": {
+   "operations": [
+    "listContextResearch",
+    "readContext",
+    "updateContext"
+   ],
+   "mcpTools": [
+    "ten98_list_context_research",
+    "ten98_read_context",
+    "ten98_update_context"
+   ],
    "migrations": [
     "0014_project_context",
-    "0030_citation_context"
+    "0030_citation_context",
+    "0062_api_content_scopes"
    ]
   },
   "P10": {
@@ -578,6 +599,59 @@
   "P62": {
    "migrations": [
     "0010_reports"
+   ]
+  },
+  "P63": {
+   "operations": [
+    "archivePrompt",
+    "createProject",
+    "createPrompts",
+    "exploreAnalytics",
+    "listContextResearch",
+    "listProjects",
+    "listPromptVersions",
+    "listPrompts",
+    "listRecentEvents",
+    "listRevenueSessions",
+    "listSessions",
+    "readAnalytics",
+    "readAttribution",
+    "readContext",
+    "readJourneys",
+    "readLinkedActivity",
+    "readPrompt",
+    "readRealtime",
+    "readRetentionReport",
+    "readRevenue",
+    "readRevenueSession",
+    "readSession",
+    "readTeam",
+    "readWebPerformance",
+    "restorePrompt",
+    "updateContext",
+    "updatePrompt",
+    "writeObservation"
+   ],
+   "mcpTools": [
+    "ten98_archive_prompt",
+    "ten98_create_prompts",
+    "ten98_list_context_research",
+    "ten98_list_prompt_versions",
+    "ten98_list_prompts",
+    "ten98_list_sessions",
+    "ten98_read_analytics",
+    "ten98_read_attribution",
+    "ten98_read_context",
+    "ten98_read_journeys",
+    "ten98_read_linked_activity",
+    "ten98_read_prompt",
+    "ten98_read_realtime",
+    "ten98_read_retention",
+    "ten98_read_session",
+    "ten98_restore_prompt",
+    "ten98_update_context",
+    "ten98_update_prompt",
+    "ten98_whoami"
    ]
   },
   "P64": {
