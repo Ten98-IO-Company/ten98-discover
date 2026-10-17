@@ -11,6 +11,7 @@ import {resolveCohort} from './cohorts.ts';
 import {validateAdvancedRegex,advancedPredicateMethod} from './advanced-predicates.ts';
 import {retentionCoverage} from './retention.ts';
 import {geographyProjectionSql,geographyKeySql,geographyKeyOrderSql} from './geography-sql.ts';
+import {selfReferralSql} from './analytics-dimensions.ts';
 import {environmentCatalog,environmentVersion} from '../lib/analytics-environment.ts';
 import {revenueCurrencies,revenueCurrencyCatalogVersion,revenueReportVersion,revenueReportLimits,revenueUnits,revenueDecimal,revenueAverage,revenueChannel,revenueChannelRules,revenueComparisonChanges,type RevenueComparisonSummary,type RevenueTotals,type RevenueResult,type RevenueSource,type RevenueBreakdown} from '../lib/revenue.ts';
 import type {SessionReadAuthority} from './session-explorer.ts';
@@ -94,8 +95,8 @@ async function readRevenue(projectId:string,authority:SessionReadAuthority|null,
     count(*) OVER(PARTITION BY e.visitor_id,e.received_at) AS ties FROM event e JOIN key_totals k USING(visitor_id) JOIN target t ON t.id=e.project_id CROSS JOIN bounds b CROSS JOIN session_page p
     WHERE e.source='browser' AND e.visit_id IS NOT NULL AND e.received_at>=b.start AND e.received_at<b.finish AND e.received_at<p.event_before
      AND(t.analytics_retained_from IS NULL OR e.received_at>=t.analytics_retained_from)AND(e.received_at AT TIME ZONE $5)::date BETWEEN ${periodFrom} AND ${periodTo} ORDER BY e.visitor_id,e.received_at,e.id),
-   sources AS MATERIALIZED(SELECT visitor_id,received_at,ties,geography,NULLIF(${text("dimensions->'referrerHost'",2048)},'') AS referrer,
-    ${text("dimensions->'campaign'->'source'",200)} AS campaign_source,${text("dimensions->'campaign'->'medium'",200)} AS campaign_medium,${env('browser')} AS browser,${env('os')} AS os,${env('device')} AS device FROM first_observations),
+   sources AS MATERIALIZED(SELECT visitor_id,received_at,ties,geography,CASE WHEN ${selfReferralSql('o')} THEN NULL ELSE NULLIF(${text("dimensions->'referrerHost'",2048)},'') END AS referrer,
+    ${text("dimensions->'campaign'->'source'",200)} AS campaign_source,${text("dimensions->'campaign'->'medium'",200)} AS campaign_medium,${env('browser')} AS browser,${env('os')} AS os,${env('device')} AS device FROM first_observations o),
    searched_keys AS MATERIALIZED(SELECT k.*,s.referrer,s.campaign_source,s.campaign_medium,s.browser,s.os,s.device,s.geography FROM key_totals k JOIN sources s USING(visitor_id)
     WHERE strpos(lower(concat_ws(' ',s.browser,s.os,s.device,s.geography->>'country',s.geography->'region'->>'name',s.geography->>'city')),lower(${searchSlot}))>0),
    key_page AS MATERIALIZED(SELECT * FROM searched_keys WHERE ${currentOnly} AND (${atSlot}::timestamptz IS NULL OR last_at<${atSlot}::timestamptz OR(last_at=${atSlot}::timestamptz AND visitor_id>${lastSlot})) ORDER BY last_at DESC,visitor_id ASC LIMIT ${limitSlot}),

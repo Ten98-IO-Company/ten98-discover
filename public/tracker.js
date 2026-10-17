@@ -463,12 +463,22 @@
       var consented = hub().nativeConsentAllowed(state), dimensions = {}, epoch = config.consentEpoch, generation = state.nativeGeneration;
       if (!performanceEvent && consented && state.nativeIdentifier !== undefined) dimensions.distinctId = state.nativeIdentifier;
       if (!performanceEvent && navigator.language) dimensions.language = navigator.language;
-      // The first page view this site sends keeps the document's referrer, even when consent or configuration arrives after an
-      // in-app navigation. Each later page view for another path reports the previous sent in-app page, whose origin is this page's own
-      // (a self-referral, as pinned Umami sends it); custom events follow the page they occur on. Only an origin is ever sent.
-      if (event.name === PAGE_VIEW && state.nativePageObservation && state.nativePageObservation.sent && state.nativePageObservation.url !== event.url) state.referrerOrigin = location.origin;
-      var referrer = state.referrerOrigin || document.referrer;
-      if (!performanceEvent && settings.captureReferrer && referrer) dimensions.referrer = new URL(referrer).origin;
+      // The first page view of each visitor key (a native generation: a new identify ID, resetIdentity, consent basis or withdrawal start one)
+      // keeps the document's referrer, even when consent or configuration arrives after an in-app navigation. A later page view for
+      // another path in the same generation reports the previous in-app page, whose origin is this page's own (a self-referral, as
+      // pinned Umami sends it); custom events follow the page they occur on. A switch justified by a sent view holds for the generation;
+      // one justified by a still-pending view holds unless that view is dropped unsent. ponytail: a generation over-approximates the
+      // server's visitor key (resetIdentity, A->B->A or a regrant can repeat an external landing) and misses server-only rotations (UTC
+      // month, IP, user agent); the server never credits a self-referral, so those keys show no referrer at worst. Upgrade path: the
+      // collector returns the key it used.
+      var prior = state.nativePageObservation, switched = state.selfReferral;
+      var inApp = !!switched && switched.generation === generation && !(switched.from && switched.from.dropped);
+      if (!inApp && event.name === PAGE_VIEW && prior && prior.generation === generation && !prior.dropped && prior.url !== event.url) {
+        state.selfReferral = {generation: generation, from: prior.sent ? null : prior}; inApp = true;
+      }
+      var referrer = !performanceEvent && settings.captureReferrer && (inApp ? location.origin : document.referrer && new URL(document.referrer).origin);
+      // Only a web origin is sent: the collector refuses any other scheme, such as android-app:// (whose origin is a tuple in Chrome on Android).
+      if (referrer && /^https?:\/\//.test(referrer)) dimensions.referrer = referrer;
       if (settings.captureScreen && window.screen) dimensions.screen = {width: screen.width, height: screen.height};
       if (!performanceEvent && settings.captureCampaigns) {
         var query = new URL(location.href).searchParams, campaign = {};
@@ -482,13 +492,13 @@
       var body = JSON.stringify(payload);
       if (new TextEncoder().encode(body).length > 16384) return;
       // An attempted basic observation may already be stored even if its receipt is lost.
-      var observation = event.name === PAGE_VIEW ? {url: event.url, basic: !consented, sent: false} : null;
+      var observation = event.name === PAGE_VIEW ? {url: event.url, basic: !consented, sent: false, generation: generation} : null;
       if (observation) state.nativePageObservation = observation;
       var controller = new AbortController(); state.nativeRequests.add(controller);
       if (performanceEvent) capture.requests.add(controller);
       function current() { return nativeCurrent(state, epoch, generation, controller) && (!performanceEvent || capture.active && capture.navigationId === payload.navigationId && capture.url === payload.url); }
       var timer = setTimeout(function () { controller.abort(); }, 5000);
-      Promise.resolve().then(function () { if (!current()) return; if (observation) observation.sent = true; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
+      Promise.resolve().then(function () { if (!current()) { if (observation) observation.dropped = true; return; } if (observation) observation.sent = true; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
         cache: 'no-store', redirect: 'error', keepalive: true, signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body}); })
         .then(async function (response) {
           if (!response) return;

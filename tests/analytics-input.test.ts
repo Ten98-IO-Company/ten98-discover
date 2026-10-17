@@ -163,7 +163,7 @@ test('referrer validation cannot retain userinfo or normalize malformed/control-
     ' https://example.test', 'https://example.test\n/private', 'https://example.test/' + 'x'.repeat(2048), '',
   ]) rejects(() => normalizeDimensions({ referrer }));
   assert.deepEqual(normalizeDimensions({ referrer: 'http://localhost:3000/path' }), { referrerHost: 'localhost' });
-  // D11: an SPA view's origin-only self-referral is the site's own origin; it is a host like any other, never compared with the event origin.
+  // D11: an SPA view's origin-only self-referral is the site's own origin; ingestion keeps it as a host like any other; only reports compare it with the event origin.
   assert.deepEqual(normalizeDimensions({ referrer: 'https://site.example' }), { referrerHost: 'site.example' });
 });
 

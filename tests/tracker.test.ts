@@ -319,6 +319,35 @@ test('SPA page_views after pushState, replaceState and popstate carry the previo
   void aborted.sandbox.ten98.identify('user-1', aborted.local({}), aborted.local({ siteKey: SITE, environment: 'live' })); await aborted.drain();
   aborted.history.pushState({}, '', '/n'); await aborted.drain();
   assert.deepEqual(aborted.payloads.filter(p => p.name === 'page_view').map(p => [p.url, p.dimensions.referrer]), [['https://site.example/n', 'https://referrer.example']]);
+  // Each visitor key has its own landing view: after identify starts a new key mid-document, that key's first view and the events
+  // after it keep the external referrer, so attribution can credit it; the next in-app view of the new key is a self-referral again.
+  const keyed = makeEnv({ settings: { captureReferrer: true } }); await keyed.start();
+  keyed.history.pushState({}, '', '/signup'); await keyed.drain();
+  void keyed.sandbox.ten98.identify('user-1', keyed.local({}), keyed.local({ siteKey: SITE, environment: 'live' })); await keyed.drain();
+  keyed.history.pushState({}, '', '/dashboard'); keyed.sandbox.ten98.track('purchase'); await keyed.drain(); keyed.history.pushState({}, '', '/receipt'); await keyed.drain();
+  assert.deepEqual(keyed.payloads.map(p => [p.name, p.url, p.dimensions.distinctId ?? null, p.dimensions.referrer]), [
+    ['page_view', 'https://site.example/dashboard', null, 'https://referrer.example'], ['page_view', 'https://site.example/signup', null, 'https://site.example'],
+    ['page_view', 'https://site.example/dashboard', 'user-1', 'https://referrer.example'], ['purchase', 'https://site.example/dashboard', 'user-1', 'https://referrer.example'],
+    ['page_view', 'https://site.example/receipt', 'user-1', 'https://site.example']]);
+  // A view for a new path in the same synchronous turn as a still-pending first view is already an in-app view.
+  const sameTurn = makeEnv({ settings: { captureReferrer: true } }); sameTurn.run(); await sameTurn.drain();
+  sameTurn.sandbox.ten98.consent(sameTurn.local(ANALYTICS), sameTurn.local({ siteKey: SITE, environment: 'live', acknowledgeReload: true })); sameTurn.history.pushState({}, '', '/same'); await sameTurn.drain();
+  assert.deepEqual(sameTurn.payloads.map(p => [p.url, p.dimensions.referrer]), [['https://site.example/dashboard', 'https://referrer.example'], ['https://site.example/same', 'https://site.example']]);
+  // When the views that justified the switch are dropped unsent (here by a same-turn move into an excluded path), the next view is the landing view again.
+  const dropped = makeEnv({ settings: { captureReferrer: true, excludedPaths: ['/private'] } }); dropped.run(); await dropped.drain();
+  dropped.sandbox.ten98.consent(dropped.local(ANALYTICS), dropped.local({ siteKey: SITE, environment: 'live', acknowledgeReload: true })); dropped.history.pushState({}, '', '/b'); dropped.history.pushState({}, '', '/private/x'); await dropped.drain();
+  dropped.history.pushState({}, '', '/public'); await dropped.drain();
+  assert.deepEqual(dropped.payloads.map(p => [p.url, p.dimensions.referrer]), [['https://site.example/public', 'https://referrer.example']]);
+  // Once a sent view justified the switch, a dropped redirect chain cannot bring the external referrer back for that key.
+  const chained = makeEnv({ settings: { captureReferrer: true, excludedPaths: ['/private'] } }); await chained.start();
+  chained.history.pushState({}, '', '/b'); chained.history.replaceState({}, '', '/c'); chained.history.replaceState({}, '', '/private/x'); await chained.drain();
+  chained.history.pushState({}, '', '/d'); await chained.drain();
+  assert.deepEqual(chained.payloads.map(p => [p.url, p.dimensions.referrer]), [['https://site.example/dashboard', 'https://referrer.example'], ['https://site.example/d', 'https://site.example']]);
+  // Only web referrers are sent: android-app:// (opaque here, a tuple origin in Chrome on Android) and ftp:// (a tuple origin) would make the collector refuse the event.
+  for (const referrer of ['android-app://com.example.mail/', 'ftp://files.example/list']) {
+   const app = makeEnv({ settings: { captureReferrer: true } }); app.document.referrer = referrer; await app.start();
+   assert.equal(app.payloads.length, 1, referrer); assert.deepEqual(app.payloads[0].dimensions, { language: 'en-GB' }, referrer);
+  }
 });
 
 test('encoded and Unicode excluded prefixes cannot bypass native privacy; malformed paths fail closed', async () => {
