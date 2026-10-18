@@ -35,7 +35,39 @@ export async function runAttributionChecks(){
  await add(main,'page_view','/landing',at(0),b,vb,dimensions('beta'));await add(main,'purchase','/checkout',at(3),b,vb,dimensions('conversion'));
  const first=await read(),last=await read(main,{model:'last-click'}),filtered=await read(main,{campaignSource:'conversion'});
  assert.deepEqual(first.measurement,{conversionEvents:3,keyedConversionEvents:3,unkeyedConversionEvents:0,convertedObservedKeys:2,convertingObservedVisits:3,attributedKeys:2,noEarlierTouchKeys:0,touchTimestampTieKeys:0,collection:{cookieless:0,consent:3,unknown:0}});
- assert.deepEqual(first.dimensions.campaignSource.rows,[{value:'alpha',creditedKeys:1,shareOfConvertedKeys:50},{value:'beta',creditedKeys:1,shareOfConvertedKeys:50}]);assert.deepEqual(last.dimensions.campaignSource.rows!.map(row=>row.value),['beta','between']);assert.equal(last.measurement.conversionEvents,3);assert.deepEqual(filtered.dimensions,first.dimensions);assert.equal(first.dimensions.referrer.recordedKeys,2);assert.ok(first.dimensions.referrer.rows!.some(row=>row.value==='attribution.test'));assert.equal(first.selection.evidenceIncomplete,false);
+ assert.deepEqual(first.dimensions.campaignSource.rows,[{value:'alpha',creditedKeys:1,shareOfConvertedKeys:50},{value:'beta',creditedKeys:1,shareOfConvertedKeys:50}]);assert.deepEqual(last.dimensions.campaignSource.rows!.map(row=>row.value),['beta','between']);assert.equal(last.measurement.conversionEvents,3);assert.deepEqual(filtered.dimensions,first.dimensions);assert.equal(first.selection.evidenceIncomplete,false);
+ // Key a's landing is a tagged self-referral (referrerHost equals its own origin host): it stays the touch and keeps its campaign credit, but its own host is never a credited referrer.
+ assert.equal(first.dimensions.referrer.recordedKeys,1);assert.equal(first.dimensions.referrer.notRecordedKeys,1);assert.deepEqual(first.dimensions.referrer.rows,[{value:'search.test',creditedKeys:1,shareOfConvertedKeys:50}]);
+ {
+  // D11 review probe, seeded as the tracker now sends it: start, pushState /signup, identify('user-1') (a new key whose first view keeps the external referrer), pushState /dashboard, track('purchase').
+  // Plus one SPA key without identify (landing, in-app view, purchase) and one key whose events are all internal navigation, as an older tracker or a multi-page site sends them.
+  const probe=await project(),own={origin:'https://probe.test',referrerHost:'probe.test'},external={origin:'https://probe.test',referrerHost:'search.test'},anon=key('probe-anon'),user=key('probe-user'),spa=key('probe-spa'),internal=key('probe-internal');
+  for(const who of[anon,user,spa,internal])await visitor(probe,who);
+  await add(probe,'page_view','/',at(0),anon,key('pv-anon'),external);await add(probe,'page_view','/signup',at(1),anon,key('pv-anon'),own);
+  await add(probe,'page_view','/dashboard',at(2),user,key('pv-user'),external);await add(probe,'purchase','/dashboard',at(3),user,key('pv-user'),external);
+  await add(probe,'page_view','/',at(0),spa,key('pv-spa'),external);await add(probe,'page_view','/pricing',at(1),spa,key('pv-spa'),own);await add(probe,'purchase','/pricing',at(2),spa,key('pv-spa'),own);
+  await add(probe,'page_view','/dashboard',at(0),internal,key('pv-internal'),own);await add(probe,'purchase','/dashboard',at(1),internal,key('pv-internal'),own);
+  for(const model of['first-click','last-click']){
+   const result=await read(probe,{model}),referrer=result.dimensions.referrer;
+   assert.deepEqual([result.measurement.convertedObservedKeys,result.measurement.attributedKeys,result.measurement.noEarlierTouchKeys,result.measurement.touchTimestampTieKeys],[3,3,0,0],model);
+   // The identified key and the SPA key credit the external referrer; the internal-only key keeps its touch, Not recorded; the site's own host is never credited.
+   assert.deepEqual(referrer.rows!.map(row=>[row.value,row.creditedKeys]),[['search.test',2]],model);assert.deepEqual([referrer.recordedKeys,referrer.notRecordedKeys],[2,1],model);
+  }
+  // Ordering rules: 'later' starts with internal navigation, then an external view, then the purchase (first-click skips the internal view);
+  // 'after' has only internal views up to its purchase and an external tagged view after it (first-click never credits a touch after the
+  // first conversion); 'tied' has an internal and an external view at one timestamp (no tie: internal navigation is a separate class).
+  const ordering=await project(),www={origin:'https://www.probe.test',referrerHost:'probe.test'},later=key('order-later'),after=key('order-after'),tied=key('order-tied');
+  for(const who of[later,after,tied])await visitor(ordering,who);
+  await add(ordering,'page_view','/cart',at(0),later,key('ov-later'),www);await add(ordering,'page_view','/',at(1),later,key('ov-later'),external);await add(ordering,'purchase','/cart',at(2),later,key('ov-later'),own);
+  await add(ordering,'page_view','/cart',at(0),after,key('ov-after'),own);await add(ordering,'purchase','/cart',at(1),after,key('ov-after'),own);
+  await add(ordering,'page_view','/',at(2),after,key('ov-after'),{origin:'https://probe.test',referrerHost:'mail.test',campaign:{source:'receipt',medium:'email'}});
+  await add(ordering,'page_view','/cart',at(0),tied,key('ov-tied'),own);await add(ordering,'page_view','/',at(0),tied,key('ov-tied'),external);await add(ordering,'purchase','/cart',at(1),tied,key('ov-tied'),own);
+  for(const model of['first-click','last-click']){
+   const result=await read(ordering,{model});
+   assert.deepEqual([result.measurement.attributedKeys,result.measurement.noEarlierTouchKeys,result.measurement.touchTimestampTieKeys],[3,0,0],model);
+   assert.deepEqual(result.dimensions.referrer.rows!.map(row=>[row.value,row.creditedKeys]),[['search.test',2]],model);assert.deepEqual(result.dimensions.campaignSource.rows,[],model);
+  }
+ }
  for(const user of[owner,admin,editor,viewer])assert.equal((await read(main,{},user)).measurement.convertedObservedKeys,2);await assert.rejects(read(main,{},stranger),{status:404});await assert.rejects(read(foreign),{status:404});assert.ok(!JSON.stringify(first).includes('DO_NOT_RETURN'));assert.ok(!JSON.stringify(first).includes(a));assert.ok(!JSON.stringify(first).includes(v1));
  await add(main,'page_view','/thanks',at(4),a,v2,dimensions('page'));const pageConversion=await read(main,{conversionKind:'pageview',conversionValue:'/thanks'});assert.equal(pageConversion.measurement.conversionEvents,1);assert.equal((await read(main,{kind:'custom',conversionKind:'pageview',conversionValue:'/thanks'})).measurement.conversionEvents,0);
  await add(main,'purchase','/checkout',at(5),null,null,dimensions('api'),'api',randomUUID(),null);const mixed=await read();assert.equal(mixed.measurement.unkeyedConversionEvents,1);assert.equal(mixed.selection.evidenceIncomplete,true);assert.ok(mixed.dimensions.campaignSource.rows!.every(row=>row.shareOfConvertedKeys===null));

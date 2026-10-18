@@ -195,16 +195,20 @@ Model quality remains unverified, including when every citation has valid proven
 `GET /` and `GET /runs` return setup/history with one optional cursor;
 `GET /runs/:runId` returns the current retained detail. `POST /quote` accepts the
 strict `contentSupportQuoteInputSchema` (32 KiB whole body): explicit connection,
-model, funded-credit/evaluation acknowledgments, positive `maxSpendUsd`, an exact
+model, funded-credit/evaluation acknowledgments, an exact
 capture or current applied project selection, both query/corpus receipts, 1–5
-query IDs and 1–20 selected page IDs. It accepts no text bodies, costs, keys or
-provider-routing overrides. The server materializes only those complete bodies,
+query IDs and 1–20 selected page IDs. It accepts no text bodies, costs, spending
+ceilings, keys or provider-routing overrides. The server materializes only those complete bodies,
 at most64 KiB; messages+schema128 KiB, wire request160 KiB and output2048 tokens.
 The complete project population is checked before selecting IDs, including keys
 outside presentation cuts. Quotes do not send an inference.
 
 `POST /runs` takes only `{quoteId,requestId}` and atomically reserves the verified
-ceiling, creates one run and queues one job with retryLimit0. The quote lasts five
+estimate, creates one run and queues one job with retryLimit0. Quotes show the
+estimate only. Since D3 the stored quote records that estimate where a chosen
+ceiling used to be (`max_spend_micros` and `source_input.maxSpendUsd`), so the
+payload and identity hashes are unchanged; legacy quotes keep their chosen
+ceiling as evidence, and the quote response returns neither. The quote lasts five
 minutes, measured by native SQL time after waits. Current owner/source receipts,
 original source clocks, key identity, connection revision, exact model/provider
 route and conservative prices are rechecked before dispatch. The manual pause
@@ -215,7 +219,11 @@ and cancels only unsent work. A dispatched request is never automatically retrie
 The existing provider transport persists an actual generation header before body
 parsing. Known charges settle even when output is refused, incomplete, too large,
 invalid, or current authority changed. An unknown charge stays `actualUsd:null`,
-marks the run uncertain and blocks new paid work until it is reconciled.
+marks the run uncertain and blocks new paid work until it is reconciled. An
+OpenRouter 402, or a 403 with a key, guardrail or workspace budget `limit_source`,
+carrying no generation evidence is a refusal before any work: the run fails with a
+settled US$0.000000 receipt and a fixed message, and nothing becomes uncertain
+([refusal contract](foundation.md#account-api-key-and-provider-controls)).
 `POST /runs/:runId/reconcile`
 with a stable `requestId` reads only the original generation metadata, requiring
 the original key/model/provider/session/actor/time identity. It can reconcile after

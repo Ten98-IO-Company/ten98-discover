@@ -5,15 +5,13 @@ import {FoundationError} from './auth.ts';
 import {canonicalHash,cleanText,parse,revision} from './context-input.ts';
 import {contentReceipt} from './project-context.ts';
 import {withKeywordProject,keywordConnection} from './keyword-research.ts';
-import {moneyInput,usdMicros} from './providers.ts';
-import {microUsd} from './keyword-research-input.ts';
 import {readRankPlan,rankPlanTotal,type RankPlan,type RankPlanTask} from './rank-execution-plan.ts';
 import {parseRankSerpRequest} from './rank-serp-input.ts';
 
 const readers=['owner','admin','editor','viewer'];
 const calendarFields={interval:z.enum(['daily','weekly','monthly']),timezone:z.string().min(1).max(100).refine(v=>cleanText(v)&&v.trim()===v&&!/[\x00-\x1f\x7f]/.test(v)),hour:z.number().int().min(0).max(23),minute:z.number().int().min(0).max(59),weekday:z.number().int().min(0).max(6).nullable().default(null)};
 const calendar=z.object(calendarFields).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);
-const approveInput=z.object({requestId:z.uuid(),revision,quoteId:z.uuid(),maximumUsd:z.string().max(14).refine(v=>!/[\s]/.test(v)).pipe(moneyInput).transform(v=>microUsd(usdMicros(v))),...calendarFields}).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);
+const approveInput=z.object({requestId:z.uuid(),revision,quoteId:z.uuid(),...calendarFields}).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);
 const disableInput=z.object({requestId:z.uuid(),revision}).strict();
 type Calendar=z.output<typeof calendar>;
 type Definition={target:RankPlan['target'];tasks:Pick<RankPlanTask,'keywordId'|'keyword'|'matchCase'|'device'>[]};
@@ -68,7 +66,7 @@ async function dto(client:PoolClient,row:any,role:string,replayed?:boolean){
   }
   const iso=(v:Date|null)=>v?.toISOString()??null;
   return {role,trackerId:row.id as string,authoredRevision:row.authored_revision as number,canManage:role==='owner',schedule:{enabled:row.schedule_enabled as boolean,interval:row.schedule_interval as 'manual'|'daily'|'weekly'|'monthly',timezone:row.schedule_timezone as string|null,hour:row.schedule_hour as number|null,minute:row.schedule_minute as number|null,weekday:row.schedule_weekday as number|null,nextDueAt:iso(row.next_due_at),
-    approval:row.approval_id?{id:row.approval_id as string,approvedAt:iso(row.approved_at),approvedByUserId:row.approval_user_id as string,maximumUsd:microUsd(BigInt(row.approval_max_micros)),connectionId:row.approval_connection_id as string,connectionName:connection?.name as string|undefined}:null,
+    approval:row.approval_id?{id:row.approval_id as string,approvedAt:iso(row.approved_at),approvedByUserId:row.approval_user_id as string,connectionId:row.approval_connection_id as string,connectionName:connection?.name as string|undefined}:null,
     approvalStale:!row.approval_id||reasons.length>0,staleReasons:reasons},...(replayed===undefined?{}:{replayed})};
 }
 export async function getRankSchedule(projectId:string,userId:string,trackerId:string){
@@ -88,10 +86,10 @@ export async function approveRankSchedule(projectId:string,userId:string,tracker
     if(!quote)throw new FoundationError(404,'Rank quote not found or unavailable.');if(quote.user_id!==userId)throw new FoundationError(403,'Only the owner who requested this quote can approve its schedule.');
     if(quote.trigger!=='manual'||quote.method!=='queued'||quote.status!=='quoted'||quote.started_at||quote.is_subset||quote.config_revision!==row.revision||quote.keywords_revision!==row.keywords_revision||quote.account_fingerprint_version!==2)throw new FoundationError(409,'Review a current full queued quote for this schedule.');
     await keywordConnection(client,wid,quote.connection_id,quote.connection_revision);
-    const plan=readRankPlan(quote.request,quote.request_hash),estimate=rankPlanTotal(plan),maximum=usdMicros(input.maximumUsd),hash=rankApprovalRequestHash(plan);
+    const plan=readRankPlan(quote.request,quote.request_hash),estimate=rankPlanTotal(plan),hash=rankApprovalRequestHash(plan);
     if(plan.method!=='queued'||plan.tasks.length!==quote.task_count||estimate.toString()!==quote.estimate_micros||hash!==await currentHash(client,row))throw new FoundationError(409,'The quote no longer covers this exact full tracker definition.');
-    if(maximum===0n||maximum<estimate)throw new FoundationError(400,'The per-check ceiling must cover the full quoted maximum.');
     await validateZone(client,input);const approvalId=randomUUID();
+    // ponytail: since D3 approval_max_micros is a dormant record of the approved quote total, not a limit; a later contract migration may drop it.
     // Expiry is checked against the database clock immediately before approval;
     // waiting for W→P→tracker locks never renews a five-minute quote.
     const saved=await client.query(`WITH approval_clock AS MATERIALIZED(SELECT clock_timestamp() AS at)
@@ -100,7 +98,7 @@ export async function approveRankSchedule(projectId:string,userId:string,tracker
       approval_request_hash=$9,approval_connection_id=$10,approval_connection_revision=$11,approval_account_fingerprint=$12,approval_account_fingerprint_version=2,
       approval_max_micros=$13,approved_at=(SELECT at FROM approval_clock),last_skip_reason=NULL,authored_revision=authored_revision+1,updated_at=(SELECT at FROM approval_clock)
       WHERE id=$1 AND $14::timestamptz>(SELECT at FROM approval_clock)`,
-      [trackerId,input.interval,input.timezone,input.hour,input.minute,input.weekday,approvalId,userId,hash,quote.connection_id,quote.connection_revision,quote.account_fingerprint,maximum.toString(),quote.expires_at]);
+      [trackerId,input.interval,input.timezone,input.hour,input.minute,input.weekday,approvalId,userId,hash,quote.connection_id,quote.connection_revision,quote.account_fingerprint,estimate.toString(),quote.expires_at]);
     if(!saved.rowCount)throw new FoundationError(409,'This quote expired. Review another quote before approving a schedule.');
     await receipt.save({id:trackerId});return dto(client,await tracker(client,projectId,trackerId),role,false);
   });

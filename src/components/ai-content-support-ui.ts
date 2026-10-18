@@ -13,10 +13,9 @@ export function readSupportList(value:unknown,projectId:string){
  for(const run of data.runs)contentSupportRunDtoSchema.parse({version:'ai-content-support-run-v1',role:data.role,projectId:data.projectId,run});return data;
 }
 function action(value:unknown){const parsed=z.object({replayed:z.boolean()}).passthrough().parse(value),{replayed,...body}=parsed;return {replayed,body};}
-export function normalizeSupportCeiling(value:string){const v=contentSupportQuoteInputSchema.shape.maxSpendUsd.parse(value),[whole,fraction='']=v.split('.');return whole+'.'+fraction.padEnd(6,'0');}
 export function readSupportQuote(value:unknown,projectId:string,input:ContentSupportQuoteInput,queryKeys:string[]){
  const {replayed,body}=action(value),data=contentSupportQuoteDtoSchema.parse(body),q=data.quote;
- if(data.projectId!==projectId||data.role!=='owner'||q.requestId!==input.requestId||q.inputExpired||!q.input||!q.selection||JSON.stringify(q.input)!==JSON.stringify(contentSupportQuoteInputSchema.parse({...input,maxSpendUsd:normalizeSupportCeiling(input.maxSpendUsd)}))||JSON.stringify(q.selection.queries.map(q=>q.key))!==JSON.stringify(queryKeys))throw Error('The saved quote does not match these exact queries, pages, model and ceiling.');return {...data,replayed};
+ if(data.projectId!==projectId||data.role!=='owner'||q.requestId!==input.requestId||q.inputExpired||!q.input||!q.selection||JSON.stringify(q.input)!==JSON.stringify(contentSupportQuoteInputSchema.parse(input))||JSON.stringify(q.selection.queries.map(q=>q.key))!==JSON.stringify(queryKeys))throw Error('The saved quote does not match these exact queries, pages and model.');return {...data,replayed};
 }
 export function readSupportRun(value:unknown,projectId:string,id?:string,quoted?:ContentSupportQuoteDto['quote'],mutation=false){
  const envelope=mutation?action(value):{body:value,replayed:false},data=contentSupportRunDtoSchema.parse(envelope.body),r=data.run;

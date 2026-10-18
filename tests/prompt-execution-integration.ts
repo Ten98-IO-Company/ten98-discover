@@ -8,6 +8,7 @@ import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts
 import {createPrompts,updatePrompt,setPromptArchived,listPrompts} from '../src/server/prompts.ts';
 import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,executePromptComparison,executePromptExecution,promptExecutionQueue,reconcilePromptExecution,reconcilePromptExecutionJobs} from '../src/server/prompt-execution.ts';
 import {refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
+import {openRouterRefusal} from '../src/server/openrouter.ts';
 import {runRetentionBatch,previewRetention,getRetention} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
@@ -20,7 +21,7 @@ export async function runPromptExecutionChecks(){
  for(const user of [owner,editor,viewer,foreign])await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Prompt fixture\',$2)',[user,`${user}@execution.integration.test`]);
  await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),owner,await hashPassword(password)]);
  const mini='openai/gpt-4o-mini' as const,models=[mini,'openai/gpt-4o'] as const;
- let paid=0,free=0,mode:'ok'|'unknown'|'truncated'|'over'|'answer_unknown'|'byok'|'invalid'|'empty'|'pending'='ok',priceChanged=false,priceModel:string|null=null,receiptChange:Record<string,unknown>={};
+ let paid=0,free=0,mode:'ok'|'unknown'|'truncated'|'over'|'answer_unknown'|'byok'|'invalid'|'empty'|'pending'|'refused'|'refused_receipt'='ok',priceChanged=false,priceModel:string|null=null,receiptChange:Record<string,unknown>={};
  const receipts=new Map<string,any>(),sent:string[]=[];
  const send:typeof fetch=async(url,init)=>{
   assert.equal(init?.redirect,'error');assert.equal(init?.credentials,'omit');assert.ok(init?.signal);const address=String(url);
@@ -30,6 +31,8 @@ export async function runPromptExecutionChecks(){
   if(address.startsWith('https://openrouter.ai/api/v1/generation?id=')){free++;return Response.json({data:{...receipts.get(new URL(address).searchParams.get('id')!),...receiptChange}});}
   assert.equal(address,'https://openrouter.ai/api/v1/chat/completions');assert.equal(init?.method,'POST');paid++;const input=JSON.parse(String(init?.body));sent.push(input.session_id);assert.deepEqual(input.provider.only,['openai']);assert.equal(input.provider.allow_fallbacks,false);
   if(mode==='unknown')throw new Error('Synthetic unavailable response, never live.');
+  // OpenRouter's documented credit refusal for the first model only; the receipt-carrying variant also sends a generation header.
+  if((mode==='refused'||mode==='refused_receipt')&&input.model===mini)return Response.json({error:{code:402,message:'Synthetic insufficient credits',metadata:{limit_source:'openrouter_credits'}}},{status:402,headers:mode==='refused_receipt'?{'x-generation-id':'gen-'+randomUUID()}:{}});
   const id='gen-'+randomUUID(),created=Math.floor(Date.now()/1000),cost=mode==='over'?0.04:mode==='answer_unknown'?1000001:0.000012345;
   receipts.set(id,{id,model:input.model,provider_name:'OpenAI',session_id:input.session_id,external_user:input.user,created_at:new Date(created*1000).toISOString(),finish_reason:'stop',is_byok:mode==='byok',total_cost:cost,upstream_inference_cost:mode==='byok'?0.01:0});
   if(mode==='truncated')return new Response('{broken',{headers:{'x-generation-id':id}});
@@ -134,6 +137,17 @@ export async function runPromptExecutionChecks(){
   }
   console.log('PASS live role/archive/key/price/cancel gates, charged malformed or empty answers, overrun/BYOK recorded without stopping remaining children (D3)');
 
+  // Owner decision D3: a credit refusal without generation evidence fails its child with a $0 receipt; the sibling and the next Start proceed.
+  mode='refused';const wallet=await fixture(),walletRun=await start(wallet);const walletPaid=paid;await executePromptComparison(walletRun.id,send);const walletRuns=(await detail(wallet,walletRun.id)).runs;
+  assert.equal(paid,walletPaid+2);assert.deepEqual(walletRuns.map((r:any)=>[r.status,r.chargeStatus]),[['failed','settled'],['completed','settled']]);
+  assert.equal(walletRuns[0].actualUsd,'0.000000');assert.equal(walletRuns[0].diagnostic,openRouterRefusal({error:{code:402}},402,null)!.diagnostic);assert.match(walletRuns[0].diagnostic!,/no credit left/);assert.equal(walletRuns[0].result,null);assert.equal(walletRuns[0].generationId,null);
+  assert.deepEqual(await ledger(walletRuns[0].id),{status:'settled',actual_micros:'0',provider_reference:null});assert.equal((await getPromptExecutions(wallet.project,owner)).spendingPaused,false);
+  await executePromptComparison(walletRun.id,send);assert.equal(paid,walletPaid+2);
+  mode='ok';const nextRun=await start(wallet);await executePromptComparison(nextRun.id,send);assert.deepEqual((await detail(wallet,nextRun.id)).runs.map((r:any)=>[r.status,r.chargeStatus]),[['completed','settled'],['completed','settled']]);assert.equal(paid,walletPaid+4);
+  mode='refused_receipt';const receipted=await fixture(),receiptedRun=await start(receipted);const receiptedPaid=paid;await executePromptComparison(receiptedRun.id,send);const receiptedRuns=(await detail(receipted,receiptedRun.id)).runs;
+  assert.equal(paid,receiptedPaid+1);assert.deepEqual(receiptedRuns.map((r:any)=>r.status),['uncertain','cancelled']);assert.ok(receiptedRuns[0].generationId);assert.equal((await ledger(receiptedRuns[0].id)).status,'uncertain');
+  mode='ok';await assert.rejects(start(receipted),{status:409,code:'SPENDING_BUDGET'});assert.equal(paid,receiptedPaid+1);
+  console.log('PASS OpenRouter credit refusal settles its child at $0 while the sibling and the next start proceed; a refusal carrying a generation header stays uncertain (D3)');
   // Owner decision D3(6): Start authorizes every child. Start still sends the legacy comparison-keyed job here; quote age
   // after Start, sibling order and one child's refusal stop no sibling, and the sweeper decides per child.
   mode='ok';const aged=await fixture(),agedRun=await start(aged);

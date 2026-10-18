@@ -7,7 +7,7 @@ type Props={workspaceId:string;projectId:string;userId:string;trackerId:string;t
 type Role='owner'|'admin'|'editor'|'viewer';
 type Envelope={role:Role;trackerId:string;authoredRevision:number;canManage:boolean;schedule:ScheduleInfo;replayed?:boolean};
 type Calendar={interval:'daily'|'weekly'|'monthly';timezone:string;hour:number;minute:number;weekday:number|null};
-type Intent={kind:'approve'|'disable';body:Record<string,unknown>;revision:number;calendar?:Calendar;maximum?:string};
+type Intent={kind:'approve'|'disable';body:Record<string,unknown>;revision:number;calendar?:Calendar};
 type Operation={controller:AbortController;write:boolean};
 type State={data:Envelope|null;quote:ScheduleQuote|null;preview:SchedulePreview|null;form:ScheduleForm;loading:boolean;working:boolean;pending:boolean;conflict:boolean;dirty:boolean;error:string;notice:string;focus:boolean;now:number};
 const object=(v:unknown):v is Record<string,any>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
@@ -19,13 +19,12 @@ const nullableDate=(v:unknown)=>v===null||date(v);
 const role=(v:unknown):v is Role=>['owner','admin','editor','viewer'].includes(v as string);
 const money=(v:unknown):v is string=>typeof v==='string'&&v.length<=14&&/^(?:0|[1-9]\d{0,6})\.\d{6}(?![\s\S])/.test(v)&&BigInt(v.replace('.',''))<=1_000_000_000_000n;
 const micros=(v:string)=>BigInt(v.replace('.',''));
-function decimal(v:string):string|null{if(v.length>14||!/^(?:0|[1-9]\d{0,6})(?:\.\d{1,6})?(?![\s\S])/.test(v))return null;const [a,b='']=v.split('.'),n=BigInt(a)*1_000_000n+BigInt(b.padEnd(6,'0'));return n>0n&&n<=1_000_000_000_000n?`${n/1_000_000n}.${(n%1_000_000n).toString().padStart(6,'0')}`:null;}
 function validSchedule(v:unknown,id:string):v is Envelope{
   if(!object(v)||!role(v.role)||v.trackerId!==id||!integer(v.authoredRevision,1,2147483646)||v.canManage!==(v.role==='owner')||!object(v.schedule)||(v.replayed!==undefined&&typeof v.replayed!=='boolean'))return false;
   const s=v.schedule;if(typeof s.enabled!=='boolean'||typeof s.approvalStale!=='boolean'||!['manual','daily','weekly','monthly'].includes(s.interval)||!nullableDate(s.nextDueAt)||!Array.isArray(s.staleReasons)||s.staleReasons.length>10||!s.staleReasons.every((r:unknown)=>text(r,100,1)))return false;
   if(s.interval==='manual'){if(s.timezone!==null||s.hour!==null||s.minute!==null||s.weekday!==null)return false;}
   else if(!text(s.timezone,100,1)||!integer(s.hour,0,23)||!integer(s.minute,0,59)||(s.interval==='weekly'?!integer(s.weekday,0,6):s.weekday!==null))return false;
-  if(s.approval!==null){const a=s.approval;if(!object(a)||!uuid(a.id)||!nullableDate(a.approvedAt)||!uuid(a.approvedByUserId)||!money(a.maximumUsd)||!uuid(a.connectionId)||(a.connectionName!==undefined&&!text(a.connectionName,120,1)))return false;}
+  if(s.approval!==null){const a=s.approval;if(!object(a)||!uuid(a.id)||!nullableDate(a.approvedAt)||!uuid(a.approvedByUserId)||!uuid(a.connectionId)||(a.connectionName!==undefined&&!text(a.connectionName,120,1)))return false;}
   return !s.enabled||s.approval!==null&&s.nextDueAt!==null;
 }
 function validPreview(v:unknown,c:Calendar):v is SchedulePreview{
@@ -47,7 +46,7 @@ function quoteDisplay(v:unknown,id:string,trackerId:string,knownExpiry?:string):
   if(!r.canStart&&Date.parse(expiresAt)>Date.now())return null;
   return {id:r.id,targetText:`${t.domain} and subdomains · Location ${t.locationCode} · Language ${t.languageCode} · ${[...devices].sort().join(' + ')} · Up to ${t.depth} results · ${t.maxCrawlPages} maximum billable page(s)`,taskCount:r.taskCount,estimateUsd:r.estimateUsd,expiresAt,expired:!r.canStart||Date.parse(expiresAt)<=Date.now()};
 }
-const blank=():ScheduleForm=>({interval:'daily',timezone:'UTC',hour:'9',minute:'0',weekday:'1',maximumUsd:'',consent:false});
+const blank=():ScheduleForm=>({interval:'daily',timezone:'UTC',hour:'9',minute:'0',weekday:'1',consent:false});
 function calendar(form:ScheduleForm):Calendar|null{
   if(!text(form.timezone,100,1)||form.timezone.trim()!==form.timezone||/[\x00-\x1f\x7f]/.test(form.timezone)||!/^\d{1,2}$/.test(form.hour)||!/^\d{1,2}$/.test(form.minute))return null;
   const hour=Number(form.hour),minute=Number(form.minute),weekday=form.interval==='weekly'?Number(form.weekday):null;
@@ -84,28 +83,27 @@ function ScheduleController(props:Props){
         if(object(raw)&&raw.role!=='owner'){purge('Only current workspace owners can approve this schedule.');return;}
         if(quote)knownDeadline.current=expiry(quote);
         const saved=data.schedule;
-        patch({quote,form:{...blank(),...(saved.interval!=='manual'?{interval:saved.interval,timezone:saved.timezone!,hour:String(saved.hour),minute:String(saved.minute),weekday:String(saved.weekday??1)}:{}),maximumUsd:quote?.estimateUsd??''},notice:quote?'':'Prepare your own unstarted full queued quote to approve a schedule.'});}
+        patch({quote,form:{...blank(),...(saved.interval!=='manual'?{interval:saved.interval,timezone:saved.timezone!,hour:String(saved.hour),minute:String(saved.minute),weekday:String(saved.weekday??1)}:{})},notice:quote?'':'Prepare your own unstarted full queued quote to approve a schedule.'});}
     }catch(error){failure(error,op);}finally{finish(op);}}
-  function change(value:ScheduleForm){if(locked()||state.current.loading||!state.current.data?.canManage)return;const before=state.current.form,calendarChanged=['interval','timezone','hour','minute','weekday'].some(k=>before[k as keyof ScheduleForm]!==value[k as keyof ScheduleForm]),scopeChanged=calendarChanged||before.maximumUsd!==value.maximumUsd;
-    patch({form:{...value,consent:scopeChanged?false:value.consent},...(calendarChanged?{preview:null}:{}),dirty:true,error:'',notice:''});}
+  function change(value:ScheduleForm){if(locked()||state.current.loading||!state.current.data?.canManage)return;const before=state.current.form,calendarChanged=['interval','timezone','hour','minute','weekday'].some(k=>before[k as keyof ScheduleForm]!==value[k as keyof ScheduleForm]);
+    patch({form:{...value,consent:calendarChanged?false:value.consent},...(calendarChanged?{preview:null}:{}),dirty:true,error:'',notice:''});}
   async function preview(){const at=state.current,c=calendar(at.form);if(locked()||!at.data?.canManage||at.conflict||!at.quote||at.quote.expired||expiry(at.quote)<=Date.now())return;if(!c){patch({error:'Enter a timezone, hour, minute and weekly day in the supported ranges.'});return;}
     const op=begin();if(!op)return;patch({preview:null,form:{...at.form,consent:false}});try{const data=await api<unknown>(base+'/preview',{method:'POST',body:c,signal:op.controller.signal});if(!current(op))return;if(!validPreview(data,c))throw new Error('The calendar preview could not be verified.');patch({preview:data});}catch(error){failure(error,op);}finally{finish(op);}}
   async function send(saved:Intent){if(operation.current?.write||!alive.current)return;intent.current=saved;const op=begin(true);if(!op)return;patch({pending:false});
     try{const data=await api<unknown>(base+'/'+saved.kind,{method:'POST',body:saved.body,signal:op.controller.signal});if(!current(op))return;if(!validSchedule(data,props.trackerId)||typeof data.replayed!=='boolean')throw new Error('The save response could not be verified.');
-      if(!data.replayed){if(saved.kind==='approve'){const c=saved.calendar!,a=data.schedule.approval;if(!data.canManage||!data.schedule.enabled||!a||!date(a.approvedAt)||!date(data.schedule.nextDueAt)||Date.parse(data.schedule.nextDueAt)<=Date.parse(a.approvedAt)||a.approvedByUserId!==props.userId||a.maximumUsd!==saved.maximum||data.authoredRevision!==saved.revision+1||data.schedule.interval!==c.interval||data.schedule.timezone!==c.timezone||data.schedule.hour!==c.hour||data.schedule.minute!==c.minute||data.schedule.weekday!==c.weekday)throw new Error('The saved approval could not be verified.');}
+      if(!data.replayed){if(saved.kind==='approve'){const c=saved.calendar!,a=data.schedule.approval;if(!data.canManage||!data.schedule.enabled||!a||!date(a.approvedAt)||!date(data.schedule.nextDueAt)||Date.parse(data.schedule.nextDueAt)<=Date.parse(a.approvedAt)||a.approvedByUserId!==props.userId||data.authoredRevision!==saved.revision+1||data.schedule.interval!==c.interval||data.schedule.timezone!==c.timezone||data.schedule.hour!==c.hour||data.schedule.minute!==c.minute||data.schedule.weekday!==c.weekday)throw new Error('The saved approval could not be verified.');}
         else if(data.schedule.enabled||data.schedule.nextDueAt!==null||![saved.revision,Math.min(saved.revision+1,2147483646)].includes(data.authoredRevision))throw new Error('The disabled schedule could not be verified.');}
       intent.current=null;accept(data);patch({pending:false,conflict:false,dirty:false,preview:null,form:{...state.current.form,consent:false},notice:data.replayed?'The original request receipt was recovered. The current schedule is shown.':saved.kind==='approve'?'Recurring spending approved. No check was started by this save.':'Schedule disabled. Work already sent retains its charges.',focus:true});
     }catch(error){if(!current(op))return;if(error instanceof ApiError&&error.status>=400&&error.status<500&&![408,429].includes(error.status)){intent.current=null;patch({pending:false,conflict:error.status===409});failure(error,op);}
       else patch({pending:true,error:error instanceof ApiError&&error.status===429?'The retry was rate limited. Wait a minute, then retry the same request.':''});
     }finally{finish(op);}}
-  function approve(){const at=state.current,c=calendar(at.form),maximum=decimal(at.form.maximumUsd);if(locked()||at.loading||!at.data?.canManage||at.conflict||!at.quote||!c||!at.preview||!at.form.consent||at.quote.expired||expiry(at.quote)<=Date.now())return;
-    if(!maximum||micros(maximum)<micros(at.quote.estimateUsd)){patch({error:'Enter a per-occurrence USD ceiling at least equal to the full quoted maximum.'});return;}
-    try{void send({kind:'approve',revision:at.data.authoredRevision,calendar:c,maximum,body:structuredClone({requestId:crypto.randomUUID(),revision:at.data.authoredRevision,quoteId:at.quote.id,maximumUsd:maximum,...c})});}catch{patch({error:'This browser could not prepare a safe approval request. Reload before trying again.'});}}
+  function approve(){const at=state.current,c=calendar(at.form);if(locked()||at.loading||!at.data?.canManage||at.conflict||!at.quote||!c||!at.preview||!at.form.consent||at.quote.expired||expiry(at.quote)<=Date.now())return;
+    try{void send({kind:'approve',revision:at.data.authoredRevision,calendar:c,body:structuredClone({requestId:crypto.randomUUID(),revision:at.data.authoredRevision,quoteId:at.quote.id,...c})});}catch{patch({error:'This browser could not prepare a safe approval request. Reload before trying again.'});}}
   function disable(){const at=state.current;if(locked()||at.loading||!at.data?.canManage||!at.data.schedule.enabled)return;if(!window.confirm('Disable this schedule? Future scheduled requests, including unsent work, will stop. Requests already sent and their charges remain.'))return;
     try{void send({kind:'disable',revision:at.data.authoredRevision,body:{requestId:crypto.randomUUID(),revision:at.data.authoredRevision}});}catch{patch({error:'This browser could not prepare a safe disable request. Reload before trying again.'});}}
   function navigate(callback:()=>void){if(!leave())return;invalidate();patch({dirty:false});callback();}
-  const quote=s.quote?{...s.quote,expiresAt:new Date(expiry(s.quote)).toISOString(),expired:s.quote.expired||expiry(s.quote)<=s.now}:null,c=calendar(s.form),maximum=decimal(s.form.maximumUsd),editable=!!s.data?.canManage&&!locked()&&!s.loading&&!s.working&&!s.conflict&&quote!==null&&!quote.expired;
+  const quote=s.quote?{...s.quote,expiresAt:new Date(expiry(s.quote)).toISOString(),expired:s.quote.expired||expiry(s.quote)<=s.now}:null,c=calendar(s.form),editable=!!s.data?.canManage&&!locked()&&!s.loading&&!s.working&&!s.conflict&&quote!==null&&!quote.expired;
   return <RankScheduleView idPrefix={prefix} backLabel={props.backLabel??'Back to tracker'} trackerName={props.trackerName} schedule={s.data?.schedule??null} quote={quote} preview={s.preview} form={s.form} canManage={!!s.data?.canManage} loading={s.loading} working={s.working} locked={locked()} pending={s.pending} conflict={s.conflict}
-    canPreview={editable&&c!==null} canApprove={editable&&c!==null&&s.preview!==null&&s.form.consent&&maximum!==null&&micros(maximum)>=micros(quote!.estimateUsd)} canDisable={!!s.data?.canManage&&s.data.schedule.enabled&&!s.loading&&!s.working&&!locked()}
+    canPreview={editable&&c!==null} canApprove={editable&&c!==null&&s.preview!==null&&s.form.consent} canDisable={!!s.data?.canManage&&s.data.schedule.enabled&&!s.loading&&!s.working&&!locked()}
     error={s.error} notice={s.notice} onChange={change} onPreview={()=>void preview()} onApprove={approve} onDisable={disable} onRetry={()=>{if(intent.current)void send(intent.current);}} onRefresh={()=>{if(!leave())return;void load();}} onBack={()=>navigate(props.onBack)} onPrepareQuote={()=>navigate(props.onPrepareQuote)}/>;
 }

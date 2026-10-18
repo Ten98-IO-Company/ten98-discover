@@ -8,6 +8,7 @@ import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts
 import {keywordPayload,keywordEndpoints,keywordAccountEndpoint,keywordCatalogEndpoint,keywordReconcileEndpoint,type KeywordRequest} from '../src/server/keyword-research-input.ts';
 import {refreshKeywordMarkets,quoteKeywordResearch,startKeywordResearch,executeKeywordResearch,getKeywordRun,getKeywordResearch,cancelKeywordResearch,reconcileKeywordResearch,reconcileKeywordJobs} from '../src/server/keyword-research.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
+import {dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 
@@ -20,7 +21,7 @@ export async function runKeywordResearchChecks(){
  await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),owner,await hashPassword(password)]);
  const free=(result:unknown[])=>Response.json({status_code:20000,cost:0,tasks_count:1,tasks:[{status_code:20000,cost:0,result}]});
  const accountLogin='synthetic-provider@keywords.integration.test';
- let account=accountLogin,paidCalls=0,freeCalls=0,mode:'ok'|'unknown'|'over'|'invalid'|'error'|'pending'|'conflict'='ok';
+ let account=accountLogin,paidCalls=0,freeCalls=0,mode:'ok'|'unknown'|'over'|'invalid'|'error'|'pending'|'conflict'|'wallet_task'|'wallet_http'|'wallet_charged'='ok';
  const sentTags:string[]=[];
  const sentPayloads:Record<string,unknown>[]=[];
  // Region rows from the public Labs CSV dated 2026-09-01:
@@ -37,6 +38,10 @@ export async function runKeywordResearchChecks(){
    assert.ok(Object.values(keywordEndpoints).includes(String(url) as any),'No non-allowlisted provider traffic.');paidCalls++;
    const data=JSON.parse(init?.body as string)[0];sentTags.push(data.tag);sentPayloads.push(data);
    if(mode==='unknown')throw new Error('Synthetic interrupted provider response.');
+   // DataForSEO appendix/errors wallet refusals: task-level 40210 in a 20000 envelope, HTTP 402 with 40200, and a charged look-alike.
+   if(mode==='wallet_task')return Response.json({status_code:20000,status_message:'Ok.',cost:0,tasks_count:1,tasks_error:1,tasks:[{id:'fixture-'+randomUUID(),status_code:40210,status_message:'Insufficient funds.',cost:0,path:new URL(String(url)).pathname.slice(1).split('/'),data,result_count:0,result:null}]});
+   if(mode==='wallet_http')return Response.json({status_code:40200,status_message:'Payment Required.',cost:0,tasks_count:0,tasks_error:0,tasks:null},{status:402});
+   if(mode==='wallet_charged')return Response.json({status_code:40210,status_message:'Insufficient funds.',cost:0.01,tasks_count:0,tasks_error:0,tasks:null});
    const cost=mode==='over'?0.03:mode==='pending'?0:0.01212;
    return Response.json({status_code:20000,cost:mode==='conflict'?0:cost,tasks_count:1,tasks:[{id:'fixture-'+randomUUID(),status_code:mode==='error'?40501:mode==='pending'?40602:20000,cost,path:new URL(String(url)).pathname.slice(1).split('/'),data,result:[{se_type:'google',location_code:data.location_code,language_code:data.language_code,items_count:1,items:[{keyword:data.keywords[0],keyword_info:{search_volume:mode==='invalid'?-1:0,cpc:null,competition:null,monthly_searches:[]}}]}]}]});
  };
@@ -142,6 +147,18 @@ export async function runKeywordResearchChecks(){
   reconcileItems=[{...matching,id:pendingReference??'pending-provider-task',metadata:keywordPayload(pending.request,pendingRun.run.id)}];assert.equal((await reconcileKeywordResearch(pending.project,owner,pendingRun.run.id,{connectionId:pending.connectionId},send)).reconciliation.status,'matched');
   assert.equal((await charge(pendingRun.run.id)).status,'settled');assert.equal((await getKeywordResearch(pending.project,owner)).spendingPaused,false);assert.equal((await start(pending)).run.status,'queued');
   console.log('PASS stale crash snapshots cannot overwrite settled or uncertain provider evidence; pending provider cost is not final');
+
+  // Owner decision D3: a wallet refusal at an explicit zero cost ends the run failed with a $0 receipt and leaves new paid work unblocked.
+  for(const kind of ['wallet_task','wallet_http'] as const){
+   mode='ok';const g=await fixture(),run=await start(g),sent:number=paidCalls;mode=kind;await executeKeywordResearch(run.run.id,send);const refused=(await getKeywordRun(g.project,owner,run.run.id)).run;
+   assert.equal(paidCalls,sent+1,kind);assert.equal(refused.status,'failed',kind);assert.equal(refused.chargeStatus,'settled',kind);assert.equal(refused.actualUsd,'0.000000',kind);assert.equal(refused.diagnostic,dataforseoRefusalMessage.payment,kind);assert.equal(refused.result,null,kind);
+   assert.deepEqual(await charge(run.run.id),{status:'settled',actual_micros:'0',estimate_micros:'12120'},kind);assert.equal((await getKeywordResearch(g.project,owner)).spendingPaused,false,kind);
+   await executeKeywordResearch(run.run.id,send);assert.equal(paidCalls,sent+1,kind);
+   mode='ok';const next=await start(g);await executeKeywordResearch(next.run.id,send);assert.equal((await getKeywordRun(g.project,owner,next.run.id)).run.status,'completed',kind);assert.equal(paidCalls,sent+2,kind);
+  }
+  const charged=await fixture(),chargedRun=await start(charged),chargedSent=paidCalls;mode='wallet_charged';await executeKeywordResearch(chargedRun.run.id,send);assert.equal(paidCalls,chargedSent+1);
+  assert.equal((await charge(chargedRun.run.id)).status,'uncertain');assert.equal((await getKeywordRun(charged.project,owner,chargedRun.run.id)).run.status,'uncertain');mode='ok';await assert.rejects(start(charged),{status:409});assert.equal(paidCalls,chargedSent+1);
+  console.log('PASS keyword wallet refusals at an explicit zero cost (task 40210, HTTP 402 40200) fail with a $0 receipt and leave new work unblocked; a charged refusal stays uncertain (D3)');
 
   mode='ok';const worker=await fixture(),workerRun=await start(worker);const job=(await pool.query('SELECT retry_limit FROM pgboss.job WHERE id=$1',[workerRun.run.id])).rows[0];assert.equal(job.retry_limit,0);await pool.query('UPDATE pgboss.job SET priority=100 WHERE id=$1',[workerRun.run.id]);
   globalThis.fetch=send;await startWorker();const deadline=Date.now()+15_000;while((await getKeywordRun(worker.project,owner,workerRun.run.id)).run.status==='queued'&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));await stopJobs();globalThis.fetch=async()=>{throw new Error('Live provider traffic is forbidden in keyword tests.');};assert.equal((await getKeywordRun(worker.project,owner,workerRun.run.id)).run.status,'completed');assert.equal(sentTags.filter(tag=>tag.endsWith(workerRun.run.id)).length,1);

@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {ApiError,errMsg} from '../lib/api';
-import {promptCalendar,promptTrackersResponse,promptTrackerResponse,promptTrackerMutationResponse,recurringCeiling,type PromptTracker} from '../lib/prompt-recurring';
+import {promptCalendar,promptTrackersResponse,promptTrackerResponse,promptTrackerMutationResponse,type PromptTracker} from '../lib/prompt-recurring';
 import {modelApi,ModelResponseError} from './OpenRouterModelPicker';
 
 type Role='owner'|'admin'|'editor'|'viewer';
@@ -12,10 +12,10 @@ export function PromptRecurringPanel({projectId,userId,role,quote,onUnauthorized
  const authority=useRef({role,revision:0}),dataAuthority=useRef(-1),pointAuthority=useRef(-1),verifiedRole=useRef<{identity:string;revision:number;role:Role}|null>(null);if(authority.current.role!==role)authority.current={role,revision:authority.current.revision+1};
  live.current=identity;
  const[data,setData]=useState<ReturnType<typeof promptTrackersResponse.parse>|null>(null),[point,setPoint]=useState<ReturnType<typeof promptTrackerResponse.parse>|null>(null),[status,setStatus]=useState<'active'|'archived'|'all'>('active'),[cursor,setCursor]=useState<string|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[attempt,setAttempt]=useState<Attempt|null>(null);
- const[name,setName]=useState(''),[interval,setInterval]=useState<'daily'|'weekly'|'monthly'>('daily'),[timezone,setZone]=useState('UTC'),[hour,setHour]=useState('9'),[minute,setMinute]=useState('0'),[weekday,setWeekday]=useState('1'),[ceiling,setCeiling]=useState(''),[consent,setConsent]=useState(false);
+ const[name,setName]=useState(''),[interval,setInterval]=useState<'daily'|'weekly'|'monthly'>('daily'),[timezone,setZone]=useState('UTC'),[hour,setHour]=useState('9'),[minute,setMinute]=useState('0'),[weekday,setWeekday]=useState('1'),[consent,setConsent]=useState(false);
  const attemptRef=useRef<Attempt|null>(null);attemptRef.current=attempt;
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;generation.current++;controller.current?.abort();};},[identity]);
- useEffect(()=>{if(!attemptRef.current){setConsent(false);setCeiling(quote?.estimateUsd??'');}},[quote?.id]);
+ useEffect(()=>{if(!attemptRef.current)setConsent(false);},[quote?.id]);
  const shown=dataAuthority.current===authority.current.revision&&data?.projectId===projectId?data:null,shownPoint=pointAuthority.current===authority.current.revision&&point?.projectId===projectId?point:null,owner=role==='owner'&&verifiedRole.current?.identity===identity&&verifiedRole.current.revision===authority.current.revision&&verifiedRole.current.role==='owner'&&(shown?.role==='owner'||shownPoint?.role==='owner'||attempt!==null),fresh=!!quote&&quote.input.reuseCached===false&&Date.parse(quote.expiresAt)>Date.now();
  function purge(message:string){generation.current++;controller.current?.abort();controller.current=null;verifiedRole.current=null;setData(null);setPoint(null);setConsent(false);setBusy(false);setError(message);}
  function pageUrl(filter=status,after:string|null=cursor){const params=new URLSearchParams();if(filter!=='active')params.set('status',filter);if(after)params.set('cursor',after);const query=params.toString();return base+(query?'?'+query:'');}
@@ -45,9 +45,8 @@ export function PromptRecurringPanel({projectId,userId,role,quote,onUnauthorized
   finally{if(mounted.current&&live.current===scope&&token===generation.current){controller.current=null;setBusy(false);}}
  }
  function calendar(){const result=promptCalendar.safeParse({interval,timezone,hour:Number(hour),minute:Number(minute),weekday:interval==='weekly'?Number(weekday):null});if(!result.success)throw new Error('Choose a daily, weekly or month-end time and supported named zone.');return result.data;}
- function funded(){const parsed=recurringCeiling.safeParse(ceiling);if(!parsed.success)throw new Error('Enter a positive per-occurrence USD ceiling with at most six decimals.');return parsed.data;}
- function create(event:FormEvent){event.preventDefault();if(!owner||!fresh||attempt)return;try{if(!name.trim())throw new Error('Give this tracker a name.');void request(base,{requestId:crypto.randomUUID(),quoteId:quote!.id,name:name.trim(),calendar:calendar(),maximumUsd:funded(),approve:consent});}catch(cause){setError(errMsg(cause));}}
- function approve(item:PromptTracker){if(!owner||!fresh||!consent||attempt)return;try{void request(base+'/'+item.id+'/approve',{requestId:crypto.randomUUID(),revision:item.revision,quoteId:quote!.id,calendar:calendar(),maximumUsd:funded()});}catch(cause){setError(errMsg(cause));}}
+ function create(event:FormEvent){event.preventDefault();if(!owner||!fresh||attempt)return;try{if(!name.trim())throw new Error('Give this tracker a name.');void request(base,{requestId:crypto.randomUUID(),quoteId:quote!.id,name:name.trim(),calendar:calendar(),approve:consent});}catch(cause){setError(errMsg(cause));}}
+ function approve(item:PromptTracker){if(!owner||!fresh||!consent||attempt)return;try{void request(base+'/'+item.id+'/approve',{requestId:crypto.randomUUID(),revision:item.revision,quoteId:quote!.id,calendar:calendar()});}catch(cause){setError(errMsg(cause));}}
  const items=shown?.items??[],visible=shownPoint&&!items.some(item=>item.id===shownPoint.item.id)?[shownPoint.item,...items]:items;
  const same=(item:PromptTracker)=>!!quote&&item.definition.promptId===quote.input.promptId&&item.definition.versionId===quote.input.versionId&&item.definition.systemText===quote.input.systemText&&item.definition.maxCompletionTokens===quote.input.maxCompletionTokens&&JSON.stringify(item.definition.models)===JSON.stringify(quote.input.models);
  return <details className="card stack prompt-recurring" onToggle={event=>{if(event.currentTarget.open)void request();}}>
@@ -68,15 +67,14 @@ export function PromptRecurringPanel({projectId,userId,role,quote,onUnauthorized
      <label>Local hour<input type="number" min={0} max={23} value={hour} onChange={e=>setHour(e.target.value)}/></label><label>Local minute<input type="number" min={0} max={59} value={minute} onChange={e=>setMinute(e.target.value)}/></label>
      {interval==='weekly'&&<label>Weekday<select value={weekday} onChange={e=>setWeekday(e.target.value)}>{['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((day,i)=><option key={day} value={i}>{day}</option>)}</select></label>}
     </div>
-    <label>Maximum USD per occurrence<input inputMode="decimal" value={ceiling} onChange={e=>setCeiling(e.target.value)}/></label>
-    <label className="row"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>I authorize future fresh requests under this per-occurrence ceiling until paused or approval changes.</label>
-    <p className="hint">The master pause, current owner/key/model approval and uncertain-charge checks still apply. This is not an overall app budget.</p>
+    <label className="row"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>I authorize future fresh requests for this definition at each occurrence's current price until paused or approval changes.</label>
+    <p className="hint">The master pause, current owner/key/model approval and uncertain-charge checks still apply. There is no app spending limit; your provider account limits apply.</p>
     <button className="btn primary" disabled={!fresh} type="submit">{consent?'Approve and schedule new tracker':'Save disabled tracker'}</button>
    </fieldset>
   </form>}
   {(shown||shownPoint)&&<div className="stack"><h3>{shown?.items.length??0} trackers on this page</h3>{shownPoint&&!items.some(item=>item.id===shownPoint.item.id)&&<p>Selected tracker outside this page</p>}{visible.map(item=><article className="card stack" key={item.id}>
    <h4 style={{overflowWrap:'anywhere'}}>{item.name}</h4><p>{item.archivedAt?'Archived':item.enabled?'Enabled':'Paused'} · {item.calendar.interval==='monthly'?'month end':item.calendar.interval} · Next {nextDue(item.nextDueAt,item.calendar.timezone)}</p>
-   <p>Per occurrence: USD {item.maximumUsd} · {item.definition.models.join(' + ')} · Prompt version <bdi>{item.definition.versionId}</bdi></p>{item.lastStatus&&<p role="status">{item.lastStatus}</p>}
+   <p>{item.definition.models.join(' + ')} · Prompt version <bdi>{item.definition.versionId}</bdi></p>{item.lastStatus&&<p role="status">{item.lastStatus}</p>}
    {owner&&!item.archivedAt&&<div className="row"><button type="button" className="btn" disabled={busy||!!attempt||!item.enabled} onClick={()=>void request(base+'/'+item.id+'/pause',{requestId:crypto.randomUUID(),revision:item.revision})}>Pause {item.name}</button><button type="button" className="btn" disabled={busy||!!attempt||!fresh||!same(item)||!consent} onClick={()=>approve(item)}>Approve and resume {item.name}</button><button type="button" className="btn" disabled={busy||!!attempt||!item.enabled} onClick={()=>void request(base+'/'+item.id+'/run',{requestId:crypto.randomUUID(),revision:item.revision})}>Run now {item.name}</button></div>}
    {owner&&<button type="button" className="btn" disabled={busy||!!attempt} onClick={()=>void request(base+'/'+item.id+'/'+(item.archivedAt?'restore':'archive'),{requestId:crypto.randomUUID(),revision:item.revision})}>{item.archivedAt?'Restore disabled':'Archive'} {item.name}</button>}
    <p className="hint">Pause prevents undispatched requests. Already sent work may still be charged; use its original comparison to cancel remaining work or reconcile an uncertain charge. Restore requires a fresh approval.</p>

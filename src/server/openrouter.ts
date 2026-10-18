@@ -113,7 +113,23 @@ function citations(value:unknown){
     try{const url=new URL(citation.url);if(url.protocol!=='https:'||url.username||url.password)return [];return [{url:url.href,title:typeof citation.title==='string'?Array.from(citation.title).slice(0,300).join(''):null}];}catch{return [];}
   });
 }
+const budgetLimitSources=new Set(['openrouter_key_limit','openrouter_guardrail_budget','openrouter_workspace_budget']);
+// Owner decision D3: OpenRouter documents 402 (no credit or in-flight limit) and 403 with a budget
+// limit_source as refused before reaching a provider (openrouter.ai/docs/api-reference/errors, checked
+// 2026-10-18). Only that exact error shape with no generation evidence is a known $0 outcome.
+export function openRouterRefusal(body:unknown,httpStatus:number,headerId:string|null):ExecutionOutcome|null{
+  if(headerId!==null||!object(body)||['id','usage','choices'].some(key=>Object.hasOwn(body,key))||!object(body.error)||typeof body.error.code!=='number'||body.error.code!==httpStatus)return null;
+  const metadata=object(body.error.metadata)?body.error.metadata:undefined,source=metadata?.limit_source;
+  // An error raised by the upstream model provider (provider_name/raw metadata) means the request reached a provider: keep it uncertain.
+  if(metadata&&(Object.hasOwn(metadata,'provider_name')||Object.hasOwn(metadata,'raw')))return null;
+  if(httpStatus!==402&&!(httpStatus===403&&budgetLimitSources.has(source)))return null;
+  return {cost:'0.000000',reference:null,result:null,
+    diagnostic:httpStatus===402?'OpenRouter refused this request before running it: the account or API key has no credit left, or its in-flight spending limit was reached. No charge was recorded. Add credits or raise the key limit at OpenRouter, then prepare a new quote.'
+      :'OpenRouter refused this request before running it: a key, guardrail or workspace budget set at OpenRouter is spent. No charge was recorded. Raise or reset that budget at OpenRouter, then prepare a new quote.',
+    evidence:{source:'refusal',httpStatus,limitSource:typeof source==='string'&&/^[a-z0-9_]{1,64}$(?![\s\S])/.test(source)?source:null,generationId:null,reportedCost:null}};
+}
 export function parseExecutionOutcome(body:unknown,httpStatus:number,headerId:string|null,route:RouteSnapshot,dispatchedAt:Date):ExecutionOutcome{
+  const refused=openRouterRefusal(body,httpStatus,headerId);if(refused)return refused;
   const outcome=unknownExecution(headerId);
   try{
     if(!object(body)||!generationId(body.id)||(headerId!==null&&body.id!==headerId)||body.model!==route.model||body.provider!==route.providerName||!object(body.usage)||typeof body.usage.is_byok!=='boolean')invalid();

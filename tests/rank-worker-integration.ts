@@ -15,6 +15,7 @@ import {rankGroupTasks,readRankPlan} from '../src/server/rank-execution-plan.ts'
 import {parseRankReconciliation} from '../src/server/rank-provider-outcome.ts';
 import {rankSerpEndpoints} from '../src/server/rank-serp-input.ts';
 import {keywordAccountEndpoint} from '../src/server/keyword-research-input.ts';
+import {dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 
 const failed=(status:number)=>(error:unknown)=>!!error&&typeof error==='object'&&'status'in error&&error.status===status;
 const reached=(promise:Promise<void>)=>Promise.race([promise,new Promise<never>((_,reject)=>{const timer=setTimeout(()=>reject(new Error('Synthetic transport was not reached.')),5000);timer.unref();})]);
@@ -30,7 +31,7 @@ export async function runRankWorkerChecks(){
   const owner=randomUUID(),editor=randomUUID(),viewer=randomUUID(),priorFetch=globalThis.fetch;let unexpected=0;
   globalThis.fetch=async()=>{unexpected++;throw new Error('External requests forbidden in rank worker acceptance.');};
   function transport(){
-    const state={paid:0,free:0,gets:0,account:'rank-worker@integration.test',price:1,getPrice:0,paidMode:'ok' as 'ok'|'lost'|'bad'|'malformed',getMode:'ok' as 'ok'|'pending'|'lost',getCost:0.0005,accountHook:null as null|(()=>Promise<void>),paidHook:null as null|(()=>Promise<void>),getHook:null as null|(()=>Promise<void>),rawUnsafe:false,observedAt:null as null|string,tasks:new Map<string,any>()};
+    const state={paid:0,free:0,gets:0,account:'rank-worker@integration.test',price:1,getPrice:0,paidMode:'ok' as 'ok'|'lost'|'bad'|'malformed'|'wallet'|'wallet_task',getMode:'ok' as 'ok'|'pending'|'lost',getCost:0.0005,accountHook:null as null|(()=>Promise<void>),paidHook:null as null|(()=>Promise<void>),getHook:null as null|(()=>Promise<void>),rawUnsafe:false,observedAt:null as null|string,tasks:new Map<string,any>()};
     const result=(data:any)=>({keyword:decodeURIComponent(data.keyword.replace(/\+/g,' ')),type:'organic',location_code:data.location_code,language_code:data.language_code,datetime:state.observedAt??new Date().toISOString(),pages_count:1,items_count:1,item_types:['organic'],items:[{type:'organic',rank_group:1,rank_absolute:1,page:1,url:'https://example.com/result',domain:'example.com',title:state.rawUnsafe?'bad\0title':'Synthetic result'}]});
     const send:typeof fetch=async(address,options)=>{
       assert.equal(options?.redirect,'error');assert.equal(options?.credentials,'omit');const target=String(address);
@@ -41,7 +42,10 @@ export async function runRankWorkerChecks(){
         const tasks=payload.map((data:any)=>{const id=randomUUID(),task={id,status_code:queued?20100:20000,cost:queued?.001:.002,path:queued?['v3','serp','google','organic','task_post']:['v3','serp','google','organic','live','advanced'],data:{...data,api:'serp',se:'google',se_type:'organic',function:queued?'task_post':'live'},result_count:queued?0:1,result:queued?null:[result(data)]};state.tasks.set(id,task);return task;});
         if(state.paidHook)await state.paidHook();if(state.paidMode==='lost')throw new Error('Synthetic lost acknowledgement.');if(state.paidMode==='bad')tasks[0].data.tag='foreign';
         if(state.paidMode==='malformed')return Response.json({status_code:20000,cost:0,tasks_count:1,tasks:{}});
-        return Response.json({status_code:20000,cost:Number((tasks.length*(queued?.001:.002)).toFixed(6)),tasks_count:tasks.length,tasks});
+        // DataForSEO appendix/errors 40210 (insufficient funds) at an explicit zero cost, for the whole response or for the second task of a batch.
+        if(state.paidMode==='wallet')return Response.json({status_code:40210,status_message:'Insufficient funds.',cost:0,tasks_count:0,tasks_error:0,tasks:null});
+        if(state.paidMode==='wallet_task')Object.assign(tasks[1],{status_code:40210,cost:0});
+        return Response.json({status_code:20000,cost:Number(tasks.reduce((sum:number,task:any)=>sum+task.cost,0).toFixed(6)),tasks_count:tasks.length,tasks});
       }
       assert.ok(target.startsWith(rankSerpEndpoints.task),'No fallback or metadata endpoint is implicit in a worker.');assert.equal(options?.method,'GET');state.gets++;
       const id=target.slice(rankSerpEndpoints.task.length),saved=state.tasks.get(id);assert.ok(saved,'Only a known task ID may be retrieved.');
@@ -133,6 +137,23 @@ export async function runRankWorkerChecks(){
     await pollRankDispatch(cf.dispatches[0],undefined,conflict.send);assert.equal((await charge(cf.dispatches[0])).actual_micros,'500');assert.equal((await dispatch(cf.dispatches[0])).phase,'uncertain');assert.equal(await paused(cf),false,'Owner decision D3: a conflicting final charge flags the check for owner review and pauses nothing.');assert.deepEqual((await tasks(cf))[0].charge_evidence,receipt.charge_evidence);assert.equal((await tasks(cf))[0].final_charge_at.toISOString(),receipt.final_charge_at.toISOString());
     const malformed=transport(),mf=await fixture(malformed);malformed.state.paidMode='malformed';await executeRankDispatch(mf.dispatches[0],malformed.send);assert.equal((await charge(mf.dispatches[0])).status,'uncertain');assert.equal(malformed.state.paid,1);
     console.log('PASS conflicting final costs preserve the prior receipt and flag the check for owner review; malformed acknowledgements remain uncertain');
+
+    // Owner decision D3: a zero-cost 40210 wallet refusal of a task_post is a final $0 with the fixed text; nothing becomes uncertain or pauses.
+    const wallet=transport(),w=await fixture(wallet,'queued',2);wallet.state.paidMode='wallet';await executeRankDispatch(w.dispatches[0],wallet.send);await executeRankDispatch(w.dispatches[0],wallet.send);
+    const refusedDispatch=await dispatch(w.dispatches[0]);assert.equal(refusedDispatch.phase,'finished');assert.equal(refusedDispatch.diagnostic,dataforseoRefusalMessage.payment);
+    assert.equal((await charge(w.dispatches[0])).status,'settled');assert.equal((await charge(w.dispatches[0])).actual_micros,'0');
+    assert.deepEqual((await tasks(w)).map(t=>[t.result_status,t.final_micros,t.diagnostic]),[['failed','0',dataforseoRefusalMessage.payment],['failed','0',dataforseoRefusalMessage.payment]]);
+    assert.equal((await getRankRun(w.project,owner,w.run)).run.status,'failed');assert.equal(await paused(w),false);assert.equal(wallet.state.paid,1);assert.equal(wallet.state.gets,0);
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name=$1 AND data->>'dispatchId'=$2",[rankPollQueue,w.dispatches[0]])).rows[0].n,0);
+    assert.equal((await reserveSpend(w.workspace,owner,{connectionId:w.connection,requestKey:randomUUID(),operation:'rank.queued',inputHash:'0'.repeat(64),estimateUsd:'0.001'})).status,'reserved');
+    const walletBatch=transport(),wb=await fixture(walletBatch,'queued',2);walletBatch.state.paidMode='wallet_task';await executeRankDispatch(wb.dispatches[0],walletBatch.send);
+    assert.equal((await charge(wb.dispatches[0])).status,'dispatched');assert.equal((await dispatch(wb.dispatches[0])).phase,'collecting');
+    const batchTasks=await tasks(wb),refusedTask=batchTasks.find(t=>t.result_status==='failed');assert.ok(refusedTask);assert.equal(batchTasks.filter(t=>t.result_status==='pending'&&t.provisional_micros==='1000').length,1);
+    assert.equal(refusedTask.final_micros,'0');assert.equal(refusedTask.provider_status,40210);assert.equal(refusedTask.diagnostic,dataforseoRefusalMessage.payment);
+    await pollRankDispatch(wb.dispatches[0],undefined,walletBatch.send);assert.equal(walletBatch.state.gets,1);assert.equal(walletBatch.state.paid,1);
+    assert.equal((await charge(wb.dispatches[0])).status,'settled');assert.equal((await charge(wb.dispatches[0])).actual_micros,'500');assert.equal((await dispatch(wb.dispatches[0])).phase,'finished');
+    assert.equal((await getRankRun(wb.project,owner,wb.run)).run.status,'partial');assert.equal(await paused(wb),false);
+    console.log('PASS zero-cost task_post wallet refusals: a refused response finishes failed at $0 with the fixed text, and a refused batch task is $0 while its sibling completes (D3)');
 
     const repriced=transport(),rp=await fixture(repriced,'queued');repriced.state.paidMode='lost';await executeRankDispatch(rp.dispatches[0],repriced.send);await recover(rp,repriced);assert.equal(await paused(rp),false);repriced.state.getPrice=.001;
     await pollRankDispatch(rp.dispatches[0],undefined,repriced.send);assert.equal(repriced.state.gets,0);assert.equal(repriced.state.paid,1);assert.equal((await charge(rp.dispatches[0])).status,'settled');assert.equal(await paused(rp),false);assert.equal((await dispatch(rp.dispatches[0])).phase,'finished');

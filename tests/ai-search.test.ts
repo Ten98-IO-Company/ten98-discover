@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {aiSearchProfileId,aiSearchEndpoints,aiSearchPayload,aiSearchPriceEvidence,aiSearchRequestSchema} from '../src/lib/ai-search.ts';
+import {aiSearchProfileId,aiSearchEndpoints,aiSearchPayload,aiSearchPriceEvidence,aiSearchRequestSchema,aiSearchQuoteInput,aiSearchSnapshotSchema} from '../src/lib/ai-search.ts';
 import {parseAiSearchCountries,parseAiSearchLanguages,assertAiSearchMarket,parseAiSearchAccount,parseAiSearchOutcome,requestAiSearch,parseAiSearchReconciliation} from '../src/server/dataforseo-ai-search.ts';
-import {dataforseoJson} from '../src/server/dataforseo-transport.ts';
+import {dataforseoJson,dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 import {deriveSearchQueries,normalizeDfsChatgptSearchEvidence,readSearchEvidence} from '../src/server/ai-search-evidence.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {initializeProviderAccountIdentity} from '../src/server/provider-account-identity.ts';
@@ -29,6 +29,14 @@ test('closed fixed profile and published tariff are estimates with no account-pr
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'a'.repeat(2001)}).success,false);
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'%'.repeat(666)+'ab'}).success,true);
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'%'.repeat(667)}).success,false);
+});
+test('quotes carry no estimate-admission ceiling (D3) while stored legacy snapshots keep theirs and their hash',()=>{
+ const quote={requestId:randomUUID(),connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),locationCode:2840,languageCode:'en',expectedCatalogRevision:'a'.repeat(64),acceptPublishedEstimate:true};
+ assert.equal(aiSearchQuoteInput.safeParse(quote).success,true);for(const maxSpendUsd of ['0.004000','1','0'])assert.equal(aiSearchQuoteInput.safeParse({...quote,maxSpendUsd}).success,false);
+ const current={version:1,request,promptId:randomUUID(),versionId:randomUUID(),country:{code:2840,name:'United States',countryCode:'US'},language:{code:'en',name:'English'},catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:now.toISOString(),price:aiSearchPriceEvidence()},legacy={...current,maxSpendUsd:'0.004000'};
+ for(const stored of [current,legacy]){const parsed=aiSearchSnapshotSchema.parse(copy(stored));assert.deepEqual(parsed,stored);assert.equal(canonicalHash(parsed),canonicalHash(stored));}
+ assert.equal(Object.hasOwn(aiSearchSnapshotSchema.parse(copy(current)),'maxSpendUsd'),false);assert.notEqual(canonicalHash(current),canonicalHash(legacy));
+ for(const maxSpendUsd of ['1\n','-1','0.0000001'])assert.equal(aiSearchSnapshotSchema.safeParse({...legacy,maxSpendUsd}).success,false);assert.equal(aiSearchSnapshotSchema.safeParse({...current,extra:true}).success,false);
 });
 test('one exact immutable payload escapes literal percent/plus once, with own run tag',()=>{
  assert.deepEqual(aiSearchPayload(request,id),{keyword:'Best C%2B%2B %2520 shoes',location_code:2840,language_code:'en',force_web_search:true,tag:'ten98:ai-search:'+id});
@@ -97,6 +105,18 @@ test('known charge survives invalid content, final paid error, capacity and deco
  const failed=response() as any;failed.body.tasks_error=1;failed.body.tasks[0].status_code=40501;failed.body.tasks[0].result=null;failed.body.tasks[0].result_count=0;
  assert.deepEqual(parseAiSearchOutcome(failed,request,id,now).content,{state:'unavailable',reason:'provider_error'});assert.equal(parseAiSearchOutcome(failed,request,id,now).charge.state,'known');
  const overrun=response();overrun.body.cost=overrun.body.tasks[0].cost=0.008;const out=parseAiSearchOutcome(overrun,request,id,now);assert.deepEqual(out.charge,{state:'known',costUsd:'0.008000',providerTaskId:reference});
+});
+test('a zero-cost wallet refusal is a known $0 charge with no provider task and the fixed text; a charged or other refusal stays unknown (D3)',async()=>{
+ const out=parseAiSearchOutcome({httpStatus:200,body:{status_code:40200,status_message:'Payment Required.',cost:0,tasks_count:0,tasks_error:0,tasks:null}},request,id,now);
+ assert.deepEqual(out,{charge:{state:'known',costUsd:'0.000000',providerTaskId:null},content:{state:'unavailable',reason:'provider_error'},diagnostic:dataforseoRefusalMessage.payment,
+  evidence:{httpStatus:200,statusCode:40200,taskStatus:null,totalCostUsd:'0.000000',taskCostUsd:null}});
+ const task=parseAiSearchOutcome({httpStatus:200,body:{status_code:20000,cost:0,tasks_count:1,tasks_error:1,tasks:[{id:reference,status_code:40203,cost:0,result:null}]}},request,id,now);
+ assert.deepEqual(task.charge,{state:'known',costUsd:'0.000000',providerTaskId:null});assert.equal(task.diagnostic,dataforseoRefusalMessage.cost_limit);assert.deepEqual(task.evidence,{httpStatus:200,statusCode:20000,taskStatus:40203,totalCostUsd:'0.000000',taskCostUsd:'0.000000'});
+ for(const body of [{status_code:40200,cost:0.004,tasks:null},{status_code:40200,tasks:null},{status_code:40204,cost:0,tasks:null},{status_code:40201,cost:0,tasks:null}]){
+  const unknown=parseAiSearchOutcome({httpStatus:200,body},request,id,now);assert.equal(unknown.charge.state,'unknown',JSON.stringify(body));assert.equal(unknown.diagnostic,undefined);
+ }
+ let sends=0;const sent=await requestAiSearch(credentials,request,id,(async()=>{sends++;return new Response(JSON.stringify({status_code:40210,cost:0,tasks:null}),{status:402,headers:{'content-type':'application/json'}});}) as typeof fetch);
+ assert.deepEqual(sent.charge,{state:'known',costUsd:'0.000000',providerTaskId:null});assert.equal(sent.diagnostic,dataforseoRefusalMessage.payment);assert.equal(sent.evidence.httpStatus,402);assert.equal(sends,1);
 });
 test('untrusted provider timestamps/models stay unknown, not current defaults or invalid calendar dates',()=>{
  const input={keyword:request.capturedPrompt,location_code:2840,language_code:'en',model:{name:'fake'},datetime:'2026-02-30 10:00:00 +00:00',markdown:'Answer'};

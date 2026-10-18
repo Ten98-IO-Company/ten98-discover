@@ -1,7 +1,7 @@
 import type * as React from 'react';
 
-export type ScheduleForm = { interval:'daily'|'weekly'|'monthly'; timezone:string; hour:string; minute:string; weekday:string; maximumUsd:string; consent:boolean };
-export type ScheduleInfo = { enabled:boolean; approvalStale:boolean; interval:'manual'|'daily'|'weekly'|'monthly'; timezone:string|null; hour:number|null; minute:number|null; weekday:number|null; nextDueAt:string|null; approval:null|{id:string;approvedAt:string|null;approvedByUserId:string;maximumUsd:string;connectionId:string;connectionName?:string}; staleReasons:string[] };
+export type ScheduleForm = { interval:'daily'|'weekly'|'monthly'; timezone:string; hour:string; minute:string; weekday:string; consent:boolean };
+export type ScheduleInfo = { enabled:boolean; approvalStale:boolean; interval:'manual'|'daily'|'weekly'|'monthly'; timezone:string|null; hour:number|null; minute:number|null; weekday:number|null; nextDueAt:string|null; approval:null|{id:string;approvedAt:string|null;approvedByUserId:string;connectionId:string;connectionName?:string}; staleReasons:string[] };
 export type ScheduleQuote = { id:string; targetText:string; taskCount:number; estimateUsd:string; expiresAt:string; expired:boolean };
 export type SchedulePreview = { capturedAt:string; timezone:string; occurrences:{utc:string;local:string;offsetSeconds:number}[] };
 export type RankScheduleViewProps = {
@@ -64,7 +64,6 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,200px),1fr))',gap:'var(--space-3)',minWidth:0}}>
       <p style={{margin:0}}><strong>{schedule.enabled ? (schedule.approvalStale ? 'Approval needs review' : 'Approved schedule') : 'Schedule disabled'}</strong></p>
       <p style={{margin:0}}>Next due: {schedule.nextDueAt !== null ? schedule.nextDueAt + ' UTC' : 'Not scheduled'}</p>
-      {schedule.approval && <p style={{margin:0}}>Maximum per occurrence: <strong>{schedule.approval.maximumUsd + ' USD'}</strong></p>}
      </div>
      <details>
       <summary>Current grant details</summary>
@@ -197,18 +196,11 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
      <p className="hint">{'Calculated at ' + preview.capturedAt + ' UTC. The first occurrence is recalculated when approval is saved. Daylight saving changes follow the selected timezone.'}</p>
     </section>
    )}
-       <div className="field">
-        <label htmlFor={idPrefix + 'maximum'}>Per-occurrence ceiling (USD)</label>
-        <input id={idPrefix + 'maximum'} type="text" inputMode="decimal" maxLength={14} value={form.maximumUsd} style={{maxWidth:'100%'}}
-         aria-describedby={idPrefix + 'maximum-hint'}
-         onChange={(event) => onChange({ ...form, maximumUsd:event.target.value, consent:false })} />
-        <p className="hint" id={idPrefix + 'maximum-hint'}>USD per full occurrence, at least the quoted maximum. This is not a monthly budget.</p>
-       </div>
       </fieldset>
       <label htmlFor={idPrefix + 'consent'} style={{display:'flex',alignItems:'flex-start',gap:'var(--space-2)',minHeight:'var(--control-touch)',margin:0,paddingBlock:'var(--space-2)'}}>
        <input id={idPrefix + 'consent'} type="checkbox" checked={form.consent} disabled={locked || busy || quote.expired || conflict} style={{flexShrink:0}}
         onChange={(event) => onChange({ ...form, consent:event.target.checked })} />
-       <span>I approve recurring provider charges up to this ceiling per occurrence.</span>
+       <span>I approve recurring provider charges at each occurrence's current price.</span>
       </label>
       <p className="hint" id={idPrefix + 'approve-hint'}>Each occurrence still requires current owner approval and unchanged tracked scope, with paid work unpaused and no uncertain charges. Saving approval does not run a check immediately.</p>
       <button type="button" className="btn primary" onClick={onApprove} disabled={!canApprove || locked || busy} aria-describedby={idPrefix + 'approve-hint'}>Approve recurring spend</button>
