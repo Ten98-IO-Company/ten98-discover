@@ -1,3 +1,4 @@
+import {Icon} from './CampaignUI';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
@@ -129,20 +130,21 @@ function InvitePanelContent(props: InvitePanelProps) {
 
   if (!info) {
     return (
-      <div>
-        <div className='alert' role='alert'>
+      <div className='account-access invitation-access'>
+        <p className='eyebrow'>WORKSPACE INVITATION</p>
+        <div className='alert form-error' role='alert'>
           <p>
             <strong>This invitation link does not work.</strong> {error}
           </p>
-          <p className='hint'>
+          <p className='hint field-help'>
             The link may have expired or already been used. Ask the person who invited you for a new one.
           </p>
         </div>
-        <div className='row'>
-          <button type='button' className='btn' onClick={() => setReload(k => k + 1)}>
+        <div className='row button-wrap'>
+          <button type='button' className='btn button' onClick={() => setReload(k => k + 1)}>
             Try again
           </button>
-          <button type='button' className='btn ghost' onClick={onCancel}>
+          <button type='button' className='btn button ghost' onClick={onCancel}>
             Cancel
           </button>
         </div>
@@ -151,9 +153,11 @@ function InvitePanelContent(props: InvitePanelProps) {
   }
 
   return (
-    <div>
+    <div className="account-access invitation-access">
+      <p className="eyebrow">WORKSPACE INVITATION</p>
+      <span className="account-access-icon" aria-hidden="true"><Icon name="users" size={20}/></span>
       <h1>You’re invited to join {info.workspaceName}</h1>
-      <p>
+      <p className="helper-note">
         This invitation is for <strong>{info.email}</strong> as <strong>{info.role}</strong> and expires on{' '}
         {formatDate(info.expiresAt)}.
       </p>
@@ -176,11 +180,11 @@ function InvitePanelContent(props: InvitePanelProps) {
               )}
             </p>
           </div>
-          <div className='row'>
-            <button type='button' className='btn primary' onClick={onSignIn}>
+          <div className='row button-wrap'>
+            <button type='button' className='btn button primary full' onClick={onSignIn}>
               {needsSignIn ? 'Sign in instead' : 'Switch account'}
             </button>
-            <button type='button' className='btn' onClick={onCancel}>
+            <button type='button' className='btn button' onClick={onCancel}>
               Cancel
             </button>
           </div>
@@ -205,7 +209,7 @@ function InvitePanelContent(props: InvitePanelProps) {
                   required
                   disabled={busy}
                 />
-                <p className='hint'>1–120 characters.</p>
+                <p className='hint field-help'>1–120 characters.</p>
               </div>
               <div className='field'>
                 <label htmlFor='invite-password'>Password</label>
@@ -220,12 +224,12 @@ function InvitePanelContent(props: InvitePanelProps) {
                   required
                   disabled={busy}
                 />
-                <p className='hint'>12–128 characters.</p>
+                <p className='hint field-help'>12–128 characters.</p>
               </div>
             </>
           )}
-          <div className='row'>
-            <button type='submit' className='btn primary' disabled={busy}>
+          <div className='row button-wrap'>
+            <button type='submit' className='btn button primary full' disabled={busy}>
               {busy
                 ? signedInEmail
                   ? 'Joining…'
@@ -234,14 +238,14 @@ function InvitePanelContent(props: InvitePanelProps) {
                   ? 'Join workspace'
                   : 'Create account and join'}
             </button>
-            <button type='button' className='btn' onClick={onCancel} disabled={busy}>
+            <button type='button' className='btn button' onClick={onCancel} disabled={busy}>
               Cancel
             </button>
           </div>
           {!signedInEmail && (
             <p className='footnote'>
               Already have an account?{' '}
-              <button type='button' className='btn ghost' onClick={onSignIn} disabled={busy}>
+              <button type='button' className='btn button ghost' onClick={onSignIn} disabled={busy}>
                 Sign in instead
               </button>
             </p>

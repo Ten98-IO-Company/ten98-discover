@@ -33,4 +33,7 @@ function RevenueFixture(){
 const revenueRoot=createRootRoute({component:()=> <main style={{maxWidth:1240,margin:'20px auto',padding:'0 16px',minWidth:0}}><Outlet/></main>});
 const revenueIndex=createRoute({getParentRoute:()=>revenueRoot,path:'/',validateSearch:parseNavigation,component:RevenueFixture});
 const revenueRouter=createRouter({routeTree:revenueRoot.addChildren([revenueIndex])});
-createRoot(document.getElementById('root')!).render(window.boardsScope?.mode==='revenue'?<RouterProvider router={revenueRouter}/>:<Fixture/>);
+const boardRoot=createRootRoute({component:()=> <Outlet/>});
+const boardIndex=createRoute({getParentRoute:()=>boardRoot,path:'/',component:Fixture});
+const boardRouter=createRouter({routeTree:boardRoot.addChildren([boardIndex])});
+createRoot(document.getElementById('root')!).render(<RouterProvider router={window.boardsScope?.mode==='revenue'?revenueRouter:boardRouter}/>);

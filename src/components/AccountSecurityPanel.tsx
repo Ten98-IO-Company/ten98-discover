@@ -1,3 +1,4 @@
+import {Icon} from './CampaignUI'
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { useAccountPresentation } from '../lib/account-presentation'
@@ -251,12 +252,12 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
 
   if (data === null) {
     return (
-      <section className="card" aria-busy={loading} aria-label="Account security">
+      <section className="account-settings panel settings-panel" aria-busy={loading} aria-label="Account security">
         <h2>Account security</h2>
         {loadErr !== '' ? (
           <>
             <div className="alert" role="alert">{loadErr}</div>
-            <button type="button" className="btn" disabled={blocked} onClick={() => void load()}>Reload security settings</button>
+            <button type="button" className="btn button" disabled={blocked} onClick={() => void load()}>Reload security settings</button>
           </>
         ) : (
           <p className="dim" role="status">Loading your security settings…</p>
@@ -271,21 +272,22 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   if (setupUri) { try { setupKey = new URL(setupUri).searchParams.get('secret') } catch { /* The full URI remains available below. */ } }
 
   return (
-    <>
-      <section className="card" aria-label="Account">
-        <div className="row between">
-          <h2>Account</h2>
-          {twoFaOn ? <span className="pill good">2FA on</span> : <span className="pill">2FA off</span>}
+    <div className="account-settings account-security">
+      <section className="panel settings-panel account-summary-card" aria-label="Account">
+        <div className="provider-settings-heading">
+          <span className="provider-initial"><Icon name="user" size={18}/></span>
+          <div><h2>Account</h2><p>{data.user.name} · <bdi dir="ltr">{data.user.email}</bdi></p></div>
+          {twoFaOn ? <span className="pill badge good configured">2FA on</span> : <span className="pill badge">2FA off</span>}
         </div>
-        <p className="dim">{data.user.name} · {data.user.email}</p>
+        <p className="provider-source">{data.sessions.length} active sessions · {data.hasPassword ? 'Local password configured' : 'Identity provider sign-in'}</p>
         {loadErr !== '' && <div className="alert" role="alert">{loadErr}</div>}
       </section>
 
-      <section className="card" aria-busy={busy === 'password'} aria-label="Password">
-        <h2>Password</h2>
+      <section className="panel settings-panel" aria-busy={busy === 'password'} aria-label="Password">
+        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="lock" size={18}/></span><div><h2>Password</h2><p>Keep your account secure</p></div></div>
         {data.hasPassword ? (
           <form onSubmit={e => { e.preventDefault(); void submitPassword() }}>
-            <p className="hint">Changing your password signs out all other sessions.</p>
+            <p className="hint field-help">Changing your password signs out all other sessions.</p>
             <div className="field">
               <label htmlFor="pw-current">Current password</label>
               <input id="pw-current" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={curPw} onChange={e => setCurPw(e.target.value)} />
@@ -293,15 +295,15 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
             <div className="field">
               <label htmlFor="pw-new">New password</label>
               <input id="pw-new" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={blocked} value={newPw} onChange={e => setNewPw(e.target.value)} />
-              <p className="hint">Use 12 to 128 characters.</p>
+              <p className="hint field-help">Use 12 to 128 characters.</p>
             </div>
             <div className="field">
               <label htmlFor="pw-new2">Repeat new password</label>
               <input id="pw-new2" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={blocked} value={newPw2} onChange={e => setNewPw2(e.target.value)} />
             </div>
             {errs.password ? <div className="alert" role="alert">{errs.password}</div> : null}
-            {pwOk !== '' ? <p className="hint" role="status">{pwOk}</p> : null}
-            <button type="submit" className="btn primary" disabled={blocked}>
+            {pwOk !== '' ? <p className="hint field-help" role="status">{pwOk}</p> : null}
+            <button type="submit" className="btn button primary" disabled={blocked}>
               {busy === 'password' ? 'Changing…' : 'Change password'}
             </button>
           </form>
@@ -313,40 +315,37 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
         )}
       </section>
 
-      <section className="card" aria-busy={busy === 'enable' || busy === 'verify' || busy === 'disable' || busy === 'recovery'} aria-label="Two-factor authentication">
-        <div className="row between">
-          <h2>Two-factor authentication</h2>
-          {twoFaOn ? <span className="pill good">On</span> : <span className="pill">Off</span>}
-        </div>
+      <section className="panel settings-panel" aria-busy={busy === 'enable' || busy === 'verify' || busy === 'disable' || busy === 'recovery'} aria-label="Two-factor authentication">
+        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="shield" size={18}/></span><div><h2>Two-factor authentication</h2><p>An extra layer of account protection</p></div>{twoFaOn ? <span className="pill badge good configured">On</span> : <span className="pill badge">Off</span>}</div>
         {!data.hasPassword ? (
-          <p className="hint">A local password is required to manage two-factor authentication.</p>
+          <p className="hint field-help">A local password is required to manage two-factor authentication.</p>
         ) : (
           <>
             {codes !== null && (
               <div>
                 <p><strong>Recovery codes</strong></p>
-                <p className="hint">Save these codes securely. They are shown only once.</p>
+                <p className="hint field-help">Save these codes securely. They are shown only once.</p>
                 <div className="field">
                   <label htmlFor="tfa-codes">Recovery codes</label>
                   <textarea id="tfa-codes" className="snippet" readOnly rows={Math.max(1, Math.min(codes.length, 12))} style={{ width: '100%' }} value={codes.join('\n')} onFocus={e => e.currentTarget.select()} />
                 </div>
-                <div className="row">
-                  <button type="button" className="btn" disabled={blocked} onClick={() => void copy('codes', codes.join('\n'))}>Copy codes</button>
-                  <button type="button" className="btn ghost" disabled={blocked} onClick={() => setCodes(null)}>I saved these codes</button>
+                <div className="row button-wrap">
+                  <button type="button" className="btn button" disabled={blocked} onClick={() => void copy('codes', codes.join('\n'))}>Copy codes</button>
+                  <button type="button" className="btn button ghost" disabled={blocked} onClick={() => setCodes(null)}>I saved these codes</button>
                 </div>
-                {copyNote.codes ? <p className="hint" role="status">{copyNote.codes}</p> : null}
+                {copyNote.codes ? <p className="hint field-help" role="status">{copyNote.codes}</p> : null}
               </div>
             )}
 
             {!twoFaOn && setupUri === null && (
               <form onSubmit={e => { e.preventDefault(); void startEnable() }}>
-                <p className="hint">2FA turns on only after you verify a code. Completing setup signs out all other sessions.</p>
+                <p className="hint field-help">2FA turns on only after you verify a code. Completing setup signs out all other sessions.</p>
                 <div className="field">
                   <label htmlFor="tfa-enable-pw">Current password</label>
                   <input id="tfa-enable-pw" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={enablePw} onChange={e => setEnablePw(e.target.value)} />
                 </div>
                 {errs.enable ? <div className="alert" role="alert">{errs.enable}</div> : null}
-                <button type="submit" className="btn primary" disabled={blocked}>
+                <button type="submit" className="btn button primary" disabled={blocked}>
                   {busy === 'enable' ? 'Starting…' : 'Start 2FA setup'}
                 </button>
               </form>
@@ -355,30 +354,30 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
             {!twoFaOn && setupUri !== null && (
               <>
                 <p><strong>Finish setup — 2FA is not on yet</strong></p>
-                <p className="hint">In your authenticator app, add a time-based account using the setup key or import the setup URI. Then enter the 6-digit code it shows.</p>
+                <p className="hint field-help">In your authenticator app, add a time-based account using the setup key or import the setup URI. Then enter the 6-digit code it shows.</p>
                 {setupKey && <div className="field">
                   <label htmlFor="tfa-key">Setup key</label>
                   <input id="tfa-key" readOnly value={setupKey} onFocus={e => e.currentTarget.select()} />
-                  <button type="button" className="btn" disabled={blocked} onClick={() => void copy('key', setupKey)}>Copy setup key</button>
-                  {copyNote.key && <p className="hint" role="status">{copyNote.key}</p>}
+                  <button type="button" className="btn button" disabled={blocked} onClick={() => void copy('key', setupKey)}>Copy setup key</button>
+                  {copyNote.key && <p className="hint field-help" role="status">{copyNote.key}</p>}
                 </div>}
                 <div className="field">
                   <label htmlFor="tfa-uri">Setup URI</label>
                   <textarea id="tfa-uri" className="snippet" readOnly rows={3} style={{ width: '100%' }} value={setupUri} onFocus={e => e.currentTarget.select()} />
                 </div>
-                <div className="row">
-                  <button type="button" className="btn" disabled={blocked} onClick={() => void copy('uri', setupUri)}>Copy setup URI</button>
-                  <button type="button" className="btn ghost" disabled={blocked} onClick={() => { setSetupUri(null); setCodes(null); setProof('') }}>Hide setup details</button>
+                <div className="row button-wrap">
+                  <button type="button" className="btn button" disabled={blocked} onClick={() => void copy('uri', setupUri)}>Copy setup URI</button>
+                  <button type="button" className="btn button ghost" disabled={blocked} onClick={() => { setSetupUri(null); setCodes(null); setProof('') }}>Hide setup details</button>
                 </div>
-                {copyNote.uri ? <p className="hint" role="status">{copyNote.uri}</p> : null}
+                {copyNote.uri ? <p className="hint field-help" role="status">{copyNote.uri}</p> : null}
                 <form onSubmit={e => { e.preventDefault(); void submitVerify() }}>
                   <div className="field">
                     <label htmlFor="tfa-code">6-digit code</label>
                     <input id="tfa-code" type="text" inputMode="numeric" autoComplete="one-time-code" minLength={6} maxLength={6} pattern="[0-9]{6}" required disabled={blocked} value={proof} onChange={e => setProof(e.target.value)} />
-                    <p className="hint">Enter the code exactly as shown, including leading zeros.</p>
+                    <p className="hint field-help">Enter the code exactly as shown, including leading zeros.</p>
                   </div>
                   {errs.verify ? <div className="alert" role="alert">{errs.verify}</div> : null}
-                  <button type="submit" className="btn primary" disabled={blocked}>
+                  <button type="submit" className="btn button primary" disabled={blocked}>
                     {busy === 'verify' ? 'Verifying…' : 'Verify and turn on 2FA'}
                   </button>
                 </form>
@@ -389,13 +388,13 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
               <>
                 <form onSubmit={e => { e.preventDefault(); void submitRecovery() }}>
                   <p><strong>Recovery codes</strong></p>
-                  <p className="hint">New codes replace your old recovery codes and sign out all other sessions. Save the new codes securely — they are shown only once.</p>
+                  <p className="hint field-help">New codes replace your old recovery codes and sign out all other sessions. Save the new codes securely — they are shown only once.</p>
                   <div className="field">
                     <label htmlFor="tfa-recovery-pw">Current password</label>
                     <input id="tfa-recovery-pw" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={recoveryPw} onChange={e => setRecoveryPw(e.target.value)} />
                   </div>
                   {errs.recovery ? <div className="alert" role="alert">{errs.recovery}</div> : null}
-                  <button type="submit" className="btn" disabled={blocked}>
+                  <button type="submit" className="btn button" disabled={blocked}>
                     {busy === 'recovery' ? 'Generating…' : 'Generate new recovery codes'}
                   </button>
                 </form>
@@ -406,7 +405,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
                     <input id="tfa-disable-pw" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={disablePw} onChange={e => setDisablePw(e.target.value)} />
                   </div>
                   {errs.disable ? <div className="alert" role="alert">{errs.disable}</div> : null}
-                  <button type="submit" className="btn" disabled={blocked}>
+                  <button type="submit" className="btn button" disabled={blocked}>
                     {busy === 'disable' ? 'Turning off…' : 'Turn off 2FA'}
                   </button>
                 </form>
@@ -416,13 +415,13 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
         )}
       </section>
 
-      <section className="card" aria-busy={busy === 'revoke' || busy === 'others'} aria-label="Sessions">
+      <section className="panel settings-panel account-sessions-card" aria-busy={busy === 'revoke' || busy === 'others'} aria-label="Sessions">
         <div className="row between">
-          <h2>Sessions</h2>
-          <div className="row">
-            <button type="button" className="btn ghost" disabled={blocked} onClick={() => void load()}>Refresh</button>
+          <div className="provider-settings-heading"><span className="provider-initial"><Icon name="monitor" size={18}/></span><div><h2>Sessions</h2><p>Devices signed in to your account</p></div></div>
+          <div className="row button-wrap">
+            <button type="button" className="btn button ghost" disabled={blocked} onClick={() => void load()}>Refresh</button>
             {others.length > 0 && (
-              <button type="button" className="btn" disabled={blocked} onClick={() => void revokeOthers()}>
+              <button type="button" className="btn button" disabled={blocked} onClick={() => void revokeOthers()}>
                 {busy === 'others' ? 'Signing out…' : 'Sign out all other sessions'}
               </button>
             )}
@@ -445,7 +444,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
                   <td className="mono">{fmt(s.createdAt)}</td>
                   <td className="mono">{fmt(s.expiresAt)}</td>
                   <td>
-                    <button type="button" className="btn ghost" disabled={blocked} onClick={() => void revokeSession(s)}>
+                    <button type="button" className="btn button ghost" disabled={blocked} onClick={() => void revokeSession(s)}>
                       {s.current ? 'Sign out' : 'Revoke'}
                     </button>
                   </td>
@@ -455,6 +454,6 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
           </table>
         </div>
       </section>
-    </>
+    </div>
   )
 }

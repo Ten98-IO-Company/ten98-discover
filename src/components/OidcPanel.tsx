@@ -1,3 +1,4 @@
+import {Icon} from './CampaignUI';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
 import { httpUrl } from './OidcSignIn';
@@ -142,30 +143,30 @@ function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofH
   if (phase === 'loading') return <p role="status" className="dim">Loading sign-in settings…</p>;
   if (phase === 'error') {
     return (
-      <section className="card">
+      <section className="panel settings-panel integration-settings-card">
         <p role="alert" className="alert">Could not load sign-in settings: {loadErr}</p>
-        <button type="button" className="btn ghost" onClick={reload}>Try again</button>
+        <button type="button" className="btn button ghost" onClick={reload}>Try again</button>
       </section>
     );
   }
 
   return (
-    <div>
+    <div className="account-settings identity-settings">
       {proofId && proofState === 'loading' && <p role="status" className="dim">Loading the sign-in result…</p>}
       {proofId && proofState === 'expired' && (
-        <section className="card">
+        <section className="panel settings-panel integration-settings-card">
           <h2>Sign-in expired</h2>
           <p role="alert" className="alert">This sign-in took too long and expired. Start the test or linking again.</p>
-          <button type="button" className="btn ghost" onClick={() => cb.current.onProofHandled()}>Dismiss</button>
+          <button type="button" className="btn button ghost" onClick={() => cb.current.onProofHandled()}>Dismiss</button>
         </section>
       )}
       {proofId && proofState === 'error' && (
-        <section className="card">
+        <section className="panel settings-panel integration-settings-card">
           <h2>Sign-in result</h2>
           <p role="alert" className="alert">Could not load the sign-in result: {proofErr}</p>
-          <div className="row">
-            <button type="button" className="btn ghost" onClick={() => setProofTick(t => t + 1)}>Try again</button>
-            <button type="button" className="btn ghost" onClick={() => cb.current.onProofHandled()}>Dismiss</button>
+          <div className="row button-wrap">
+            <button type="button" className="btn button ghost" onClick={() => setProofTick(t => t + 1)}>Try again</button>
+            <button type="button" className="btn button ghost" onClick={() => cb.current.onProofHandled()}>Dismiss</button>
           </div>
         </section>
       )}
@@ -186,10 +187,10 @@ function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofH
       {instanceOperator && (opData
         ? <OperatorSection data={opData} busy={busy} mutate={mutate} reload={reload} />
         : (
-          <section className="card">
-            <h2>Identity providers (operator)</h2>
+          <section className="panel settings-panel integration-settings-card">
+            <div className="provider-settings-heading"><span className="provider-initial"><Icon name="settings" size={18}/></span><div><h2>Identity providers (operator)</h2><p>Manage your installation’s sign-in providers</p></div></div>
             <p role="alert" className="alert">Your operator access changed or provider management is unavailable here. Operator access is granted explicitly on this host; owning a workspace does not grant it.</p>
-            <button type="button" className="btn ghost" onClick={reload}>Try again</button>
+            <button type="button" className="btn button ghost" onClick={reload}>Try again</button>
           </section>
         )
       )}
@@ -221,8 +222,8 @@ function ProofReview({proof, instanceOperator, vaultOk, busy, mutate, onDone, on
   });
 
   return (
-    <section className="card">
-      <h2>{proof.purpose === 'link' ? 'Review identity before linking' : 'Review test sign-in'}</h2>
+    <section className="panel settings-panel integration-settings-card">
+      <div className="provider-settings-heading"><span className="provider-initial"><Icon name="shield" size={18}/></span><div><h2>{proof.purpose === 'link' ? 'Review identity before linking' : 'Review test sign-in'}</h2><p>{proof.providerName}</p></div></div>
       <p>
         {proof.purpose === 'link'
           ? `Sign-in at ${proof.providerName} returned this identity. It is linked to your account only if you confirm below.`
@@ -241,12 +242,12 @@ function ProofReview({proof, instanceOperator, vaultOk, busy, mutate, onDone, on
         </table>
       </div>
       {err && <p role="alert" className="alert">{err}</p>}
-      <div className="row">
-        {proof.purpose === 'link' && <button type="button" className="btn primary" disabled={busy} onClick={confirm}>Link this identity</button>}
-        {canEnable && <button type="button" className="btn primary" disabled={busy || !vaultOk} onClick={confirm}>Enable tested provider</button>}
-        <button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>Cancel</button>
+      <div className="row button-wrap">
+        {proof.purpose === 'link' && <button type="button" className="btn button primary" disabled={busy} onClick={confirm}>Link this identity</button>}
+        {canEnable && <button type="button" className="btn button primary" disabled={busy || !vaultOk} onClick={confirm}>Enable tested provider</button>}
+        <button type="button" className="btn button ghost" disabled={busy} onClick={onCancel}>Cancel</button>
       </div>
-      {canEnable && !vaultOk && <p className="hint">Secret storage (vault) is not configured on this host, so the provider cannot be enabled yet.</p>}
+      {canEnable && !vaultOk && <p className="hint field-help">Secret storage (vault) is not configured on this host, so the provider cannot be enabled yet.</p>}
       {proof.purpose === 'test' && !instanceOperator && <p className="dim">Only an operator can enable this provider. Nothing else is required from you.</p>}
     </section>
   );
@@ -289,38 +290,26 @@ function AccountSection({providers, identities, hasPassword, busy, mutate, reloa
   });
 
   return (
-    <section className="card">
-      <h2>Your sign-in methods</h2>
+    <section className="panel settings-panel integration-settings-card">
+      <div className="provider-settings-heading"><span className="provider-initial"><Icon name="key" size={18}/></span><div><h2>Your sign-in methods</h2><p>Connect the identities you use to sign in</p></div></div>
+      <p className="provider-source">{identities.length} linked {identities.length === 1 ? 'identity' : 'identities'}</p>
       {err && <p role="alert" className="alert">{err}</p>}
       {identities.length === 0 ? (
         <p className="dim">No external identities are linked to your account yet.</p>
       ) : (
-        <div className="table-wrap">
-          <table style={{minWidth: '40rem'}}>
-            <thead><tr><th>Provider</th><th>Issuer</th><th>Subject</th><th>Status</th><th></th></tr></thead>
-            <tbody>
-              {identities.map(i => (
-                <tr key={i.id}>
-                  <td>{i.providerName}</td>
-                  <td className="mono" style={{overflowWrap: 'anywhere'}}>{i.issuer}</td>
-                  <td className="mono" style={{overflowWrap: 'anywhere'}}>{i.subject}</td>
-                  <td>{i.enabled ? <span className="pill good">Enabled</span> : <span className="pill bad">Disabled</span>}</td>
-                  <td>
-                    {hasPassword && <details>
-                      <summary>Remove…</summary>
-                      <p className="hint">Confirm with your password to remove this sign-in method.</p>
-                      <ProofFields busy={busy} submit="Remove identity" onProof={remove(i.id)} />
-                    </details>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="identity-provider-grid">
+          {identities.map(i => (
+            <section className="panel integration-settings-card identity-provider-card" key={i.id}>
+              <div className="provider-settings-heading"><span className="provider-initial">{Array.from(i.providerName.trim())[0]?.toUpperCase() || 'I'}</span><div><h3>{i.providerName}</h3><p>Linked sign-in method</p></div>{i.enabled ? <span className="pill badge good configured">Enabled</span> : <span className="pill badge bad not-connected">Disabled</span>}</div>
+              <dl className="identity-details"><dt>Issuer</dt><dd className="mono">{i.issuer}</dd><dt>Subject</dt><dd className="mono">{i.subject}</dd></dl>
+              {hasPassword && <details><summary>Remove…</summary><p className="hint field-help">Confirm with your password to remove this sign-in method.</p><ProofFields busy={busy} submit="Remove identity" onProof={remove(i.id)} /></details>}
+            </section>
+          ))}
         </div>
       )}
-      <p><strong>Link a new sign-in method</strong></p>
-      <p className="hint">You sign in at the provider, then review the returned identity here before anything is linked. Accounts are never merged by email alone.</p>
-      {!hasPassword ? <p className="hint">Use the Identity account security section on this page to verify with your linked provider and add a local recovery password before linking or removing sign-in methods.</p> : providers.length === 0 ? (
+      <h3 className="settings-subheading">Link a new sign-in method</h3>
+      <p className="hint field-help">You sign in at the provider, then review the returned identity here before anything is linked. Accounts are never merged by email alone.</p>
+      {!hasPassword ? <p className="hint field-help">Use the Identity account security section on this page to verify with your linked provider and add a local recovery password before linking or removing sign-in methods.</p> : providers.length === 0 ? (
         <p className="dim">No external providers are enabled on this server yet.</p>
       ) : (
         <>
@@ -440,16 +429,16 @@ function OperatorSection({data, busy, mutate, reload}: {
   };
 
   return (
-    <section className="card">
-      <h2>Identity providers (operator)</h2>
-      <p className="hint">Operator access is granted explicitly on this host; owning a workspace does not grant it.</p>
+    <section className="panel settings-panel integration-settings-card">
+      <div className="provider-settings-heading"><span className="provider-initial"><Icon name="settings" size={18}/></span><div><h2>Identity providers (operator)</h2><p>Manage your installation’s sign-in providers</p></div></div>
+      <p className="hint field-help">Operator access is granted explicitly on this host; owning a workspace does not grant it.</p>
       <div className="field">
         <label htmlFor={fid + '-cb'}>Callback URL — register this exact address with your identity provider</label>
-        <div className="row">
+        <div className="row button-wrap">
           <input id={fid + '-cb'} readOnly value={data.callbackUrl} className="mono" onFocus={e => e.target.select()} />
-          <button type="button" className="btn ghost" onClick={() => void copy()}>Copy</button>
+          <button type="button" className="btn button ghost" onClick={() => void copy()}>Copy</button>
         </div>
-        {copied && <p role="status" className="hint">Copied to clipboard.</p>}
+        {copied && <p role="status" className="hint field-help">Copied to clipboard.</p>}
       </div>
       {vaultMissing && <p role="alert" className="alert">Secret storage (vault) is not configured on this host. An operator must finish the host setup before drafts can be saved, tested, or enabled.</p>}
       {err && <p role="alert" className="alert">{err}</p>}
@@ -457,34 +446,22 @@ function OperatorSection({data, busy, mutate, reload}: {
         <p className="dim">No providers configured yet. Create a draft below.</p>
       ) : (
         <>
-          <p className="hint">Saving a draft does not change the live provider; enabling requires a successful test sign-in. Disabling revokes its sessions. Users with only this provider lose access until it is re-enabled; configured local recovery passwords remain usable.</p>
+          <p className="hint field-help">Saving a draft does not change the live provider; enabling requires a successful test sign-in. Disabling revokes its sessions. Users with only this provider lose access until it is re-enabled; configured local recovery passwords remain usable.</p>
           {data.providers.map(p => (
-            <div className="card" key={p.id}>
-              <div className="row between">
-                <div>
-                  <strong>{p.settings.name}</strong>{' '}
-                  {p.enabled ? <span className="pill good">Enabled</span> : <span className="pill bad">Disabled</span>}
-                  <div className="dim">
-                    Draft revision {p.revision} · Live revision {p.activeRevision ?? 'none'}
-                    {p.testedRevision != null && ` · Tested revision ${p.testedRevision}`}
-                    {p.testedAt && ` (${new Date(p.testedAt).toLocaleString()})`}
-                  </div>
-                </div>
-                <div className="row">
-                  <button type="button" className="btn ghost" disabled={busy} onClick={() => edit(p)}>Edit draft</button>
-                  {p.enabled && <button type="button" className="btn ghost" disabled={busy} onClick={() => disable(p)}>Disable</button>}
-                </div>
-              </div>
+            <div className="panel integration-settings-card identity-provider-card" key={p.id}>
+              <div className="provider-settings-heading"><span className="provider-initial">{Array.from(p.settings.name.trim())[0]?.toUpperCase() || 'I'}</span><div><h3>{p.settings.name}</h3><p>{p.settings.issuer}</p></div>{p.enabled ? <span className="pill badge good configured">Enabled</span> : <span className="pill badge bad not-connected">Disabled</span>}</div>
+              <p className="provider-source">Draft revision {p.revision} · Live revision {p.activeRevision ?? 'none'}{p.testedRevision != null && ` · Tested revision ${p.testedRevision}`}{p.testedAt && ` (${new Date(p.testedAt).toLocaleString()})`}</p>
+              <div className="button-wrap"><button type="button" className="btn button ghost" disabled={busy} onClick={() => edit(p)}>Edit draft</button>{p.enabled && <button type="button" className="btn button ghost" disabled={busy} onClick={() => disable(p)}>Disable</button>}</div>
               <details>
                 <summary>Test sign-in</summary>
-                <p className="hint">Confirm with your password to start a test sign-in at the provider.</p>
+                <p className="hint field-help">Confirm with your password to start a test sign-in at the provider.</p>
                 <ProofFields busy={busy || vaultMissing} submit="Start test sign-in" onProof={test(p.id)} />
               </details>
             </div>
           ))}
         </>
       )}
-      <p><strong>{editingId ? 'Edit draft' : 'New draft'}</strong></p>
+      <h3 className="settings-subheading">{editingId ? 'Edit draft' : 'New draft'}</h3>
       <form onSubmit={save}>
         <fieldset disabled={busy || vaultMissing} style={{border: 0, margin: 0, padding: 0, minWidth: 0}}>
         <div className="field">
@@ -502,7 +479,7 @@ function OperatorSection({data, busy, mutate, reload}: {
         <div className="field">
           <label htmlFor={fid + '-s'}>Client secret</label>
           <input id={fid + '-s'} type="password" autoComplete="new-password" maxLength={4096} value={secret} onChange={e => setSecret(e.target.value)} />
-          <p className="hint">Saving replaces the stored secret; it cannot be viewed afterwards. Public clients use the form-body option with an empty secret.</p>
+          <p className="hint field-help">Saving replaces the stored secret; it cannot be viewed afterwards. Public clients use the form-body option with an empty secret.</p>
         </div>
         <div className="field">
           <label htmlFor={fid + '-a'}>Client authentication</label>
@@ -520,19 +497,19 @@ function OperatorSection({data, busy, mutate, reload}: {
           <div className="field">
             <label htmlFor={fid + '-d'}>Private provider addresses — IPs, one per line, max 16</label>
             <textarea id={fid + '-d'} rows={3} value={addresses} onChange={e => setAddresses(e.target.value)} />
-            <p className="hint">Only list addresses here when you deliberately run the identity provider inside a private network.</p>
+            <p className="hint field-help">Only list addresses here when you deliberately run the identity provider inside a private network.</p>
           </div>
           <div className="field">
             <label htmlFor={fid + '-t'}>
               <input id={fid + '-t'} type="checkbox" checked={trustEmail} onChange={e => setTrustEmail(e.target.checked)} /> Trust verified email
             </label>
-            <p className="hint">Uses the provider's verified email to confirm invited users only. It never merges existing accounts.</p>
+            <p className="hint field-help">Uses the provider's verified email to confirm invited users only. It never merges existing accounts.</p>
           </div>
         </details>
-        {saved && <p role="status" className="hint">Draft saved. It does not change the live provider until it is enabled after a successful test sign-in.</p>}
-        <div className="row">
-          <button type="submit" className="btn primary" disabled={busy || vaultMissing}>{editingId ? 'Save draft' : 'Create draft'}</button>
-          {editingId && <button type="button" className="btn ghost" onClick={reset}>Cancel editing</button>}
+        {saved && <p role="status" className="hint field-help">Draft saved. It does not change the live provider until it is enabled after a successful test sign-in.</p>}
+        <div className="row button-wrap">
+          <button type="submit" className="btn button primary" disabled={busy || vaultMissing}>{editingId ? 'Save draft' : 'Create draft'}</button>
+          {editingId && <button type="button" className="btn button ghost" onClick={reset}>Cancel editing</button>}
         </div>
         </fieldset>
       </form>
@@ -573,7 +550,7 @@ function ProofFields({busy, submit, onProof}: {busy: boolean; submit: string; on
           <input id={id + '-co'} type="text" inputMode={factor === 'code' ? 'numeric' : 'text'} autoComplete="one-time-code" required maxLength={factor === 'code' ? 6 : 21} value={code} onChange={e => setCode(e.target.value)} />
         </div>
       )}
-      <button type="submit" className="btn primary" disabled={busy}>{submit}</button>
+      <button type="submit" className="btn button primary" disabled={busy}>{submit}</button>
       </fieldset>
     </form>
   );

@@ -1,3 +1,4 @@
+import {Icon} from './CampaignUI';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {ApiError,errMsg} from '../lib/api';
 import {accountLocaleInventory,accountLocaleMapping,accountPreferencesDefaults,accountPreferencesWireInputSchema,canonicalAccountTimeZone,type AccountPreferencesInput,type AccountPreferencesDto} from '../lib/account-preferences';
@@ -33,27 +34,32 @@ export function AccountPreferencesPanel({expectedUserId,onUnauthorized}:{expecte
       setReloadRequired(true);setError(failure instanceof ApiError&&failure.status===409?'Preferences changed on another device. Reload saved preferences before saving again.':errMsg(failure));
     }finally{if(current()){locked.current=false;request.current=null;setBusy(false);}}
   }
-  return <section className="account-preferences stack" aria-label="Profile and appearance">
+  return <section className="account-settings account-preferences" aria-label="Profile and appearance">
     <p className="dim">Personal settings follow your account across workspaces. Changes apply after Save.</p>
     {account?.loading&&<p role="status">Loading saved preferences…</p>}
     {account?.error&&<div className="alert" role="alert">{account.error}</div>}
     {error&&<div className="alert" role="alert">{error}</div>}
     {notice&&<p role="status">{notice}</p>}
-    <form onSubmit={save} className="stack">
-      <fieldset className="card stack" disabled={blocked}><legend>Profile</legend>
+    <form onSubmit={save} className="account-preferences-form">
+      <div className="account-settings-grid">
+      <fieldset className="panel settings-panel preferences-profile" disabled={blocked}><legend className="sr-only">Profile</legend>
+        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="user" size={18}/></span><div><h2>Your account</h2><p><bdi dir="ltr">{data?.user.email??'Unavailable'}</bdi></p></div></div>
+        <p className="provider-source">Personal profile</p>
         <div className="field"><label htmlFor={uid+'-name'}>Display name</label><input id={uid+'-name'} autoComplete="name" maxLength={120} value={draft?.name??''} onChange={e=>field('name',e.target.value)} required/></div>
-        <div className="field"><span>Email</span><p><bdi dir="ltr">{data?.user.email??'Unavailable'}</bdi></p><p className="hint">Email and sign-in security are managed separately.</p></div>
+        <div className="field"><span>Email</span><p><bdi dir="ltr">{data?.user.email??'Unavailable'}</bdi></p><p className="hint field-help">Email and sign-in security are managed separately.</p></div>
       </fieldset>
-      <fieldset className="card stack" disabled={blocked}><legend>Regional format</legend>
-        <p className="hint" id={uid+'-format-help'}>Interface text is currently English. This changes dates and numbers in account settings; report formats and applied report time zones stay unchanged.</p>
+      <fieldset className="panel settings-panel preferences-regional" disabled={blocked}><legend className="sr-only">Regional format</legend>
+        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="globe" size={18}/></span><div><h2>Regional format</h2><p>Dates, numbers and time zone</p></div></div>
+        <p className="hint field-help" id={uid+'-format-help'}>Interface text is currently English. This changes dates and numbers in account settings; report formats and applied report time zones stay unchanged.</p>
         <div className="field"><label htmlFor={uid+'-zone'}>Time zone</label><input id={uid+'-zone'} list={uid+'-zones'} value={draft?.timeZone??''} onChange={e=>field('timeZone',e.target.value)} aria-describedby={uid+'-format-help'} autoComplete="off" required/><datalist id={uid+'-zones'}>{zones.map(value=><option value={value} key={value}/>)}</datalist></div>
-        <button className="btn" type="button" onClick={()=>{const value=canonicalAccountTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);if(value)field('timeZone',value);}}>Use device time zone</button>
+        <button className="btn button" type="button" onClick={()=>{const value=canonicalAccountTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);if(value)field('timeZone',value);}}>Use device time zone</button>
         <div className="field"><label htmlFor={uid+'-locale'}>Date and number format</label><select id={uid+'-locale'} value={draft?.locale??'en-US'} onChange={e=>field('locale',e.target.value as Draft['locale'])} aria-describedby={uid+'-format-help'}>{accountLocaleInventory.map(([code,label,direction])=><option key={code} value={code} lang={accountLocaleMapping(code).formatLocale} dir={direction}>{label} · {code}</option>)}</select></div>
-        <div className="preferences-preview" aria-label="Draft format preview"><p className="hint">Preview only · your draft</p>{mapping&&zone?<dl><dt>Number</dt><dd lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.NumberFormat(mapping.formatLocale).format(1234567.89)}</dd><dt>Date and time</dt><dd lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.DateTimeFormat(mapping.formatLocale,{timeZone:zone,dateStyle:'medium',timeStyle:'short'}).format(new Date())}</dd></dl>:<p>This browser cannot preview that time zone. Choose a recognized named time zone to change it.</p>}</div>
+        <div className="preferences-preview" aria-label="Draft format preview"><p className="hint field-help">Preview only · your draft</p>{mapping&&zone?<dl><dt>Number</dt><dd lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.NumberFormat(mapping.formatLocale).format(1234567.89)}</dd><dt>Date and time</dt><dd lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.DateTimeFormat(mapping.formatLocale,{timeZone:zone,dateStyle:'medium',timeStyle:'short'}).format(new Date())}</dd></dl>:<p>This browser cannot preview that time zone. Choose a recognized named time zone to change it.</p>}</div>
       </fieldset>
-      <fieldset className="card preferences-theme" disabled={blocked}><legend>Appearance</legend><p className="hint">Light is the default. System follows your device after you save.</p><div className="row">{(['light','dark','system'] as const).map(value=><label key={value} htmlFor={uid+'-'+value}><input id={uid+'-'+value} type="radio" name={uid+'-theme'} checked={draft?.theme===value} onChange={()=>field('theme',value)}/>{value[0].toUpperCase()+value.slice(1)}</label>)}</div></fieldset>
-      <div className="row"><button className="btn primary" disabled={blocked||reloadRequired||!dirty}>{busy?'Saving…':'Save preferences'}</button><button className="btn" type="button" disabled={blocked} onClick={()=>{if(draft)setDraft({...draft,...accountPreferencesDefaults});acknowledged.current=null;setNotice('Defaults are staged. Save to apply them.');}}>Restore default preferences</button><button className="btn" type="button" disabled={busy||!!account?.loading} onClick={()=>{acknowledged.current=null;setNotice('');void account?.reload();}}>Reload saved preferences</button></div>
-      <p className="hint">Reload replaces unsaved edits. Preferences do not change financial values, exports or saved report evidence.</p>
+      <fieldset className="panel settings-panel preferences-theme" disabled={blocked}><legend className="sr-only">Appearance</legend><div className="provider-settings-heading"><span className="provider-initial"><Icon name="sun" size={18}/></span><div><h2>Appearance</h2><p>Make this workspace feel like yours</p></div></div><p className="hint field-help">Light is the default. System follows your device after you save.</p><div className="row button-wrap">{(['light','dark','system'] as const).map(value=><label key={value} htmlFor={uid+'-'+value}><input id={uid+'-'+value} type="radio" name={uid+'-theme'} checked={draft?.theme===value} onChange={()=>field('theme',value)}/>{value[0].toUpperCase()+value.slice(1)}</label>)}</div></fieldset>
+      </div>
+      <div className="button-wrap account-settings-actions"><button className="btn button primary" disabled={blocked||reloadRequired||!dirty}>{busy?'Saving…':'Save preferences'}</button><button className="btn button" type="button" disabled={blocked} onClick={()=>{if(draft)setDraft({...draft,...accountPreferencesDefaults});acknowledged.current=null;setNotice('Defaults are staged. Save to apply them.');}}>Restore default preferences</button><button className="btn button" type="button" disabled={busy||!!account?.loading} onClick={()=>{acknowledged.current=null;setNotice('');void account?.reload();}}>Reload saved preferences</button></div>
+      <p className="hint field-help">Reload replaces unsaved edits. Preferences do not change financial values, exports or saved report evidence.</p>
     </form>
   </section>;
 }
