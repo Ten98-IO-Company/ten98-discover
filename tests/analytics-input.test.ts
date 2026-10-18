@@ -128,6 +128,7 @@ test('properties and dimensions reject strings PostgreSQL cannot store as JSONB'
     rejects(() => normalizeProperties({ values: [value] }));
     rejects(() => normalizeProperties({ [value]: 1 }));
     rejects(() => normalizeDimensions({ campaign: { source: value } }));
+    rejects(() => normalizeDimensions({ clickIds: { gclid: value } }));
     rejects(() => normalizeDimensions({ distinctId: value }));
     rejects(() => normalizeDimensions({ referrer: `https://example.test/${value}` }));
   }
@@ -138,11 +139,15 @@ test('dimensions retain only configured public metadata and normalized referrer 
   const input = {
     referrer: 'https://BÜCHER.example:8443/private?secret-sentinel=1#secret-sentinel', language: 'en-us',
     screen: { width: 1920, height: 1080 }, campaign: { source: 'newsletter', term: '' }, distinctId: ' customer-1 ',
+    clickIds: { gclid: 'g-1', fbclid: '' },
   };
   assert.deepEqual(normalizeDimensions(input), {
     referrerHost: 'xn--bcher-kva.example', language: 'en-US', screenWidth: 1920, screenHeight: 1080,
-    campaign: { source: 'newsletter', term: '' }, distinctId: ' customer-1 ',
+    campaign: { source: 'newsletter', term: '' }, distinctId: ' customer-1 ', clickIds: { gclid: 'g-1', fbclid: '' },
   });
+  // All six pinned Umami identifiers are admitted, each kept exactly (an empty value as Umami stores it).
+  const six = { gclid: 'a', fbclid: 'b', msclkid: 'c', ttclid: 'd', li_fat_id: 'e', twclid: '' };
+  assert.deepEqual(normalizeDimensions({ clickIds: six }), { clickIds: six });
   assert.deepEqual(normalizeDimensions({}), {});
   assert.deepEqual(normalizeDimensions({ campaign: {} }), { campaign: {} });
   assert.equal(input.referrer.includes('/private?'), true);
@@ -153,6 +158,9 @@ test('dimension fields are strict at every nesting level', () => {
     { ip: 'secret-sentinel' }, { userAgent: 'secret-sentinel' }, { referrerHost: 'example.test' },
     { screen: { width: 100, height: 100, extra: true } }, { campaign: { unexpected: 'secret-sentinel' } },
     { referrer: undefined }, { language: null }, { screen: [] }, { campaign: null }, null, [],
+    { clickIds: { GCLID: 'secret-sentinel' } }, { clickIds: { utm_source: 'secret-sentinel' } }, { clickIds: null }, { clickIds: [] },
+    { clickIds: 'secret-sentinel' }, { clickIds: { gclid: 1 } }, { clickIds: { gclid: null } }, { clickIds: { gclid: undefined } },
+    { clickIds: Object.defineProperty({}, 'gclid', { enumerable: true, get() { return 'secret-sentinel'; } }) },
     JSON.parse('{"__proto__":{"secret-sentinel":true}}'),
   ]) rejects(() => normalizeDimensions(input));
 });
@@ -172,6 +180,13 @@ test('locale, screen, campaign and identity limits preserve valid boundary value
   assert.equal(normalizeDimensions({ screen: { width: 1, height: 10000 } }).screenHeight, 10000);
   assert.equal(normalizeDimensions({ campaign: { source: 'x'.repeat(200) } }).campaign?.source?.length, 200);
   assert.equal(normalizeDimensions({ distinctId: 'x'.repeat(256) }).distinctId?.length, 256);
+  // Click IDs are truncated to Umami's 255 like its saveEvent, by code point (PostgreSQL varchar(255)), before the JSONB check.
+  const clickId = (value: string) => normalizeDimensions({ clickIds: { gclid: value } }).clickIds?.gclid;
+  assert.equal(clickId('x'.repeat(255)), 'x'.repeat(255));
+  assert.equal(clickId('x'.repeat(300)), 'x'.repeat(255));
+  assert.equal(clickId('😀'.repeat(256)), '😀'.repeat(255));
+  assert.equal(clickId('a'.repeat(255) + '\u0000'), 'a'.repeat(255));
+  assert.equal(clickId(''), '');
   for (const input of [
     { language: 'en_US' }, { language: ' en-US' }, { language: 'x'.repeat(101) },
     { screen: { width: 0, height: 1 } }, { screen: { width: 1, height: 10001 } },

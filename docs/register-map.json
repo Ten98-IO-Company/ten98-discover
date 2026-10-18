@@ -341,7 +341,8 @@
    ],
    "migrations": [
     "0012_native_analytics",
-    "0040_analytics_geography"
+    "0040_analytics_geography",
+    "0065_event_click_ids"
    ]
   },
   "P31": {
@@ -426,6 +427,9 @@
     "ten98_read_attribution",
     "ten98_read_journeys",
     "ten98_read_retention"
+   ],
+   "migrations": [
+    "0065_event_click_ids"
    ]
   },
   "P39": {

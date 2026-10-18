@@ -1,5 +1,6 @@
 import { InputError } from './validation.ts';
 import { toUSVString, types } from 'node:util';
+import { paidAdsClickIds } from '../lib/attribution.ts';
 
 export type PropertyPrimitive = string | number | boolean | null;
 export type NormalizedProperty =
@@ -22,6 +23,7 @@ export type NormalizedDimensions = {
     term?: string;
     content?: string;
   };
+  clickIds?: Partial<Record<typeof paidAdsClickIds[number][0], string>>;
   distinctId?: string;
 };
 
@@ -212,7 +214,24 @@ const campaign = (v: unknown): NonNullable<NormalizedDimensions['campaign']> => 
   return out;
 };
 
-const distinctId = (v: unknown): string => {
+const CLICK_ID_KEYS = new Set<string>(paidAdsClickIds.map(([id]) => id));
+
+// Pinned Umami keeps the value URLSearchParams read (empty included) and truncates it to VarChar(255). Truncating by
+// code point before the JSONB-safety check never splits a surrogate pair, and PostgreSQL varchar counts code points.
+const clickIds = (v: unknown): NonNullable<NormalizedDimensions['clickIds']> => {
+  if (!isPlainObject(v)) bad();
+  const out: Record<string, string> = {};
+  for (const k of dataKeys(v)) {
+    const desc = Object.getOwnPropertyDescriptor(v, k)!;
+    if (!CLICK_ID_KEYS.has(k) || !('value' in desc) || typeof desc.value !== 'string') bad();
+    const value = Array.from(desc.value).slice(0, 255).join('');
+    if (!cleanText(value)) bad();
+    out[k] = value;
+  }
+  return out;
+};
+
+const distinctId =(v: unknown): string => {
   if (typeof v !== 'string' || v.length === 0 || v.length > 256 || !cleanText(v) || CTRL.test(v)) bad();
   return v; // preserved exactly; the collector hashes and drops it before storage
 };
@@ -239,6 +258,9 @@ export function normalizeDimensions(raw: unknown): NormalizedDimensions {
       }
       case 'campaign':
         out.campaign = campaign(v);
+        break;
+      case 'clickIds':
+        out.clickIds = clickIds(v);
         break;
       case 'distinctId':
         out.distinctId = distinctId(v);

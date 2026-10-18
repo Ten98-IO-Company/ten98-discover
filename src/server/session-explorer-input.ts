@@ -18,7 +18,7 @@ export type CanonicalSessionListQuery=SessionPopulationQuery&{visitorKey:string|
 export type SessionListInput={query:CanonicalSessionListQuery;pageSize:number;cursor:Extract<SessionCursor,{route:'list'}>|null};
 export type SessionActivityInput={visitorKey:string;from:string;to:string;timeZone:string;pageSize:number;cursor:Extract<SessionCursor,{route:'activity'}>|null};
 export type LinkedActivityInput=Omit<SessionActivityInput,'cursor'>&{cursor:Extract<SessionCursor,{route:'linked-activity'}>|null};
-export type StoredSessionDimensions=Omit<NormalizedDimensions,'distinctId'>&{origin?:string;environmentVersion?:typeof environmentVersion;browser?:typeof environmentCatalog.browser[number];os?:typeof environmentCatalog.os[number];device?:typeof environmentCatalog.device[number];geography?:GeographyObservation};
+export type StoredSessionDimensions=Omit<NormalizedDimensions,'distinctId'|'clickIds'>&{origin?:string;environmentVersion?:typeof environmentVersion;browser?:typeof environmentCatalog.browser[number];os?:typeof environmentCatalog.os[number];device?:typeof environmentCatalog.device[number];geography?:GeographyObservation};
 export type SessionSelection={status:'available';reason:null;countsAreLowerBounds:boolean}|{status:'unavailable';
   reason:'event_history_unavailable'|'identity_unavailable'|'cohort_membership_unavailable'|'session_property_selection_unavailable';countsAreLowerBounds:false};
 export type SessionRetention={policy:{revision:number;rawAnalyticsDays:number};eventRetainedFrom:string|null;

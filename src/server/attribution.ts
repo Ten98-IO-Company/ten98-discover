@@ -10,7 +10,7 @@ import {retentionCoverage} from './retention.ts';
 import type {SessionReadAuthority} from './session-explorer.ts';
 import {geographyFields,type GeoField} from '../lib/analytics-geography.ts';
 import {journeyStepSchema} from '../lib/journeys.ts';
-import {attributionFields,attributionLimits,attributionMethod,type AttributionModel,type AttributionResult} from '../lib/attribution.ts';
+import {attributionFields,attributionLimits,attributionMethod,paidAdsClickIds,type AttributionModel,type AttributionResult} from '../lib/attribution.ts';
 import {internalNavigationSql,selfReferralSql} from './analytics-dimensions.ts';
 
 const ownNames=['model','conversionKind','conversionValue'];
@@ -65,6 +65,8 @@ export async function projectAttribution(projectId:string,authority:SessionReadA
    converted AS MATERIALIZED(SELECT visitor_id,min(received_at) AS first_conversion_at,max(received_at) AS latest_conversion_at FROM keyed_conversions GROUP BY visitor_id),
    touch_candidates AS MATERIALIZED(SELECT e.id,e.visitor_id,e.received_at,${internalNavigationSql('e')} AS internal,
     CASE WHEN ${selfReferralSql('e')} THEN NULL ELSE NULLIF(${metadata("e.dimensions->'referrerHost'",2048)},'') END AS referrer,
+    -- Only the closed Paid ads label leaves SQL; NULL and an empty identifier both fall through to Not recorded.
+    CASE ${paidAdsClickIds.map(([id,label])=>`WHEN e.${id}<>'' THEN '${label}'`).join(' ')} END AS paid_ads,
     ${['source','medium','campaign','content','term'].map(field=>`${metadata(`CASE WHEN jsonb_typeof(e.dimensions->'campaign')='object' THEN e.dimensions->'campaign'->'${field}' END`,200)} AS campaign_${field}`).join(',')}
     FROM event e JOIN converted c ON c.visitor_id=e.visitor_id JOIN target p ON p.id=e.project_id CROSS JOIN bounds b
     WHERE e.source='browser' AND e.visit_id IS NOT NULL AND e.received_at>=b.start AND e.received_at<b.finish
@@ -76,7 +78,7 @@ export async function projectAttribution(projectId:string,authority:SessionReadA
    selected AS MATERIALIZED(SELECT DISTINCT ON(visitor_id) * FROM touch_ties ORDER BY visitor_id,internal,received_at ${order},id ${order}),
    dimension_fields(field) AS(VALUES ${attributionFields.map(field=>`('${field}')`).join(',')}),
    touch_values AS MATERIALIZED(SELECT field,value FROM selected s CROSS JOIN LATERAL(VALUES
-    ('referrer',s.referrer),('campaignSource',s.campaign_source),('campaignMedium',s.campaign_medium),('campaignName',s.campaign_campaign),('campaignContent',s.campaign_content),('campaignTerm',s.campaign_term))v(field,value)),
+    ('referrer',s.referrer),('paidAds',s.paid_ads),('campaignSource',s.campaign_source),('campaignMedium',s.campaign_medium),('campaignName',s.campaign_campaign),('campaignContent',s.campaign_content),('campaignTerm',s.campaign_term))v(field,value)),
    grouped AS MATERIALIZED(SELECT field,value,count(*) AS credits FROM touch_values WHERE value IS NOT NULL AND value<>'' GROUP BY field,value),
    ranked AS MATERIALIZED(SELECT *,row_number() OVER(PARTITION BY field ORDER BY credits DESC,value COLLATE "C") AS ordinal FROM grouped),
    dimension_reports AS(SELECT f.field,
@@ -117,10 +119,10 @@ export async function projectAttribution(projectId:string,authority:SessionReadA
   if(keyed>events||attributed>converted||converted>keyed||ties>attributed||input.model==='first-click'&&attributed!==converted)throw tooLarge();
   const {groupBy:_,groupProperty:__,...scope}=query,collection={cookieless:count(row.collection.cookieless),consent:count(row.collection.consent),unknown:count(row.collection.unknown)};
   if(collection.cookieless+collection.consent+collection.unknown!==events)throw tooLarge();
-  const result:AttributionResult={version:'native-attribution-v1',projectId,asOf:(row.as_of as Date).toISOString(),range:{from:query.from,to:query.to,timeZone:query.timeZone,start,end},query:{...scope,model:input.model,conversion:input.conversion},method:attributionMethod,coverage,
+  const result:AttributionResult={version:'native-attribution-v2',projectId,asOf:(row.as_of as Date).toISOString(),range:{from:query.from,to:query.to,timeZone:query.timeZone,start,end},query:{...scope,model:input.model,conversion:input.conversion},method:attributionMethod,coverage,
    selection:{status:unavailable?'unavailable':'available',reason,evidenceIncomplete},
    measurement:{conversionEvents:hidden?null:events,keyedConversionEvents:hidden?null:keyed,unkeyedConversionEvents:hidden||sessionProperties&&row.report_candidates.unidentified>0?null:unknown,convertedObservedKeys:unavailable?null:converted,convertingObservedVisits:unavailable?null:count(row.converting_visits),attributedKeys:unavailable?null:attributed,noEarlierTouchKeys:unavailable?null:converted-attributed,touchTimestampTieKeys:unavailable?null:ties,collection:hidden?{cookieless:null,consent:null,unknown:null}:collection},dimensions,
-   paidAds:{status:'unavailable',reason:'native_paid_click_signal_not_recorded'},...(cohort?{cohort}:{}),...(sessionProperties?{sessionProperties}:{}),...(query.predicates?{predicateMethod:advancedPredicateMethod(query.predicates)}:{}),
+   ...(cohort?{cohort}:{}),...(sessionProperties?{sessionProperties}:{}),...(query.predicates?{predicateMethod:advancedPredicateMethod(query.predicates)}:{}),
    ...(geo?{geographyProvenance:hidden?{source:'db-ip-city-lite',scope:'matching-conversion-events',databaseCount:null,oldestDatabaseBuild:null,newestDatabaseBuild:null}:row.geography_provenance}:{})};
   if(Buffer.byteLength(JSON.stringify(result))>attributionLimits.responseBytes)throw tooLarge();
   await client.query('COMMIT');return result;
