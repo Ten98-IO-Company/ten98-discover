@@ -404,7 +404,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
   }
 
   function confirmDiscard(): boolean {
-    if (retryAttempt && !window.confirm('This request may already have saved. Discard the local attempt and reload before starting a new save?')) return false;
+    if (retryAttempt) return window.confirm('This save may already have completed. Discard the local draft? Check saved prompts before trying another save.');
     return !formDirty() || window.confirm('You have unsaved changes. Select OK to discard them, or Cancel to keep editing.');
   }
 
@@ -620,7 +620,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     onAccessLoss={(status, message) => { purge(); if (status === 401) unauthorizedRef.current(); else setErr(message); }}
     onUse={(questions, topic) => {
       setDiscovery(null); closeForm(); setMode('bulk'); setBulkText(questions.join('\n')); setFTopic(topic); setFEnabled(false); setShowCreate(true);
-      setNotice('Review and edit these starter questions, then save. Nothing has been run or sent to a provider.');
+      setNotice('Review the questions, then save. Saving does not run them.');
       returnFocus.current = null; requestAnimationFrame(() => document.getElementById('pl-bulk')?.focus());
     }} />;
   if (execution) return <PromptExecutionsPanel key={execution.generation} workspaceId={workspaceId} projectId={projectId} userId={userId}
@@ -634,7 +634,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
       <div className="row between">
         <div>
           <h2 ref={libraryHeading} tabIndex={-1}>Prompt library</h2>
-          <p className="footnote">Saving prompts does not run them. Choose Review a run, then Recurring prompt tracking. Scheduling requires explicit owner approval. Discover prompts uses local templates; Suggest prompts uses a paid AI model.</p>
+          <p className="footnote">Saved prompts stay idle until you start a run. Template discovery is free; model suggestions use provider credits.</p>
         </div>
         <div className="row">
           {canEdit && <button id="pl-discover-prompts" type="button" className="btn primary" onClick={() => openSuggestions(true)} disabled={busy || loading}>Discover prompts</button>}
