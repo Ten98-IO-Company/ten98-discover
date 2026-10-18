@@ -1,44 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
+import type { Environment, Provider, CanonicalEvent, Destination, Configuration, Consent } from '../server/destinations';
 
-type Environment = 'live' | 'test';
-type Provider =
-  | 'meta'
-  | 'ga4'
-  | 'google_ads'
-  | 'cloudflare'
-  | 'tiktok'
-  | 'linkedin'
-  | 'microsoft_ads'
-  | 'pinterest'
-  | 'snapchat'
-  | 'x';
-type CanonicalEvent =
-  | 'page_view'
-  | 'sign_up'
-  | 'generate_lead'
-  | 'view_item'
-  | 'add_to_cart'
-  | 'begin_checkout'
-  | 'purchase'
-  | 'refund';
-type Owner = 'managed' | 'external';
-
-interface Mapping {
-  event: CanonicalEvent;
-  target?: string;
-}
-interface Destination {
-  provider: Provider;
-  assetId: string;
-  enabled: boolean;
-  owner: Owner;
-  ownershipConfirmed: boolean;
-  mappings: Mapping[];
-}
-interface Configuration {
-  destinations: Destination[];
-}
 interface CatalogEvent {
   event: CanonicalEvent;
   target: string | null;
@@ -74,12 +37,6 @@ interface ManagementDTO {
   } | null;
   history: HistoryEntry[];
   catalog: CatalogEntry[];
-}
-interface Consent {
-  analytics: boolean;
-  advertising: boolean;
-  adUserData: boolean;
-  adPersonalization: boolean;
 }
 type RouteStatus = 'disabled' | 'external' | 'consent_blocked' | 'unsupported' | 'would_invoke';
 interface PreviewRoute {
@@ -604,7 +561,7 @@ function DestinationsInner({
                 value={dest.owner}
                 disabled={busy}
                 onChange={(e) =>
-                  editDestination(dest.provider, (x) => void (x.owner = e.target.value as Owner))
+                  editDestination(dest.provider, (x) => void (x.owner = e.target.value as Destination['owner']))
                 }
               >
                 <option value="managed">Managed by ten98</option>

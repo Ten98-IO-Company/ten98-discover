@@ -7,4 +7,3 @@ export const projectDeleteState=z.object({workspaceId:z.uuid(),projectId:z.uuid(
 export const projectDeleteAck=z.object({workspaceId:z.uuid(),projectId:z.uuid(),requestId:z.uuid(),appliedRevision:revision,deletedAt:z.iso.datetime({precision:6})}).strict();
 export const projectDeleteResult=z.object({workspaceId:z.uuid(),role:z.enum(['owner','admin']),ack:projectDeleteAck,deleted:z.literal(true),replayed:z.boolean()}).strict().refine(value=>value.workspaceId===value.ack.workspaceId);
 export type ProjectDeleteState=z.infer<typeof projectDeleteState>;
-export type ProjectDeleteResult=z.infer<typeof projectDeleteResult>;

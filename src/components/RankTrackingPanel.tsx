@@ -23,7 +23,7 @@ const safeText=(v:unknown,max:number,min=1):v is string=>typeof v==='string'&&v.
 const str=(v:unknown,max:number,min=1):v is string=>safeText(v,max,min)&&!/[\u0000-\u001f\u007f]/.test(v);
 const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const int=(v:unknown,min:number,max:number)=>Number.isInteger(v)&&Number(v)>=min&&Number(v)<=max;
-const iso=(v:unknown):v is string=>typeof v==='string'&&/^[A-Z]{2}$(?![\s\S])/.test(v);
+const iso=(v:unknown):v is string=>typeof v==='string'&&/^[A-Z]{2}$/.test(v);
 function validCoverage(v:unknown):v is RankLocationCoverage{
   if(!object(v)||v.grouping!=='country_iso_code'||!int(v.receivedRows,1,300000)||!int(v.selectableRows,0,v.receivedRows)||!int(v.missingParentRows,0,v.receivedRows)||!Array.isArray(v.unavailableGroups)||v.unavailableGroups.length>300)return false;
   let total=v.selectableRows,previous='';

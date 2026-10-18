@@ -7,9 +7,9 @@ export const domainScopes=['subdomains','domain','subfolder','exact_url'] as con
 export type DomainScope=typeof domainScopes[number];
 export type DomainTarget={target:string;hostname:string;path:string;scope:DomainScope};
 export const domainRankedEndpoint='https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live';
-export const domainReports=['overview_v1','pages_v1','competitors_v1'] as const;
+const domainReports=['overview_v1','pages_v1','competitors_v1'] as const;
 export type DomainReport=typeof domainReports[number];
-export const domainRequestInput=z.object({connectionId:z.uuid(),target:z.string().min(1).max(2048),scope:z.enum(domainScopes),locationCode:z.number().int().min(1).max(2147483647),languageCode:z.string().regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/),limit:z.union([z.literal(1),z.literal(25),z.literal(50),z.literal(100)]),report:z.enum(domainReports).optional()}).strict();
+const domainRequestInput=z.object({connectionId:z.uuid(),target:z.string().min(1).max(2048),scope:z.enum(domainScopes),locationCode:z.number().int().min(1).max(2147483647),languageCode:z.string().regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/),limit:z.union([z.literal(1),z.literal(25),z.literal(50),z.literal(100)]),report:z.enum(domainReports).optional()}).strict();
 export type DomainRequest=z.infer<typeof domainRequestInput>;
 export function domainEndpointName(request:DomainRequest){return request.report==='overview_v1'?'domain_rank_overview':request.report==='pages_v1'?'relevant_pages':request.report==='competitors_v1'?'competitors_domain':'ranked_keywords';}
 export function domainEndpoint(request:DomainRequest){return 'https://api.dataforseo.com/v3/dataforseo_labs/google/'+domainEndpointName(request)+'/live';}

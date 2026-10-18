@@ -29,7 +29,7 @@ export type GoogleProvider = keyof typeof googleScopes;
 export type ReportRow = { dimensions: Record<string, string>; metrics: Record<string, string | null> };
 export type ReportPage = { rows: ReportRow[]; rowCount: number | null; quality: { warnings: string[]; metadata: Record<string, unknown> } };
 export const safeGoogleString = (max: number) => z.string().max(max).refine(value => !value.includes('\0') && toUSVString(value) === value);
-export const googleDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+const googleDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
   const date = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 });
@@ -120,7 +120,7 @@ export function normalizeGoogleCompatibility(report: GoogleReport, value: unknow
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = safeGoogleString(4096);
-const numeric = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$(?![\s\S])/).max(100).refine(value => Number.isFinite(Number(value)));
+const numeric = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/).max(100).refine(value => Number.isFinite(Number(value)));
 function malformed(): never { throw new FoundationError(502, 'Google returned a report that could not be safely interpreted.'); }
 // Provider dimensions/metrics are explicitly selected above. No arbitrary query,
 // source payload or user-level export is persisted or exposed through this adapter.
@@ -146,8 +146,8 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
       const data = z.object({
         dimensionHeaders: z.array(z.object({ name: safeGoogleString(120) })).optional(), metricHeaders: z.array(z.object({ name: safeGoogleString(120) })).optional(),
         rows: z.array(z.object({ dimensionValues: aggregate ? z.array(z.object({ value: text })).default([]) : z.array(z.object({ value: text })), metricValues: z.array(z.object({ value: numeric })) })).max(1000).default([]), rowCount: count.optional(),
-        metadata: z.object({ timeZone: safeGoogleString(120).optional(), currencyCode: z.string().regex(/^[A-Z]{3}$(?![\s\S])/).optional(), emptyReason: safeGoogleString(1000).optional(),
-          dataLossFromOtherRow: z.boolean().optional(), subjectToThresholding: z.boolean().optional(), samplingMetadatas: z.array(z.object({ samplesReadCount: z.string().regex(/^\d+$(?![\s\S])/).max(30), samplingSpaceSize: z.string().regex(/^\d+$(?![\s\S])/).max(30) })).max(5).optional(),
+        metadata: z.object({ timeZone: safeGoogleString(120).optional(), currencyCode: z.string().regex(/^[A-Z]{3}$/).optional(), emptyReason: safeGoogleString(1000).optional(),
+          dataLossFromOtherRow: z.boolean().optional(), subjectToThresholding: z.boolean().optional(), samplingMetadatas: z.array(z.object({ samplesReadCount: z.string().regex(/^\d+$/).max(30), samplingSpaceSize: z.string().regex(/^\d+$/).max(30) })).max(5).optional(),
           schemaRestrictionResponse: z.object({ activeMetricRestrictions: z.array(restriction).max(30).optional() }).optional(),
           dataTruncationReasons: z.array(z.object({ dataTruncationType: safeGoogleString(120).optional(), dataTruncationMessage: safeGoogleString(2048).optional(), dataTruncationDate: googleDate.optional(),
             dataTruncationDateRanges: z.array(z.object({ startDate: googleDate, endDate: googleDate })).max(10).optional() })).max(20).optional(),

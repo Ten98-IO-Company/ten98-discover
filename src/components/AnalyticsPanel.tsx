@@ -12,7 +12,7 @@ import {analyticsDimensions,analyticsSelectionFields,analyticsFieldLimit,type An
 import {emptyAdvanced,readAdvanced,buildAdvanced,clean,focusAdvanced,initialDraft,buildParams,ExactFilterControls,TIMEZONES,patchLocationFilters,type Draft} from './ExplorerFilters';
 import './analytics.css';
 
-export type AnalyticsPanelProps = {
+type AnalyticsPanelProps = {
   projectId: string;
   userId: string;
   onUnauthorized: () => void;

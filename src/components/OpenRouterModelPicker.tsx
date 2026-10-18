@@ -7,8 +7,8 @@ const keys=(v:Record<string,unknown>,names:string[])=>Object.keys(v).length===na
 const text=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length>0&&v.length<=max&&v.trim()===v&&!/[\x00-\x1f\x7f-\x9f\uD800-\uDFFF]/u.test(v);
 const stamp=(v:unknown)=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v)&&Number.isFinite(Date.parse(v));
 const capacity=(v:unknown):v is number=>Number.isSafeInteger(v)&&Number(v)>0&&Number(v)<=2_000_000;
-const decimal=(v:unknown):v is string=>typeof v==='string'&&v.length<=140&&/^(?:0|[1-9]\d*)(?:\.\d+)?$(?![\s\S])/.test(v);
-export function modelUsdMicros(v:unknown,maximum=1_000_000_000_000n):bigint|null{if(typeof v!=='string'||!/^(?:0|[1-9]\d{0,6})\.\d{6}$(?![\s\S])/.test(v))return null;const n=BigInt(v.replace('.',''));return n<=maximum?n:null;}
+const decimal=(v:unknown):v is string=>typeof v==='string'&&v.length<=140&&/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(v);
+export function modelUsdMicros(v:unknown,maximum=1_000_000_000_000n):bigint|null{if(typeof v!=='string'||!/^(?:0|[1-9]\d{0,6})\.\d{6}$/.test(v))return null;const n=BigInt(v.replace('.',''));return n<=maximum?n:null;}
 export function readModelCatalog(v:unknown):OpenRouterCatalog{
  if(!object(v)||!keys(v,['version','status','fetchedAt','revision','complete','models'])||v.version!=='openrouter-text-catalog-v1'||!['fresh','stale','unavailable'].includes(v.status)||typeof v.complete!=='boolean'||!Array.isArray(v.models)||v.models.length>2000)throw Error('The model catalog could not be verified.');
  if(v.status==='unavailable'?(v.fetchedAt!==null||v.revision!==null||v.complete||v.models.length!==0):(!stamp(v.fetchedAt)||typeof v.revision!=='string'||!/^[a-f0-9]{64}$/.test(v.revision)||!v.complete))throw Error('The model catalog state is inconsistent.');

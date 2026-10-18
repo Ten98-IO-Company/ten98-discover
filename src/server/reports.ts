@@ -1,5 +1,4 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
-import {toUSVString} from 'node:util';
 import type {PoolClient} from 'pg';
 import {parse as parseHtml, serialize, type DefaultTreeAdapterTypes as Html} from 'parse5';
 import {z} from 'zod';
@@ -7,6 +6,7 @@ import {FoundationError} from './auth.ts';
 import {getConfig} from './config.ts';
 import {getDatabase} from './db.ts';
 import {readJson} from './validation.ts';
+import {cleanText,text,revision as revisionInput} from './context-input.ts';
 
 const htmlNamespace = 'http://www.w3.org/1999/xhtml';
 const svgNamespace = 'http://www.w3.org/2000/svg';
@@ -24,11 +24,9 @@ function badInput(): never { throw new FoundationError(400, 'Check the report fi
 function input<S extends z.ZodType>(schema: S, value: unknown): z.output<S> { const result=schema.safeParse(value); if (!result.success) badInput(); return result.data; }
 function unavailable(): never { throw new FoundationError(404, 'Report not found or unavailable.'); }
 const idInput=z.uuid();
-const validText=(value:string)=>toUSVString(value)===value&&!value.includes('\0');
-const nameInput=z.string().trim().min(1).max(120).refine(validText);
-const revisionInput=z.number().int().positive().max(2147483646);
+const nameInput=text(120,1);
 const reportInput=z.object({title:nameInput,html:z.string().min(1).max(1048576)}).strict();
-const templateInput=z.object({name:nameInput,brief:z.string().trim().min(1).max(20000).refine(validText)}).strict();
+const templateInput=z.object({name:nameInput,brief:z.string().trim().min(1).max(20000).refine(cleanText)}).strict();
 const cursorInput=z.object({at:z.iso.datetime(),id:idInput}).strict();
 type Role='owner'|'admin'|'editor'|'viewer';
 type PageRow={id:string;createdAt:Date};
@@ -46,7 +44,7 @@ function rasterData(value:string) {
 
 /** Preserve authored source separately. Only this static allowlist is rendered. */
 export function sanitizeReportHtml(source:string):string {
-  if (typeof source!=='string' || !source.trim() || Buffer.byteLength(source)>1048576 || !validText(source)) badInput();
+  if (typeof source!=='string' || !source.trim() || Buffer.byteLength(source)>1048576 || !cleanText(source)) badInput();
   const document=parseHtml(source,{scriptingEnabled:false});
   const pending:Array<{node:Html.ParentNode;depth:number}>=[{node:document,depth:0}];
   let count=0;

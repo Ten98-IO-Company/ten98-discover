@@ -75,7 +75,7 @@ type View={owner:number;role:TrackedAssetRole;items:TrackedAssetItem[];nextCurso
 
 export function TrackedAssetsPanel(props:Props){return <TrackedAssetsInner key={props.userId+':'+props.workspaceId} {...props}/>;}
 function TrackedAssetsInner(props:Props){
- const {workspaceId,userId,kind,appUrl,query='',readOwner='',readEnabled=true,onNavigate,onUnauthorized}=props,base='/api/workspaces/'+workspaceId+'/tracked-assets';
+ const {workspaceId,kind,appUrl,query='',readOwner='',readEnabled=true,onNavigate}=props,base='/api/workspaces/'+workspaceId+'/tracked-assets';
  const [fallback]=useState(defaultScope),parsed=useMemo(()=>{try{return navigation(query,fallback);}catch{return null;}},[query,fallback]),signature=JSON.stringify([kind,query,readOwner,readEnabled,props.role]);
  const ownership=useRef({signature,version:0});if(ownership.current.signature!==signature)ownership.current={signature,version:ownership.current.version+1};const owner=ownership.current.version;
  const [view,setView]=useState<View|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[draft,setDraft]=useState<TrackedAssetFields>(()=>emptyFields(kind)),[scopeDraft,setScopeDraft]=useState(fallback),[pending,setPending]=useState<Pending|null>(null),[saving,setSaving]=useState(false),[confirmDelete,setConfirmDelete]=useState(false),[copied,setCopied]=useState(''),[shareLabel,setShareLabel]=useState('Shared report'),[shareExpiry,setShareExpiry]=useState(()=>new Date(Date.now()+7*864e5).toISOString().slice(0,16)),[shareSections,setShareSections]=useState<typeof trackedShareSections[number][]>([...trackedShareSections]),[createdShare,setCreatedShare]=useState<{id:string;assetId:string;kind:Kind;url:string}|null>(null);

@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, timestamp, integer, bigint, primaryKey, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, timestamp, integer, bigint, uuid } from 'drizzle-orm/pg-core';
 
 export const user = pgTable('user', {
   id: text('id').primaryKey(), name: text('name').notNull(), email: text('email').notNull().unique(),
@@ -25,5 +25,3 @@ export const twoFactor = pgTable('twoFactor', {
   failedVerificationCount: integer('failedVerificationCount').notNull().default(0), lockedUntil: timestamp('lockedUntil', { withTimezone: true }),
 });
 export const rateLimit = pgTable('rateLimit', { id: text('id').primaryKey(), key: text('key').notNull().unique(), count: integer('count').notNull(), lastRequest: bigint('lastRequest', { mode: 'number' }).notNull() });
-export const workspace = pgTable('workspace', { id: text('id').primaryKey(), name: text('name').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow() });
-export const membership = pgTable('membership', { workspaceId: text('workspace_id').notNull().references(() => workspace.id), userId: text('user_id').notNull().references(() => user.id), role: text('role').notNull() }, table => [primaryKey({ columns: [table.workspaceId, table.userId] })]);

@@ -1,11 +1,11 @@
 import type * as React from 'react';
 
-export type RankReportingDevice='desktop'|'mobile';
-export type RankMatrixFilters={device:RankReportingDevice;search:string;pinned:'all'|'true'|'false';runLimit:number};
-export type RankDistributionGroupDisplay={id:string;title:string;denominator:string;observedCoverage:string;top100Comparable:string;counts:readonly {id:string;label:string;value:string}[]};
-export type RankMatrixColumnDisplay={id:string;startedAt:string;utc:string;status:string;method:string;trigger:string;target:string;compatibility:string};
-export type RankMatrixCellDisplay={runId:string;state:string;position:string;change:string;coverage:string;observedAt:string;retrievedAt:string;availability:string};
-export type RankMatrixRowDisplay={id:string;keyword:string;caseRule:string;pinned:boolean;cells:readonly RankMatrixCellDisplay[]};
+type RankReportingDevice='desktop'|'mobile';
+type RankMatrixFilters={device:RankReportingDevice;search:string;pinned:'all'|'true'|'false';runLimit:number};
+type RankDistributionGroupDisplay={id:string;title:string;denominator:string;observedCoverage:string;top100Comparable:string;counts:readonly {id:string;label:string;value:string}[]};
+type RankMatrixColumnDisplay={id:string;startedAt:string;utc:string;status:string;method:string;trigger:string;target:string;compatibility:string};
+type RankMatrixCellDisplay={runId:string;state:string;position:string;change:string;coverage:string;observedAt:string;retrievedAt:string;availability:string};
+type RankMatrixRowDisplay={id:string;keyword:string;caseRule:string;pinned:boolean;cells:readonly RankMatrixCellDisplay[]};
 export type RankReportingViewProps={
  prefix:string;role:'owner'|'admin'|'editor'|'viewer'|null;mode:'distribution'|'matrix';
  loaded:boolean;reading:boolean;exporting:boolean;error:string;notice:string;

@@ -72,13 +72,12 @@ function hasExactKeys(o:Record<string,unknown>, keys:readonly string[]): boolean
 }
 // Literal U+FFFD is well-formed; lone surrogates are not.
 function wellFormed(s:string): boolean { return toUSVString(s) === s; }
-function codepoints(s:string): number { let n = 0; for (const _c of s) n++; return n; }
 
 function validQueryString(v:unknown): v is string {
   return typeof v === 'string' && wellFormed(v) && !QUERY_BAD_CONTROL.test(v);
 }
 function checkQueryCapacity(s:string): void {
-  if (s.length > MAX_QUERY_UNITS || codepoints(s) > MAX_QUERY_CODEPOINTS) fail();
+  if (s.length > MAX_QUERY_UNITS || [...s].length > MAX_QUERY_CODEPOINTS) fail();
 }
 function validAnswerText(v:unknown): v is string {
   return typeof v === 'string' && wellFormed(v) && !ANSWER_BAD_CONTROL.test(v);
@@ -220,12 +219,10 @@ function checkAnswerField(a:unknown): SearchAnswer {
   return {state:s, text:t, basis:b};
 }
 
-function checkEvidence(ev:unknown): SearchEvidence {
+export function readSearchEvidence(ev:unknown): SearchEvidence {
   if (!isRecord(ev) || !hasExactKeys(ev, ['version', 'answer', 'queries']) || ev.version !== searchEvidenceVersion) fail();
   return {version:searchEvidenceVersion, answer:checkAnswerField(ev.answer), queries:checkQueriesField(ev.queries)};
 }
-
-export function readSearchEvidence(raw:unknown):SearchEvidence{return checkEvidence(raw);}
 
 export function deriveSearchQueries(input:{
  evidence:SearchEvidence;
@@ -239,7 +236,7 @@ export function deriveSearchQueries(input:{
   const prompt = input.capturedPrompt;
   if (typeof prompt !== 'string' || prompt.trim() === '' || prompt.length > MAX_PROMPT_UNITS
       || !wellFormed(prompt) || prompt.includes('\u0000')) fail(); // validated even without queries
-  const ev = checkEvidence(input.evidence); // retained normalized JSON re-validated
+  const ev = readSearchEvidence(input.evidence); // retained normalized JSON re-validated
 
   // One match per execution on the answer axis, never per query; validates subjects/method even at ''.
   const ans = ev.answer;

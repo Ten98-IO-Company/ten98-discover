@@ -8,7 +8,7 @@ export const journeysLimits=Object.freeze({steps:7,paths:100,queryCharacters:655
 const clean=(value:string)=>!/[\u0000\ud800-\udfff]/u.test(value);
 export const journeyStepSchema=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('pageview'),value:z.string().min(1).max(2048).refine(value=>clean(value)&&value.startsWith('/')&&!/[?#]/.test(value))}).strict(),
- z.object({kind:z.literal('custom'),value:z.string().regex(/^[A-Za-z][A-Za-z0-9_.:-]{0,63}$(?![\s\S])/).refine(value=>value!=='page_view')}).strict(),
+ z.object({kind:z.literal('custom'),value:z.string().regex(/^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/).refine(value=>value!=='page_view')}).strict(),
 ]);
 export type JourneyStep=z.infer<typeof journeyStepSchema>;
 export type JourneysQuery=Omit<ReturnType<typeof explorerQuery>,'groupBy'|'groupProperty'>&{steps:number;start:JourneyStep|null;end:JourneyStep|null};

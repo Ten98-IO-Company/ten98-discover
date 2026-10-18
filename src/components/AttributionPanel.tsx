@@ -18,7 +18,7 @@ function draftFrom(query:string|undefined):AttributionDraft|null{
  if(['from','to','timeZone'].some(key=>!p.has(key)))return null;const nav=sessionNavigation(Object.fromEntries(['from','to','timeZone'].map(key=>[key,p.get(key)])));if(nav.sessionInvalid||!nav.from)return null;base.scope={...base.scope,from:nav.from,to:nav.to!,timeZone:nav.timeZone!};
  const model=p.get('model')??'first-click';if(model!=='first-click'&&model!=='last-click')return null;base.model=model;
  const conversion=journeyStepSchema.safeParse({kind:p.get('conversionKind'),value:p.get('conversionValue')});if(!conversion.success)return null;base.conversionKind=conversion.data.kind;base.conversionValue=conversion.data.value;
- if(p.has('cohortId')||p.has('cohortRevision')){const id=p.get('cohortId'),revision=p.get('cohortRevision')??'';if(!z.uuid().safeParse(id).success||!/^[1-9][0-9]{0,9}$(?![\s\S])/.test(revision)||Number(revision)>2147483647)return null;base.cohort={id:id!,revision:Number(revision)};}
+ if(p.has('cohortId')||p.has('cohortRevision')){const id=p.get('cohortId'),revision=p.get('cohortRevision')??'';if(!z.uuid().safeParse(id).success||!/^[1-9][0-9]{0,9}$/.test(revision)||Number(revision)>2147483647)return null;base.cohort={id:id!,revision:Number(revision)};}
  for(const key of ['from','to','timeZone','model','conversionKind','conversionValue','cohortId','cohortRevision'])p.delete(key);if(!p.has('kind'))p.set('kind','all');const filters=savedPredicates(p.toString());if(!filters)return null;base.scope={...base.scope,...filters};return base;
 }
 function paramsFrom(draft:AttributionDraft):{qs:string}|{error:string}{

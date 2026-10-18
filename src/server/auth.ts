@@ -110,13 +110,7 @@ const claimInput = z.object({
     .default('My workspace'),
 }).strict()
 
-export async function claimInstallation(input: {
-  token: string
-  name: string
-  email: string
-  password: string
-  workspaceName: string
-}): Promise<void> {
+export async function claimInstallation(input: z.input<typeof claimInput>): Promise<void> {
   const result = claimInput.safeParse(input)
   if (!result.success) {
     throw new FoundationError(400, 'Check your setup details. Use a valid email and a password between 12 and 128 characters.')

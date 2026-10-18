@@ -4,7 +4,7 @@ import {usdText} from './ai-search.ts';
 import {openRouterModelId,openRouterProviderName,openRouterProviderTag,openRouterRouteIdentity,openRouterTextProfile} from './openrouter-models.ts';
 
 export const contentSupportContract={purpose:'website-content-support',promptVersion:'closed-corpus-support-v1',schemaVersion:1,method:'closed-corpus-model-judgment-v1',derivationVersion:'immutable-prompt-trim-lower-v1'} as const;
-const uuid=z.uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/),unique=(v:unknown[])=>new Set(v).size===v.length;
+const uuid=z.uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/),unique=(v:unknown[])=>new Set(v).size===v.length;
 const exact=(max:number,min=0)=>z.string().min(min).max(max).refine(v=>!/[\p{Cs}\u0000]/u.test(v));
 const micros=(v:string)=>{const [whole,fraction='']=v.split('.');return BigInt(whole)*1_000_000n+BigInt(fraction.padEnd(6,'0'));};
 // Reuse the existing client-side money grammar, then bound/require positivity.
@@ -25,9 +25,9 @@ export const contentSupportActionInputSchema=z.object({requestId:uuid}).strict()
 export const contentSupportExportInputSchema=z.object({expectedPayloadHash:hash,expectedResultHash:hash,expectedQueryReceiptHash:hash,expectedCorpusReceiptHash:hash}).strict();
 export type ContentSupportQuoteInput=z.infer<typeof contentSupportQuoteInputSchema>;
 
-const capacity=z.number().int().positive().max(2_000_000),price=z.string().max(140).regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$(?![\s\S])/);
+const capacity=z.number().int().positive().max(2_000_000),price=z.string().max(140).regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/);
 export const contentSupportRouteSchema=z.object({model,tag:z.string().refine(openRouterProviderTag),providerName:z.string().refine(openRouterProviderName),profile:z.literal(openRouterTextProfile),
- contextLength:capacity,promptCapacity:capacity,completionCapacity:capacity,promptPrice:price,completionPrice:price,requestPrice:price,estimateMicros:z.string().regex(/^[1-9]\d{0,12}$(?![\s\S])/),
+ contextLength:capacity,promptCapacity:capacity,completionCapacity:capacity,promptPrice:price,completionPrice:price,requestPrice:price,estimateMicros:z.string().regex(/^[1-9]\d{0,12}$/),
 }).strict().refine(v=>openRouterRouteIdentity(v)&&v.completionCapacity>=2048&&v.contextLength>2048);
 export const contentSupportDependenciesSchema=z.array(z.discriminatedUnion('kind',[
  z.object({kind:z.literal('query'),captureId:uuid,quoteId:uuid,quoteCreatedAt:stamp,inputHash:hash,inputFingerprint:hash,resultHash:hash}).strict(),
@@ -49,7 +49,7 @@ export const contentSupportQuoteDtoSchema=z.object({version:z.literal('ai-conten
  if(q.input&&q.selection&&(q.input.model!==q.route.model||q.input.expectedQueryReceiptHash!==q.queryReceiptHash||q.input.expectedCorpusReceiptHash!==q.corpusReceiptHash||JSON.stringify(q.input.selectedQueryIds)!==JSON.stringify(q.selection.queries.map(r=>r.id))||JSON.stringify(q.input.selectedPageIds)!==JSON.stringify(q.selection.pages.map(r=>r.id))||q.selection.pages.some(p=>p.auditRunId!==q.input!.source.selection.auditRunId)))fail();
 });
 export const contentSupportRunDtoSchema=z.object({version:z.literal('ai-content-support-run-v1'),role,projectId:uuid,run:z.object({...versions,id:uuid,quoteId:uuid,requestId:uuid,inputHash:hash,payloadHash:hash,queryReceiptHash:hash,corpusReceiptHash:hash,resultHash:hash.nullable(),route:contentSupportRouteSchema,status:z.enum(['queued','running','completed','failed','uncertain','cancelled']),chargeStatus:z.enum(['reserved','dispatched','settled','uncertain','cancelled']),
- estimateUsd:positiveMoney,actualUsd:money.nullable(),createdAt:stamp,dispatchedAt:stamp.nullable(),completedAt:stamp.nullable(),generationId:z.string().regex(/^gen-[0-9A-Za-z-]{1,124}$(?![\s\S])/).nullable(),diagnostic:exact(1000).nullable(),inputExpired:z.boolean(),resultExpired:z.boolean(),selection:contentSupportSelectionSchema.nullable(),proposal:contentSupportProposalSchema.nullable(),canCancel:z.boolean(),canReconcile:z.boolean(),
+ estimateUsd:positiveMoney,actualUsd:money.nullable(),createdAt:stamp,dispatchedAt:stamp.nullable(),completedAt:stamp.nullable(),generationId:z.string().regex(/^gen-[0-9A-Za-z-]{1,124}$/).nullable(),diagnostic:exact(1000).nullable(),inputExpired:z.boolean(),resultExpired:z.boolean(),selection:contentSupportSelectionSchema.nullable(),proposal:contentSupportProposalSchema.nullable(),canCancel:z.boolean(),canReconcile:z.boolean(),
 }).strict()}).strict().superRefine(({role,run:r},ctx)=>{
  const fail=()=>ctx.addIssue({code:'custom',message:'Inconsistent content-support run.'});
  if((r.chargeStatus==='settled')!==(r.actualUsd!==null)||r.inputExpired!==(r.selection===null)||r.inputExpired&&!r.resultExpired||r.resultExpired&&(r.proposal!==null||r.resultHash!==null)||(r.proposal!==null)!==(r.resultHash!==null)||r.proposal!==null&&(r.status!=='completed'||r.chargeStatus!=='settled')||(r.status==='completed'&&!r.resultExpired&&r.proposal===null))fail();

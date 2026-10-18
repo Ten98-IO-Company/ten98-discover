@@ -37,7 +37,6 @@ export const googleInspectionResponse=z.object({inspectionResult:z.object({
   mobileUsabilityResult:z.object({verdict,issues:z.array(z.object({issueType:state.optional(),severity:state.optional(),message:text.optional()})).max(1000).optional()}).optional(),
   richResultsResult:z.object({verdict,detectedItems:z.array(z.object({richResultType:text.optional(),items:z.array(z.object({name:text.optional(),issues:z.array(issue).max(1000).optional()})).max(1000).optional()})).max(1000).optional()}).optional(),
 })});
-export type GoogleInspectionResult=z.output<typeof googleInspectionResponse>['inspectionResult'];
 
 export const googleInspectionBatch=z.strictObject({
   projectId:z.uuid(),connectionId:z.uuid(),revision:z.number().int().positive(),propertyId:safeGoogleString(2048).min(1),languageCode:safeGoogleString(80).min(1),

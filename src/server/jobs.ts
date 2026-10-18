@@ -22,6 +22,7 @@ import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} fr
 import {claimDueRankOccurrence} from './rank-recurring.ts';
 import {claimDuePromptOccurrence} from './prompt-recurring.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
+const reconcilers = [reconcileKeywordJobs, reconcileDomainResearchJobs, reconcileRankJobs, reconcilePromptExecutionJobs, reconcileAiSuggestionJobs, reconcileAiSearchJobs, reconcileContentSupportJobs, reconcileDomainRedirectChecks];
 
 const queueName = 'setup-probe';
 let bossPromise: Promise<PgBoss> | undefined;
@@ -41,18 +42,7 @@ export function getBoss(): Promise<PgBoss> {
     bossPromise = (async () => {
       try {
         await boss.start();
-        await boss.createQueue(queueName);
-        await boss.createQueue(googleQueue);
-        await boss.createQueue(keywordQueue);
-        await boss.createQueue(domainResearchQueue);
-        await boss.createQueue(promptExecutionQueue);
-        await boss.createQueue(suggestionQueue);
-        await boss.createQueue(aiSearchQueue);
-        await boss.createQueue(contentSupportQueue);
-        await boss.createQueue(domainRedirectQueue);
-        await boss.createQueue(siteAuditQueue);
-        await boss.createQueue(rankQueue);
-        await boss.createQueue(rankPollQueue);
+        for (const name of [queueName, googleQueue, keywordQueue, domainResearchQueue, promptExecutionQueue, suggestionQueue, aiSearchQueue, contentSupportQueue, domainRedirectQueue, siteAuditQueue, rankQueue, rankPollQueue]) await boss.createQueue(name);
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -127,14 +117,7 @@ async function heartbeat() {
   if (!await boss.getQueue(queueName)) throw new Error('Worker queue is unavailable');
   await reconcileProbes();
   await reconcileGoogleImports();
-  await reconcileKeywordJobs();
-  await reconcileDomainResearchJobs();
-  await reconcileRankJobs();
-  await reconcilePromptExecutionJobs();
-  await reconcileAiSuggestionJobs();
-  await reconcileAiSearchJobs();
-  await reconcileContentSupportJobs();
-  await reconcileDomainRedirectChecks();
+  for (const reconcile of reconcilers) await reconcile();
   await reconcileSiteAudits();
   // ponytail: one worker health row covers the single-worker Compose profile; use instance IDs before scaling workers.
   return getDatabase().pool.query(
@@ -147,14 +130,7 @@ export function startWorker(): Promise<void> {
   if (!workerPromise) workerPromise = (async () => {
     try {
       const boss = await getBoss();
-      await reconcileKeywordJobs();
-      await reconcileDomainResearchJobs();
-      await reconcileRankJobs();
-      await reconcilePromptExecutionJobs();
-      await reconcileAiSuggestionJobs();
-      await reconcileAiSearchJobs();
-      await reconcileContentSupportJobs();
-      await reconcileDomainRedirectChecks();
+      for (const reconcile of reconcilers) await reconcile();
       await boss.work<{ probeId: string }>(queueName, { batchSize: 5 }, async (jobs) => {
         for (const job of jobs) {
           if (typeof job.data?.probeId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(job.data.probeId)) {

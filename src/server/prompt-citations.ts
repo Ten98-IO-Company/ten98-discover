@@ -41,7 +41,7 @@ const label='Retained citation observations classified using current project con
 const changesKinds=['newly_observed','fewer_citations','not_observed_now','annotation_title_changed'] as const;
 const filterKeys=['from','to','timeZone','model','promptId','tag','urlGrouping','query','publisherCategory','pageType','sourceType','ownership','entityId'];
 const navigationKeys=['view','period','urlId','domainId','changeKind','cursor'];
-const hex=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/);
+const hex=z.string().regex(/^[a-f0-9]{64}$/);
 const bad=()=>new FoundationError(400,'Check the citation filters and try again.');
 const changed=()=>new FoundationError(409,'The citation evidence or current context changed. Reload the report.');
 const cap=()=>new FoundationError(413,'Narrow the date range. This citation report exceeds its analysis capacity.');
@@ -144,7 +144,7 @@ async function select(client:PoolClient,p:ContentProject,filters:CitationFilters
 }
 const cursorSchema=z.object({scope:hex,revision:hex,offset:z.number().int().min(1).max(400000)}).strict();
 function offset(raw:string|null,scope:string,revision:string){if(raw===null)return 0;let value:unknown;
- try{if(!raw||raw.length>512||!/^[A-Za-z0-9_-]+$(?![\s\S])/.test(raw))throw bad();value=JSON.parse(Buffer.from(raw,'base64url').toString('utf8'));}catch{throw bad();}
+ try{if(!raw||raw.length>512||!/^[A-Za-z0-9_-]+$/.test(raw))throw bad();value=JSON.parse(Buffer.from(raw,'base64url').toString('utf8'));}catch{throw bad();}
  const parsed=cursorSchema.safeParse(value);if(!parsed.success||parsed.data.scope!==scope)throw bad();if(parsed.data.revision!==revision)throw changed();return parsed.data.offset;}
 const part=(rows:CitationEvidence[]):Part=>({count:count(rows),axes:axes(rows)});
 export async function getPromptCitations(projectId:string,userId:string,params=new URLSearchParams(),signal?:AbortSignal):Promise<CitationReport>{

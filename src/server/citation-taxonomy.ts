@@ -1,10 +1,6 @@
 // Adapted from Elmo 3c673d0253d01ae030fa41519f62ad7e54f2281b / apps/web/src/lib/domain-categories.ts
 // Copyright (c) 2026 Blue Whale Software, LLC. MIT; see THIRD_PARTY_NOTICES.md.
 // Kept server-only in ten98-monitor; upstream provenance comments are retained.
-// Client-safe citation taxonomy: types, display config, and lightweight URL
-// helpers. The heavy domain lists + `categorizeDomain` live in
-// `domain-categories.server.ts` (server-only) so the ~25k-entry editorial list
-// never ships in the browser bundle.
 
 export type CitationCategory =
 	| "brand"
@@ -18,28 +14,6 @@ export type CitationCategory =
 	| "reference"
 	| "institutional"
 	| "other";
-
-/**
- * Ordered source of truth for citation source categories. Display order, chart
- * band order, tab order, and total accumulators are all derived from this — add
- * or reorder a category here and the rest follows.
- */
-export const CITATION_CATEGORIES: CitationCategory[] = [
-	"brand",
-	"competitor",
-	"editorial",
-	"reviews",
-	"ecommerce",
-	"social",
-	"developer",
-	"pr",
-	"reference",
-	"institutional",
-	"other",
-];
-
-export const emptyCategoryCounts = (): Record<CitationCategory, number> =>
-	Object.fromEntries(CITATION_CATEGORIES.map((c) => [c, 0])) as Record<CitationCategory, number>;
 
 /**
  * Page-type axis — orthogonal to the source category. Inferred from the URL path
@@ -61,75 +35,6 @@ export type CitationPageType =
 	| "search"
 	| "shopping"
 	| "other";
-
-export const CITATION_PAGE_TYPES: CitationPageType[] = [
-	"homepage",
-	"article",
-	"listicle",
-	"howto",
-	"comparison",
-	"review",
-	"forum",
-	"video",
-	"doc",
-	"product",
-	"info",
-	"search",
-	"shopping",
-	"other",
-];
-
-export const emptyPageTypeCounts = (): Record<CitationPageType, number> =>
-	Object.fromEntries(CITATION_PAGE_TYPES.map((p) => [p, 0])) as Record<CitationPageType, number>;
-
-export function extractDomain(urlOrDomain: string): string {
-	try {
-		const cleaned = urlOrDomain.replace(/^https?:\/\//, "");
-		const withoutWww = cleaned.replace(/^www\./, "");
-		return withoutWww.split("/")[0].toLowerCase();
-	} catch {
-		return urlOrDomain.toLowerCase();
-	}
-}
-
-const DOMAIN_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
-
-/**
- * Clean and validate a user-entered domain string.
- * Strips protocols, www prefix, and trailing paths. Returns the cleaned domain
- * if valid, or null if the input doesn't look like a valid domain.
- */
-export function cleanAndValidateDomain(input: string): string | null {
-	const cleaned = extractDomain(input.trim());
-	if (!cleaned || !DOMAIN_REGEX.test(cleaned)) return null;
-	return cleaned;
-}
-
-export function dedupeDomains(values: string[]): string[] {
-	const out: string[] = [];
-	const seen = new Set<string>();
-	for (const v of values) {
-		const cleaned = cleanAndValidateDomain(v);
-		if (!cleaned || seen.has(cleaned)) continue;
-		seen.add(cleaned);
-		out.push(cleaned);
-	}
-	return out;
-}
-
-export function dedupeAliases(values: string[]): string[] {
-	const out: string[] = [];
-	const seen = new Set<string>();
-	for (const v of values) {
-		const trimmed = v.trim();
-		if (!trimmed) continue;
-		const key = trimmed.toLowerCase();
-		if (seen.has(key)) continue;
-		seen.add(key);
-		out.push(trimmed);
-	}
-	return out;
-}
 
 export function normalizeUrl(url: string): string {
 	try {
@@ -211,11 +116,6 @@ export function isGoogleRedirectUrl(url: string): boolean {
 	} catch {
 		return false;
 	}
-}
-
-/** Any Google search/shopping surface pulled out of the source-mix donut. */
-export function isGoogleSurfaceUrl(url: string): boolean {
-	return isGoogleShoppingUrl(url) || isGoogleSearchUrl(url) || isGoogleRedirectUrl(url);
 }
 
 export function parseGoogleProductName(url: string, title?: string | null): string | null {
@@ -545,115 +445,3 @@ export function resolvePageType(
 	if (pt === "other" && CONTENT_PUBLISHER_CATEGORIES.has(category)) return "article";
 	return pt;
 }
-
-/**
- * Round category counts to percentages that always sum to exactly 100.
- * Uses largest-remainder method to distribute rounding residuals.
- */
-export function toRoundedPercentages(counts: Record<string, number>): Record<string, number> {
-	const entries = Object.entries(counts);
-	const total = entries.reduce((s, [, v]) => s + v, 0);
-	if (total === 0) return Object.fromEntries(entries.map(([k]) => [k, 0]));
-
-	const raw = entries.map(([k, v]) => ({ key: k, exact: (v / total) * 100 }));
-	const floored = raw.map((r) => ({ ...r, floor: Math.floor(r.exact) }));
-	let remainder = 100 - floored.reduce((s, r) => s + r.floor, 0);
-
-	// Distribute remaining points to entries with largest fractional parts
-	floored.sort((a, b) => b.exact - b.floor - (a.exact - a.floor));
-	for (const entry of floored) {
-		if (remainder <= 0) break;
-		entry.floor += 1;
-		remainder -= 1;
-	}
-
-	return Object.fromEntries(floored.map((r) => [r.key, r.floor]));
-}
-
-export const CATEGORY_CONFIG: Record<
-	CitationCategory,
-	{ label: string; chartColor: string; badgeClass: string; chartDotClass: string }
-> = {
-	brand: {
-		label: "Brand",
-		chartColor: "#2563eb",
-		badgeClass: "bg-blue-600/90 text-white",
-		chartDotClass: "bg-blue-600",
-	},
-	competitor: {
-		label: "Competitor",
-		chartColor: "#ef4444",
-		badgeClass: "bg-red-500/90 text-white",
-		chartDotClass: "bg-red-500",
-	},
-	editorial: {
-		label: "Editorial",
-		chartColor: "#a463f2",
-		badgeClass: "bg-purple-500/90 text-white",
-		chartDotClass: "bg-purple-500",
-	},
-	reviews: {
-		label: "Reviews",
-		chartColor: "#efb118",
-		badgeClass: "bg-amber-500/90 text-white",
-		chartDotClass: "bg-amber-500",
-	},
-	ecommerce: {
-		label: "Ecommerce",
-		chartColor: "#36b39a",
-		badgeClass: "bg-teal-500/90 text-white",
-		chartDotClass: "bg-teal-500",
-	},
-	social: {
-		label: "Social",
-		chartColor: "#ff8ab7",
-		badgeClass: "bg-pink-400/90 text-white",
-		chartDotClass: "bg-pink-400",
-	},
-	developer: {
-		label: "Developer",
-		chartColor: "#3ca951",
-		badgeClass: "bg-green-600/90 text-white",
-		chartDotClass: "bg-green-600",
-	},
-	pr: { label: "PR", chartColor: "#f58518", badgeClass: "bg-orange-500/90 text-white", chartDotClass: "bg-orange-500" },
-	reference: {
-		label: "Reference",
-		chartColor: "#b279a2",
-		badgeClass: "bg-fuchsia-500/90 text-white",
-		chartDotClass: "bg-fuchsia-500",
-	},
-	institutional: {
-		label: "Institutional",
-		chartColor: "#79a8e8",
-		badgeClass: "bg-sky-500/90 text-white",
-		chartDotClass: "bg-sky-500",
-	},
-	other: {
-		label: "Other",
-		chartColor: "#9498a0",
-		badgeClass: "bg-slate-400/90 text-white",
-		chartDotClass: "bg-slate-400",
-	},
-};
-
-export const DOMAIN_CATEGORY_COLORS: Record<string, string> = Object.fromEntries(
-	CITATION_CATEGORIES.map((c) => [c, CATEGORY_CONFIG[c].chartColor]),
-);
-
-export const PAGE_TYPE_CONFIG: Record<CitationPageType, { label: string; chartColor: string }> = {
-	homepage: { label: "Homepage", chartColor: "#79a8e8" },
-	article: { label: "Article", chartColor: "#2563eb" },
-	listicle: { label: "Listicle", chartColor: "#36b39a" },
-	howto: { label: "Guide", chartColor: "#a463f2" },
-	comparison: { label: "Comparison", chartColor: "#f58518" },
-	review: { label: "Review", chartColor: "#ff8ab7" },
-	forum: { label: "Forum", chartColor: "#11a8cd" },
-	video: { label: "Video", chartColor: "#ef4444" },
-	doc: { label: "Docs", chartColor: "#b279a2" },
-	product: { label: "Storefront", chartColor: "#3ca951" },
-	info: { label: "Info", chartColor: "#efb118" },
-	search: { label: "Search", chartColor: "#b6992d" },
-	shopping: { label: "Shopping", chartColor: "#9c6b4e" },
-	other: { label: "Other", chartColor: "#9498a0" },
-};

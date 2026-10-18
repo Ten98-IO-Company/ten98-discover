@@ -8,7 +8,7 @@ export type SavedKeywordFilterDraft = {
   sort: 'createdAt' | 'keyword' | 'searchVolume' | 'cpcUsd' | 'competition' | 'keywordDifficulty' | 'fetchedAt';
   order: 'asc' | 'desc';
 };
-export type SavedKeywordTagOption = { id: string; name: string; color: string | null };
+type SavedKeywordTagOption = { id: string; name: string; color: string | null };
 export const emptySavedKeywordFilters: () => SavedKeywordFilterDraft = () => ({
   search: '', includeTerms: '', excludeTerms: '', locationCode: '', languageCode: '',
   tagIds: [], minVolume: '', maxVolume: '', minCpcUsd: '', maxCpcUsd: '',

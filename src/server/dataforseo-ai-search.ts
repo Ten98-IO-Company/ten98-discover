@@ -9,7 +9,7 @@ const own=(o:Record<string,unknown>,key:string)=>Object.hasOwn(o,key);
 const object=(v:unknown):v is Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 function dense(v:unknown):v is unknown[]{if(!Array.isArray(v))return false;for(let i=0;i<v.length;i++)if(!Object.hasOwn(v,i))return false;return true;}
 function invalid():never{throw new Error('DataForSEO search evidence is unavailable.');}
-const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$(?![\s\S])/.test(v);
+const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(v);
 const pathFor=(url:string)=>new URL(url).pathname.slice(1).split('/');
 function pathMatches(value:unknown,url:string){const expected=pathFor(url);return dense(value)&&value.length===expected.length&&value.every((v,i)=>v===expected[i]);}
 function envelope(response:DataforseoResponse,url:string){
@@ -27,14 +27,14 @@ export function parseAiSearchCountries(response:DataforseoResponse):AiSearchCoun
   if(!object(row)||!own(row,'location_type')||!validText(row.location_type,80)||!own(row,'location_code')||!Number.isSafeInteger(row.location_code)||Number(row.location_code)<1||Number(row.location_code)>2_147_483_647||!own(row,'location_name')||!validText(row.location_name,200))invalid();
   if(ids.has(row.location_code as number))invalid();ids.add(row.location_code as number);
   if(row.location_type!=='Country')continue;
-  if(!own(row,'country_iso_code')||typeof row.country_iso_code!=='string'||!/^[A-Z]{2}$(?![\s\S])/.test(row.country_iso_code)||codes.has(row.country_iso_code))invalid();
+  if(!own(row,'country_iso_code')||typeof row.country_iso_code!=='string'||!/^[A-Z]{2}$/.test(row.country_iso_code)||codes.has(row.country_iso_code))invalid();
   codes.add(row.country_iso_code);countries.push({code:row.location_code as number,name:row.location_name,countryCode:row.country_iso_code});
  }
  if(countries.length===0||countries.length>300)invalid();return countries.sort((a,b)=>a.code-b.code);
 }
 export function parseAiSearchLanguages(response:DataforseoResponse):AiSearchLanguage[]{
  const rows=resultRows(response,aiSearchEndpoints.languages,1000),seen=new Set<string>(),languages:AiSearchLanguage[]=[];
- for(const row of rows){if(!object(row)||!own(row,'language_code')||typeof row.language_code!=='string'||!/^[a-z]{2,3}(?:-[A-Z]{2})?$(?![\s\S])/.test(row.language_code)||!own(row,'language_name')||!validText(row.language_name,80)||seen.has(row.language_code))invalid();seen.add(row.language_code);languages.push({code:row.language_code,name:row.language_name});}
+ for(const row of rows){if(!object(row)||!own(row,'language_code')||typeof row.language_code!=='string'||!/^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(row.language_code)||!own(row,'language_name')||!validText(row.language_name,80)||seen.has(row.language_code))invalid();seen.add(row.language_code);languages.push({code:row.language_code,name:row.language_name});}
  if(languages.length===0)invalid();return languages.sort((a,b)=>a.code<b.code?-1:a.code>b.code?1:0);
 }
 export function assertAiSearchMarket(raw:unknown,countries:AiSearchCountry[],languages:AiSearchLanguage[]):AiSearchRequest{
@@ -55,7 +55,7 @@ function matchesPayload(value:unknown,request:AiSearchRequest,id:string){
   &&Object.keys(value).every(key=>Object.hasOwn(expected,key)||Object.hasOwn(defaults,key)&&value[key]===defaults[key]);
 }
 function observedAt(value:unknown):string|null{
- if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+00:00$(?![\s\S])/.test(value))return null;
+ if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+00:00$/.test(value))return null;
  const normalized=value.slice(0,10)+'T'+value.slice(11,19)+'.000Z',date=new Date(normalized);
  return Number.isFinite(date.getTime())&&date.toISOString()===normalized?normalized:null;
 }
@@ -101,7 +101,7 @@ const stamp=(time:number)=>new Date(time).toISOString().slice(0,19).replace('T',
 function receiptBinding(raw:unknown):AiSearchReceiptBinding{
  if(!object(raw)||Object.keys(raw).some(k=>!['profileId','runId','payloadHash','dispatchedAt','asOf','providerTaskId'].includes(k))||
   !['profileId','runId','payloadHash','dispatchedAt','asOf'].every(k=>own(raw,k))||raw.profileId!==aiSearchProfileId||!uuid(raw.runId)||
-  typeof raw.payloadHash!=='string'||!/^[a-f0-9]{64}$(?![\s\S])/.test(raw.payloadHash)||typeof raw.dispatchedAt!=='string'||typeof raw.asOf!=='string'||
+  typeof raw.payloadHash!=='string'||!/^[a-f0-9]{64}$/.test(raw.payloadHash)||typeof raw.dispatchedAt!=='string'||typeof raw.asOf!=='string'||
   ![raw.dispatchedAt,raw.asOf].every(s=>{const n=new Date(s);return Number.isFinite(n.getTime())&&n.toISOString()===s;})||
   own(raw,'providerTaskId')&&raw.providerTaskId!==null&&!uuid(raw.providerTaskId))invalid();
  const age=new Date(raw.asOf).getTime()-new Date(raw.dispatchedAt).getTime();
@@ -117,7 +117,7 @@ function receiptPayload(metadata:unknown,id:string){
  if(!matchesPayload(metadata,request,id))invalid();return aiSearchPayload(request,id);
 }
 function chargeRow(row:unknown){
- if(!object(row)||!own(row,'id')||!uuid(row.id)||!own(row,'status')||typeof row.status!=='string'||!/^\d{5}$(?![\s\S])/.test(row.status)||!finalTaskStatuses.has(Number(row.status))||!own(row,'cost'))invalid();
+ if(!object(row)||!own(row,'id')||!uuid(row.id)||!own(row,'status')||typeof row.status!=='string'||!/^\d{5}$/.test(row.status)||!finalTaskStatuses.has(Number(row.status))||!own(row,'cost'))invalid();
  return {providerTaskId:row.id,costUsd:microUsd(providerMicros(row.cost)),statusCode:Number(row.status)};
 }
 export function parseAiSearchReconciliation(response:DataforseoResponse,raw:unknown,id?:string){

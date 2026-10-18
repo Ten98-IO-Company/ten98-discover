@@ -15,7 +15,7 @@ export const trackedAssetInput=z.discriminatedUnion('kind',[
 ]);
 export const trackedShareInput=z.object({requestId:trackedUuid,assetRevision:trackedRevision,label:text(120,1),scope:z.string().min(1).max(20000),
  sections:z.array(z.enum(trackedShareSections)).min(1).max(3).refine(v=>new Set(v).size===v.length),expiresAt:z.iso.datetime({offset:true}),
- token:z.string().regex(/^[A-Za-z0-9_-]{43}$(?![\s\S])/)}).strict();
+ token:z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).strict();
 export type TrackedAssetFields=z.infer<typeof trackedAssetInput>;
 export type TrackedAssetRole='owner'|'admin'|'editor'|'viewer';
 export type TrackedAssetItem=TrackedAssetFields&{id:string;workspaceId:string;publicUrl:string;revision:number;createdAt:string;updatedAt:string};

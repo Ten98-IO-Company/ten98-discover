@@ -15,7 +15,7 @@ export const googleQueue = 'google-report-import';
 type ImportRow = { id: string; connection_id: string; project_id: string; user_id: string; request_id: string; connection_revision: number; app_revision: number; report: GoogleReport; date_from: string; date_to: string; status: string; pages: number; row_count: number; provider_row_count: number | null; source: Record<string, unknown>; quality: { warnings: string[]; metadata: Record<string, unknown> }; diagnostic: string | null; created_at: Date; completed_at: Date | null; data_expired_at: Date | null };
 // Explicit text dates keep provider-local calendar boundaries independent of the host timezone.
 const importFields = 'i.*,i.date_from::text AS date_from,i.date_to::text AS date_to';
-export function googleImportDto(row: ImportRow) {
+function googleImportDto(row: ImportRow) {
   return { id: row.id, report: row.report, from: row.date_from, to: row.date_to, status: row.status, dataStatus: row.data_expired_at ? 'expired' : 'available', pages: row.pages, rowCount: row.row_count, diagnostic: row.diagnostic, createdAt: row.created_at, completedAt: row.completed_at };
 }
 
@@ -84,8 +84,8 @@ export async function readGoogleImport(projectId: string, userId: string, import
       if (row.status !== 'completed' || row.pages !== 3 || page.rows.length !== row.row_count || !observations || observations.trend.rowCount !== row.row_count) throw new FoundationError(503, 'The complete organic overview is unavailable. Import a fresh snapshot.');
     }
     const result = { import: googleImportDto(row), source: row.source, dimensions: definition.dimensions, metrics: definition.metrics, rows: page.rows.slice(0, limit).map(item => item.row), quality, nextOffset: page.rows.length > limit ? offset + limit : null };
-    if (ga4OrganicReports.includes(row.report) && Buffer.byteLength(JSON.stringify(result), 'utf8') > 2097152) throw new FoundationError(503, 'The complete organic report is too large. Choose a smaller date range.');
-    if (isGa4CommerceReport(row.report) && Buffer.byteLength(JSON.stringify(result), 'utf8') > 2097152) throw new FoundationError(503, 'The complete GA4 report is too large. Choose a smaller date range.');
+    const organic = ga4OrganicReports.includes(row.report);
+    if ((organic || isGa4CommerceReport(row.report)) && Buffer.byteLength(JSON.stringify(result), 'utf8') > 2097152) throw new FoundationError(503, `The complete ${organic ? 'organic' : 'GA4'} report is too large. Choose a smaller date range.`);
     return result;
   };
   return apiToken === undefined ? googleProjectTransaction(projectId, userId, false, run) : withContentProject(projectId, userId, false, run, apiToken, false, 'google:read');

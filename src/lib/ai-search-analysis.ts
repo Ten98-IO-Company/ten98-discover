@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {aiSearchProfileId} from './ai-search.ts';
 
-const clean=(s:string)=>Array.from(s).every(c=>{const n=c.codePointAt(0)!;return n<0xd800||n>0xdfff;})&&!s.includes('\0');
+const clean=(s:string)=>!/[\uD800-\uDFFF]/u.test(s)&&!s.includes('\0');
 const text=(max:number)=>z.string().max(max).refine(clean);
 export const aiQueryLookbacks=['1w','1m','3m','6m','1y','all'] as const;
 export const aiQueryStatuses=['queued','running','completed','failed','uncertain','cancelled','reconciled'] as const;
