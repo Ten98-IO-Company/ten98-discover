@@ -1,5 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
+import {useBlocker} from '@tanstack/react-router';
+import {PromptDiscoveryPanel} from './PromptDiscoveryPanel';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
 import {AiSuggestionsPanel} from './AiSuggestionsPanel';
 import type {ExecutionEntry} from './PromptExecutionsPanel';
@@ -108,6 +110,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
 
   const [execution, setExecution] = useState<{generation: number; entry: ExecutionEntry} | null>(null);
   const [suggestions, setSuggestions] = useState<number | null>(null);
+  const [discovery, setDiscovery] = useState<number | null>(null);
   const [returning, setReturning] = useState(false);
   const entryGeneration = useRef(0);
   const returnFocus = useRef<string | null>(null);
@@ -216,6 +219,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     setNotice(null);
     setExecution(null);
     setSuggestions(null);
+    setDiscovery(null);
   }
 
   async function load(cursor: string | null, filters: Filters, accessOnly = false, failClosed = false) {
@@ -352,6 +356,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
           return;
         }
         if (e.status === 409) {
+          if (a.kind === 'create') { setFormError(errMsg(e)); return; }
           if (a.kind === 'update') {
             setFormError(errMsg(e));
             await openConflict(a.promptId, ac.signal); // draft text stays untouched
@@ -427,7 +432,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     if (aliveRef.current) setReturning(false);
   }
 
-  function openSuggestions() {
+  function openSuggestions(organic = false) {
     if (opRef.current || returning || !confirmDiscard()) return;
     genRef.current += 1;
     verGenRef.current += 1;
@@ -438,8 +443,9 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     setVerLoading(false);
     closeForm();
     setShowCreate(false);
-    returnFocus.current = 'pl-suggest-prompts';
-    setSuggestions(++entryGeneration.current);
+    returnFocus.current = organic ? 'pl-discover-prompts' : 'pl-suggest-prompts';
+    if (organic) setDiscovery(++entryGeneration.current);
+    else setSuggestions(++entryGeneration.current);
   }
 
   async function backFromSuggestions(saved: boolean) {
@@ -452,11 +458,11 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
   }
 
   useEffect(() => {
-    if (execution || suggestions !== null || returning || !returnFocus.current) return;
+    if (execution || suggestions !== null || discovery !== null || returning || !returnFocus.current) return;
     const trigger = document.getElementById(returnFocus.current);
     (trigger instanceof HTMLButtonElement && !trigger.disabled ? trigger : libraryHeading.current)?.focus();
     returnFocus.current = null;
-  }, [execution, suggestions, returning]);
+  }, [execution, suggestions, discovery, returning]);
 
   const onApply = () => {
     if (!confirmDiscard()) return;
@@ -603,10 +609,20 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     load(null, applied);
   };
 
+  useBlocker({shouldBlockFn: () => execution || suggestions !== null || discovery !== null || role === null ? false : !confirmDiscard(), enableBeforeUnload: () => role !== null && (formDirty() || retryAttempt !== null)});
+
   const canEdit = role === 'owner' || role === 'admin' || role === 'editor';
   const hasFilter = applied.status !== 'active' || applied.q.trim() !== '' || applied.tag.trim() !== '' || applied.classification !== '';
   const formOpen = showCreate || editing !== null;
 
+  if (discovery !== null) return <PromptDiscoveryPanel key={discovery} projectId={projectId}
+    onBack={() => { setDiscovery(null); void backToLibrary(); }}
+    onAccessLoss={(status, message) => { purge(); if (status === 401) unauthorizedRef.current(); else setErr(message); }}
+    onUse={(questions, topic) => {
+      setDiscovery(null); closeForm(); setMode('bulk'); setBulkText(questions.join('\n')); setFTopic(topic); setFEnabled(false); setShowCreate(true);
+      setNotice('Review and edit these starter questions, then save. Nothing has been run or sent to a provider.');
+      returnFocus.current = null; requestAnimationFrame(() => document.getElementById('pl-bulk')?.focus());
+    }} />;
   if (execution) return <PromptExecutionsPanel key={execution.generation} workspaceId={workspaceId} projectId={projectId} userId={userId}
     entry={execution.entry} onBack={() => void backToLibrary()} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
   if (suggestions !== null) return <AiSuggestionsPanel key={suggestions} workspaceId={workspaceId} projectId={projectId} userId={userId}
@@ -618,16 +634,17 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
       <div className="row between">
         <div>
           <h2 ref={libraryHeading} tabIndex={-1}>Prompt library</h2>
-          <p className="footnote">Saving prompts does not run them. Choose Review a run, then Recurring prompt tracking. Scheduling requires explicit owner approval.</p>
+          <p className="footnote">Saving prompts does not run them. Choose Review a run, then Recurring prompt tracking. Scheduling requires explicit owner approval. Discover prompts uses local templates; Suggest prompts uses a paid AI model.</p>
         </div>
         <div className="row">
-          {role && <button style={{minHeight:44}} id="pl-suggest-prompts" type="button" className="btn ghost" onClick={openSuggestions} disabled={busy || loading}>Suggest prompts</button>}
+          {canEdit && <button id="pl-discover-prompts" type="button" className="btn primary" onClick={() => openSuggestions(true)} disabled={busy || loading}>Discover prompts</button>}
+          {role && <button style={{minHeight:44}} id="pl-suggest-prompts" type="button" className="btn ghost" onClick={() => openSuggestions()} disabled={busy || loading}>Suggest prompts</button>}
           {role && <button id="pl-recent-runs" type="button" className="btn ghost" onClick={() => openExecution({kind: 'history'}, 'pl-recent-runs')} disabled={busy || loading}>Recent runs</button>}
           <button type="button" className="btn ghost" onClick={onRefresh} disabled={busy || loading || loadingMore}>
             Refresh
           </button>
           {canEdit && !formOpen && (
-            <button type="button" className="btn primary" onClick={onNew} disabled={busy || loading}>
+            <button type="button" className="btn ghost" onClick={onNew} disabled={busy || loading}>
               Add prompt
             </button>
           )}
