@@ -233,7 +233,7 @@ export async function handleAccountSecurity(request: Request): Promise<Response 
       if (captured.message) {
         const message = captured.message, link = new URL(`/#password-reset=${message.token}`, getConfig().appUrl).href;
         // No PoolClient/auth instance survives into delivery, and no automatic retry is scheduled.
-        setImmediate(() => { void sendTransactionalEmail({ to: message.to, subject: 'Reset your ten98-monitor password', text: `A password reset was requested for your ten98-monitor account.\n\nOpen this link within one hour:\n${link}\n\nThe link works once. Your existing two-factor settings and recovery codes stay unchanged. If you did not request this, ignore this email.` }).catch(() => undefined); });
+        setImmediate(() => { void sendTransactionalEmail({ to: message.to, subject: 'Reset your ten98 Discover password', text: `A password reset was requested for your ten98 Discover account.\n\nOpen this link within one hour:\n${link}\n\nThe link works once. Your existing two-factor settings and recovery codes stay unchanged. If you did not request this, ignore this email.` }).catch(() => undefined); });
       }
       return json({ ok: true });
     }

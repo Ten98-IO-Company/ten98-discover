@@ -1,4 +1,4 @@
-# ten98-monitor — foundation quickstart & limitations
+# ten98 Discover — foundation quickstart & limitations
 
 > Code and safety contracts retained from [docs/foundation.md at dcd1b3d](https://github.com/Ten98-IO-Company/ten98-monitor/blob/dcd1b3de5f7e0600c6b459e6b20f08b072106097/docs/foundation.md). Historical/planning checkpoints: [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/ten98-monitor-foundation-quickstart-and-limitations-implementation-h-f1qEnZxqJA). Qualifications are preserved; this adds no acceptance claim.
 

@@ -511,10 +511,10 @@
         .then(async function (response) {
           if (!response) return;
           var text = await readNativeResponse(response, controller.signal);
-          if (!response.ok) { warn('ten98-monitor: event was not accepted. Check installation diagnostics.'); return; }
+          if (!response.ok) { warn('ten98 Discover: event was not accepted. Check installation diagnostics.'); return; }
           var result = JSON.parse(text);
           if (current() && result.accepted && typeof result.context === 'string' && result.context.length <= 1024) state.nativeContext = result.context;
-        }).catch(function () { if (!controller.signal.aborted) warn('ten98-monitor: collector unavailable or blocked.'); })
+        }).catch(function () { if (!controller.signal.aborted) warn('ten98 Discover: collector unavailable or blocked.'); })
         .finally(function () { clearTimeout(timer); state.nativeRequests.delete(controller); if (performanceEvent) capture.requests.delete(controller); });
       if (observation) { startPerformance(state); startReplay(state); startHeatmap(state); }
     } catch (ignore) {} // Invalid application properties must never break the host page.
@@ -743,7 +743,7 @@
       loader.async = true;
       loader.referrerPolicy = 'no-referrer';
       if (script && script.nonce) loader.nonce = script.nonce;
-      loader.onerror = function () { warn('ten98-monitor: destination loader unavailable or blocked.'); };
+      loader.onerror = function () { warn('ten98 Discover: destination loader unavailable or blocked.'); };
       (document.head || document.documentElement).appendChild(loader);
     } catch (ignore) {} // A blocked coordinator leaves collection disabled.
   }

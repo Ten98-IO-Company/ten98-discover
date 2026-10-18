@@ -1,12 +1,14 @@
-# ten98-monitor
+# ten98 Discover
 
-An MIT-licensed, self-hosted application combining web analytics, SEO and AI visibility monitoring. The app is free and fully featured by design; external data/model providers may charge.
+SEO, AEO and GEO intelligence, combined with web analytics in an MIT-licensed, self-hosted application. The app is free and fully featured by design; external data/model providers may charge.
 
 **Status: development foundation; not a V1 release.** Full source parity, additional platform integrations and operational acceptance remain in progress. See the [current implementation and release gaps](https://wiki.ten98.io/s/ten98-docs/p/release-status-vBt9k2HJBg) and [81-requirement register](https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5). No release image is published.
 
 ## Documentation
 
 [ten98-monitor in Docmost](https://wiki.ten98.io/s/ten98-docs/p/ten98-monitor-0oQB5fKF1h) contains product scope, research, design, user flows, delivery plans and historical acceptance records. Runnable setup, current code/security contracts, required notices and AI guardrails remain in this repository. The [latest UI checkpoint](https://wiki.ten98.io/s/ten98-docs/p/ui-redesign-acceptance-through-r04-p2uXBbp8rZ) records its incremental validation and remaining work.
+
+The product is named ten98 Discover; the repository, checkout directory and Docker identifiers remain ten98-monitor for existing installations.
 
 ## Run with Docker
 
