@@ -10,7 +10,7 @@ import { getBoss, stopJobs } from '../src/server/jobs.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { googleScopes } from '../src/server/google-reports.ts';
 import { withGoogleTransportForTests } from '../src/server/google-http.ts';
-import { runGoogleImport, reconcileGoogleImports, googleQueue, startGoogleImportWorker } from '../src/server/google-jobs.ts';
+import { runGoogleImport, reconcileGoogleImports, googleQueue, startGoogleImportWorker, listGoogleConnections, readGoogleImport } from '../src/server/google-jobs.ts';
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials, googleConnectionContext, disconnectGoogle } from '../src/server/google.ts';
 import { decryptCredentials } from '../src/server/credential-vault.ts';
 import { createApiKey } from '../src/server/api-keys.ts';
@@ -167,6 +167,46 @@ export async function runGoogleChecks(browserCheck?: (fixture: GoogleBrowserFixt
       assert.equal((await call(`/api/projects/${foreignId}/google/imports/${importId}`, undefined, viewer)).response.status, 404);
       assert.equal((await call(`${base}/connections/${gsc.id}/imports`, { ...input, requestId: randomUUID() }, viewer)).response.status, 404);
       console.log('PASS Google app/operator guard, bound one-use PKCE callback, encrypted grants, exact properties, tenant isolation and resumable snapshot pagination');
+
+      // google:read bearer family: only the two saved-snapshot reads, under the content gate; every other Google route stays cookie-only.
+      const wire = (value: unknown) => JSON.parse(JSON.stringify(value));
+      const bearer = (path: string, token: string, method = 'GET', headers: Record<string, string> = {}) => handleApi(new Request(config.appUrl + path, { method,
+        headers: { authorization: `Bearer ${token}`, ...(method === 'POST' ? { 'content-type': 'application/json', origin: config.appUrl } : {}), ...headers }, ...(method === 'POST' ? { body: '{}' } : {}) }));
+      const ownerKey = await createApiKey(workspace.id, userId, { name: 'Google snapshot reader', scopes: ['google:read'], expiresInDays: 1 });
+      // The viewer allowlist names google:read: issue as admin, then return the issuer to the fixture's viewer role.
+      await pool.query("UPDATE membership SET role='admin' WHERE workspace_id=$1 AND user_id=$2", [workspace.id, viewerId]);
+      const viewerKey = await createApiKey(workspace.id, viewerId, { name: 'Google viewer reader', scopes: ['google:read'], expiresInDays: 1 });
+      await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2", [workspace.id, viewerId]);
+      const { app: cookieApp, ...cookieSources } = (await call(base)).data;
+      assert.deepEqual(Object.keys(cookieApp).sort(), ['configured', 'enabled', 'testing'], 'The cookie route keeps the instance app configuration.');
+      for (const [key, uid, role] of [[ownerKey, userId, 'owner'], [viewerKey, viewerId, 'viewer']] as const) {
+        const listed = await bearer(base, key.token); assert.equal(listed.status, 200); assert.equal(listed.headers.get('cache-control'), 'no-store');
+        const sources = await listed.json();
+        assert.deepEqual(sources, wire(await listGoogleConnections(projectId, uid, key.token)), 'The bearer route equals the direct read under the same key.');
+        assert.deepEqual(Object.keys(sources).sort(), ['connections', 'role'], 'A key never receives the instance app configuration.'); assert.equal(sources.role, role);
+        assert.deepEqual(sources.connections, cookieSources.connections, 'Sources and import receipts equal the cookie DTO.');
+        const text = JSON.stringify(sources); assert.equal(text.includes(accessToken) || text.includes(refreshToken) || text.includes(clientSecret), false, 'No token or secret reaches a key.');
+        for (const suffix of [`/imports/${importId}`, `/imports/${importId}?offset=1000`]) {
+          const snapshot = await bearer(base + suffix, key.token); assert.equal(snapshot.status, 200, suffix);
+          const body = await snapshot.json();
+          assert.deepEqual(body, wire(await readGoogleImport(projectId, uid, importId, new URL(config.appUrl + base + suffix).searchParams.get('offset') ?? 0, key.token)));
+          assert.deepEqual(body, (await call(base + suffix)).data, 'The snapshot equals the cookie read.');
+        }
+      }
+      const importsBefore = (await pool.query('SELECT count(*)::int AS n FROM google_import WHERE project_id=$1', [projectId])).rows[0].n, callsBefore = providerCalls;
+      for (const [path, method] of [[`${base}/connect`, 'POST'], [`${base}/connections/${gsc.id}/properties`, 'POST'], [`${base}/connections/${gsc.id}/select`, 'POST'], [`${base}/connections/${gsc.id}/disconnect`, 'POST'],
+        [`${base}/connections/${gsc.id}/imports`, 'POST'], [`${base}/connections/${gsc.id}/inspect`, 'POST'], [`${base}/imports/${importId}`, 'POST'], ['/api/google/app', 'GET'], ['/api/google/app', 'POST'], ['/api/google/callback?state=x&code=y', 'GET'], [`/api/projects/${projectId}/events`, 'GET']] as const)
+        assert.equal((await bearer(path, ownerKey.token, method)).status, 403, `${method} ${path}`);
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM google_import WHERE project_id=$1', [projectId])).rows[0].n, importsBefore); assert.equal(providerCalls, callsBefore, 'No refused route reaches Google.');
+      for (const suffix of ['?unknown=1', '?offset=0', `/imports/${importId}?offset=0&offset=50`, `/imports/${importId}?limit=10`]) assert.equal((await bearer(base + suffix, ownerKey.token)).status, 400, suffix);
+      assert.equal((await call(`${base}/imports/${importId}?unknown=1`)).response.status, 200, 'The cookie route keeps ignoring unknown parameters.');
+      const foreignKey = await createApiKey(foreignWorkspace.workspace.id, viewerId, { name: 'Foreign Google reader', scopes: ['google:read'], expiresInDays: 1 });
+      for (const path of [base, `${base}/imports/${importId}`, `/api/projects/${foreignId}/google/imports/${importId}`]) assert.equal((await bearer(path, foreignKey.token)).status, 404, path);
+      assert.equal((await bearer(`/api/projects/${foreignId}/google/imports/${importId}`, ownerKey.token)).status, 404, 'A key cannot reach a project of another workspace.');
+      assert.equal((await bearer(base, ownerKey.token, 'GET', { cookie: [...actor].map(([name, value]) => `${name}=${value}`).join('; ') })).status, 400, 'Cookie plus bearer is refused.');
+      await pool.query('UPDATE api_key SET revoked_at=clock_timestamp() WHERE id=$1', [viewerKey.key.id]);
+      for (const path of [base, `${base}/imports/${importId}`]) assert.equal((await bearer(path, viewerKey.token)).status, 401, path);
+      console.log('PASS google:read bearer list and snapshot equal the direct and cookie reads without the app configuration or tokens, viewer keys allowed, every other Google route 403, strict query, foreign 404, mixed credentials 400 and revoked 401');
       await pool.query('DELETE FROM request_limit WHERE key=$1', [`google:write:${userId}`]);
 
       // Reconnect with a short-lived access token; the actual refresh endpoint

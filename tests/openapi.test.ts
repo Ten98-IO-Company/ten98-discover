@@ -42,18 +42,18 @@ test('Revenue inventory matches the three closed native readers and pinned curre
  }
 });
 
-test('static OpenAPI exposes exactly the supported 44 native operations with local references',()=>{
+test('static OpenAPI exposes exactly the supported 48 native operations with local references',()=>{
  assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
  const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
   assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
   assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
   const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
  }
- assert.equal(ids.length,44);assert.equal(new Set(ids).size,44);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ assert.equal(ids.length,48);assert.equal(new Set(ids).size,48);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
  const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
  const added=['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance','readContext','listContextResearch','updateContext',
   'listSegments','readSegment','listCohorts','readCohort','listAnnotations','readAnnotationTimeline','readAnnotation','listRankTrackers','readRankTracker','readRankDistribution','readRankMatrix','querySavedKeywords','listSavedKeywordTags',
-  'listRankRuns','readRankResults','readRankKeywordHistory'];
+  'listRankRuns','readRankResults','readRankKeywordHistory','listGoogleSources','readGoogleSnapshot','listDomains','listDomainRedirectChecks'];
  assert.deepEqual(ids.filter(id=>!added.includes(id)).sort(),prior.sort());for(const name of added)assert.equal(ids.filter(id=>id===name).length,1);
  const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
  const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
@@ -90,6 +90,8 @@ test('content read families carry one scope each, a body only on the two saved-k
   ['/rank-trackers','listRankTrackers','rank:read',['archived','cursor']],['/rank-trackers/{trackerId}','readRankTracker','rank:read',[]],['/rank-trackers/{trackerId}/distribution','readRankDistribution','rank:read',['device','runId']],['/rank-trackers/{trackerId}/matrix','readRankMatrix','rank:read',['device','search','pinned','runLimit','cursor']],
   ['/rank-trackers/{trackerId}/runs','listRankRuns','rank:read',['cursor']],['/rank-trackers/{trackerId}/results','readRankResults','rank:read',['cursor','device','search','pinned']],['/rank-trackers/{trackerId}/keywords/{keywordId}/history','readRankKeywordHistory','rank:read',['cursor','device']],
   ['/saved-keywords/list','querySavedKeywords','keywords:read',[]],['/saved-keywords/tags/list','listSavedKeywordTags','keywords:read',[]],
+  ['/google','listGoogleSources','google:read',[]],['/google/imports/{importId}','readGoogleSnapshot','google:read',['offset']],
+  ['/domains','listDomains','domains:read',[]],['/domains/{domainId}/redirect-checks','listDomainRedirectChecks','domains:read',[]],
  ] as const;
  for(const[suffix,operationId,scope,queries]of cases){
   const item=(nativeOpenApi.paths as any)[base+suffix],method=scope==='keywords:read'?'post':'get',op=item[method];
@@ -119,6 +121,11 @@ test('content read families carry one scope each, a body only on the two saved-k
  for(const[suffix,schema]of [['/saved-keywords/list','SavedKeywordList'],['/saved-keywords/tags/list','CursorBody']])assert.deepEqual((nativeOpenApi.paths as any)[base+suffix].post.requestBody.content['application/json'].schema,{$ref:'#/components/schemas/'+schema});
  // Excluded neighbours never enter the bearer inventory: rank catalog/locations/schedule/checks/keyword writes, every export or refresh, and every saved-definition write.
  for(const path of Object.keys(nativeOpenApi.paths))assert.doesNotMatch(path,/rank-trackers\/(?:catalog|locations|\{trackerId\}\/(?:schedule|keywords(?!\/\{keywordId\}\/history$)|quote|update|archive))|rank-checks|\/export$|refresh|saved-keywords$|saved-keywords\/(?:remove|bulk-tags|tags\/\{)|(?:segments|cohorts|annotations)\/\{\w+\}\/(?:update|delete)$/,path);
+ // Nor the cookie-only Google app, callback, connect, property, disconnect, import and inspection routes, or any domain write or domain research.
+ for(const path of Object.keys(nativeOpenApi.paths))assert.doesNotMatch(path,/^\/api\/google\/|\/google\/(?:connect|connections)|\/domains\/\{domainId\}\/(?:update|challenge|verify|revoke|remove)$|domain-research/,path);
+ const offset=parameter('/google/imports/{importId}','offset');assert.deepEqual(offset.schema,{type:'integer',minimum:0,maximum:10000,default:0});assert.equal(offset.required,false);
+ for(const suffix of ['/domains','/domains/{domainId}/redirect-checks'])assert.match((nativeOpenApi.paths as any)[base+suffix].get.description,/owner\/admin keys only.*No query parameters\./);
+ assert.deepEqual(Object.keys((nativeOpenApi.paths as any)[base+'/google'].get.responses['200'].content['application/json'].schema.properties),['role','connections'],'A key never receives the instance app configuration.');
 });
 
 test('retention specification requires month/timezone and preserves closed entry-filter and response bounds',()=>{

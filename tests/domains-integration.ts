@@ -177,6 +177,51 @@ try {
   assert.equal((await request(path, 'GET', undefined, { cookie: '' })).status, 401);
   const key = await createApiKey(workspace, owner, { name: 'Domain boundary', scopes: ['projects:read','projects:write'], expiresInDays: 1 });
   assert.equal((await handleApi(new Request(`${appUrl}${path}`, { headers: { authorization: `Bearer ${key.token}` } }))).status, 403);
+
+  // domains:read bearer family: owner/admin keys read stored rows through the content gate and never create the canonical row.
+  const bearer = (suffix: string, token: string, method = 'GET', headers: Record<string, string> = {}) => handleApi(new Request(`${appUrl}${suffix}`, { method,
+    headers: { authorization: `Bearer ${token}`, ...(method === 'POST' ? { 'content-type': 'application/json', origin: appUrl } : {}), ...headers }, ...(method === 'POST' ? { body: '{}' } : {}) }));
+  const freshProject = randomUUID(), freshPath = `/api/projects/${freshProject}/domains`, rows = async () => (await pool.query('SELECT count(*)::int AS n FROM project_domain WHERE project_id=$1', [freshProject])).rows[0].n;
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,'Fresh bearer fixture','https://fresh.example.com',$3)", [freshProject, workspace, randomUUID()]);
+  const reader = await createApiKey(workspace, owner, { name: 'Domain reader', scopes: ['domains:read'], expiresInDays: 1 });
+  const unvisited = await bearer(freshPath, reader.token); assert.equal(unvisited.status, 200); assert.equal(unvisited.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await unvisited.json(), { project: { id: freshProject, origin: 'https://fresh.example.com', canonicalHost: 'fresh.example.com', canonicalVerifiable: true }, domains: [], limit: 50 });
+  assert.equal(await rows(), 0, 'A bearer read creates no canonical row.');
+  assert.deepEqual(JSON.parse(JSON.stringify(await getDomains(freshProject, owner, reader.token))), { project: { id: freshProject, origin: 'https://fresh.example.com', canonicalHost: 'fresh.example.com', canonicalVerifiable: true }, domains: [], limit: 50 });
+  assert.equal(await rows(), 0, 'The direct bearer read creates no canonical row either.');
+  const cookieState = await request(freshPath); assert.equal(cookieState.status, 200); assert.equal(await rows(), 1, 'The cookie read keeps creating the canonical row lazily.');
+  const cookieBody = await cookieState.json(), keyed = await bearer(freshPath, reader.token); assert.equal(keyed.status, 200);
+  assert.deepEqual(await keyed.json(), cookieBody, 'After the cookie read the bearer response equals it.'); assert.equal(cookieBody.domains.length, 1);
+  const canonicalId = cookieBody.domains[0].id;
+  for (const [suffix, method] of [[freshPath, 'POST'], ...['update', 'challenge', 'verify', 'revoke', 'remove'].map(action => [`${freshPath}/${canonicalId}/${action}`, 'POST']), [`${freshPath}/${canonicalId}/redirect-checks`, 'POST'], [`/api/projects/${freshProject}/domain-research`, 'GET']] as const)
+    assert.equal((await bearer(suffix, reader.token, method)).status, 403, `${method} ${suffix}`);
+  assert.equal(await rows(), 1, 'No refused write changed the registry.');
+  assert.equal((await bearer(`${freshPath}?unexpected=true`, reader.token)).status, 400);
+  assert.equal((await bearer(freshPath, reader.token, 'GET', { cookie })).status, 400, 'Cookie plus bearer is refused.');
+  assert.equal((await bearer(`/api/projects/${freshProject}/events`, reader.token)).status, 403, 'domains:read does not reach analytics.');
+  // Only current owners and admins hold domains:read: an admin issuer demoted to editor or viewer loses it, and regains it with the role.
+  const reviewer = randomUUID();
+  await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [reviewer, 'Domain reviewer', `${randomUUID()}@example.com`]);
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'admin')", [workspace, reviewer]);
+  const reviewerKey = await createApiKey(workspace, reviewer, { name: 'Admin domain reader', scopes: ['domains:read'], expiresInDays: 1 });
+  assert.equal((await bearer(freshPath, reviewerKey.token)).status, 200);
+  for (const role of ['editor', 'viewer']) {
+    await pool.query('UPDATE membership SET role=$3 WHERE workspace_id=$1 AND user_id=$2', [workspace, reviewer, role]);
+    assert.equal((await bearer(freshPath, reviewerKey.token)).status, 403, role);
+    await assert.rejects(getDomains(freshProject, reviewer, reviewerKey.token), fail(403));
+  }
+  await pool.query("UPDATE membership SET role='admin' WHERE workspace_id=$1 AND user_id=$2", [workspace, reviewer]);
+  assert.equal((await bearer(freshPath, reviewerKey.token)).status, 200);
+  const foreignWorkspace = randomUUID(), foreignProject = randomUUID();
+  await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Foreign domain fixtures')", [foreignWorkspace]);
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')", [foreignWorkspace, owner]);
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,'Foreign fixture','https://foreign.example.com',$3)", [foreignProject, foreignWorkspace, randomUUID()]);
+  const foreignKey = await createApiKey(foreignWorkspace, owner, { name: 'Foreign domain reader', scopes: ['domains:read'], expiresInDays: 1 });
+  assert.equal((await bearer(freshPath, foreignKey.token)).status, 404, 'A key cannot reach a project of another workspace.');
+  assert.equal((await bearer(`/api/projects/${foreignProject}/domains`, reader.token)).status, 404);
+  await pool.query('UPDATE api_key SET revoked_at=clock_timestamp() WHERE id=$1', [reviewerKey.key.id]);
+  assert.equal((await bearer(freshPath, reviewerKey.token)).status, 401, 'A revoked key is refused.');
+  console.log('PASS domains:read bearer list: stored rows only with no canonical INSERT, equal to the cookie read afterwards, every write 403, strict query, mixed credentials 400, owner/admin-only by current role, foreign 404 and revoked 401');
   assert.equal((await request(path, 'POST', { hostname: 'http.example.com', role: 'serving' }, { origin: 'https://other.example.com' })).status, 403);
   assert.equal((await request(path, 'PUT', {})).status, 405);
   assert.equal((await request(`${path}?unexpected=true`)).status, 400);

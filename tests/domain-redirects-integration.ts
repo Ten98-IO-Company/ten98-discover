@@ -130,6 +130,23 @@ export async function runDomainRedirectChecks(){
     assert.equal((await handleApi(new Request(endpoint+'?url=http://127.0.0.1',{headers:{cookie}}))).status,400);
     assert.equal((await handleApi(new Request(endpoint,{method:'POST',headers:{cookie,origin:'https://foreign.example.com','content-type':'application/json'},body:JSON.stringify({requestId:randomUUID()})}))).status,403);
     const token=await createApiKey(workspace,owner,{name:'No redirect scope',scopes:['analytics:read']});assert.equal((await handleApi(new Request(endpoint,{headers:{authorization:'Bearer '+token.token}}))).status,403);
+    // domains:read admits only the receipt read: equal to the direct and cookie reads, no start, bounded by the 5 s content gate.
+    const reader=await createApiKey(workspace,owner,{name:'Redirect receipt reader',scopes:['domains:read']}),keyed=(url:string,init:RequestInit={})=>handleApi(new Request(url,{...init,headers:{authorization:'Bearer '+reader.token,...init.headers as Record<string,string>}}));
+    const keyedRead=await keyed(endpoint);assert.equal(keyedRead.status,200);const keyedBody=await keyedRead.json();
+    assert.deepEqual(keyedBody,JSON.parse(JSON.stringify(await getDomainRedirectChecks(project,owner,id,reader.token))));
+    assert.deepEqual(keyedBody,await (await handleApi(new Request(endpoint,{headers:{cookie}}))).json());assert.ok(keyedBody.checks.length>0);
+    const receipts=(await pool.query('SELECT count(*)::int AS n FROM domain_redirect_check WHERE domain_id=$1',[id])).rows[0].n;
+    assert.equal((await keyed(endpoint,{method:'POST',headers:{'content-type':'application/json',origin:config.appUrl},body:JSON.stringify({requestId:randomUUID()})})).status,403);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM domain_redirect_check WHERE domain_id=$1',[id])).rows[0].n,receipts,'A key starts no redirect check.');
+    assert.equal((await keyed(endpoint+'?url=http://127.0.0.1')).status,400);
+    assert.equal((await keyed(`${config.appUrl}/api/projects/${foreignProject}/domains/${id}/redirect-checks`)).status,404,'A project of another workspace is not reachable.');
+    const holder=await pool.connect();
+    try{
+      await holder.query('BEGIN');await holder.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[workspace]);
+      const started=Date.now(),busy=await keyed(endpoint);assert.equal(busy.status,503,'A bearer read waits at most the 5 s lock bound, then answers 503.');assert.deepEqual(Object.keys(await busy.json()),['error']);assert.ok(Date.now()-started>=4500);
+    }finally{await holder.query('ROLLBACK').catch(()=>{});holder.release();}
+    assert.equal((await keyed(endpoint)).status,200,'The read succeeds once the workspace lock is released.');
+    console.log('PASS domains:read redirect receipts equal the direct and cookie reads, no start under a key, strict query, foreign 404 and a 503 after the bounded workspace wait');
     await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspace,owner]);assert.equal((await handleApi(new Request(endpoint,{headers:{cookie}}))).status,404);
     console.log('PASS cookie/Origin/bearer/current-membership API gates; no external transport calls');
   }finally{globalThis.fetch=originalFetch;await stopJobs();}
