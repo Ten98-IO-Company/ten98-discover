@@ -1193,3 +1193,29 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 `public/replay.js` embeds the unmodified published rrweb2.1.7 UMD browser build and its style sheet inside an application-owned private scope. Upstream commit: a9cb69272522e677522f9a2f2eb8ac43fbf9efcb. Archive SHA-256:13680f81b1df0f7bae04a27e5b373de2b0deb39db1506049d53448c21428ba26. Unmodified UMD SHA-256:a35df0b0bed5ae358683e0a82aa8c1a354bb229f60469e4d269fb3e8b2c77058.
 
 The bundled runtime also includes base64-arraybuffer1.0.2, mitt3.0.1 and @xstate/fsm1.6.5, all MIT. Complete upstream and dependency copyright notices and license texts are retained in `public/vendor/rrweb-LICENSE.txt`. The application's recorder/player adapters remain MIT. No remote CDN or additional Node runtime dependency is required.
+
+## ten98-campaign shared interface
+
+The owner-directed Discover redesign adopts the logo, stroked SVG icons, authentication composition, shell and shared-control CSS from the local ten98-campaign source snapshot inspected on 18 October 2026 (`src/main.tsx`, `src/styles.css`, `public/favicon.svg`). Application-specific data and authentication implementations remain independent.
+
+MIT License
+
+Copyright (c) 2026 ten98-campaign contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,1 +1,27 @@
-.attribution-panel,.attribution-panel>*{min-width:0}.attribution-panel .attribution-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:16px}.attribution-controls>div{min-width:0}.attribution-controls input,.attribution-controls select{width:100%;min-width:0;max-width:100%}.attribution-panel input,.attribution-panel select,.attribution-panel button{min-height:44px}.attribution-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:16px}.attribution-panel table{width:100%;table-layout:fixed;border-collapse:collapse}.attribution-panel th,.attribution-panel td{padding:10px 6px;text-align:start;vertical-align:top;overflow-wrap:anywhere}.attribution-panel caption{text-align:start;padding-block:8px;color:var(--muted,#596579)}.attribution-panel p,.attribution-panel dd,.attribution-panel dt,.attribution-panel summary{overflow-wrap:anywhere}.attribution-metrics,.attribution-coverage{display:flex;flex-wrap:wrap;gap:20px;margin:0}.attribution-metrics>div{flex:1;min-width:min(100%,160px)}.attribution-metrics dd{font-size:1.8rem;font-weight:600;margin:8px 0}.attribution-coverage dd{margin:4px 0}.attribution-panel .row{flex-wrap:wrap}.attribution-panel .card{min-width:0;max-width:100%}.attribution-panel details>div{padding-block-start:12px}@media(max-width:500px){.attribution-panel .card{padding:16px}.attribution-panel th,.attribution-panel td{padding:8px 3px;font-size:.85rem}.attribution-panel .row>*{max-width:100%}}
+/* Campaign panel and metric rhythm, with fixed-column report containment. */
+.attribution-panel, .attribution-panel > * { min-width: 0; }
+.attribution-panel .attribution-controls { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,220px),1fr)); gap: 22px; }
+.attribution-controls > div { min-width: 0; }
+.attribution-controls input, .attribution-controls select { width: 100%; min-width: 0; max-width: 100%; }
+.attribution-panel input, .attribution-panel select, .attribution-panel button { min-height: var(--control-touch); }
+.attribution-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,380px),1fr)); gap: 22px; }
+.attribution-grid > .card { margin-bottom: 0; }
+.attribution-panel table { width: 100%; table-layout: fixed; border-collapse: collapse; white-space: normal; }
+.attribution-panel th, .attribution-panel td { text-align: start; vertical-align: top; overflow-wrap: anywhere; }
+.attribution-panel caption { text-align: start; padding-block: 12px; color: var(--color-text-muted); font-size: var(--text-xs); }
+.attribution-panel p, .attribution-panel dd, .attribution-panel dt, .attribution-panel summary { overflow-wrap: anywhere; }
+.attribution-metrics, .attribution-coverage { display: flex; flex-wrap: wrap; gap: 15px; margin: 0; }
+.attribution-metrics > div { flex: 1; min-width: min(100%,160px); padding: 19px 19px 17px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); box-shadow: var(--shadow-panel); }
+.attribution-metrics dt { color: var(--color-text-muted); font-size: var(--text-xs); }
+.attribution-metrics dd { font-family: var(--font-heading); font-size: 26px; font-weight: 750; letter-spacing: -1px; margin: 14px 0 0; }
+.attribution-coverage dt { color: var(--color-text-muted); font-size: var(--text-xs); }
+.attribution-coverage dd { margin: 5px 0; }
+.attribution-panel .row { flex-wrap: wrap; }
+.attribution-panel .card { min-width: 0; max-width: 100%; }
+.attribution-panel details > div { padding-block-start: 17px; }
+@media (max-width:500px) {
+  .attribution-grid, .attribution-panel .attribution-controls { gap: 18px; }
+  .attribution-metrics > div { padding: 16px; }
+  .attribution-metrics dd { font-size: 25px; }
+  .attribution-panel .row > * { max-width: 100%; }
+}

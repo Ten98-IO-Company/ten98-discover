@@ -1,3 +1,4 @@
+import {Icon} from './CampaignUI'
 import { AuthLayout } from './AuthLayout'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, ApiError } from '../lib/api'
@@ -44,8 +45,8 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
     }
   }
 
-  return <AuthLayout><section className='card auth' aria-labelledby='recovery-title'>
-    <p className='auth-brand'>Your Discover workspace</p><h1 id='recovery-title'>{value.kind === 'request' ? 'Reset your password' : 'Choose a new password'}</h1>
+  return <AuthLayout><section className='card auth auth-form-inner account-access password-recovery-access' aria-labelledby='recovery-title'>
+    <p className='eyebrow'>Your Discover workspace</p><span className="account-access-icon" aria-hidden="true"><Icon name="lock" size={20}/></span><h1 id='recovery-title'>{value.kind === 'request' ? 'Reset your password' : 'Choose a new password'}</h1>
     {value.kind === 'request' && availability === 'loading' && <p role='status'>Checking email recovery…</p>}
     {value.kind === 'request' && availability === 'disabled' && <p role='status'>Email recovery is not configured for this installation. Contact the installation operator, or return to sign-in and use your linked identity provider.</p>}
     {value.kind === 'request' && availability === 'error' && <p role='alert'>Email recovery availability could not be checked. Return to sign-in and try again.</p>}
@@ -54,15 +55,15 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
       {value.kind === 'reset' && invalid && !error && <p role='alert'>This reset link is invalid or incomplete. Reopen the original email or request a new link. Reloading this page clears the link from memory.</p>}
       {(value.kind === 'request' && availability === 'enabled' || value.kind === 'reset' && !invalid) && <form className='stack' onSubmit={event => void submit(event)}>
         {value.kind === 'request' ? <div className='field'><label htmlFor='recovery-email'>Account email</label><input id='recovery-email' type='email' autoComplete='email' required maxLength={254} value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /></div> : <>
-          <div className='field'><label htmlFor='recovery-password'>New password</label><input id='recovery-password' type='password' autoComplete='new-password' required minLength={12} maxLength={128} value={password} disabled={busy} onChange={event => setPassword(event.target.value)} /><p className='hint'>12–128 characters.</p></div>
+          <div className='field'><label htmlFor='recovery-password'>New password</label><input id='recovery-password' type='password' autoComplete='new-password' required minLength={12} maxLength={128} value={password} disabled={busy} onChange={event => setPassword(event.target.value)} /><p className='hint field-help'>12–128 characters.</p></div>
           <div className='field'><label htmlFor='recovery-confirm'>Confirm new password</label><input id='recovery-confirm' type='password' autoComplete='new-password' required minLength={12} maxLength={128} value={confirmation} disabled={busy} onChange={event => setConfirmation(event.target.value)} /></div>
-          <p className='hint'>The reset link is kept only in this open page. If you reload or close it, reopen the email.</p>
+          <p className='hint field-help'>The reset link is kept only in this open page. If you reload or close it, reopen the email.</p>
         </>}
-        <button className='btn primary' disabled={busy}>{busy ? value.kind === 'request' ? 'Requesting link…' : 'Changing password…' : value.kind === 'request' ? 'Send reset link' : 'Change password'}</button>
+        <button className='btn button primary full' disabled={busy}>{busy ? value.kind === 'request' ? 'Requesting link…' : 'Changing password…' : value.kind === 'request' ? 'Send reset link' : 'Change password'}</button>
       </form>}
     </>}
     {error && <p role='alert' className='alert'>{error}</p>}
-    {value.kind === 'reset' && <button type='button' className='btn' disabled={busy} onClick={onRequest}>Request a new link</button>}
-    <button type='button' className='btn' disabled={busy} onClick={() => onSignIn()}>Back to sign in</button>
+    {value.kind === 'reset' && <button type='button' className='btn button' disabled={busy} onClick={onRequest}>Request a new link</button>}
+    <button type='button' className='btn button' disabled={busy} onClick={() => onSignIn()}><span aria-hidden="true"><Icon name="arrow" size={16}/></span>Back to sign in</button>
   </section></AuthLayout>
 }
