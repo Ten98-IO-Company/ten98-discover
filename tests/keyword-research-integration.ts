@@ -73,6 +73,16 @@ export async function runKeywordResearchChecks(){
   const unknownProject=await fixture();await assert.rejects(getKeywordRun(unknownProject.project,owner,first.run.id),{status:404});
   console.log('PASS keyword quote/actor/project ownership, idempotent queued start and single paid dispatch');
 
+  // Owner decision D3 (slice C1): saved-refresh children are exempt from the dispatch-time quote age, but a single keyword run keeps
+  // the five-minute rule. Own fixture, so no later ledger total in this lane changes.
+  const lone=await fixture(),loneQuote=await quote(lone),loneRun=(await startKeywordResearch(lone.project,owner,{quoteId:loneQuote.id,requestKey:randomUUID()})).run,callsBeforeLone=paidCalls;
+  await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[loneQuote.id]);
+  await reconcileKeywordJobs();
+  assert.equal((await getKeywordRun(lone.project,owner,loneRun.id)).run.status,'cancelled','An expired single run is cancelled by the sweeper.');
+  assert.equal((await charge(loneRun.id)).status,'cancelled','Its reservation is released.');
+  assert.equal(paidCalls,callsBeforeLone,'An expired single run never dispatches.');
+  console.log('PASS single keyword run keeps the five-minute quote rule after Start: sweeper cancels, reservation released, no paid call');
+
   const expired=await quote(f);await pool.query("UPDATE keyword_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[expired.id]);await assert.rejects(startKeywordResearch(f.project,owner,{quoteId:expired.id,requestKey:randomUUID()}),{status:409});
   const revision=await quote(f);await saveProvider(f.workspace,owner,{name:'Rotated synthetic',credentials:{login:accountLogin,password:'synthetic-rotation'}},f.connectionId);await assert.rejects(startKeywordResearch(f.project,owner,{quoteId:revision.id,requestKey:randomUUID()}),{status:409});
   const queue=(await getBoss()),originalSend=queue.send.bind(queue);const rollbackQuote=await quote(f);let queueCalls=0;

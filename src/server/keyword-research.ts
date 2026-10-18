@@ -160,7 +160,7 @@ export async function executeKeywordResearch(id:string,send:typeof fetch=fetch){
     if(initial.saved_refresh_plan_id){
       const checked=await scoped(initial.project_id,initial.user_id,writers,async(client,wid)=>{
         const row=await runRow(client,initial.project_id,id),plan=await savedPlan(client,row);
-        if(row.status!=='queued'||row.charge_status!=='reserved'||row.expires_at.getTime()<=Date.now()||!plan)throw new FoundationError(409,'Research authorization expired.');
+        if(row.status!=='queued'||row.charge_status!=='reserved'||!plan)throw new FoundationError(409,'Research authorization expired.');
         await assertSavedRefreshTargets(client,row.project_id,plan.targets);
         return credentials(await connection(client,wid,row.connection_id,row.connection_revision));
       });
@@ -169,7 +169,7 @@ export async function executeKeywordResearch(id:string,send:typeof fetch=fetch){
     }
     await dispatchSpend(initial.workspace_id,initial.user_id,id,async(client,ledger)=>{
     const row=await runRow(client,initial.project_id,id);
-    if(row.status!=='queued'||row.expires_at.getTime()<=Date.now())throw new FoundationError(409,'Research authorization expired.');
+    if(row.status!=='queued'||!row.saved_refresh_plan_id&&row.expires_at.getTime()<=Date.now())throw new FoundationError(409,'Research authorization expired.');
     const stored=await connection(client,initial.workspace_id,ledger.connection_id,ledger.connection_revision);
     secret=credentials(stored);request=parseKeywordRequest(row.request);
     const plan=await savedPlan(client,row);
@@ -205,7 +205,7 @@ export async function reconcileKeywordResearch(projectId:string,userId:string,id
 export async function reconcileKeywordJobs(){
   const rows=await getDatabase().pool.query(`SELECT r.id,r.status FROM keyword_research_run r JOIN keyword_quote q ON q.id=r.quote_id
     LEFT JOIN pgboss.job j ON j.id=r.id AND j.name=$1
-    WHERE (r.status='queued' AND (q.expires_at<clock_timestamp() OR j.id IS NULL OR j.state IN('failed','cancelled','completed')))
+    WHERE (r.status='queued' AND ((q.saved_refresh_plan_id IS NULL AND q.expires_at<clock_timestamp()) OR j.id IS NULL OR j.state IN('failed','cancelled','completed')))
        OR (r.status='running' AND r.dispatched_at<clock_timestamp()-interval '90 seconds') ORDER BY r.created_at LIMIT 50`,[keywordQueue]);
   for(const row of rows.rows){if(row.status==='queued')await cancelUndispatched(row.id,'The queued research did not run. Prepare a new quote to try again.');else await finishResearch(row.id,{cost:null,reference:null,result:null,diagnostic:'The worker stopped after dispatch. The provider charge must be reconciled before spending again.',evidence:{httpStatus:null,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}},true);}
 }

@@ -92,7 +92,7 @@ export async function assertPromptRecurringAuthority(client:PoolClient,quoteId:s
  await promptConnection(client,q.workspace_id,q.connection_id,row.approval_connection_revision);
  if(!(await client.query("SELECT 1 FROM membership WHERE workspace_id=$1 AND user_id=$2 AND role='owner'",[q.workspace_id,o.requested_by])).rowCount)deny();
  if(freshModels&&promptModelDefinition(inputOf(q.input),q.routes)!==row.approval_models_hash)deny();
- if(!(await client.query('SELECT 1 WHERE $1::timestamptz>clock_timestamp()',[q.expires_at])).rowCount)deny();
+ // Owner decision D3: quote age is checked at Start alone (startPromptExecution); a started child is never refused for it.
 }
 async function transaction<T>(id:string,work:(client:PoolClient,row:any)=>Promise<T>){
  const client=await getDatabase().pool.connect();try{await client.query('BEGIN');await client.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='10s'");const scope=(await client.query('SELECT workspace_id,project_id FROM prompt_tracker WHERE id=$1',[id])).rows[0];if(!scope)throw new FoundationError(404,'Prompt tracker not found or unavailable.');await client.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[scope.workspace_id]);await client.query('SELECT id FROM project WHERE id=$1 AND workspace_id=$2 FOR UPDATE',[scope.project_id,scope.workspace_id]);const value=await work(client,await tracker(client,scope.project_id,id));await client.query('COMMIT');return value;}catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
