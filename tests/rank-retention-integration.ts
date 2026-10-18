@@ -27,8 +27,8 @@ export async function runRankRetentionChecks(){
     await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Rank retention fixture')",[f.workspace]);
     for(const [uid,role]of [[owner,'owner'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[f.workspace,uid,role]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Rank retention','https://example.com',$3,'infinity')",[f.project,f.workspace,randomUUID()]);
-    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic account',credentials:{login:'rank-retention@integration.test',password:'synthetic-only'},monthlyLimitUsd:'100'})).connection.id;
-    await saveBudget(f.workspace,owner,{monthlyLimitUsd:'100',paused:false});
+    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic account',credentials:{login:'rank-retention@integration.test',password:'synthetic-only'}})).connection.id;
+    await saveBudget(f.workspace,owner,{paused:false});
     await pool.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages)
       VALUES($1,$2,$3,'Rank retention','example.com',2840,'United States','Country',2840,'US','en','English',clock_timestamp(),$4,100,1)`,[f.tracker,f.workspace,f.project,devices]);
     await changeRankKeywords(f.project,owner,f.tracker,'add',{requestId:randomUUID(),revision:1,keywords:Array.from({length:count},(_,i)=>'Retained term '+i),matchCase:true});

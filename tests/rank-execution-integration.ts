@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs} from '../src/server/jobs.ts';
-import {saveBudget,saveProvider,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
+import {saveBudget,saveProvider,revokeProvider} from '../src/server/providers.ts';
 import {reserveSpend} from '../src/server/spending.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {getRankTracker,updateRankTracker,archiveRankTracker,changeRankKeywords} from '../src/server/rank-tracking.ts';
@@ -33,8 +33,8 @@ export async function runRankExecutionChecks(){
     await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Rank execution fixture')",[f.workspace]);
     for(const [uid,role]of [[owner,'owner'],[editor,'editor'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[f.workspace,uid,role]);
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Rank execution','https://example.com',$3,'infinity')",[f.project,f.workspace,randomUUID()]);
-    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic account',credentials:{login:'synthetic-rank@integration.test',password:'synthetic-never-live'},monthlyLimitUsd:'10'})).connection.id;
-    await saveBudget(f.workspace,owner,{monthlyLimitUsd:'10',paused:false});
+    f.connection=(await saveProvider(f.workspace,owner,{provider:'dataforseo',name:'Synthetic account',credentials:{login:'synthetic-rank@integration.test',password:'synthetic-never-live'}})).connection.id;
+    await saveBudget(f.workspace,owner,{paused:false});
     await pool.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages)
       VALUES($1,$2,$3,'Rank execution','example.com',2840,'United States','Country',2840,'US','en','English',clock_timestamp(),$4,100,1)`,[f.tracker,f.workspace,f.project,devices]);
     await changeRankKeywords(f.project,owner,f.tracker,'add',{requestId:randomUUID(),revision:1,keywords:Array.from({length:count},(_,i)=>i===0?'C++ %20':'term '+i),matchCase:true});
@@ -83,19 +83,28 @@ export async function runRankExecutionChecks(){
       if(mutation==='settings')await updateRankTracker(f.project,owner,f.tracker,{requestId:randomUUID(),revision:t.authoredRevision,name:t.name,devices:t.devices,depth:90,maxCrawlPages:1});
       if(mutation==='keywords')await changeRankKeywords(f.project,owner,f.tracker,'remove',{requestId:randomUUID(),revision:t.authoredRevision,keywordIds:[d.keywords[0].id]});
       if(mutation==='archive')await archiveRankTracker(f.project,owner,f.tracker,{requestId:randomUUID(),revision:t.authoredRevision,archived:true});
-      if(mutation==='connection')await saveProvider(f.workspace,owner,{name:'Changed credentials',credentials:{login:'synthetic-rank@integration.test',password:'synthetic-rotated'},monthlyLimitUsd:'10'},f.connection);
+      if(mutation==='connection')await saveProvider(f.workspace,owner,{name:'Changed credentials',credentials:{login:'synthetic-rank@integration.test',password:'synthetic-rotated'}},f.connection);
       await assert.rejects(start(f,q.run.id),failed(409));assert.deepEqual(await counts(f),{ledger:0,dispatch:0,tasks:0});
     }
     console.log('PASS current paid settings, captured keyword membership, archive and connection revisions fence stale starts');
 
     const queued=await fixture(101),queuedQuote=await quote(queued,{method:'queued'});assert.equal(queuedQuote.run.taskCount,101);assert.equal(queuedQuote.run.dispatchCount,2);assert.equal(queuedQuote.run.estimateUsd,'0.101000');
-    await saveProviderLimit(queued.workspace,owner,queued.connection,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.100000'});await assert.rejects(start(queued,queuedQuote.run.id),failed(409));assert.deepEqual(await counts(queued),{ledger:0,dispatch:0,tasks:0});
+    // Owner decision D3: no connection cap. A test-only trigger records an uncertain sentinel charge after the first group's reservation (N=1),
+    // so the second group meets the real ledger gate (409 SPENDING_BUDGET) and the whole start rolls back, sentinel included.
+    await pool.query(`CREATE FUNCTION d3_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.operation<>'test.sentinel' AND NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
+        INSERT INTO provider_request(id,workspace_id,connection_id,user_id,request_key,operation,input_hash,estimate_micros,connection_revision,status,budget_month)
+        VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,NEW.connection_revision,'uncertain',NEW.budget_month);
+      END IF; RETURN NULL; END $$`);
+    await pool.query(`CREATE TRIGGER d3_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION d3_sentinel('${queued.workspace}','1')`);
+    try{await assert.rejects(start(queued,queuedQuote.run.id),(error:any)=>failed(409)(error)&&error.code==='SPENDING_BUDGET'&&/uncertain charge/.test(error.message));}finally{await pool.query('DROP TRIGGER d3_sentinel ON provider_request');await pool.query('DROP FUNCTION d3_sentinel()');}
+    assert.deepEqual(await counts(queued),{ledger:0,dispatch:0,tasks:0});
     const rolled=await fixture(),rollbackQuote=await quote(rolled),boss=await getBoss(),originalSend=boss.send.bind(boss),inserted:string[]=[];
     boss.send=(async(...args:any[])=>{const job=await(originalSend as any)(...args);assert.equal(typeof job,'string');inserted.push(job);if(inserted.length===2)throw new Error('Synthetic failure after second real queue insertion.');return job;})as typeof boss.send;
     const rollbackKey=randomUUID();try{await assert.rejects(start(rolled,rollbackQuote.run.id,rollbackKey));}finally{boss.send=originalSend;}
     assert.equal(inserted.length,2);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=ANY($1::uuid[])',[inserted])).rowCount,0);assert.deepEqual(await counts(rolled),{ledger:0,dispatch:0,tasks:0});assert.equal((await getRankRun(rolled.project,owner,rollbackQuote.run.id)).run.status,'quoted');assert.equal((await pool.query('SELECT 1 FROM project_content_request WHERE project_id=$1 AND request_id=$2',[rolled.project,rollbackKey])).rowCount,0);
     await start(rolled,rollbackQuote.run.id,rollbackKey);assert.deepEqual(await counts(rolled),{ledger:2,dispatch:2,tasks:2});
-    console.log('PASS second-child budget and actual second queue insertion failures roll back the entire start, allowing one exact retry');
+    console.log('PASS second-child reservation and actual second queue insertion failures roll back the entire start, allowing one exact retry');
 
     const orphan=await fixture(),oq=await quote(orphan),raw=(await pool.query('SELECT request FROM rank_run WHERE id=$1',[oq.run.id])).rows[0].request as RankPlan,group=raw.groups[0],payload=rankGroupPayload(raw,group),requestKey=randomUUID();
     await reserveSpend(orphan.workspace,owner,{connectionId:orphan.connection,requestKey:group.requestKey,operation:'rank.'+raw.method,inputHash:canonicalHash({runId:oq.run.id,method:raw.method,payload}),estimateUsd:microUsd(BigInt(group.maximumMicros))});

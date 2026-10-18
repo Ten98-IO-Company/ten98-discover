@@ -29,7 +29,6 @@ async function finish(id:string,owner:string,outcome:ExecutionOutcome,crashOnly=
  await client.query(`UPDATE ai_suggestion_run SET status=$2,diagnostic=$3,raw_result=$4,proposal=$5,evidence=$6,generation_id=$7,
  completed_at=COALESCE(completed_at,clock_timestamp()),result_purged_at=CASE WHEN $8 THEN COALESCE(result_purged_at,clock_timestamp()) ELSE result_purged_at END WHERE id=$1`,
  [id,settled.reconciliationRequired?'uncertain':proposal?'completed':'failed',diagnostic,raw,proposal===null?null:JSON.stringify(proposal),JSON.stringify(outcome.evidence),reference,!!row.result_expired||row.input_expired]);
- if(outcome.pause)await client.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[row.workspace_id]);
  });}
 
 export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
@@ -64,7 +63,7 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
    if(!dispatched)throw new FoundationError(409,'The suggestion quote expired. Prepare another quote.');
    dispatchedAt=dispatched.dispatched_at;
   });
- }catch{await withSuggestionRun(id,async(client,row)=>{if(row.lease_owner===owner)await cancelReserved(client,row,'Not sent: quote expiry, permissions, context, credentials, endpoint or spending limits changed. Prepare a new quote.');});return;}
+ }catch{await withSuggestionRun(id,async(client,row)=>{if(row.lease_owner===owner)await cancelReserved(client,row,'Not sent: quote expiry, permissions, context, credentials, endpoint, the paid-work pause or an uncertain charge changed. Prepare a new quote.');});return;}
  const outcome=await requestSuggestionExecution(secret,captured.messages,captured.route,id,captured.request_actor,dispatchedAt!,async generation=>{
   await withSuggestionRun(id,async(client,row)=>{
    if(row.lease_owner!==owner||!['dispatched','uncertain'].includes(row.charge_status)||row.generation_id&&row.generation_id!==generation)throw new Error('Suggestion receipt changed.');
@@ -95,8 +94,8 @@ export async function reconcileAiSuggestion(projectId:string,userId:string,id:st
    if(row.charge_status!=='uncertain'||row.generation_id!==outcome.reference)throw new FoundationError(409,'The receipt changed. Reload this suggestion.');
    const settled=await settleSpend(client,row.workspace_id,id,outcome.cost,outcome.reference);
    await client.query('UPDATE ai_suggestion_run SET status=$2,evidence=$3,diagnostic=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',
-    [id,settled.reconciliationRequired?'uncertain':row.proposal?'completed':'failed',JSON.stringify(outcome.evidence),'Charge recovery does not recover an unavailable proposal. Spending remains paused for owner review.']);
-   await client.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[row.workspace_id]);await receipt.save({id});
+    [id,settled.reconciliationRequired?'uncertain':row.proposal?'completed':'failed',JSON.stringify(outcome.evidence),'Charge recovery does not recover an unavailable proposal.']);
+   await receipt.save({id});
   });
  }
  return {...await getAiSuggestion(projectId,userId,id),acknowledgement:{requestId:input.requestId,runId:id,operation:'reconcile' as const},replayed:saved.replayed};

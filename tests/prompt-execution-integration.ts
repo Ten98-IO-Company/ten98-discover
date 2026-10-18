@@ -4,7 +4,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
-import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
+import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
 import {createPrompts,updatePrompt,setPromptArchived,listPrompts} from '../src/server/prompts.ts';
 import {getPromptExecutions,getPromptComparison,getPromptComparisonSummary,getPromptExecutionResult,getPromptExecutionCitations,quotePromptExecution,startPromptExecution,cancelPromptComparison,executePromptComparison,reconcilePromptExecution,reconcilePromptExecutionJobs} from '../src/server/prompt-execution.ts';
 import {refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
@@ -41,8 +41,8 @@ export async function runPromptExecutionChecks(){
   const workspace=randomUUID(),project=randomUUID();await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Prompt execution integration')",[workspace]);
   for(const [user,role] of [[owner,'owner'],[editor,'editor'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[workspace,user,role]);
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Prompts','https://'||$1||'.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
-  const connection=(await saveProvider(workspace,owner,{provider:'openrouter',name:'Synthetic only',credentials:{apiKey:'synthetic-never-live'},monthlyLimitUsd:'10'})).connection;
-  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[connection.id]);await saveBudget(workspace,owner,{monthlyLimitUsd:'10',paused:false});
+  const connection=(await saveProvider(workspace,owner,{provider:'openrouter',name:'Synthetic only',credentials:{apiKey:'synthetic-never-live'}})).connection;
+  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[connection.id]);await saveBudget(workspace,owner,{paused:false});
   const prompt=(await createPrompts(project,owner,{requestId:randomUUID(),prompts:[{text:'Exact original prompt',enabled:false}]})).items[0];
   return {workspace,project,connectionId:connection.id,prompt,request:{connectionId:connection.id,promptId:prompt.id,versionId:prompt.currentVersionId,systemText:'Explicit system text',models:[...models],maxCompletionTokens:2048,fundedCredits:true as const}};
  }
@@ -51,6 +51,18 @@ export async function runPromptExecutionChecks(){
  const start=async(f:Fixture,user=owner)=>(await startPromptExecution(f.project,user,{quoteId:(await quote(f,user)).id,requestKey:randomUUID()})).comparison;
  const detail=async(f:Fixture,id:string)=>(await getPromptComparison(f.project,owner,id)).comparison;
  const ledger=async(id:string)=>(await pool.query('SELECT status,actual_micros,provider_reference FROM provider_request WHERE id=$1',[id])).rows[0];
+ // Owner decision D3 removed the cap that used to refuse a later child. This uncertain sentinel is the real
+ // replacement trigger: once the workspace holds n reservations, one uncertain row makes the next child meet
+ // spendingGate's 409 inside the same transaction, so the rollback must also remove the sentinel.
+ async function withUncertainSentinel<T>(workspace:string,n:number,action:()=>Promise<T>){
+  await pool.query(`CREATE FUNCTION prompt_execution_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+   IF NEW.operation<>'test.sentinel' AND NEW.workspace_id=TG_ARGV[0] AND (SELECT count(*) FROM provider_request WHERE workspace_id=NEW.workspace_id AND operation<>'test.sentinel')=TG_ARGV[1]::int THEN
+    INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,status,budget_month)
+    VALUES(gen_random_uuid(),NEW.workspace_id,NEW.connection_id,NEW.connection_revision,NEW.user_id,gen_random_uuid(),'test.sentinel',repeat('0',64),1,'uncertain',NEW.budget_month);
+   END IF; RETURN NULL; END $$`);
+  await pool.query(`CREATE TRIGGER prompt_execution_sentinel AFTER INSERT ON provider_request FOR EACH ROW EXECUTE FUNCTION prompt_execution_sentinel('${workspace}','${n}')`);
+  try{return await action();}finally{await pool.query('DROP TRIGGER prompt_execution_sentinel ON provider_request');await pool.query('DROP FUNCTION prompt_execution_sentinel()');}
+ }
  try{
   const f=await fixture(),freeBefore=free;assert.equal((await getPromptExecutions(f.project,viewer)).role,'viewer');assert.equal(free,freeBefore);assert.equal(paid,0);
   assert.deepEqual((await listPrompts(f.project,viewer,new URLSearchParams())).execution,{available:true,schedulingAvailable:false,nextRunAt:null});assert.equal(free,freeBefore);
@@ -87,13 +99,16 @@ export async function runPromptExecutionChecks(){
   const recoveredStart=await startPromptExecution(permissions.project,editor,{quoteId:permissionQuote.quote.id,requestKey:permissionKey});assert.equal(recoveredStart.role,'editor');assert.equal(recoveredStart.comparison.id,permissionStart.comparison.id);assert.equal(recoveredStart.comparison.canCancel,false);assert.equal(paid,2);
   console.log('PASS current-role cancellation metadata, immutable bounded authored preview and accepted-start recovery after quote expiry');
 
-  const budget=await fixture();await saveProviderLimit(budget.workspace,owner,budget.connectionId,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.03'});await assert.rejects(start(budget),{status:409});assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM prompt_comparison WHERE workspace_id=$1',[budget.workspace])).rowCount,0);
+  const budget=await fixture();await withUncertainSentinel(budget.workspace,1,()=>assert.rejects(start(budget),{status:409,code:'SPENDING_BUDGET'}));assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM prompt_comparison WHERE workspace_id=$1',[budget.workspace])).rowCount,0);
   const rollback=await fixture(),rq=await quote(rollback),boss=await getBoss(),originalSend=boss.send.bind(boss);let insertedQueueId:string|undefined;boss.send=(async(...args:any[])=>{insertedQueueId=await (originalSend as any)(...args);throw new Error('Synthetic failure after queue insertion');}) as typeof boss.send;
   try{await assert.rejects(startPromptExecution(rollback.project,owner,{quoteId:rq.id,requestKey:randomUUID()}));}finally{boss.send=originalSend;}
   assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.ok(insertedQueueId);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=$1',[insertedQueueId])).rowCount,0);
   const expired=await fixture(),eq=await quote(expired);await pool.query("UPDATE prompt_execution_quote SET created_at=clock_timestamp()-interval '10 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[eq.id]);await assert.rejects(startPromptExecution(expired.project,owner,{quoteId:eq.id,requestKey:randomUUID()}),{status:409});
-  const competition=await fixture();await saveProviderLimit(competition.workspace,owner,competition.connectionId,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.06'});const cq1=await quote(competition),cq2=await quote(competition);const concurrent=await Promise.allSettled([startPromptExecution(competition.project,owner,{quoteId:cq1.id,requestKey:randomUUID()}),startPromptExecution(competition.project,owner,{quoteId:cq2.id,requestKey:randomUUID()})]);assert.equal(concurrent.filter(v=>v.status==='fulfilled').length,1);
-  console.log('PASS second-child budget failure and enqueue failure roll back every reservation; concurrent budgets serialize');
+  // Owner decision D3: no cap decides between concurrent starts; different quotes both start and one quote starts once.
+  const competition=await fixture(),cq1=await quote(competition),cq2=await quote(competition);const concurrent=await Promise.allSettled([startPromptExecution(competition.project,owner,{quoteId:cq1.id,requestKey:randomUUID()}),startPromptExecution(competition.project,owner,{quoteId:cq2.id,requestKey:randomUUID()})]);assert.equal(concurrent.filter(v=>v.status==='fulfilled').length,2);
+  const cq3=await quote(competition),sameQuote=await Promise.allSettled([startPromptExecution(competition.project,owner,{quoteId:cq3.id,requestKey:randomUUID()}),startPromptExecution(competition.project,owner,{quoteId:cq3.id,requestKey:randomUUID()})]);assert.equal(sameQuote.filter(v=>v.status==='fulfilled').length,1);
+  const refusedStart=sameQuote.find(v=>v.status==='rejected') as PromiseRejectedResult;assert.equal(refusedStart.reason.status,409);assert.equal(refusedStart.reason.message,'This quote already started a comparison.');assert.equal((await pool.query('SELECT count(*)::int AS n FROM prompt_comparison WHERE quote_id=$1',[cq3.id])).rows[0].n,1);
+  console.log('PASS second-child reservation failure and enqueue failure roll back every reservation; starts of one quote serialize (D3)');
 
   let before=paid;
   for(const changed of ['role','archive','credentials','price','cancel'] as const){
@@ -110,15 +125,18 @@ export async function runPromptExecutionChecks(){
   const waiting=executePromptComparison(inFlightRun.id,async(...args)=>{if(String(args[0]).endsWith('/endpoints')){ready();await preflightGate;}return send(...args);});
   await preflightReady;await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[inFlight.workspace,editor]);release();await waiting;assert.equal(paid,before);assert.ok((await detail(inFlight,inFlightRun.id)).runs.every((r:any)=>r.status==='cancelled'));
   for(const kind of ['invalid','empty','over','byok'] as const){
-   mode='ok';const g=await fixture(),run=await start(g);mode=kind;await executePromptComparison(run.id,send);const result=await detail(g,run.id);assert.equal(result.runs[0].chargeStatus,'settled');
+   mode='ok';const g=await fixture(),run=await start(g),sentBefore:number=paid;mode=kind;await executePromptComparison(run.id,send);const result=await detail(g,run.id);assert.equal(result.runs[0].chargeStatus,'settled');
    if(kind==='invalid'){assert.equal(result.runs[0].status,'failed');assert.ok(result.runs[0].diagnostic);}
    if(kind==='empty')assert.equal(result.runs[0].result.text,'');
-   if(kind==='over'||kind==='byok'){assert.equal(result.runs[1].status,'cancelled');assert.equal((await getPromptExecutions(g.project,owner)).spendingPaused,true);}
+   // Owner decision D3: a known overrun or BYOK charge is recorded; nothing pauses, so the sibling still runs.
+   if(kind==='over'||kind==='byok'){assert.equal(result.runs[1].status,'completed');assert.equal(paid,sentBefore+2);assert.equal((await getPromptExecutions(g.project,owner)).spendingPaused,false);}
+   if(kind==='over')assert.ok(Number(result.runs[0].actualUsd)>Number(result.runs[0].estimateUsd));
   }
-  console.log('PASS live role/archive/key/price/cancel gates, charged malformed or empty answers, overrun/BYOK stops remaining children');
+  console.log('PASS live role/archive/key/price/cancel gates, charged malformed or empty answers, overrun/BYOK recorded without stopping remaining children (D3)');
 
   mode='ok';const uncertain=await fixture(),uncertainRun=await start(uncertain);mode='truncated';await executePromptComparison(uncertainRun.id,send);const unresolved=await detail(uncertain,uncertainRun.id),child=unresolved.runs[0];assert.equal(child.status,'uncertain');assert.ok(child.generationId);assert.equal(unresolved.runs[1].status,'cancelled');before=paid;await executePromptComparison(uncertainRun.id,send);assert.equal(paid,before);
-  await saveBudget(uncertain.workspace,owner,{monthlyLimitUsd:'10',paused:false});await assert.rejects(start(uncertain),{status:409});
+  // Owner decision D3: the uncertain child cancels its sibling and blocks new work through the ledger, without pausing.
+  assert.equal((await getPromptExecutions(uncertain.project,owner)).spendingPaused,false);await saveBudget(uncertain.workspace,owner,{paused:false});await assert.rejects(start(uncertain),{status:409,code:'SPENDING_BUDGET'});
   await assert.rejects(reconcilePromptExecution(uncertain.project,editor,child.id,{},send),{status:404});
   for(const change of [{id:'gen-other'},{session_id:'foreign'},{external_user:'foreign'},{finish_reason:null},{total_cost:'0.01'}]){receiptChange=change;assert.equal((await reconcilePromptExecution(uncertain.project,owner,child.id,{},send)).reconciliation.status,'inconclusive');assert.equal((await ledger(child.id)).status,'uncertain');}
   // Expiring copied input must not orphan an unresolved charge or restore payload on recovery.
@@ -135,12 +153,14 @@ export async function runPromptExecutionChecks(){
   assert.deepEqual(purgedUncertain.prompt,{id:uncertain.prompt.id,versionId:uncertain.request.versionId,textPreview:'Exact original prompt'});assert.equal(purgedUncertain.canCancel,false);
   assert.deepEqual(purgedUncertain.runs.map((r:any)=>r.status),['uncertain','cancelled']);assert.equal(purgedUncertain.runs[0].result,null);
   assert.deepEqual((await pool.query(preservedSql,[child.id])).rows[0],preserved);assert.equal(free,readsBeforePurge);assert.equal(paid,before);
-  receiptChange={};assert.equal((await reconcilePromptExecution(uncertain.project,owner,child.id,{},send)).reconciliation.status,'matched');const recovered=(await detail(uncertain,uncertainRun.id)).runs[0];assert.equal(recovered.status,'reconciled');assert.equal(recovered.result,null);assert.equal((await getPromptExecutions(uncertain.project,owner)).spendingPaused,true);assert.equal(paid,before);
+  receiptChange={};assert.equal((await reconcilePromptExecution(uncertain.project,owner,child.id,{},send)).reconciliation.status,'matched');const recovered=(await detail(uncertain,uncertainRun.id)).runs[0];assert.equal(recovered.status,'reconciled');assert.equal(recovered.result,null);assert.equal((await getPromptExecutions(uncertain.project,owner)).spendingPaused,false);assert.equal(paid,before);
   const recoveredComparison=await detail(uncertain,uncertainRun.id);
   assert.equal(recoveredComparison.inputExpired,true);assert.equal(recoveredComparison.input,null);assert.equal(recoveredComparison.messages,null);
   assert.equal(recovered.generationId,child.generationId);assert.equal(recovered.chargeStatus,'settled');assert.equal(recovered.actualUsd,'0.000013');
   assert.deepEqual(receipts.get(child.generationId),originalReceipt);assert.equal(free,readsBeforePurge+1);
   await executePromptComparison(uncertainRun.id,send);assert.equal(paid,before);
+  // Owner decision D3: once the charge is reconciled, a new Start is admitted with no unpause step.
+  const resumedStart=await start(uncertain);assert.equal(resumedStart.runs.length,2);await cancelPromptComparison(uncertain.project,owner,resumedStart.id,{});assert.equal(paid,before);
   mode='ok';const missing=await fixture(),missingRun=await start(missing);mode='unknown';await executePromptComparison(missingRun.id,send);const noId=(await detail(missing,missingRun.id)).runs[0];const freeCount=free;assert.equal((await reconcilePromptExecution(missing.project,owner,noId.id,{},send)).reconciliation.status,'inconclusive');assert.equal(free,freeCount);
   const rotated=await fixture(),rotatedRun=await start(rotated),authBefore=process.env.AUTH_SECRET;
   const storedActor=(await pool.query('SELECT q.request_actor FROM prompt_comparison c JOIN prompt_execution_quote q ON q.id=c.quote_id WHERE c.id=$1',[rotatedRun.id])).rows[0].request_actor;
@@ -176,8 +196,10 @@ export async function runPromptExecutionChecks(){
   const insightsAfter=await getPromptInsights(retainedAnswer.project,viewer,insightParams);assert.equal(insightsAfter.coverage.expired,1);assert.equal(insightsAfter.coverage.eligible,0);assert.equal(insightsAfter.metrics[0].eligibleAnswers,null);
   assert.equal((await previewRetention(retainedAnswer.workspace,owner,{revision:retainedPolicy.revision,settings:retainedPolicy.settings})).promptEstimate.results,1);
   const erasedAnswer=await runRetentionBatch(retainedAnswer.project);assert.equal(erasedAnswer?.expiredPromptResults,1);assert.equal(erasedAnswer?.expiredPromptInputs,1);
-  assert.equal((await detail(retainedAnswer,retainedRun.id)).runs[0].result,null);assert.equal((await detail(retainedAnswer,retainedRun.id)).runs[0].resultExpired,true);assert.equal((await getPromptExecutions(retainedAnswer.project,owner)).spendingPaused,true);
+  assert.equal((await detail(retainedAnswer,retainedRun.id)).runs[0].result,null);assert.equal((await detail(retainedAnswer,retainedRun.id)).runs[0].resultExpired,true);assert.equal((await getPromptExecutions(retainedAnswer.project,owner)).spendingPaused,false);
   assert.equal((await getPromptInsights(retainedAnswer.project,viewer,insightParams)).coverage.expired,1);assert.equal(paid,paidBeforeRecovery);
+  // Owner decision D3: the matched reconcile leaves no block, so a new Start is admitted without an unpause.
+  const retainedResume=await start(retainedAnswer);assert.equal(retainedResume.runs.length,2);await cancelPromptComparison(retainedAnswer.project,owner,retainedResume.id,{});assert.equal(paid,paidBeforeRecovery);
   await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650 WHERE id=$1',[retainedAnswer.workspace]);
   const erasedReceipt=await detail(retainedAnswer,retainedRun.id);assert.equal(erasedReceipt.runs[0].resultExpired,true);assert.equal(erasedReceipt.runs[0].result,null);assert.equal(erasedReceipt.inputExpired,true);assert.equal(erasedReceipt.messages,null);
   console.log('PASS charge-only reconciliation preserves the original raw-retention clock, expired insight eligibility and cleanup while settling its exact ledger');
@@ -264,10 +286,9 @@ export async function runPromptExecutionChecks(){
   assert.deepEqual(three.quote.routes.map(r=>r.model),selected.slice(0,3));
   for(const invalid of [[...selected,'other/fifth'],[...selected.slice(0,3),selected[0]]])await assert.rejects(quotePromptExecution(four.project,owner,{...fourInput,models:invalid},sendFour),{status:400});
   const fourQuote=(await quotePromptExecution(four.project,owner,fourInput,sendFour)).quote;assert.equal(fourQuote.estimateUsd,'0.081716');
-  await saveProviderLimit(four.workspace,owner,four.connectionId,{revision:1,expectedMonthlyLimitUsd:'10',monthlyLimitUsd:'0.07'});
-  await assert.rejects(startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:randomUUID()}),{status:409});
+  // Owner decision D3: the uncertain sentinel after three reservations, not a cap, refuses the fourth child.
+  await withUncertainSentinel(four.workspace,3,()=>assert.rejects(startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:randomUUID()}),{status:409,code:'SPENDING_BUDGET'}));
   for(const table of ['provider_request','prompt_comparison','prompt_execution'])assert.equal((await pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE workspace_id=$1`,[four.workspace])).rows[0].n,0,'The fourth reservation rolls back all preceding children.');
-  await saveProviderLimit(four.workspace,owner,four.connectionId,{revision:1,expectedMonthlyLimitUsd:'0.07',monthlyLimitUsd:'0.09'});
   const fourKey=randomUUID(),fourStart=await startPromptExecution(four.project,owner,{quoteId:fourQuote.id,requestKey:fourKey});
   assert.equal(fourStart.comparison.runs.length,4);assert.equal(fourStart.comparison.answerMode,'individual');
   assert.ok(fourStart.comparison.runs.every(r=>!('result'in r)));assert.equal(fourPaid,0);
@@ -329,11 +350,11 @@ export async function runPromptExecutionChecks(){
   for(const [index,run] of failedSummary.comparison.runs.entries())assert.equal((await getPromptExecutionResult(failedFour.project,viewer,run.id)).run.result?.text??null,index===1?null:largeText);
   const uncertainFour=await fixture(),uncertainQuote=(await quotePromptExecution(uncertainFour.project,owner,{...uncertainFour.request,models:selected},sendFour)).quote,uncertainStart=await startPromptExecution(uncertainFour.project,owner,{quoteId:uncertainQuote.id,requestKey:randomUUID()});
   loseFour=true;await executePromptComparison(uncertainStart.comparison.id,sendFour);assert.equal(fourPaid,10);const unresolvedFour=await getPromptComparisonSummary(uncertainFour.project,owner,uncertainStart.comparison.id);
-  assert.deepEqual(unresolvedFour.comparison.runs.map(r=>r.status),['uncertain','cancelled','cancelled','cancelled']);assert.equal((await getPromptExecutions(uncertainFour.project,owner)).spendingPaused,true);await executePromptComparison(uncertainStart.comparison.id,sendFour);assert.equal(fourPaid,10);
+  assert.deepEqual(unresolvedFour.comparison.runs.map(r=>r.status),['uncertain','cancelled','cancelled','cancelled']);assert.equal((await getPromptExecutions(uncertainFour.project,owner)).spendingPaused,false);await executePromptComparison(uncertainStart.comparison.id,sendFour);assert.equal(fourPaid,10);
   assert.deepEqual((await pool.query(`SELECT status,count(*)::int AS count,sum(actual_micros)::text AS actual FROM provider_request
     WHERE workspace_id=ANY($1::text[]) GROUP BY status ORDER BY status`,[[four.workspace,one.workspace,failedFour.workspace,uncertainFour.workspace]])).rows,
     [{status:'cancelled',count:3,actual:null},{status:'settled',count:9,actual:'117'},{status:'uncertain',count:1,actual:null}]);
-  console.log('PASS actual held-answer expiry/current-membership denial and four-model unknown-charge pause without replay');
+  console.log('PASS actual held-answer expiry/current-membership denial and four-model unknown charge stops its siblings without a pause or replay (D3)');
 
   // Two additional genuine parser/worker outputs. Raw legal Unicode URLs grow
   // only through the unchanged URL.href canonicalization, never a stored-body rewrite.

@@ -6,7 +6,7 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {getBoss,stopJobs,startWorker} from '../src/server/jobs.ts';
 import {getAuth} from '../src/server/auth.ts';
-import {saveProvider,saveBudget,revokeProvider,saveProviderLimit} from '../src/server/providers.ts';
+import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
 import {updateProjectContext} from '../src/server/project-context.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {createPrompts,listPrompts,updatePrompt} from '../src/server/prompts.ts';
@@ -47,8 +47,8 @@ export async function runSuggestionChecks(){
   const workspace=randomUUID(),project=randomUUID();await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Suggestion fixture')",[workspace]);
   for(const [user,role] of [[owner,'owner'],[editor,'editor'],[viewer,'viewer']])await pool.query('INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,$3)',[workspace,user,role]);
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Coffee','https://coffee.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
-  const conn=(await saveProvider(workspace,owner,{provider:'openrouter',name:'Synthetic',credentials:{apiKey:'synthetic-only-'+project},monthlyLimitUsd:'5'})).connection;
-  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[conn.id]);await saveBudget(workspace,owner,{monthlyLimitUsd:'5',paused:false});
+  const conn=(await saveProvider(workspace,owner,{provider:'openrouter',name:'Synthetic',credentials:{apiKey:'synthetic-only-'+project}})).connection;
+  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[conn.id]);await saveBudget(workspace,owner,{paused:false});
   return {workspace,project,connectionId:conn.id,input:{requestId:randomUUID(),connectionId:conn.id,contextRevision:1,profileId:'benchmark-mini-v1' as const,benchmark:true as const,fundedCredits:true as const,maxSpendUsd:'1',topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]}};
  }
  type Fixture=Awaited<ReturnType<typeof fixture>>;
@@ -75,10 +75,12 @@ export async function runSuggestionChecks(){
   boss.send=(async(...args:any[])=>{queuedId=await (originalSend as any)(...args);throw new Error('Synthetic queue rollback');}) as typeof boss.send;
   try{await assert.rejects(startAiSuggestions(rollback.project,owner,{requestId:randomUUID(),quoteId:rq.id}));}finally{boss.send=originalSend;}
   assert.ok(queuedId);assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[rollback.workspace])).rowCount,0);assert.equal((await pool.query('SELECT id FROM pgboss.job WHERE id=$1',[queuedId])).rowCount,0);
-  const budget=await fixture();await saveProviderLimit(budget.workspace,owner,budget.connectionId,{revision:1,expectedMonthlyLimitUsd:'5',monthlyLimitUsd:'0.01'});await assert.rejects(start(budget),{status:409});
+  // Owner decision D3: the removed workspace cap is replaced by the owner's manual pause.
+  const budget=await fixture(),budgetQuote=await quote(budget),jobsBefore=(await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='ai-suggestion'")).rows[0].n;await saveBudget(budget.workspace,owner,{paused:true});
+  await assert.rejects(startAiSuggestions(budget.project,owner,{requestId:randomUUID(),quoteId:budgetQuote.id}),{status:409,code:'SPENDING_BUDGET'});assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='ai-suggestion'")).rows[0].n,jobsBefore);
   const cap=await fixture();await assert.rejects(quoteAiSuggestions(cap.project,owner,{...cap.input,maxSpendUsd:'0.01'},send),{status:409});
   const busy=await fixture(),first=await start(busy);busy.input.requestId=randomUUID();await assert.rejects(start(busy),{status:409});await cancelAiSuggestion(busy.project,owner,first.id,{requestId:randomUUID()});
-  console.log('PASS queue rollback, conservative per-request/workspace caps and one active project request');
+  console.log('PASS queue rollback, manual pause and one active project request');
 
   const baseline=paid;
   for(const kind of ['role','context','library','price','connection','cancel'] as const){

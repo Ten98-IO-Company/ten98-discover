@@ -31,15 +31,15 @@ export async function createKeywordCase(label){
     const project={id:randomUUID(),name:'Keyword '+label+' '+suffix,origin:'https://'+label+'-'+suffix+'.example.com'};
     await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,$3,$4,$5,'infinity')",[project.id,workspace.id,project.name,project.origin,randomUUID()]);projects.push(project);
   }
-  const dataforseo=(await saveProvider(workspace.id,owner.id,{provider:'dataforseo',name:'Synthetic DataForSEO',credentials:{login:'synthetic-provider@keywords.integration.test',password:'synthetic-never-live'},monthlyLimitUsd:'10'})).connection.id;
-  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[dataforseo]);await saveBudget(workspace.id,owner.id,{monthlyLimitUsd:'10',paused:false});
+  const dataforseo=(await saveProvider(workspace.id,owner.id,{provider:'dataforseo',name:'Synthetic DataForSEO',credentials:{login:'synthetic-provider@keywords.integration.test',password:'synthetic-never-live'}})).connection.id;
+  await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[dataforseo]);await saveBudget(workspace.id,owner.id,{paused:false});
   await refreshKeywordMarkets(projects[0].id,owner.id,{connectionId:dataforseo},createSyntheticProviderFetch());
   const group={workspace,owner,main:projects[0],other:projects[1],connections:{dataforseo}};fixture.groups[key]=group;
   await writeFile(fixturePath,JSON.stringify(fixture,null,2)+'\n',{mode:0o600});return group;
 }
 export async function createPromptCase(label){
   const group=await createKeywordCase('prompt-'+label),pool=getDatabase().pool;
-  group.connections.openrouter=(await saveProvider(group.workspace.id,group.owner.id,{provider:'openrouter',name:'Synthetic OpenRouter',credentials:{apiKey:'synthetic-never-live'},monthlyLimitUsd:'10'})).connection.id;
+  group.connections.openrouter=(await saveProvider(group.workspace.id,group.owner.id,{provider:'openrouter',name:'Synthetic OpenRouter',credentials:{apiKey:'synthetic-never-live'}})).connection.id;
   await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[group.connections.openrouter]);
   const prompt=(await createPrompts(group.main.id,group.owner.id,{requestId:randomUUID(),prompts:[{text:'Synthetic '+label+' authored prompt',enabled:false}]})).items[0];group.prompts={disabled:prompt};
   const fixture=await readFixture();fixture.groups['keyword-prompt-'+label]=group;await writeFile(fixturePath,JSON.stringify(fixture,null,2)+'\n',{mode:0o600});return group;
@@ -96,10 +96,10 @@ export async function seedFixture(){
     const connections={};
     for(const provider of ['dataforseo','openrouter']){
       const credentials=provider==='openrouter'?{apiKey:'synthetic-never-live'}:{login:'synthetic-provider@keywords.integration.test',password:'synthetic-never-live'};
-      connections[provider]=(await saveProvider(workspace.id,owner.id,{provider,name:'Synthetic '+provider,credentials,monthlyLimitUsd:'10'})).connection.id;
+      connections[provider]=(await saveProvider(workspace.id,owner.id,{provider,name:'Synthetic '+provider,credentials})).connection.id;
       await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[connections[provider]]);
     }
-    await saveBudget(workspace.id,owner.id,{monthlyLimitUsd:'10',paused:false});
+    await saveBudget(workspace.id,owner.id,{paused:false});
     await refreshKeywordMarkets(main.id,owner.id,{connectionId:connections.dataforseo},send);
     const initial=(await createPrompts(main.id,owner.id,{requestId:randomUUID(),prompts:[
       {text:'Synthetic disabled prompt original version',enabled:false},

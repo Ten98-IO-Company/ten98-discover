@@ -101,7 +101,7 @@ export async function getPromptExecutions(projectId:string,userId:string){return
   const budget=(await client.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[wid])).rows[0];
   const comparisons=[];for(const row of (await client.query('SELECT id FROM prompt_comparison WHERE project_id=$1 ORDER BY created_at DESC,id DESC LIMIT 20',[projectId])).rows)comparisons.push(await comparisonDto(client,projectId,row.id,userId,role));
   const catalog=cachedOpenRouterModels();
-  return boundedOpenRouterMetadata({role,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),catalog,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,comparisons,cache:{available:true},scheduling:{available:true,kind:'owner-approved-text-v1'}});
+  return boundedOpenRouterMetadata({role,models:catalog.models.filter(m=>m.admission==='candidate').map(m=>m.id),catalog,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??false,connections:connections.rows,comparisons,cache:{available:true},scheduling:{available:true,kind:'owner-approved-text-v1'}});
 });}
 export async function getPromptComparison(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true)}));}
 export async function getPromptComparisonSummary(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_wid,role)=>boundedPromptRead({role,comparison:await comparisonDto(client,projectId,id,userId,role,true,true)}));}
@@ -231,9 +231,8 @@ async function finish(row:any,outcome:ExecutionOutcome,crashOnly=false){return w
   const settled=await settleSpend(client,current.workspace_id,current.id,outcome.cost,reference);
   await client.query(`UPDATE prompt_execution SET status=$2,diagnostic=$3,result=$4,evidence=$5,generation_id=$6,completed_at=clock_timestamp() WHERE id=$1`,
     [row.id,settled.reconciliationRequired?'uncertain':outcome.result?'completed':'failed',outcome.diagnostic,outcome.result===null?null:JSON.stringify(outcome.result),JSON.stringify(outcome.evidence),reference]);
-  if(outcome.pause)await client.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[current.workspace_id]);
-  const paused=(await client.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[current.workspace_id])).rows[0]?.paused;
-  if(settled.reconciliationRequired||paused)await cancelChildren(client,current.comparison_id,'Remaining requests stopped because spending requires review.');
+  // Owner decision D3: nothing pauses automatically; a manual pause stops each sibling at its own dispatch gate.
+  if(settled.reconciliationRequired)await cancelChildren(client,current.comparison_id,'Remaining requests were not sent because an earlier charge in this comparison is uncertain. Reconcile it first.');
 });}
 export async function executePromptComparison(id:string,send:typeof fetch=fetch){
   if(!z.uuid().safeParse(id).success)throw new Error('Invalid comparison job.');
@@ -262,7 +261,7 @@ export async function executePromptComparison(id:string,send:typeof fetch=fetch)
         // A duplicate worker must not cancel siblings after another worker advances this child.
         const current=(await client.query('SELECT status FROM prompt_execution WHERE id=$1',[row.id])).rows[0];
         if(current?.status!=='queued')return;
-        await cancelChildren(client,id,'Not dispatched because the quote, endpoint, permissions, credentials or spending limits changed.');
+        await cancelChildren(client,id,'Not dispatched because the quote, endpoint, permissions, credentials, the paid-work pause or an uncertain charge changed.');
       });return;}throw error;
     }
     const outcome=await requestPromptExecution(secret,row.messages,row.route,row.input.maxCompletionTokens,row.id,row.request_actor,dispatchedAt!,async generation=>{
@@ -293,8 +292,7 @@ export async function reconcilePromptExecution(projectId:string,userId:string,id
     const settled=await settleSpend(client,wid,id,outcome.cost,outcome.reference);
     // Charge recovery is not a new answer or a new raw-evidence retention period.
     await client.query('UPDATE prompt_execution SET status=$2,evidence=$3,diagnostic=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',[id,settled.reconciliationRequired?'uncertain':current.result?'completed':'reconciled',JSON.stringify(outcome.evidence),outcome.diagnostic??'The credit charge was recovered. The original answer is unavailable; a new answer requires a new paid quote.']);
-    await client.query('UPDATE workspace_budget SET paused=true,updated_at=clock_timestamp() WHERE workspace_id=$1',[wid]);
-    return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,current.comparison_id,userId,role,true,true),reconciliation:{status:settled.reconciliationRequired?'inconclusive':'matched',message:'Spending remains paused until an owner reviews the charge.'}});
+    return boundedPromptRead({role,comparison:await comparisonDto(client,projectId,current.comparison_id,userId,role,true,true),reconciliation:{status:settled.reconciliationRequired?'inconclusive':'matched',message:settled.reconciliationRequired?'The charge remains unresolved; new paid work stays blocked until it is reconciled.':'Charge recorded.'}});
   });
 }
 export async function reconcilePromptExecutionJobs(){

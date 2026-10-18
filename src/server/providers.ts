@@ -23,20 +23,20 @@ const credentialsInput = {
   openrouter: z.object({ apiKey: z.string().min(1).max(4096).regex(/^[^\s]+$/) }).strict(),
   dataforseo: z.object({ login: z.string().trim().email().max(254), password: z.string().min(1).max(4096).refine(value=>toUSVString(value)===value&&!/[\x00-\x1f\x7f]/.test(value)) }).strict(),
 };
-const createInput = z.object({ name: z.string().trim().min(1).max(120), provider: providerInput, credentials: z.unknown(), monthlyLimitUsd: moneyInput }).strict();
-const updateInput = createInput.omit({ provider: true }).extend({ monthlyLimitUsd: moneyInput.optional() });
-const budgetInput = z.object({ monthlyLimitUsd: moneyInput.optional(), paused: z.boolean() }).strict();
-const limitInput = z.object({ revision: z.number().int().min(1).max(2_147_483_647), expectedMonthlyLimitUsd: moneyInput, monthlyLimitUsd: moneyInput }).strict();
+// Owner decision D3: no app spending cap; the strict schemas refuse the removed monthlyLimitUsd field.
+const createInput = z.object({ name: z.string().trim().min(1).max(120), provider: providerInput, credentials: z.unknown() }).strict();
+const updateInput = createInput.omit({ provider: true });
+const budgetInput = z.object({ paused: z.boolean() }).strict();
 
-type Connection = { id: string; workspace_id: string; provider: 'openrouter' | 'dataforseo'; name: string; encrypted_credentials: unknown; revision: number; monthly_limit_micros: string; check_status: string; diagnostic: string | null; last_checked_at: Date | null; created_at: Date; updated_at: Date; revoked_at: Date | null };
+type Connection = { id: string; workspace_id: string; provider: 'openrouter' | 'dataforseo'; name: string; encrypted_credentials: unknown; revision: number; check_status: string; diagnostic: string | null; last_checked_at: Date | null; created_at: Date; updated_at: Date; revoked_at: Date | null };
 function metadata(row: Connection) {
-  return { id: row.id, name: row.name, provider: row.provider, revision: row.revision, monthlyLimitUsd: usd(row.monthly_limit_micros), checkStatus: row.check_status, diagnostic: row.diagnostic, lastCheckedAt: row.last_checked_at, createdAt: row.created_at, updatedAt: row.updated_at };
+  return { id: row.id, name: row.name, provider: row.provider, revision: row.revision, checkStatus: row.check_status, diagnostic: row.diagnostic, lastCheckedAt: row.last_checked_at, createdAt: row.created_at, updatedAt: row.updated_at };
 }
 function context(row: Pick<Connection, 'id' | 'workspace_id' | 'provider' | 'revision'>) {
   return { id: row.id, workspaceId: row.workspace_id, provider: row.provider, revision: row.revision };
 }
 
-// The workspace lock also serializes membership changes, key revocation and budget reservations.
+// The workspace lock also serializes membership changes, key revocation and ledger reservations.
 export async function providerTransaction<T>(workspaceId: string, userId: string, roles: string[], run: (client: PoolClient, role: string) => Promise<T>, deadline?:'5s') {
   if(deadline!==undefined&&deadline!=='5s')throw new TypeError('Unsupported provider transaction deadline.');
   z.uuid().parse(workspaceId); z.uuid().parse(userId);
@@ -58,7 +58,7 @@ export async function providerTransaction<T>(workspaceId: string, userId: string
 export async function listProviders(workspaceId: string, userId: string) {
   return providerTransaction(workspaceId, userId, ['owner'], async client => {
     const connections = await client.query<Connection>('SELECT * FROM provider_connection WHERE workspace_id=$1 AND revoked_at IS NULL ORDER BY created_at,id', [workspaceId]);
-    const budget = await client.query('SELECT monthly_limit_micros,paused FROM workspace_budget WHERE workspace_id=$1', [workspaceId]);
+    const budget = await client.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1', [workspaceId]);
     const totals = await client.query(`SELECT COALESCE(sum(actual_micros) FILTER(WHERE status='settled'),0)::text AS spent,
       COALESCE(sum(estimate_micros) FILTER(WHERE status IN ('reserved','dispatched')),0)::text AS reserved,
       COALESCE(sum(estimate_micros) FILTER(WHERE status='uncertain'),0)::text AS uncertain,
@@ -67,7 +67,8 @@ export async function listProviders(workspaceId: string, userId: string) {
     const ledger = await client.query(`SELECT id,connection_id AS "connectionId",operation,status,estimate_micros,actual_micros,created_at AS "createdAt"
       FROM provider_request WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 50`, [workspaceId]);
     return { vaultConfigured: credentialKeys() !== null, connections: connections.rows.map(metadata),
-      budget: { monthlyLimitUsd: usd(budget.rows[0]?.monthly_limit_micros ?? '0'), monthlyLimitEnforced: false as const, paused: budget.rows[0]?.paused ?? true,
+      // A missing workspace_budget row means unpaused (owner decision D3).
+      budget: { paused: budget.rows[0]?.paused ?? false,
         month: totals.rows[0].month, spentUsd: usd(totals.rows[0].spent), reservedUsd: usd(totals.rows[0].reserved), uncertainUsd: usd(totals.rows[0].uncertain) },
       ledger: ledger.rows.map(({ estimate_micros, actual_micros, ...row }) => ({ ...row, estimateUsd: usd(estimate_micros), actualUsd: actual_micros === null ? null : usd(actual_micros) })) };
   });
@@ -79,9 +80,6 @@ export async function saveProvider(workspaceId: string, userId: string, input: u
   return providerTransaction(workspaceId, userId, ['owner'], async client => {
     const previous = connectionId ? (await client.query<Connection>('SELECT * FROM provider_connection WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL FOR UPDATE', [connectionId, workspaceId])).rows[0] : undefined;
     if (connectionId && !previous) throw new FoundationError(404, 'Connection not found or unavailable.');
-    if (previous && data.monthlyLimitUsd !== undefined && usdMicros(data.monthlyLimitUsd) !== BigInt(previous.monthly_limit_micros)) {
-      throw new FoundationError(409, 'Reload the connection and edit its spending cap separately.');
-    }
     const provider = previous?.provider ?? (data as z.infer<typeof createInput>).provider;
     const credentials = credentialsInput[provider].parse(data.credentials);
     const id = previous?.id ?? randomUUID();
@@ -89,23 +87,7 @@ export async function saveProvider(workspaceId: string, userId: string, input: u
     const encrypted = encryptCredentials(credentials, { id, workspaceId, provider, revision });
     const result = previous
       ? await client.query<Connection>(`UPDATE provider_connection SET name=$3,encrypted_credentials=$4,revision=$5,check_status='untested',diagnostic=NULL,last_checked_at=NULL,updated_at=now() WHERE id=$1 AND workspace_id=$2 RETURNING *`, [id, workspaceId, data.name, encrypted, revision])
-      : await client.query<Connection>('INSERT INTO provider_connection(id,workspace_id,provider,name,encrypted_credentials,monthly_limit_micros) VALUES($1,$2,$3,$4,$5,$6) RETURNING *', [id, workspaceId, provider, data.name, encrypted, usdMicros((data as z.infer<typeof createInput>).monthlyLimitUsd).toString()]);
-    return { connection: metadata(result.rows[0]) };
-  });
-}
-
-export async function saveProviderLimit(workspaceId: string, userId: string, connectionId: string, input: unknown) {
-  z.uuid().parse(connectionId);
-  const data = limitInput.parse(input);
-  return providerTransaction(workspaceId, userId, ['owner'], async client => {
-    const row = (await client.query<Connection>('SELECT * FROM provider_connection WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL', [connectionId, workspaceId])).rows[0];
-    if (!row) throw new FoundationError(404, 'Connection not found or unavailable.');
-    if (row.revision !== data.revision || BigInt(row.monthly_limit_micros) !== usdMicros(data.expectedMonthlyLimitUsd)) {
-      throw new FoundationError(409, 'The connection or spending cap changed. Reload it before saving.');
-    }
-    const limit = usdMicros(data.monthlyLimitUsd).toString();
-    if (limit === row.monthly_limit_micros) return { connection: metadata(row) };
-    const result = await client.query<Connection>('UPDATE provider_connection SET monthly_limit_micros=$3,updated_at=now() WHERE id=$1 AND workspace_id=$2 RETURNING *', [connectionId, workspaceId, limit]);
+      : await client.query<Connection>('INSERT INTO provider_connection(id,workspace_id,provider,name,encrypted_credentials) VALUES($1,$2,$3,$4,$5) RETURNING *', [id, workspaceId, provider, data.name, encrypted]);
     return { connection: metadata(result.rows[0]) };
   });
 }

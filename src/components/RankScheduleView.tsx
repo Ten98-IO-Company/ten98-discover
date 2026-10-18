@@ -210,7 +210,7 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
         onChange={(event) => onChange({ ...form, consent:event.target.checked })} />
        <span>I approve recurring provider charges up to this ceiling per occurrence.</span>
       </label>
-      <p className="hint" id={idPrefix + 'approve-hint'}>Each occurrence still requires current owner approval, unchanged tracked scope and available capacity under the connection spending cap, with paid work unpaused and no uncertain charges. Saving approval does not run a check immediately.</p>
+      <p className="hint" id={idPrefix + 'approve-hint'}>Each occurrence still requires current owner approval and unchanged tracked scope, with paid work unpaused and no uncertain charges. Saving approval does not run a check immediately.</p>
       <button type="button" className="btn primary" onClick={onApprove} disabled={!canApprove || locked || busy} aria-describedby={idPrefix + 'approve-hint'}>Approve recurring spend</button>
      </form>
     </>

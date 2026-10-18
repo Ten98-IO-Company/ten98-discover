@@ -52,8 +52,8 @@ async function fixture():Promise<Fixture>{
   await pool.query('INSERT INTO workspace(id,name) VALUES($1,\'Identity fixture\')',[workspace]);
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspace,owner]);
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Identity fixture','https://identity.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
-  const connection=(await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic identity account',credentials:{login:account,password:'synthetic-never-live'},monthlyLimitUsd:'10'})).connection.id;
-  await saveBudget(workspace,owner,{monthlyLimitUsd:'10',paused:false});
+  const connection=(await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic identity account',credentials:{login:account,password:'synthetic-never-live'}})).connection.id;
+  await saveBudget(workspace,owner,{paused:false});
   await pool.query('INSERT INTO keyword_market_catalog(workspace_id,markets) VALUES($1,$2)',[workspace,JSON.stringify([{locationCode:2840,locationName:'United States',languageCode:'en',languageName:'English'}])]);
   return {owner,workspace,project,connection,request:{connectionId:connection,mode:'overview',keywords:['identity'],locationCode:2840,languageCode:'en',limit:100}};
 }
@@ -84,7 +84,7 @@ async function rejectMissingCapsule(){
 
 try{
   assert.equal((await pool.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN('r','p','v','m','S','f') LIMIT 1")).rowCount,0,'Use an initially empty owned database.');
-  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0062');
+  const sources=await migrationSources();assert.equal(sources.at(-1)?.version,'0063');
   if(scenario==='ai_search'){
     stage='AI-only modern reference after fresh install';cli('migrate',0);await assertSchema();
     const stable=await getProviderAccountIdentityKey(2),f=await fixture(),prompt=randomUUID(),version=randomUUID(),price=aiSearchPriceEvidence(),seed=await pool.connect();

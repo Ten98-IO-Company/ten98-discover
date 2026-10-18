@@ -61,7 +61,7 @@ export async function getKeywordResearch(projectId:string,userId:string){return 
   const catalog=(await client.query('SELECT updated_at AS "updatedAt",markets FROM keyword_market_catalog WHERE workspace_id=$1',[workspaceId])).rows[0]??{updatedAt:null,markets:[]};
   const budget=(await client.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[workspaceId])).rows[0];
   const rows=await client.query(runSelect+' WHERE r.project_id=$1 ORDER BY r.created_at DESC,r.id DESC LIMIT 20',[projectId]);
-  return {role,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??true,connections:connections.rows,catalog,runs:rows.rows.map(summary)};
+  return {role,vaultConfigured:credentialKeys()!==null,spendingPaused:budget?.paused??false,connections:connections.rows,catalog,runs:rows.rows.map(summary)};
 });}
 export async function getKeywordRun(projectId:string,userId:string,id:string){z.uuid().parse(id);return scoped(projectId,userId,readers,async(client,_workspace,role)=>({run:dto(await runRow(client,projectId,id),userId,role)}));}
 export async function refreshKeywordMarkets(projectId:string,userId:string,raw:unknown,send:typeof fetch=fetch){
@@ -179,7 +179,7 @@ export async function executeKeywordResearch(id:string,send:typeof fetch=fetch){
     }
     const dispatched=(await client.query("UPDATE keyword_research_run SET status='running',dispatched_at=clock_timestamp() WHERE id=$1 RETURNING dispatched_at",[id])).rows[0];
     if(plan)await markSavedRefreshAttempt(client,row.project_id,plan.targets,plan.version,'running',dispatched.dispatched_at);
-  });}catch(error){if(error instanceof FoundationError){await cancelUndispatched(id,'Research was not dispatched because its quote, permissions, connection or spending limits changed.');return;}throw error;}
+  });}catch(error){if(error instanceof FoundationError){await cancelUndispatched(id,'Research was not dispatched because its quote, permissions or connection changed, paid work is paused or an earlier charge is uncertain.');return;}throw error;}
   const outcome=await requestKeywordResearch(secret,request!,id,send);
   await finishResearch(id,outcome);
 }
@@ -198,7 +198,7 @@ export async function reconcileKeywordResearch(projectId:string,userId:string,id
     const completed=(await client.query('UPDATE keyword_research_run SET status=$2,diagnostic=$3,reconciliation_evidence=$4,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1 RETURNING completed_at',[id,status,settled.reconciliationRequired?'The reported charge is outside supported limits; spending remains blocked.':current.result?null:'The charge was recovered. The original live result is unavailable; a new result requires a new paid quote.',JSON.stringify({source:'dataforseo_labs/id_list',taskId:matched.reference,statusCode:matched.statusCode,actualUsd:matched.cost,checkedAt:new Date().toISOString()})])).rows[0];
     const plan=await savedPlan(client,current);
     if(plan)await publishSavedKeywordMetrics(client,projectId,plan.targets,{runId:id,version:plan.version,observedAt:completed.completed_at,result:current.result,status});
-    return {run:dto(await runRow(client,projectId,id),userId,role),reconciliation:{status:settled.reconciliationRequired?'inconclusive' as const:'matched' as const,message:settled.reconciliationRequired?'The charge remains unresolved.':'Provider charge matched. Spending stays paused until an owner reviews the budget.'}};
+    return {run:dto(await runRow(client,projectId,id),userId,role),reconciliation:{status:settled.reconciliationRequired?'inconclusive' as const:'matched' as const,message:settled.reconciliationRequired?'The charge remains unresolved.':'Provider charge matched and recorded.'}};
   });
 }
 // No paid replay: terminal queue state can cancel an unsubmitted reservation or mark a lost dispatch uncertain.

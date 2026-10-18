@@ -99,5 +99,5 @@ test('one fixed structured request preserves financial proof and never retries a
   return Response.json({id:'gen-suggestion',created:Math.floor(now.getTime()/1000),model,provider:'OpenAI',usage:{cost:0.000012345,is_byok:false},choices:[{finish_reason:'stop',message:{content:'not valid proposal JSON'}}]},{headers:{'x-generation-id':'gen-suggestion'}});
  });
  assert.equal(calls,1);assert.equal(captured,'gen-suggestion');assert.equal(result.cost,'0.000013');assert.equal(result.result?.text,'not valid proposal JSON');
- const lost=await requestSuggestionExecution({apiKey:'synthetic'},suggestionMessages(snapshot()),route,id,'a'.repeat(64),now,async()=>{},async()=>{calls++;throw new Error('Synthetic lost acknowledgement');});assert.equal(calls,2);assert.equal(lost.cost,null);assert.equal(lost.pause,true);
+ const lost=await requestSuggestionExecution({apiKey:'synthetic'},suggestionMessages(snapshot()),route,id,'a'.repeat(64),now,async()=>{},async()=>{calls++;throw new Error('Synthetic lost acknowledgement');});assert.equal(calls,2);assert.equal(lost.cost,null);assert.ok(!('pause' in lost));// Owner decision D3: unknown cost stays uncertain; no outcome pauses spending.
 });
