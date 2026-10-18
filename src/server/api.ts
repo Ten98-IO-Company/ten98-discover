@@ -39,6 +39,7 @@ import {getProjectContext,getContextResearch,updateProjectContext} from './proje
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
+import { getEmailStatus, sendTransactionalEmail } from './email.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
 import { assertOidcCredentialsReadable, handleOidc, oidcSignOutUrl } from './oidc.ts';
@@ -1026,7 +1027,16 @@ export async function handleApi(request: Request): Promise<Response> {
         if (match[2] === 'rename') return json(await renameWorkspace(match[1], user.id, await readJson(request)));
         if (match[2] === 'invitations') {
           const result = await inviteMember(match[1], user.id, await readJson(request));
-          return json({ invitation: result.invitation, inviteUrl: `${config.appUrl}/#invite=${result.token}` }, 201);
+          const { email: to, role } = result.invitation, inviteUrl = `${config.appUrl}/#invite=${result.token}`;
+          // Committed above; no PoolClient is held, one attempt only, and no failure undoes the invitation. Fixed text:
+          // workspace and inviter names are member-chosen, so they never reach the installation's sender (phishing surface).
+          // The installation-wide budget mirrors password recovery: plus-tag variants and self-made workspaces evade the address and actor keys.
+          // It is checked after the address key, so re-inviting one address past its budget never spends the installation's.
+          const email = !getEmailStatus().configured ? 'disabled' : await limit(`invitation-email:${createHash('sha256').update(to).digest('hex')}`, 3)
+            .then(() => limit('invitation-email:global', 20))
+            .then(() => sendTransactionalEmail({ to, subject: 'Your ten98 Discover workspace invitation', text: `You were invited to join a workspace on the ten98 Discover installation at ${config.appUrl} with the ${role} role.\n\nOpen this link within 7 days to accept:\n${inviteUrl}\n\nOnly the newest invitation link sent to this address for a workspace works. If you did not expect this invitation, ignore this email.` }))
+            .then(() => 'accepted' as const, () => 'failed' as const);
+          return json({ invitation: result.invitation, inviteUrl, email }, 201);
         }
       }
     }

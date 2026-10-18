@@ -17,7 +17,8 @@
     "readTeam"
    ],
    "routes": [
-    "GET /api/projects/{projectId}/website-shares"
+    "GET /api/projects/{projectId}/website-shares",
+    "POST /api/workspaces/{workspaceId}/invitations"
    ],
    "migrations": [
     "0001_foundation",

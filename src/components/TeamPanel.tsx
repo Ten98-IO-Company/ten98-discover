@@ -6,6 +6,7 @@ type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 
 type Member = { userId: string; name: string; email: string; role: Role };
 type Invitation = { id: string; email: string; role: Role; expiresAt: string };
+type InviteDelivery = 'accepted' | 'failed' | 'disabled';
 type TeamData = {
   workspace: { id: string; name: string; twoFactorRequired: boolean };
   role: Role;
@@ -48,7 +49,7 @@ function TeamPanelContent(props: TeamPanelProps) {
   const [name, setName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<Role>('editor');
-  const [inviteLink, setInviteLink] = useState<{ email: string; url: string } | null>(null);
+  const [inviteLink, setInviteLink] = useState<{ email: string; url: string; delivery: InviteDelivery } | null>(null);
   const [copied, setCopied] = useState(false);
   const [transferTo, setTransferTo] = useState('');
   const [transferEmail, setTransferEmail] = useState('');
@@ -192,12 +193,12 @@ function TeamPanelContent(props: TeamPanelProps) {
     const email = inviteEmail.trim();
     if (!data || !email || email.length > 254) return;
     void runMutation('Could not create the invitation', async signal => {
-      const res = await api<{ invitation: Invitation; inviteUrl: string }>(
+      const res = await api<{ invitation: Invitation; inviteUrl: string; email: InviteDelivery }>(
         `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`,
         { method: 'POST', body: { email, role: inviteRoles.includes(inviteRole) ? inviteRole : 'editor' }, signal },
       );
       return () => {
-        setInviteLink({ email: res.invitation.email, url: res.inviteUrl });
+        setInviteLink({ email: res.invitation.email, url: res.inviteUrl, delivery: res.email });
         setCopied(false);
         setInviteEmail('');
       };
@@ -485,7 +486,8 @@ function TeamPanelContent(props: TeamPanelProps) {
         <section className='card'>
           <h2>Invite someone</h2>
           <p className='dim'>
-            No email is sent automatically — you will get a link to copy and share yourself. It expires after 7 days.
+            When this installation has email configured, the invitation is also emailed. You always get a link to copy
+            and share yourself. It expires after 7 days.
           </p>
           <form onSubmit={submitInvite}>
             <div className='field'>
@@ -523,8 +525,15 @@ function TeamPanelContent(props: TeamPanelProps) {
           {inviteLink && (
             <div className='banner' role='status'>
               <p>
-                <strong>Invitation created for {inviteLink.email}.</strong> Copy the link below and share it with them
-                — no email was sent. It expires after 7 days.
+                {inviteLink.delivery === 'accepted' ? (
+                  <><strong>Invitation emailed to {inviteLink.email}.</strong> If it does not arrive, copy the link below.</>
+                ) : inviteLink.delivery === 'failed' ? (
+                  <><strong>Invitation created for {inviteLink.email}, but the email could not be sent.</strong> Copy the link
+                  below and share it yourself.</>
+                ) : (
+                  <><strong>Invitation created for {inviteLink.email}.</strong> Copy the link below and share it with them
+                  — no email was sent.</>
+                )}{' '}It expires after 7 days.
               </p>
               <div className='row'>
                 <button type='button' className='btn' onClick={() => void copyInvite()}>
