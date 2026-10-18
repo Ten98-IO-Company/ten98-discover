@@ -1,6 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
 import {useBlocker} from '@tanstack/react-router';
+import {z} from 'zod';
 import {PromptDiscoveryPanel} from './PromptDiscoveryPanel';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
 import {AiSuggestionsPanel} from './AiSuggestionsPanel';
@@ -67,6 +68,25 @@ const MAX_TOPIC = 100;
 const MAX_TAGS = 20;
 const MAX_TAG_LEN = 80;
 const MAX_BATCH = 100;
+const savedText = (maximum: number) => z.string().max(maximum).refine(value => !value.includes('\0') && new TextDecoder().decode(new TextEncoder().encode(value)) === value);
+const promptSchema = z.object({
+  id: z.uuid(), revision: z.number().int().positive(), currentVersionId: z.uuid(), text: savedText(MAX_TEXT).min(1), topic: savedText(MAX_TOPIC), enabled: z.boolean(), archivedAt: z.iso.datetime().nullable(),
+  userTags: z.array(savedText(MAX_TAG_LEN).min(1)).max(MAX_TAGS), systemTags: z.array(z.enum(['branded', 'unbranded'])).length(1),
+  classification: z.object({isBranded: z.boolean(), systemIsBranded: z.boolean(), isOverridden: z.boolean(), version: z.literal('elmo-substring-v1')}),
+  createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
+});
+const bulkAcknowledgement = z.object({items: z.array(promptSchema).min(1).max(MAX_BATCH), replayed: z.boolean()});
+const pointAcknowledgement = z.object({prompt: promptSchema, replayed: z.boolean()});
+function confirmAcknowledgement(value: unknown, attempt: Attempt) {
+  if (attempt.kind === 'create') {
+    const parsed = bulkAcknowledgement.safeParse(value);
+    if (parsed.success && parsed.data.items.length === attempt.body.prompts.length && new Set(parsed.data.items.map(item => item.id)).size === parsed.data.items.length) return;
+  } else {
+    const parsed = pointAcknowledgement.safeParse(value);
+    if (parsed.success && parsed.data.prompt.id === attempt.promptId) return;
+  }
+  throw new ApiError('The save acknowledgement could not be verified. Check saved prompts before retrying.');
+}
 
 function parseTags(raw: string): string[] {
   return raw
@@ -322,14 +342,16 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     const access = accessRef.current;
     const fail = a.kind === 'create' || a.kind === 'update' ? setFormError : setErr;
     try {
+      let acknowledgement: unknown;
       if (a.kind === 'create') {
-        await api<unknown>(`${base}/bulk`, {method: 'POST', body: a.body, signal: ac.signal});
+        acknowledgement = await api<unknown>(`${base}/bulk`, {method: 'POST', body: a.body, signal: ac.signal});
       } else if (a.kind === 'update') {
-        await api<unknown>(`${base}/${encodeURIComponent(a.promptId)}/update`, {method: 'POST', body: a.body, signal: ac.signal});
+        acknowledgement = await api<unknown>(`${base}/${encodeURIComponent(a.promptId)}/update`, {method: 'POST', body: a.body, signal: ac.signal});
       } else {
-        await api<unknown>(`${base}/${encodeURIComponent(a.promptId)}/${a.kind}`, {method: 'POST', body: a.body, signal: ac.signal});
+        acknowledgement = await api<unknown>(`${base}/${encodeURIComponent(a.promptId)}/${a.kind}`, {method: 'POST', body: a.body, signal: ac.signal});
       }
       if (!aliveRef.current || access !== accessRef.current || ac.signal.aborted) return;
+      confirmAcknowledgement(acknowledgement, a);
       if (a.kind === 'create') resetFields();
       else if (a.kind === 'update') closeForm();
       setNotice(
@@ -372,7 +394,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
       // Network-uncertain: the server may or may not have applied it. Keep the
       // exact request (id + payload) for an explicit user retry; never auto-retry.
       setRetryAttempt(a);
-      fail('Network error — the request may not have reached the server. Your entry was kept unchanged. Use the retry button to resend the identical request, or edit and save as a new request.');
+      fail('We could not confirm the save. It may already be saved. Your draft is kept. Check saved prompts before retrying, or use the retry button to resend the identical request.');
     } finally {
       opRef.current = false;
       if (aliveRef.current) setBusy(false);

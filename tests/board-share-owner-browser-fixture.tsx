@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {createRoot} from 'react-dom/client';
+import {createRootRoute,createRouter,RouterProvider} from '@tanstack/react-router';
 import {BoardsPanel,BoardShareManager} from '../src/components/BoardsPanel';
 import type {BoardItem,BoardRole} from '../src/lib/boards';
 import {ApiError} from '../src/lib/api';
@@ -27,4 +28,5 @@ function Fixture(){
  return <main className="stack"><p data-fixture-ready>Actual owner component · synthetic API</p><output data-denied>{denied}</output><h2>{item.definition.name}</h2><section className="boards-panel stack"><BoardShareManager key={state.user} accessEpoch={accessEpoch} workspaceId={w} userId={state.user} item={item} currentRole={state.role} owner={String(state.owner)} enabled={state.enabled} onRole={role=>setState(old=>({...old,role}))} onAccessLoss={cause=>{if(cause instanceof ApiError&&[401,403,404].includes(cause.status))accessEpoch.current++;setDenied(n=>n+1);}}/></section></main>;
 }
 declare global{interface Window{boardShareOwnerFixture:{set:(patch:Partial<{id:string;user:string;role:BoardRole;enabled:boolean;revision:number}>)=>void;holdAck:(releaseOnUnauthorized?:boolean)=>void;heldAck:()=>boolean;releaseAck:()=>void}}}
-createRoot(document.getElementById('root')!).render(<Fixture/>);
+const parentRouter=createRouter({routeTree:createRootRoute({component:Fixture})});
+createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('parent')?<RouterProvider router={parentRouter}/>:<Fixture/>);
