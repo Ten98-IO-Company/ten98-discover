@@ -107,7 +107,43 @@ export async function getTeam(workspaceId: string, userId: string) {
        AND (m.role='owner' OR (m.role='admin' AND i.role IN ('editor','viewer')))
        ORDER BY i.created_at,i.id`, [workspaceId],
     );
-    return { workspace, role, members: members.rows, invitations: invitations.rows };
+    const required = await client.query('SELECT 1 FROM workspace_two_factor_requirement WHERE workspace_id=$1', [workspaceId]);
+    return { workspace: { ...workspace, twoFactorRequired: required.rowCount === 1 }, role, members: members.rows, invitations: invitations.rows };
+  });
+}
+
+const factorGatedPath = /^\/api\/(workspaces|projects)\/([0-9a-f-]{36})(?:\/|$)/i;
+const lockedMember = `SELECT 1 FROM workspace_two_factor_requirement r JOIN membership m ON m.workspace_id=r.workspace_id AND m.user_id=$2
+  JOIN "user" u ON u.id=m.user_id WHERE NOT u."twoFactorEnabled" AND r.workspace_id=`;
+
+// ponytail: point-in-time check before each service transaction (the projectAccess class); a request already past it when the
+// requirement turns on or the member disables their factor can finish. Soundness relies on verify/disable revoking other sessions
+// (keepResponseSession in account-security.ts) and on no session being created without the factor challenge. Upgrade path:
+// carry the predicate into each service's post-wait membership recheck.
+/** Refuses a member without a verified factor on every workspace and website route of a workspace that requires one. */
+export async function requireWorkspaceFactor(path: string, userId: string): Promise<void> {
+  const match = factorGatedPath.exec(path);
+  if (!match) return;
+  // Non-members find no row and fall through to the service's own 404.
+  const target = match[1].toLowerCase() === 'workspaces' ? '$1' : '(SELECT workspace_id FROM project WHERE id=$1)';
+  const locked = await getDatabase().pool.query(lockedMember + target, [match[2].toLowerCase(), userId]);
+  if (locked.rowCount) throw new FoundationError(403, 'This workspace requires two-factor authentication. Turn it on in Account security, then try again.');
+}
+
+/** Owner-only: require or stop requiring a verified second factor for every member of this workspace. */
+export async function setTwoFactorRequirement(workspaceId: string, userId: string, input: unknown) {
+  parse(idInput, workspaceId); parse(idInput, userId);
+  const { required } = parse(z.object({ required: z.boolean() }).strict(), input);
+  return transaction(async (client) => {
+    await lockWorkspace(client, workspaceId);
+    if (await managerRole(client, workspaceId, userId) !== 'owner') throw new FoundationError(403, 'Only a workspace owner can change the two-factor requirement.');
+    if (required) {
+      // FOR SHARE: the owner's own concurrent factor disable either commits first (409) or waits for this change.
+      const actor = await client.query<{ twoFactorEnabled: boolean }>('SELECT "twoFactorEnabled" FROM "user" WHERE id=$1 FOR SHARE', [userId]);
+      if (!actor.rows[0]?.twoFactorEnabled) throw new FoundationError(409, 'Turn on two-factor authentication for your own account before requiring it for this workspace.');
+      await client.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1) ON CONFLICT DO NOTHING', [workspaceId]);
+    } else await client.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [workspaceId]);
+    return { twoFactorRequired: required };
   });
 }
 

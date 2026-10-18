@@ -112,6 +112,7 @@ export const nativeOpenApi={
   '/api/projects/{projectId}/ai-content-support/runs/{runId}/cancel':{post:{summary:'Owner cancellation before dispatch only',body:{requestId:uuid},bodyMaxBytes:2048}},
   '/api/projects/{projectId}/ai-content-support/runs/{runId}/reconcile':{post:{summary:'Owner metadata-only recovery of original generation and key; no resend',body:{requestId:uuid},bodyMaxBytes:2048}},
   '/api/projects/{projectId}/ai-content-support/runs/{runId}/export':{post:{summary:'Current-member fresh CSV with four current receipt checks',body:'contentSupportExportInputSchema in src/lib/ai-content-support.ts',bodyMaxBytes:2048,responseMaxBytes:2097152}},
+  '/api/workspaces/{workspaceId}/two-factor':{post:{summary:'Current owner sets or clears the workspace two-factor requirement; enabling requires the owner\'s own verified factor; members without a factor get 403 on the workspace and its websites and their keys are suspended; cookie only',body:'Strict {required:boolean}',bodyMaxBytes:8192,query:'None'}},
   authority:'Native browser session; POST Origin must equal APP_URL. No paid API-key scope. Mixed cookie/Bearer400, bare Bearer403. Strict fields; no client evidence bodies, credentials or estimates. Owner-only evaluation is temporary, not a subscription entitlement. See docs/ai-insights.md.',
  },
  paths:{

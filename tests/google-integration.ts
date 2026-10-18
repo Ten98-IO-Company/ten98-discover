@@ -126,6 +126,18 @@ export async function runGoogleChecks(browserCheck?: (fixture: GoogleBrowserFixt
       await pool.query("UPDATE membership SET role='editor' WHERE workspace_id=$1 AND user_id=$2", [workspace.id, userId]);
       assert.match((await call(demoted.callback)).response.headers.get('location')!, /google=failed$/); assert.equal(providerCalls, 0, 'Callback must recheck current workspace ownership.');
       await pool.query("UPDATE membership SET role='owner' WHERE workspace_id=$1 AND user_id=$2", [workspace.id, userId]);
+      // Workspace two-factor requirement (P04): a flow started while unlocked cannot publish a grant once the factor-less owner is locked.
+      assert.equal((await pool.query('SELECT "twoFactorEnabled" FROM "user" WHERE id=$1', [userId])).rows[0].twoFactorEnabled, false);
+      const factorLocked = await connect('gsc');
+      await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1)', [workspace.id]);
+      try {
+        const lockedConnect = await call(`${base}/connect`, { provider: 'gsc', name: 'Locked' });
+        assert.equal(lockedConnect.response.status, 403);
+        assert.deepEqual(lockedConnect.data, { error: 'This workspace requires two-factor authentication. Turn it on in Account security, then try again.' });
+        assert.match((await call(factorLocked.callback)).response.headers.get('location')!, /google=failed$/);
+        assert.equal(providerCalls, 0, 'A locked callback must refuse before the token exchange.');
+        assert.equal((await pool.query('SELECT 1 FROM google_connection WHERE project_id=$1', [projectId])).rowCount, 0, 'A locked callback must not publish a grant.');
+      } finally { await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [workspace.id]); }
       const deniedConsent = await connect('gsc'); mode = 'missing_scope';
       assert.match((await call(deniedConsent.callback)).response.headers.get('location')!, /google=failed$/); mode = 'normal';
       assert.equal((await pool.query('SELECT 1 FROM google_connection WHERE project_id=$1', [projectId])).rowCount, 0, 'Incomplete scope consent must not create a connection.');

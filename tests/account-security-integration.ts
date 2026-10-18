@@ -41,6 +41,19 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   await acceptInvitation({ token: invitation.token, name: 'Account security check', password: firstPassword });
   const user = await pool.query('SELECT id FROM "user" WHERE email=$1', [email]);
   const userId = user.rows[0].id as string;
+  // Workspace two-factor requirement (P04): fixture workspace R requires a factor; the synthetic user is its viewer.
+  // options.workspaceId is never enforced and the foundation owner's own factor is never changed.
+  const requiredWorkspace = randomUUID(), requiredProject = randomUUID();
+  await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Two-factor required fixture')", [requiredWorkspace]);
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'viewer')", [requiredWorkspace, options.ownerId, userId]);
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Two-factor fixture',$3,gen_random_uuid(),'infinity')", [requiredProject, requiredWorkspace, `https://${randomUUID()}.two-factor.integration.test`]);
+  await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1)', [requiredWorkspace]);
+  const factorGate = 'This workspace requires two-factor authentication. Turn it on in Account security, then try again.';
+  const factorRequired = async (workspaceId: string) => (await pool.query('SELECT 1 FROM workspace_two_factor_requirement WHERE workspace_id=$1', [workspaceId])).rowCount === 1;
+  async function locked(path: string, actor: Browser, input?: unknown) {
+    const body = await expect(path, actor, 403, input);
+    assert.deepEqual(body, { error: factorGate }, `A member without a factor must be refused at ${path} with only the gate message.`);
+  }
 
   async function call(path: string, actor: Browser, input?: unknown, origin = options.appUrl) {
     const headers = new Headers({ cookie: [...actor.cookies].map(([name, value]) => `${name}=${value}`).join('; ') });
@@ -76,6 +89,22 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   assert.equal(initial.hasPassword, true);
   assert.ok(initial.sessions.some((session: { current: boolean }) => session.current));
   assert.ok(initial.sessions.every((session: Record<string, unknown>) => !('token' in session) && !('ipAddress' in session)), 'Session list must not reveal bearer credentials.');
+
+  // Refusal before enrolment: every workspace and website route of R answers the gate; enrolment and other workspaces stay reachable.
+  for (const path of [`/api/workspaces/${requiredWorkspace}/projects`, `/api/workspaces/${requiredWorkspace}/team`, `/api/workspaces/${requiredWorkspace}/tracked-assets?kind=link`,
+    `/api/projects/${requiredProject}/events`, `/api/projects/${requiredProject}/realtime`, `/api/projects/${requiredProject}/google`, `/api/PROJECTS/${requiredProject.toUpperCase()}/events`]) await locked(path, primary);
+  await locked(`/api/projects/${requiredProject}/analytics/export`, primary, {});
+  for (const path of ['/api/me', '/api/account/security', '/api/account/preferences', `/api/workspaces/${options.workspaceId}/projects`]) await expect(path, primary, 200);
+  await expect(`/api/workspaces/${randomUUID()}/projects`, primary, 404);
+  const ownWorkspace = (await expect('/api/workspaces', primary, 201, { name: 'Two-factor owner fixture' })).workspace;
+  assert.equal(ownWorkspace.role, 'owner');
+  const ownSetter = `/api/workspaces/${ownWorkspace.id}/two-factor`;
+  assert.equal((await expect(ownSetter, primary, 409, { required: true })).error, 'Turn on two-factor authentication for your own account before requiring it for this workspace.');
+  await expect(ownSetter, primary, 400, { required: 'yes' });
+  await expect(ownSetter, primary, 400, { required: true, extra: true });
+  await expect(ownSetter, primary, 403, { required: true }, 'https://untrusted.integration.test');
+  assert.equal(await factorRequired(ownWorkspace.id), false, 'Refused requirement changes must write nothing.');
+  console.log('PASS workspace two-factor requirement refuses an un-enrolled member on every workspace and website route with only the gate message, keeps account, preference and other workspaces reachable, and refuses an owner without a factor');
   await signIn(secondary, firstPassword);
   const secondaryStatus = await expect('/api/account/security', secondary, 200);
   const secondaryId = secondaryStatus.sessions.find((session: { current: boolean }) => session.current).id;
@@ -146,6 +175,24 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   await expect('/api/me', secondary, 401);
   await expect('/api/account/two-factor/enable', primary, 400, { password: nextPassword });
 
+  // Enrolment regains access in the same browser; only a current owner with a factor sets the requirement, idempotently.
+  for (const path of [`/api/workspaces/${requiredWorkspace}/projects`, `/api/projects/${requiredProject}/events`, `/api/projects/${requiredProject}/realtime`]) await expect(path, primary, 200);
+  for (let attempt = 0; attempt < 2; attempt++) assert.deepEqual(await expect(ownSetter, primary, 200, { required: true }), { twoFactorRequired: true });
+  assert.equal(await factorRequired(ownWorkspace.id), true);
+  assert.equal((await expect(`/api/workspaces/${ownWorkspace.id}/team`, primary, 200)).workspace.twoFactorRequired, true);
+  // Clearing is idempotent and reported by the team read; requiring again restores the state the re-lock group below expects.
+  for (let attempt = 0; attempt < 2; attempt++) assert.deepEqual(await expect(ownSetter, primary, 200, { required: false }), { twoFactorRequired: false });
+  assert.equal(await factorRequired(ownWorkspace.id), false, 'Clearing removes the requirement row.');
+  assert.equal((await expect(`/api/workspaces/${ownWorkspace.id}/team`, primary, 200)).workspace.twoFactorRequired, false);
+  assert.deepEqual(await expect(ownSetter, primary, 200, { required: true }), { twoFactorRequired: true });
+  assert.equal(await factorRequired(ownWorkspace.id), true);
+  const requiredSetter = `/api/workspaces/${requiredWorkspace}/two-factor`;
+  await pool.query("UPDATE membership SET role='admin' WHERE workspace_id=$1 AND user_id=$2", [requiredWorkspace, userId]);
+  assert.equal((await expect(requiredSetter, primary, 403, { required: false })).error, 'Only a workspace owner can change the two-factor requirement.');
+  await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2", [requiredWorkspace, userId]);
+  assert.equal((await expect(requiredSetter, primary, 404, { required: false })).error, 'Workspace not found or unavailable.');
+  assert.equal(await factorRequired(requiredWorkspace), true, 'Administrators and viewers cannot lift the requirement.');
+
   const oidcClient = await pool.connect();
   try {
     await oidcClient.query('BEGIN');
@@ -169,7 +216,9 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   const project = (await pool.query('SELECT id FROM project WHERE workspace_id=$1 ORDER BY created_at LIMIT 1', [options.workspaceId])).rows[0]?.id as string | undefined;
   assert.ok(project, 'Foundation test must leave a website in the owner workspace.');
   assert.deepEqual([...challenged.cookies.keys()], ['better-auth.two_factor'], 'The password step must leave only the two_factor cookie.');
-  const pendingReads = [`/api/workspaces/${options.workspaceId}/projects`, `/api/projects/${project}/events`, `/api/projects/${project}/realtime`];
+  // The required workspace R stays 401, never the 403 gate, while only the pending cookie is present.
+  const pendingReads = [`/api/workspaces/${options.workspaceId}/projects`, `/api/projects/${project}/events`, `/api/projects/${project}/realtime`,
+    `/api/workspaces/${requiredWorkspace}/projects`, `/api/projects/${requiredProject}/events`];
   const closed = async () => { for (const path of pendingReads) assert.deepEqual(Object.keys(await expect(path, challenged, 401)), ['error'], `A pending second factor must not read ${path}.`); };
   await closed();
   const pendingCookie = challenged.cookies.get('better-auth.two_factor');
@@ -230,6 +279,26 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   await expect('/api/account/two-factor/disable', primary, 200, { password: finalPassword });
   assert.equal((await expect('/api/account/security', primary, 200)).user.twoFactorEnabled, false);
   assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 0);
+
+  // Re-lock on disable: R and the member's own required workspace refuse again, the owner cannot lift it while locked,
+  // and the enrolment path stays reachable without creating a factor.
+  await locked(`/api/workspaces/${requiredWorkspace}/projects`, primary);
+  await locked(`/api/workspaces/${ownWorkspace.id}/projects`, primary);
+  await locked(ownSetter, primary, { required: false });
+  assert.equal(await factorRequired(ownWorkspace.id), true, 'A locked owner cannot lift the requirement.');
+  // A factor-less non-member of the required workspace W (the foundation owner) gets the service's own 404, never the gate.
+  assert.equal((await pool.query('SELECT "twoFactorEnabled" FROM "user" WHERE id=$1', [options.ownerId])).rows[0].twoFactorEnabled, false);
+  const outsider: Browser = { cookies: new Map(options.ownerCookie.split('; ').map((pair): [string, string] => [pair.slice(0, pair.indexOf('=')), pair.slice(pair.indexOf('=') + 1)])) };
+  const ownProject = randomUUID();
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Two-factor own fixture',$3,gen_random_uuid(),'infinity')", [ownProject, ownWorkspace.id, `https://${randomUUID()}.two-factor.integration.test`]);
+  assert.deepEqual(await expect(`/api/workspaces/${ownWorkspace.id}/projects`, outsider, 404), { error: 'Workspace not found or unavailable.' });
+  assert.deepEqual(await expect(`/api/projects/${ownProject}/events`, outsider, 404), { error: 'Project not found or unavailable.' });
+  await expect('/api/account/security', primary, 200);
+  assert.equal((await expect('/api/account/two-factor/enable', primary, 400, { password: 'incorrect password' })).error, 'The current password was not accepted.');
+  assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 0);
+  await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [requiredWorkspace]);
+  await expect(`/api/workspaces/${requiredWorkspace}/projects`, primary, 200);
+  console.log('PASS workspace two-factor requirement: refusal before enrolment, the enrolment path regains access, owner-only idempotent setting and clearing, disabling the factor locks the member again until the requirement is lifted, and a factor-less non-member still gets the service 404');
   const normal = browser();
   assert.equal((await signIn(normal, finalPassword)).ok, true);
   await expect('/api/account/sessions/revoke-others', primary, 200, {});

@@ -105,8 +105,9 @@ export async function authenticateApiKey(token: string, client?: Pick<PoolClient
   if (typeof token !== 'string' || !validToken(token)) invalidKey();
   const result = await (client ?? getDatabase().pool).query<ApiKeyPrincipal>(
     `SELECT k.id,k.issuer_user_id AS "userId",k.workspace_id AS "workspaceId",m.role,k.scopes
-     FROM api_key k JOIN membership m ON m.workspace_id=k.workspace_id AND m.user_id=k.issuer_user_id
-     WHERE k.token_hash=$1 AND k.revoked_at IS NULL AND k.expires_at>clock_timestamp()`, [digest(token)],
+     FROM api_key k JOIN membership m ON m.workspace_id=k.workspace_id AND m.user_id=k.issuer_user_id JOIN "user" u ON u.id=k.issuer_user_id
+     WHERE k.token_hash=$1 AND k.revoked_at IS NULL AND k.expires_at>clock_timestamp()
+       AND (u."twoFactorEnabled" OR NOT EXISTS (SELECT 1 FROM workspace_two_factor_requirement r WHERE r.workspace_id=k.workspace_id))`, [digest(token)],
   );
   const principal = result.rows[0];
   if (!principal || !['owner', 'admin', 'editor', 'viewer'].includes(principal.role)) invalidKey();

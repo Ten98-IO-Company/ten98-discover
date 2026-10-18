@@ -37,7 +37,8 @@ export async function runNativePromptApiChecks(){
    const before=(await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0];
    await migration.query('BEGIN');await migration.query(upgrade.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[upgrade.version,upgrade.checksum]);await migration.query('COMMIT');
    assert.deepEqual((await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0],before);
-   assert.deepEqual((await authenticateApiKey(oldToken)).scopes,['projects:read','analytics:read']);
+   // authenticateApiKey also reads workspace_two_factor_requirement (0068), which a 0041 database cannot have: the stored key row is
+   // compared byte-for-byte at 0041 above, and the same authentication with the exact grants is asserted after the full upgrade below.
    await migration.query('BEGIN');
    for(const source of sources.filter(source=>source.version>'0041')){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}
    await migration.query('COMMIT');

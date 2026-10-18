@@ -215,7 +215,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   }
 
   const submitDisable = async (): Promise<void> => {
-    if (!window.confirm('Turning off two-factor authentication removes this layer of sign-in protection. Continue?')) return
+    if (!window.confirm('Turning off two-factor authentication removes this layer of sign-in protection. Workspaces that require it will block your access, and API keys you created there will stop working, until you turn it on again. Continue?')) return
     if (disablePw === '') { opErr('disable', 'Enter your current password to turn off 2FA.'); return }
     await mutate<unknown>('disable', '/api/account/two-factor/disable', { password: disablePw }, () => {
       setData(previous => previous ? { ...previous, user: { ...previous.user, twoFactorEnabled: false } } : previous)
