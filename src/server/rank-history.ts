@@ -3,11 +3,13 @@ import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {canonicalHash,parse} from './context-input.ts';
-import {readContentCursor} from './project-context.ts';
-import {withKeywordProject} from './keyword-research.ts';
+import {readContentCursor,withContentProject} from './project-context.ts';
 import {microUsd} from './keyword-research-input.ts';
 
-const readers=['owner','admin','editor','viewer'];
+// Cookie and key readers share one bounded gate (nativeRead): workspace and project SHARE locks, 5 s statement and lock
+// waits, membership read after admission. Every rank writer takes the workspace row FOR UPDATE first, so a reader never
+// interleaves with a write. A key caller's bound failure is already 503; this maps the cookie caller's the same way.
+function busy(error:unknown):never{if(['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'Rank history is busy. Retry shortly.');throw error;}
 const devices=['desktop','mobile'] as const;
 type Device=typeof devices[number];
 export type RankHistoryTarget={domain:string;locationCode:number;languageCode:string;depth:number;maxCrawlPages:number};
@@ -16,11 +18,11 @@ export type RankHistoryObservation={
   target:RankHistoryTarget;attemptedAt:string;observedAt:string|null;retrievedAt:string|null;
   position:number|null;rankBasis:'organic'|'absolute'|null;absolutePosition:number|null;rankingUrl:string|null;
   serpFeatures:string[]|null;checkedDepth:number|null;returnedItemCount:number|null;
-  rawExpiredAt:string|null;dataExpiredAt:string|null;diagnostic:string|null;
+  rawExpiredAt:string|null;dataExpiredAt:string|null;diagnostic?:string|null; // Cookie readers only: it states provider balance, cost-limit and charge state.
 };
 export type RankRunSummary={id:string;status:string;trigger:string;method:string;isSubset:boolean;taskCount:number;scheduledFor:string|null;
   createdAt:string;startedAt:string|null;completedAt:string|null;quoteExpired:boolean;rawExpiredAt:string|null;dataExpiredAt:string|null;
-  costStatus:'not_started'|'pending'|'uncertain'|'final';estimateUsd:string;knownChargeUsd:string;diagnostic:string|null};
+  diagnostic?:string|null;costStatus?:'not_started'|'pending'|'uncertain'|'final';estimateUsd?:string;knownChargeUsd?:string}; // Ledger and diagnostic fields: cookie readers only.
 export type RankBaseline={days:1|7|30|90;targetAt:string;source:'at_or_before'|'earliest_available'|'unavailable';
   observation:RankHistoryObservation|null;change:number|null};
 export type RankLatestRow={keywordId:string;keyword:string;matchCase:boolean;pinnedAt:string|null;device:Device;
@@ -36,7 +38,8 @@ async function tracker(client:PoolClient,projectId:string,id:string){const row=(
 function target(row:any):RankHistoryTarget{return {domain:row.target_domain,locationCode:row.location_code,languageCode:row.language_code,depth:row.serp_depth,maxCrawlPages:row.max_crawl_pages};}
 // Every predicate also binds project/config/UUID. Mutable names and pins never alter compatibility.
 const compatible=`r.request->'target'=$4::jsonb AND t.keyword=k.keyword AND t.match_case=k.match_case`;
-const taskColumns=`t.id AS "taskId",r.id AS "runId",t.device,t.result_status AS status,r.status AS "runStatus",r.is_subset AS "isSubset",
+// A key caller never selects t.diagnostic: its fixed texts report the provider balance, cost limit and charge reconciliation.
+const taskColumns=(key:boolean)=>`t.id AS "taskId",r.id AS "runId",t.device,t.result_status AS status,r.status AS "runStatus",r.is_subset AS "isSubset",
   (${compatible}) AS compatible,r.request->'target' AS target,${sqlTime('COALESCE(r.started_at,r.created_at)')} AS "attemptedAt",
   ${sqlTime('t.observed_at')} AS "observedAt",${sqlTime('t.retrieved_at')} AS "retrievedAt",
   CASE WHEN t.data_expired_at IS NULL AND r.data_expired_at IS NULL THEN t.position END AS position,
@@ -46,11 +49,11 @@ const taskColumns=`t.id AS "taskId",r.id AS "runId",t.device,t.result_status AS 
   CASE WHEN t.data_expired_at IS NULL AND r.data_expired_at IS NULL THEN t.serp_features END AS "serpFeatures",
   CASE WHEN t.data_expired_at IS NULL AND r.data_expired_at IS NULL THEN t.checked_depth END AS "checkedDepth",
   CASE WHEN t.data_expired_at IS NULL AND r.data_expired_at IS NULL THEN t.returned_item_count END AS "returnedItemCount",
-  ${sqlTime('COALESCE(t.raw_expired_at,r.raw_expired_at)')} AS "rawExpiredAt",${sqlTime('COALESCE(t.data_expired_at,r.data_expired_at)')} AS "dataExpiredAt",t.diagnostic`;
+  ${sqlTime('COALESCE(t.raw_expired_at,r.raw_expired_at)')} AS "rawExpiredAt",${sqlTime('COALESCE(t.data_expired_at,r.data_expired_at)')} AS "dataExpiredAt"${key?'':',t.diagnostic'}`;
 
-export async function listRankRuns(projectId:string,userId:string,trackerId:string,params=new URLSearchParams()){
+export async function listRankRuns(projectId:string,userId:string,trackerId:string,params=new URLSearchParams(),apiToken?:string){
   trackerId=parse(z.uuid(),trackerId);const input=parse(z.object({cursor:page}).strict(),fields(params,['cursor']));
-  return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>{
+  return withContentProject(projectId,userId,false,async(client,{role})=>{
     await tracker(client,projectId,trackerId);const scope={projectId,trackerId,list:'rank-runs'},after=readContentCursor(input.cursor??null,scope);
     const rows=(await client.query(`SELECT r.id,r.status,r.trigger,r.method,r.is_subset,r.task_count,r.scheduled_for,r.created_at,r.started_at,r.completed_at,r.expires_at,r.raw_expired_at,r.data_expired_at,r.diagnostic,r.estimate_micros,
       ${sqlTime('r.created_at')} AS cursor_at,c.* FROM rank_run r LEFT JOIN LATERAL (
@@ -60,17 +63,18 @@ export async function listRankRuns(projectId:string,userId:string,trackerId:stri
       ORDER BY r.created_at DESC,r.id DESC LIMIT 51`,[projectId,trackerId,after?.at??null,after?.id??null])).rows;
     const runs:RankRunSummary[]=rows.slice(0,50).map(r=>({id:r.id,status:r.status,trigger:r.trigger,method:r.method,isSubset:r.is_subset,taskCount:r.task_count,
       createdAt:iso(r.created_at)!,scheduledFor:iso(r.scheduled_for),startedAt:iso(r.started_at),completedAt:iso(r.completed_at),quoteExpired:r.status==='quoted'&&r.expires_at.getTime()<=Date.now(),
-      rawExpiredAt:iso(r.raw_expired_at),dataExpiredAt:iso(r.data_expired_at),diagnostic:r.diagnostic,estimateUsd:microUsd(BigInt(r.estimate_micros)),knownChargeUsd:microUsd(BigInt(r.known_micros)),
-      costStatus:r.uncertain?'uncertain':r.pending?'pending':r.charge_count?'final':'not_started'}));
+      rawExpiredAt:iso(r.raw_expired_at),dataExpiredAt:iso(r.data_expired_at),
+      // Provider-ledger amounts and the diagnostic (uncertain-charge and schedule-skip texts that restate cost and approval state) never reach a key holder; cookie readers keep them.
+      ...(apiToken===undefined?{diagnostic:r.diagnostic,estimateUsd:microUsd(BigInt(r.estimate_micros)),knownChargeUsd:microUsd(BigInt(r.known_micros)),
+        costStatus:r.uncertain?'uncertain':r.pending?'pending':r.charge_count?'final':'not_started'}:{})}));
     return {role,trackerId,runs,nextCursor:cursor(rows,scope)};
-  });
+  },apiToken,true,'rank:read').catch(busy);
 }
 
-export async function getLatestRankResults(projectId:string,userId:string,trackerId:string,params=new URLSearchParams()){
+export async function getLatestRankResults(projectId:string,userId:string,trackerId:string,params=new URLSearchParams(),apiToken?:string){
   trackerId=parse(z.uuid(),trackerId);
   const input=parse(z.object({cursor:page,device:deviceInput,search:z.string().max(200).refine(s=>!s.includes('\0')&&toUSVString(s)===s).default(''),pinned:z.enum(['true','false']).optional()}).strict(),fields(params,['cursor','device','search','pinned']));
-  return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>{
-    await client.query("SET LOCAL statement_timeout='5s'");
+  return withContentProject(projectId,userId,false,async(client,{role})=>{
     const config=await tracker(client,projectId,trackerId),currentTarget=target(config),scope={projectId,trackerId,list:'rank-latest',device:input.device,search:input.search,pinned:input.pinned??null,target:currentTarget},after=readContentCursor(input.cursor??null,scope);
     const keywords=(await client.query(`SELECT id,keyword,match_case,pinned_at,${sqlTime('created_at')} AS cursor_at FROM rank_keyword WHERE project_id=$1 AND config_id=$2
       AND strpos(keyword,$3)>0 AND ($4::boolean IS NULL OR (pinned_at IS NOT NULL)=$4::boolean)
@@ -104,7 +108,7 @@ export async function getLatestRankResults(projectId:string,userId:string,tracke
       (array_agg(id ORDER BY observed_at DESC,id DESC) FILTER(WHERE eligible AND observed_at<=$6::timestamptz-interval '2160 hours'))[1] AS day90
       FROM scoped GROUP BY keyword_id,device`,[projectId,trackerId,keywords.slice(0,50).map(k=>k.id),JSON.stringify(currentTarget),pairs,asOf])).rows:[];
     const selected=[...new Set(picks.flatMap(r=>[r.attempt,r.observation,r.earliest,r.day1,r.day7,r.day30,r.day90]).filter(Boolean))];
-    const observations:RankHistoryObservation[]=selected.length?(await client.query(`SELECT ${taskColumns} FROM rank_task t JOIN rank_run r ON r.id=t.run_id AND r.project_id=t.project_id
+    const observations:RankHistoryObservation[]=selected.length?(await client.query(`SELECT ${taskColumns(apiToken!==undefined)} FROM rank_task t JOIN rank_run r ON r.id=t.run_id AND r.project_id=t.project_id
       JOIN rank_keyword k ON k.id=t.keyword_id AND k.project_id=$1 AND k.config_id=$2
       WHERE t.project_id=$1 AND r.config_id=$2 AND t.id=ANY($3::uuid[])`,[projectId,trackerId,selected,JSON.stringify(currentTarget)])).rows:[];
     const byTask=new Map(observations.map(r=>[r.taskId,r])),byPair=new Map(picks.map(r=>[r.keyword_id+':'+r.device,r]));
@@ -116,22 +120,22 @@ export async function getLatestRankResults(projectId:string,userId:string,tracke
           change:latest?.status==='ranked'&&observation?.status==='ranked'&&latest.rankBasis===observation.rankBasis&&latest.taskId!==observation.taskId?observation.position!-latest.position!:null};})};
     }));
     return {role,trackerId,target:currentTarget,enabledDevices:config.devices,asOf:asOf.toISOString(),rows:results,nextCursor:cursor(keywords,scope)};
-  });
+  },apiToken,true,'rank:read').catch(busy);
 }
 
-export async function getRankKeywordHistory(projectId:string,userId:string,trackerId:string,keywordId:string,params=new URLSearchParams()){
+export async function getRankKeywordHistory(projectId:string,userId:string,trackerId:string,keywordId:string,params=new URLSearchParams(),apiToken?:string){
   trackerId=parse(z.uuid(),trackerId);keywordId=parse(z.uuid(),keywordId);
   const input=parse(z.object({cursor:page,device:deviceInput}).strict(),fields(params,['cursor','device']));
-  return withKeywordProject(projectId,userId,readers,async(client,_wid,role)=>{
-    await client.query("SET LOCAL statement_timeout='5s'");const config=await tracker(client,projectId,trackerId),currentTarget=target(config);
+  return withContentProject(projectId,userId,false,async(client,{role})=>{
+    const config=await tracker(client,projectId,trackerId),currentTarget=target(config);
     let keyword=(await client.query('SELECT keyword,match_case FROM rank_keyword WHERE project_id=$1 AND config_id=$2 AND id=$3',[projectId,trackerId,keywordId])).rows[0];const removed=!keyword;
     if(!keyword)keyword=(await client.query(`SELECT t.keyword,t.match_case FROM rank_task t JOIN rank_run r ON r.id=t.run_id AND r.project_id=t.project_id WHERE t.project_id=$1 AND r.config_id=$2 AND t.keyword_id=$3 ORDER BY COALESCE(r.started_at,r.created_at) DESC,t.id DESC LIMIT 1`,[projectId,trackerId,keywordId])).rows[0];
     if(!keyword)throw new FoundationError(404,'Tracked keyword history not found or unavailable.');
     const scope={projectId,trackerId,keywordId,list:'rank-keyword-history',device:input.device,target:currentTarget},after=readContentCursor(input.cursor??null,scope);
-    const rows=(await client.query(`SELECT ${taskColumns},t.id,${sqlTime('COALESCE(r.started_at,r.created_at)')} AS cursor_at FROM rank_task t JOIN rank_run r ON r.id=t.run_id AND r.project_id=t.project_id
+    const rows=(await client.query(`SELECT ${taskColumns(apiToken!==undefined)},t.id,${sqlTime('COALESCE(r.started_at,r.created_at)')} AS cursor_at FROM rank_task t JOIN rank_run r ON r.id=t.run_id AND r.project_id=t.project_id
       CROSS JOIN (SELECT $8::text AS keyword,$9::boolean AS match_case) k WHERE t.project_id=$1 AND r.config_id=$2 AND t.keyword_id=$3 AND ($5='both' OR t.device=$5)
       AND ($6::timestamptz IS NULL OR (COALESCE(r.started_at,r.created_at),t.id)<($6::timestamptz,$7::uuid)) ORDER BY COALESCE(r.started_at,r.created_at) DESC,t.id DESC LIMIT 51`,[projectId,trackerId,keywordId,JSON.stringify(currentTarget),input.device,after?.at??null,after?.id??null,keyword.keyword,keyword.match_case])).rows;
     const observations:RankHistoryObservation[]=rows.slice(0,50).map(({id,cursor_at,...r})=>r as RankHistoryObservation);
     return {role,trackerId,keyword:{id:keywordId,keyword:keyword.keyword,matchCase:keyword.match_case,removed},target:currentTarget,enabledDevices:config.devices,observations,nextCursor:cursor(rows,scope)};
-  });
+  },apiToken,true,'rank:read').catch(busy);
 }

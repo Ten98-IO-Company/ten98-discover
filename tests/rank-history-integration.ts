@@ -9,6 +9,7 @@ import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {saveProvider} from '../src/server/providers.ts';
+import {dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 import {compileRankPlan,rankGroupPayload,rankPlanTotal} from '../src/server/rank-execution-plan.ts';
 import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from '../src/server/rank-history.ts';
 
@@ -133,6 +134,47 @@ export async function runRankHistoryChecks(){
     assert.equal((await handleApi(new Request(config.appUrl+path+'/runs',{headers:{authorization:'Bearer '+token}}))).status,403);
     assert.equal((await handleApi(new Request(config.appUrl+'/api/projects/'+f.project+'/rank-trackers/'+b.tracker+'/runs',{headers:{cookie}}))).status,404);
     console.log('PASS actual cookie-only rank history API: viewer reads, literal filters, wrong methods, unknown parameters, tenant boundary and secret-free responses');
+
+    // rank:read bearer family: the same three readers under the shared bounded gate; provider-ledger amounts never reach a key.
+    const rankKey=await createApiKey(b.workspace,owner,{name:'Rank history reader',scopes:['rank:read']});
+    const bearer=(suffix:string,method='GET',headers:Record<string,string>={},token=rankKey.token)=>handleApi(new Request(config.appUrl+path+suffix,{method,headers:{authorization:'Bearer '+token,...headers},...(method==='POST'?{body:'{}'}:{})}));
+    // Latest-results baselines date their targets from the per-call report time: checked against it, then dropped with it.
+    const undated=(value:unknown)=>{const copy=JSON.parse(JSON.stringify(value));if(copy.asOf){for(const row of copy.rows)for(const x of row.baselines){assert.equal(Date.parse(x.targetAt),Date.parse(copy.asOf)-x.days*86400000);delete x.targetAt;}delete copy.asOf;}return copy;};
+    const direct=[['/runs',()=>listRankRuns(b.project,owner,b.tracker,new URLSearchParams(),rankKey.token)],
+      ['/results?device=desktop',()=>getLatestRankResults(b.project,owner,b.tracker,new URLSearchParams({device:'desktop'}),rankKey.token)],
+      ['/keywords/'+b.keywords[0].id+'/history',()=>getRankKeywordHistory(b.project,owner,b.tracker,b.keywords[0].id,new URLSearchParams(),rankKey.token)]] as const;
+    // Diagnostics restate cost and approval state: the worker's uncertain-charge text and a schedule skip on runs, a provider wallet refusal on a task.
+    const uncertainText='The provider charge or result could not be confirmed. An owner must reconcile this check; it will not be sent again.',skipText='Skipped: paid work is paused or an earlier charge is uncertain. No paid request was sent.';
+    await pool.query('UPDATE rank_run SET diagnostic=$2 WHERE id=$1',[expected[4].id,uncertainText]);await pool.query('UPDATE rank_run SET diagnostic=$2 WHERE id=$1',[expected[3].id,skipText]);
+    await pool.query('UPDATE rank_task SET diagnostic=$2 WHERE id=$1',[expected[4].tasks[0],dataforseoRefusalMessage.payment]);
+    for(const [suffix,read] of direct){
+      const reply=await bearer(suffix);assert.equal(reply.status,200,suffix);const text=await reply.text(),body=JSON.parse(text);assert.equal(body.role,'owner');assert.deepEqual(undated(body),undated(await read()));
+      for(const secret of ['encrypted_credentials','account_fingerprint','synthetic-only','raw_evidence','estimateUsd','knownChargeUsd','costStatus','"diagnostic"',uncertainText,skipText,dataforseoRefusalMessage.payment])assert.ok(!text.includes(secret),suffix+' '+secret);
+      assert.equal((await bearer(suffix,'POST')).status,403,suffix);
+    }
+    const keyRuns=await bearer('/runs').then(r=>r.json()),cookieRuns=await api('/runs').then(r=>r.json());assert.equal(keyRuns.runs.length,12);
+    assert.ok(cookieRuns.runs.every((r:any)=>/^\d+\.\d{6}$/.test(r.estimateUsd)&&/^\d+\.\d{6}$/.test(r.knownChargeUsd)&&r.costStatus==='final'));
+    assert.deepEqual(cookieRuns.runs.filter((r:any)=>r.diagnostic!==null).map((r:any)=>[r.id,r.diagnostic]),[[expected[4].id,uncertainText],[expected[3].id,skipText]]);
+    assert.deepEqual(cookieRuns.runs.map(({estimateUsd:_e,knownChargeUsd:_k,costStatus:_c,diagnostic:_d,...run}:any)=>run),keyRuns.runs);
+    // The cookie results and history keep the task diagnostic on every observation the key answer returns without it.
+    const desktopRow=(value:any)=>value.rows.find((r:any)=>r.keywordId===b.keywords[0].id&&r.device==='desktop');
+    const cookieLatest=desktopRow(await api('/results?device=desktop').then(r=>r.json())),keyLatest=desktopRow(await bearer('/results?device=desktop').then(r=>r.json()));
+    const cookieHistory=await api('/keywords/'+b.keywords[0].id+'/history').then(r=>r.json()),keyHistory=await bearer('/keywords/'+b.keywords[0].id+'/history').then(r=>r.json());
+    for(const [cookieObservation,keyObservation] of [[cookieLatest.latestAttempt,keyLatest.latestAttempt],[cookieLatest.latestObservation,keyLatest.latestObservation],[cookieHistory.observations[0],keyHistory.observations[0]]]){
+      assert.equal(cookieObservation.taskId,expected[4].tasks[0]);assert.equal(cookieObservation.diagnostic,dataforseoRefusalMessage.payment);
+      const {diagnostic:_d,...rest}=cookieObservation;assert.deepEqual(keyObservation,rest);assert.equal(Object.hasOwn(keyObservation,'diagnostic'),false);
+    }
+    assert.equal((await bearer('/runs?unknown=1')).status,400);assert.equal((await bearer('/runs','GET',{cookie})).status,400);
+    for(const target of ['/api/projects/'+b.project+'/rank-checks/'+expected[0].id,'/api/projects/'+b.project+'/rank-trackers/'+b.tracker+'/schedule'])assert.equal((await handleApi(new Request(config.appUrl+target,{headers:{authorization:'Bearer '+rankKey.token}}))).status,403,target);
+    const other=await fixture(['Other workspace']),foreign=await createApiKey(other.workspace,owner,{name:'Other workspace reader',scopes:['rank:read']});
+    assert.equal((await bearer('/runs','GET',{},foreign.token)).status,404);
+    // Both callers wait on the workspace gate behind a writer and fail at the 5 s lock bound, well before the pool's 10 s statement bound.
+    const block=await pool.connect();try{await block.query('BEGIN');await block.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[b.workspace]);const start=Date.now();
+      const [keyBusy,cookieBusy]=await Promise.all([bearer('/runs'),api('/runs')]),elapsed=Date.now()-start;
+      assert.equal(keyBusy.status,503);assert.equal(cookieBusy.status,503);assert.ok(elapsed>=4500&&elapsed<10000,String(elapsed));
+    }finally{await block.query('ROLLBACK');block.release();}
+    await pool.query('UPDATE api_key SET revoked_at=clock_timestamp() WHERE id=$1',[rankKey.key.id]);assert.equal((await bearer('/runs')).status,401);
+    assert.equal(calls,0);console.log('PASS rank:read bearer runs/results/history equal the direct reads without ledger amounts; POST, unknown parameter, cookie plus bearer, checks/schedule, foreign workspace and revoked key refused; the shared workspace gate answers 503 to key and cookie at its 5 s bound');
 
     const perf=await fixture(Array.from({length:50},(_,i)=>'History load '+i));
     for(let i=0;i<365;i++)await run(perf,{keywords:perf.keywords,device:'both',created:at(i+.01),position:(i%30)+1});

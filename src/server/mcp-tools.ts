@@ -20,6 +20,7 @@ import {listAnnotations} from './annotations.ts';
 import {listRankTrackers,getRankTracker} from './rank-tracking.ts';
 import {getRankDistribution} from './rank-distribution.ts';
 import {getRankMatrix} from './rank-matrix.ts';
+import {listRankRuns,getLatestRankResults,getRankKeywordHistory} from './rank-history.ts';
 import {listSavedKeywords,listSavedKeywordTags} from './saved-keywords.ts';
 import {savedKeywordFilterKeys} from './saved-keyword-input.ts';
 
@@ -43,6 +44,7 @@ const prompt=z.strictObject({projectId:id,promptId:id});
 // Closed top level and closed kinds; each op's fields stay with the strict native contextPatch, whose transforms must run once.
 const contextUpdate=z.strictObject({projectId:id,...action,updates:z.array(z.looseObject({kind:z.enum(contextOp.options.map(option=>option.shape.kind.value))})).min(1).max(50)});
 const cursor512=z.string().max(512),cursorQuery=z.strictObject({projectId:id,query:z.strictObject({cursor:cursor512.optional()}).optional()}),tracker=z.strictObject({projectId:id,trackerId:id});
+const rankDevice=z.enum(['desktop','mobile','both']).optional();
 // Closed key set from the native parser; each value stays with the strict parseSavedKeywordFilters.
 const savedKeywordList=z.strictObject({projectId:id,filters:z.strictObject(Object.fromEntries(savedKeywordFilterKeys.map(name=>[name,z.unknown().optional()]))).optional(),pageSize:z.literal([50,100,250]).optional(),cursor:cursor512.optional()});
 // Wire schemas have no transforms. Native parsers remain authoritative for dates,
@@ -74,6 +76,9 @@ export const mcpTools=[
   {name:'ten98_read_rank_tracker',scope:'rank:read',description:'Read one rank tracker and its current keywords (at most 1,000). Reads saved configuration only; no provider call.',schema:tracker},
   {name:'ten98_read_rank_distribution',scope:'rank:read',description:'Read the retained rank distribution for one tracker: latest compatible observation per keyword/device, or one saved check by runId. Never-checked, limited, expired, incompatible and failed states stay separate; asOf is report time. No provider call.',schema:tracker.extend({query:z.strictObject({device:z.enum(['desktop','mobile','both']).optional(),runId:id.optional()}).optional()})},
   {name:'ten98_read_rank_matrix',scope:'rank:read',description:'Read the recent-check matrix for one tracker and device: up to 26 recent started checks as columns and 50 keywords per page with a scoped nextCursor. Expired, incompatible and missing cells stay explicit; runLimit is 1–26 (default 12). No provider call.',schema:tracker.extend({query:z.strictObject({device:z.enum(['desktop','mobile']),search:z.string().max(200).optional(),pinned:z.enum(['true','false']).optional(),runLimit:z.string().regex(/^[1-9]\d?$/).optional(),cursor:cursor512.optional()})})},
+  {name:'ten98_list_rank_runs',scope:'rank:read',description:'List the checks of one tracker, newest first, 50 per page with a scoped nextCursor: status, trigger, method, timing and expiry. Under a key the provider-ledger amounts, cost status and diagnostic are omitted. No provider call.',schema:tracker.extend({query:z.strictObject({cursor:cursor512.optional()}).optional()})},
+  {name:'ten98_read_rank_results',scope:'rank:read',description:'Read the latest attempt and latest compatible observation per current keyword and device with dated 1/7/30/90-day baselines, 50 keywords per page with a scoped nextCursor. Optional device (default both), literal search and pinned filter. Never-checked, expired and incompatible states stay explicit; asOf is report time. Observations omit the diagnostic under a key. No provider call.',schema:tracker.extend({query:z.strictObject({cursor:cursor512.optional(),device:rankDevice,search:z.string().max(200).optional(),pinned:z.enum(['true','false']).optional()}).optional()})},
+  {name:'ten98_read_rank_keyword_history',scope:'rank:read',description:'Read the retained observations of one tracked keyword ID, a removed keyword included, newest attempt first, 50 per page with a scoped nextCursor; optional device (default both). Incompatible targets and expired data stay explicit. Observations omit the diagnostic under a key. No provider call.',schema:tracker.extend({keywordId:id,query:z.strictObject({cursor:cursor512.optional(),device:rankDevice}).optional()})},
   {name:'ten98_list_saved_keywords',scope:'keywords:read',description:'Query saved keywords with the native filters, 50/100/250 per page and a scoped cursor bound to the list and metric revisions. Returns retained metrics and the first 250 tags; never refreshes, exports or calls a provider.',schema:savedKeywordList},
   {name:'ten98_list_saved_keyword_tags',scope:'keywords:read',description:'List saved-keyword tags with assignment counts, 250 per page with a scoped cursor. Reads saved data only.',schema:z.strictObject({projectId:id,cursor:cursor512.optional()})},
 ] as const;
@@ -100,7 +105,7 @@ export function createNativeMcpServer(token:string,state:McpRequestState,limit:M
       const principal=tool.scope===null?await authenticateApiKey(token):await authorizeApiKey(token,state.principal.workspaceId,tool.scope as ApiKeyScope);
       if(principal.userId!==state.principal.userId||principal.workspaceId!==state.principal.workspaceId)throw new FoundationError(401,'Authority changed.');
       if(tool.name==='ten98_whoami')return mcpResult({userId:principal.userId,workspaceId:principal.workspaceId,scopes:principal.scopes,tools:availableTools(principal).map(item=>item.name)});
-      const args=raw as {projectId:string;promptId?:string;trackerId?:string;visitorKey?:string;query?:Record<string,string>;requestId?:string};
+      const args=raw as {projectId:string;promptId?:string;trackerId?:string;keywordId?:string;visitorKey?:string;query?:Record<string,string>;requestId?:string};
       const target=await getDatabase().pool.query('SELECT id FROM project WHERE id=$1 AND workspace_id=$2',[args.projectId,principal.workspaceId]);
       if(!target.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
       const query=new URLSearchParams(args.query),authority={kind:'api-key' as const,token};
@@ -127,6 +132,9 @@ export function createNativeMcpServer(token:string,state:McpRequestState,limit:M
         case 'ten98_read_rank_tracker':await limit(`rank-read:${principal.userId}`,120);result=await getRankTracker(args.projectId,principal.userId,args.trackerId!,token);break;
         case 'ten98_read_rank_distribution':await limit(`rank-report:${principal.userId}`,30);result=await getRankDistribution(args.projectId,principal.userId,args.trackerId!,query,token);break;
         case 'ten98_read_rank_matrix':await limit(`rank-report:${principal.userId}`,30);result=await getRankMatrix(args.projectId,principal.userId,args.trackerId!,query,token);break;
+        case 'ten98_list_rank_runs':await limit(`rank-read:${principal.userId}`,120);result=await listRankRuns(args.projectId,principal.userId,args.trackerId!,query,token);break;
+        case 'ten98_read_rank_results':await limit(`rank-read:${principal.userId}`,120);result=await getLatestRankResults(args.projectId,principal.userId,args.trackerId!,query,token);break;
+        case 'ten98_read_rank_keyword_history':await limit(`rank-read:${principal.userId}`,120);result=await getRankKeywordHistory(args.projectId,principal.userId,args.trackerId!,args.keywordId!,query,token);break;
         case 'ten98_list_saved_keywords':case 'ten98_list_saved_keyword_tags':{
           await limit(`saved-keyword:${principal.userId}`,120);await limit(`saved-keyword-read:${principal.userId}`,60);
           const {projectId,...input}=raw as Record<string,unknown>;

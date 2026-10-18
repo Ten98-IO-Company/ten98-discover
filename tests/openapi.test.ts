@@ -42,17 +42,18 @@ test('Revenue inventory matches the three closed native readers and pinned curre
  }
 });
 
-test('static OpenAPI exposes exactly the supported 41 native operations with local references',()=>{
+test('static OpenAPI exposes exactly the supported 44 native operations with local references',()=>{
  assert.equal(nativeOpenApi.openapi,'3.1.2');assert.deepEqual(nativeOpenApi.servers,[{url:'/'}]);
  const ids:string[]=[];for(const[path,item]of Object.entries(nativeOpenApi.paths))for(const[method,op]of Object.entries(item)){
   assert.ok(['get','post'].includes(method));ids.push(op.operationId);assert.deepEqual(op.security,[{bearerAuth:[]}]);assert.equal(op['x-ten98-scopes'].length,1);
   assert.deepEqual([...path.matchAll(/\{([^}]+)\}/g)].map(x=>x[1]).sort(),op.parameters.filter((x:any)=>x.in==='path').map((x:any)=>x.name).sort());
   const names=op.parameters.map((x:any)=>x.in+':'+x.name);assert.equal(new Set(names).size,names.length);
  }
- assert.equal(ids.length,41);assert.equal(new Set(ids).size,41);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
+ assert.equal(ids.length,44);assert.equal(new Set(ids).size,44);assert.equal(ids.filter(x=>/Prompt/.test(x)).length,7);
  const prior=['listProjects','createProject','readTeam','listRecentEvents','writeObservation','readAnalytics','readRealtime','exploreAnalytics','listSessions','readSession','readLinkedActivity','listPrompts','readPrompt','listPromptVersions','createPrompts','updatePrompt','archivePrompt','restorePrompt'];
  const added=['readJourneys','readRetentionReport','readAttribution','readRevenue','listRevenueSessions','readRevenueSession','readWebPerformance','readContext','listContextResearch','updateContext',
-  'listSegments','readSegment','listCohorts','readCohort','listAnnotations','readAnnotationTimeline','readAnnotation','listRankTrackers','readRankTracker','readRankDistribution','readRankMatrix','querySavedKeywords','listSavedKeywordTags'];
+  'listSegments','readSegment','listCohorts','readCohort','listAnnotations','readAnnotationTimeline','readAnnotation','listRankTrackers','readRankTracker','readRankDistribution','readRankMatrix','querySavedKeywords','listSavedKeywordTags',
+  'listRankRuns','readRankResults','readRankKeywordHistory'];
  assert.deepEqual(ids.filter(id=>!added.includes(id)).sort(),prior.sort());for(const name of added)assert.equal(ids.filter(id=>id===name).length,1);
  const walk=(x:any)=>{if(!x||typeof x!=='object')return;if(x.$ref){assert.match(x.$ref,/^#\/components\/schemas\//);assert.ok(Object.hasOwn(nativeOpenApi.components.schemas,x.$ref.split('/').at(-1)));}for(const v of Object.values(x))walk(v);};walk(nativeOpenApi);
  const params=nativeOpenApi.paths['/api/projects/{projectId}/explore'].get.parameters as any[];
@@ -87,6 +88,7 @@ test('content read families carry one scope each, a body only on the two saved-k
   ['/segments','listSegments','segments:read',['cursor']],['/segments/{segmentId}','readSegment','segments:read',[]],['/cohorts','listCohorts','segments:read',['cursor']],['/cohorts/{cohortId}','readCohort','segments:read',[]],
   ['/annotations','listAnnotations','annotations:read',['from','to','timeZone','search','cursor']],['/annotations/timeline','readAnnotationTimeline','annotations:read',['from','to','timeZone']],['/annotations/{annotationId}','readAnnotation','annotations:read',[]],
   ['/rank-trackers','listRankTrackers','rank:read',['archived','cursor']],['/rank-trackers/{trackerId}','readRankTracker','rank:read',[]],['/rank-trackers/{trackerId}/distribution','readRankDistribution','rank:read',['device','runId']],['/rank-trackers/{trackerId}/matrix','readRankMatrix','rank:read',['device','search','pinned','runLimit','cursor']],
+  ['/rank-trackers/{trackerId}/runs','listRankRuns','rank:read',['cursor']],['/rank-trackers/{trackerId}/results','readRankResults','rank:read',['cursor','device','search','pinned']],['/rank-trackers/{trackerId}/keywords/{keywordId}/history','readRankKeywordHistory','rank:read',['cursor','device']],
   ['/saved-keywords/list','querySavedKeywords','keywords:read',[]],['/saved-keywords/tags/list','listSavedKeywordTags','keywords:read',[]],
  ] as const;
  for(const[suffix,operationId,scope,queries]of cases){
@@ -105,12 +107,18 @@ test('content read families carry one scope each, a body only on the two saved-k
  assert.deepEqual(parameter('/rank-trackers/{trackerId}/distribution','runId').schema,{type:'string',format:'uuid'});
  const matrixDevice=parameter('/rank-trackers/{trackerId}/matrix','device');assert.equal(matrixDevice.required,true);assert.deepEqual(matrixDevice.schema.enum,['desktop','mobile']);
  assert.deepEqual(parameter('/rank-trackers/{trackerId}/matrix','runLimit').schema,{type:'integer',minimum:1,maximum:26,default:12});assert.equal(parameter('/rank-trackers/{trackerId}/matrix','search').schema.maxLength,200);
+ for(const suffix of ['/rank-trackers/{trackerId}/results','/rank-trackers/{trackerId}/keywords/{keywordId}/history'])assert.deepEqual(parameter(suffix,'device').schema,{type:'string',enum:['desktop','mobile','both'],default:'both'});
+ assert.equal(parameter('/rank-trackers/{trackerId}/results','search').schema.maxLength,200);assert.deepEqual(parameter('/rank-trackers/{trackerId}/results','pinned').schema.enum,['true','false']);
+ // Runs are the one rank reader whose cookie DTO carries provider-ledger amounts; the bearer contract names their omission and the diagnostic's, and observations name theirs.
+ const runs=(nativeOpenApi.paths as any)[base+'/rank-trackers/{trackerId}/runs'].get;assert.match(runs.description,/omits estimateUsd, knownChargeUsd, costStatus and diagnostic/);
+ for(const suffix of ['/rank-trackers/{trackerId}/results','/rank-trackers/{trackerId}/keywords/{keywordId}/history'])assert.match((nativeOpenApi.paths as any)[base+suffix].get.description,/Under a bearer key every observation omits diagnostic/,suffix);
+ assert.deepEqual(Object.keys(runs.responses['200'].content['application/json'].schema.properties),['role','trackerId','runs','nextCursor']);
  const list=nativeOpenApi.components.schemas.SavedKeywordList as any;assert.equal(list.additionalProperties,false);assert.deepEqual(list.required,[]);assert.deepEqual(list.properties.pageSize.enum,[50,100,250]);assert.equal(list.properties.cursor.maxLength,512);
  assert.equal(list.properties.filters.additionalProperties,false);assert.deepEqual(Object.keys(list.properties.filters.properties),[...savedKeywordFilterKeys]);
  const cursorBody=nativeOpenApi.components.schemas.CursorBody as any;assert.deepEqual(cursorBody.required,[]);assert.equal(cursorBody.properties.cursor.maxLength,512);
  for(const[suffix,schema]of [['/saved-keywords/list','SavedKeywordList'],['/saved-keywords/tags/list','CursorBody']])assert.deepEqual((nativeOpenApi.paths as any)[base+suffix].post.requestBody.content['application/json'].schema,{$ref:'#/components/schemas/'+schema});
- // Excluded neighbours never enter the bearer inventory: rank catalog/locations/schedule/runs/results/history/checks, every export or refresh, and every saved-definition write.
- for(const path of Object.keys(nativeOpenApi.paths))assert.doesNotMatch(path,/rank-trackers\/(?:catalog|locations|\{trackerId\}\/(?:runs|results|schedule|keywords|quote|update|archive))|rank-checks|\/export$|refresh|saved-keywords$|saved-keywords\/(?:remove|bulk-tags|tags\/\{)|(?:segments|cohorts|annotations)\/\{\w+\}\/(?:update|delete)$/,path);
+ // Excluded neighbours never enter the bearer inventory: rank catalog/locations/schedule/checks/keyword writes, every export or refresh, and every saved-definition write.
+ for(const path of Object.keys(nativeOpenApi.paths))assert.doesNotMatch(path,/rank-trackers\/(?:catalog|locations|\{trackerId\}\/(?:schedule|keywords(?!\/\{keywordId\}\/history$)|quote|update|archive))|rank-checks|\/export$|refresh|saved-keywords$|saved-keywords\/(?:remove|bulk-tags|tags\/\{)|(?:segments|cohorts|annotations)\/\{\w+\}\/(?:update|delete)$/,path);
 });
 
 test('retention specification requires month/timezone and preserves closed entry-filter and response bounds',()=>{
