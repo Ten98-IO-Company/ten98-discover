@@ -93,7 +93,7 @@ export function mcpResult(value:unknown):CallToolResult {
 export type McpRequestState={principal:ApiKeyPrincipal;committed:boolean};
 export type McpLimit=(key:string,maximum:number)=>Promise<void>;
 export function createNativeMcpServer(token:string,state:McpRequestState,limit:McpLimit){
-  const server=new McpServer({name:'ten98-monitor',version:'0.0.0-foundation'},{capabilities:{tools:{listChanged:false}},maxToolInputElements:10000});
+  const server=new McpServer({name:'ten98-monitor',title:'ten98 Discover',version:'0.0.0-foundation'},{capabilities:{tools:{listChanged:false}},maxToolInputElements:10000});
   for(const tool of availableTools(state.principal))server.registerTool(tool.name,{description:tool.description,inputSchema:tool.schema,
     annotations:{readOnlyHint:!('write'in tool),destructiveHint:'write'in tool,idempotentHint:true,openWorldHint:false}},async(raw:unknown)=>{
     try{

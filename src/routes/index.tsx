@@ -1,3 +1,4 @@
+import { AuthLayout } from '../components/AuthLayout'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -551,20 +552,20 @@ function App() {
 
   if (phase === 'error') {
     return (
-      <main className='center'>
+      <AuthLayout>
         <div className='card auth'>
           <div role='alert' className='alert'>{pageError}</div>
           <button className='btn primary' onClick={() => { setPhase('loading'); void boot() }}>Try again</button>
         </div>
-      </main>
+      </AuthLayout>
     )
   }
 
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
   if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={resetSession} />
-  if (inviteToken && !inviteSigningIn) return <main className='center'><section className='card auth'><InvitePanel token={inviteToken} signedInEmail={me?.user.email ?? null}
+  if (inviteToken && !inviteSigningIn) return <AuthLayout><section className='card auth'><InvitePanel token={inviteToken} signedInEmail={me?.user.email ?? null}
     onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={unauthorized} />
-    {!me && <OidcSignIn key={inviteToken} invitationToken={inviteToken} />}</section></main>
+    {!me && <div className='auth-providers'><OidcSignIn key={inviteToken} invitationToken={inviteToken} /></div>}</section></AuthLayout>
   if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
     onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
@@ -610,7 +611,7 @@ function App() {
     <AccountPresentationContext.Provider value={presentation}><div className='shell'>
       <a className='skip-link' href='#main-content' onClick={(event) => { event.preventDefault(); mainRef.current?.focus() }}>Skip to main content</a>
       <aside className='side' aria-label='Application navigation'>
-        <div className='brand-row'><p className='brand'><span className='brand-mark' aria-hidden='true'>98</span><span>ten98<span className='brand-product'>monitor</span></span></p>
+        <div className='brand-row'><p className='brand'><span className='brand-mark' aria-hidden='true'>98</span><span>ten98<span className='brand-product'>Discover</span></span></p>
           <button type='button' className='btn mobile-nav-toggle' aria-expanded={menuOpen} aria-controls='app-navigation' onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? 'Close menu' : 'Menu'}</button>
         </div>
         <div id='app-navigation' className={`side-body${menuOpen ? ' is-open' : ''}`}>
@@ -914,9 +915,9 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   }
 
   return (
-    <main className='center'>
+    <AuthLayout>
       <form className='card auth' onSubmit={(e) => void submit(e)}>
-        <h1>Secure this installation</h1>
+        <p className='auth-brand'>Your Discover workspace</p><h1>Secure this installation</h1>
         <p className='dim'>Create the owner account and its default workspace. The setup token comes from your server configuration.</p>
         <div className='field'><label htmlFor='su-token'>Setup token</label>
           <input id='su-token' type='password' autoComplete='off' required value={token} onChange={(e) => setToken(e.target.value)} /></div>
@@ -933,7 +934,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
         {ownerExists && <p className='row'><button type='button' className='btn' onClick={() => onSignInInstead(email.trim())}>Sign in instead</button></p>}
         <button className='btn primary' disabled={busy}>{busy ? 'Creating…' : 'Create owner account'}</button>
       </form>
-    </main>
+    </AuthLayout>
   )
 }
 
@@ -954,9 +955,9 @@ function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { in
   }
 
   return (
-    <main className='center'>
+    <AuthLayout>
       <form className='card auth' onSubmit={(e) => void submit(e)}>
-        <p className='auth-brand'>ten98 / monitor</p>
+        <p className='auth-brand'>Your Discover workspace</p>
         <h1>Sign in</h1>
         {notice && <p className={notice.kind === 'error' ? 'alert' : 'notice'} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.message}</p>}
         <div className='field'><label htmlFor='si-email'>Email</label>
@@ -967,9 +968,9 @@ function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { in
         <button className='btn primary' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
         <button type='button' className='btn' disabled={busy} onClick={() => onForgot(email.trim())}>Forgot password?</button>
         {onCancel && <button type='button' className='btn' onClick={onCancel}>Back to invitation</button>}
-        <OidcSignIn />
+        <div className='auth-providers'><OidcSignIn /></div>
       </form>
-    </main>
+    </AuthLayout>
   )
 }
 
@@ -987,15 +988,15 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
     catch (e) { setError(errMsg(e)) }
     finally { locked.current = false; setBusy(false) }
   }
-  return <main className='center'><form className='card auth' onSubmit={event => void submit(event)}>
-    <h1>Verify your sign-in</h1><p>{recovery ? 'Enter one unused recovery code. Each code can only be used once.' : 'Enter the six-digit code from your authenticator app.'}</p>
+  return <AuthLayout><form className='card auth' onSubmit={event => void submit(event)}>
+    <p className='auth-brand'>Your Discover workspace</p><h1>Verify your sign-in</h1><p>{recovery ? 'Enter one unused recovery code. Each code can only be used once.' : 'Enter the six-digit code from your authenticator app.'}</p>
     <div className='field'><label htmlFor='factor-code'>{recovery ? 'Recovery code' : 'Authenticator code'}</label>
       <input id='factor-code' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} value={code} onChange={event => setCode(event.target.value)} maxLength={recovery ? 21 : 6} required disabled={busy} /></div>
     {error && <div className='alert' role='alert'>{error}</div>}
     <div className='row'><button className='btn primary' disabled={busy}>{busy ? 'Verifying…' : 'Verify'}</button>
       <button type='button' className='btn' disabled={busy} onClick={() => { setRecovery(!recovery); setCode(''); setError('') }}>{recovery ? 'Use authenticator' : 'Use a recovery code'}</button>
       <button type='button' className='btn ghost' disabled={busy} onClick={onCancel}>Back to sign in</button></div>
-  </form></main>
+  </form></AuthLayout>
 }
 
 function CreateProjectForm({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {

@@ -5,7 +5,8 @@
 
 /* Static tokens, shared across themes */
 :root {
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-heading: "Aptos Display", "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --text-xs: 0.75rem;
@@ -37,7 +38,7 @@
   --space-12: 3rem;
 
   --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
+  --radius-md: 0.5625rem;
   --radius-lg: 0.75rem;
   --radius-pill: 999px;
 
@@ -46,7 +47,7 @@
   --focus-offset: 2px;
 
   --sidebar-width: 14.5rem;
-  --topbar-height: 3.5rem;
+  --topbar-height: 4.3125rem;
   --content-max: 90rem;
   --form-max: 42rem;
   --auth-max: 28rem;
@@ -78,20 +79,20 @@
 [data-theme="system"] {
   color-scheme: light;
 
-  --color-canvas: #F7F8FA;
+  --color-canvas: #F8F9FC;
   --color-surface: #FFFFFF;
-  --color-surface-subtle: #F0F3F7;
+  --color-surface-subtle: #F5F4FA;
   --color-surface-raised: #FFFFFF;
-  --color-text: #18212F;
-  --color-text-muted: #566274;
+  --color-text: #252435;
+  --color-text-muted: #696374;
   --color-text-placeholder: #68758A;
-  --color-border: #DCE2EA;
+  --color-border: #EAEAF1;
   --color-border-control: #8793A5;
-  --color-accent: #3454D1;
-  --color-accent-hover: #2845B4;
-  --color-accent-active: #223C9C;
+  --color-accent: #5943CE;
+  --color-accent-hover: #4731B6;
+  --color-accent-active: #3D2B9C;
   --color-on-accent: #FFFFFF;
-  --color-accent-subtle: #EEF2FF;
+  --color-accent-subtle: #EFECFC;
   --color-success: #176B49;
   --color-success-subtle: #EAF5EF;
   --color-warning: #825208;
@@ -101,9 +102,9 @@
   --color-info: #245AA8;
   --color-info-subtle: #EDF4FF;
   --color-disabled-text: #68758A;
-  --color-disabled-surface: #F0F3F7;
-  --color-focus: #3454D1;
-  --color-chart-1: #3454D1;
+  --color-disabled-surface: #F5F4FA;
+  --color-focus: #5943CE;
+  --color-chart-1: #5943CE;
   --color-chart-2: #14796F;
   --color-chart-3: #926008;
   --color-chart-4: #9A417F;
@@ -124,11 +125,11 @@
   --color-text-placeholder: #A0ADBF;
   --color-border: #344258;
   --color-border-control: #788BA6;
-  --color-accent: #ACC0FF;
-  --color-accent-hover: #C1CFFF;
-  --color-accent-active: #D2DCFF;
-  --color-on-accent: #142447;
-  --color-accent-subtle: #243457;
+  --color-accent: #C2B6FF;
+  --color-accent-hover: #D3CAFF;
+  --color-accent-active: #E3DDFF;
+  --color-on-accent: #2C2056;
+  --color-accent-subtle: #352A54;
   --color-success: #80D8AE;
   --color-success-subtle: #173C2D;
   --color-warning: #F3CC78;
@@ -139,8 +140,8 @@
   --color-info-subtle: #223751;
   --color-disabled-text: #A0ADBF;
   --color-disabled-surface: #1D2938;
-  --color-focus: #ACC0FF;
-  --color-chart-1: #ACC0FF;
+  --color-focus: #C2B6FF;
+  --color-chart-1: #C2B6FF;
   --color-chart-2: #71CFC3;
   --color-chart-3: #E5BE73;
   --color-chart-4: #E7A0CC;
@@ -163,11 +164,11 @@
     --color-text-placeholder: #A0ADBF;
     --color-border: #344258;
     --color-border-control: #788BA6;
-    --color-accent: #ACC0FF;
-    --color-accent-hover: #C1CFFF;
-    --color-accent-active: #D2DCFF;
-    --color-on-accent: #142447;
-    --color-accent-subtle: #243457;
+    --color-accent: #C2B6FF;
+    --color-accent-hover: #D3CAFF;
+    --color-accent-active: #E3DDFF;
+    --color-on-accent: #2C2056;
+    --color-accent-subtle: #352A54;
     --color-success: #80D8AE;
     --color-success-subtle: #173C2D;
     --color-warning: #F3CC78;
@@ -178,8 +179,8 @@
     --color-info-subtle: #223751;
     --color-disabled-text: #A0ADBF;
     --color-disabled-surface: #1D2938;
-    --color-focus: #ACC0FF;
-    --color-chart-1: #ACC0FF;
+    --color-focus: #C2B6FF;
+    --color-chart-1: #C2B6FF;
     --color-chart-2: #71CFC3;
     --color-chart-3: #E5BE73;
     --color-chart-4: #E7A0CC;

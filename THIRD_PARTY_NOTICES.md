@@ -139,7 +139,7 @@ Before each source import, record original repository/commit/path, destination p
 
 Do not adopt all three manifests or all hosted-service SDKs. One example requiring resolution is Umami's declared `ua-parser-js` 2.x dependency; verify its actual resolved license and select a compatible implementation or license strategy before reuse. Generic OIDC must not depend on an unreviewed paid/enterprise auth add-on. This plan makes no claim that the entire reference dependency graph is MIT.
 
-Use original ten98-monitor branding. Upstream names identify references, not endorsement. Provider responses and datasets have separate usage/retention/redistribution terms; do not publish private captured answers or customer analytics as test fixtures. Prefer original synthetic fixtures, or explicitly licensed and sanitized evidence.
+Use original ten98 Discover branding. Upstream names identify references, not endorsement. Provider responses and datasets have separate usage/retention/redistribution terms; do not publish private captured answers or customer analytics as test fixtures. Prefer original synthetic fixtures, or explicitly licensed and sanitized evidence.
 
 The [REA skill](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/SKILL.md) informed source-versus-runtime evidence handling. Its code/tools were not bundled. Other local skills used as working instructions are recorded in the brief; their files are not redistributed here.
 

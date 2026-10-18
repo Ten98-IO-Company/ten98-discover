@@ -17,7 +17,7 @@ export type ResetPasswordMessage = { userId: string; email: string; token: strin
 function createAuth(client?: PoolClient, captureReset?: (message: ResetPasswordMessage) => void) {
   const config = getConfig()
   const factors = twoFactor({
-    issuer: 'ten98-monitor',
+    issuer: 'ten98 Discover',
     // Browser routes still require either a local password or a one-use, fresh OIDC proof.
     allowPasswordless: true,
     backupCodeOptions: { amount: 10, length: 20 },
@@ -55,7 +55,7 @@ function createAuth(client?: PoolClient, captureReset?: (message: ResetPasswordM
     baseURL: config.appUrl,
     secret: config.authSecret,
     trustedOrigins: [config.appUrl],
-    appName: 'ten98-monitor',
+    appName: 'ten98 Discover',
     // Database adapter failures can contain query parameters. Report safe errors at our API boundary.
     logger: { disabled: true },
     // better-call logs non-API exceptions even when the Better Auth logger is off.
