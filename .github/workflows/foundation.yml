@@ -94,7 +94,6 @@ jobs:
             await client.query('CREATE DATABASE ten98_account_preferences_ci');
             await client.query('CREATE DATABASE ten98_password_recovery_ci');
             await client.query('CREATE DATABASE ten98_prompt_recurring_ci');
-            await client.query('CREATE DATABASE ten98_google_ads_ci');
             await client.query('CREATE DATABASE ten98_google_ga4_ci');
             await client.query('CREATE DATABASE ten98_web_performance_ci');
             await client.query('CREATE DATABASE ten98_session_replay_ci');
@@ -149,17 +148,6 @@ jobs:
             await client.query('CREATE DATABASE ten98_rank_recurring_ci');
             await client.query('CREATE DATABASE ten98_rank_distribution_ci');
             await client.query('CREATE DATABASE ten98_rank_matrix_ci');
-            await client.query('CREATE DATABASE ten98_meta_auth_ci');
-            await client.query('CREATE DATABASE ten98_meta_callbacks_ci');
-            await client.query('CREATE DATABASE ten98_meta_auth_reports_ci');
-            await client.query('CREATE DATABASE ten98_meta_callbacks_imports_ci');
-            await client.query('CREATE DATABASE ten98_meta_auth_imports_ci');
-            await client.query('CREATE DATABASE ten98_meta_auth_worker_ci');
-            await client.query('CREATE DATABASE ten98_meta_auth_latest_ci');
-            await client.query('CREATE DATABASE ten98_meta_auth_inventory_ci');
-            await client.query('CREATE DATABASE ten98_meta_auth_inventory_worker_ci');
-            await client.query('CREATE DATABASE ten98_meta_auth_inventory_boundary_ci');
-            await client.query('CREATE DATABASE ten98_meta_callbacks_inventory_ci');
             await client.query('CREATE DATABASE ten98_journeys_ci');
             await client.query('CREATE DATABASE ten98_attribution_ci');
             await client.query('CREATE DATABASE ten98_retention_report_ci');
@@ -192,7 +180,6 @@ jobs:
               ['ten98_account_preferences_ci', [['tests/account-preferences-integration.ts']], { TEN98_ACCOUNT_PREFERENCES_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_password_recovery_ci', [['src/server/cli.ts', 'migrate'], ['--experimental-test-module-mocks', '--test', 'tests/password-recovery-integration.ts']], { TEN98_PASSWORD_RECOVERY_INTEGRATION: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_prompt_recurring_ci', [['src/server/cli.ts', 'migrate'], ['tests/prompt-recurring-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
-              ['ten98_google_ads_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-ads-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_domain_research_ci', [['src/server/cli.ts', 'migrate'], ['tests/domain-research-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_backlink_research_ci', [['src/server/cli.ts', 'migrate'], ['tests/backlink-research-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_google_ga4_ci', [['src/server/cli.ts', 'migrate'], ['tests/google-commerce-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1', TEN98_GOOGLE_COMMERCE_INTEGRATION: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
@@ -247,17 +234,6 @@ jobs:
               ['ten98_rank_recurring_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-recurring-integration.ts']], { TEN98_RANK_RECURRING_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_rank_distribution_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-distribution-integration.ts']], { TEN98_RANK_DISTRIBUTION_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_rank_matrix_ci', [['src/server/cli.ts', 'migrate'], ['tests/rank-matrix-integration.ts']], { TEN98_RANK_MATRIX_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_auth_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-auth-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_callbacks_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-callbacks-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_auth_reports_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-report-auth-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_callbacks_imports_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-import-deletion-integration.ts']], { TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_auth_imports_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-import-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_auth_latest_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-latest-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_auth_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-import-worker-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_auth_inventory_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_auth_inventory_worker_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-worker-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_auth_inventory_boundary_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-boundary-integration.ts']], { TEN98_META_AUTH_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
-              ['ten98_meta_callbacks_inventory_ci', [['src/server/cli.ts', 'migrate'], ['tests/meta-inventory-deletion-integration.ts']], { TEN98_META_CALLBACKS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1' }],
               ['ten98_journeys_ci', [['tests/journeys-integration.ts']], { TEN98_JOURNEYS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_attribution_ci', [['tests/attribution-integration.ts']], { TEN98_ATTRIBUTION_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_retention_report_ci', [['tests/retention-report-integration.ts']], { TEN98_RETENTION_REPORT_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', ANALYTICS_NETWORK_MODE: 'off' }],

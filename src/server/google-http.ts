@@ -5,7 +5,6 @@ import { getConfig } from './config.ts';
 type Transport = (url: string, init: RequestInit) => Promise<Response>;
 const fixtureTransport = new AsyncLocalStorage<Transport>();
 const hosts = new Set(['oauth2.googleapis.com', 'www.googleapis.com', 'analyticsadmin.googleapis.com', 'analyticsdata.googleapis.com', 'searchconsole.googleapis.com']);
-type AdsHeaders = { developerToken: string; loginCustomerId?: string };
 export class GoogleRequestError extends FoundationError {
   retryable: boolean;
   reauthorize: boolean;
@@ -18,12 +17,10 @@ export class GoogleRequestError extends FoundationError {
 }
 
 /** Fixed Google hosts only; redirects cannot forward bearer credentials. */
-export async function googleRequest(url: string, token?: string, body?: unknown, ads?: AdsHeaders, signal?: AbortSignal): Promise<unknown> {
+export async function googleRequest(url: string, token?: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
   const parsed = new URL(url);
-  const adsEndpoint = parsed.hostname === 'googleads.googleapis.com' && !parsed.search && (body === undefined ? parsed.pathname === '/v26/customers:listAccessibleCustomers' : /^\/v26\/customers\/[1-9]\d{9}\/googleAds:search$/.test(parsed.pathname));
-  if (parsed.protocol !== 'https:' || !(hosts.has(parsed.hostname) || adsEndpoint) || parsed.port || parsed.username || parsed.password || url.includes('#') || adsEndpoint !== !!ads || ads && (!/^[A-Za-z0-9_-]{1,4096}$/.test(ads.developerToken) || ads.loginCustomerId !== undefined && !/^[1-9]\d{9}$/.test(ads.loginCustomerId))) throw new Error('Invalid Google endpoint.');
+  if (parsed.protocol !== 'https:' || !hosts.has(parsed.hostname) || parsed.port || parsed.username || parsed.password || url.includes('#')) throw new Error('Invalid Google endpoint.');
   const headers: Record<string, string> = { accept: 'application/json' };
-  if (ads) { headers['developer-token'] = ads.developerToken; if (ads.loginCustomerId) headers['login-customer-id'] = ads.loginCustomerId; }
   if (token) headers.authorization = `Bearer ${token}`;
   if (body !== undefined) headers['content-type'] = body instanceof URLSearchParams ? 'application/x-www-form-urlencoded' : 'application/json';
   let response: Response;

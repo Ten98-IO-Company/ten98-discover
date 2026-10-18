@@ -30,10 +30,16 @@ test('shared Google transport refuses malformed UTF-8 and preserves valid astral
       return new Response(calls===1?new Uint8Array([123,34,120,34,58,34,255,34,125]):JSON.stringify({x:'مرحبا 😀'}));
     },async()=>{
       await assert.rejects(googleRequest('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect#','synthetic',{}),/Invalid Google endpoint/);assert.equal(calls,0,'An empty endpoint fragment must fail before transport.');
+      // Fixed hosts only: foreign, insecure, ported, credentialed and the removed Ads host fail before transport.
+      for(const target of ['https://evil.test/v1/urlInspection/index:inspect','http://searchconsole.googleapis.com/v1/urlInspection/index:inspect','https://searchconsole.googleapis.com:444/v1/urlInspection/index:inspect','https://u@searchconsole.googleapis.com/v1/urlInspection/index:inspect','https://googleads.googleapis.com/v26/customers:listAccessibleCustomers'])await assert.rejects(googleRequest(target,'synthetic',{}),/Invalid Google endpoint/);
+      assert.equal(calls,0,'Refused endpoints never reach the transport.');
       await assert.rejects(googleRequest('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect','synthetic',{}),e=>e instanceof Error&&'status'in e&&e.status===502);
       assert.deepEqual(await googleRequest('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect','synthetic',{}),{x:'مرحبا 😀'});
       assert.equal(calls,2);
     });
+    // A redirect or an oversized body is an unavailable provider answer, never followed or truncated.
+    for(const response of [()=>new Response(null,{status:302,headers:{location:'https://evil.test'}}),()=>new Response(' '.repeat(2097153))])
+      await withGoogleTransportForTests(async()=>response(),async()=>{await assert.rejects(googleRequest('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect','synthetic',{}),{status:502});});
   }finally{for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);}
 });
 

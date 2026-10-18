@@ -31,8 +31,6 @@ interface PreviewDto {
   cutoff: string;
   derivedCutoff: string;
   derivedEstimate: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean };
-  metaEstimate?: { status: 'available' | 'unavailable'; imports: number | null; atLeast: boolean };
-  metaInventoryEstimate?: { status: 'available' | 'unavailable'; inventories: number | null; atLeast: boolean };
   rawEvidenceCutoff:string;
   promptEstimate: { status:'available'|'unavailable';results:number|null;inputs:number|null;atLeast:boolean };
   redirectEstimate?:{status:'available'|'unavailable';checks:number|null;atLeast:boolean};
@@ -73,7 +71,7 @@ const FIELDS: ReadonlyArray<{
   {key: 'rawAnalyticsDays', cat: 'rawAnalytics', label: 'Raw analytics', helper: 'Days to keep events, performance observations, session properties and explicit identity links. Each property uses its latest update; each link uses its latest accepted evidence (default 90).'},
   {key: 'replayDays', cat: 'replay', label: 'Replay', helper: 'Days to keep recording content and recorded paths (default 7). Expired content becomes unreadable immediately; bounded cleanup removes it afterward.'},
   {key: 'rawProviderEvidenceDays', cat: 'rawProviderEvidence', label: 'Raw provider evidence', helper: 'Days to keep generated answers, copied execution input and observed redirect chains (default 90). Receipts and authored prompts remain.'},
-  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google and Meta reports, Meta campaign inventories, keyword and domain SEO research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
+  {key: 'derivedHistoryDays', cat: 'derivedHistory', label: 'Derived history', helper: 'Days to keep Google reports, keyword and domain SEO research results and saved keyword metrics from their original observation (default 365). Authored lists, tags, receipts and charges remain.'},
 ];
 
 function toDraft(s: RetentionSettings): Draft {
@@ -447,8 +445,6 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <p style={{margin:'8px 0'}}>{preview.replayEstimate?.status==='available'&&preview.replayEstimate.recordings!==null&&preview.replayEstimate.chunks!==null?`${preview.replayEstimate.atLeast?'At least ':''}${preview.replayEstimate.recordings.toLocaleString()} recording records or expired request tombstones and ${preview.replayEstimate.chunks.toLocaleString()} stored replay chunks eligible for cleanup.`:'Replay estimate unavailable. Recording content still follows the replay retention period.'}{preview.replayEstimate?.status==='available'&&preview.replayEstimate.logicalBytes!==null?` About ${fmtBytes(preview.replayEstimate.logicalBytes)} in sampled logical row bytes, not guaranteed disk savings.`:''}</p>
               <h4>Imported reports and research</h4>
               <p style={{margin: '8px 0'}}>Derived data cutoff (UTC): {fmtUtc(preview.derivedCutoff)}. {preview.derivedEstimate.status === 'available' && preview.derivedEstimate.imports !== null ? `${preview.derivedEstimate.atLeast ? 'At least ' : ''}${preview.derivedEstimate.imports.toLocaleString()} finished Google imports eligible.` : 'Import estimate unavailable.'}</p>
-              <p style={{margin: '8px 0'}}>{preview.metaEstimate?.status === 'available' && preview.metaEstimate.imports !== null ? `${preview.metaEstimate.atLeast ? 'At least ' : ''}${preview.metaEstimate.imports.toLocaleString()} finished Meta imports eligible or already awaiting cleanup. Their receipts remain.` : 'Meta import estimate unavailable. Finished Meta report rows still follow this policy.'}</p>
-              <p style={{margin: '8px 0'}}>{preview.metaInventoryEstimate?.status === 'available' && preview.metaInventoryEstimate.inventories !== null ? `${preview.metaInventoryEstimate.atLeast ? 'At least ' : ''}${preview.metaInventoryEstimate.inventories.toLocaleString()} finished Meta campaign inventories eligible or already awaiting cleanup. Their receipts remain.` : 'Meta campaign inventory estimate unavailable. Finished campaign metadata still follows this policy.'}</p>
               <p style={{margin: '8px 0'}}>{preview.keywordEstimate.status === 'available' && preview.keywordEstimate.results !== null ? `${preview.keywordEstimate.atLeast ? 'At least ' : ''}${preview.keywordEstimate.results.toLocaleString()} keyword results eligible.` : 'Keyword result estimate unavailable.'}</p>
               <p style={{margin: '8px 0'}}>{preview.domainResearchEstimate?.status==='available'&&preview.domainResearchEstimate.results!==null?`${preview.domainResearchEstimate.atLeast?'At least ':''}${preview.domainResearchEstimate.results.toLocaleString()} domain SEO reports eligible. Their used quotes and charges remain.`:'Domain SEO report estimate unavailable. Reports still follow derived history retention.'}</p>
               <p style={{margin: '8px 0'}}>{preview.savedKeywordEstimate.status === 'available' && preview.savedKeywordEstimate.metrics !== null ? `${preview.savedKeywordEstimate.atLeast ? 'At least ' : ''}${preview.savedKeywordEstimate.metrics.toLocaleString()} saved keyword metric snapshots eligible. Authored keywords and tags remain.` : 'Saved keyword metric estimate unavailable. Authored keywords and tags remain.'}</p>
@@ -457,13 +453,13 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <p style={{margin:'8px 0'}}>{preview.promptEstimate.status==='available'&&preview.promptEstimate.results!==null?`${preview.promptEstimate.atLeast?'At least ':''}${preview.promptEstimate.results.toLocaleString()} generated prompt answers and ${preview.promptEstimate.inputs?.toLocaleString() ?? "unknown"} copied execution inputs eligible under raw provider evidence retention.`:'Prompt answer estimate unavailable.'}</p>
               <p style={{margin:'8px 0'}}>{preview.redirectEstimate?.status==='available'&&preview.redirectEstimate.checks!==null?`${preview.redirectEstimate.atLeast?'At least ':''}${preview.redirectEstimate.checks.toLocaleString()} redirect observations eligible. Their check receipts remain.`:'Redirect observation estimate unavailable.'}</p>
               <details><summary>What stays and how expiry works</summary>
-              <p className="hint" style={{margin: '8px 0'}}>Google and Meta report rows, Meta campaign metadata, Google quality metadata, keyword results and saved keyword metrics expire after the derived-history period. Saving or refreshing a list does not extend an older observation's expiry. Authored keywords, tags and prompt versions remain. Generated prompt answers and copied execution input follow raw provider evidence retention. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Expired replay paths and content are hidden immediately and purged in bounded passes. Safe request tombstones keep retries from recreating expired recordings until derived-history retention removes them; they contain no recorded path or events.</p>
+              <p className="hint" style={{margin: '8px 0'}}>Google report rows, Google quality metadata, keyword results and saved keyword metrics expire after the derived-history period. Saving or refreshing a list does not extend an older observation's expiry. Authored keywords, tags and prompt versions remain. Generated prompt answers and copied execution input follow raw provider evidence retention. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Expired replay paths and content are hidden immediately and purged in bounded passes. Safe request tombstones keep retries from recreating expired recordings until derived-history retention removes them; they contain no recorded path or events.</p>
               <p className="hint" style={{margin: '8px 0'}}>
                 Kept as-is: authored reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups.
               </p>
               </details>
               <div className="alert" style={{margin: '8px 0'}}>
-                Older analytics, finished Google and Meta reports, Meta campaign metadata, keyword results, saved keyword metrics, generated prompt answers and copied execution input will be deleted automatically. Authored keyword lists and tags remain. Increasing these periods later cannot restore deleted data.
+                Older analytics, finished Google reports, keyword results, saved keyword metrics, generated prompt answers and copied execution input will be deleted automatically. Authored keyword lists and tags remain. Increasing these periods later cannot restore deleted data.
               </div>
               <div className="row" style={{flexWrap: 'wrap', gap: 8}}>
                 <button type="button" className="btn primary" style={BTN} onClick={() => void onSave()} disabled={busy !== null}>
@@ -491,7 +487,7 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <span className="dim">Latest completed project cleanup: </span>
               {dto.lastCompletedAt ? fmtUtc(dto.lastCompletedAt) : 'No cleanup completed yet'}
             </p>
-            <p className="hint" style={{margin: '4px 0'}}>The latest finish of one project — not proof every project is caught up. Meta report and campaign payloads use a separate bounded cleanup task; this timestamp does not confirm that task is complete.</p>
+            <p className="hint" style={{margin: '4px 0'}}>The latest finish of one project — not proof every project is caught up.</p>
             {dto.failedProjects > 0 && (
               <p className="alert" style={{margin: '8px 0'}}>
                 The last cleanup failed for {dto.failedProjects} {dto.failedProjects === 1 ? 'project' : 'projects'}.

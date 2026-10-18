@@ -170,10 +170,13 @@ test('page guards distinguish account access, membership and administrative priv
   assert.equal(allowedView('providers', 'admin', false), false)
   assert.equal(allowedView('google-app', 'owner', false), false)
   assert.equal(allowedView('google-app', undefined, true), true)
-  assert.equal(allowedView('meta-app', 'owner', false), false)
-  assert.equal(allowedView('meta-app', undefined, true), true)
   assert.equal(allowedView('events', undefined, false), false)
-  for (const view of ['keywords', 'ranks', 'audits', 'conversions', 'meta', 'meta-reports', 'ai-insights'] as const) {
+  // The removed Meta views are no longer routable; an old link opens the project overview.
+  for (const view of ['meta', 'meta-app', 'meta-reports']) {
+    assert.equal((views as readonly string[]).includes(view), false)
+    assert.deepEqual(parseNavigation({workspace, project, view}), {workspace, project, view: 'project'})
+  }
+  for (const view of ['keywords', 'ranks', 'audits', 'conversions', 'ai-insights'] as const) {
     assert.deepEqual(parseNavigation({workspace, project, view}), {workspace, project, view})
     assert.equal(projectView(view), true)
     assert.equal(allowedView(view, 'viewer', false), true)
@@ -197,11 +200,10 @@ test('callbacks reject mixed families, duplicates and double-encoded capabilitie
   assert.equal(parseCallback(''), null)
 })
 
-test('Meta returns accept only exact sanitized scope and fail without provider text', () => {
+test('Former Meta returns are no callback family and fail closed without provider text', () => {
   const meta = `#meta=connected&meta-project=${project}&meta-workspace=${workspace}`
-  assert.deepEqual(parseCallback(meta), { kind: 'meta', workspace, project })
-  assert.deepEqual(parseCallback('#meta=failed'), { kind: 'meta-error' })
-  for (const hash of [meta+'&google=connected', meta+'&oidc-factor=1', meta+'&invite='+'a'.repeat(43), meta+'&meta=connected', meta+'&return=https://example.test', '#meta=failed&error=private-value', '#meta=connected', '#meta=connected&meta-project='+project+'&meta-workspace=bad']) assert.deepEqual(parseCallback(hash), {kind:'invalid'})
+  for (const hash of [meta, '#meta=failed', meta+'&oidc-factor=1', meta+'&invite='+'a'.repeat(43), '#meta=failed&error=private-value']) assert.deepEqual(parseCallback(hash), {kind:'invalid'})
+  assert.deepEqual(parseCallback(meta+'&google=connected'), {kind:'google-error'}, 'Leftover Meta keys make a Google return fail like any unknown key.')
 })
 
 test('session deep links retain only bounded scope and definition references', () => {
