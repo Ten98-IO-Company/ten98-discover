@@ -14,7 +14,7 @@ import {quoteAiSuggestions,startAiSuggestions,getAiSuggestion,getAiSuggestions,c
 import {executeAiSuggestion,reconcileAiSuggestion,reconcileAiSuggestionJobs} from '../src/server/ai-suggestion-worker.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
 import {handleApi} from '../src/server/api.ts';
-import {suggestionProfiles} from '../src/server/ai-suggestion-input.ts';
+import {suggestionProfiles,suggestionQuoteInput} from '../src/server/ai-suggestion-input.ts';
 
 export async function runSuggestionChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_AI_SUGGESTIONS_TEST,'1');
@@ -49,7 +49,7 @@ export async function runSuggestionChecks(){
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Coffee','https://coffee.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);
   const conn=(await saveProvider(workspace,owner,{provider:'openrouter',name:'Synthetic',credentials:{apiKey:'synthetic-only-'+project}})).connection;
   await pool.query("UPDATE provider_connection SET check_status='ok' WHERE id=$1",[conn.id]);await saveBudget(workspace,owner,{paused:false});
-  return {workspace,project,connectionId:conn.id,input:{requestId:randomUUID(),connectionId:conn.id,contextRevision:1,profileId:'benchmark-mini-v1' as const,benchmark:true as const,fundedCredits:true as const,maxSpendUsd:'1',topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]}};
+  return {workspace,project,connectionId:conn.id,input:{requestId:randomUUID(),connectionId:conn.id,contextRevision:1,profileId:'benchmark-mini-v1' as const,benchmark:true as const,fundedCredits:true as const,topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]}};
  }
  type Fixture=Awaited<ReturnType<typeof fixture>>;
  const quote=async(f:Fixture)=>(await quoteAiSuggestions(f.project,owner,f.input,send)).quote;
@@ -78,9 +78,15 @@ export async function runSuggestionChecks(){
   // Owner decision D3: the removed workspace cap is replaced by the owner's manual pause.
   const budget=await fixture(),budgetQuote=await quote(budget),jobsBefore=(await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='ai-suggestion'")).rows[0].n;await saveBudget(budget.workspace,owner,{paused:true});
   await assert.rejects(startAiSuggestions(budget.project,owner,{requestId:randomUUID(),quoteId:budgetQuote.id}),{status:409,code:'SPENDING_BUDGET'});assert.equal((await pool.query('SELECT id FROM provider_request WHERE workspace_id=$1',[budget.workspace])).rowCount,0);assert.equal((await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='ai-suggestion'")).rows[0].n,jobsBefore);
-  const cap=await fixture();await assert.rejects(quoteAiSuggestions(cap.project,owner,{...cap.input,maxSpendUsd:'0.01'},send),{status:409});
+  // Owner decision D3: no per-request ceiling. A quote naming one is refused before any receipt or provider read, and the reservation is the verified estimate.
+  const cap=await fixture(),capFree=free;await assert.rejects(quoteAiSuggestions(cap.project,owner,{...cap.input,maxSpendUsd:'1'},send),{status:400});assert.equal(free,capFree);assert.equal((await pool.query('SELECT count(*)::int AS n FROM ai_suggestion_quote WHERE project_id=$1',[cap.project])).rows[0].n,0);
+  const capQuote=await quote(cap),capRun=(await startAiSuggestions(cap.project,owner,{requestId:randomUUID(),quoteId:capQuote.id})).run;assert.equal(capRun.estimateUsd,capQuote.estimateUsd);assert.equal((await pool.query('SELECT estimate_micros FROM provider_request WHERE id=$1',[capRun.id])).rows[0].estimate_micros,'20429');await cancelAiSuggestion(cap.project,owner,capRun.id,{requestId:randomUUID()});
   const busy=await fixture(),first=await start(busy);busy.input.requestId=randomUUID();await assert.rejects(start(busy),{status:409});await cancelAiSuggestion(busy.project,owner,first.id,{requestId:randomUUID()});
-  console.log('PASS queue rollback, manual pause and one active project request');
+  // Owner decision D3: a run queued from a pre-D3 quote stores the removed ceiling in its captured input; the worker strips it and dispatches exactly once.
+  const preD3=await fixture(),preD3Run=await start(preD3),preD3Paid=paid;await pool.query(`UPDATE ai_suggestion_quote SET input=input||'{"maxSpendUsd":"1"}'::jsonb WHERE id=$1`,[preD3Run.quoteId]);
+  const preD3Input=(await pool.query('SELECT input FROM ai_suggestion_quote WHERE id=$1',[preD3Run.quoteId])).rows[0].input;assert.equal(preD3Input.maxSpendUsd,'1');assert.equal(suggestionQuoteInput.safeParse(preD3Input).success,false,'The stored pre-D3 input needs the worker strip.');
+  await Promise.all([executeAiSuggestion(preD3Run.id,send),executeAiSuggestion(preD3Run.id,send)]);await executeAiSuggestion(preD3Run.id,send);assert.equal(paid,preD3Paid+1);const preD3Done=await detail(preD3,preD3Run.id);assert.equal(preD3Done.status,'completed');assert.equal(preD3Done.chargeStatus,'settled');assert.equal(preD3Done.actualUsd,'0.000013');assert.equal(preD3Done.proposal!.prompts.length,2);
+  console.log('PASS queue rollback, manual pause, removed ceiling field (D3) with the estimate reserved, one active project request, and a pre-D3 queued input dispatching once');
 
   const baseline=paid;
   for(const kind of ['role','context','library','price','connection','cancel'] as const){

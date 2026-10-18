@@ -96,6 +96,22 @@ async function runDimensionRegressionChecks(pool:pg.Pool,workspace:string,owner:
  for(const field of ['country','region','city'] as const){const report=await exploreAnalytics(id,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02',groupBy:field}));assert.ok(report.breakdown.groups.length>0);for(const row of report.breakdown.groups){assert.equal(row.type,'string');assert.equal(typeof row.value,'string');}assert.ok(report.breakdown.groups.some(row=>row.value==='{"state":"unknown"}'));assert.ok(report.breakdown.groups.some(row=>row.value==='{"state":"not-recorded"}'));}
  console.log('PASS canonical geography top20 ties and unchanged Explorer known/unknown/not-recorded string discriminants');
 
+ // D11 review: a referrerHost equal to the host of the event's own recorded origin is a self-referral, never a referrer for the channel,
+ // so in-app views of a direct visit stay not_recorded. Hosts compare with the port dropped and a leading www. ignored on both sides (as pinned Umami does),
+ // any host characters count (underscores too), and without a recorded origin nothing is provably self.
+ const channelProject=await project(),channelCases=[
+  {origin:'https://shop.test',referrerHost:'shop.test'},{origin:'https://shop.test:8443',referrerHost:'shop.test'},{origin:'https://shop.test'},
+  {origin:'https://shop.test',referrerHost:'search.test'},{origin:'https://www.shop.test',referrerHost:'shop.test'},{origin:'https://my_shop.test',referrerHost:'my_shop.test'},
+  {referrerHost:'shop.test'},{origin:'https://shop.test',referrerHost:'shop.test',campaign:{source:'newsletter',medium:'email'}}];
+ for(const dimensions of channelCases)await event(channelProject,'page_view',dimensions);
+ const channelRows=(await projectAnalytics(channelProject,owner,params('channel'))).dimensionComparison!.current.rows;
+ assert.deepEqual(Object.fromEntries(channelRows.map(row=>[row.key.value,row.pageViews])),{not_recorded:5,referrer_only:2,tagged_email:1});
+ const explored=async(groupBy:string)=>Object.fromEntries((await exploreAnalytics(channelProject,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02',groupBy}))).breakdown.groups.map(row=>[String(row.value),row.events]));
+ assert.deepEqual(await explored('channel'),{not_recorded:5,referrer_only:2,tagged_email:1});
+ // The referrer dimension itself stays literal: the own host is still a recorded referrer value there.
+ assert.equal((await explored('referrer'))['shop.test'],5);
+ console.log('PASS self-referrals are no channel referrer in comparison and Explorer while the referrer dimension stays literal');
+
  // Long common prefixes must stay bounded without conflating recorded keys and sentinel states.
  const unicodeProject=await project(),prefix='🧪'.repeat(124),extraVisitor='e'.repeat(64),extraVisit='f'.repeat(64);
  assert.equal([...prefix+'0001'].length,128);assert.equal(Buffer.byteLength(prefix+'0001','utf8'),500);

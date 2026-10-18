@@ -9,9 +9,9 @@ export const attributionLimits=Object.freeze({values:20,queryCharacters:65536,re
 export type AttributionModel='first-click'|'last-click';
 export type AttributionQuery=Omit<ReturnType<typeof explorerQuery>,'groupBy'|'groupProperty'>&{model:AttributionModel;conversion:JourneyStep};
 export const attributionMethod=Object.freeze({unit:'converted-observed-native-key',credit:'one-selected-touch-per-key',
- touchScope:'unfiltered-native-keyed-events-in-selected-project-dates',first:'earliest-retained-window-observation-including-conversion',
- last:'latest-timestamp-strictly-before-latest-matching-conversion',ordering:'server-receipt-time-then-event-id',
- referrers:'recorded-hosts-including-self',historyComplete:false,captureCoverage:'unknown'} as const);
+ touchScope:'unfiltered-native-keyed-events-in-selected-project-dates',first:'earliest-retained-window-observation-up-to-first-matching-conversion-including-it',
+ last:'latest-timestamp-strictly-before-latest-matching-conversion',ordering:'other-touches-before-internal-navigation-then-server-receipt-time-then-event-id',
+ referrers:'recorded-hosts-excluding-self-referrals',historyComplete:false,captureCoverage:'unknown'} as const);
 export type AttributionDimension={rows:{value:string;creditedKeys:number;shareOfConvertedKeys:number|null}[]|null;
  recordedKeys:number|null;emptyKeys:number|null;notRecordedKeys:number|null;totalValues:number|null;
  displayedKeys:number|null;omittedKeys:number|null;truncated:boolean;limit:20};

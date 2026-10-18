@@ -7,7 +7,7 @@ import {getBoss} from './jobs.ts';
 import {decryptCredentials} from './credential-vault.ts';
 import {canonicalHash,parse} from './context-input.ts';
 import {contentCursor,readContentCursor,contentProfile,contentReceipt,withContentProject,type ContentProject} from './project-context.ts';
-import {usd,usdMicros} from './providers.ts';
+import {usd} from './providers.ts';
 import {reserveSpendInTransaction} from './spending.ts';
 import {keyFingerprint,executionActor,executionRequestBody,readSuggestionRoute} from './openrouter.ts';
 import {openRouterTextProfile} from '../lib/openrouter-models.ts';
@@ -96,7 +96,6 @@ export async function quoteAiSuggestions(projectId:string,userId:string,raw:unkn
  if('prior' in saved)return result(saved.role!,saved.prior!,true);
  const route=await readSuggestionRoute(saved.credentials,suggestionModel(input),send,openRouterTextProfile);
  executionRequestBody(suggestionMessages(saved.snapshot),route,2048,'00000000-0000-4000-8000-000000000000',executionActor(userId),true);
- if(BigInt(route.estimateMicros)>usdMicros(input.maxSpendUsd))throw new FoundationError(409,'The verified reservation exceeds the selected per-request ceiling.');
  return withContentProject(projectId,userId,true,async(client,p)=>{
   requireOwner(p);const receipt=await contentReceipt(client,p.id,input.requestId,'ai-suggestion.quote',receiptBody);if(receipt.replayed)return result(p.role,await quoteDto(client,p.id,receipt.result.id as string),true);
   const wid=await suggestionWorkspace(client,p.id);await suggestionConnection(client,wid,input.connectionId,saved.connectionRevision);await assertSuggestionSnapshot(client,p.id,input,saved.snapshot.snapshotHash);

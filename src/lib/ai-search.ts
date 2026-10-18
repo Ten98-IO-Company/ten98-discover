@@ -35,11 +35,12 @@ export function aiSearchPayload(raw:unknown,runId:string){
 
 const requestId=z.object({requestId:z.uuid()}).strict(),hash=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/);
 export const aiSearchRefreshInput=z.object({connectionId:z.uuid()}).strict();
-export const aiSearchQuoteInput=requestId.extend({connectionId:z.uuid(),promptId:z.uuid(),versionId:z.uuid(),locationCode:aiSearchRequestSchema.shape.locationCode,languageCode:aiSearchRequestSchema.shape.languageCode,expectedCatalogRevision:hash,maxSpendUsd:z.string().max(20).regex(/^(?:0|[1-9]\d{0,6})(?:\.\d{1,6})?$(?![\s\S])/),acceptPublishedEstimate:z.literal(true)}).strict();
+export const usdText=z.string().max(20).regex(/^(?:0|[1-9]\d{0,6})(?:\.\d{1,6})?$(?![\s\S])/);
+export const aiSearchQuoteInput=requestId.extend({connectionId:z.uuid(),promptId:z.uuid(),versionId:z.uuid(),locationCode:aiSearchRequestSchema.shape.locationCode,languageCode:aiSearchRequestSchema.shape.languageCode,expectedCatalogRevision:hash,acceptPublishedEstimate:z.literal(true)}).strict();
 export const aiSearchStartInput=requestId.extend({quoteId:z.uuid(),priceVersion:z.literal(aiSearchPriceVersion),acceptExternalCharge:z.literal(true)}).strict();
 export const aiSearchActionInput=requestId;
 export const aiSearchReconcileInput=requestId.extend({connectionId:z.uuid()}).strict();
-export const aiSearchSnapshotSchema=z.object({version:z.literal(1),request:aiSearchRequestSchema,promptId:z.uuid(),versionId:z.uuid(),maxSpendUsd:aiSearchQuoteInput.shape.maxSpendUsd,
+export const aiSearchSnapshotSchema=z.object({version:z.literal(1),request:aiSearchRequestSchema,promptId:z.uuid(),versionId:z.uuid(),maxSpendUsd:usdText.optional(),
  country:z.object({code:z.number().int().positive(),name:z.string().min(1).max(200),countryCode:z.string().regex(/^[A-Z]{2}$(?![\s\S])/)}).strict(),
  language:z.object({code:aiSearchRequestSchema.shape.languageCode,name:z.string().min(1).max(80)}).strict(),catalogRevision:hash,countriesHash:hash,languagesHash:hash,preparedAt:z.iso.datetime(),
  price:z.object({version:z.literal(aiSearchPriceVersion),profileId:z.literal(aiSearchProfileId),mode:z.literal('published-tariff'),sourceUrl:z.literal('https://dataforseo.com/pricing/ai-optimization/llm-scraper'),checkedOn:z.literal('2026-10-15'),billingUnit:z.literal('result'),maximumResults:z.literal(1),unitMicros:z.literal('4000'),estimateMicros:z.literal('4000'),estimateUsd:z.literal('0.004000'),limitation:z.literal('Published-price estimate; not an account-enforced maximum.')}).strict(),

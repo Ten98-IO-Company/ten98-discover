@@ -69,5 +69,19 @@ export async function runRevenueReportChecks(){
  assert.equal(writerVersions.money!.net,'6.0000');assert.equal(writerVersions.measurement.keyed!.net,'2.0000');assert.equal(writerVersions.measurement.unkeyed!.net,'4.0000');assert.equal(writerVersions.identity.qualifiedKeys,2);assert.equal(writerVersions.identity.revenueKeys,2);
  assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);
  console.log('PASS stored UTF16/astral/BMP/type/empty metadata bounds, canonical geography ties and100-row cutoff, all-money partitions and current+retained version evidence');
+ {
+  // D11 review: a first observation whose referrerHost equals its own origin host (a self-referral) is never a revenue source or a referrer channel;
+  // the key keeps that observation for environment, listing and search. 'identified' mirrors the review probe as the tracker now sends it (the new key's first view keeps the external referrer).
+  const selfProject=await project(),later='2026-10-10T12:05:00.000Z',own={origin:'https://probe.test',referrerHost:'probe.test'},external={origin:'https://probe.test',referrerHost:'search.test'};
+  const cases=[['self',own],['identified',external],['tagged',{...own,campaign:{source:'newsletter',medium:'email'}}]] as const;
+  for(const[name,dimensions]of cases){await add(selfProject,key('source-'+name),'page_view',null,at,'sale','USD',dimensions);await add(selfProject,key('source-'+name),'sale','1.0000',later,'sale','USD',dimensions);}
+  const sourced=await read(selfProject),source=(name:string)=>sourced.sessions.rows!.find(row=>row.visitorKey===key('source-'+name))!.source;
+  assert.equal(sourced.identity.revenueKeys,3);assert.equal(sourced.sessions.matchingSearchKeys,3);assert.equal(sourced.sessions.rows!.length,3);
+  assert.deepEqual(cases.map(([name])=>[name,source(name).referrer,source(name).channel]),[['self',null,'not_recorded'],['identified','search.test','referrer_only'],['tagged',null,'tagged_email']]);
+  assert.deepEqual(sourced.dimensions!.referrers.rows.map(row=>[row.key,row.totals.net]).sort(),[[null,'2.0000'],['search.test','1.0000']].sort());
+  assert.deepEqual(sourced.dimensions!.channels.rows.map(row=>[row.key,row.totals.net]).sort(),[['not_recorded','1.0000'],['referrer_only','1.0000'],['tagged_email','1.0000']].sort());
+  assert.ok(!JSON.stringify(sourced).includes('probe.test'),'The site\'s own host is never a revenue source.');
+ }
+ console.log('PASS self-referral first observations are never a revenue referrer or referrer channel, keys stay listed with their environment');
 }
 if(import.meta.main)try{await runRevenueReportChecks();}finally{await closeDatabase();}

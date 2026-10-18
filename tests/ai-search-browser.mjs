@@ -51,7 +51,7 @@ try{
   }
   const body=req.postDataJSON();writes.push({path,body});if(mode==='action'){assert.equal(path,'/ai-search/runs/'+action.before.run.id+'/'+action.kind);assert.equal(typeof body.requestId,'string');if(action.kind==='reconcile')assert.equal(body.connectionId,action.connectionId);return reply(route,action.response);}assert.equal(mode,'flow');
   if(path==='/ai-search/catalog/refresh'){assert.deepEqual(body,{connectionId:flow.catalog.catalog.connectionId});return reply(route,flow.catalog);}
-  if(path==='/ai-search/quote'){assert.equal(body.requestId,flow.quote.quote.requestId);assert.equal(body.promptId,flow.quote.quote.promptId);assert.equal(body.versionId,flow.quote.quote.versionId);assert.equal(body.acceptPublishedEstimate,true);if(quoteUncertain){quoteUncertain=false;return route.abort('failed');}return reply(route,flow.quote);}
+  if(path==='/ai-search/quote'){assert.equal(body.requestId,flow.quote.quote.requestId);assert.equal(body.promptId,flow.quote.quote.promptId);assert.equal(body.versionId,flow.quote.quote.versionId);assert.equal(body.acceptPublishedEstimate,true);assert.equal(Object.hasOwn(body,'maxSpendUsd'),false,'Owner decision D3: no estimate-admission ceiling is sent.');if(quoteUncertain){quoteUncertain=false;return route.abort('failed');}return reply(route,flow.quote);}
   if(path==='/ai-search/runs'){assert.equal(body.quoteId,flow.quote.quote.id);assert.equal(body.acceptExternalCharge,true);if(startUncertain){startUncertain=false;return route.abort('failed');}flowStarted=true;return reply(route,flow.start,202);}
   throw Error('Unapproved mock mutation '+path);
  }catch(error){errors.push(error.message);return reply(route,{error:'Fixture rejected an unsupported request.'},503);}});

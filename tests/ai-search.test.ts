@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {aiSearchProfileId,aiSearchEndpoints,aiSearchPayload,aiSearchPriceEvidence,aiSearchRequestSchema} from '../src/lib/ai-search.ts';
+import {aiSearchProfileId,aiSearchEndpoints,aiSearchPayload,aiSearchPriceEvidence,aiSearchRequestSchema,aiSearchQuoteInput,aiSearchSnapshotSchema} from '../src/lib/ai-search.ts';
 import {parseAiSearchCountries,parseAiSearchLanguages,assertAiSearchMarket,parseAiSearchAccount,parseAiSearchOutcome,requestAiSearch,parseAiSearchReconciliation} from '../src/server/dataforseo-ai-search.ts';
 import {dataforseoJson,dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 import {deriveSearchQueries,normalizeDfsChatgptSearchEvidence,readSearchEvidence} from '../src/server/ai-search-evidence.ts';
@@ -29,6 +29,14 @@ test('closed fixed profile and published tariff are estimates with no account-pr
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'a'.repeat(2001)}).success,false);
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'%'.repeat(666)+'ab'}).success,true);
  assert.equal(aiSearchRequestSchema.safeParse({...request,capturedPrompt:'%'.repeat(667)}).success,false);
+});
+test('quotes carry no estimate-admission ceiling (D3) while stored legacy snapshots keep theirs and their hash',()=>{
+ const quote={requestId:randomUUID(),connectionId:randomUUID(),promptId:randomUUID(),versionId:randomUUID(),locationCode:2840,languageCode:'en',expectedCatalogRevision:'a'.repeat(64),acceptPublishedEstimate:true};
+ assert.equal(aiSearchQuoteInput.safeParse(quote).success,true);for(const maxSpendUsd of ['0.004000','1','0'])assert.equal(aiSearchQuoteInput.safeParse({...quote,maxSpendUsd}).success,false);
+ const current={version:1,request,promptId:randomUUID(),versionId:randomUUID(),country:{code:2840,name:'United States',countryCode:'US'},language:{code:'en',name:'English'},catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:now.toISOString(),price:aiSearchPriceEvidence()},legacy={...current,maxSpendUsd:'0.004000'};
+ for(const stored of [current,legacy]){const parsed=aiSearchSnapshotSchema.parse(copy(stored));assert.deepEqual(parsed,stored);assert.equal(canonicalHash(parsed),canonicalHash(stored));}
+ assert.equal(Object.hasOwn(aiSearchSnapshotSchema.parse(copy(current)),'maxSpendUsd'),false);assert.notEqual(canonicalHash(current),canonicalHash(legacy));
+ for(const maxSpendUsd of ['1\n','-1','0.0000001'])assert.equal(aiSearchSnapshotSchema.safeParse({...legacy,maxSpendUsd}).success,false);assert.equal(aiSearchSnapshotSchema.safeParse({...current,extra:true}).success,false);
 });
 test('one exact immutable payload escapes literal percent/plus once, with own run tag',()=>{
  assert.deepEqual(aiSearchPayload(request,id),{keyword:'Best C%2B%2B %2520 shoes',location_code:2840,language_code:'en',force_web_search:true,tag:'ten98:ai-search:'+id});

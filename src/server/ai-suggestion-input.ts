@@ -1,7 +1,6 @@
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {canonicalHash,cleanText,parse,revision,sectionKeys,tags,text} from './context-input.ts';
-import {moneyInput,usdMicros} from './providers.ts';
 import type {OpenRouterModel,RenderedInput} from './openrouter-input.ts';
 import {openRouterModelId} from '../lib/openrouter-models.ts';
 
@@ -17,7 +16,7 @@ const hex=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/);
 const suggestionTags=z.array(text(80,1)).max(3).pipe(tags);
 const suggestionQuoteFields=z.object({requestId:z.uuid(),connectionId:z.uuid(),contextRevision:revision,
  benchmark:z.literal(true),fundedCredits:z.literal(true),
- maxSpendUsd:moneyInput.refine(v=>usdMicros(v)>0n),topic:text(100,1),country:text(80,1),language:text(80,1),
+ topic:text(100,1),country:text(80,1),language:text(80,1),
  sectionKeys:z.array(z.enum(sectionKeys)).max(4).refine(unique),competitorIds:z.array(z.uuid()).max(10).refine(unique),
  excludedPrompts:z.array(text(2000,1)).max(20)}).strict();
 export const suggestionQuoteInput=z.union([

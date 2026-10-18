@@ -2,13 +2,26 @@ import {revenueChannelRules} from '../lib/revenue.ts';
 import {geographyKeySql} from './geography-sql.ts';
 
 /** Closed projections of existing stored observations; aliases are internal SQL identifiers only. */
-export function recordedDimensionSql(field:'hostname'|'screen'|'channel',alias:string){
+export function recordedDimensionSql(field:'hostname'|'screen'|'channel',alias:string):string{
  if(field==='hostname')return `substring(${alias}.dimensions->>'origin' from '^https?://(\\[[0-9a-f:.]+\\]|[a-z0-9.-]+)(?::[0-9]{1,5})?$')`;
  if(field==='screen')return `CASE WHEN jsonb_typeof(${alias}.dimensions->'screenWidth')='number' AND jsonb_typeof(${alias}.dimensions->'screenHeight')='number'
   AND ${alias}.dimensions->>'screenWidth' ~ '^([1-9][0-9]{0,3}|10000)$' AND ${alias}.dimensions->>'screenHeight' ~ '^([1-9][0-9]{0,3}|10000)$'
   THEN (${alias}.dimensions->>'screenWidth')||'x'||(${alias}.dimensions->>'screenHeight') END`;
  return "CASE "+revenueChannelRules.map(([name,tokens])=>"WHEN lower("+alias+".dimensions->'campaign'->>'medium')=ANY(ARRAY["+tokens.map(token=>"'"+token+"'").join(',')+"])THEN '"+name+"'").join(' ')
-  +" WHEN NULLIF("+alias+".dimensions->'campaign'->>'medium','')IS NOT NULL OR NULLIF("+alias+".dimensions->'campaign'->>'source','')IS NOT NULL THEN 'other_tagged' WHEN NULLIF("+alias+".dimensions->>'referrerHost','')IS NOT NULL THEN 'referrer_only' ELSE 'not_recorded' END";
+  +" WHEN NULLIF("+alias+".dimensions->'campaign'->>'medium','')IS NOT NULL OR NULLIF("+alias+".dimensions->'campaign'->>'source','')IS NOT NULL THEN 'other_tagged' WHEN NULLIF("+alias+".dimensions->>'referrerHost','')IS NOT NULL AND NOT "+selfReferralSql(alias)+" THEN 'referrer_only' ELSE 'not_recorded' END";
+}
+/**
+ * A referrer host equal to the host of the event's own recorded origin is a self-referral (an in-app navigation, D11), never a referrer
+ * for channels, touches or sources. A leading www. is ignored on both sides, as pinned Umami does; the host is read without a character
+ * whitelist so any URL.hostname (underscores included) matches. No other alias counts, and an event without a recorded origin is never one.
+ */
+export function selfReferralSql(alias:string):string{
+ const host=`substring(${alias}.dimensions->>'origin' from '^https?://(\\[[^]]+\\]|[^/:]+)')`;
+ return `COALESCE(regexp_replace(NULLIF(${alias}.dimensions->>'referrerHost',''),'^www[.]','')=regexp_replace(${host},'^www[.]',''),false)`;
+}
+/** An untagged self-referral is internal navigation: attribution chooses another event of the same key first (revenue keeps its first observation). */
+export function internalNavigationSql(alias:string){
+ return `(${selfReferralSql(alias)} AND NOT(${alias}.dimensions ? 'campaign'))`;
 }
 export function analyticsDimensionValueSql(selector:string,alias:string){
  return `CASE ${selector} WHEN 'hostname' THEN to_jsonb(${recordedDimensionSql('hostname',alias)}) WHEN 'screen' THEN to_jsonb(${recordedDimensionSql('screen',alias)}) WHEN 'channel' THEN to_jsonb(${recordedDimensionSql('channel',alias)}) WHEN 'event' THEN to_jsonb(${alias}.event_name) WHEN 'path' THEN to_jsonb(${alias}.path) WHEN 'origin' THEN to_jsonb(${alias}.origin)

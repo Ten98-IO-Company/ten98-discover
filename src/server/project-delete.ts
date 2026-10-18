@@ -41,7 +41,7 @@ export async function deleteProject(workspaceId:string,projectId:string,userId:s
   // Break the existing recurring quote/occurrence cycle, then only the NO ACTION/RESTRICT
   // children. Remaining exact-project dependents use their existing FK cascade.
   await client.query('UPDATE prompt_execution_quote SET recurring_occurrence_id=NULL,recurring_models_hash=NULL WHERE project_id=$1',[projectId]);
-  for(const table of ['prompt_occurrence','prompt_tracker','prompt_comparison_item','prompt_execution','prompt_comparison','rank_task','rank_dispatch','rank_run','rank_keyword','rank_config','ai_suggestion_run','saved_keyword_tag_assignment'] as const)await client.query('DELETE FROM '+table+' WHERE project_id=$1',[projectId]);
+  for(const table of ['prompt_occurrence','prompt_tracker','prompt_comparison_item','prompt_execution','prompt_comparison','rank_task','rank_dispatch','rank_run','rank_keyword','rank_config','ai_suggestion_run','saved_keyword_tag_assignment','google_import'] as const)await client.query('DELETE FROM '+table+' WHERE project_id=$1',[projectId]);
   if((await client.query('DELETE FROM project WHERE id=$1 AND workspace_id=$2',[projectId,workspaceId])).rowCount!==1)throw missing();
   const at=(await client.query("SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS at")).rows[0].at;
   await client.query('INSERT INTO project_deletion_request(workspace_id,request_id,actor_id,project_id,input_hash,applied_revision,deleted_at)VALUES($1,$2,$3,$4,$5,$6,$7)',[workspaceId,input.requestId,userId,projectId,inputHash,input.revision,at]);

@@ -42,7 +42,8 @@ export async function executeAiSuggestion(id:string,send:typeof fetch=fetch){
  try{
   if(captured.quote_expired)throw new FoundationError(409,'The suggestion quote expired. Prepare another quote.');
   if(captured.input_expired)throw new FoundationError(409,'The captured input expired.');
-  const input=parse(suggestionQuoteInput,captured.input);
+  // ponytail: quotes stored before D3 carry the removed ceiling and expire within five minutes; delete one release later.
+  const {maxSpendUsd:_legacy,...stored}=captured.input as Record<string,unknown>;const input=parse(suggestionQuoteInput,stored);
   const credentials=await withContentProject(captured.project_id,captured.user_id,true,async(client,p)=>{
    if(p.role!=='owner')throw new FoundationError(403,'The evaluation owner is unavailable.');
    return suggestionCredentials(await suggestionConnection(client,captured.workspace_id,captured.connection_id,captured.connection_revision));

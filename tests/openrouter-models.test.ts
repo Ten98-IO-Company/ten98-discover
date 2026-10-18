@@ -77,9 +77,9 @@ test('new request profile disables compression, bounds UTF8 payload/output, and 
  const legacy={...route,model:'openai/gpt-4o-mini',tag:'openai',providerName:'OpenAI',profile:undefined,contextLength:undefined};assert.equal('plugins'in executionBody(messages,legacy,2048,id,actor),false);
 });
 test('dynamic suggestion profile is explicit, schema-bound and cannot override legacy profiles',()=>{
- const input={requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'catalog-text-schema-v1',model,benchmark:true,fundedCredits:true,maxSpendUsd:'0.1',topic:'Grinders',country:'UAE',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]};
+ const input={requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'catalog-text-schema-v1',model,benchmark:true,fundedCredits:true,topic:'Grinders',country:'UAE',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]};
  const parsed=suggestionQuoteInput.parse(input);assert.equal(suggestionModel(parsed),model);
- for(const patch of [{model:undefined},{profileId:'benchmark-mini-v1'},{benchmark:false},{maxSpendUsd:'0'},{tools:[]},{model:'auto'}])assert.equal(suggestionQuoteInput.safeParse({...input,...patch}).success,false);
+ for(const patch of [{model:undefined},{profileId:'benchmark-mini-v1'},{benchmark:false},{maxSpendUsd:'0'},{maxSpendUsd:'0.1'},{tools:[]},{model:'auto'}])assert.equal(suggestionQuoteInput.safeParse({...input,...patch}).success,false);
  const legacy={...input,profileId:'benchmark-mini-v1'};delete (legacy as any).model;assert.equal(suggestionModel(suggestionQuoteInput.parse(legacy)),'openai/gpt-4o-mini');
  assert.ok(executionInput.safeParse({connectionId:input.connectionId,promptId:id,versionId:randomUUID(),systemText:'',models:[model],maxCompletionTokens:2048,fundedCredits:true}).success);
 });
