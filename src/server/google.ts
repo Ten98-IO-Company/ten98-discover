@@ -9,6 +9,7 @@ import { credentialKeys, decryptCredentials, encryptCredentials } from './creden
 import { isInstanceOperator, requireInstanceOperator } from './instance-operators.ts';
 import { googleInput, googleScopes, safeGoogleString, type GoogleProvider } from './google-reports.ts';
 import { googleRequest, GoogleRequestError } from './google-http.ts';
+import { requireWorkspaceFactor } from './teams.ts';
 
 export type GoogleConnection = { id: string; project_id: string; workspace_id: string; provider: GoogleProvider; name: string; revision: number; app_revision: number; encrypted_tokens: unknown; scopes: string[]; status: string; property_id: string | null; property_name: string | null; time_zone: string | null; currency_code: string | null; updated_at: Date };
 type App = { revision: number; client_id: string; encrypted_secret: unknown; enabled: boolean; testing: boolean };
@@ -172,6 +173,8 @@ export async function googleCallback(request: Request): Promise<Response> {
     const result = await getDatabase().pool.query(`DELETE FROM google_oauth_flow WHERE id=$1 AND state_hash=$2 AND browser_hash=$3 AND session_id=$4 AND user_id=$5 AND expires_at>now() RETURNING *`, [flowId, digest(state), digest(browser), session.session.id, session.user.id]);
     const flow = result.rows[0];
     if (!flow || params.has('error') || !params.get('code')) return redirect(false);
+    // A member locked by the workspace two-factor requirement cannot publish a grant; the refusal becomes redirect(false) below.
+    await requireWorkspaceFactor('/api/projects/' + flow.project_id, session.user.id);
     const code = googleInput(safeGoogleString(4096).min(1), params.get('code'));
     return await googleProjectTransaction(flow.project_id, session.user.id, true, async (client, workspaceId) => {
       // Hold the actual session row while exchanging; sign-out/revocation cannot

@@ -4,7 +4,7 @@ import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
 import {getBoss} from './jobs.ts';
-import {withDomainProject} from './domains.ts';
+import {withDomainProject,withDomainRead} from './domains.ts';
 import {observeDomainRedirect,type RedirectTransport} from './domain-redirect-network.ts';
 
 export const domainRedirectQueue='domain-redirect-check';
@@ -23,9 +23,9 @@ async function state(client:PoolClient,projectId:string,domainId:string){
   const checks=(await client.query('SELECT * FROM domain_redirect_check WHERE project_id=$1 AND domain_id=$2 ORDER BY created_at DESC,id DESC LIMIT 20',[projectId,domainId])).rows;
   return {domainId,eligible:!!eligible(row),checks:checks.map(check=>({...dto(check),currentConfiguration:!!eligible(row)&&check.domain_revision===row.redirect_revision})),nextAllowedAt:checks[0]?new Date(checks[0].created_at.getTime()+300_000).toISOString():null};
 }
-export async function getDomainRedirectChecks(projectId:unknown,userId:unknown,domainId:unknown){
-  const id=parse(z.uuid(),domainId);
-  return withDomainProject(projectId,userId,async(client,project)=>state(client,project.id,id));
+export async function getDomainRedirectChecks(projectId:unknown,userId:unknown,domainId:unknown,apiToken?:string){
+  const id=parse(z.uuid(),domainId),read=async(client:PoolClient,project:{id:string})=>state(client,project.id,id);
+  return apiToken===undefined?withDomainProject(projectId,userId,read):withDomainRead(projectId,userId,apiToken,read);
 }
 export async function startDomainRedirectCheck(projectId:unknown,userId:unknown,domainId:unknown,input:unknown){
   const id=parse(z.uuid(),domainId),{requestId}=parse(z.object({requestId:z.uuid()}).strict(),input),boss=await getBoss();

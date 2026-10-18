@@ -113,8 +113,10 @@ export async function projectAnalytics(projectId: string, userId: string, params
     WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS as_of),
     key_authority AS MATERIALIZED (SELECT $13::uuid IS NULL OR EXISTS(SELECT 1 FROM api_key k
       JOIN membership m ON m.workspace_id=k.workspace_id AND m.user_id=k.issuer_user_id JOIN project p ON p.workspace_id=k.workspace_id AND p.id=$1 CROSS JOIN clock c
+      JOIN "user" u ON u.id=k.issuer_user_id
       WHERE k.id=$13::uuid AND k.issuer_user_id=$2 AND m.role IN('owner','admin','editor','viewer') AND 'analytics:read'=ANY(k.scopes)
-        AND k.revoked_at IS NULL AND k.expires_at>c.as_of) AS valid),
+        AND k.revoked_at IS NULL AND k.expires_at>c.as_of
+        AND (u."twoFactorEnabled" OR NOT EXISTS(SELECT 1 FROM workspace_two_factor_requirement r WHERE r.workspace_id=k.workspace_id))) AS valid),
     target AS MATERIALIZED (
       SELECT p.analytics_retained_from,p.analytics_settings,p.origin FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
       CROSS JOIN key_authority k WHERE p.id=$1 AND k.valid

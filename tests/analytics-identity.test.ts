@@ -170,6 +170,7 @@ test('API observations cannot impersonate a browser identity or retain disabled 
     context: browser.context, properties: { plan: 'basic' }, dimensions: {
       distinctId: 'private-distinct-sentinel', referrer: 'https://private-referrer-sentinel.example/private',
       campaign: { source: 'private-campaign-sentinel' }, screen: { width: 1536, height: 864 }, language: 'en-us',
+      clickIds: { gclid: 'private-click-sentinel', twclid: 'private-click-sentinel' },
     } };
   const response = await insertApiObservation(fixture.client, projectId, input);
   assert.equal(response.accepted, true);
@@ -185,8 +186,10 @@ test('API observations cannot impersonate a browser identity or retain disabled 
   assert.equal(values[9], 'api');
   assert.equal(values[10], 'observations-v2');
   assert.equal(values[12],null,'API ingestion never claims a browser collection basis.');
+  assert.equal(values.length, 19);
+  assert.deepEqual(values.slice(13), [null, null, null, null, null, null], 'API observations never store ad click identifiers (gclid, fbclid, msclkid, ttclid, li_fat_id, twclid).');
   const serialized = JSON.stringify(values);
-  for (const sentinel of ['private-query-sentinel', 'private-hash-sentinel', 'private-distinct-sentinel', 'private-referrer-sentinel', 'private-campaign-sentinel', browser.context, base.ip, base.userAgent]) {
+  for (const sentinel of ['private-query-sentinel', 'private-hash-sentinel', 'private-distinct-sentinel', 'private-referrer-sentinel', 'private-campaign-sentinel', 'private-click-sentinel', browser.context, base.ip, base.userAgent]) {
     assert.equal(serialized.includes(sentinel), false);
   }
   assert.equal(input.dimensions.distinctId, 'private-distinct-sentinel');
@@ -195,10 +198,14 @@ test('API observations cannot impersonate a browser identity or retain disabled 
 test('enabled dimension capture remains bounded and raw distinct ID is removed', async () => {
   const fixture = apiClient({ captureReferrer: true, captureCampaigns: true, captureScreen: true });
   await insertApiObservation(fixture.client, projectId, { eventId: randomUUID(), name: 'page_view', url: 'https://site.example/',
-    dimensions: { referrer: 'https://referrer.example:8443/private?secret=1', campaign: { source: 'newsletter' }, screen: { width: 1000, height: 800 }, distinctId: 'private-distinct-sentinel' } });
+    dimensions: { referrer: 'https://referrer.example:8443/private?secret=1', campaign: { source: 'newsletter' }, screen: { width: 1000, height: 800 }, distinctId: 'private-distinct-sentinel',
+      clickIds: { gclid: 'api-click-sentinel', fbclid: 'api-click-sentinel', msclkid: 'api-click-sentinel', ttclid: 'api-click-sentinel', li_fat_id: 'api-click-sentinel', twclid: 'api-click-sentinel' } } });
   assert.deepEqual(JSON.parse(fixture.writes[0][8] as string), {
     origin: 'https://site.example', referrerHost: 'referrer.example', campaign: { source: 'newsletter' }, screenWidth: 1000, screenHeight: 800,
   });
+  // Owner decision D1: even with campaign capture on, an API observation carries no analytics grant, so its click IDs are dropped.
+  assert.deepEqual(fixture.writes[0].slice(13), [null, null, null, null, null, null]);
+  assert.equal(JSON.stringify(fixture.writes[0]).includes('api-click-sentinel'), false);
 });
 
 test('disabled/excluded API observations write nothing, and duplicates return no context', async () => {

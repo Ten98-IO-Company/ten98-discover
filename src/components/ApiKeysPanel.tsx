@@ -32,6 +32,9 @@ const SCOPES: { value: string; label: string }[] = [
   { value: 'annotations:read', label: 'Read annotations' },
   { value: 'rank:read', label: 'Read rank trackers and rank reports' },
   { value: 'keywords:read', label: 'Read saved keywords' },
+  { value: 'google:read', label: 'Read Google sources and saved report snapshots' },
+  { value: 'domains:read', label: 'Read domains and redirect checks' },
+  { value: 'audits:read', label: 'Read site audit history and issues' },
 ]
 
 export function ApiKeysPanel({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {

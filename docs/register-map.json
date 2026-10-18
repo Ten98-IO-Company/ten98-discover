@@ -30,9 +30,13 @@
    ]
   },
   "P04": {
+   "routes": [
+    "POST /api/workspaces/{workspaceId}/two-factor"
+   ],
    "migrations": [
     "0004_account_security",
-    "0009_oidc_account_security"
+    "0009_oidc_account_security",
+    "0068_workspace_two_factor"
    ]
   },
   "P05": {
@@ -44,6 +48,9 @@
     "listAnnotations",
     "listCohorts",
     "listContextResearch",
+    "listDomainRedirectChecks",
+    "listDomains",
+    "listGoogleSources",
     "listProjects",
     "listPromptVersions",
     "listPrompts",
@@ -54,6 +61,8 @@
     "listSavedKeywordTags",
     "listSegments",
     "listSessions",
+    "listSiteAuditIssues",
+    "listSiteAudits",
     "querySavedKeywords",
     "readAnalytics",
     "readAnnotation",
@@ -61,6 +70,7 @@
     "readAttribution",
     "readCohort",
     "readContext",
+    "readGoogleSnapshot",
     "readJourneys",
     "readLinkedActivity",
     "readPrompt",
@@ -75,6 +85,7 @@
     "readRevenueSession",
     "readSegment",
     "readSession",
+    "readSiteAudit",
     "readTeam",
     "readWebPerformance",
     "restorePrompt",
@@ -89,7 +100,9 @@
    "migrations": [
     "0006_api_keys",
     "0041_api_prompt_scopes",
-    "0062_api_content_scopes"
+    "0062_api_content_scopes",
+    "0066_google_domains_scopes",
+    "0067_audits_read_scope"
    ]
   },
   "P06": {
@@ -99,6 +112,9 @@
     "listAnnotations",
     "listCohorts",
     "listContextResearch",
+    "listDomainRedirectChecks",
+    "listDomains",
+    "listGoogleSources",
     "listPromptVersions",
     "listPrompts",
     "listRankRuns",
@@ -106,10 +122,13 @@
     "listSavedKeywordTags",
     "listSegments",
     "listSessions",
+    "listSiteAuditIssues",
+    "listSiteAudits",
     "querySavedKeywords",
     "readAnalytics",
     "readAttribution",
     "readContext",
+    "readGoogleSnapshot",
     "readJourneys",
     "readPrompt",
     "readRankDistribution",
@@ -120,6 +139,7 @@
     "readRealtime",
     "readRetentionReport",
     "readSession",
+    "readSiteAudit",
     "restorePrompt",
     "updateContext",
     "updatePrompt"
@@ -130,6 +150,9 @@
     "ten98_list_annotations",
     "ten98_list_cohorts",
     "ten98_list_context_research",
+    "ten98_list_domain_redirect_checks",
+    "ten98_list_domains",
+    "ten98_list_google_sources",
     "ten98_list_prompt_versions",
     "ten98_list_prompts",
     "ten98_list_rank_runs",
@@ -138,9 +161,12 @@
     "ten98_list_saved_keywords",
     "ten98_list_segments",
     "ten98_list_sessions",
+    "ten98_list_site_audit_issues",
+    "ten98_list_site_audits",
     "ten98_read_analytics",
     "ten98_read_attribution",
     "ten98_read_context",
+    "ten98_read_google_snapshot",
     "ten98_read_journeys",
     "ten98_read_linked_activity",
     "ten98_read_prompt",
@@ -152,6 +178,7 @@
     "ten98_read_realtime",
     "ten98_read_retention",
     "ten98_read_session",
+    "ten98_read_site_audit",
     "ten98_restore_prompt",
     "ten98_update_context",
     "ten98_update_prompt",
@@ -159,8 +186,12 @@
    ]
   },
   "P07": {
+   "routes": [
+    "POST /api/workspaces/{workspaceId}/two-factor"
+   ],
    "migrations": [
-    "0045_account_preferences"
+    "0045_account_preferences",
+    "0068_workspace_two_factor"
    ]
   },
   "P08": {
@@ -350,7 +381,8 @@
    ],
    "migrations": [
     "0012_native_analytics",
-    "0040_analytics_geography"
+    "0040_analytics_geography",
+    "0065_event_click_ids"
    ]
   },
   "P31": {
@@ -435,6 +467,9 @@
     "ten98_read_attribution",
     "ten98_read_journeys",
     "ten98_read_retention"
+   ],
+   "migrations": [
+    "0065_event_click_ids"
    ]
   },
   "P39": {
@@ -645,11 +680,25 @@
    ]
   },
   "P53": {
+   "operations": [
+    "listSiteAudits",
+    "readSiteAudit"
+   ],
+   "mcpTools": [
+    "ten98_list_site_audits",
+    "ten98_read_site_audit"
+   ],
    "migrations": [
     "0019_site_audits"
    ]
   },
   "P54": {
+   "operations": [
+    "listSiteAuditIssues"
+   ],
+   "mcpTools": [
+    "ten98_list_site_audit_issues"
+   ],
    "migrations": [
     "0019_site_audits",
     "0032_site_audit_body"
@@ -661,18 +710,42 @@
    ]
   },
   "P56": {
+   "operations": [
+    "listSiteAudits",
+    "readSiteAudit"
+   ],
+   "mcpTools": [
+    "ten98_list_site_audits",
+    "ten98_read_site_audit"
+   ],
    "migrations": [
     "0019_site_audits",
     "0032_site_audit_body"
    ]
   },
   "P57": {
+   "operations": [
+    "listGoogleSources",
+    "readGoogleSnapshot"
+   ],
+   "mcpTools": [
+    "ten98_list_google_sources",
+    "ten98_read_google_snapshot"
+   ],
    "migrations": [
     "0015_google_imports",
     "0044_google_ads_imports"
    ]
   },
   "P58": {
+   "operations": [
+    "listGoogleSources",
+    "readGoogleSnapshot"
+   ],
+   "mcpTools": [
+    "ten98_list_google_sources",
+    "ten98_read_google_snapshot"
+   ],
    "migrations": [
     "0015_google_imports",
     "0044_google_ads_imports",
@@ -695,6 +768,9 @@
     "listAnnotations",
     "listCohorts",
     "listContextResearch",
+    "listDomainRedirectChecks",
+    "listDomains",
+    "listGoogleSources",
     "listProjects",
     "listPromptVersions",
     "listPrompts",
@@ -705,6 +781,8 @@
     "listSavedKeywordTags",
     "listSegments",
     "listSessions",
+    "listSiteAuditIssues",
+    "listSiteAudits",
     "querySavedKeywords",
     "readAnalytics",
     "readAnnotation",
@@ -712,6 +790,7 @@
     "readAttribution",
     "readCohort",
     "readContext",
+    "readGoogleSnapshot",
     "readJourneys",
     "readLinkedActivity",
     "readPrompt",
@@ -726,6 +805,7 @@
     "readRevenueSession",
     "readSegment",
     "readSession",
+    "readSiteAudit",
     "readTeam",
     "readWebPerformance",
     "restorePrompt",
@@ -739,6 +819,9 @@
     "ten98_list_annotations",
     "ten98_list_cohorts",
     "ten98_list_context_research",
+    "ten98_list_domain_redirect_checks",
+    "ten98_list_domains",
+    "ten98_list_google_sources",
     "ten98_list_prompt_versions",
     "ten98_list_prompts",
     "ten98_list_rank_runs",
@@ -747,9 +830,12 @@
     "ten98_list_saved_keywords",
     "ten98_list_segments",
     "ten98_list_sessions",
+    "ten98_list_site_audit_issues",
+    "ten98_list_site_audits",
     "ten98_read_analytics",
     "ten98_read_attribution",
     "ten98_read_context",
+    "ten98_read_google_snapshot",
     "ten98_read_journeys",
     "ten98_read_linked_activity",
     "ten98_read_prompt",
@@ -761,6 +847,7 @@
     "ten98_read_realtime",
     "ten98_read_retention",
     "ten98_read_session",
+    "ten98_read_site_audit",
     "ten98_restore_prompt",
     "ten98_update_context",
     "ten98_update_prompt",
@@ -845,11 +932,23 @@
    ]
   },
   "P79": {
+   "operations": [
+    "listDomains"
+   ],
+   "mcpTools": [
+    "ten98_list_domains"
+   ],
    "migrations": [
     "0011_domains"
    ]
   },
   "P80": {
+   "operations": [
+    "listDomainRedirectChecks"
+   ],
+   "mcpTools": [
+    "ten98_list_domain_redirect_checks"
+   ],
    "migrations": [
     "0018_domain_redirect_checks"
    ]

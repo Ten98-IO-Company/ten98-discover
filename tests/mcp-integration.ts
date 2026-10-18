@@ -43,12 +43,18 @@ export async function runMcpChecks(){
     const data=(response:Awaited<ReturnType<typeof rpc>>)=>{assert.equal(response.status,200,JSON.stringify(response.wire));assert.equal(response.wire.result?.isError,undefined,JSON.stringify(response.wire));assert.ok(response.bytes<=8*1024*1024);assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['mcp-session-id'],undefined);const result=response.wire.result;assert.deepEqual(JSON.parse(result.content[0].text),result.structuredContent);return result.structuredContent;};
     for(const modern of [true,false]){
       const listed=await rpc('tools/list',{},all.token,modern);assert.equal(listed.status,200);assert.deepEqual(listed.wire.result.tools.map((x:any)=>x.name),mcpTools.map(t=>t.name));assert.equal(listed.headers['mcp-session-id'],undefined);
-      const who=data(await call('ten98_whoami',{},all.token,modern));assert.equal(who.workspaceId,workspace);assert.equal(who.userId,ownerId);assert.equal(who.tools.length,31);
+      const who=data(await call('ten98_whoami',{},all.token,modern));assert.equal(who.workspaceId,workspace);assert.equal(who.userId,ownerId);assert.equal(who.tools.length,38);
     }
     const discovery=await rpc('server/discover');assert.equal(discovery.status,200);assert.equal(discovery.wire.result.capabilities.tools.listChanged,false);for(const cap of ['tasks','resources','prompts','sampling'])assert.equal(discovery.wire.result.capabilities[cap],undefined);
     const init=await rpc('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'native-protocol-fixture',version:'1'}},all.token,false);assert.equal(init.status,200);assert.equal(init.wire.result.protocolVersion,'2025-11-25');
     const subscription=await rpc('subscriptions/listen',{subscriptions:[]});assert.equal(subscription.status,200);assert.ok(subscription.wire.error);assert.equal(subscription.complete,true);
     console.log('PASS actual HTTP modern/legacy discovery, safe whoami, finite transports and no advertised extra capabilities');
+    // The lane owner has no verified factor: while the workspace requires one, the key is refused on every invocation, then resumes.
+    await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1)',[workspace]);
+    try{const suspended=await rpc('tools/list');assert.equal(suspended.status,401);assert.equal(suspended.wire.error.message,'A valid native Bearer API key is required.');}
+    finally{await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1',[workspace]);}
+    assert.equal((await rpc('tools/list')).status,200);assert.equal((await pool.query('SELECT 1 FROM api_key WHERE id=$1 AND revoked_at IS NULL',[all.key.id])).rowCount,1);
+    console.log('PASS MCP refuses a key whose issuer lacks the factor a workspace two-factor requirement demands, without revoking it, and resumes when the requirement is lifted');
 
     const date=(await pool.query("SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD') AS date")).rows[0].date,calendar={from:date,to:date,timeZone:'UTC'};
     assert.equal(data(await call('ten98_read_analytics',{projectId:project,query:{from:date,to:date,compare:'prev',geoDetail:'city',geoSearch:'',geoPeriod:'comparison'}})).totals.pageViews,1);
@@ -429,6 +435,125 @@ export async function runMcpChecks(){
           }
           assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
           reportEvidence.groups.push('seo-authored-reads-nine-tools-projections-exclusions-two-waits-dual-rate-parity');console.log('PASS additive rank tracker/report/history and saved-keyword read equivalence over direct, bearer HTTP and both MCP transports with the bearer projections (no vault, connections or ledger amounts), excluded neighbours refused, foreign tenancy, two observed revocation waits, dual saved-keyword rate parity and zero provider work');
+        }
+
+        // Additive Google snapshot and domain registry reads (P57, P58, P79, P80): google:read for every role, domains:read for current owners/admins, seeded by direct SQL with no provider, DNS or HTTP work.
+        {
+          const {listGoogleConnections,readGoogleImport}=await import('../src/server/google-jobs.ts');
+          const {getDomains}=await import('../src/server/domains.ts');
+          const {getDomainRedirectChecks}=await import('../src/server/domain-redirects.ts');
+          const gp=await makeProject(),googleKey=await makeKey(ru,['google:read']),domainsKey=await makeKey(ru,['domains:read']),connectionId=randomUUID(),importId=randomUUID(),domainId=randomUUID();
+          assert.deepEqual((await rpc('tools/list',{},googleKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_google_sources','ten98_read_google_snapshot']);
+          assert.deepEqual((await rpc('tools/list',{},domainsKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_domains','ten98_list_domain_redirect_checks']);
+          await pool.query("INSERT INTO google_connection(id,workspace_id,project_id,name,provider,revision,app_revision,status) VALUES($1,$2,$3,'MCP synthetic source','gsc',1,1,'disconnected')",[connectionId,rw,gp]);
+          await pool.query(`INSERT INTO google_import(id,connection_id,project_id,user_id,request_id,connection_revision,app_revision,report,date_from,date_to,status,pages,row_count,source,quality,completed_at)
+            VALUES($1,$2,$3,$4,$5,1,1,'gsc_daily','2026-01-01','2026-01-01','completed',1,1,'{"provider":"gsc","propertyId":"sc-domain:mcp-fixture.com"}','{"warnings":[],"metadata":{}}',clock_timestamp())`,[importId,connectionId,gp,ru,randomUUID()]);
+          await pool.query(`INSERT INTO google_import_page(import_id,page,rows) VALUES($1,0,'[{"dimensions":["2026-01-01"],"metrics":{"clicks":0,"impressions":1,"ctr":0,"position":null}}]')`,[importId]);
+          await pool.query("INSERT INTO project_domain(id,project_id,hostname,role,expected_target_host,verified_at) VALUES($1,$2,'alias.mcp-fixture.com','redirect_alias','target.mcp-fixture.com',clock_timestamp())",[domainId,gp]);
+          await pool.query(`INSERT INTO domain_redirect_check(id,workspace_id,project_id,domain_id,user_id,request_id,domain_revision,hostname,expected_target_host,verified_at,status,diagnostic,completed_at)
+            SELECT $1,p.workspace_id,p.id,d.id,$3,$4,d.redirect_revision,d.hostname,d.expected_target_host,d.verified_at,'stale','Synthetic MCP receipt',clock_timestamp() FROM project p JOIN project_domain d ON d.project_id=p.id WHERE p.id=$5 AND d.id=$2`,[randomUUID(),domainId,ru,randomUUID(),gp]);
+          const domainRows=async()=>(await pool.query('SELECT count(*)::int AS n FROM project_domain WHERE project_id=$1',[gp])).rows[0].n as number;
+          const reads:{name:string;path:string;key:{token:string};args:Record<string,unknown>;read:()=>Promise<unknown>}[]=[
+            {name:'ten98_list_google_sources',path:'google',key:googleKey,args:{},read:()=>listGoogleConnections(gp,ru,googleKey.token)},
+            {name:'ten98_read_google_snapshot',path:'google/imports/'+importId,key:googleKey,args:{importId},read:()=>readGoogleImport(gp,ru,importId,0,googleKey.token)},
+            {name:'ten98_read_google_snapshot',path:'google/imports/'+importId+'?offset=1',key:googleKey,args:{importId,query:{offset:'1'}},read:()=>readGoogleImport(gp,ru,importId,'1',googleKey.token)},
+            {name:'ten98_list_domains',path:'domains',key:domainsKey,args:{},read:()=>getDomains(gp,ru,domainsKey.token)},
+            {name:'ten98_list_domain_redirect_checks',path:'domains/'+domainId+'/redirect-checks',key:domainsKey,args:{domainId},read:()=>getDomainRedirectChecks(gp,ru,domainId,domainsKey.token)},
+          ];
+          const results:Record<string,any>={};
+          for(const spec of reads){
+            const expected=wire(await spec.read()),native=await http('/api/projects/'+gp+'/'+spec.path,{authorization:'Bearer '+spec.key.token});
+            assert.equal(native.status,200,JSON.stringify(native.wire));assert.equal(native.complete,true);assert.equal(native.headers['cache-control'],'no-store');assert.deepEqual(native.wire,expected);
+            for(const modern of [true,false])assert.deepEqual(data(await call(spec.name,{projectId:gp,...spec.args},spec.key.token,modern)),expected);
+            results[spec.path]=expected;
+          }
+          assert.deepEqual(Object.keys(results.google).sort(),['connections','role']);assert.deepEqual(results.google.connections.map((c:any)=>[c.id,c.imports.map((i:any)=>i.id)]),[[connectionId,[importId]]]);
+          assert.deepEqual(Object.keys(wire(await listGoogleConnections(gp,ru))).sort(),['app','connections','role'],'Only the cookie-shaped list carries the app configuration.');
+          assert.equal(results['google/imports/'+importId].rows.length,1);assert.equal(results['google/imports/'+importId].import.dataStatus,'available');assert.deepEqual(results['google/imports/'+importId+'?offset=1'].rows,[]);
+          assert.deepEqual(results.domains.domains.map((d:any)=>[d.id,d.status]),[[domainId,'verified']]);assert.equal(results.domains.project.canonicalVerifiable,false);assert.equal(await domainRows(),1,'No key read created a registry row.');
+          assert.deepEqual(results['domains/'+domainId+'/redirect-checks'].checks.map((c:any)=>c.status),['stale']);
+          for(const [name,token,args] of [['ten98_list_google_sources',domainsKey.token,{}],['ten98_read_google_snapshot',reportKey.token,{importId}],['ten98_list_domains',googleKey.token,{}],['ten98_list_domain_redirect_checks',reportKey.token,{domainId}]] as const){const denied=await call(name,{projectId:gp,...args},token);assert.ok(denied.wire.error);assert.equal(denied.wire.result,undefined);}
+          assert.equal((await http('/api/projects/'+gp+'/google',{authorization:'Bearer '+domainsKey.token})).status,403);assert.equal((await http('/api/projects/'+gp+'/domains',{authorization:'Bearer '+googleKey.token})).status,403);
+          // google:read survives demotion to viewer; domains:read lapses below admin.
+          const demoted=await reportActor(),demotedGoogle=await makeKey(demoted.userId,['google:read']),demotedDomains=await makeKey(demoted.userId,['domains:read']);
+          for(const role of ['editor','viewer']){
+            await pool.query('UPDATE membership SET role=$3 WHERE workspace_id=$1 AND user_id=$2',[rw,demoted.userId,role]);
+            assert.deepEqual((await rpc('tools/list',{},demotedDomains.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami'],role);assert.equal((await http('/api/projects/'+gp+'/domains',{authorization:'Bearer '+demotedDomains.token})).status,403,role);
+            assert.deepEqual((await rpc('tools/list',{},demotedGoogle.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_google_sources','ten98_read_google_snapshot'],role);
+            assert.deepEqual(data(await call('ten98_list_google_sources',{projectId:gp},demotedGoogle.token)),{...results.google,role},role);
+          }
+          for(const [name,token] of [['ten98_list_google_sources',googleKey.token],['ten98_list_domains',domainsKey.token]] as const){const foreign=await call(name,{projectId:foreignProject},token);assert.equal(foreign.status,200);assert.equal(foreign.wire.result.structuredContent.error.status,404);assert.equal(JSON.stringify(foreign.wire).includes(foreignProject),false);}
+          assert.equal((await call('ten98_read_google_snapshot',{projectId:gp,importId:randomUUID()},googleKey.token)).wire.result.structuredContent.error.status,404);
+          assert.equal((await call('ten98_list_domain_redirect_checks',{projectId:gp,domainId:randomUUID()},domainsKey.token)).wire.result.structuredContent.error.status,404);
+          const rateActor=await reportActor(),rateGoogle=await makeKey(rateActor.userId,['google:read']),rateDomains=await makeKey(rateActor.userId,['domains:read']);
+          for(const [limitKey,maximum,name,path,key,args] of [['google:read:'+rateActor.userId,120,'ten98_list_google_sources','google',rateGoogle,{}],['domain-settings:'+rateActor.userId,60,'ten98_list_domains','domains',rateDomains,{}],['domain-redirect:'+rateActor.userId+':read',60,'ten98_list_domain_redirect_checks','domains/'+domainId+'/redirect-checks',rateDomains,{domainId}]] as const){
+            await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),$2)ON CONFLICT(key,minute)DO UPDATE SET count=$2",[limitKey,maximum]);
+            assert.equal((await call(name,{projectId:gp,...args},key.token)).wire.result.structuredContent.error.status,429,name);assert.equal((await http('/api/projects/'+gp+'/'+path,{authorization:'Bearer '+key.token})).status,429,path);
+          }
+          for(const [table,name,pattern,scope] of [['google_import','ten98_list_google_sources','SELECT i.*,i.date_from::text AS date_from%','google:read'],['project_domain','ten98_list_domains','SELECT * FROM project_domain WHERE project_id=$1 ORDER BY%','domains:read']] as const){
+            const key=await makeKey(ru,[scope]),lock=await pool.connect();let pending:ReturnType<typeof call>|undefined;
+            try{await lock.query('BEGIN');await lock.query('LOCK TABLE '+table+' IN ACCESS EXCLUSIVE MODE');
+              pending=call(name,{projectId:gp},key.token);void pending.catch(()=>{});await waiting(lock,pattern);
+              await pool.query('UPDATE api_key SET revoked_at=clock_timestamp()WHERE id=$1',[key.key.id]);await lock.query('COMMIT');const result=await pending;assert.equal(result.status,401);assert.ok(result.wire.error);assert.equal(result.wire.result,undefined);
+              reportEvidence.waits.push({tool:name,action:'revocation',status:result.status});persist();
+            }finally{await lock.query('ROLLBACK').catch(()=>{});lock.release();await pending?.catch(()=>{});}
+          }
+          assert.equal(await domainRows(),1);assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
+          reportEvidence.groups.push('google-domains-four-tools-projection-owner-admin-tenancy-two-waits-rate-parity');console.log('PASS additive Google source/snapshot and domain registry/redirect-receipt read equivalence over direct, bearer HTTP and both MCP transports, no app configuration or canonical INSERT under a key, google:read for viewers and domains:read for owners/admins only, foreign tenancy, native rate parity, two observed revocation waits and zero provider work');
+        }
+
+        // Additive site audit reads (P53, P54, P56): audits:read for every role over the native audit gate, seeded by direct SQL with no crawl, queue or website work.
+        {
+          const {listSiteAudits,getSiteAudit,listSiteAuditIssues}=await import('../src/server/site-audits.ts');
+          const ap=await makeProject(),auditsKey=await makeKey(ru,['audits:read']),runId=randomUUID(),issueId=randomUUID();
+          assert.deepEqual((await rpc('tools/list',{},auditsKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_site_audits','ten98_read_site_audit','ten98_list_site_audit_issues']);
+          await pool.query(`WITH stamp AS (SELECT clock_timestamp() AS at) INSERT INTO site_audit_run(id,workspace_id,project_id,user_id,request_id,request_hash,origin,config,status,created_at,completed_at,deadline_at,queue_job_id)
+            SELECT $1,$2,$3,$4,gen_random_uuid(),repeat('a',64),'https://audit.mcp-report.test','{"mode":"static","startPath":"/","maxPages":50}'::jsonb,'completed',at,at,at+interval '30 minutes',gen_random_uuid() FROM stamp`,[runId,rw,ap,ru]);
+          await pool.query("INSERT INTO site_audit_issue(id,run_id,issue_key,rule_version,code,severity,details) VALUES($1,$2,repeat('b',64),'static-graph-v1','orphan-page','info','{}')",[issueId,runId]);
+          const reads:{name:string;path:string;args:Record<string,unknown>;read:()=>Promise<unknown>}[]=[
+            {name:'ten98_list_site_audits',path:'audits',args:{},read:()=>listSiteAudits(ap,ru,new URLSearchParams(),auditsKey.token)},
+            {name:'ten98_list_site_audits',path:'audits?limit=1',args:{query:{limit:'1'}},read:()=>listSiteAudits(ap,ru,new URLSearchParams('limit=1'),auditsKey.token)},
+            {name:'ten98_read_site_audit',path:'audits/'+runId,args:{runId},read:()=>getSiteAudit(ap,ru,runId,auditsKey.token)},
+            {name:'ten98_list_site_audit_issues',path:'audits/'+runId+'/issues',args:{runId},read:()=>listSiteAuditIssues(ap,ru,runId,new URLSearchParams(),auditsKey.token)},
+            {name:'ten98_list_site_audit_issues',path:'audits/'+runId+'/issues?severity=info&limit=1',args:{runId,query:{severity:'info',limit:'1'}},read:()=>listSiteAuditIssues(ap,ru,runId,new URLSearchParams('severity=info&limit=1'),auditsKey.token)},
+          ];
+          const results:Record<string,any>={};
+          for(const spec of reads){
+            const expected=wire(await spec.read()),native=await http('/api/projects/'+ap+'/'+spec.path,{authorization:'Bearer '+auditsKey.token});
+            assert.equal(native.status,200,JSON.stringify(native.wire));assert.equal(native.complete,true);assert.equal(native.headers['cache-control'],'no-store');assert.deepEqual(native.wire,expected);
+            for(const modern of [true,false])assert.deepEqual(data(await call(spec.name,{projectId:ap,...spec.args},auditsKey.token,modern)),expected);
+            results[spec.path]=expected;
+          }
+          assert.deepEqual(wire(await getSiteAudit(ap,ru,runId)),results['audits/'+runId],'The key read equals the member read, canCancel and canDelete included.');
+          assert.deepEqual(results.audits.runs.map((r:any)=>[r.id,r.status,r.dataStatus]),[[runId,'completed','available']]);
+          assert.deepEqual(results['audits/'+runId+'/issues'].issues.map((i:any)=>[i.id,i.pageId,i.code]),[[issueId,null,'orphan-page']]);
+          assert.deepEqual(results['audits/'+runId+'/issues'].groups,[{code:'orphan-page',severity:'info',retainedFindingCount:1,affectedUrlCount:0,unassignedFindingCount:1}]);assert.equal(results['audits/'+runId+'/issues'].matchingRetainedCount,1);
+          for(const [name,args] of [['ten98_list_site_audits',{}],['ten98_read_site_audit',{runId}],['ten98_list_site_audit_issues',{runId}]] as const){const denied=await call(name,{projectId:ap,...args},reportKey.token);assert.ok(denied.wire.error);assert.equal(denied.wire.result,undefined);}
+          for(const suffix of ['audits','audits/'+runId,'audits/'+runId+'/issues','audits/setup','audits/'+runId+'/pages'])assert.equal((await http('/api/projects/'+ap+'/'+suffix,{authorization:'Bearer '+(suffix.endsWith('setup')||suffix.endsWith('pages')?auditsKey.token:reportKey.token)})).status,403,suffix);
+          // audits:read stays on the viewer allowlist; the run DTO reports the issuer's current role.
+          const demoted=await reportActor(),demotedAudits=await makeKey(demoted.userId,['audits:read']);
+          for(const role of ['editor','viewer']){
+            await pool.query('UPDATE membership SET role=$3 WHERE workspace_id=$1 AND user_id=$2',[rw,demoted.userId,role]);
+            assert.deepEqual((await rpc('tools/list',{},demotedAudits.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_site_audits','ten98_read_site_audit','ten98_list_site_audit_issues'],role);
+            const viewed=data(await call('ten98_read_site_audit',{projectId:ap,runId},demotedAudits.token));assert.equal(viewed.role,role);assert.equal(viewed.run.canDelete,false,role);
+          }
+          for(const [name,args] of [['ten98_list_site_audits',{}],['ten98_read_site_audit',{runId}]] as const){const foreign=await call(name,{projectId:foreignProject,...args},auditsKey.token);assert.equal(foreign.status,200);assert.equal(foreign.wire.result.structuredContent.error.status,404);assert.equal(JSON.stringify(foreign.wire).includes(foreignProject),false);}
+          assert.equal((await call('ten98_read_site_audit',{projectId:ap,runId:randomUUID()},auditsKey.token)).wire.result.structuredContent.error.status,404);
+          assert.equal((await call('ten98_list_site_audit_issues',{projectId:ap,runId:randomUUID()},auditsKey.token)).wire.result.structuredContent.error.status,404);
+          const rateActor=await reportActor(),rateAudits=await makeKey(rateActor.userId,['audits:read']);
+          await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),120)ON CONFLICT(key,minute)DO UPDATE SET count=120",['audits:'+rateActor.userId+':read']);
+          assert.equal((await call('ten98_list_site_audits',{projectId:ap},rateAudits.token)).wire.result.structuredContent.error.status,429);assert.equal((await http('/api/projects/'+ap+'/audits',{authorization:'Bearer '+rateAudits.token})).status,429);
+          {
+            const key=await makeKey(ru,['audits:read']),lock=await pool.connect();let pending:ReturnType<typeof call>|undefined;
+            try{await lock.query('BEGIN');await lock.query('LOCK TABLE site_audit_issue IN ACCESS EXCLUSIVE MODE');
+              pending=call('ten98_list_site_audit_issues',{projectId:ap,runId},key.token);void pending.catch(()=>{});await waiting(lock,'SELECT i.id,i.page_id AS "pageId"%');
+              await pool.query('UPDATE api_key SET revoked_at=clock_timestamp()WHERE id=$1',[key.key.id]);await lock.query('COMMIT');const result=await pending;assert.equal(result.status,401);assert.ok(result.wire.error);assert.equal(result.wire.result,undefined);
+              reportEvidence.waits.push({tool:'ten98_list_site_audit_issues',action:'revocation',status:result.status});persist();
+            }finally{await lock.query('ROLLBACK').catch(()=>{});lock.release();await pending?.catch(()=>{});}
+          }
+          assert.deepEqual((await pool.query('SELECT raw_expired_at,data_expired_at,status FROM site_audit_run WHERE id=$1',[runId])).rows,[{raw_expired_at:null,data_expired_at:null,status:'completed'}],'Reads of a current run latch nothing and change no lifecycle.');
+          assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
+          reportEvidence.groups.push('site-audits-three-tools-viewer-tenancy-one-wait-rate-parity');console.log('PASS additive site audit list/detail/issues read equivalence over direct, bearer HTTP and both MCP transports, equal to the member read, cookie-only setup and pages refused, audits:read for every role, foreign tenancy, native rate parity, one observed revocation wait and zero provider work');
         }
         reportEvidence.phase='passed';
       }catch(error){reportEvidence.phase='failed';reportEvidence.failure={name:error instanceof Error?error.name:'Error',message:error instanceof Error?error.message.slice(0,2000):'Unknown failure'};throw error;}

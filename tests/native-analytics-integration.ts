@@ -24,7 +24,9 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   assert.deepEqual((await call('/api/collect',event(),true)).data,{accepted:false,reason:'consent_required'});
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM event WHERE project_id=$1',[projectId])).rows[0].n,0);
   const acceptedEvent={...event(),consent:consent(),properties:{plan:'starter',nested:{count:2},when:'2024-02-29T12:00:00+04:00'},dimensions:{
-    language:'en-us',referrer:'https://private-referrer.example/secret',campaign:{source:'private-campaign'},screen:{width:1024,height:768},distinctId:'private-distinct'}};
+    language:'en-us',referrer:'https://private-referrer.example/secret',campaign:{source:'private-campaign'},screen:{width:1024,height:768},distinctId:'private-distinct',
+    clickIds:{gclid:'private-gclid',fbclid:'',msclkid:'m'.repeat(300),twclid:'😀'.repeat(256)}}};
+  const clickColumns=['gclid','fbclid','msclkid','ttclid','li_fat_id','twclid'];
   const accepted=await call('/api/collect',acceptedEvent,true,{'x-forwarded-for':'192.0.2.99'});
   assert.equal(accepted.status,202); assert.equal(accepted.data.accepted,true); assert.equal(accepted.data.duplicate,false);
   if(process.env.ANALYTICS_NETWORK_MODE==='direct') assert.equal(typeof accepted.data.context,'string','Production Node transport must expose its real peer.');
@@ -39,7 +41,8 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   assert.deepEqual({browser:storedBrowser,os:storedOs,device:storedDevice,environmentVersion:storedEnvironmentVersion},{browser:'unknown',os:'unknown',device:'unknown',environmentVersion:'server-ua-environment-v1'});
   assert.deepEqual(storedPublicDimensions,{language:'en-US',origin});
   assert.deepEqual(stored.properties,{'plan':{type:'string',value:'starter'},'nested.count':{type:'number',value:2},when:{type:'date',value:'2024-02-29T08:00:00.000Z'}});
-  for(const text of ['private-query','private-fragment','private-referrer','private-campaign','private-distinct','192.0.2.99','Ten98 acceptance browser'])assert.equal(JSON.stringify(stored).includes(text),false);
+  for(const text of ['private-query','private-fragment','private-referrer','private-campaign','private-distinct','private-gclid','192.0.2.99','Ten98 acceptance browser'])assert.equal(JSON.stringify(stored).includes(text),false);
+  for(const column of clickColumns)assert.equal(stored[column],null,'Campaign capture off stores no ad click identifier, even with the analytics grant.');
   for(const headers of [{'dnt':'1'},{'sec-gpc':'1'},{'user-agent':'Example crawler'}] as Record<string,string>[])assert.equal((await call('/api/collect',{...event(),consent:consent()},true,headers)).data.accepted,false);
   for(const properties of [{bad:'\u0000'},JSON.parse('{"__proto__":{"polluted":true}}'),{bad:'x'.repeat(1001)}])assert.equal((await call('/api/collect',{...event(),consent:consent(),properties},true)).status,400);
   for(const invalid of [{properties:null},{dimensions:null},{url:origin+'/'+ 'é'.repeat(400)}])assert.equal((await call('/api/collect',{...event(),consent:consent(),...invalid},true)).status,400);
@@ -58,6 +61,10 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   const {browser:enabledBrowser,os:enabledOs,device:enabledDevice,environmentVersion:enabledEnvironmentVersion,...enabledPublicDimensions}=dimensions;
   assert.deepEqual({browser:enabledBrowser,os:enabledOs,device:enabledDevice,environmentVersion:enabledEnvironmentVersion},{browser:'unknown',os:'unknown',device:'unknown',environmentVersion:'server-ua-environment-v1'});
   assert.deepEqual(enabledPublicDimensions,{origin,language:'en-US',referrerHost:'private-referrer.example',campaign:{source:'private-campaign'},screenWidth:1024,screenHeight:768});
+  // Owner decision D1: capture on plus the analytics grant stores the raw click IDs in their own columns (never the dimensions JSON above),
+  // empty kept and each cut to 255 code points like pinned Umami's VarChar(255).
+  assert.deepEqual((await pool.query('SELECT gclid,fbclid,msclkid,ttclid,li_fat_id,twclid FROM event WHERE project_id=$1 AND id=$2',[projectId,enabled.eventId])).rows[0],
+    {gclid:'private-gclid',fbclid:'',msclkid:'m'.repeat(255),ttclid:null,li_fat_id:null,twclid:'😀'.repeat(255)});
 
   // A real PostgreSQL wait reproduces the stale-statement-snapshot consent bug.
   await saveDestinationsDraft(projectId,options.ownerId,'live',{expectedVersion:0,configuration:{destinations:[]}});
@@ -93,19 +100,22 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   let basicConfig=await getPublicDestinations(basicKey,'live',origin);
   assert.equal(basicConfig.schemaVersion,3);assert.equal(basicConfig.nativeTracking.collectionMode,'cookieless');
   // Explicit fixture opt-in proves basic events stay outside the linking subsystem.
-  await pool.query("UPDATE project SET analytics_settings=jsonb_set(analytics_settings,'{linkIdentities}','true'),identity_links_started_at=clock_timestamp() WHERE id=$1",[basicProject]);
+  // Campaign capture is on too, so the basic event below proves the consent gate on ad click identifiers (owner decision D1).
+  await pool.query("UPDATE project SET analytics_settings=jsonb_set(jsonb_set(analytics_settings,'{linkIdentities}','true'),'{captureCampaigns}','true'),identity_links_started_at=clock_timestamp() WHERE id=$1",[basicProject]);
   basicConfig=await getPublicDestinations(basicKey,'live',origin);
   const basic=()=>({...event(),siteKey:basicKey,collection:{mode:'cookieless' as const,epoch:basicConfig.consentEpoch}});
-  const basicEvent={...basic(),name:'signup',properties:{plan:'starter',nil:null,flag:false,nested:{count:0}},dimensions:{language:'en-us'}};
+  const basicEvent={...basic(),name:'signup',properties:{plan:'starter',nil:null,flag:false,nested:{count:0}},dimensions:{language:'en-us',campaign:{source:'basic-campaign'},clickIds:{gclid:'basic-click-sentinel',fbclid:'basic-click-sentinel',twclid:'basic-click-sentinel'}}};
   const basicAccepted=await call('/api/collect',basicEvent,true);assert.equal(basicAccepted.status,202);assert.equal(basicAccepted.data.accepted,true);
   const basicRow=(await pool.query('SELECT to_jsonb(e) AS value FROM event e WHERE project_id=$1 AND id=$2',[basicProject,basicEvent.eventId])).rows[0].value;
   assert.equal(basicRow.collection_basis,'cookieless');assert.equal(basicRow.identity_link_evidence_version,null);
+  assert.deepEqual(basicRow.dimensions.campaign,{source:'basic-campaign'},'Basic events keep UTM values under campaign capture.');
+  for(const column of clickColumns)assert.equal(basicRow[column],null,'A cookieless basic event never stores an ad click identifier, even with campaign capture on.');
   assert.deepEqual(basicRow.properties,{plan:{type:'string',value:'starter'},nil:{type:'null',value:null},flag:{type:'boolean',value:false},'nested.count':{type:'number',value:0}});
   assert.deepEqual((await call('/api/collect',{...basicEvent,consent:{analytics:true,epoch:basicConfig.consentEpoch},collection:undefined,dimensions:{distinctId:'cannot-retrofit'}},true)).data,{accepted:true,duplicate:true});
   assert.deepEqual((await pool.query('SELECT to_jsonb(e) AS value FROM event e WHERE project_id=$1 AND id=$2',[basicProject,basicEvent.eventId])).rows[0].value,basicRow,'Duplicate cannot change basis, identity or event proof.');
   assert.equal((await pool.query('SELECT 1 FROM analytics_identity_link WHERE project_id=$1',[basicProject])).rowCount,0);
   assert.equal((await pool.query('SELECT identity_event_evidence_started_at FROM project WHERE id=$1',[basicProject])).rows[0].identity_event_evidence_started_at,null,'Duplicate consented input cannot mint an evidence-start fence.');
-  for(const sentinel of ['private-query','private-fragment','Ten98 acceptance browser','cannot-retrofit'])assert.equal(JSON.stringify(basicRow).includes(sentinel),false);
+  for(const sentinel of ['private-query','private-fragment','Ten98 acceptance browser','cannot-retrofit','basic-click-sentinel'])assert.equal(JSON.stringify(basicRow).includes(sentinel),false);
   for(const invalid of [{consent:{analytics:true,epoch:basicConfig.consentEpoch}},{dimensions:{distinctId:'private-id'}},{collection:{mode:'consent-first',epoch:basicConfig.consentEpoch}},{collection:{mode:'cookieless',epoch:basicConfig.consentEpoch,extra:true}},{properties:{bad:'x'.repeat(1001)}},{properties:Object.fromEntries(Array.from({length:51},(_,i)=>['key'+i,i]))}])assert.equal((await call('/api/collect',{...basic(),...invalid},true)).status,400);
   for(const authorization of [{collection:undefined},{collection:{mode:'cookieless',epoch:randomUUID()}}])assert.deepEqual((await call('/api/collect',{...basic(),...authorization},true)).data,{accepted:false,reason:'consent_required'});
   for(const headers of [{dnt:'1'},{'sec-gpc':'1'},{'user-agent':'Example crawler'}] as Record<string,string>[])assert.deepEqual((await call('/api/collect',basic(),true,headers)).data,{accepted:false,reason:'collection_disabled'});

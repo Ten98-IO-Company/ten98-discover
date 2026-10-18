@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
 
-export const apiKeyScopes = ['projects:read', 'projects:write', 'analytics:read', 'events:write', 'team:read', 'prompts:read', 'prompts:write', 'context:read', 'context:write', 'segments:read', 'annotations:read', 'rank:read', 'keywords:read'] as const;
+export const apiKeyScopes = ['projects:read', 'projects:write', 'analytics:read', 'events:write', 'team:read', 'prompts:read', 'prompts:write', 'context:read', 'context:write', 'segments:read', 'annotations:read', 'rank:read', 'keywords:read', 'google:read', 'domains:read', 'audits:read'] as const;
 export type ApiKeyScope = typeof apiKeyScopes[number];
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 export type ApiKeyDto = {
@@ -46,10 +46,10 @@ export function parseApiKeyHeaders(headers: Headers): string | null {
 }
 
 // Explicit allowlist: a future scope is denied to viewers until it is named here.
-const viewerScopes = new Set<ApiKeyScope>(['projects:read', 'analytics:read', 'prompts:read', 'context:read', 'segments:read', 'annotations:read', 'rank:read', 'keywords:read']);
+const viewerScopes = new Set<ApiKeyScope>(['projects:read', 'analytics:read', 'prompts:read', 'context:read', 'segments:read', 'annotations:read', 'rank:read', 'keywords:read', 'google:read', 'audits:read']);
 function allows(role: Role, scope: ApiKeyScope): boolean {
   if (role === 'owner' || role === 'admin') return true;
-  if (scope === 'team:read') return false;
+  if (scope === 'team:read' || scope === 'domains:read') return false;
   if (role === 'editor') return true;
   return role === 'viewer' && viewerScopes.has(scope);
 }
@@ -105,8 +105,9 @@ export async function authenticateApiKey(token: string, client?: Pick<PoolClient
   if (typeof token !== 'string' || !validToken(token)) invalidKey();
   const result = await (client ?? getDatabase().pool).query<ApiKeyPrincipal>(
     `SELECT k.id,k.issuer_user_id AS "userId",k.workspace_id AS "workspaceId",m.role,k.scopes
-     FROM api_key k JOIN membership m ON m.workspace_id=k.workspace_id AND m.user_id=k.issuer_user_id
-     WHERE k.token_hash=$1 AND k.revoked_at IS NULL AND k.expires_at>clock_timestamp()`, [digest(token)],
+     FROM api_key k JOIN membership m ON m.workspace_id=k.workspace_id AND m.user_id=k.issuer_user_id JOIN "user" u ON u.id=k.issuer_user_id
+     WHERE k.token_hash=$1 AND k.revoked_at IS NULL AND k.expires_at>clock_timestamp()
+       AND (u."twoFactorEnabled" OR NOT EXISTS (SELECT 1 FROM workspace_two_factor_requirement r WHERE r.workspace_id=k.workspace_id))`, [digest(token)],
   );
   const principal = result.rows[0];
   if (!principal || !['owner', 'admin', 'editor', 'viewer'].includes(principal.role)) invalidKey();

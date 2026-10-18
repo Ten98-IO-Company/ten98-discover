@@ -35,7 +35,7 @@ import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from '
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
-import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation, transferOwnership } from './teams.ts';
+import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
@@ -169,7 +169,9 @@ export async function handleApi(request: Request): Promise<Response> {
       const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
       // Content families admitted by scope; method and scope are explicit per row, nothing else matches.
-      // Rank catalog/locations/schedule/checks/keyword writes/matrix export and every saved-keyword write, export or refresh never match.
+      // Rank catalog/locations/schedule/checks/keyword writes/matrix export and every saved-keyword write, export or refresh never match;
+      // nor do the Google app, callback, connect, property, disconnect, import and inspection routes, or any domain write;
+      // nor audit setup, pages, page detail, links, export, start, cancel or delete ('setup' never matches the id pattern).
       const scopedRoutes:[RegExp,'GET'|'POST',ApiKeyScope][]=[
         [new RegExp(`^/api/projects/(${id})/context(?:/research-log)?$`,'i'),'GET','context:read'],
         [new RegExp(`^/api/projects/(${id})/context/update$`,'i'),'POST','context:write'],
@@ -178,6 +180,9 @@ export async function handleApi(request: Request): Promise<Response> {
         [new RegExp(`^/api/projects/(${id})/rank-trackers(?:/${id}(?:/distribution|/matrix|/runs|/results|/keywords/${id}/history)?)?$`,'i'),'GET','rank:read'],
         // Case-sensitive: the handler classifies read-only POSTs by exact lowercase words, so a spelling variant must not pass as a read.
         [new RegExp(`^/api/projects/(${id})/saved-keywords/(?:list|tags/list)$`),'POST','keywords:read'],
+        [new RegExp(`^/api/projects/(${id})/google(?:/imports/${id})?$`,'i'),'GET','google:read'],
+        [new RegExp(`^/api/projects/(${id})/domains(?:/${id}/redirect-checks)?$`,'i'),'GET','domains:read'],
+        [new RegExp(`^/api/projects/(${id})/audits(?:/${id}(?:/issues)?)?$`,'i'),'GET','audits:read'],
       ];
       const scoped=scopedRoutes.find(([route,method])=>request.method===method&&route.test(path));
       if(promptApiRoute&&(promptRead||promptWrite)) {
@@ -250,7 +255,7 @@ export async function handleApi(request: Request): Promise<Response> {
       return json(await collectNative(request, event.siteKey, event, extractAnalyticsPeer(request)), 202, cors);
     }
     if (!principal && request.method === 'POST' && request.headers.get('origin') !== config.appUrl) throw new FoundationError(403, 'This action must originate from the application.');
-    const googleResponse = await handleGoogle(request);
+    const googleResponse = await handleGoogle(request, principal ? { userId: principal.userId, token: apiToken! } : undefined);
     if (googleResponse) return googleResponse;
     const oidcResponse = await handleOidc(request);
     if (oidcResponse) return oidcResponse;
@@ -306,6 +311,8 @@ export async function handleApi(request: Request): Promise<Response> {
       return json({ error: 'Authentication route unavailable.' }, 404);
     }
     const user = principal ? { id: principal.userId, name: '', email: '' } : await signedIn(request);
+    // Every route below is under /api/(workspaces|projects)/<id> except GET /api/me and POST /api/workspaces, which stay reachable.
+    await requireWorkspaceFactor(path, user.id);
     const analyticsExportRoute=path.match(new RegExp('^/api/projects/('+id+')/analytics/export$','i'));
     if(analyticsExportRoute){
       if(request.method!=='POST')return json({error:'Method not allowed.'},405);
@@ -461,14 +468,14 @@ export async function handleApi(request: Request): Promise<Response> {
       const [,projectId,runOrSetup,action,pageId,links]=auditRoute;
       await limit(`audits:${user.id}:${request.method==='GET'?'read':'write'}`,request.method==='GET'?120:10);
       if(request.method==='GET'){
-        if(!runOrSetup)return json(await listSiteAudits(projectId,user.id,url.searchParams));
+        if(!runOrSetup)return json(await listSiteAudits(projectId,user.id,url.searchParams,apiToken??undefined));
         if(runOrSetup==='setup'&&!action){if(url.search)throw new FoundationError(400,'Audit setup does not accept query parameters.');return json(await getSiteAuditSetup(projectId,user.id));}
         if(runOrSetup!=='setup'){
-          if(!action){if(url.search)throw new FoundationError(400,'Audit details do not accept query parameters.');return json(await getSiteAudit(projectId,user.id,runOrSetup));}
+          if(!action){if(url.search)throw new FoundationError(400,'Audit details do not accept query parameters.');return json(await getSiteAudit(projectId,user.id,runOrSetup,apiToken??undefined));}
           if(action==='pages'&&!pageId)return json(await listSiteAuditPages(projectId,user.id,runOrSetup,url.searchParams));
           if(action==='pages'&&pageId&&links)return json(await listSiteAuditLinks(projectId,user.id,runOrSetup,pageId,url.searchParams));
           if(action==='pages'&&pageId&&!links){if(url.search)throw new FoundationError(400,'Page details do not accept query parameters.');return json(await getSiteAuditPage(projectId,user.id,runOrSetup,pageId));}
-          if(action==='issues'&&!pageId)return json(await listSiteAuditIssues(projectId,user.id,runOrSetup,url.searchParams));
+          if(action==='issues'&&!pageId)return json(await listSiteAuditIssues(projectId,user.id,runOrSetup,url.searchParams,apiToken??undefined));
         }
       }
       if(request.method==='POST'){
@@ -833,7 +840,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if(redirectRoute){
       if(url.search)throw new FoundationError(400,'Redirect checks do not accept query parameters.');
       await limit(`domain-redirect:${user.id}:read`,60);
-      if(request.method==='GET')return json(await getDomainRedirectChecks(redirectRoute[1],user.id,redirectRoute[2]));
+      if(request.method==='GET')return json(await getDomainRedirectChecks(redirectRoute[1],user.id,redirectRoute[2],apiToken??undefined));
       if(request.method==='POST'){
         await limit(`domain-redirect:${user.id}:write`,10);
         return json(await startDomainRedirectCheck(redirectRoute[1],user.id,redirectRoute[2],await readJson(request,4096)),202);
@@ -844,7 +851,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if (domainRoute) {
       if (url.search) throw new FoundationError(400, 'Domain settings do not accept query parameters.');
       await limit(`domain-settings:${user.id}`, 60);
-      if (request.method === 'GET' && !domainRoute[2]) return json(await getDomains(domainRoute[1], user.id));
+      if (request.method === 'GET' && !domainRoute[2]) return json(await getDomains(domainRoute[1], user.id, apiToken ?? undefined));
       if (request.method === 'POST') {
         const input = await readJson(request, 4096);
         if (!domainRoute[2]) return json(await addDomain(domainRoute[1], user.id, input), 201);
@@ -969,7 +976,7 @@ export async function handleApi(request: Request): Promise<Response> {
       const { rows } = await getDatabase().pool.query('SELECT w.id,w.name,m.role FROM workspace w JOIN membership m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.created_at,w.id', [user.id]);
       return json({ user: { id: user.id, name: user.name, email: user.email }, instanceOperator: await isInstanceOperator(user.id), workspaces: rows });
     }
-    let match = path.match(new RegExp(`^/api/workspaces/(${id})/(team|rename|invitations|transfer-ownership)$`, 'i'));
+    let match = path.match(new RegExp(`^/api/workspaces/(${id})/(team|rename|invitations|transfer-ownership|two-factor)$`, 'i'));
     if (match) {
       if (request.method === 'GET' && match[2] === 'team') {
         const result = await getTeam(match[1], user.id);
@@ -979,6 +986,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'POST') {
         await limit(`team:${user.id}`, 60);
         if (match[2] === 'transfer-ownership') return json(await transferOwnership(match[1], user.id, await readJson(request)));
+        if (match[2] === 'two-factor') return json(await setTwoFactorRequirement(match[1], user.id, await readJson(request)));
         if (match[2] === 'rename') return json(await renameWorkspace(match[1], user.id, await readJson(request)));
         if (match[2] === 'invitations') {
           const result = await inviteMember(match[1], user.id, await readJson(request));

@@ -7,7 +7,7 @@ type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 type Member = { userId: string; name: string; email: string; role: Role };
 type Invitation = { id: string; email: string; role: Role; expiresAt: string };
 type TeamData = {
-  workspace: { id: string; name: string };
+  workspace: { id: string; name: string; twoFactorRequired: boolean };
   role: Role;
   members: Member[];
   invitations: Invitation[];
@@ -253,6 +253,15 @@ function TeamPanelContent(props: TeamPanelProps) {
     });
   }
 
+  function toggleTwoFactor() {
+    if (!data || myRole !== 'owner' || busy) return;
+    const required = !data.workspace.twoFactorRequired;
+    if (required && !window.confirm('Members without two-factor authentication will lose access to this workspace’s data, and API keys they created will stop working, until they turn it on. Require it now?')) return;
+    void runMutation('Could not change the two-factor requirement', async signal => {
+      await api<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/two-factor`, { method: 'POST', body: { required }, signal });
+    });
+  }
+
   async function copyInvite() {
     if (!inviteLink) return;
     const link = inviteLink;
@@ -385,6 +394,20 @@ function TeamPanelContent(props: TeamPanelProps) {
           </div>
         )}
       </section>
+
+      {myRole === 'owner' && (
+        <section className='card' aria-labelledby='two-factor-heading'>
+          <h2 id='two-factor-heading'>Two-factor requirement</h2>
+          <p id='two-factor-status' role='status'>
+            {data.workspace.twoFactorRequired
+              ? 'Members must turn on two-factor authentication before opening this workspace’s data.'
+              : 'Members can open this workspace without two-factor authentication.'}
+          </p>
+          <button type='button' className='btn' style={{ minBlockSize: 'var(--control-touch)' }} aria-disabled={busy} aria-describedby='two-factor-status' onClick={toggleTwoFactor}>
+            {data.workspace.twoFactorRequired ? 'Stop requiring two-factor authentication' : 'Require two-factor authentication'}
+          </button>
+        </section>
+      )}
 
       {myRole === 'owner' && (
         <section className='card' aria-labelledby='ownership-heading'>

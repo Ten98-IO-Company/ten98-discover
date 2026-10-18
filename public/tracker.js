@@ -481,9 +481,17 @@
       if (referrer && /^https?:\/\//.test(referrer)) dimensions.referrer = referrer;
       if (settings.captureScreen && window.screen) dimensions.screen = {width: screen.width, height: screen.height};
       if (!performanceEvent && settings.captureCampaigns) {
-        var query = new URL(location.href).searchParams, campaign = {};
+        var query = new URL(location.href).searchParams, campaign = {}, clickIds = {};
         ['source', 'medium', 'campaign', 'term', 'content'].forEach(function (key) { var value = query.get('utm_' + key); if (value) campaign[key] = value; });
         if (Object.keys(campaign).length) dimensions.campaign = campaign;
+        // Pinned Umami's six paid-click identifiers (src/lib/attribution.ts), read like its collector: first occurrence, empty kept.
+        // Only with the analytics grant (owner decision D1; cookieless basic events carry none). Each is cut to the collector's
+        // 255 code points and a NUL-bearing value is skipped, so a long or malformed identifier never costs the page view.
+        if (consented) ['gclid', 'fbclid', 'msclkid', 'ttclid', 'li_fat_id', 'twclid'].forEach(function (key) {
+          var value = query.get(key);
+          if (value !== null && value.indexOf('\u0000') === -1) clickIds[key] = Array.from(value).slice(0, 255).join('');
+        });
+        if (Object.keys(clickIds).length) dimensions.clickIds = clickIds;
       }
       var payload = performanceEvent ? {type: 'performance', siteKey: state.siteKey, navigationId: event.navigationId, url: event.url, metric: event.metric, value: event.value, revision: event.revision, dimensions: dimensions} :
         {siteKey: state.siteKey, name: event.name, eventId: event.eventId, url: event.url, properties: event.properties, dimensions: dimensions, context: state.nativeContext || undefined};

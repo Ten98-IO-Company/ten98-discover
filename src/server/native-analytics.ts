@@ -14,6 +14,7 @@ import {analyticsEnvironment} from './analytics-environment.ts';
 import {collectGeography,geographyReadiness} from './analytics-geography.ts';
 import type {GeographyObservation} from '../lib/analytics-geography.ts';
 import {normalizeRevenueProperties} from '../lib/revenue.ts';
+import {paidAdsClickIds} from '../lib/attribution.ts';
 import {replaySettings} from '../lib/session-replay.ts';
 import {heatmapSettings} from '../lib/replay-heatmaps.ts';
 
@@ -126,10 +127,14 @@ async function writeObservation(client: PoolClient, project: Project, input: Obs
   if (!settings.captureReferrer) delete dimensions.referrerHost;
   if (!settings.captureCampaigns) delete dimensions.campaign;
   if (!settings.captureScreen) { delete dimensions.screenWidth; delete dimensions.screenHeight; }
-  const inserted = await client.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,properties,dimensions,source,metric_version,identity_link_evidence_version,collection_basis)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(project_id,id) DO NOTHING RETURNING id`,
+  // Raw ad click IDs (owner decision D1) go to their own columns, never the dimensions JSON, and only for a browser event that
+  // carries the analytics grant: cookieless basic and API observations never store them (docs/attribution.md).
+  const {clickIds:submittedClickIds,...stored}=dimensions,clickIds=settings.captureCampaigns&&source==='browser'&&basis==='consent'?submittedClickIds??{}:{};
+  const inserted = await client.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,properties,dimensions,source,metric_version,identity_link_evidence_version,collection_basis,gclid,fbclid,msclkid,ttclid,li_fat_id,twclid)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(project_id,id) DO NOTHING RETURNING id`,
     [input.eventId, project.id, input.name, eventPath(input.url), now, identity?.visitor ?? null, identity?.visit ?? null,
-      JSON.stringify(properties), JSON.stringify({ ...dimensions, ...environment,...geography?{geography}:{}, origin: new URL(input.url).origin }), source, identity?.metricVersion ?? 'observations-v2',identityEvidence,basis]);
+      JSON.stringify(properties), JSON.stringify({ ...stored, ...environment,...geography?{geography}:{}, origin: new URL(input.url).origin }), source, identity?.metricVersion ?? 'observations-v2',identityEvidence,basis,
+      ...paidAdsClickIds.map(([id])=>clickIds[id]??null)]);
   if (inserted.rowCount && identity) await client.query(`INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,$3,$3)
     ON CONFLICT(project_id,id) DO UPDATE SET first_seen_at=CASE WHEN analytics_visitor.first_seen_at<(SELECT analytics_retained_from FROM project WHERE id=$1) THEN excluded.first_seen_at ELSE LEAST(analytics_visitor.first_seen_at,excluded.first_seen_at) END,last_seen_at=GREATEST(analytics_visitor.last_seen_at,excluded.last_seen_at)`, [project.id, identity.visitor, now]);
   return { accepted: true, duplicate: !inserted.rowCount, ...(inserted.rowCount && identity ? { context: identity.context } : {}) };

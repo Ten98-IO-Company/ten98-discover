@@ -43,7 +43,7 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
 
   const input = { name: 'Input check', scopes: ['projects:read'] };
   for (const invalid of [null, {}, { ...input, name: ' ' }, { ...input, name: 'x'.repeat(81) }, { ...input, extra: true },
-    { ...input, scopes: [] }, { ...input, scopes: ['projects:read', 'projects:read'] }, { ...input, scopes: ['paid:run'] }, { ...input, scopes: ['audits:read'] }, { ...input, scopes: ['domains:read'] },
+    { ...input, scopes: [] }, { ...input, scopes: ['projects:read', 'projects:read'] }, { ...input, scopes: ['paid:run'] }, { ...input, scopes: ['audits:write'] }, { ...input, scopes: ['domains:write'] }, { ...input, scopes: ['google:write'] },
     { ...input, expiresInDays: 0 }, { ...input, expiresInDays: 366 }, { ...input, expiresInDays: 1.5 }, { ...input, expiresInDays: null }]) {
     await rejects(createApiKey(workspaceId, options.ownerId, invalid), 400, 'Invalid key fields must be rejected.');
   }
@@ -72,6 +72,28 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
   await rejects(authenticateApiKey(memberKey.token), 401, 'Removed members must lose key access.');
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'admin')", [workspaceId, memberId]);
   await rejects(authenticateApiKey(memberKey.token), 401, 'Rejoining must not reactivate previously issued keys.');
+
+  // Workspace two-factor requirement: keys whose issuer has no verified factor are suspended, never revoked, and resume on enrolment.
+  const factorKey = await createApiKey(workspaceId, memberId, { name: 'Factor issuer', scopes: ['projects:read'] });
+  const unrevoked = async () => assert.equal((await pool.query('SELECT 1 FROM api_key WHERE id=ANY($1::uuid[]) AND revoked_at IS NULL', [[factorKey.key.id, created.key.id]])).rowCount, 2, 'Suspension must never revoke a key.');
+  await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1)', [workspaceId]);
+  try {
+    await rejects(authenticateApiKey(factorKey.token), 401, 'A required factor suspends an un-enrolled issuer key.');
+    await rejects(authenticateApiKey(created.token), 401, 'A required factor suspends the un-enrolled owner key too.');
+    assert.equal((await http(`/api/workspaces/${workspaceId}/projects`, 401, { token: created.token })).body.error, 'The API key is invalid, expired or unavailable.');
+    await unrevoked();
+    await pool.query('UPDATE "user" SET "twoFactorEnabled"=true WHERE id=$1', [memberId]);
+    assert.equal((await authorizeApiKey(factorKey.token, workspaceId, 'projects:read')).userId, memberId, 'Enrolment resumes the issuer key.');
+    await rejects(authenticateApiKey(created.token), 401, 'Another issuer enrolling does not resume a key.');
+    await pool.query('UPDATE "user" SET "twoFactorEnabled"=false WHERE id=$1', [memberId]);
+    await rejects(authenticateApiKey(factorKey.token), 401, 'Disabling the factor suspends the key again.');
+    await unrevoked();
+  } finally { await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1', [workspaceId]); }
+  await authorizeApiKey(factorKey.token, workspaceId, 'projects:read');
+  await authorizeApiKey(created.token, workspaceId, 'projects:read');
+  await unrevoked();
+  await http(`/api/workspaces/${workspaceId}/two-factor`, 403, { token: created.token }, { required: true });
+  console.log('PASS API keys of an issuer without a verified factor are suspended while the workspace requires two-factor authentication, never revoked, and resume on enrolment or when the requirement is lifted');
 
   await rejects(revokeApiKey(options.workspaceId, options.ownerId, created.key.id), 404, 'Revocation must enforce the selected workspace.');
   await authorizeApiKey(created.token, workspaceId, 'projects:read');

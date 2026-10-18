@@ -9,6 +9,7 @@ import { expireKeywordResults } from '../src/server/keyword-retention.ts';
 import { enqueueGoogleImport, listGoogleConnections, readGoogleImport } from '../src/server/google-jobs.ts';
 import { getRetention, previewRetention, saveRetention, runRetentionBatch } from '../src/server/retention.ts';
 import { stopJobs } from '../src/server/jobs.ts';
+import { createApiKey } from '../src/server/api-keys.ts';
 
 export async function runGoogleRetentionChecks() {
   assert.equal(process.env.TEN98_INTEGRATION_TEST, '1');
@@ -100,6 +101,21 @@ export async function runGoogleRetentionChecks() {
     await gate.query('COMMIT');
     assert.equal((await afterCommit).import.dataStatus, 'expired');
   } finally { await gate.query('ROLLBACK').catch(() => {}); gate.release(); }
+  // A google:read bearer read takes the workspace SHARE gate instead; it must still wait behind cleanup and see the committed expiry.
+  const bearerReceipt = await receipt(), reader = await createApiKey(primary.workspaceId, owner, { name: 'Google retention reader', scopes: ['google:read'], expiresInDays: 1 });
+  const bearerGate = await pool.connect();
+  try {
+    await bearerGate.query('BEGIN');
+    await bearerGate.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE', [primary.workspaceId]);
+    await bearerGate.query('SELECT id FROM project WHERE id=$1 FOR UPDATE', [primary.id]);
+    await expireGoogleImportPages(bearerGate, primary.id, cutoff);
+    let bearerResolved = false;
+    const bearerRead = readGoogleImport(primary.id, owner, bearerReceipt.id, 0, reader.token).then(value => { bearerResolved = true; return value; });
+    await delay(50); assert.equal(bearerResolved, false, 'A bearer report read must also serialize behind cleanup.');
+    await bearerGate.query('COMMIT');
+    const expiredRead = await bearerRead;
+    assert.equal(expiredRead.import.dataStatus, 'expired'); assert.deepEqual(expiredRead.rows, []); assert.deepEqual(expiredRead.quality.metadata, {});
+  } finally { await bearerGate.query('ROLLBACK').catch(() => {}); bearerGate.release(); }
 
   const oldKeyword=await keyword(primary,old), exactKeyword=await keyword(primary,cutoff),newKeyword=await keyword(primary,new Date(cutoff.getTime()+1)),foreignKeyword=await keyword(foreign,old);
   const evidenceBefore=(await pool.query('SELECT row_to_json(p) AS ledger,r.reconciliation_evidence FROM provider_request p JOIN keyword_research_run r ON r.id=p.id WHERE p.id=$1',[oldKeyword.id])).rows[0];

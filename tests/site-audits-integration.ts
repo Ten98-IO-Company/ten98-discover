@@ -318,6 +318,84 @@ export async function runSiteAuditChecks(){
   const leasedHttp=await handleApi(exportRequest()),busyHttp=await handleApi(exportRequest());assert.equal(busyHttp.status,503);assert.equal(busyHttp.headers.get('retry-after'),'5');await leasedHttp.body!.cancel();
   let releaseExport!:()=>void,enteredExport!:()=>void;const exportHeld=new Promise<void>(resolve=>{releaseExport=resolve;}),exportReading=new Promise<void>(resolve=>{enteredExport=resolve;});const delayedExport=new Request(exportEndpoint,{method:'POST',headers:{cookie,origin:config.appUrl,'content-type':'application/json'},body:new ReadableStream({async start(controller){enteredExport();await exportHeld;controller.enqueue(new TextEncoder().encode(JSON.stringify(exportBody)));controller.close();}}),duplex:'half'} as RequestInit),exportPending=handleApi(delayedExport);await exportReading;await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspace,owner]);releaseExport();assert.equal((await exportPending).status,404);await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspace,owner]);
   console.log('PASS exact CSV HTTP route, cookie/Origin/bearer scope, strict body/query, identity encoding/length headers and live read-membership revocation during body parsing');
+  {
+  // audits:read admits the list, run detail and issues only: equal to the member read, through the same durable expiry latch.
+  const reader=await createApiKey(workspace,owner,{name:'Audit reader',scopes:['audits:read']});
+  const keyed=(suffix:string,key=reader.token,init:RequestInit={})=>handleApi(new Request(endpoint+suffix,{...init,headers:{authorization:'Bearer '+key,...init.headers as Record<string,string>}}));
+  const wire=(value:unknown)=>JSON.parse(JSON.stringify(value)),keyedRun=await start();await finish(keyedRun.run.id);const runPath='/'+keyedRun.run.id;
+  const keyedPage=(await listSiteAuditPages(project,owner,keyedRun.run.id,new URLSearchParams())).pages[0].id;
+  await pool.query("INSERT INTO site_audit_issue(id,run_id,page_id,issue_key,rule_version,code,severity,details) VALUES($1,$2,$3,$4,'static-html-v1','missing-title','critical','{}')",[randomUUID(),keyedRun.run.id,keyedPage,'d'.repeat(64)]);
+  const reads:[string,(key?:string)=>Promise<unknown>][]=[['?limit=2',key=>listSiteAudits(project,owner,new URLSearchParams('limit=2'),key)],[runPath,key=>getSiteAudit(project,owner,keyedRun.run.id,key)],[runPath+'/issues?code=missing-title',key=>listSiteAuditIssues(project,owner,keyedRun.run.id,new URLSearchParams('code=missing-title'),key)]];
+  for(const [suffix,read] of reads){
+   const response=await keyed(suffix);assert.equal(response.status,200,suffix);assert.equal(response.headers.get('cache-control'),'no-store');const body=await response.json();
+   assert.deepEqual(body,wire(await read()),'The key read equals the member read: '+suffix);assert.deepEqual(wire(await read(reader.token)),body,'The direct key read equals the HTTP key read: '+suffix);
+  }
+  const keyedIssues=await (await keyed(runPath+'/issues')).json();assert.equal(keyedIssues.issues.length,1);assert.equal(keyedIssues.matchingRetainedCount,1);assert.equal(keyedIssues.run.canDelete,true,'The run DTO is the issuer role DTO, unchanged under a key.');
+  // The earlier analytics key went with the owner's removed membership above; a fresh one shows the wrong scope is refused on every admitted route.
+  const analyticsOnly=await createApiKey(workspace,owner,{name:'Analytics only',scopes:['analytics:read']});
+  for(const suffix of ['',runPath,runPath+'/issues'])assert.equal((await keyed(suffix,analyticsOnly.token)).status,403,'analytics:read never reaches audits: '+suffix);
+  assert.equal((await keyed('',reader.token,{headers:{cookie}})).status,400,'Cookie plus bearer is refused.');
+  assert.equal((await keyed('?limit=1&limit=2')).status,400);assert.equal((await keyed(runPath+'?limit=1')).status,400);
+  assert.equal((await handleApi(new Request(`${config.appUrl}/api/projects/${project}/events`,{headers:{authorization:'Bearer '+reader.token}}))).status,403,'audits:read does not reach analytics.');
+  // Setup, pages, page detail, links, export, start, cancel and delete stay cookie-only; nothing changes.
+  const runsBefore=(await pool.query('SELECT count(*)::int AS n FROM site_audit_run WHERE project_id=$1',[project])).rows[0].n;
+  for(const [suffix,method] of [['','POST'],[runPath+'/cancel','POST'],[runPath+'/delete','POST'],[runPath+'/pages/export','POST'],['/setup','GET'],[runPath+'/pages','GET'],[runPath+'/pages/'+keyedPage,'GET'],[runPath+'/pages/'+keyedPage+'/links','GET']] as const)
+   assert.equal((await keyed(suffix,reader.token,method==='POST'?{method,headers:{origin:config.appUrl,'content-type':'application/json'},body:JSON.stringify(input())}:{})).status,403,method+' '+suffix);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM site_audit_run WHERE project_id=$1',[project])).rows[0].n,runsBefore);const unchanged=(await getSiteAudit(project,owner,keyedRun.run.id)).run;assert.equal(unchanged.status,'completed');assert.equal(unchanged.dataStatus,'available');
+  // Tenancy, revocation and the viewer allowlist.
+  const foreignReader=await createApiKey(foreignWorkspace,owner,{name:'Foreign audit reader',scopes:['audits:read']});
+  assert.equal((await keyed('',foreignReader.token)).status,404,'A key cannot reach a project of another workspace.');
+  assert.equal((await handleApi(new Request(`${config.appUrl}/api/projects/${foreignProject}/audits`,{headers:{authorization:'Bearer '+reader.token}}))).status,404);
+  const revoked=await createApiKey(workspace,owner,{name:'Revoked audit reader',scopes:['audits:read']});await pool.query('UPDATE api_key SET revoked_at=clock_timestamp() WHERE id=$1',[revoked.key.id]);
+  assert.equal((await keyed('',revoked.token)).status,401,'A revoked key is refused.');
+  const viewerKey=await createApiKey(workspace,admin,{name:'Viewer audit reader',scopes:['audits:read']});await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[workspace,admin]);
+  try{const viewed=await keyed(runPath+'/issues',viewerKey.token);assert.equal(viewed.status,200,'audits:read is on the viewer allowlist.');const viewedBody=await viewed.json();assert.equal(viewedBody.role,'viewer');assert.equal(viewedBody.run.canDelete,false);}
+  finally{await pool.query("UPDATE membership SET role='admin' WHERE workspace_id=$1 AND user_id=$2",[workspace,admin]);}
+  // A key read latches due expiry durably, exactly as a member read; a later policy extension cannot re-reveal the retained issue.
+  const aged=await start();await finish(aged.run.id);const agedPath='/'+aged.run.id;
+  await pool.query("INSERT INTO site_audit_issue(id,run_id,issue_key,rule_version,code,severity,details) VALUES($1,$2,$3,'static-graph-v1','orphan-page','info','{}')",[randomUUID(),aged.run.id,'e'.repeat(64)]);
+  await pool.query("WITH age AS (SELECT clock_timestamp()-interval '366 days' AS at) UPDATE site_audit_run SET created_at=age.at,completed_at=age.at,deadline_at=age.at+interval '30 minutes' FROM age WHERE id=$1",[aged.run.id]);
+  const markers=async()=>(await pool.query('SELECT raw_expired_at,data_expired_at FROM site_audit_run WHERE id=$1',[aged.run.id])).rows[0] as {raw_expired_at:Date|null;data_expired_at:Date|null};
+  assert.deepEqual(await markers(),{raw_expired_at:null,data_expired_at:null},'Nothing latched the aged run before the key read.');
+  const agedRead=await keyed(agedPath+'/issues');assert.equal(agedRead.status,200);const agedBody=await agedRead.json();
+  assert.equal(agedBody.run.dataStatus,'expired');assert.deepEqual(agedBody.issues,[]);assert.equal(agedBody.groups,null);assert.equal(agedBody.matchingRetainedCount,null);assert.equal(agedBody.nextCursor,null);
+  const latched=await markers();assert.ok(latched.raw_expired_at&&latched.data_expired_at,'The key read committed both expiry markers.');assert.equal(agedBody.run.dataExpiredAt,latched.data_expired_at!.toISOString());
+  await pool.query('UPDATE workspace SET raw_provider_evidence_days=3650,derived_history_days=3650 WHERE id=$1',[workspace]);
+  try{
+   const extended=await (await keyed(agedPath+'/issues')).json();assert.equal(extended.run.dataStatus,'expired','A later policy extension cannot revive key-latched data.');assert.deepEqual(extended.issues,[]);assert.equal(extended.groups,null);
+   assert.equal((await (await keyed(agedPath)).json()).run.rawEvidenceStatus,'expired');assert.equal((await (await keyed('?limit=100')).json()).runs.find((r:{id:string})=>r.id===aged.run.id).dataStatus,'expired');
+   assert.deepEqual(await markers(),latched,'Markers never move once latched.');assert.equal((await pool.query('SELECT 1 FROM site_audit_issue WHERE run_id=$1',[aged.run.id])).rowCount,1,'The retained row still exists; only the durable latch hides it.');
+  }finally{await pool.query('UPDATE workspace SET raw_provider_evidence_days=90,derived_history_days=365 WHERE id=$1',[workspace]);}
+  // Bounded wait: behind a held workspace UPDATE lock a key read answers 503 within the 5 s bound, and a key revoked during that wait outranks it with 401.
+  const stale=await createApiKey(workspace,owner,{name:'Stale audit reader',scopes:['audits:read']}),lockHolder=await pool.connect();
+  try{
+   await lockHolder.query('BEGIN');await lockHolder.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[workspace]);
+   const waited=performance.now(),busy=await keyed('');assert.equal(busy.status,503);const busyMs=performance.now()-waited;assert.ok(busyMs>=4500&&busyMs<8000,'A key read waits the 5 s lock bound, then answers 503 ('+Math.round(busyMs)+' ms).');
+   const pending=keyed('',stale.token),end=Date.now()+4000;let reached=false;
+   while(!reached&&Date.now()<end){reached=!!(await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE $1",['SELECT id FROM workspace WHERE id=$1 FOR SHARE%'])).rowCount;if(!reached)await new Promise(resolve=>setTimeout(resolve,10));}
+   assert.ok(reached,'The stale key read reached the workspace lock wait.');await pool.query('UPDATE api_key SET revoked_at=clock_timestamp() WHERE id=$1',[stale.key.id]);
+   assert.equal((await pending).status,401,'Stale key authority outranks the 503 on the error path.');
+  }finally{await lockHolder.query('ROLLBACK').catch(()=>{});lockHolder.release();}
+  // The pre-COMMIT key recheck is the HTTP path's only guard after the read (api.ts publishes json(result) directly): a key revoked while its issues
+  // read waits, after the raw expiry latch was written, is refused 401 and the latch rolls back; a current key read then latches it.
+  const rawDue=await start();await finish(rawDue.run.id);const rawDueIssues='/'+rawDue.run.id+'/issues';
+  await pool.query("INSERT INTO site_audit_issue(id,run_id,issue_key,rule_version,code,severity,details) VALUES($1,$2,$3,'static-graph-v1','orphan-page','info','{}')",[randomUUID(),rawDue.run.id,'f'.repeat(64)]);
+  await pool.query("WITH age AS (SELECT clock_timestamp()-interval '100 days' AS at) UPDATE site_audit_run SET created_at=age.at,completed_at=age.at,deadline_at=age.at+interval '30 minutes' FROM age WHERE id=$1",[rawDue.run.id]);
+  const rawMarkers=async()=>(await pool.query('SELECT raw_expired_at,data_expired_at FROM site_audit_run WHERE id=$1',[rawDue.run.id])).rows[0] as {raw_expired_at:Date|null;data_expired_at:Date|null};
+  const midRead=await createApiKey(workspace,owner,{name:'Mid-read audit reader',scopes:['audits:read']}),issueLock=await pool.connect();
+  try{
+   await issueLock.query('BEGIN');await issueLock.query('LOCK TABLE site_audit_issue IN ACCESS EXCLUSIVE MODE');
+   const pending=keyed(rawDueIssues,midRead.token),end=Date.now()+4000;let reached=false;
+   while(!reached&&Date.now()<end){reached=!!(await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE $1",['SELECT i.id,i.page_id AS "pageId"%'])).rowCount;if(!reached)await new Promise(resolve=>setTimeout(resolve,10));}
+   assert.ok(reached,'The key read passed the gate and the expiry latch and reached the issue lock wait.');
+   await pool.query('UPDATE api_key SET revoked_at=clock_timestamp() WHERE id=$1',[midRead.key.id]);await issueLock.query('COMMIT');
+   assert.equal((await pending).status,401,'A key revoked while its read ran is refused before COMMIT.');
+  }finally{await issueLock.query('ROLLBACK').catch(()=>{});issueLock.release();}
+  assert.deepEqual(await rawMarkers(),{raw_expired_at:null,data_expired_at:null},'The stale key committed no expiry latch.');
+  const rawLatched=await (await keyed(rawDueIssues)).json();assert.equal(rawLatched.run.rawEvidenceStatus,'expired');assert.equal(rawLatched.run.dataStatus,'available');assert.equal(rawLatched.issues.length,1);
+  const rawAfter=await rawMarkers();assert.ok(rawAfter.raw_expired_at,'A current key read latches the due raw expiry.');assert.equal(rawAfter.data_expired_at,null);
+  console.log('PASS audits:read list/detail/issues equal the member read, every other audit route 403 under a key, mixed credentials 400, strict query, foreign 404, revoked 401, viewer allowlist, durable key-read expiry latch that a policy extension cannot revive, bounded 503 and stale-key 401 on the error path, and a key revoked mid-read refused 401 before COMMIT with its latch rolled back');
+  }
   let unblock!:()=>void;const held=new Promise<void>(resolve=>{unblock=resolve;});let reading!:()=>void;const entered=new Promise<void>(resolve=>{reading=resolve;});
   const request=new Request(endpoint,{method:'POST',headers:{cookie,origin:config.appUrl,'content-type':'application/json'},body:new ReadableStream({async start(controller){reading();await held;controller.enqueue(new TextEncoder().encode(JSON.stringify(input())));controller.close();}}),duplex:'half'} as RequestInit);
   const delayed=handleApi(request);await entered;await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[workspace,owner]);unblock();assert.equal((await delayed).status,403);

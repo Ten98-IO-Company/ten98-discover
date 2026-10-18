@@ -249,6 +249,13 @@ export async function runOidcChecks(options: Options): Promise<void> {
       assert.equal(authorization.searchParams.get('max_age'), '0'); assert.equal(authorization.searchParams.get('prompt'), 'login');
       return (await finish(start, newBrowser, '#oidc-proof=')).proofId;
     }
+    // A workspace two-factor requirement locks this OIDC-only member until they enrol the app's authenticator through Identity;
+    // the provider's own sign-in (amr/acr) does not satisfy it.
+    const requiredWorkspace = randomUUID();
+    await pool.query("INSERT INTO workspace(id,name) VALUES($1,'OIDC two-factor required fixture')", [requiredWorkspace]);
+    await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'viewer')", [requiredWorkspace, newUserId]);
+    await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1)', [requiredWorkspace]);
+    assert.equal((await call(`/api/workspaces/${requiredWorkspace}/projects`, newBrowser, undefined, 403)).error, 'This workspace requires two-factor authentication. Turn it on in Account security, then try again.');
     const enrollProof = await accountProof();
     await call(`/api/account/oidc/proofs/${enrollProof}`, actor, undefined, 403);
     const oidcEnroll = await call('/api/account/oidc/reauth/confirm', newBrowser, { proofId: enrollProof, action: 'enable-two-factor' });
@@ -256,6 +263,8 @@ export async function runOidcChecks(options: Options): Promise<void> {
     await call('/api/account/oidc/reauth/confirm', newBrowser, { proofId: enrollProof, action: 'enable-two-factor' }, 410);
     await call('/api/account/two-factor/verify', newBrowser, { code: authenticatorCode(new URL(oidcEnroll.totpURI).searchParams.get('secret')!) });
     assert.equal((await call('/api/account/security', newBrowser)).user.twoFactorEnabled, true);
+    await call(`/api/workspaces/${requiredWorkspace}/projects`, newBrowser);
+    console.log('PASS an OIDC-only member of a workspace requiring two-factor authentication is refused until enrolling the app authenticator through Identity, then reads it');
     assert.ok((await pool.query('SELECT 1 FROM session WHERE "userId"=$1 AND "oidcProviderId"=$2', [newUserId, providerId])).rowCount, 'OIDC-only factor enrollment must preserve provider-bound session revocation.');
     const replacementProof = await accountProof();
     await call('/api/account/oidc/reauth/confirm', newBrowser, { proofId: replacementProof, action: 'replace-recovery' }, 400);
