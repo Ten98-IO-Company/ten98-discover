@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { hashPassword } from 'better-auth/crypto'
@@ -41,13 +41,12 @@ try {
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true })
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
   let external = 0, errors = 0
-  const requests: string[] = [], metaReportWrites: string[] = [], aiWrites: string[] = []
+  const requests: string[] = [], aiWrites: string[] = []
   await context.route('**/*', (route: any) => {
     const url = new URL(route.request().url())
     if (url.origin !== config.appUrl) { external++; return route.abort() }
     requests.push(url.pathname)
     if (route.request().method() !== 'GET' && /\/prompt-(?:executions|insights)(?:\/|$)/.test(url.pathname)) aiWrites.push(url.pathname)
-    if (route.request().method()==='POST' && /\/meta\/(?:connections\/[^/]+\/(?:imports|campaign-inventories)|(?:imports|campaign-inventories)\/[^/]+\/cancel)$/.test(url.pathname)) metaReportWrites.push(url.pathname)
     return route.continue()
   })
   page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', () => errors++)
@@ -166,7 +165,7 @@ try {
   console.log('PASS navigation: malformed, foreign and forbidden targets canonicalize before protected panels mount.')
 
   const families = ['Measure', 'Research', 'Connect']
-  const commonSections = ['Analytics', 'Realtime', 'Compare', 'UTM campaigns', 'Explore', 'Sessions', 'Attribution', 'Journeys', 'Retention', 'Revenue', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'AI search', 'Keywords', 'Domain SEO', 'Rank tracking', 'Meta ads', 'Meta reports', 'Install tracker', 'Collection and privacy']
+  const commonSections = ['Analytics', 'Realtime', 'Compare', 'UTM campaigns', 'Explore', 'Sessions', 'Attribution', 'Journeys', 'Retention', 'Revenue', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'AI search', 'Keywords', 'Domain SEO', 'Rank tracking', 'Install tracker', 'Collection and privacy']
   for (const [workspace, projectId, isOwner] of [[a.id, a1, true], [b.id, b1, false]] as const) {
     await page.goto(href(workspace, projectId, 'events')); await heading('Recent events'); await menu()
     const sections = page.getByRole('navigation', { name: 'Project sections', exact: true })
@@ -192,11 +191,11 @@ try {
   try {
     await page.reload(); await page.getByRole('heading', { name: /retention/i }).first().waitFor(); await menu()
     const instance = page.getByRole('navigation', { name: 'Instance settings', exact: true, includeHidden: true })
-    assert.deepEqual(await instance.getByRole('link', { includeHidden: true }).allTextContents(), ['Google app setup', 'Meta app setup'])
+    assert.deepEqual(await instance.getByRole('link', { includeHidden: true }).allTextContents(), ['Google app setup'])
     assert.equal(await page.getByRole('link', { name: 'AI and search providers', exact: true, includeHidden: true }).count(), 0, 'Instance authority does not upgrade a workspace viewer.')
-    await link('Meta app setup'); await heading('Meta app setup'); await selected(b.id, b1, 'meta-app')
+    await link('Google app setup'); await heading('Google app setup'); await selected(b.id, b1, 'google-app')
     assert.notEqual(await page.locator('details.account-menu').getAttribute('open'), null, 'Current operator destination opens the account footer.')
-    assert.deepEqual(await instance.locator('a[aria-current="page"]').allTextContents(), ['Meta app setup'])
+    assert.deepEqual(await instance.locator('a[aria-current="page"]').allTextContents(), ['Google app setup'])
   } finally { await pool.query('DELETE FROM instance_operator WHERE user_id=$1', [owner.id]) }
   await page.reload(); await heading('Web analytics'); await selected(b.id, b1, 'project')
   assert.equal(await page.getByRole('navigation', { name: 'Instance settings', includeHidden: true }).count(), 0)
@@ -277,120 +276,23 @@ try {
   assert.equal(new URL(page.url()).searchParams.get('view'), 'security')
   console.log('PASS navigation: workspace creation/membership refresh preserves newer valid viewer navigation.')
 
-  for (const family of ['google','meta']) {
+  for (const family of ['google']) {
     const fragment=`#${family}=connected&${family}-project=${a2}&${family}-workspace=${a.id}`
     const callback = await hold(`**/api/workspaces/${a.id}/projects`)
     await page.goto(href(b.id, b1, 'events')+fragment); await callback.began
     await link('Account security'); await heading('Account security'); callback.release(); await callback.remove(); await delay(150)
     await heading('Account security'); assert.equal(new URL(page.url()).hash, '')
     await page.goto(href(b.id, b1, 'events')+fragment)
-    await heading(family==='meta'?'Meta ads':'Google reports'); await selected(a.id, a2, family); assert.equal(new URL(page.url()).hash, '')
+    await heading('Google reports'); await selected(a.id, a2, family); assert.equal(new URL(page.url()).hash, '')
     await page.goto(href(a.id, a1, 'events')+fragment+'&oidc-factor=1')
     await heading('Recent events'); await page.getByRole('alert').filter({ hasText: 'invalid or ambiguous' }).waitFor()
     assert.equal(new URL(page.url()).hash, '')
   }
+  // The Meta connection was removed: its old return fragment is no callback family and is scrubbed as invalid.
+  await page.goto(href(a.id, a1, 'events')+`#meta=connected&meta-project=${a2}&meta-workspace=${a.id}`)
+  await heading('Recent events'); await page.getByRole('alert').filter({ hasText: 'invalid or ambiguous' }).waitFor()
+  assert.equal(new URL(page.url()).hash, ''); await selected(a.id, a1, 'events')
   console.log('PASS navigation: callback has one-shot priority, yields to user intent, and rejects mixed fragments.')
-
-  await page.goto(href(a.id,a2,'meta-reports')); await heading('Meta reports'); await selected(a.id,a2,'meta-reports')
-  await page.getByText('No sources on this page.',{exact:true}).waitFor()
-  assert.equal(await page.getByText('No sources on this page.',{exact:true}).count(),1)
-  assert.equal(await page.getByLabel('Source',{exact:true}).count(),0)
-  assert.equal(await page.getByRole('navigation',{name:'Meta report views',exact:true}).count(),0)
-  assert.equal(await page.getByRole('button',{name:'Import report',exact:true}).count(),0)
-  await page.reload(); await heading('Meta reports'); await page.getByText('No sources on this page.',{exact:true}).waitFor(); await selected(a.id,a2,'meta-reports')
-  await link('Context'); await heading('Project context'); await page.goBack(); await heading('Meta reports'); await selected(a.id,a2,'meta-reports')
-  await page.getByRole('button',{name:'Manage connections',exact:true}).click(); await heading('Meta ads'); await selected(a.id,a2,'meta')
-  await page.goBack(); await heading('Meta reports'); await selected(a.id,a2,'meta-reports'); await page.getByText('No sources on this page.',{exact:true}).waitFor()
-  await page.setViewportSize({width:360,height:800})
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
-  await mkdir('private/navigation-browser',{recursive:true}); await page.screenshot({path:'private/navigation-browser/meta-reports-360.png',fullPage:true})
-  await page.setViewportSize({width:1280,height:900})
-  await page.goto(href(b.id,b1,'meta-reports')); await heading('Meta reports'); await selected(b.id,b1,'meta-reports'); await page.getByText('No sources on this page.',{exact:true}).waitFor()
-  const memberSources=await context.request.get(`${config.appUrl}/api/projects/${b1}/meta`)
-  assert.equal(memberSources.status(),200); assert.equal((await memberSources.json()).role,'viewer')
-  assert.equal(await page.getByText('No sources on this page.',{exact:true}).count(),1)
-  assert.equal(await page.getByLabel('Source',{exact:true}).count(),0)
-  assert.equal(await page.getByRole('navigation',{name:'Meta report views',exact:true}).count(),0)
-  assert.equal(await page.getByRole('button',{name:'Import report',exact:true}).count(),0)
-  assert.equal(await page.getByRole('button',{name:'Cancel local import',exact:true}).count(),0)
-  assert.deepEqual(metaReportWrites,[])
-  assert.equal((await pool.query('SELECT count(*) FROM meta_import WHERE project_id=ANY($1::text[])',[[a2,b1]])).rows[0].count,'0')
-  console.log('PASS navigation: Meta reports realAPI empty state, deep link/reload/Back, Manage connections, viewer read access and no automatic imports.')
-
-  // Retained reports stay useful with the provider disconnected. Seed only local
-  // evidence; this journey must never authorize or submit a provider report.
-  const metaApp=randomUUID(),metaSource=randomUUID(),metaGrant=randomUUID(),metaReceipt=randomUUID(),metaEmpty=randomUUID()
-  const metaDefinition={provider:'meta_ads',accountId:'12345678901234567890',accountName:'Navigation retained account',currency:'AED',timeZone:'Asia/Dubai',graphVersion:'v26.0',report:'campaign_daily',definitionVersion:1,level:'campaign',breakdowns:[],attribution:{mode:'meta_reported',requestedWindows:['7d_click','1d_view'],reportingPolicy:'meta_mixed',effectiveAdSetSettings:'unknown'}}
-  const metaRows=['2026-09-01','2026-09-02'].map(date=>({date,accountId:metaDefinition.accountId,campaignId:'99999999999999999999',campaignName:'=Navigation campaign',impressions:'123456789012345678901234567890',clicks:'0',spend:'12.000000000000000001',actions:null,actionValues:[]}))
-  await pool.query(`INSERT INTO meta_app_registration(id,app_id,config_id,revision,credential_revision,encrypted_config,active,enabled,bound_origin,declared_mode)
-    VALUES($1,$2,'67890',1,1,'{}',false,false,$3,'development')`,[metaApp,String(BigInt('0x'+randomBytes(12).toString('hex'))),config.appUrl])
-  await pool.query(`INSERT INTO meta_connection(id,workspace_id,project_id,name,status,account_id,account_name,currency,time_zone,account_status)
-    VALUES($1,$2,$3,'Navigation retained source','disconnected',$4,$5,'AED','Asia/Dubai',1)`,[metaSource,b.id,b1,metaDefinition.accountId,metaDefinition.accountName])
-  await pool.query(`INSERT INTO meta_oauth_flow(id,registration_id,app_revision,start_epoch,workspace_id,project_id,user_id,connection_id,phase,subject_hash,granted_at,expires_at)
-    VALUES($1,$2,1,1,$3,$4,$5,$6,'completed',$7,clock_timestamp(),clock_timestamp())`,[metaGrant,metaApp,b.id,b1,other.id,metaSource,'a'.repeat(64)])
-  await pool.query('UPDATE meta_connection SET current_grant_id=$2 WHERE id=$1',[metaSource,metaGrant])
-  for(const [id,from,rowCount,age]of [[metaReceipt,'2026-09-01',2,2],[metaEmpty,'2026-09-02',0,1]]as const){
-    await pool.query(`INSERT INTO meta_import(id,workspace_id,project_id,user_id,connection_id,grant_id,connection_revision,app_revision,request_id,report,date_from,date_to,source,status,completed_at,created_at,row_count,pages,definition_key)
-      VALUES($1,$2,$3,$4,$5,$6,1,1,$7,'campaign_daily',$8,'2026-09-02',$9,'completed',clock_timestamp()-make_interval(mins=>$10),clock_timestamp()-make_interval(mins=>$10),$11,$12,encode(sha256(convert_to(($9::jsonb-'accountName')::text,'UTF8')),'hex'))`,[id,b.id,b1,other.id,metaSource,metaGrant,randomUUID(),from,JSON.stringify(metaDefinition),age,rowCount,rowCount?1:0])
-  }
-  await pool.query('INSERT INTO meta_import_page(import_id,project_id,workspace_id,page,rows,row_count,content_hash) VALUES($1,$2,$3,0,$4,2,$5)',[metaReceipt,b1,b.id,JSON.stringify(metaRows),createHash('sha256').update(JSON.stringify(metaRows)).digest('hex')])
-  await page.reload();await heading('Meta reports');await page.getByLabel('Source',{exact:true}).selectOption(metaSource)
-  await page.getByLabel('Import history',{exact:true}).selectOption(metaReceipt)
-  const metaViews=page.getByRole('navigation',{name:'Meta report views',exact:true});await metaViews.waitFor()
-  await metaViews.getByRole('button',{name:'Latest complete coverage',exact:true}).waitFor()
-  assert.equal(await metaViews.getByRole('button',{name:'Latest complete coverage',exact:true}).count(),1)
-  assert.equal(await metaViews.getByRole('button',{name:'Campaign inventory',exact:true}).count(),1)
-  assert.equal(await metaViews.evaluate((nav:Element)=>{const saved=[...document.querySelectorAll('h2')].find(node=>node.textContent==='Saved imports');return !!saved&&!!(nav.compareDocumentPosition(saved)&Node.DOCUMENT_POSITION_FOLLOWING)}),true,'Saved-data navigation precedes the Saved imports heading.')
-  for(const width of [1440,360]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:`private/navigation-browser/meta-import-selected-${width}.png`,fullPage:true})}
-  await page.setViewportSize({width:1280,height:900})
-  const latest=page.getByRole('button',{name:'Latest complete coverage',exact:true});await latest.click();await heading('Latest complete coverage')
-  const coverage=page.getByRole('region',{name:'Daily coverage',exact:true}),latestRows=page.getByRole('region',{name:'Latest daily Meta rows',exact:true})
-  await coverage.getByText('Completed with no rows',{exact:true}).waitFor();assert.equal(await latestRows.locator('tbody tr').count(),1)
-  await latestRows.getByText('12.000000000000000001',{exact:true}).waitFor();await latestRows.getByText('123456789012345678901234567890',{exact:true}).waitFor()
-  const downloadReady=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();const download=await downloadReady
-  assert.equal(download.suggestedFilename(),'meta-latest-campaign_daily.csv');const csv=await readFile(await download.path(),'utf8')
-  assert.match(csv,/"coverage"/);assert.match(csv,/"empty"/);assert.match(csv,/"12\.000000000000000001"/);assert.match(csv,/"'=Navigation campaign"/);assert.match(csv,/"null","\[\]"/)
-  assert.equal(csv.split('\r\n').filter(line=>line.startsWith('"row",')).length,1)
-  await page.setViewportSize({width:1440,height:900});await page.screenshot({path:'private/navigation-browser/meta-latest-1440.png',fullPage:true})
-  await page.setViewportSize({width:360,height:800});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
-  await page.screenshot({path:'private/navigation-browser/meta-latest-360.png',fullPage:true});await page.setViewportSize({width:1280,height:900})
-  await page.getByRole('button',{name:'Open import for 2026-09-02',exact:true}).click();await heading('Meta reports');await page.waitForFunction((id:string)=>(document.querySelector('select[id$="import"]')as HTMLSelectElement|null)?.value===id,metaEmpty)
-  assert.equal(await page.getByRole('button',{name:'Import report',exact:true}).count(),0)
-  await latest.click();await heading('Latest complete coverage');await page.getByRole('button',{name:'Back to imports',exact:true}).click();await heading('Meta reports')
-  assert.deepEqual(metaReportWrites,[]);assert.equal((await pool.query('SELECT count(*) FROM meta_import WHERE connection_id=$1',[metaSource])).rows[0].count,'2')
-  console.log('PASS navigation: viewer reads disconnected-source coverage, complete empty day supersedes older rows, exact CSV download and receipt/Back handoff through production UI/API.')
-
-  const inventoryComplete=randomUUID(),inventoryPartial=randomUUID(),inventoryEmpty=randomUUID()
-  const inventoryDefinition={provider:'meta_ads',accountId:metaDefinition.accountId,accountName:metaDefinition.accountName,currency:'AED',timeZone:'Asia/Dubai',graphVersion:'v26.0',definitionVersion:1,kind:'campaign_inventory',effectiveStatuses:['ACTIVE','PAUSED','ARCHIVED','DELETED','IN_PROCESS','WITH_ISSUES']}
-  async function inventory(id:string,status:string,age:number,rows:unknown[]){
-    await pool.query(`INSERT INTO meta_campaign_inventory(id,workspace_id,project_id,user_id,connection_id,grant_id,connection_revision,app_revision,request_id,source,status,created_at,completed_at,first_fetched_at,last_fetched_at,pages,row_count)
-      VALUES($1,$2,$3,$4,$5,$6,1,1,$7,$8,$9,clock_timestamp()-make_interval(mins=>$10),clock_timestamp()-make_interval(mins=>$10)+interval '10 seconds',clock_timestamp()-make_interval(mins=>$10)+interval '1 second',clock_timestamp()-make_interval(mins=>$10)+interval '9 seconds',1,$11)`,[id,b.id,b1,other.id,metaSource,metaGrant,randomUUID(),JSON.stringify(inventoryDefinition),status,age,rows.length])
-    await pool.query('INSERT INTO meta_campaign_inventory_page(inventory_id,project_id,workspace_id,page,rows,row_count,content_hash) VALUES($1,$2,$3,0,$4,$5,$6)',[id,b1,b.id,JSON.stringify(rows),rows.length,createHash('sha256').update(JSON.stringify(rows)).digest('hex')])
-  }
-  await inventory(inventoryComplete,'completed',3,[{id:'1234567890123456789012345678901234567890',accountId:metaDefinition.accountId,name:'=Campaign without activity',status:'PAUSED',effectiveStatus:'NEW_PROVIDER_STATUS'}])
-  await inventory(inventoryPartial,'partial',2,[{id:'2',accountId:metaDefinition.accountId,name:'Partial campaign only',status:null,effectiveStatus:'ARCHIVED'}])
-  await page.getByRole('button',{name:'Campaign inventory',exact:true}).click();await heading('Campaign inventory')
-  const inventoryTable=page.getByRole('region',{name:'Saved campaigns',exact:true})
-  await inventoryTable.getByText('=Campaign without activity',{exact:true}).waitFor();await inventoryTable.getByText('Unknown: NEW_PROVIDER_STATUS',{exact:true}).waitFor()
-  assert.equal(await inventoryTable.locator('tbody tr').count(),1);assert.equal(await page.getByRole('button',{name:'Refresh campaign inventory',exact:true}).count(),0)
-  const inventoryDownloadReady=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();const inventoryDownload=await inventoryDownloadReady
-  assert.equal(inventoryDownload.suggestedFilename(),'meta-campaign-inventory.csv');const inventoryCsv=await readFile(await inventoryDownload.path(),'utf8')
-  assert.match(inventoryCsv,/"coverage"/);assert.match(inventoryCsv,/"complete"/);assert.match(inventoryCsv,/"'=Campaign without activity"/);assert.match(inventoryCsv,/"1234567890123456789012345678901234567890"/);assert.match(inventoryCsv,/"PAUSED","NEW_PROVIDER_STATUS"/)
-  assert.equal(inventoryCsv.split('\r\n').filter(line=>line.startsWith('"campaign",')).length,1)
-  const inventoryHistory=page.locator('details').filter({has:page.locator('summary',{hasText:/^Inventory history$/})})
-  assert.equal(await inventoryHistory.getAttribute('open'),null,'Historical inventory is a secondary disclosure while latest complete is selected.')
-  await page.setViewportSize({width:1440,height:900});await page.screenshot({path:'private/navigation-browser/meta-campaign-1440.png',fullPage:true});await page.setViewportSize({width:1280,height:900})
-  await inventoryHistory.locator(':scope > summary').click()
-  await page.getByLabel('Inventory history',{exact:true}).selectOption(inventoryPartial);await inventoryTable.getByText('Partial campaign only',{exact:true}).waitFor()
-  await page.getByRole('button',{name:'Show latest complete',exact:true}).click();await inventoryTable.getByText('=Campaign without activity',{exact:true}).waitFor()
-  await page.setViewportSize({width:360,height:800});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:'private/navigation-browser/meta-campaign-360.png',fullPage:true});await page.setViewportSize({width:1280,height:900})
-  await inventory(inventoryEmpty,'completed',1,[]);await page.getByRole('button',{name:'Reload saved inventory',exact:true}).click()
-  await page.getByText('No campaigns returned on this page. Review the snapshot coverage before drawing conclusions.',{exact:true}).waitFor();assert.equal(await inventoryTable.count(),0);assert.equal(await page.getByRole('button',{name:'Export CSV',exact:true}).isEnabled(),true)
-  await pool.query('UPDATE meta_campaign_inventory SET data_expired_at=clock_timestamp() WHERE id=$1',[inventoryEmpty]);await page.getByRole('button',{name:'Reload saved inventory',exact:true}).click()
-  await page.getByText(/This snapshot.s campaign data has expired\./,{exact:true}).waitFor();assert.equal(await inventoryTable.count(),0);assert.equal(await page.getByRole('button',{name:'Export CSV',exact:true}).count(),0)
-  await page.getByRole('button',{name:'Back to reports',exact:true}).click();await heading('Meta reports');await page.waitForFunction((id:string)=>(document.querySelector('select[id$="import"]')as HTMLSelectElement|null)?.value===id,metaEmpty)
-  assert.deepEqual(metaReportWrites,[]);assert.equal((await pool.query('SELECT count(*) FROM meta_campaign_inventory WHERE connection_id=$1',[metaSource])).rows[0].count,'3')
-  console.log('PASS navigation: disconnected-source campaign snapshots, exact CSV, explicit partial history, empty/expired latest without fallback, mobile rendering and fresh report handoff; no Meta writes.')
 
   for (const [workspace, project] of [[a.id,a2],[b.id,b1]]) {
     await page.goto(href(workspace,project,'ai-insights'));await heading('AI insights');await selected(workspace,project,'ai-insights')

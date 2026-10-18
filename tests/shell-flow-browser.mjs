@@ -406,7 +406,7 @@ try {
   }
   assert.equal(page.url(), toggleUrl); assert.equal(apiRequests.length, requestsBeforeToggles, 'Native disclosure toggles do not issue requests.');
   operator = true; await open('events'); await accountSummary.click();
-  assert.deepEqual(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true}).getByRole('link').allTextContents(), ['Google app setup','Meta app setup']);
+  assert.deepEqual(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true}).getByRole('link').allTextContents(), ['Google app setup']);
   assert.equal(await accountMenu.getByText('Applies across workspaces.', {exact:true}).isVisible(), true);
   assert.equal(await side.getByRole('link', {name:'AI and search providers',exact:true,includeHidden:true}).count(), 0, 'Operator authority does not upgrade a workspace viewer.');
   projectListCount = 0; operator = false;

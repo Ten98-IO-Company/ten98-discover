@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
-import { googleAdsColumnLabel, googleAdsCost, googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
+import { googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
 
 const BTN = { minHeight: 44 };
 
-type Provider = 'gsc' | 'ga4' | 'ads';
+type Provider = 'gsc' | 'ga4';
 type Role = 'owner' | 'admin' | 'editor' | 'viewer';
-type ReportKind = 'gsc_daily' | 'gsc_queries' | 'gsc_pages' | 'ga4_traffic' | 'ga4_events' | 'ga4_pages' | 'ga4_acquisition' | 'ga4_key_events' | 'ga4_organic_landing' | 'ga4_organic_daily' | 'ga4_organic_weekly' | 'ads_daily' | 'ads_campaigns' | 'ads_ad_groups' | Ga4CommerceReport;
+type ReportKind = 'gsc_daily' | 'gsc_queries' | 'gsc_pages' | 'ga4_traffic' | 'ga4_events' | 'ga4_pages' | 'ga4_acquisition' | 'ga4_key_events' | 'ga4_organic_landing' | 'ga4_organic_daily' | 'ga4_organic_weekly' | Ga4CommerceReport;
 
 interface ImportDto {
   id: string;
@@ -34,7 +34,6 @@ interface Connection {
   propertyName: string | null;
   timeZone: string | null;
   currencyCode: string | null;
-  loginCustomerId?: string | null;
   scopes: string[];
   updatedAt: string;
   imports: ImportDto[];
@@ -42,13 +41,13 @@ interface Connection {
 
 interface Overview {
   role: Role;
-  app: { configured: boolean; enabled: boolean; testing: boolean; adsConfigured: boolean };
+  app: { configured: boolean; enabled: boolean; testing: boolean };
   connections: Connection[];
 }
 
 interface Snapshot {
   import: ImportDto;
-  source: { provider: Provider; propertyId: string | null; propertyName: string | null; timeZone: string | null; currencyCode: string | null; loginCustomerId?: string | null; apiVersion?: string };
+  source: { provider: Provider; propertyId: string | null; propertyName: string | null; timeZone: string | null; currencyCode: string | null };
   dimensions: string[];
   metrics: string[];
   rows: Array<{ dimensions: Record<string, string>; metrics: Record<string, string | null> }>;
@@ -56,7 +55,7 @@ interface Snapshot {
   nextOffset: number | null;
 }
 
-const PROVIDER_LABEL: Record<Provider, string> = { gsc: 'Google Search Console', ga4: 'Google Analytics 4', ads: 'Google Ads' };
+const PROVIDER_LABEL: Record<Provider, string> = { gsc: 'Google Search Console', ga4: 'Google Analytics 4' };
 
 const REPORT_OPTIONS: Record<Provider, Array<{ kind: ReportKind; label: string }>> = {
   gsc: [
@@ -74,11 +73,6 @@ const REPORT_OPTIONS: Record<Provider, Array<{ kind: ReportKind; label: string }
     { kind: 'ga4_organic_daily', label: 'Organic overview by day' },
     { kind: 'ga4_organic_weekly', label: 'Organic overview by week' },
     ...Object.keys(ga4CommerceReports).filter(isGa4CommerceReport).map(kind => ({ kind, label: ga4CommerceReports[kind].label })),
-  ],
-  ads: [
-    { kind: 'ads_daily', label: 'Ads account by day' },
-    { kind: 'ads_campaigns', label: 'Ads campaigns by day' },
-    { kind: 'ads_ad_groups', label: 'Ads ad groups by day' },
   ],
 };
 
@@ -352,7 +346,6 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
             <select id="g-provider" disabled={pending} value={cProvider} onChange={e => setCProvider(e.target.value as Provider)}>
               <option value="gsc">Google Search Console</option>
               <option value="ga4">Google Analytics 4</option>
-              <option value="ads" disabled={!overview.app.adsConfigured}>Google Ads</option>
             </select>
           </div>
           <div className="field">
@@ -360,8 +353,7 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
             <input id="g-conn-name" type="text" maxLength={120} disabled={pending} value={cName} onChange={e => setCName(e.target.value)} />
           </div>
           <button type="button" className="btn primary" style={BTN} disabled={pending || cBusy || cName.trim() === ''} onClick={() => void connect(cProvider, cName.trim())}>Connect to Google</button>
-          <p className="hint">{cProvider === 'ads' ? 'Google uses its broad Ads permission, which can permit account changes. This app only sends fixed reporting queries and never changes campaigns, ads or budgets.' : 'You are sent to Google to approve read-only access and then return here.'}</p>
-          {!overview.app.adsConfigured && <p className="hint">For Ads reports, the instance operator must also save a Google Ads developer token in Google app setup.</p>}
+          <p className="hint">You are sent to Google to approve read-only access and then return here.</p>
           {cErr !== '' && <p role="alert" className="alert">{cErr}</p>}
           </div>
         </details>
@@ -389,10 +381,9 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
   const busy = localBusy || ops.busy;
   const [err, setErr] = useState('');
   const [note, setNote] = useState('');
-  const [propsData, setPropsData] = useState<{ list: Array<{ id: string; name: string; loginCustomerId?: string | null }>; next: string | null } | null>(null);
-  const [managerId, setManagerId] = useState('');
+  const [propsData, setPropsData] = useState<{ list: Array<{ id: string; name: string }>; next: string | null } | null>(null);
   const [pick, setPick] = useState('');
-  const [report, setReport] = useState<ReportKind>(conn.provider === 'gsc' ? 'gsc_daily' : conn.provider === 'ads' ? 'ads_daily' : 'ga4_traffic');
+  const [report, setReport] = useState<ReportKind>(conn.provider === 'gsc' ? 'gsc_daily' : 'ga4_traffic');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const maxImportDay=organicReport(report)?googleLastCompletedDay(conn.timeZone):new Date().toISOString().slice(0,10);
@@ -438,10 +429,9 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
 
   const loadProps = (pageToken?: string) => run(async (serial, c) => {
     try {
-      if (conn.provider === 'ads' && managerId && !/^[1-9]\d{9}$/.test(managerId)) { setErr('Enter the ten-digit manager customer ID without spaces or hyphens.'); return; }
-      const r = await api<{ properties: Array<{ id: string; name: string; loginCustomerId?: string | null }>; nextPageToken: string | null }>(`${base}/properties`, {
+      const r = await api<{ properties: Array<{ id: string; name: string }>; nextPageToken: string | null }>(`${base}/properties`, {
         method: 'POST',
-        body: conn.provider === 'ads' && managerId ? { managerCustomerId: managerId } : pageToken ? { pageToken } : {},
+        body: pageToken ? { pageToken } : {},
         signal: c.signal,
       });
       if (!ops.alive(serial, c)) return;
@@ -462,11 +452,10 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
   });
 
   const chooseProp = () => {
-    if (pick === '') { setErr(conn.provider === 'ads' ? 'Choose an account first.' : 'Choose a property first.'); return; }
+    if (pick === '') { setErr('Choose a property first.'); return; }
     void run(async (serial, c) => {
       try {
-        const selected = propsData?.list.find(p=>p.id===pick);
-        await api(`${base}/select`, { method: 'POST', body: { propertyId: pick, ...(selected?.loginCustomerId ? { loginCustomerId: selected.loginCustomerId } : {}) }, signal: c.signal });
+        await api(`${base}/select`, { method: 'POST', body: { propertyId: pick }, signal: c.signal });
         if (!ops.alive(serial, c)) return;
         await ops.refresh(serial, c);
       } catch (e) {
@@ -597,7 +586,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
     <section className="card stack google-connection">
       <div className="row between">
         <div><h2>{conn.name}</h2><p className="dim">{PROVIDER_LABEL[conn.provider]}</p></div>
-        <span className={conn.status === 'ready' ? 'pill good' : conn.status === 'reconnect' ? 'pill bad' : 'pill'}>{conn.provider === 'ads' && conn.status === 'select_property' ? 'Account selection needed' : connStatus(conn.status)}</span>
+        <span className={conn.status === 'ready' ? 'pill good' : conn.status === 'reconnect' ? 'pill bad' : 'pill'}>{connStatus(conn.status)}</span>
       </div>
       {note !== '' && <p role="status" className="hint">{note}</p>}
       {err !== '' && <p role="alert" className="alert">{err}</p>}
@@ -628,10 +617,9 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
           <p>Snapshot status: {impStatus(snap.imp.status)}</p>
           {snap.imp.diagnostic && <p role="status" className="hint">{snap.imp.diagnostic}</p>}
           <p className="dim">
-            Source: {PROVIDER_LABEL[snap.source.provider]} · {snap.source.provider === 'ads' ? 'Account' : 'Property'}: {snap.source.propertyName ?? 'Unavailable'}{snap.source.propertyId ? ` (${snap.source.propertyId})` : ''} · Range: {snap.imp.from} to {snap.imp.to} · Time zone: {snap.source.timeZone ?? 'Unavailable'} · Currency: {snap.source.currencyCode ?? 'Unavailable'}
+            Source: {PROVIDER_LABEL[snap.source.provider]} · Property: {snap.source.propertyName ?? 'Unavailable'}{snap.source.propertyId ? ` (${snap.source.propertyId})` : ''} · Range: {snap.imp.from} to {snap.imp.to} · Time zone: {snap.source.timeZone ?? 'Unavailable'} · Currency: {snap.source.currencyCode ?? 'Unavailable'}
           </p>
-          {snap.imp.status === 'partial' && <p role="status" className="alert">{snap.source.provider === 'ads' ? 'Partial import: Google returned a continuation after this bounded snapshot. Choose a smaller date range.' : 'Partial import: the page limit was reached, so this snapshot is incomplete.'}</p>}
-          {snap.source.provider === 'ads' && <p className="hint">Google Ads {snap.source.apiVersion} · {snap.source.loginCustomerId ? `Manager ${snap.source.loginCustomerId}` : 'Direct access'} · {snap.imp.rowCount.toLocaleString()} stored rows. Provider match count: <bdi dir="ltr">{typeof snap.metadata.totalResultsCount === 'string' ? snap.metadata.totalResultsCount : 'Unavailable'}</bdi>. More provider rows: {snap.metadata.nextPageAvailable === true ? 'yes — not imported' : snap.metadata.nextPageAvailable === false ? 'no continuation returned' : 'Unavailable'}. These rows are not native events.</p>}
+          {snap.imp.status === 'partial' && <p role="status" className="alert">Partial import: the page limit was reached, so this snapshot is incomplete.</p>}
           {snap.warnings.length > 0 && (
             <ul className="hint">{snap.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
           )}
@@ -649,15 +637,15 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
               <table style={{ minWidth: '36rem' }}>
                 <thead>
                   <tr>
-                    {snap.dimensions.map(d => <th key={d} scope="col" title={d}>{snap.source.provider === 'ads' ? googleAdsColumnLabel(d) : snap.source.provider === 'ga4' ? googleGa4ColumnLabel(d) : d}</th>)}
-                    {snap.metrics.map(m => <th key={m} scope="col" title={m}>{snap.source.provider === 'ads' ? googleAdsColumnLabel(m) : snap.source.provider === 'ga4' ? googleGa4ColumnLabel(m) : m}</th>)}
+                    {snap.dimensions.map(d => <th key={d} scope="col" title={d}>{snap.source.provider === 'ga4' ? googleGa4ColumnLabel(d) : d}</th>)}
+                    {snap.metrics.map(m => <th key={m} scope="col" title={m}>{snap.source.provider === 'ga4' ? googleGa4ColumnLabel(m) : m}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {snap.rows.map((r, i) => (
                     <tr key={i}>
                       {snap.dimensions.map(d => <td key={d}>{r.dimensions[d] ?? ''}</td>)}
-                      {snap.metrics.map(m => <td key={m} title={typeof r.metrics[m] === 'string' ? snap.source.provider === 'ads' && m === 'costMicros' ? `${r.metrics[m]} costMicros` : snap.source.provider === 'ga4' ? r.metrics[m]! : undefined : undefined}>{snap.source.provider === 'ads' && m === 'costMicros' ? <bdi dir="ltr">{googleAdsCost(r.metrics[m], snap.source.currencyCode)}</bdi> : snap.source.provider === 'ga4' ? <bdi dir="ltr">{googleGa4MetricValue(m, r.metrics[m], snap.source.currencyCode)}</bdi> : r.metrics[m] ?? 'Unavailable'}</td>)}
+                      {snap.metrics.map(m => <td key={m} title={typeof r.metrics[m] === 'string' && snap.source.provider === 'ga4' ? r.metrics[m]! : undefined}>{snap.source.provider === 'ga4' ? <bdi dir="ltr">{googleGa4MetricValue(m, r.metrics[m], snap.source.currencyCode)}</bdi> : r.metrics[m] ?? 'Unavailable'}</td>)}
                     </tr>
                   ))}
                 </tbody>
@@ -672,17 +660,16 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
       {conn.status === 'select_property' && (
         owner && appOn ? (
           <div className="stack">
-            <p className="hint">{conn.provider === 'ads' ? 'Choose the Ads account this connection reports on. The choice is permanent; add another connection for a different account.' : 'Choose the property this connection reports on. The choice is permanent; add another connection for a different property.'}</p>
-            {conn.provider === 'ads' && <div className="field"><label htmlFor={`manager-${conn.id}`}>Manager customer ID (optional)</label><input id={`manager-${conn.id}`} inputMode="numeric" maxLength={10} disabled={busy} value={managerId} onChange={e=>{setManagerId(e.target.value);setPick('');setPropsData(null);}}/><p className="hint">Leave blank to list accounts you access directly. To use a manager, enter its ten-digit ID and load its advertising clients.</p></div>}
-            {(!propsData || conn.provider === 'ads') && (
-              <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void loadProps()}>{conn.provider === 'ads' ? 'Load Ads accounts' : 'Load available properties'}</button>
+            <p className="hint">Choose the property this connection reports on. The choice is permanent; add another connection for a different property.</p>
+            {!propsData && (
+              <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void loadProps()}>Load available properties</button>
             )}
             {propsData && propsData.list.length === 0 && (
-              <p className="dim">{conn.provider === 'ads' ? 'No accounts were returned for this Google access.' : 'No properties were returned for this Google account.'}</p>
+              <p className="dim">No properties were returned for this Google account.</p>
             )}
             {propsData && propsData.list.length > 0 && (
               <>
-                <div role="radiogroup" aria-label={`${conn.provider === 'ads' ? 'Choose account' : 'Properties'} for ${conn.name}`} className="stack">
+                <div role="radiogroup" aria-label={`Properties for ${conn.name}`} className="stack">
                   {propsData.list.map(p => (
                     <label key={p.id} className="row" style={{ minHeight: 44 }}>
                       <input type="radio" disabled={busy} name={`prop-${conn.id}`} checked={pick === p.id} onChange={() => setPick(p.id)} />
@@ -690,15 +677,15 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
                     </label>
                   ))}
                 </div>
-                {propsData.next !== null && conn.provider !== 'ads' && (
+                {propsData.next !== null && (
                   <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void loadProps(propsData.next ?? undefined)}>Load more properties</button>
                 )}
-                <button type="button" className="btn primary" style={BTN} disabled={busy || pick === ''} onClick={chooseProp}>{conn.provider === 'ads' ? 'Use this Ads account' : 'Use this property'}</button>
+                <button type="button" className="btn primary" style={BTN} disabled={busy || pick === ''} onClick={chooseProp}>Use this property</button>
               </>
             )}
           </div>
         ) : (
-          <p className="hint">{conn.provider === 'ads' ? 'A workspace owner still needs to choose an account for this connection.' : 'A workspace owner still needs to choose a property for this connection.'}</p>
+          <p className="hint">A workspace owner still needs to choose a property for this connection.</p>
         )
       )}
 
@@ -712,7 +699,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
               {REPORT_OPTIONS[conn.provider].map(o => <option key={o.kind} value={o.kind}>{o.label}</option>)}
             </select>
           </div>
-          {conn.provider === 'ga4' && <p className="hint">{isGa4CommerceReport(report) ? ga4CommerceReports[report].description : report === 'ga4_pages' ? 'Daily views and engagement by page path or app screen class.' : report === 'ga4_acquisition' ? 'Daily acquisition by session source, medium and campaign; this is not first-user attribution.' : report === 'ga4_key_events' ? 'Daily events Google marked as key at collection time. Key events are not Google Ads conversions.' : 'Daily property measurements reported by Google Analytics.'} Dates use {conn.timeZone ?? 'the property time zone'}. User counts are specific to each row; do not add them across dates or dimensions.</p>}
+          {conn.provider === 'ga4' && <p className="hint">{isGa4CommerceReport(report) ? ga4CommerceReports[report].description : report === 'ga4_pages' ? 'Daily views and engagement by page path or app screen class.' : report === 'ga4_acquisition' ? 'Daily acquisition by session source, medium and campaign; this is not first-user attribution.' : report === 'ga4_key_events' ? 'Daily events Google marked as key at collection time. Key events are not ad-platform conversions.' : 'Daily property measurements reported by Google Analytics.'} Dates use {conn.timeZone ?? 'the property time zone'}. User counts are specific to each row; do not add them across dates or dimensions.</p>}
           {organicReport(report) && <p className="hint">Organic Search only. Choose completed days in the property timezone; today is excluded. {report === 'ga4_organic_landing' ? 'Landing pages are grouped by hostname and landing path over the whole selected range, up to 10,000 rows. A partial import is explicitly incomplete.' : 'Three report requests capture the current range, an equal-length preceding range, and the selected daily or weekly trend. Nothing is shown until all three finish. Two compatibility checks verify the exact fields; Google quota use and quality remain separate for each stage.'}</p>}
           {isGa4CommerceReport(report) && <p className="hint">These rows cover the selected range, rather than a daily series. The date limit includes today in UTC; recent property days may be incomplete. Each import uses the report’s fixed fields and filters.</p>}
           <div className="row">
@@ -725,7 +712,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
               <input id={`to-${conn.id}`} type="date" disabled={busy} min={from || undefined} max={maxImportDay??undefined} value={to} onChange={e => { setTo(e.target.value); attempt.current = null; }} />
             </div>
           </div>
-          <p className="hint">Dates are inclusive, up to 366 days, and cannot be in the future. Each import is a separate snapshot.{conn.provider === 'ads' ? ' Ads dates use the account time zone. One provider page is imported, up to 10,000 rows and 2 MiB; continuation means partial. For a size refusal or partial snapshot, choose a smaller range.' : ''}</p>
+          <p className="hint">Dates are inclusive, up to 366 days, and cannot be in the future. Each import is a separate snapshot.</p>
           <button type="button" className="btn primary" style={BTN} disabled={busy} onClick={queueImport}>Import report snapshot</button>
         </div>
         </details>
@@ -761,9 +748,8 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
       <details className="google-tools"><summary>Connection details</summary>
         <div className="stack">
       <p className="dim">
-        {conn.provider === 'ads' ? 'Account' : 'Property'}: {conn.propertyName ?? 'Not selected'}{conn.propertyId ? ` (${conn.propertyId})` : ''} · Time zone: {conn.timeZone ?? 'Not set'} · Currency: {conn.currencyCode ?? 'Not set'}
+        Property: {conn.propertyName ?? 'Not selected'}{conn.propertyId ? ` (${conn.propertyId})` : ''} · Time zone: {conn.timeZone ?? 'Not set'} · Currency: {conn.currencyCode ?? 'Not set'}
       </p>
-      {conn.provider === 'ads' && <p className="hint">Ads reporting only · {conn.loginCustomerId ? `Manager ${conn.loginCustomerId}` : 'Direct customer access'}. Costs are account-currency micros; 1,000,000 micros equals one currency unit. Google-defined conversions remain separate from native analytics.</p>}
 
       {owner && conn.status !== 'disconnected' && (
         <div className="row">
