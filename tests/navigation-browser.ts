@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { hashPassword } from 'better-auth/crypto'
