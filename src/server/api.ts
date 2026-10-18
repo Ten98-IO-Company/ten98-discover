@@ -169,14 +169,14 @@ export async function handleApi(request: Request): Promise<Response> {
       const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
       // Content families admitted by scope; method and scope are explicit per row, nothing else matches.
-      // Rank catalog/locations/schedule/runs/results/history/keywords and every saved-keyword write, export or refresh never match;
+      // Rank catalog/locations/schedule/checks/keyword writes/matrix export and every saved-keyword write, export or refresh never match;
       // nor do the Google app, callback, connect, property, disconnect, import and inspection routes, or any domain write.
       const scopedRoutes:[RegExp,'GET'|'POST',ApiKeyScope][]=[
         [new RegExp(`^/api/projects/(${id})/context(?:/research-log)?$`,'i'),'GET','context:read'],
         [new RegExp(`^/api/projects/(${id})/context/update$`,'i'),'POST','context:write'],
         [new RegExp(`^/api/projects/(${id})/(?:segments|cohorts)(?:/${id})?$`,'i'),'GET','segments:read'],
         [new RegExp(`^/api/projects/(${id})/annotations(?:/timeline|/${id})?$`,'i'),'GET','annotations:read'],
-        [new RegExp(`^/api/projects/(${id})/rank-trackers(?:/${id}(?:/distribution|/matrix)?)?$`,'i'),'GET','rank:read'],
+        [new RegExp(`^/api/projects/(${id})/rank-trackers(?:/${id}(?:/distribution|/matrix|/runs|/results|/keywords/${id}/history)?)?$`,'i'),'GET','rank:read'],
         // Case-sensitive: the handler classifies read-only POSTs by exact lowercase words, so a spelling variant must not pass as a read.
         [new RegExp(`^/api/projects/(${id})/saved-keywords/(?:list|tags/list)$`),'POST','keywords:read'],
         [new RegExp(`^/api/projects/(${id})/google(?:/imports/${id})?$`,'i'),'GET','google:read'],
@@ -702,9 +702,9 @@ export async function handleApi(request: Request): Promise<Response> {
       await projectAccess(projectId,user.id);
       await limit(`rank-read:${user.id}`,120);
       if(request.method!=='GET')return json({error:'Method not allowed.'},405);
-      if(action==='runs')return json(await listRankRuns(projectId,user.id,trackerId,url.searchParams));
-      if(action==='results')return json(await getLatestRankResults(projectId,user.id,trackerId,url.searchParams));
-      return json(await getRankKeywordHistory(projectId,user.id,trackerId,keywordId,url.searchParams));
+      if(action==='runs')return json(await listRankRuns(projectId,user.id,trackerId,url.searchParams,apiToken??undefined));
+      if(action==='results')return json(await getLatestRankResults(projectId,user.id,trackerId,url.searchParams,apiToken??undefined));
+      return json(await getRankKeywordHistory(projectId,user.id,trackerId,keywordId,url.searchParams,apiToken??undefined));
     }
     const rankRoute=path.match(new RegExp(`^/api/projects/(${id})/rank-trackers(?:/(catalog|locations|${id})(?:/(update|archive|keywords|quote)(?:/(add|remove|pin))?)?)?$`,'i'));
     if(rankRoute){

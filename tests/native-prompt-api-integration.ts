@@ -99,9 +99,9 @@ export async function runNativePromptApiChecks(){
     assert.equal((await http(base,{authorization:'Bearer '+oldToken})).status,404);
     const oldSame=await createApiKey(workspace,ownerId,{name:'Original grants',scopes:['projects:read','projects:write','analytics:read','events:write','team:read']});assert.equal((await http(base,bearer(oldSame.token))).status,403);
     const fixtureId=randomUUID(),contentRoutes:{path:string;body?:unknown}[]=[{path:context},{path:context+'/research-log'},{path:context+'/update',body:{requestId:randomUUID(),revision:1}},
-      ...['segments','segments/'+fixtureId,'cohorts','cohorts/'+fixtureId,'annotations','annotations/timeline?from=2026-01-01&to=2026-01-02','annotations/'+fixtureId,'rank-trackers','rank-trackers/'+fixtureId,'rank-trackers/'+fixtureId+'/distribution','rank-trackers/'+fixtureId+'/matrix?device=desktop'].map(suffix=>({path:'/api/projects/'+project+'/'+suffix})),
+      ...['segments','segments/'+fixtureId,'cohorts','cohorts/'+fixtureId,'annotations','annotations/timeline?from=2026-01-01&to=2026-01-02','annotations/'+fixtureId,'rank-trackers','rank-trackers/'+fixtureId,'rank-trackers/'+fixtureId+'/distribution','rank-trackers/'+fixtureId+'/matrix?device=desktop','rank-trackers/'+fixtureId+'/runs','rank-trackers/'+fixtureId+'/results','rank-trackers/'+fixtureId+'/keywords/'+fixtureId+'/history','google','google/imports/'+fixtureId,'domains','domains/'+fixtureId+'/redirect-checks'].map(suffix=>({path:'/api/projects/'+project+'/'+suffix})),
       {path:'/api/projects/'+project+'/saved-keywords/list',body:{}},{path:'/api/projects/'+project+'/saved-keywords/tags/list',body:{}}];
-    assert.equal(contentRoutes.length,16);
+    assert.equal(contentRoutes.length,23);
     for(const op of contentRoutes)assert.equal((await http(op.path,bearer(oldSame.token),op.body)).status,403,'The five original grants never reach a content route: '+op.path);
     assert.equal((await http('/api/projects/'+project+'/segments',bearer(read.token))).status,403,'prompts:read must not retrogrant segments:read');
     await assert.rejects(getPrompt(project,oldUser,first.id,all.token),(e:unknown)=>e instanceof FoundationError&&e.status===404,'Token cannot be attributed to a different supplied user.');

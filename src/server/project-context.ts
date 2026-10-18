@@ -16,7 +16,7 @@ export async function withContentProject<T>(projectId:unknown,userId:unknown,wri
     if(nativeRead)await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");
     if(apiToken!==undefined) {
       await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");
-      // ponytail: bearer reads hold the workspace SHARE lock for a handful of statements, each bounded to 5 s, at 120/min/user and make FOR UPDATE writers
+      // ponytail: bearer reads (and the rank-history cookie readers, nativeRead) hold the workspace SHARE lock for a handful of statements, each bounded to 5 s, at 120/min/user and make FOR UPDATE writers
       // (key revocation, team mutations, content writes) wait; prompts already carry this exposure. Upgrade path if writer
       // starvation is ever measured: a post-read publication check outside the transaction, as the Explorer routes do.
       const target=await client.query<{id:string}>(`SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.id=$1 FOR ${write?'UPDATE':'SHARE'} OF w`,[pid]);

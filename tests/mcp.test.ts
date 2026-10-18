@@ -11,7 +11,7 @@ import {savedKeywordFilterKeys} from '../src/server/saved-keyword-input.ts';
 
 const principal:ApiKeyPrincipal={id:randomUUID(),userId:randomUUID(),workspaceId:randomUUID(),role:'owner',scopes:[...apiKeyScopes]};
 test('fixed native catalog, strict bounded schemas and scope separation',()=>{
-  assert.equal(mcpTools.length,32);assert.equal(new Set(mcpTools.map(t=>t.name)).size,32);
+  assert.equal(mcpTools.length,35);assert.equal(new Set(mcpTools.map(t=>t.name)).size,35);
   const original=['ten98_whoami','ten98_read_analytics','ten98_read_realtime','ten98_list_sessions','ten98_read_session','ten98_read_linked_activity','ten98_list_prompts','ten98_read_prompt','ten98_list_prompt_versions','ten98_create_prompts','ten98_update_prompt','ten98_archive_prompt','ten98_restore_prompt'];
   assert.deepEqual(mcpTools.filter(tool=>original.includes(tool.name)).map(tool=>tool.name),original);
   assert.equal(availableTools({...principal,scopes:['analytics:read']}).length,9);
@@ -21,12 +21,12 @@ test('fixed native catalog, strict bounded schemas and scope separation',()=>{
   assert.equal(availableTools({...principal,scopes:['context:write']}).length,2);
   assert.equal(availableTools({...principal,scopes:['segments:read']}).length,3);
   assert.equal(availableTools({...principal,scopes:['annotations:read']}).length,2);
-  assert.equal(availableTools({...principal,scopes:['rank:read']}).length,5);
+  assert.equal(availableTools({...principal,scopes:['rank:read']}).length,8);
   assert.equal(availableTools({...principal,scopes:['keywords:read']}).length,3);
   assert.deepEqual(availableTools({...principal,scopes:['google:read']}).map(t=>t.name),['ten98_whoami','ten98_list_google_sources','ten98_read_google_snapshot']);
   assert.deepEqual(availableTools({...principal,scopes:['domains:read']}).map(t=>t.name),['ten98_whoami','ten98_list_domains','ten98_list_domain_redirect_checks']);
-  // The content slices' thirteen scopes still reach exactly their twenty-eight tools.
-  assert.equal(availableTools({...principal,scopes:apiKeyScopes.filter(scope=>scope!=='google:read'&&scope!=='domains:read')}).length,28);
+  // The content slices' thirteen scopes still reach exactly their thirty-one tools (twenty-eight plus the three rank-history readers).
+  assert.equal(availableTools({...principal,scopes:apiKeyScopes.filter(scope=>scope!=='google:read'&&scope!=='domains:read')}).length,31);
   // No retrogrant at discovery: the seven pre-increment scopes still reach exactly the sixteen pre-increment tools, and the context slice's nine reach nineteen.
   assert.equal(availableTools({...principal,scopes:['projects:read','projects:write','analytics:read','events:write','team:read','prompts:read','prompts:write']}).length,16);
   assert.equal(availableTools({...principal,scopes:['projects:read','projects:write','analytics:read','events:write','team:read','prompts:read','prompts:write','context:read','context:write']}).length,19);
@@ -56,6 +56,10 @@ test('fixed native catalog, strict bounded schemas and scope separation',()=>{
   for(const name of ['ten98_list_google_sources','ten98_list_domains'])assert.equal(mcpTools.find(t=>t.name===name)!.schema.safeParse({projectId:input.projectId,query:{}}).success,false,name);
   const redirects=mcpTools.find(t=>t.name==='ten98_list_domain_redirect_checks')!.schema;
   assert.equal(redirects.safeParse({projectId:input.projectId,domainId}).success,true);for(const bad of [{projectId:input.projectId},{projectId:input.projectId,domainId,query:{}}])assert.equal(redirects.safeParse(bad).success,false);
+  // Rank history tools take exactly the native query keys of their routes; the keyword history also needs its keyword ID.
+  const schema=(name:string)=>mcpTools.find(t=>t.name===name)!.schema as any,keywordId=randomUUID();
+  for(const [name,args] of [['ten98_list_rank_runs',{query:{cursor:'c'}}],['ten98_read_rank_results',{query:{cursor:'c',device:'both',search:'',pinned:'false'}}],['ten98_read_rank_keyword_history',{keywordId,query:{cursor:'c',device:'mobile'}}]] as const)assert.equal(schema(name).safeParse({projectId:input.projectId,trackerId,...args}).success,true,name);
+  for(const [name,args] of [['ten98_list_rank_runs',{query:{device:'desktop'}}],['ten98_read_rank_results',{query:{limit:'50'}}],['ten98_read_rank_results',{query:{device:'tablet'}}],['ten98_read_rank_keyword_history',{}],['ten98_read_rank_keyword_history',{keywordId,query:{search:'x'}}],['ten98_list_rank_runs',{query:{cursor:'c'.repeat(513)}}]] as const)assert.equal(schema(name).safeParse({projectId:input.projectId,trackerId,...args}).success,false,name);
 });
 test('every scoped tool has its own explicit case and the switch default throws instead of routing',()=>{
   const source=readFileSync(new URL('../src/server/mcp-tools.ts',import.meta.url),'utf8');
@@ -85,7 +89,7 @@ test('official SDK emits finite modern and legacy catalog responses without sess
       const response=await handler.fetch(new Request('http://127.0.0.1:3111/api/mcp',{method:'POST',headers,body:JSON.stringify(body)}));
       assert.equal(response.status,200);assert.equal(response.headers.has('mcp-session-id'),false);
       const text=await response.text(),wire=JSON.parse(modern?text:text.split('\n').find(line=>line.startsWith('data: {'))!.slice(6));
-      assert.equal(wire.result.tools.length,32);assert.ok(wire.result.tools.every((tool:any)=>tool.annotations.openWorldHint===false));
+      assert.equal(wire.result.tools.length,35);assert.ok(wire.result.tools.every((tool:any)=>tool.annotations.openWorldHint===false));
       assert.ok(wire.result.tools.every((tool:any)=>tool.inputSchema.additionalProperties===false));
     }finally{await handler.close();}
   }
