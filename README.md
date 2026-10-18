@@ -8,7 +8,7 @@ SEO, AEO and GEO intelligence, combined with web analytics in an MIT-licensed, s
 
 [ten98-monitor in Docmost](https://wiki.ten98.io/s/ten98-docs/p/ten98-monitor-0oQB5fKF1h) contains product scope, research, design, user flows, delivery plans and historical acceptance records. Runnable setup, current code/security contracts, required notices and AI guardrails remain in this repository. The [latest UI checkpoint](https://wiki.ten98.io/s/ten98-docs/p/ui-redesign-acceptance-through-r04-p2uXBbp8rZ) records its incremental validation and remaining work.
 
-The product is named ten98 Discover; the repository, checkout directory and Docker identifiers remain ten98-monitor for existing installations.
+The product and repository are named ten98 Discover (`ten98-discover`). Existing Docker image identifiers remain `ten98-monitor`. Keep the existing Compose project name when upgrading to reuse its volumes.
 
 ## Run with Docker
 

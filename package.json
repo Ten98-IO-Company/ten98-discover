@@ -1,6 +1,6 @@
 {
   "name": "ten98-monitor",
-  "version": "0.0.0-foundation",
+  "version": "0.1.0-preview.1",
   "private": true,
   "type": "module",
   "license": "MIT",
