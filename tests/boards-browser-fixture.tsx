@@ -2,7 +2,7 @@ import * as React from 'react';
 import {createRoot} from 'react-dom/client';
 import {BoardsPanel} from '../src/components/BoardsPanel';
 import {RevenuePanel} from '../src/components/RevenuePanel';
-import {createRootRoute,createRoute,createRouter,RouterProvider,Outlet} from '@tanstack/react-router';
+import {createRootRoute,createRoute,createRouter,RouterProvider,Outlet,Link} from '@tanstack/react-router';
 import {parseNavigation} from '../src/lib/navigation';
 import '../src/styles.css';
 
@@ -22,7 +22,7 @@ function Fixture(){
  React.useEffect(()=>{window.boardsFixture={set:value=>setScope(old=>({...old,...value}))};},[]);
  return <main className="stack" style={{maxWidth:1240,margin:'20px auto',padding:'0 16px',minWidth:0,gridTemplateColumns:'minmax(0,1fr)'}}>
   <p className="hint">Synthetic board API and native report-shaped bodies. Actual source components; no database, native authorization, collection, paid work or compiled application proof.</p>
-  <button className="btn" onClick={()=>setShown(value=>!value)}>{shown?'Unmount boards':'Mount boards'}</button><output aria-label="Unauthorized callbacks">{callbacks}</output><output aria-label="Fixture applied query" style={{overflowWrap:'anywhere',maxWidth:'100%',minWidth:0}}>{scope.query}</output>
+  <Link to={'/away' as any}>Leave boards fixture</Link><button className="btn" onClick={()=>setShown(value=>!value)}>{shown?'Unmount boards':'Mount boards'}</button><output aria-label="Unauthorized callbacks">{callbacks}</output><output aria-label="Fixture applied query" style={{overflowWrap:'anywhere',maxWidth:'100%',minWidth:0}}>{scope.query}</output>
   {signedOut?<h1>Fixture signed out</h1>:shown?<BoardsPanel {...scope} projects={[{id:'61000000-0000-4000-8000-000000000003',name:'Main website'},{id:'61000000-0000-4000-8000-000000000004',name:'Second website'}]} onNavigate={query=>setScope(old=>({...old,query,readOwner:'entry-'+(++entry.current)}))} onUnauthorized={()=>{setCallbacks(value=>value+1);setSignedOut(true);}}/>:<p>Boards unmounted</p>}
  </main>;
 }
@@ -35,5 +35,6 @@ const revenueIndex=createRoute({getParentRoute:()=>revenueRoot,path:'/',validate
 const revenueRouter=createRouter({routeTree:revenueRoot.addChildren([revenueIndex])});
 const boardRoot=createRootRoute({component:()=> <Outlet/>});
 const boardIndex=createRoute({getParentRoute:()=>boardRoot,path:'/',component:Fixture});
-const boardRouter=createRouter({routeTree:boardRoot.addChildren([boardIndex])});
+const boardAway=createRoute({getParentRoute:()=>boardRoot,path:'/away',component:()=> <h1>Outside boards fixture</h1>});
+const boardRouter=createRouter({routeTree:boardRoot.addChildren([boardIndex,boardAway])});
 createRoot(document.getElementById('root')!).render(<RouterProvider router={window.boardsScope?.mode==='revenue'?revenueRouter:boardRouter}/>);

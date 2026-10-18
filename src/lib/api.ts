@@ -16,7 +16,7 @@ export async function api<T>(path: string, opts: { method?: string; body?: unkno
   }
   const text = await res.text()
   let data: unknown = null
-  if (text !== '') { try { data = JSON.parse(text) } catch { data = null } }
+  if (text !== '') { try { data = JSON.parse(text) } catch { if (res.ok) throw new ApiError('The server response could not be confirmed. Check saved data before retrying.') } }
   if (!res.ok) {
     const d = data as { error?: unknown; message?: unknown } | null
     const fromBody = d !== null ? (typeof d.error === 'string' ? d.error : typeof d.message === 'string' ? d.message : '') : ''

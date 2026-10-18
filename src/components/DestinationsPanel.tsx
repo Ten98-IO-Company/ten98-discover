@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
 import {useBlocker} from '@tanstack/react-router';
+import {z} from 'zod';
 import type { Environment, Provider, CanonicalEvent, Destination, Configuration, Consent } from '../server/destinations';
 
 interface CatalogEvent {
@@ -64,6 +65,27 @@ const EVENTS: CanonicalEvent[] = [
   'purchase',
   'refund',
 ];
+
+const providerSchema = z.enum(['meta', 'ga4', 'google_ads', 'cloudflare', 'tiktok', 'linkedin', 'microsoft_ads', 'pinterest', 'snapchat', 'x']);
+const eventSchema = z.enum(EVENTS);
+const unique = (values: string[]) => new Set(values).size === values.length;
+const configurationSchema = z.object({destinations: z.array(z.object({
+  provider: providerSchema, assetId: z.string().min(1).max(64), enabled: z.boolean(), owner: z.enum(['managed', 'external']), ownershipConfirmed: z.boolean(),
+  mappings: z.array(z.object({event: eventSchema, target: z.string().min(1).max(128).optional()}).strict()).max(8).refine(values => unique(values.map(value => value.event))),
+}).strict()).max(10).refine(values => unique(values.map(value => value.provider)))}).strict();
+const timestampSchema = z.iso.datetime();
+const managementSchema = z.object({
+  project: z.object({id: z.uuid(), origin: z.url()}), environment: z.enum(['live', 'test']), draftVersion: z.number().int().nonnegative(), draft: configurationSchema,
+  active: z.object({id: z.uuid(), number: z.number().int().positive(), consentEpoch: z.uuid(), configuration: configurationSchema, createdAt: timestampSchema}).nullable(),
+  history: z.array(z.object({id: z.uuid(), number: z.number().int().positive(), createdAt: timestampSchema, rollbackOf: z.uuid().nullable()})).max(20).refine(values => unique(values.map(value => value.id))),
+  catalog: z.array(z.object({provider: providerSchema, label: z.string(), assetLabel: z.string(), assetPattern: z.string(), notes: z.string(),
+    events: z.array(z.object({event: eventSchema, target: z.string().nullable(), targetRequired: z.boolean(), targetLabel: z.string().optional()})).max(8).refine(values => unique(values.map(value => value.event))),
+    purposes: z.array(z.enum(['analytics', 'advertising', 'adUserData', 'adPersonalization'])).max(4),
+  })).max(10).refine(values => unique(values.map(value => value.provider))),
+});
+const previewSchema = z.object({dryRun: z.literal(true), event: eventSchema, routes: z.array(z.object({
+  provider: providerSchema, assetId: z.string().min(1).max(64), target: z.string().nullable(), status: z.enum(['disabled', 'external', 'consent_blocked', 'unsupported', 'would_invoke']), reason: z.string(), fields: z.array(z.string()),
+})).max(10).refine(values => unique(values.map(value => value.provider)))});
 
 const CONSENT_FIELDS = [
   ['analytics', 'Analytics'],
@@ -189,12 +211,19 @@ function DestinationsInner({
   const url = (suffix: string) =>
     `/api/projects/${encodeURIComponent(projectId)}/destinations${suffix}?environment=${environment}`;
 
-  const applyMgmt = (m: ManagementDTO) => {
+  const applyMgmt = (value: unknown, expectedVersion?: number) => {
+    const parsed = managementSchema.safeParse(value);
+    if (!parsed.success || parsed.data.project.id !== projectId || parsed.data.environment !== environment ||
+        expectedVersion !== undefined && parsed.data.draftVersion !== expectedVersion + 1 ||
+        parsed.data.draft.destinations.some(destination => !parsed.data.catalog.some(entry => entry.provider === destination.provider))) {
+      throw new Error('The saved settings response could not be verified. Your local edits are kept. Reload saved settings before making another change.');
+    }
+    const m: ManagementDTO = parsed.data, nextDraft = structuredClone(m.draft);
     denied.current = false;
     setPendingWrite(false);
     setConflicted(false);
     setMgmt(m);
-    setDraft(structuredClone(m.draft));
+    setDraft(nextDraft);
     setDirty(false);
     setPreview(null);
     setDryRunVersion(null);
@@ -237,14 +266,14 @@ function DestinationsInner({
     const op = ++opRef.current;
     setLoading(true);
     try {
-      const m = await api<ManagementDTO>(
+      const m = await api<unknown>(
         `/api/projects/${encodeURIComponent(projectId)}/destinations?environment=${environment}`,
         { signal: ac.signal },
       );
       if (ac.signal.aborted || op !== opRef.current) return;
+      applyMgmt(m);
       setGone(false);
       setError(null);
-      applyMgmt(m);
     } catch (e) {
       if (ac.signal.aborted || op !== opRef.current) return;
       showError(e);
@@ -291,9 +320,9 @@ function DestinationsInner({
     setMutating(true);
     setError(null);
     try {
-      const result = await api<ManagementDTO>(url(suffix), { method: 'POST', body, signal: ac.signal });
+      const result = await api<unknown>(url(suffix), { method: 'POST', body, signal: ac.signal });
       if (ac.signal.aborted || op !== opRef.current) return;
-      applyMgmt(result);
+      applyMgmt(result, mgmt.draftVersion);
     } catch (e) {
       if (ac.signal.aborted || op !== opRef.current) return;
       if (e instanceof ApiError && [400, 401, 403, 404, 409, 413, 429].includes(e.status)) setPendingWrite(false);
@@ -338,6 +367,7 @@ function DestinationsInner({
     e.preventDefault();
     if (busyRef.current || loading || dirty || pendingWrite || conflicted || !mgmt) return;
     busyRef.current = true;
+    setPreview(null); setDryRunVersion(null); setAck(false);
     const ac = new AbortController();
     abortRef.current?.abort();
     abortRef.current = ac;
@@ -350,7 +380,7 @@ function DestinationsInner({
       if (pCurrency.trim()) properties.currency = pCurrency.trim().toUpperCase();
       if (pTxn.trim()) properties.transactionId = pTxn.trim();
       if (pItem.trim()) properties.itemId = pItem.trim();
-      const r = await api<PreviewResult>(url('/preview'), {
+      const value = await api<unknown>(url('/preview'), {
         method: 'POST',
         signal: ac.signal,
         body: {
@@ -360,7 +390,12 @@ function DestinationsInner({
         },
       });
       if (ac.signal.aborted || op !== opRef.current) return;
-      setPreview(r);
+      const parsed = previewSchema.safeParse(value);
+      if (!parsed.success || parsed.data.event !== pEvent || parsed.data.routes.length !== mgmt.draft.destinations.length ||
+          parsed.data.routes.some(route => !mgmt.draft.destinations.some(destination => destination.provider === route.provider && destination.assetId === route.assetId))) {
+        throw new Error('The dry-run response could not be verified. Run the preview again before publishing.');
+      }
+      setPreview(parsed.data);
       setDryRunVersion(mgmt.draftVersion);
     } catch (err) {
       if (ac.signal.aborted || op !== opRef.current) return;
