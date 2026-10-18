@@ -99,6 +99,7 @@ jobs:
             await client.query('CREATE DATABASE ten98_session_replay_ci');
             await client.query('CREATE DATABASE ten98_replay_heatmaps_ci');
             await client.query('CREATE DATABASE ten98_boards_ci');
+            await client.query('CREATE DATABASE ten98_website_share_ci');
             await client.query('CREATE DATABASE ten98_tracked_assets_ci');
             await client.query('CREATE DATABASE ten98_analytics_reset_ci');
             await client.query('CREATE DATABASE ten98_project_delete_ci');
@@ -187,6 +188,7 @@ jobs:
               ['ten98_session_replay_ci', [['tests/session-replay-integration.ts']], { TEN98_SESSION_REPLAY_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_replay_heatmaps_ci', [['tests/replay-heatmaps-integration.ts']], { TEN98_REPLAY_HEATMAPS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_boards_ci', [['tests/boards-integration.ts']], { TEN98_CUSTOM_BOARDS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
+              ['ten98_website_share_ci', [['tests/website-shares-integration.ts']], { TEN98_WEBSITE_SHARE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_tracked_assets_ci', [['tests/tracked-assets-integration.ts']], { TEN98_TRACKED_ASSETS_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_analytics_reset_ci', [['tests/analytics-reset-integration.ts']], { TEN98_ANALYTICS_RESET_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],
               ['ten98_project_delete_ci', [['tests/project-delete-integration.ts']], { TEN98_PROJECT_DELETE_TEST: '1', TEN98_ISOLATED_CI_DATABASE: '1', APP_URL: 'http://127.0.0.1:3111', ANALYTICS_NETWORK_MODE: 'off' }],

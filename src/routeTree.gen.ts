@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
 import { Route as ShareSlugRouteImport } from './routes/share/$slug'
 import { Route as ShareBoardsSlugRouteImport } from './routes/share/boards/$slug'
+import { Route as ShareWebsitesShareIdRouteImport } from './routes/share/websites/$shareId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -34,18 +35,25 @@ const ShareBoardsSlugRoute = ShareBoardsSlugRouteImport.update({
   path: '/share/boards/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShareWebsitesShareIdRoute = ShareWebsitesShareIdRouteImport.update({
+  id: '/share/websites/$shareId',
+  path: '/share/websites/$shareId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/$': typeof ApiSplatRoute
   '/share/$slug': typeof ShareSlugRoute
   '/share/boards/$slug': typeof ShareBoardsSlugRoute
+  '/share/websites/$shareId': typeof ShareWebsitesShareIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/$': typeof ApiSplatRoute
   '/share/$slug': typeof ShareSlugRoute
   '/share/boards/$slug': typeof ShareBoardsSlugRoute
+  '/share/websites/$shareId': typeof ShareWebsitesShareIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +61,30 @@ export interface FileRoutesById {
   '/api/$': typeof ApiSplatRoute
   '/share/$slug': typeof ShareSlugRoute
   '/share/boards/$slug': typeof ShareBoardsSlugRoute
+  '/share/websites/$shareId': typeof ShareWebsitesShareIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/$' | '/share/$slug' | '/share/boards/$slug'
+  fullPaths:
+    | '/'
+    | '/api/$'
+    | '/share/$slug'
+    | '/share/boards/$slug'
+    | '/share/websites/$shareId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/$' | '/share/$slug' | '/share/boards/$slug'
-  id: '__root__' | '/' | '/api/$' | '/share/$slug' | '/share/boards/$slug'
+  to:
+    | '/'
+    | '/api/$'
+    | '/share/$slug'
+    | '/share/boards/$slug'
+    | '/share/websites/$shareId'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/$'
+    | '/share/$slug'
+    | '/share/boards/$slug'
+    | '/share/websites/$shareId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,6 +92,7 @@ export interface RootRouteChildren {
   ApiSplatRoute: typeof ApiSplatRoute
   ShareSlugRoute: typeof ShareSlugRoute
   ShareBoardsSlugRoute: typeof ShareBoardsSlugRoute
+  ShareWebsitesShareIdRoute: typeof ShareWebsitesShareIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -99,6 +125,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShareBoardsSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/share/websites/$shareId': {
+      id: '/share/websites/$shareId'
+      path: '/share/websites/$shareId'
+      fullPath: '/share/websites/$shareId'
+      preLoaderRoute: typeof ShareWebsitesShareIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -107,6 +140,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSplatRoute: ApiSplatRoute,
   ShareSlugRoute: ShareSlugRoute,
   ShareBoardsSlugRoute: ShareBoardsSlugRoute,
+  ShareWebsitesShareIdRoute: ShareWebsitesShareIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -9,6 +9,7 @@ import { createBoardShare, listBoardShares, revokeBoardShare, saveBoard } from '
 import { createReportShare, listReportShares, revokeReportShare, saveReport } from '../src/server/reports.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, revokeInvitation, transferOwnership } from '../src/server/teams.ts';
 import { createTrackedAssetShare, listTrackedAssetShares, revokeTrackedAssetShare, saveTrackedAsset } from '../src/server/tracked-assets.ts';
+import { createWebsiteShare, listWebsiteShares, revokeWebsiteShare } from '../src/server/website-shares.ts';
 
 type Options = { baseUrl: string; appUrl: string; ownerCookie: string; ownerId: string; workspaceId: string };
 async function rejects(promise: Promise<unknown>, status: number, message: string) {
@@ -320,8 +321,8 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   console.log('PASS native HTTP ownership transfer, origin refusal and immediate role refresh');
 
   // Register P02: a removed member's old permissions stop applying to shares, while the report, tracked-asset
-  // and board grants stay workspace-owned (no creator column), so their public links outlive the creator until
-  // a current owner/admin revokes them.
+  // and board grants (no creator column) and website grants stay workspace-owned, so their public links outlive the creator until a current
+  // owner/admin revokes them (D6). Website share listings name the creator with a former-member marker.
   const project = (await http(`/api/workspaces/${workspaceId}/projects`, 201, { name: 'Share checks', origin: `https://${randomUUID()}.teams.integration.test` }, options.ownerCookie)).body.project;
   const scope = 'from=2026-01-01&to=2026-01-02&timeZone=UTC', expiresAt = new Date(Date.now() + 86_400_000).toISOString();
   const report = (await saveReport(project.id, admin.id, { title: 'Member report', html: '<p>Shared</p>' })).report;
@@ -333,20 +334,32 @@ export async function runTeamsChecks(options: Options): Promise<void> {
   const board = (await saveBoard(workspaceId, admin.id, { requestId: randomUUID(), definition: { schemaVersion: 1, name: 'Member board', description: '', defaultEntity: null, scope, rows: [{ id: randomUUID(), minHeight: 150, cards: [{ id: cardId, type: 'TextBlock', text: 'Shared' }] }] } })).item!;
   const boardToken = randomBytes(32).toString('base64url');
   const boardShare = await createBoardShare(workspaceId, admin.id, board.id, { requestId: randomUUID(), boardRevision: board.revision, label: 'Member board link', theme: 'light', selectedCardIds: [cardId], scope, allowFilter: false, ongoingLive: false, expiresAt, token: boardToken });
+  const websiteToken = randomBytes(32).toString('base64url');
+  const websiteShare = await createWebsiteShare(project.id, admin.id, { requestId: randomUUID(), label: 'Member website link', sections: ['overview'], expiresAt, token: websiteToken });
   const open = async (path: string, headers?: Record<string, string>) => {
     const response = await fetch(new URL(path, options.baseUrl), { headers, signal: AbortSignal.timeout(15_000) });
     await response.arrayBuffer();
     return response.status;
   };
-  const links = () => Promise.all([open(new URL(reportShare.url).pathname), open(`/api/tracked-shares/${trackedToken}`), open(`/api/board-shares/${boardShare.ack.shareId}/manifest`, { 'x-ten98-board-share': boardToken })]);
+  const read = async (path: string, headers: Record<string, string>) => {
+    const response = await fetch(new URL(path, options.baseUrl), { method: 'POST', headers: { ...headers, origin: options.appUrl, 'content-type': 'application/json' }, body: JSON.stringify({ from: '2026-01-01', to: '2026-01-02' }), signal: AbortSignal.timeout(15_000) });
+    await response.arrayBuffer();
+    return response.status;
+  };
+  const links = () => Promise.all([open(new URL(reportShare.url).pathname), open(`/api/tracked-shares/${trackedToken}`), open(`/api/board-shares/${boardShare.ack.shareId}/manifest`, { 'x-ten98-board-share': boardToken }), read(`/api/website-shares/${websiteShare.ack.shareId}/read`, { 'x-ten98-website-share': websiteToken })]);
   await removeMember(workspaceId, options.ownerId, admin.id);
-  assert.deepEqual(await links(), [200, 200, 200], 'Report, tracked-asset and board shares are workspace-owned: removing their creator must not revoke the public links.');
+  assert.deepEqual(await links(), [200, 200, 200, 200], 'Report, tracked-asset, board and website shares are workspace-owned: removing their creator must not revoke the public links.');
   await rejects(listReportShares(project.id, admin.id, report.id), 404, 'A removed member must not manage report shares.');
   await rejects(listTrackedAssetShares(workspaceId, admin.id, asset.id, ''), 404, 'A removed member must not manage tracked-asset shares.');
   await rejects(listBoardShares(workspaceId, admin.id, board.id), 404, 'A removed member must not manage board shares.');
+  await rejects(listWebsiteShares(project.id, admin.id, ''), 404, 'A removed member must not manage website shares.');
+  const listedCreator = (await listWebsiteShares(project.id, options.ownerId, '')).items.find(item => item.id === websiteShare.ack.shareId)?.creator;
+  assert.equal(listedCreator?.email, admin.email, 'The owner listing names the removed creator.');
+  assert.equal(listedCreator?.member, false, 'The owner listing marks the removed creator as a former member.');
   await revokeReportShare(project.id, options.ownerId, report.id, reportShare.share.id);
   await revokeTrackedAssetShare(workspaceId, options.ownerId, asset.id, trackedShare.ack.shareId!, { requestId: randomUUID(), revision: 1 });
   await revokeBoardShare(workspaceId, options.ownerId, board.id, boardShare.ack.shareId, { requestId: randomUUID(), revision: 1 });
-  assert.deepEqual(await links(), [404, 404, 404], 'The owner must be able to close every link a removed member created.');
-  console.log('PASS member removal keeps workspace-owned report/tracked/board share links live, strips the removed member\'s share management and leaves owner revocation in force');
+  await revokeWebsiteShare(project.id, options.ownerId, websiteShare.ack.shareId, { requestId: randomUUID() });
+  assert.deepEqual(await links(), [404, 404, 404, 404], 'The owner must be able to close every link a removed member created.');
+  console.log('PASS member removal keeps workspace-owned report/tracked/board/website share links live, strips the removed member\'s share management, lists the website creator as a former member and leaves owner revocation in force');
 }

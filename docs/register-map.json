@@ -16,10 +16,14 @@
    "operations": [
     "readTeam"
    ],
+   "routes": [
+    "GET /api/projects/{projectId}/website-shares"
+   ],
    "migrations": [
     "0001_foundation",
     "0002_teams",
-    "0007_oidc"
+    "0007_oidc",
+    "0069_project_shares"
    ]
   },
   "P03": {
@@ -568,11 +572,15 @@
   "P45": {
    "routes": [
     "GET /api/board-shares/{shareId}/manifest",
+    "GET /api/projects/{projectId}/website-shares",
     "GET /api/tracked-shares/{token}",
     "GET /api/workspaces/{workspaceId}/boards/{boardId}/shares",
     "GET /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}",
     "GET /api/workspaces/{workspaceId}/tracked-assets/{assetId}/shares",
     "POST /api/board-shares/{shareId}/cards/{cardId}/read",
+    "POST /api/projects/{projectId}/website-shares",
+    "POST /api/projects/{projectId}/website-shares/{shareId}/revoke",
+    "POST /api/website-shares/{shareId}/read",
     "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares",
     "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}/publish",
     "POST /api/workspaces/{workspaceId}/boards/{boardId}/shares/{shareId}/revoke",
@@ -582,7 +590,8 @@
    "migrations": [
     "0010_reports",
     "0058_tracked_assets",
-    "0060_board_shares"
+    "0060_board_shares",
+    "0069_project_shares"
    ]
   },
   "P46": {

@@ -30,6 +30,8 @@ import {listAnnotations,annotationTimeline,getAnnotation,saveAnnotation,deleteAn
 import {listSegments,getSegment,saveSegment,deleteSegment} from './segments.ts';
 import {listBoards,getBoard,saveBoard,cloneBoard,deleteBoard,readBoardCard,previewBoardCard,listBoardShares,getBoardShare,createBoardShare,publishBoardShare,revokeBoardShare,getPublicBoardManifest,readPublicBoardCard} from './boards.ts';
 import {boardLimits} from '../lib/boards.ts';
+import {listWebsiteShares,createWebsiteShare,revokeWebsiteShare,readWebsiteShare,canonicalShareToken} from './website-shares.ts';
+import {websiteShareLimits} from '../lib/website-shares.ts';
 import {listCohorts,getCohort,saveCohort,deleteCohort} from './cohorts.ts';
 import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from './funnels.ts';
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
@@ -92,6 +94,9 @@ function json(body: unknown, status = 200, additional?: HeadersInit) {
   for (const value of extra.getSetCookie()) headers.append('set-cookie', value);
   return Response.json(body, { status, headers });
 }
+
+// Public website share aggregates in flight in this process (see the public website block).
+let websiteShareReads = 0;
 
 async function limit(key: string, maximum: number, client?:PoolClient) {
   const { rows } = await (client??getDatabase().pool).query(
@@ -159,6 +164,23 @@ export async function handleApi(request: Request): Promise<Response> {
       if(!cardId&&(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0'))throw new FoundationError(400,'The shared manifest does not accept a body.');
       await limit('board-share:'+publicBoard[1].toLowerCase()+':read',120);
       return json(cardId?await readPublicBoardCard(publicBoard[1],token,cardId,await readJson(request,51200)):await getPublicBoardManifest(publicBoard[1],token),200,{'referrer-policy':'no-referrer','x-robots-tag':'noindex, nofollow'});
+    }
+    // Public website capability, same class as the board block above: matched before any API key or session lookup.
+    // ponytail: these admission checks are duplicated across board and website shares; extract a shared shareCapability() helper if a third public capability is added.
+    const publicWebsite=path.match(new RegExp('^/api/website-shares/('+id+')/read$','i'));
+    if(publicWebsite){
+      if(request.headers.has('authorization')||request.headers.has('x-api-key'))throw new FoundationError(403,'Use only the website share capability.');
+      if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Shared website reads do not accept query parameters.');
+      if(request.method!=='POST')return json({error:'Method not allowed.'},405,{allow:'POST'});
+      const token=request.headers.get('x-ten98-website-share');
+      if(!canonicalShareToken(token))throw new FoundationError(404,'Website share not found or unavailable.');
+      if(request.headers.get('origin')!==config.appUrl||request.headers.get('sec-fetch-site')==='cross-site')throw new FoundationError(403,'Open this share on its hosted installation.');
+      // Global first, so random share ids cannot grow request_limit rows without bound.
+      // ponytail: the limits count requests per minute and the in-flight cap keeps public aggregates to two of the web process's 10 pool connections, so collection keeps its connections; a short-lived result cache is the upgrade path if link traffic grows.
+      await limit('website-share:global',300);await limit('website-share:'+publicWebsite[1].toLowerCase()+':read',120);
+      if(websiteShareReads>=2)throw new FoundationError(503,'Shared website reads are busy. Try again shortly.');
+      websiteShareReads++;
+      try{return json(await readWebsiteShare(publicWebsite[1],token,await readJson(request,websiteShareLimits.readBodyBytes)),200,{'referrer-policy':'no-referrer','x-robots-tag':'noindex, nofollow'});}finally{websiteShareReads--;}
     }
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
@@ -333,6 +355,20 @@ export async function handleApi(request: Request): Promise<Response> {
       if(request.method!=='POST'||boardShareManagement[3]&&!boardShareManagement[4])return json({error:'Method not allowed.'},405);
       const body=await readJson(request,51200);
       return json(!boardShareManagement[3]?await createBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],body):boardShareManagement[4]==='publish'?await publishBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],boardShareManagement[3],body):await revokeBoardShare(boardShareManagement[1],user.id,boardShareManagement[2],boardShareManagement[3],body));
+    }
+    // Owner/admin cookie management; bearer keys were already refused above. requireWorkspaceFactor covered this /api/projects path.
+    const websiteShareManagement=path.match(new RegExp('^/api/projects/('+id+')/website-shares(?:/('+id+')/revoke)?$','i'));
+    if(websiteShareManagement){
+      if(request.url.includes('#')||request.method!=='GET'&&request.url.includes('?'))throw new FoundationError(400,'Website share changes do not accept query parameters.');
+      if(request.method==='GET'&&!websiteShareManagement[2]){
+        await limit('website-shares:'+user.id+':read',120);
+        if(request.body!==null||request.headers.has('transfer-encoding')||request.headers.has('content-length')&&request.headers.get('content-length')?.trim()!=='0')throw new FoundationError(400,'Share management reads do not accept a body.');
+        return json(await listWebsiteShares(websiteShareManagement[1],user.id,url.search.slice(1)));
+      }
+      if(request.method!=='POST')return json({error:'Method not allowed.'},405);
+      await limit('website-shares:'+user.id+':write',30);
+      const body=await readJson(request,websiteShareManagement[2]?websiteShareLimits.readBodyBytes:websiteShareLimits.bodyBytes);
+      return json(websiteShareManagement[2]?await revokeWebsiteShare(websiteShareManagement[1],user.id,websiteShareManagement[2],body):await createWebsiteShare(websiteShareManagement[1],user.id,body));
     }
     const boardPreviewRoute=path.match(new RegExp('^/api/workspaces/('+id+')/boards/preview$','i'));
     if(boardPreviewRoute){

@@ -91,15 +91,25 @@ export function analyticsQuery(params:URLSearchParams,now=new Date()) {
   if(!geographyFiltersValid(geographyFilters))throw new InputError(400,'Choose compatible location filters.');
   return {range:analyticsRange(dates,now),filters,geographyFilters,...compare===null?{}:{compare:compare as AnalyticsComparisonMode},...detail?{detail}:{},...dimension===null?{}:{dimension:dimension as AnalyticsDimension},...selection?{selection,selectionQuery}:{}};
 }
-export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string):Promise<AnalyticsReport> {
+/** Only readWebsiteShare constructs this after its locator; SQL repeats the grant binding, so a structural value is not authority. */
+export type AnalyticsShareContext={shareId:string;tokenHash:string};
+const memberJoin='JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2';
+const shareJoin="JOIN project_share s ON s.project_id=p.id AND s.id=($2::jsonb->>'shareId')::uuid AND s.token_hash=$2::jsonb->>'tokenHash' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp()";
+export async function projectAnalytics(projectId: string, userId: string, params: URLSearchParams,apiKeyId?:string,share?:AnalyticsShareContext):Promise<AnalyticsReport> {
   const {range,filters,geographyFilters,compare,detail,dimension,selection,selectionQuery} = analyticsQuery(params),derived=compare?deriveAnalyticsComparison(range,compare):null;
   if(compare&&!derived)throw new InputError(400,'Choose a later start date so the comparison stays on or after 1970-01-01.');
   const client=await getDatabase().pool.connect();
-  const values:unknown[]=[projectId,userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters),detail?JSON.stringify(detail):null,dimension??null];
+  const values:unknown[]=[projectId,share?JSON.stringify(share):userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters),detail?JSON.stringify(detail):null,dimension??null];
   const predicate=advancedPredicateSql(selection,value=>{values.push(value);return '$'+values.length;},'UTC');
+  let epoch:string|undefined;
   try{
   if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");}
-  if(client){
+  if(client&&share){
+    // Public website share: no workspace gate, grant lock or project row lock, so no writer ever waits for (or starves behind) a public
+    // reader. The epoch read here and rechecked before COMMIT refuses a read that a reset, settings save or restore committed during.
+    epoch=(await client.query<{analytics_epoch:string}>('SELECT analytics_epoch FROM project WHERE id=$1',[projectId])).rows[0]?.analytics_epoch;
+    if(!epoch)throw new FoundationError(404,'Project not found or unavailable.');
+  }else if(client){
     const hint=(await client.query('SELECT p.workspace_id FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1',[projectId,userId])).rows[0]?.workspace_id;
     if(!hint)throw new FoundationError(404,'Project not found or unavailable.');
     // Publication gate shared with native report reads. The aggregation clock and
@@ -117,7 +127,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
         AND k.revoked_at IS NULL AND k.expires_at>c.as_of
         AND (u."twoFactorEnabled" OR NOT EXISTS(SELECT 1 FROM workspace_two_factor_requirement r WHERE r.workspace_id=k.workspace_id))) AS valid),
     target AS MATERIALIZED (
-      SELECT p.analytics_retained_from,p.analytics_settings,p.origin FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2
+      SELECT p.analytics_retained_from,p.analytics_settings,p.origin FROM project p ${share?shareJoin:memberJoin}
       CROSS JOIN key_authority k WHERE p.id=$1 AND k.valid
     ), periods AS (SELECT 'current' AS period,$3::timestamptz AS start,$4::timestamptz AS finish,$5::date AS from_day,$6::date AS to_day
       UNION ALL SELECT 'comparison',$9::timestamptz,$10::timestamptz,$11::date,$12::date WHERE $9::timestamptz IS NOT NULL),
@@ -257,6 +267,13 @@ export async function projectAnalytics(projectId: string, userId: string, params
   }
   const result={...current,...comparison?{comparison}:{},...geographyDetail?{geographyDetail}:{},...dimensionComparison?{dimensionComparison}:{},...selectionQuery?{selection:selectionQuery}:{}};
   if((dimension||selection)&&Buffer.byteLength(JSON.stringify(result),'utf8')>2*1024*1024)throw new FoundationError(503,'This comparison is too large. Choose a shorter date range or more filters.');
+  // A revoke, expiry or deletion (404) or an epoch change (503) that committed during the read refuses publication; a write committing
+  // after this check is concurrent with the read, as it would be after a lock holder's COMMIT.
+  if(client&&share){
+    const binding=(await client.query<{current:boolean}>('SELECT p.analytics_epoch=$3 AS current FROM project p '+shareJoin+' WHERE p.id=$1',[projectId,values[1],epoch])).rows[0];
+    if(!binding)throw new FoundationError(404,'Project not found or unavailable.');
+    if(!binding.current)throw new FoundationError(503,'Analytics changed during this read. Try again.');
+  }
   if(client)await client.query('COMMIT');return result;
   }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,detail?'Location search took too long. Choose a shorter date range.':compare?'Comparison took too long. Choose a shorter date range.':'Analytics took too long. Choose a shorter date range.');throw error;}
   finally{client?.release();}
