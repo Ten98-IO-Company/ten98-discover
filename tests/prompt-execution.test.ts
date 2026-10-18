@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {decimalSumMicros,decimalText,executionInput,executionBody,parseOpenRouterJson,ExactCost,promptCacheKey} from '../src/server/openrouter-input.ts';
-import {parseRoute,parseExecutionOutcome,readOpenRouterRoutes,requestPromptExecution,reconcileOpenRouter,executionActor} from '../src/server/openrouter.ts';
+import {parseRoute,parseExecutionOutcome,readOpenRouterRoutes,requestPromptExecution,reconcileOpenRouter,executionActor,openRouterRefusal} from '../src/server/openrouter.ts';
 import {openRouterTextProfile} from '../src/lib/openrouter-models.ts';
 import {refreshOpenRouterCatalog} from '../src/server/openrouter-models.ts';
 process.env.AUTH_SECRET='prompt-unit-auth-only-'.repeat(4);process.env.BOOTSTRAP_TOKEN='prompt-unit-bootstrap-only-'.repeat(4);process.env.DATABASE_URL='postgresql://synthetic:synthetic@localhost/unused_prompt_unit';
@@ -60,6 +60,48 @@ test('one paid send captures its generation header before parsing and never retr
  const failed=await requestPromptExecution(secret,[{role:'user',content:'Public test'}],route,2048,id,actor,now,async v=>{captured.push(v);},send);assert.equal(sends,1);assert.deepEqual(captured,['gen-header']);assert.equal(failed.cost,null);assert.equal(failed.reference,'gen-header');
  const thrown=await requestPromptExecution(secret,[],route,2048,id,actor,now,async()=>{},async()=>{sends++;throw new Error('private-detail');});assert.equal(sends,2);assert.ok(!JSON.stringify(thrown).includes('private-detail'));
  const oversized=await requestPromptExecution(secret,[],route,2048,id,actor,now,async()=>{},async()=>new Response('x'.repeat(2_097_153)));assert.equal(oversized.cost,null);
+});
+// Owner decision D3: OpenRouter's documented pre-provider wallet and budget refusals are a known $0 failed request with fixed text.
+const creditRefusal='OpenRouter refused this request before running it: the account or API key has no credit left, or its in-flight spending limit was reached. No charge was recorded. Add credits or raise the key limit at OpenRouter, then prepare a new quote.';
+const budgetRefusal='OpenRouter refused this request before running it: a key, guardrail or workspace budget set at OpenRouter is spent. No charge was recorded. Raise or reset that budget at OpenRouter, then prepare a new quote.';
+const errorBody=(value:unknown)=>parseOpenRouterJson(JSON.stringify(value));
+test('a 402, or a 403 from an OpenRouter budget, without generation evidence is a known $0 refusal that never echoes provider text',()=>{
+ const cases:[number,unknown,string,string|null][]=[[402,{code:402,message:'Insufficient credits <b>raw provider text</b>'},creditRefusal,null],[402,{code:402,message:'x',metadata:{limit_source:'openrouter_in_flight_budget'}},creditRefusal,'openrouter_in_flight_budget'],
+  ...['openrouter_key_limit','openrouter_guardrail_budget','openrouter_workspace_budget'].map(source=>[403,{code:403,message:'x',metadata:{limit_source:source}},budgetRefusal,source] as [number,unknown,string,string|null])];
+ for(const [status,error,diagnostic,limitSource] of cases){
+  const outcome=parseExecutionOutcome(errorBody({error}),status,null,route,now);
+  assert.deepEqual(outcome,{cost:'0.000000',reference:null,result:null,diagnostic,evidence:{source:'refusal',httpStatus:status,limitSource,generationId:null,reportedCost:null}});
+  assert.deepEqual(openRouterRefusal(errorBody({error}),status,null),outcome);assert.ok(!JSON.stringify(outcome).includes('raw provider text'));
+ }
+ for(const source of ['Bad Source <x>','a'.repeat(65),'openrouter_credits\n','',7])assert.equal(openRouterRefusal({error:{code:402,metadata:{limit_source:source}}},402,null)?.evidence.limitSource,null,JSON.stringify(source));
+});
+test('moderation, generation evidence, mismatched codes and 200 error bodies keep the uncertain path',()=>{
+ const cases:[unknown,number,string|null][]=[
+  [{error:{code:403,message:'Flagged',metadata:{reasons:['moderation'],flagged_input:'x'}}},403,null],[{error:{code:403,message:'x',metadata:{limit_source:'openrouter_credits'}}},403,null],
+  [{error:{code:403,message:'x',metadata:{limit_source:'openrouter_in_flight_budget'}}},403,null],[{error:{code:403,message:'x'}},403,null],
+  [{error:{code:402,message:'x'}},402,'gen-header'],[{id:'gen-x',error:{code:402,message:'x'}},402,null],[{usage:{cost:0},error:{code:402,message:'x'}},402,null],[{choices:[],error:{code:402,message:'x'}},402,null],
+  [{error:{code:403,message:'x'}},402,null],[{error:{code:402,message:'x'}},403,null],[{error:{code:'402',message:'x'}},402,null],
+  [{error:{code:402,message:'x'}},200,null],[{error:{code:200,message:'x'}},200,null],[{error:{code:429,message:'x'}},429,null],
+  [{error:'402'},402,null],[{error:null},402,null],[{},402,null],[[{error:{code:402}}],402,null],
+  // An upstream model provider raised the error, so the request reached a provider and its charge is not known to be zero.
+  [{error:{code:402,message:'x',metadata:{provider_name:'Example Provider',raw:'upstream says no'}}},402,null],
+  [{error:{code:402,message:'x',metadata:{raw:'upstream says no'}}},402,null],[{error:{code:403,message:'x',metadata:{limit_source:'openrouter_key_limit',provider_name:'Example Provider'}}},403,null],
+ ];
+ for(const [value,status,header] of cases){const outcome=parseExecutionOutcome(errorBody(value),status,header,route,now);assert.equal(outcome.cost,null,JSON.stringify([value,status,header]));assert.equal(outcome.reference,header);assert.equal(openRouterRefusal(errorBody(value),status,header),null);}
+ assert.equal(parseExecutionOutcome(null,402,null,route,now).cost,null);
+});
+test('a contained 402 is sent once and captures no generation; a 402 carrying a generation header or a non-JSON body stays uncertain',async()=>{
+ let sends=0;const captured:string[]=[],secret={apiKey:'synthetic-never-live'},messages=[{role:'user' as const,content:'Public test'}];
+ const reply=(status:number,value:unknown,headers:Record<string,string>={}):typeof fetch=>async()=>{sends++;return Response.json(value,{status,headers});};
+ const refused=await requestPromptExecution(secret,messages,route,2048,id,actor,now,async v=>{captured.push(v);},reply(402,{error:{code:402,message:'Insufficient credits',metadata:{limit_source:'openrouter_credits'}}}));
+ assert.equal(sends,1);assert.equal(captured.length,0);assert.equal(refused.cost,'0.000000');assert.equal(refused.reference,null);assert.equal(refused.diagnostic,creditRefusal);assert.equal(refused.evidence.limitSource,'openrouter_credits');
+ const budget=await requestPromptExecution(secret,messages,route,2048,id,actor,now,async v=>{captured.push(v);},reply(403,{error:{code:403,message:'x',metadata:{limit_source:'openrouter_workspace_budget'}}}));
+ assert.equal(sends,2);assert.equal(captured.length,0);assert.equal(budget.cost,'0.000000');assert.equal(budget.diagnostic,budgetRefusal);
+ const receipt=await requestPromptExecution(secret,messages,route,2048,id,actor,now,async v=>{captured.push(v);},reply(402,{error:{code:402,message:'x'}},{'x-generation-id':'gen-wallet'}));
+ assert.equal(sends,3);assert.deepEqual(captured,['gen-wallet']);assert.equal(receipt.cost,null);assert.equal(receipt.reference,'gen-wallet');
+ const malformedHeader=await requestPromptExecution(secret,messages,route,2048,id,actor,now,async v=>{captured.push(v);},reply(402,{error:{code:402,message:'x'}},{'x-generation-id':'not a generation'}));
+ assert.equal(sends,4);assert.deepEqual(captured,['gen-wallet']);assert.equal(malformedHeader.cost,null);
+ const html=await requestPromptExecution(secret,messages,route,2048,id,actor,now,async()=>{},async()=>{sends++;return new Response('<html>402</html>',{status:402});});assert.equal(sends,5);assert.equal(html.cost,null);
 });
 test('read-only readiness and reconciliation require exact route/session/actor/time evidence',async()=>{
  let calls=0;const secret={apiKey:'synthetic-never-live'};

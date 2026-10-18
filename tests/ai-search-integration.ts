@@ -9,6 +9,7 @@ import {aiSearchEndpoints} from '../src/lib/ai-search.ts';
 import {saveProvider,saveBudget} from '../src/server/providers.ts';
 import {getAiSearch,getAiSearchRun,refreshAiSearchCatalog,quoteAiSearch,startAiSearch,executeAiSearch,cancelAiSearch,reconcileAiSearch,expireAiSearch} from '../src/server/ai-search.ts';
 import {stopJobs} from '../src/server/jobs.ts';
+import {dataforseoRefusalMessage} from '../src/server/dataforseo-transport.ts';
 
 export async function runAiSearchChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_AI_SEARCH_TEST,'1');
@@ -57,7 +58,7 @@ export async function runAiSearchChecks(){
   const provider=await saveProvider(workspace,owner,{provider:'dataforseo',name:'Synthetic adapter only',credentials:{login:'search@example.invalid',password:'synthetic-never-live'}}),connectionId=provider.connection.id;
   await pool.query("UPDATE provider_connection SET check_status='ok'WHERE id=$1",[connectionId]);await saveBudget(workspace,owner,{paused:false});
   const editor=randomUUID(),viewer=randomUUID();for(const[id,role]of[[editor,'editor'],[viewer,'viewer']]){await pool.query('INSERT INTO "user"(id,name,email)VALUES($1,\'Search role fixture\',$2)',[id,id+'@ai-search.test']);await pool.query('INSERT INTO membership(workspace_id,user_id,role)VALUES($1,$2,$3)',[workspace,id,role]);}
-  let paid=0,free=0,mode:'ok'|'invalid'|'lost'|'overrun'='ok';const receipts=new Map<string,{id:string;metadata:any;cost:number}>();
+  let paid=0,free=0,mode:'ok'|'invalid'|'lost'|'overrun'|'wallet'='ok';const receipts=new Map<string,{id:string;metadata:any;cost:number}>();
   const path=(address:string)=>new URL(address).pathname.slice(1).split('/');
   const envelope=(address:string,rows:unknown[],data?:unknown)=>Response.json({status_code:20000,cost:0,tasks_count:1,tasks_error:0,tasks:[{id:randomUUID(),status_code:20000,cost:0,path:path(address),result_count:rows.length,result:rows,...data?{data}:{}}]});
   const send:typeof fetch=async(address,options)=>{
@@ -66,7 +67,10 @@ export async function runAiSearchChecks(){
    if(url===aiSearchEndpoints.locations){free++;return envelope(url,[{location_code:2840,location_name:'United States',location_type:'Country',country_iso_code:'US'}]);}
    if(url===aiSearchEndpoints.languages){free++;return envelope(url,[{language_code:'en',language_name:'English'}]);}
    if(url===aiSearchEndpoints.reconciliation){free++;const data=JSON.parse(String(options?.body))[0],rows=[];for(const receipt of receipts.values()){const runId=receipt.metadata.tag.slice('ten98:ai-search:'.length),row=(await pool.query('SELECT dispatched_at FROM ai_search_run WHERE id=$1',[runId])).rows[0];if(!row?.dispatched_at)continue;const posted=(row.dispatched_at as Date).toISOString().slice(0,19).replace('T',' ')+' +00:00';if(posted<data.datetime_from||posted>data.datetime_to)continue;rows.push({...receipt,status:'20000',url:path(aiSearchEndpoints.live).join('/'),datetime_posted:posted});}return envelope(url,rows,data);}
-   assert.equal(url,aiSearchEndpoints.live);paid++;const metadata=JSON.parse(String(options?.body))[0],receipt={id:randomUUID(),metadata,cost:mode==='overrun'?0.008:0.004};receipts.set(metadata.tag,receipt);if(mode==='lost')throw Error('Synthetic lost response.');
+   assert.equal(url,aiSearchEndpoints.live);paid++;
+   // DataForSEO appendix/errors 40200 (payment required) at an explicit zero cost: no task ran, so no receipt is recorded.
+   if(mode==='wallet')return Response.json({status_code:40200,status_message:'Payment Required.',cost:0,tasks_count:0,tasks_error:0,tasks:null});
+   const metadata=JSON.parse(String(options?.body))[0],receipt={id:randomUUID(),metadata,cost:mode==='overrun'?0.008:0.004};receipts.set(metadata.tag,receipt);if(mode==='lost')throw Error('Synthetic lost response.');
    return Response.json({status_code:20000,cost:receipt.cost,tasks_count:1,tasks_error:0,tasks:[{id:receipt.id,status_code:20000,cost:receipt.cost,path:path(url),data:metadata,result_count:1,result:[{keyword:mode==='invalid'?'mismatched':metadata.keyword.replaceAll('%2B','+').replaceAll('%25','%'),location_code:metadata.location_code,language_code:metadata.language_code,markdown:'Synthetic Acme answer',fan_out_queries:[]}]}]});
   };
   const fixtures=async()=>{const pid=randomUUID(),promptId=randomUUID(),versionId=randomUUID(),c=await pool.connect();try{await c.query('BEGIN');await c.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at)VALUES($1,$2,'Search capture service fixture',$4,$3,'infinity')",[pid,workspace,randomUUID(),'https://'+pid+'.service-search.test']);await c.query('INSERT INTO project_prompt(id,project_id,current_version_id)VALUES($1,$2,$3)',[promptId,pid,versionId]);await c.query("INSERT INTO prompt_text_version(id,project_id,prompt_id,number,text,lower_text,created_by)VALUES($1,$2,$3,1,'Acme C++ %20','acme c++ %20',$4)",[versionId,pid,promptId,owner]);await c.query('COMMIT');return {pid,promptId,versionId};}catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}};
@@ -107,6 +111,15 @@ export async function runAiSearchChecks(){
   // Owner decision D3: after the uncertain capture was reconciled, a new Start reserves with no unpause step.
   const resumedFixture=await prepare(),resumed=await startAiSearch(resumedFixture.pid,owner,{requestId:randomUUID(),quoteId:resumedFixture.quoted.quote.id,priceVersion:price.version,acceptExternalCharge:true});assert.equal(resumed.replayed,false);assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[resumed.run.id])).rows[0].status,'reserved');assert.equal(paid,3);assert.equal(outbound,0);
   console.log('PASS immutable raw anchor, irreversible expiry and exact synthetic ledger:3settled/1cancelled; a new start needs no unpause after reconciliation (D3); actual paid/outbound0');
+   // Owner decision D3: a zero-cost 40200 wallet refusal ends the capture failed with a $0 receipt and the fixed text; nothing becomes uncertain.
+   const walletFixture=await prepare(),walletStart=await startAiSearch(walletFixture.pid,owner,{requestId:randomUUID(),quoteId:walletFixture.quoted.quote.id,priceVersion:price.version,acceptExternalCharge:true}),walletPaid=paid;
+   mode='wallet';await executeAiSearch(walletStart.run.id,send);await executeAiSearch(walletStart.run.id,send);mode='ok';
+   const walletRun=(await getAiSearchRun(walletFixture.pid,viewer,walletStart.run.id)).run;assert.equal(paid,walletPaid+1);assert.equal(walletRun.status,'failed');assert.equal(walletRun.chargeStatus,'settled');assert.equal(walletRun.actualUsd,'0.000000');assert.equal(walletRun.result,null);diagnostic(walletRun,dataforseoRefusalMessage.payment);
+   const walletHistory=(await getAiSearch(walletFixture.pid,viewer)).runs.find(row=>row.id===walletStart.run.id);assert.ok(walletHistory);diagnostic(walletHistory,dataforseoRefusalMessage.payment);
+   assert.deepEqual((await pool.query('SELECT status,actual_micros,provider_reference FROM provider_request WHERE id=$1',[walletStart.run.id])).rows[0],{status:'settled',actual_micros:'0',provider_reference:null});
+   assert.equal((await pool.query("SELECT count(*)::int AS n FROM provider_request WHERE status='uncertain'")).rows[0].n,0);assert.equal((await pool.query('SELECT paused FROM workspace_budget WHERE workspace_id=$1',[workspace])).rows[0].paused,false);
+   const afterWallet=await prepare(),afterStart=await startAiSearch(afterWallet.pid,owner,{requestId:randomUUID(),quoteId:afterWallet.quoted.quote.id,priceVersion:price.version,acceptExternalCharge:true});assert.equal((await pool.query('SELECT status FROM provider_request WHERE id=$1',[afterStart.run.id])).rows[0].status,'reserved');assert.equal(paid,walletPaid+1);assert.equal(outbound,0);
+   console.log('PASS zero-cost 40200 wallet refusal fails the capture with a $0 receipt and fixed text, nothing uncertain, and the next start reserves (D3)');
  }finally{await stopJobs();globalThis.fetch=original;assert.equal(outbound,0);}
 }
 if(import.meta.main&&process.env.TEN98_AI_SEARCH_TEST==='1'){try{await runAiSearchChecks();}finally{await closeDatabase();}}

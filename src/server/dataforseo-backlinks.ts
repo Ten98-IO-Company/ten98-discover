@@ -1,5 +1,5 @@
 import {FoundationError} from './auth.ts';
-import {dataforseoJson} from './dataforseo-transport.ts';
+import {dataforseoJson,dataforseoRefusal,dataforseoRefusalEvidence,dataforseoRefusalMessage} from './dataforseo-transport.ts';
 import {microUsd,providerMicros,validText} from './keyword-research-input.ts';
 import {normalizePublicHostname} from './domains.ts';
 import {backlinkEndpoint,backlinkEndpointName,backlinkPayload,backlinkReconcileEndpoint,backlinkUrlMatches,matchesBacklinkPayload,type BacklinkRequest,type BacklinkResult,type BacklinkRow,type BacklinkGroupMetrics} from './backlink-research-input.ts';
@@ -28,6 +28,7 @@ function groupMetrics(v:Obj):BacklinkGroupMetrics{return {backlinks:metric(v.bac
 const final=new Set([20000,40102,40103,40106,40501,40502,40503,40504,40505,40506]);
 export function parseBacklinkOutcome(response:{httpStatus:number;body:unknown},request:BacklinkRequest,id:string,now=new Date()):BacklinkOutcome{
  const outcome:BacklinkOutcome={cost:null,reference:null,result:null,diagnostic:'The provider charge is unknown. Reconcile it before spending again.',evidence:{httpStatus:response.httpStatus,statusCode:null,taskStatus:null,reportedCost:null,taskCost:null}};
+ const refused=dataforseoRefusal(response);if(refused)return {...outcome,cost:'0.000000',diagnostic:dataforseoRefusalMessage[refused],evidence:dataforseoRefusalEvidence(response)};
  try{
   const b=response.body;if(!object(b))invalid();outcome.evidence.reportedCost=b.cost;outcome.evidence.statusCode=typeof b.status_code==='number'?b.status_code:null;
   if(response.httpStatus!==200||b.status_code!==20000||b.tasks_count!==1||!Array.isArray(b.tasks)||b.tasks.length!==1||!object(b.tasks[0]))invalid();

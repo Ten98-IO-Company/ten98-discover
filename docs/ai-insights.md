@@ -219,7 +219,11 @@ and cancels only unsent work. A dispatched request is never automatically retrie
 The existing provider transport persists an actual generation header before body
 parsing. Known charges settle even when output is refused, incomplete, too large,
 invalid, or current authority changed. An unknown charge stays `actualUsd:null`,
-marks the run uncertain and blocks new paid work until it is reconciled.
+marks the run uncertain and blocks new paid work until it is reconciled. An
+OpenRouter 402, or a 403 with a key, guardrail or workspace budget `limit_source`,
+carrying no generation evidence is a refusal before any work: the run fails with a
+settled US$0.000000 receipt and a fixed message, and nothing becomes uncertain
+([refusal contract](foundation.md#account-api-key-and-provider-controls)).
 `POST /runs/:runId/reconcile`
 with a stable `requestId` reads only the original generation metadata, requiring
 the original key/model/provider/session/actor/time identity. It can reconcile after

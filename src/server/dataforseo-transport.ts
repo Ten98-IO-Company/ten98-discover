@@ -25,6 +25,33 @@ async function boundedJson(response:Response,maximum:number,identity=false){
   }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 
+// Owner decision D3: wallet refusals from DataForSEO appendix/errors (checked 2026-10-18). 40201 (paused),
+// 40202/40209 (rate limits) and 40204 (subscription) are not wallet refusals and stay uncertain.
+export const dataforseoWalletCodes=new Map<number,'payment'|'cost_limit'>([[40200,'payment'],[40210,'payment'],[40203,'cost_limit']]);
+export const dataforseoRefusalMessage={
+  payment:'DataForSEO refused this request because the account balance is too low (payment required or insufficient funds). No charge was recorded. Add funds in DataForSEO, then prepare a new quote.',
+  cost_limit:'DataForSEO refused this request because the daily cost limit set in your DataForSEO account was reached. No charge was recorded. Raise the limit in DataForSEO or wait for it to reset, then prepare a new quote.'
+} as const;
+// A known $0 refusal needs an explicit numeric zero cost on the response and on every task;
+// a missing cost is never zero. Mixed, partial or other codes return null (uncertain).
+export function dataforseoRefusal(r:DataforseoResponse):'payment'|'cost_limit'|null{
+  const b=r.body;
+  if(r.httpStatus!==200&&r.httpStatus!==402||!b||typeof b!=='object'||Array.isArray(b))return null;
+  const {status_code:code,cost,tasks}=b as Record<string,unknown>;
+  if(cost!==0||tasks!=null&&!Array.isArray(tasks))return null;
+  const list=(tasks??[]) as unknown[],kinds=new Set<string|undefined>();
+  for(const task of list){if(!task||typeof task!=='object'||Array.isArray(task)||(task as Record<string,unknown>).cost!==0)return null;kinds.add(dataforseoWalletCodes.get((task as Record<string,unknown>).status_code as number));}
+  const kind=dataforseoWalletCodes.get(code as number),taskKind=kinds.size===1?[...kinds][0] as 'payment'|'cost_limit'|undefined:undefined;
+  if(kind)return list.length===0||taskKind===kind?kind:null;
+  if(code===20000)return list.length?taskKind??null:null;
+  return r.httpStatus===402&&list.length===0&&(code==null||code===402)?'payment':null;
+}
+// Ledger evidence for a recognised refusal: the provider's own codes and its explicit zero costs.
+export function dataforseoRefusalEvidence(r:DataforseoResponse){
+  const b=r.body as Record<string,any>,task=Array.isArray(b.tasks)?b.tasks[0]:undefined;
+  return {httpStatus:r.httpStatus,statusCode:Number.isInteger(b.status_code)?b.status_code as number:null,taskStatus:Number.isInteger(task?.status_code)?task.status_code as number:null,reportedCost:0,taskCost:task?0:null};
+}
+
 // One attempt only. Callers must authorize/reserve paid work before entering here.
 // Fixed routes also protect direct callers; no custom host, redirect or query URL.
 export async function dataforseoJson(url:string,credentials:unknown,method:'GET'|'POST',body:unknown,send:typeof fetch=fetch):Promise<DataforseoResponse>{
