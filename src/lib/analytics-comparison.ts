@@ -8,7 +8,7 @@ export type AnalyticsCoverage={status:'complete'|'partial'|'unavailable';retaine
 export type AnalyticsPeriodReport={range:{from:string;to:string;timeZone:'UTC'};totals:{pageViews:number|null;customEvents:number|null};coverage:AnalyticsCoverage;
  collection:{mode:'cookieless'|'consent-first';captureCoverage:'unknown';pageViews:{cookieless:number|null;consent:number|null;unknown:number|null}};
  measurement:{version:string;identifiedPageViews:number|null;unidentifiedPageViews:number|null;visitors:number|null;visits:number|null;bounceRate:number|null;averageVisitSeconds:number|null};
- daily:{date:string;pageViews:number|null;customEvents:number|null;coverage:AnalyticsCoverage['status']}[];pages:{path:string;pageViews:number}[];events:{name:string;count:number}[];
+ daily:{date:string;pageViews:number|null;customEvents:number|null;coverage:AnalyticsCoverage['status']}[];pages:{path:string;pageViews:number}[];referrers:{host:string;pageViews:number;visitors:number|null}[];events:{name:string;count:number}[];
  lastReceivedAt:string|null;environment:AnalyticsEnvironment;geography:GeographyReport};
 export type AnalyticsComparison={version:'analytics-comparison-v1';mode:AnalyticsComparisonMode;asOf:string;report:AnalyticsPeriodReport;
  change:{pageViews:{absolute:number|null;percent:number|null};customEvents:{absolute:number|null;percent:number|null};visitors:{absolute:number|null;percent:number|null};visits:{absolute:number|null;percent:number|null};averageVisitSeconds:{absolute:number|null;percent:number|null};bounceRate:{percentagePoints:number|null}};

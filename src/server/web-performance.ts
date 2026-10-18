@@ -17,7 +17,7 @@ export async function collectPerformance(request:Request,raw:unknown,peerAddress
  try{
   await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");
   await client.query('SELECT id FROM project WHERE public_key=$1 FOR SHARE',[input.siteKey]);
-  const {project,userAgent,reason,basis}=await nativeCollectionPolicy(client,request,input.siteKey,input,'event');
+  const {project,userAgent,reason,basis}=await nativeCollectionPolicy(client,request,input.siteKey,input,'event',peerAddress);
   if(reason||project.analytics_settings.capturePerformance!==true){await client.query('COMMIT');return {accepted:false,reason:reason??'collection_disabled'};}
   const settings=publicAnalyticsSettings(project.analytics_settings),screen=settings.captureScreen?input.dimensions?.screen:undefined;
   const dimensions={...analyticsEnvironment(userAgent,screen?.width),...screen?{screenWidth:screen.width,screenHeight:screen.height}:{},...settings.captureGeography===true?{geography:collectGeography(resolveAnalyticsNetwork(request,peerAddress))}:{}};

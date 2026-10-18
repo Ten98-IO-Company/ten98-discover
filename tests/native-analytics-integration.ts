@@ -156,5 +156,30 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   await assert.rejects(pool.query('INSERT INTO event(id,project_id,event_name,path,visitor_id) VALUES($1,$2,$3,$4,$5)',[randomUUID(),projectId,'page_view','/',knownVisitor]),{code:'23514'});
   const epoch=(await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[projectId])).rows[0].analytics_epoch;
   assert.notEqual(trackingConsentEpoch(epoch,null),staleConsent.epoch);
+
+  // Installation IP exclusion (P31) matches only the trust-mode address: forwarding headers never trigger it, and in direct mode never bypass it.
+  const excludedProject=randomUUID(),excludedKey=randomUUID(),excludedOrigin='https://excluded.integration.test';
+  await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)',[excludedProject,options.workspaceId,'Excluded network acceptance',excludedOrigin,excludedKey]);
+  const excludedConfig=await getPublicDestinations(excludedKey,'live',excludedOrigin);assert.equal(excludedConfig.nativeTracking.collectionMode,'cookieless');
+  const networkNames=['ANALYTICS_NETWORK_MODE','ANALYTICS_TRUSTED_PROXIES','ANALYTICS_EXCLUDED_IPS'] as const,savedNetwork=networkNames.map(name=>process.env[name]);let acceptedCount=0;
+  const collectFrom=async(peer:string,forwarded?:string)=>{
+    const result=await collectNative(new Request(excludedOrigin,{headers:{origin:excludedOrigin,'user-agent':'Excluded network browser',...forwarded===undefined?{}:{'x-forwarded-for':forwarded}}}),excludedKey,{eventId:randomUUID(),name:'page_view',url:excludedOrigin+'/',collection:{mode:'cookieless',epoch:excludedConfig.consentEpoch}},peer);
+    if(result.accepted)acceptedCount++;return result;
+  };
+  try{
+    process.env.ANALYTICS_NETWORK_MODE='direct';process.env.ANALYTICS_EXCLUDED_IPS='203.0.113.0/24,2001:db8::/32';
+    for(const peer of ['203.0.113.5','::ffff:203.0.113.6','2001:db8::7'])assert.deepEqual(await collectFrom(peer),{accepted:false,reason:'collection_disabled'},peer);
+    assert.equal((await collectFrom('198.51.100.7','203.0.113.5')).accepted,true,'Forwarding headers cannot trigger exclusion in direct mode.');
+    assert.deepEqual(await collectFrom('203.0.113.5','198.51.100.7'),{accepted:false,reason:'collection_disabled'},'Forwarding headers cannot bypass exclusion in direct mode.');
+    process.env.ANALYTICS_NETWORK_MODE='proxy';process.env.ANALYTICS_TRUSTED_PROXIES='127.0.0.1/32';
+    assert.deepEqual(await collectFrom('127.0.0.1','203.0.113.5'),{accepted:false,reason:'collection_disabled'});
+    assert.equal((await collectFrom('127.0.0.1','203.0.113.5, 198.51.100.7')).accepted,true,'Only the first untrusted address from the right is matched.');
+    assert.equal((await collectFrom('192.0.2.9','203.0.113.5')).accepted,true,'An untrusted proxy peer resolves no address and is never excluded.');
+  }finally{networkNames.forEach((name,index)=>{if(savedNetwork[index]===undefined)delete process.env[name];else process.env[name]=savedNetwork[index];});}
+  assert.equal(acceptedCount,3);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM event WHERE project_id=$1',[excludedProject])).rows[0].n,acceptedCount,'Excluded requests write nothing.');
+  const excludedPublic=JSON.stringify(await getPublicDestinations(excludedKey,'live',excludedOrigin));
+  for(const text of ['ANALYTICS_EXCLUDED','203.0.113.','2001:db8'])assert.equal(excludedPublic.includes(text),false,'The exclusion list is never published.');
+  console.log('PASS installation IP exclusion in direct and proxy mode: trust-mode address only, nothing stored for excluded requests, nothing published');
   console.log('PASS native consent, privacy, settings epochs, publication-lock race, duplicate handling and measured visit statistics');
 }

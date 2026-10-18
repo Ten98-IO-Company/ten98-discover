@@ -37,6 +37,7 @@ type Analytics = {
   };
   daily: Daily[];
   pages: { path: string; pageViews: number }[];
+  referrers?: { host: string; pageViews: number; visitors: number | null }[];
   events: { name: string; count: number }[];
   lastReceivedAt: string | null;
   environment?: AnalyticsEnvironment;
@@ -130,7 +131,9 @@ function validEnvironment(value: unknown, filters: EnvironmentFilters, total: nu
 export function validReport(value: unknown, range: Range, filters: EnvironmentFilters, maxDays = MAX_DAYS, geographyFilters:GeographyFilters={}): value is Analytics {
   if (!record(value) || !record(value.range) || value.range.from !== range.from || value.range.to !== range.to || value.range.timeZone !== 'UTC' || !record(value.coverage) || !['complete','partial','unavailable'].includes(value.coverage.status as string) || value.coverage.retainedFrom !== null && !stamp(value.coverage.retainedFrom) || !record(value.totals) || ![value.totals.pageViews,value.totals.customEvents].every(nullableCount) || !record(value.measurement) || !['identifiedPageViews','unidentifiedPageViews','visitors','visits'].every(k=>nullableCount((value.measurement as Record<string,unknown>)[k])) || !metric(value.measurement.bounceRate,100) || !metric(value.measurement.averageVisitSeconds) || value.lastReceivedAt !== null && !stamp(value.lastReceivedAt)) return false;
   if (!Array.isArray(value.daily) || value.daily.length > maxDays || !value.daily.every(day=>record(day) && typeof day.date==='string' && parseDay(day.date)!==null && day.date>=range.from && day.date<=range.to && ['complete','partial','unavailable'].includes(day.coverage as string) && nullableCount(day.pageViews) && nullableCount(day.customEvents)) || !Array.isArray(value.pages) || value.pages.length>20 || !value.pages.every(row=>record(row) && typeof row.path==='string' && row.path.length<=2048 && count(row.pageViews)) || !Array.isArray(value.events) || value.events.length>20 || !value.events.every(row=>record(row) && typeof row.name==='string' && row.name.length<=320 && count(row.count))) return false;
-  if (value.coverage.status==='unavailable' && ([value.totals.pageViews,value.totals.customEvents,...['identifiedPageViews','unidentifiedPageViews','visitors','visits','bounceRate','averageVisitSeconds'].map(k=>(value.measurement as Record<string,unknown>)[k])].some(n=>n!==null) || value.pages.length || value.events.length || value.daily.some(day=>day.pageViews!==null || day.customEvents!==null))) return false;
+  // Optional so older snapshots and fixtures stay valid; when present: unique literal hosts, positive views, visitors within views.
+  if (value.referrers !== undefined && (!Array.isArray(value.referrers) || value.referrers.length>20 || !value.referrers.every(row=>keys(row,['host','pageViews','visitors']) && typeof row.host==='string' && row.host.length>=1 && row.host.length<=2048 && count(row.pageViews) && row.pageViews>0 && (row.visitors===null || count(row.visitors) && row.visitors>=1 && row.visitors<=row.pageViews)) || new Set(value.referrers.map(row=>row.host)).size!==value.referrers.length)) return false;
+  if (value.coverage.status==='unavailable' && ([value.totals.pageViews,value.totals.customEvents,...['identifiedPageViews','unidentifiedPageViews','visitors','visits','bounceRate','averageVisitSeconds'].map(k=>(value.measurement as Record<string,unknown>)[k])].some(n=>n!==null) || value.pages.length || value.referrers?.length || value.events.length || value.daily.some(day=>day.pageViews!==null || day.customEvents!==null))) return false;
   if(value.collection!==undefined&&(!record(value.collection)||!['consent-first','cookieless'].includes(value.collection.mode as string)||value.collection.captureCoverage!=='unknown'||!record(value.collection.pageViews)||!['cookieless','consent','unknown'].every(k=>nullableCount((value.collection as {pageViews:Record<string,unknown>}).pageViews[k]))))return false;
   if(value.geography===undefined?Object.keys(geographyFilters).length>0:!validGeography(value.geography,geographyFilters,value.totals.pageViews as number|null,value.measurement.identifiedPageViews as number|null,value.coverage.status as string))return false;
   return value.environment === undefined ? !Object.keys(filters).length : validEnvironment(value.environment,filters,value.totals.pageViews as number|null,value.measurement.identifiedPageViews as number|null,value.coverage.status==='unavailable');
@@ -478,6 +481,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
 
   const busy = !invalid&&!unavailableRange&&(!routeReady||view.loading||view.queryKey!==queryKey);
   const data = !routeReady||invalid||unavailableRange||view.queryKey!==queryKey||acceptedOwner.current!==readOwner?null:view.data;
+  const referrersMeasured=Boolean(data?.referrers?.some(row=>row.visitors!==null));
   const exportDraft=initialDraft();exportDraft.from=from;exportDraft.to=to;
   for(const[field,value]of Object.entries({...filters,...geographyFilters}))if(value!==undefined)exportDraft.filters[field]={on:true,value};
   let exportUnsupported=invalid?'This applied scope cannot be exported. Return to Explore or explicitly reset Analytics.':'';
@@ -745,6 +749,25 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
           </section>
 
           <GeographyCard key={queryKey} period="current" detail={data.geographyDetail} onDetail={loadLocation} data={data.geography} range={data.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation}/>
+          {data.referrers&&<section className="card analytics-breakdown">
+            <h2>Top referrers</h2>
+            <p className="hint">Up to 20 external referrer hosts in this date range. In-site navigation and page views without a recorded referrer are not listed; referrer capture is off by default and is turned on in Collection and privacy. Selecting a host filters every report by that referrer, including in-site navigation from it.</p>
+            {data.referrers.length === 0 ? (
+              <p className="dim">{data.coverage.status === 'complete' ? 'No referrer hosts are recorded in this range.' : 'No referrer hosts are recorded in the retained portion.'}</p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th scope="col">Referrer</th><th scope="col" className="analytics-num">{referrersMeasured?'Estimated visitors':'Page views'}</th></tr></thead>
+                  <tbody>
+                    {data.referrers.map(row=><tr key={row.host}>
+                      <td className="analytics-path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('referrer',{type:'string',value:row.host})} aria-label={`Filter Referrer: ${row.host}`}><bdi dir="ltr">{row.host}</bdi></button></td>
+                      <td className="analytics-num">{fmtNum(referrersMeasured?row.visitors:row.pageViews)}</td>
+                    </tr>)}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>}
           <EnvironmentCard data={data} busy={busy} field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/>
         </>
       )}

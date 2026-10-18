@@ -51,6 +51,14 @@ and OpenSEO's matched-cell/coverage comparison are not the same formula.
 The existing quote input hash includes pricing and selected model lists; it is
 not a valid semantic comparison-cell identity.
 
+When at least one day is available, **Download SVG** saves the displayed trend as
+`ai-insights-trend-{firstDate}-{lastDate}.svg`: a standalone light-theme
+`image/svg+xml` file (viewBox 0 0 600 180, white background, the same points,
+lines and dotted unavailable days, 100/50/0% and first/last date labels) whose
+title and description name the metric, entity, range and gap rule. All text is
+XML-escaped and XML-invalid characters are dropped; the file has no script, link,
+style sheet or foreign content. Pinned Umami offers no chart download.
+
 The [adjacent-period comparison](ai-period-comparison.md) adds a separately
 labelled current-context, equal-cell method. It compares equal local-calendar
 ranges, requires retained copied settings to identify cells, and exposes changes
