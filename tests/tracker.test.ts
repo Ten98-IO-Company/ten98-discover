@@ -277,15 +277,36 @@ test('withdrawal aborts outstanding requests, clears context, and rejects late i
 test('properties are native-only unless they meet each vendor contract; dimensions obey capture switches', async () => {
   const e = makeEnv({ destinations: [meta] }); await e.start();
   const properties = { plan: 'free', nested: { enabled: true }, amount: 1.125, tags: ['one', false] };
-  e.location.search = '?utm_source=private-source&email=hidden'; e.location.hash = '#hidden';
+  e.location.search = '?utm_source=private-source&gclid=private-click&email=hidden'; e.location.hash = '#hidden';
   e.sandbox.ten98.track('feature_used', properties); await e.drain();
   assert.deepEqual(e.payloads.at(-1)!.properties, properties); assert.deepEqual(e.payloads.at(-1)!.dimensions, { language: 'en-GB' });
   assert.equal(e.scripts.length, 1); assert.equal(e.payloads.at(-1)!.url, 'https://site.example/dashboard');
   const enabled = makeEnv({ settings: { captureReferrer: true, captureScreen: true, captureCampaigns: true } });
-  enabled.location.search = '?utm_source=newsletter&utm_medium=email&utm_campaign=launch&utm_term=term&utm_content=card&email=secret';
+  // Owner decision D1: with the analytics grant the six pinned Umami click IDs are read like its collector (first occurrence,
+  // case-sensitive key, empty kept, percent-decoded), cut to 255 code points; a NUL-bearing value is skipped, never the view.
+  enabled.location.search = '?utm_source=newsletter&utm_medium=email&utm_campaign=launch&utm_term=term&utm_content=card&email=secret'
+    + '&gclid=g-1&gclid=second&GCLID=upper&fbclid=&li_fat_id=l%2B1&msclkid=' + '%F0%9F%98%80'.repeat(256) + '&ttclid=a%00b';
   await enabled.start(); assert.deepEqual(enabled.payloads[0].dimensions, { language: 'en-GB', referrer: 'https://referrer.example',
-    screen: { width: 1280, height: 720 }, campaign: { source: 'newsletter', medium: 'email', campaign: 'launch', term: 'term', content: 'card' } });
+    screen: { width: 1280, height: 720 }, campaign: { source: 'newsletter', medium: 'email', campaign: 'launch', term: 'term', content: 'card' },
+    clickIds: { gclid: 'g-1', fbclid: '', li_fat_id: 'l+1', msclkid: '😀'.repeat(255) } });
   assert.equal(JSON.stringify(enabled.payloads).includes('secret'), false);
+  // Cookieless basic events never carry click IDs, even with campaign capture on; the same page's UTM values still count. After the
+  // analytics grant the next event carries them.
+  const basic = makeEnv({ settings: { captureCampaigns: true }, collectionMode: 'cookieless', pageUrl: 'https://site.example/dashboard?utm_source=basic-source&gclid=basic-click&twclid=basic-click' });
+  basic.run(); await basic.drain(); basic.sandbox.ten98.track('signup'); await basic.drain();
+  assert.equal(basic.payloads.length, 2);
+  for (const payload of basic.payloads) { assert.deepEqual(payload.dimensions, { language: 'en-GB', campaign: { source: 'basic-source' } }); assert.equal(payload.consent, undefined); }
+  assert.equal(JSON.stringify(basic.payloads).includes('basic-click'), false);
+  await basic.grant(); basic.sandbox.ten98.track('purchase'); await basic.drain();
+  const granted = basic.payloads.at(-1)!; assert.equal(granted.name, 'purchase'); assert.deepEqual(granted.consent, { analytics: true, epoch: EPOCH });
+  assert.deepEqual(granted.dimensions.clickIds, { gclid: 'basic-click', twclid: 'basic-click' });
+  // Vendor tags never receive click IDs from the tracker: it forwards only the page URL (no query) and properties to the coordinator.
+  const vendor = makeEnv({ settings: { captureCampaigns: true }, destinations: [meta], pageUrl: 'https://site.example/dashboard?gclid=vendor-click&fbclid=vendor-click' });
+  vendor.run(); await vendor.drain(); await vendor.grant({ analytics: true, advertising: true, adUserData: true, adPersonalization: true });
+  vendor.sandbox.ten98.track('purchase', vendor.local({ value: '1.25', currency: 'USD', transactionId: 'order' })); await vendor.drain();
+  assert.equal(vendor.scripts.length, 2); vendor.scripts[1].onload(); await vendor.drain();
+  assert.deepEqual(vendor.payloads.at(-1)!.dimensions.clickIds, { gclid: 'vendor-click', fbclid: 'vendor-click' });
+  assert.ok(vendor.sandbox.fbq.queue.length > 0); assert.equal(JSON.stringify(vendor.sandbox.fbq.queue).includes('vendor-click'), false);
 });
 
 test('SPA page_views after pushState, replaceState and popstate carry the previous in-app page origin while the landing view keeps the external referrer origin; no path or private query/hash leaks', async () => {
@@ -871,7 +892,7 @@ test('performance public configuration keeps optional true false and absent dist
 });
 
 test('five bounded performance metrics send only their anonymous native payload and never invoke advertising', async () => {
-  const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',destinations:[meta],pageUrl:'https://site.example/dashboard?utm_source=campaign-secret#fragment-secret',settings:{capturePerformance:true,captureScreen:true,captureCampaigns:true,captureReferrer:true}});
+  const e=makeEnv({performanceObserver:true,performanceAdapter:'ready',destinations:[meta],pageUrl:'https://site.example/dashboard?utm_source=campaign-secret&gclid=click-secret#fragment-secret',settings:{capturePerformance:true,captureScreen:true,captureCampaigns:true,captureReferrer:true}});
   await e.start();assert.equal(e.performanceCallbacks.length,1);await identify(e,{plan:'profile-secret'},'identifier-secret');
   assert.equal(e.performancePayloads.length,0);e.dispatch('pageshow',{persisted:true,timeStamp:1000});await e.drain();
   const values:[string,number][]=[['LCP',2500],['INP',200],['CLS',0],['FCP',1800],['TTFB',0]];
@@ -879,7 +900,7 @@ test('five bounded performance metrics send only their anonymous native payload 
   await e.drain();assert.equal(e.performancePayloads.length,5);assert.deepEqual(e.performancePayloads.map(payload=>payload.metric),['lcp','inp','cls','fcp','ttfb']);assert.deepEqual(e.performancePayloads.map(payload=>payload.value),[2500,200,0,1800,0]);assert.deepEqual(e.performancePayloads.map(payload=>payload.revision),[1,2,3,4,5]);
   const nav=e.performancePayloads[0].navigationId;assert.match(nav,UUID_RE);
   for(const payload of e.performancePayloads){assert.equal(payload.navigationId,nav);assert.equal(payload.siteKey,SITE);assert.equal(payload.url,'https://site.example/dashboard');assert.deepEqual(payload.consent,{analytics:true,epoch:EPOCH});assert.equal(payload.collection,undefined);assert.deepEqual(payload.dimensions,{screen:{width:1280,height:720}});assert.deepEqual(Object.keys(payload).sort(),['consent','dimensions','metric','navigationId','revision','siteKey','type','url','value']);}
-  assert.doesNotMatch(JSON.stringify(e.performancePayloads),/identifier-secret|profile-secret|campaign-secret|fragment-secret|raw-secret|private DOM|referrer|language|context/);
+  assert.doesNotMatch(JSON.stringify(e.performancePayloads),/identifier-secret|profile-secret|campaign-secret|click-secret|fragment-secret|raw-secret|private DOM|referrer|language|context/);
   for(const call of e.performanceCalls()){assert.equal(call.options.credentials,'omit');assert.equal(call.options.referrerPolicy,'no-referrer');assert.equal(call.options.redirect,'error');assert.equal(call.options.keepalive,true);assert.equal(call.url,ENDPOINT);}
   assert.equal(e.scripts.some(script=>/facebook|tiktok|googletagmanager/.test(script.src)),false,'An analytics grant must not load an advertising SDK');
   const before=e.performancePayloads.length;

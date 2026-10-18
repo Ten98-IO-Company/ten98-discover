@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {attributionQuery} from '../src/server/attribution.ts';
 import {journeyStepSchema} from '../src/lib/journeys.ts';
-import {attributionFields,attributionLimits,attributionMethod} from '../src/lib/attribution.ts';
+import {attributionFields,attributionLimits,attributionMethod,paidAdsClickIds} from '../src/lib/attribution.ts';
 
 test('Attribution owns closed model/typed conversion and reuses bounded local-calendar filters',()=>{
  const base={conversionKind:'custom',conversionValue:'purchase'},parse=(extra:Record<string,string>={})=>attributionQuery(new URLSearchParams({...base,...extra}),new Date('2026-10-15T12:00:00Z'));
@@ -14,5 +14,7 @@ test('Attribution owns closed model/typed conversion and reuses bounded local-ca
  assert.throws(()=>parse({unknown:'x'.repeat(65537)}),{status:400});assert.equal(parse({conversionKind:'pageview',conversionValue:'/'+'a'.repeat(2047)}).conversion.value.length,2048);
 });
 test('Attribution publishes explicit observed-key semantics and bounded fixed metadata dimensions',()=>{
- assert.deepEqual(attributionFields,['referrer','campaignSource','campaignMedium','campaignName','campaignContent','campaignTerm']);assert.equal(attributionLimits.values,20);assert.equal(attributionLimits.responseBytes,2097152);assert.equal(attributionMethod.historyComplete,false);assert.equal(attributionMethod.captureCoverage,'unknown');assert.equal(attributionMethod.referrers,'recorded-hosts-excluding-self-referrals');assert.equal(attributionMethod.ordering,'other-touches-before-internal-navigation-then-server-receipt-time-then-event-id');assert.equal(attributionMethod.last,'latest-timestamp-strictly-before-latest-matching-conversion');
+ assert.deepEqual(attributionFields,['referrer','paidAds','campaignSource','campaignMedium','campaignName','campaignContent','campaignTerm']);
+ // Owner decision D1: pinned Umami 3.4.0 getAttribution.ts paidAds precedence and labels, exactly.
+ assert.deepEqual(paidAdsClickIds,[['gclid','Google Ads'],['fbclid','Facebook / Meta'],['msclkid','Microsoft Ads'],['ttclid','TikTok Ads'],['li_fat_id','LinkedIn Ads'],['twclid','Twitter Ads (X)']]);assert.equal(attributionMethod.paidAds,'first-non-empty-gclid-fbclid-msclkid-ttclid-li_fat_id-twclid');assert.equal(attributionLimits.values,20);assert.equal(attributionLimits.responseBytes,2097152);assert.equal(attributionMethod.historyComplete,false);assert.equal(attributionMethod.captureCoverage,'unknown');assert.equal(attributionMethod.referrers,'recorded-hosts-excluding-self-referrals');assert.equal(attributionMethod.ordering,'other-touches-before-internal-navigation-then-server-receipt-time-then-event-id');assert.equal(attributionMethod.last,'latest-timestamp-strictly-before-latest-matching-conversion');
 });

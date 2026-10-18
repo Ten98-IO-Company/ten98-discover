@@ -405,7 +405,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
           />
           Campaign parameters
         </label>
-        <p className="hint">Stores only the UTM parameters source, medium, campaign, term, and content.</p>
+        <p className="hint">Stores the UTM parameters source, medium, campaign, term, and content. After a visitor’s analytics grant it also stores the raw ad click identifiers gclid, fbclid, msclkid, ttclid, li_fat_id, and twclid for Paid ads attribution; cookieless basic events never carry them.{draft.consentMode==='external'&&' Your consent platform’s analytics disclosure must cover these identifiers.'}</p>
         <label className="row">
           <input
             type="checkbox" style={{width: 'auto', flexShrink: 0}}
