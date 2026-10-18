@@ -22,6 +22,6 @@ test('ordinary callbacks remain owned by their existing parser', () => {
     assert.equal(parsePasswordResetFragment(hash), null);
   }
   assert.deepEqual(parseCallback('#oidc-complete=1'), { kind: 'complete' });
-  assert.deepEqual(parseCallback('#meta=failed'), { kind: 'meta-error' });
+  assert.deepEqual(parseCallback('#google=failed'), { kind: 'google-error' });
   assert.deepEqual(parseCallback(`#password-reset=${token}`), { kind: 'invalid' });
 });

@@ -4,9 +4,9 @@ import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
 import { getBoss } from './jobs.ts';
-import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection, googleAdsConfigured, googleAdsHeaders, googleAdsCustomer } from './google.ts';
+import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection } from './google.ts';
 import { GoogleRequestError, googleRequest } from './google-http.ts';
-import { googleImportInput, googleInput, googleReportRequest, googleReports, googleAdsVersion, isDetailedGa4Report, ga4OrganicReports, isOrganicOverview, organicPreviousRange, validateOrganicDates, googleCompatibilityRequest, normalizeGoogleCompatibility, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
+import { googleImportInput, googleInput, googleReportRequest, googleReports, isDetailedGa4Report, ga4OrganicReports, isOrganicOverview, organicPreviousRange, validateOrganicDates, googleCompatibilityRequest, normalizeGoogleCompatibility, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
 import { isGa4CommerceReport, readOrganicOverview } from '../lib/google-report-display.ts';
 
 export const googleQueue = 'google-report-import';
@@ -26,7 +26,7 @@ export async function listGoogleConnections(projectId: string, userId: string) {
       const imports = await client.query<ImportRow>(`SELECT ${importFields} FROM google_import i WHERE connection_id=$1 ORDER BY created_at DESC,id DESC LIMIT 20`, [row.id]);
       metadata.push({ ...googleConnectionDto(row, app?.revision), imports: imports.rows.map(googleImportDto) });
     }
-    return { role, app: { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true, adsConfigured: !!app && googleAdsConfigured(app) }, connections: metadata };
+    return { role, app: { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true }, connections: metadata };
   });
 }
 
@@ -43,9 +43,8 @@ export async function enqueueGoogleImport(projectId: string, userId: string, con
     if (connection.status !== 'ready' || !connection.property_id || connection.app_revision !== app.revision) throw new FoundationError(409, 'Connect and select an authorized property before importing.');
     if (googleReports[data.report].provider !== connection.provider) throw new FoundationError(400, 'Select a report for this provider.');
     if (ga4OrganicReports.includes(data.report)) validateOrganicDates(data.from, data.to, connection.time_zone);
-    if (connection.provider === 'ads') googleAdsHeaders(app, connection.login_customer_id ?? undefined);
     if ((await client.query("SELECT 1 FROM google_import WHERE connection_id=$1 AND status IN ('queued','running')", [connectionId])).rowCount) throw new FoundationError(409, 'This connection already has an active import. Wait for it to finish.');
-    const source = { provider: connection.provider, propertyId: connection.property_id, propertyName: connection.property_name, timeZone: connection.time_zone, currencyCode: connection.currency_code, ...(connection.provider === 'ads' ? { loginCustomerId: connection.login_customer_id, apiVersion: googleAdsVersion, attribution: 'Google Ads conversion settings; not native analytics' } : {}) };
+    const source = { provider: connection.provider, propertyId: connection.property_id, propertyName: connection.property_name, timeZone: connection.time_zone, currencyCode: connection.currency_code };
     const id = randomUUID();
     const inserted = (await client.query<ImportRow>(`INSERT INTO google_import AS i(id,connection_id,project_id,user_id,request_id,connection_revision,app_revision,report,date_from,date_to,source)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING ${importFields}`, [id, connectionId, projectId, userId, data.requestId, connection.revision, app.revision, data.report, data.from, data.to, source])).rows[0];
@@ -91,8 +90,8 @@ export async function runGoogleImport(importId: string): Promise<void> {
       // Reject obsolete work before opening or refreshing a replacement grant.
       await refreshGoogleConnection(initial.project_id, initial.user_id, initial.connection_id, undefined, { revision: initial.connection_revision, appRevision: initial.app_revision, propertyId: typeof initial.source.propertyId === 'string' ? initial.source.propertyId : '' });
       // ponytail: a GSC/legacy GA4 page holds the workspace lock for one bounded 15s
-      // request; detailed GA4 first-page attempts and Ads use two independently
-      // bounded reads (compatibility/customer verification, then report). Organic
+      // request; detailed GA4 first-page attempts use two independently
+      // bounded reads (compatibility, then report). Organic
       // overview stages each commit separately; current/trend have compatibility
       // plus report, previous has one report. No lock spans all three stages. Split into revocable leases if volume
       // makes this brief serialization disruptive; never drop the final recheck.
@@ -105,20 +104,6 @@ export async function runGoogleImport(importId: string): Promise<void> {
         if (row.pages >= 10) throw new Error('Invalid Google import checkpoint.');
         if (ga4OrganicReports.includes(row.report)) validateOrganicDates(row.date_from, row.date_to, connection.time_zone);
         const accessToken = await googleAccessToken(client, connection, app);
-        if (connection.provider === 'ads') {
-          if (row.pages !== 0 || row.row_count !== 0) throw new FoundationError(409, 'The Ads import checkpoint is inconsistent. Start a fresh import.');
-          const customerId = connection.property_id.slice(10), customer = await googleAdsCustomer(accessToken, app, customerId, connection.login_customer_id ?? undefined);
-          if (customer.manager || customer.timeZone !== connection.time_zone || customer.currencyCode !== connection.currency_code) throw new FoundationError(409, 'The Google Ads account settings changed. Add a new source to preserve timezone and currency provenance.');
-          const raw = await googleRequest(`https://googleads.googleapis.com/${googleAdsVersion}/customers/${customerId}/googleAds:search`, accessToken,
-            googleReportRequest(row.report, row.date_from, row.date_to, 0), googleAdsHeaders(app, connection.login_customer_id ?? undefined));
-          const page = normalizeGoogleReport(row.report, raw, row.date_from, row.date_to, customerId), storedPages = Math.max(1, Math.ceil(page.rows.length / 1000));
-          // One bounded provider response is published atomically; its unconsumed
-          // continuation is evidence of a partial import, never a complete report.
-          for (let n = 0; n < storedPages; n++) await client.query('INSERT INTO google_import_page(import_id,page,rows) VALUES($1,$2,$3)', [row.id, n, JSON.stringify(page.rows.slice(n * 1000, (n + 1) * 1000))]);
-          await client.query(`UPDATE google_import SET status=$2,pages=$3,row_count=$4,provider_row_count=$5,quality=$6,diagnostic=NULL,completed_at=now() WHERE id=$1`,
-            [row.id, page.complete ? 'completed' : 'partial', storedPages, page.rows.length, page.rowCount, page.quality]);
-          return true;
-        }
         const endpoint = connection.provider === 'gsc' ? `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(connection.property_id)}/searchAnalytics/query` : `https://analyticsdata.googleapis.com/v1beta/${connection.property_id}:runReport`;
         if (isOrganicOverview(row.report)) {
           const stage = (['current', 'previous', 'trend'] as const)[row.pages];
@@ -130,7 +115,7 @@ export async function runGoogleImport(importId: string): Promise<void> {
             normalizeGoogleCompatibility(row.report, compatibility, stage);
           }
           const raw = await googleRequest(endpoint, accessToken, googleReportRequest(row.report, row.date_from, row.date_to, 0, stage));
-          const page = normalizeGoogleReport(row.report, raw, range.from, range.to, undefined, stage);
+          const page = normalizeGoogleReport(row.report, raw, range.from, range.to, stage);
           if (page.quality.metadata.timeZone && page.quality.metadata.timeZone !== connection.time_zone) throw new FoundationError(409, 'The Google property timezone changed. Add a new source.');
           if (page.quality.metadata.currencyCode && page.quality.metadata.currencyCode !== connection.currency_code) throw new FoundationError(409, 'The Google property currency changed. Add a new source.');
           const prior = row.quality.metadata.organic as Record<string, unknown> | undefined;

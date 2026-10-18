@@ -21,12 +21,6 @@ import {rankQueue} from './rank-execution.ts';
 import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} from './rank-worker.ts';
 import {claimDueRankOccurrence} from './rank-recurring.ts';
 import {claimDuePromptOccurrence} from './prompt-recurring.ts';
-import {runMetaDeletionBatch} from './meta-callbacks.ts';
-import {expireMetaFlows} from './meta-auth.ts';
-import {metaQueue,expireMetaImportPages} from './meta-imports.ts';
-import {runMetaImportStep,reconcileMetaImports} from './meta-import-worker.ts';
-import {metaInventoryQueue,expireMetaInventoryPages} from './meta-inventory.ts';
-import {runMetaInventoryStep,reconcileMetaInventories} from './meta-inventory-worker.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
 
 const queueName = 'setup-probe';
@@ -35,7 +29,6 @@ let workerPromise: Promise<void> | undefined;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 let heartbeatTask: Promise<unknown> | undefined;
 let retentionTask: Promise<unknown> | undefined;
-let metaDeletionTask: Promise<unknown> | undefined;
 let recurringTimer: ReturnType<typeof setInterval> | undefined;
 let recurringTask: Promise<unknown> | undefined;
 let workerStarted = false;
@@ -60,8 +53,6 @@ export function getBoss(): Promise<PgBoss> {
         await boss.createQueue(siteAuditQueue);
         await boss.createQueue(rankQueue);
         await boss.createQueue(rankPollQueue);
-        await boss.createQueue(metaQueue);
-        await boss.createQueue(metaInventoryQueue);
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -164,8 +155,6 @@ export function startWorker(): Promise<void> {
       await reconcileAiSearchJobs();
       await reconcileContentSupportJobs();
       await reconcileDomainRedirectChecks();
-      await reconcileMetaImports();
-      await reconcileMetaInventories();
       await boss.work<{ probeId: string }>(queueName, { batchSize: 5 }, async (jobs) => {
         for (const job of jobs) {
           if (typeof job.data?.probeId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(job.data.probeId)) {
@@ -187,8 +176,6 @@ export function startWorker(): Promise<void> {
         }
       });
       await startGoogleImportWorker(boss);
-      await boss.work<{importId:string}>(metaQueue,{batchSize:1},async jobs=>{for(const job of jobs)await runMetaImportStep(job.data?.importId);});
-      await boss.work<{inventoryId:string}>(metaInventoryQueue,{batchSize:1},async jobs=>{for(const job of jobs)await runMetaInventoryStep(job.data?.inventoryId);});
       await boss.work<{runId:string}>(keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
       await boss.work<{runId:string}>(domainResearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainResearch(job.data?.runId);});
       await boss.work<{dispatchId:string}>(rankQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeRankDispatch(job.data?.dispatchId);});
@@ -209,9 +196,6 @@ export function startWorker(): Promise<void> {
         if (!retentionTask) retentionTask = runRetentionBatch().then(()=>runTrackedAssetRetention())
           .catch(() => console.error('Retention cleanup failed; inspect retention status and database availability.'))
           .finally(() => { retentionTask = undefined; });
-        if (!metaDeletionTask) metaDeletionTask = runMetaDeletionBatch().then(() => expireMetaFlows()).then(() => expireMetaImportPages()).then(() => expireMetaInventoryPages()).then(() => reconcileMetaImports()).then(() => reconcileMetaInventories())
-          .catch(() => console.error('Meta data cleanup failed; inspect local deletion status and database availability.'))
-          .finally(() => { metaDeletionTask = undefined; });
       }, 10_000);
       // Keep provider preflight outside heartbeat/healthcheck and never overlap a
       // prior claim. ponytail: one due tracker per family per tick caps each at six
@@ -236,7 +220,6 @@ export async function stopJobs() {
   recurringTimer = undefined;
   await heartbeatTask;
   await retentionTask;
-  await metaDeletionTask;
   await recurringTask;
   await stopSiteAudits();
   const boss = await bossPromise?.catch(() => undefined);

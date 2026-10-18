@@ -3,9 +3,7 @@ import { toUSVString } from 'node:util';
 import { FoundationError } from './auth.ts';
 import { ga4CommerceReports, isGa4CommerceReport, googleCalendarWeek, googleGa4MetricInRange, googleLastCompletedDay } from '../lib/google-report-display.ts';
 
-export const googleScopes = { gsc: 'https://www.googleapis.com/auth/webmasters.readonly', ga4: 'https://www.googleapis.com/auth/analytics.readonly', ads: 'https://www.googleapis.com/auth/adwords' } as const;
-export const googleAdsVersion = 'v26';
-export const googleAdsCustomerId = z.string().regex(/^[1-9]\d{9}$(?![\s\S])/);
+export const googleScopes = { gsc: 'https://www.googleapis.com/auth/webmasters.readonly', ga4: 'https://www.googleapis.com/auth/analytics.readonly' } as const;
 const organicMetrics = ['sessions', 'activeUsers', 'engagedSessions', 'engagementRate', 'keyEvents', 'transactions', 'purchaseRevenue'] as const;
 export const googleReports = {
   gsc_daily: { provider: 'gsc', dimensions: ['date'], metrics: ['clicks', 'impressions', 'ctr', 'position'] },
@@ -20,9 +18,6 @@ export const googleReports = {
   ga4_organic_daily: { provider: 'ga4', dimensions: ['date'], metrics: organicMetrics },
   ga4_organic_weekly: { provider: 'ga4', dimensions: ['yearWeek'], metrics: organicMetrics },
   ...ga4CommerceReports,
-  ads_daily: { provider: 'ads', dimensions: ['date', 'customerId'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
-  ads_campaigns: { provider: 'ads', dimensions: ['date', 'customerId', 'campaignId', 'campaignName', 'campaignStatus'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
-  ads_ad_groups: { provider: 'ads', dimensions: ['date', 'customerId', 'campaignId', 'campaignName', 'adGroupId', 'adGroupName', 'adGroupStatus'], metrics: ['impressions', 'clicks', 'costMicros', 'conversions', 'conversionsValue'] },
 } as const;
 export type GoogleReport = keyof typeof googleReports;
 export const ga4InventoryReports: readonly GoogleReport[] = ['ga4_pages', 'ga4_acquisition', 'ga4_key_events'];
@@ -32,7 +27,7 @@ export const isOrganicOverview = (report: string) => report === 'ga4_organic_dai
 export type OrganicStage = 'current' | 'previous' | 'trend';
 export type GoogleProvider = keyof typeof googleScopes;
 export type ReportRow = { dimensions: Record<string, string>; metrics: Record<string, string | null> };
-export type ReportPage = { rows: ReportRow[]; rowCount: number | null; complete?: boolean; quality: { warnings: string[]; metadata: Record<string, unknown> } };
+export type ReportPage = { rows: ReportRow[]; rowCount: number | null; quality: { warnings: string[]; metadata: Record<string, unknown> } };
 export const safeGoogleString = (max: number) => z.string().max(max).refine(value => !value.includes('\0') && toUSVString(value) === value);
 export const googleDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
   const date = new Date(`${value}T00:00:00Z`);
@@ -76,32 +71,20 @@ const siteSearchFilter = { andGroup: { expressions: [
 
 type GoogleReportRequest =
   | {
-    query: string; searchSettings: { returnTotalResultsCount: true };
-    startDate?: never; endDate?: never; dimensions?: never; type?: never; dataState?: never; aggregationType?: never; rowLimit?: never; startRow?: never;
-    dateRanges?: never; metrics?: never; orderBys?: never; offset?: never; limit?: never; returnPropertyQuota?: never; keepEmptyRows?: never; dimensionFilter?: never;
-  }
-  | {
     startDate: string; endDate: string; dimensions: readonly string[]; type: 'web'; dataState: 'final'; aggregationType: 'auto'; rowLimit: 1000; startRow: number;
-    query?: never; searchSettings?: never; dateRanges?: never; metrics?: never; orderBys?: never; offset?: never; limit?: never; returnPropertyQuota?: never; keepEmptyRows?: never; dimensionFilter?: never;
+    dateRanges?: never; metrics?: never; orderBys?: never; offset?: never; limit?: never; returnPropertyQuota?: never; keepEmptyRows?: never; dimensionFilter?: never;
   }
   | {
     dateRanges: Array<{ startDate: string; endDate: string }>; dimensions: Array<{ name: string }>; metrics: Array<{ name: string }>;
     orderBys: Array<{ dimension: { dimensionName: string; orderType?: 'ALPHANUMERIC' } }>; offset: string; limit: '1000'; returnPropertyQuota: true; keepEmptyRows: true;
     dimensionFilter?: { filter: { fieldName: 'isKeyEvent' | 'sessionDefaultChannelGroup'; stringFilter: { matchType: 'EXACT'; value: 'true' | 'Organic Search'; caseSensitive: true } } } | typeof siteSearchFilter;
-    query?: never; searchSettings?: never; startDate?: never; endDate?: never; type?: never; dataState?: never; aggregationType?: never; rowLimit?: never; startRow?: never;
+    startDate?: never; endDate?: never; type?: never; dataState?: never; aggregationType?: never; rowLimit?: never; startRow?: never;
   };
 
 export function googleReportRequest(report: GoogleReport, from: string, to: string, offset: number, stage: OrganicStage = 'trend'): GoogleReportRequest {
   const definition = googleReports[report], aggregate = isOrganicOverview(report) && stage !== 'trend';
   if (stage !== 'trend' && !isOrganicOverview(report)) throw new FoundationError(400, 'Select an organic overview.');
   if (stage === 'previous') { const previous = organicPreviousRange(from, to); from = previous.from; to = previous.to; }
-  if (definition.provider === 'ads') {
-    googleInput(googleDate, from); googleInput(googleDate, to);
-    if (offset !== 0) throw new FoundationError(400, 'Google Ads imports fetch one bounded provider page. Choose a smaller range for a partial snapshot.');
-    const resource = report === 'ads_daily' ? 'customer' : report === 'ads_campaigns' ? 'campaign' : 'ad_group';
-    const fields = ['segments.date', 'customer.id', ...(resource === 'customer' ? [] : ['campaign.id', 'campaign.name']), ...(resource === 'campaign' ? ['campaign.status'] : resource === 'ad_group' ? ['ad_group.id', 'ad_group.name', 'ad_group.status'] : []), 'metrics.impressions', 'metrics.clicks', 'metrics.cost_micros', 'metrics.conversions', 'metrics.conversions_value'];
-    return { query: `SELECT ${fields.join(', ')} FROM ${resource} WHERE segments.date BETWEEN '${from}' AND '${to}' ORDER BY segments.date${resource === 'customer' ? '' : ', campaign.id'}${resource === 'ad_group' ? ', ad_group.id' : ''}`, searchSettings: { returnTotalResultsCount: true } };
-  }
   if (definition.provider === 'gsc') return { startDate: from, endDate: to, dimensions: definition.dimensions, type: 'web', dataState: 'final', aggregationType: 'auto', rowLimit: 1000, startRow: offset };
   const keyEventFilter: { dimensionFilter?: { filter: { fieldName: 'isKeyEvent'; stringFilter: { matchType: 'EXACT'; value: 'true'; caseSensitive: true } } } } = {};
   if (report === 'ga4_key_events') keyEventFilter.dimensionFilter = { filter: { fieldName: 'isKeyEvent', stringFilter: { matchType: 'EXACT', value: 'true', caseSensitive: true } } };
@@ -141,34 +124,14 @@ const numeric = z.string().regex(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$(
 function malformed(): never { throw new FoundationError(502, 'Google returned a report that could not be safely interpreted.'); }
 // Provider dimensions/metrics are explicitly selected above. No arbitrary query,
 // source payload or user-level export is persisted or exposed through this adapter.
-export function normalizeGoogleReport(report: GoogleReport, value: unknown, from: string, to: string, customerId?: string, stage: OrganicStage = 'trend'): ReportPage {
+export function normalizeGoogleReport(report: GoogleReport, value: unknown, from: string, to: string, stage: OrganicStage = 'trend'): ReportPage {
   try {
     const organic = ga4OrganicReports.includes(report), overview = isOrganicOverview(report), aggregate = overview && stage !== 'trend';
     if (stage !== 'trend' && !overview) malformed();
     const definition = aggregate ? { ...googleReports[report], dimensions: [] as readonly string[] } : googleReports[report];
     let rows: ReportRow[], rowCount: number | null;
     const warnings: string[] = [], metadata: Record<string, unknown> = {};
-    let complete: boolean | undefined;
-    if (definition.provider === 'ads') {
-      if (!googleAdsCustomerId.safeParse(customerId).success) malformed();
-      const integer = z.string().regex(/^(?:0|[1-9]\d*)$(?![\s\S])/).max(30);
-      const entity = z.object({ id: integer, name: text, status: safeGoogleString(80).optional() });
-      const data = z.object({ results: z.array(z.object({ segments: z.object({ date: googleDate }), customer: z.object({ id: googleAdsCustomerId }), campaign: entity.optional(), adGroup: entity.optional(), metrics: z.object({ impressions: integer.optional(), clicks: integer.optional(), costMicros: integer.optional(), conversions: z.number().finite().nonnegative().optional(), conversionsValue: z.number().finite().optional() }).optional() })).max(10000).default([]), nextPageToken: safeGoogleString(4096).optional(), totalResultsCount: integer.optional() }).parse(value);
-      complete = !data.nextPageToken;
-      if (!complete && !data.results.length || data.totalResultsCount !== undefined && (BigInt(data.totalResultsCount) < BigInt(data.results.length) || complete && BigInt(data.totalResultsCount) !== BigInt(data.results.length) || !complete && BigInt(data.totalResultsCount) <= BigInt(data.results.length))) malformed();
-      rowCount = data.totalResultsCount !== undefined && BigInt(data.totalResultsCount) <= 2147483647n ? Number(data.totalResultsCount) : null;
-      rows = data.results.map(row => {
-        if (row.customer.id !== customerId || report !== 'ads_daily' && !row.campaign || report === 'ads_ad_groups' && !row.adGroup) malformed();
-        const dimensions: Record<string, string> = { date: row.segments.date, customerId: row.customer.id };
-        if (report !== 'ads_daily') Object.assign(dimensions, { campaignId: row.campaign!.id, campaignName: row.campaign!.name });
-        if (report === 'ads_campaigns') dimensions.campaignStatus = row.campaign!.status ?? 'UNKNOWN';
-        if (report === 'ads_ad_groups') Object.assign(dimensions, { adGroupId: row.adGroup!.id, adGroupName: row.adGroup!.name, adGroupStatus: row.adGroup!.status ?? 'UNKNOWN' });
-        return { dimensions, metrics: Object.fromEntries(definition.metrics.map(name => [name, row.metrics?.[name] === undefined ? null : String(row.metrics[name])])) };
-      });
-      Object.assign(metadata, { apiVersion: googleAdsVersion, providerPages: 1, returnedRows: rows.length, totalResultsCount: data.totalResultsCount ?? null, nextPageAvailable: !complete, costUnit: 'one million costMicros per account currency unit', attribution: 'Google Ads reported conversions; not native conversions' });
-      warnings.push('Google Ads omits some all-zero date segments. Missing rows are not filled with zero; absent metric fields are unavailable.', 'Google Ads conversions use the account conversion settings and can be restated. Do not add these snapshots or blend them with native conversions.');
-      if (!complete) warnings.push('Google returned a continuation token after this bounded provider page. This snapshot is partial; choose a smaller date range.');
-    } else if (definition.provider === 'gsc') {
+    if (definition.provider === 'gsc') {
       const data = z.object({ rows: z.array(z.object({ keys: z.array(text), clicks: count, impressions: count, ctr: z.number().finite().min(0).max(1), position: z.number().finite().nonnegative().optional() })).max(1000).default([]), responseAggregationType: safeGoogleString(80).optional() }).parse(value);
       rows = data.rows.map(row => {
         if (row.keys.length !== definition.dimensions.length) malformed();
@@ -224,10 +187,8 @@ export function normalizeGoogleReport(report: GoogleReport, value: unknown, from
       if (data.metadata?.emptyReason) warnings.push('Google supplied an empty-report reason; see report metadata.');
     }
     if (definition.dimensions.some(name => name === 'date')) for (const row of rows) if (!googleDate.safeParse(row.dimensions.date).success || row.dimensions.date < from || row.dimensions.date > to) malformed();
-    const keys = rows.map(row => JSON.stringify(definition.provider === 'ads'
-      ? ['date', 'customerId', ...(report === 'ads_daily' ? [] : ['campaignId']), ...(report === 'ads_ad_groups' ? ['adGroupId'] : [])].map(field => row.dimensions[field])
-      : row.dimensions));
+    const keys = rows.map(row => JSON.stringify(row.dimensions));
     if (new Set(keys).size !== keys.length) malformed();
-    return { rows, rowCount, ...(complete === undefined ? {} : { complete }), quality: { warnings, metadata } };
+    return { rows, rowCount, quality: { warnings, metadata } };
   } catch { return malformed(); }
 }
