@@ -145,7 +145,7 @@ export async function runOpenRouterModelChecks(){
   }
   pass('retired-after-start and fresh endpoint architecture/reasoning drift cancel reservations before every paid send');
 
-  const suggestions=await fixture(),suggestionInput={requestId:randomUUID(),connectionId:suggestions.connectionId,contextRevision:1,profileId:'catalog-text-schema-v1',model,benchmark:true,fundedCredits:true,maxSpendUsd:'0.1',topic:'Monitoring',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]};
+  const suggestions=await fixture(),suggestionInput={requestId:randomUUID(),connectionId:suggestions.connectionId,contextRevision:1,profileId:'catalog-text-schema-v1',model,benchmark:true,fundedCredits:true,topic:'Monitoring',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]};
 
   record('suggestionContext',await getProjectContext(suggestions.project,users.owner));
   record('suggestionProviders',await listProviders(suggestions.workspace,users.owner));

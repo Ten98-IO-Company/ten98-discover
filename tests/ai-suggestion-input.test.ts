@@ -8,7 +8,7 @@ import {requireCatalogModels,refreshOpenRouterCatalog} from '../src/server/openr
 import {openRouterTextProfile} from '../src/lib/openrouter-models.ts';
 
 const model='openai/gpt-4o-mini' as const;
-const input=()=>({requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'benchmark-mini-v1',benchmark:true,fundedCredits:true,maxSpendUsd:'1',topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]});
+const input=()=>({requestId:randomUUID(),connectionId:randomUUID(),contextRevision:1,profileId:'benchmark-mini-v1',benchmark:true,fundedCredits:true,topic:'Coffee',country:'Global',language:'English',sectionKeys:[],competitorIds:[],excludedPrompts:[]});
 const snapshot=():SuggestionSnapshot=>({version:1,project:{id:randomUUID(),name:'Coffee',origin:'https://example.org'},contextRevision:1,profile:{name:'Coffee',aliases:[],citationDomains:[]},sections:[],competitors:[],topic:'Coffee',country:'Global',language:'English',existingPrompts:[],excludedPrompts:[],evidence:[{id:'profile',kind:'profile',sha256:'a'.repeat(64),value:{name:'Coffee'}}],topicLibraryHash:'b'.repeat(64),snapshotHash:'c'.repeat(64)});
 const proposal=()=>({version:1,limitation:'none',prompts:[{text:'Which grinder is easy to clean?',tags:['Maintenance'],rationale:'This helps evaluate the saved topic.',evidenceIds:['profile']}]});
 const endpoint=()=>({data:{id:model,endpoints:[{tag:'openai',provider_name:'OpenAI',model_id:model,status:0,context_length:128000,max_prompt_tokens:null,max_completion_tokens:16384,supported_parameters:['max_tokens','response_format','structured_outputs'],pricing:{prompt:'0.00000015',completion:'0.0000006',discount:0}}]}});
@@ -50,7 +50,7 @@ test('every suggestion candidate verifies exact capabilities, arithmetic, dispat
 
 test('only explicit benchmark profiles and bounded authored selections enter quotation',()=>{
  assert.ok(suggestionQuoteInput.safeParse(input()).success);
- for(const delta of [{profileId:'openrouter/auto'},{benchmark:false},{fundedCredits:false},{maxSpendUsd:'0'},{maxSpendUsd:'1\n'},{model:'new-model'},{country:'\ud800'},{topic:''},{competitorIds:Array(11).fill(randomUUID())},{sectionKeys:['positioning','positioning']},{excludedPrompts:Array(21).fill('text')}])assert.equal(suggestionQuoteInput.safeParse({...input(),...delta}).success,false);
+ for(const delta of [{profileId:'openrouter/auto'},{benchmark:false},{fundedCredits:false},{maxSpendUsd:'0'},{maxSpendUsd:'1'},{maxSpendUsd:'1\n'},{model:'new-model'},{country:'\ud800'},{topic:''},{competitorIds:Array(11).fill(randomUUID())},{sectionKeys:['positioning','positioning']},{excludedPrompts:Array(21).fill('text')}])assert.equal(suggestionQuoteInput.safeParse({...input(),...delta}).success,false);
  assert.ok(suggestionQuoteInput.safeParse({...input(),excludedPrompts:['😀'.repeat(1000),'controls\tallowed']}).success);
  assert.equal(suggestionQuoteInput.safeParse({...input(),excludedPrompts:['a'.repeat(2001)]}).success,false);
 });

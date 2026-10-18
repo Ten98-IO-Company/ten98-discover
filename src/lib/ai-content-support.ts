@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {contentCoverageInputSchema,projectContentCoverageInputSchema} from './ai-content-coverage.ts';
-import {aiSearchQuoteInput} from './ai-search.ts';
+import {usdText} from './ai-search.ts';
 import {openRouterModelId,openRouterProviderName,openRouterProviderTag,openRouterRouteIdentity,openRouterTextProfile} from './openrouter-models.ts';
 
 export const contentSupportContract={purpose:'website-content-support',promptVersion:'closed-corpus-support-v1',schemaVersion:1,method:'closed-corpus-model-judgment-v1',derivationVersion:'immutable-prompt-trim-lower-v1'} as const;
@@ -8,16 +8,18 @@ const uuid=z.uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-
 const exact=(max:number,min=0)=>z.string().min(min).max(max).refine(v=>!/[\p{Cs}\u0000]/u.test(v));
 const micros=(v:string)=>{const [whole,fraction='']=v.split('.');return BigInt(whole)*1_000_000n+BigInt(fraction.padEnd(6,'0'));};
 // Reuse the existing client-side money grammar, then bound/require positivity.
-const money=aiSearchQuoteInput.shape.maxSpendUsd.pipe(z.string().refine(v=>micros(v)<=1_000_000_000_000n)),positiveMoney=money.pipe(z.string().refine(v=>micros(v)>0n));
+const money=usdText.pipe(z.string().refine(v=>micros(v)<=1_000_000_000_000n)),positiveMoney=money.pipe(z.string().refine(v=>micros(v)>0n));
 const model=z.string().refine(v=>openRouterModelId(v)&&!v.startsWith('openrouter/')&&!/:(online|nitro|floor)$/.test(v));
 const role=z.enum(['owner','admin','editor','viewer']),stamp=z.iso.datetime({precision:6}),count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const contentSupportSourceSchema=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('capture'),selection:contentCoverageInputSchema}).strict(),
  z.object({kind:z.literal('project'),selection:projectContentCoverageInputSchema}).strict(),
 ]);
-export const contentSupportQuoteInputSchema=z.object({requestId:uuid,connectionId:uuid,model,fundedCredits:z.literal(true),evaluation:z.literal(true),maxSpendUsd:positiveMoney,
+export const contentSupportQuoteInputSchema=z.object({requestId:uuid,connectionId:uuid,model,fundedCredits:z.literal(true),evaluation:z.literal(true),
  source:contentSupportSourceSchema,expectedQueryReceiptHash:hash,expectedCorpusReceiptHash:hash,selectedQueryIds:z.array(hash).min(1).max(5).refine(unique),selectedPageIds:z.array(uuid).min(1).max(20).refine(unique),
 }).strict();
+// The stored quote input keeps its pre-D3 shape so payload and identity hashes stay verifiable; since D3 maxSpendUsd records the estimate.
+export const contentSupportStoredInputSchema=contentSupportQuoteInputSchema.extend({maxSpendUsd:positiveMoney}).strict();
 export const contentSupportStartInputSchema=z.object({quoteId:uuid,requestId:uuid}).strict();
 export const contentSupportActionInputSchema=z.object({requestId:uuid}).strict();
 export const contentSupportExportInputSchema=z.object({expectedPayloadHash:hash,expectedResultHash:hash,expectedQueryReceiptHash:hash,expectedCorpusReceiptHash:hash}).strict();
@@ -39,12 +41,12 @@ const citation=z.object({pageId:uuid,bodySha256:hash,start:count.max(65536),end:
 export const contentSupportProposalSchema=z.object({version:z.literal(1),rows:z.array(z.object({queryId:hash,state:z.enum(['supported','partly_supported','not_supported_in_supplied_text','insufficient_evidence']),rationale:exact(280,1).refine(v=>v.trim()!==''),citations:z.array(citation).max(3)}).strict()).min(1).max(5),semanticConclusions:z.literal('unverified'),evidenceValidation:z.literal('exact-supplied-spans-v1')}).strict().refine(v=>unique(v.rows.map(r=>r.queryId))&&v.rows.every(r=>!['supported','partly_supported'].includes(r.state)||r.citations.length>0));
 const versions={purpose:z.literal(contentSupportContract.purpose),promptVersion:z.literal(contentSupportContract.promptVersion),schemaVersion:z.literal(contentSupportContract.schemaVersion),method:z.literal(contentSupportContract.method),derivationVersion:z.literal(contentSupportContract.derivationVersion)};
 export const contentSupportQuoteDtoSchema=z.object({version:z.literal('ai-content-support-quote-v1'),role,projectId:uuid,quote:z.object({...versions,id:uuid,requestId:uuid,createdAt:stamp,expiresAt:stamp,inputHash:hash,payloadHash:hash,schemaHash:hash,queryReceiptHash:hash,corpusReceiptHash:hash,
- route:contentSupportRouteSchema,estimateUsd:positiveMoney,maxSpendUsd:positiveMoney,inputExpired:z.boolean(),input:contentSupportQuoteInputSchema.nullable(),selection:contentSupportSelectionSchema.nullable(),
+ route:contentSupportRouteSchema,estimateUsd:positiveMoney,inputExpired:z.boolean(),input:contentSupportQuoteInputSchema.nullable(),selection:contentSupportSelectionSchema.nullable(),
 }).strict()}).strict().superRefine(({quote:q},ctx)=>{
  const fail=()=>ctx.addIssue({code:'custom',message:'Inconsistent content-support quote.'});
  if(q.createdAt.slice(20)!==q.expiresAt.slice(20)||Date.parse(q.expiresAt)-Date.parse(q.createdAt)!==300000||q.inputExpired!==(q.input===null)||q.inputExpired!==(q.selection===null))fail();
- if(money.safeParse(q.estimateUsd).success&&money.safeParse(q.maxSpendUsd).success&&contentSupportRouteSchema.safeParse(q.route).success&&(micros(q.estimateUsd)!==BigInt(q.route.estimateMicros)||micros(q.estimateUsd)>micros(q.maxSpendUsd)))fail();
- if(q.input&&q.selection&&(q.input.model!==q.route.model||q.input.maxSpendUsd!==q.maxSpendUsd||q.input.expectedQueryReceiptHash!==q.queryReceiptHash||q.input.expectedCorpusReceiptHash!==q.corpusReceiptHash||JSON.stringify(q.input.selectedQueryIds)!==JSON.stringify(q.selection.queries.map(r=>r.id))||JSON.stringify(q.input.selectedPageIds)!==JSON.stringify(q.selection.pages.map(r=>r.id))||q.selection.pages.some(p=>p.auditRunId!==q.input!.source.selection.auditRunId)))fail();
+ if(money.safeParse(q.estimateUsd).success&&contentSupportRouteSchema.safeParse(q.route).success&&micros(q.estimateUsd)!==BigInt(q.route.estimateMicros))fail();
+ if(q.input&&q.selection&&(q.input.model!==q.route.model||q.input.expectedQueryReceiptHash!==q.queryReceiptHash||q.input.expectedCorpusReceiptHash!==q.corpusReceiptHash||JSON.stringify(q.input.selectedQueryIds)!==JSON.stringify(q.selection.queries.map(r=>r.id))||JSON.stringify(q.input.selectedPageIds)!==JSON.stringify(q.selection.pages.map(r=>r.id))||q.selection.pages.some(p=>p.auditRunId!==q.input!.source.selection.auditRunId)))fail();
 });
 export const contentSupportRunDtoSchema=z.object({version:z.literal('ai-content-support-run-v1'),role,projectId:uuid,run:z.object({...versions,id:uuid,quoteId:uuid,requestId:uuid,inputHash:hash,payloadHash:hash,queryReceiptHash:hash,corpusReceiptHash:hash,resultHash:hash.nullable(),route:contentSupportRouteSchema,status:z.enum(['queued','running','completed','failed','uncertain','cancelled']),chargeStatus:z.enum(['reserved','dispatched','settled','uncertain','cancelled']),
  estimateUsd:positiveMoney,actualUsd:money.nullable(),createdAt:stamp,dispatchedAt:stamp.nullable(),completedAt:stamp.nullable(),generationId:z.string().regex(/^gen-[0-9A-Za-z-]{1,124}$(?![\s\S])/).nullable(),diagnostic:exact(1000).nullable(),inputExpired:z.boolean(),resultExpired:z.boolean(),selection:contentSupportSelectionSchema.nullable(),proposal:contentSupportProposalSchema.nullable(),canCancel:z.boolean(),canReconcile:z.boolean(),

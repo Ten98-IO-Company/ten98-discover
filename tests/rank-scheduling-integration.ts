@@ -36,7 +36,7 @@ export async function runRankSchedulingChecks(){
   const current=(f:Fixture,uid=owner)=>getRankSchedule(f.project,uid,f.tracker);
   const raw=(f:Fixture)=>(pool.query('SELECT * FROM rank_config WHERE id=$1',[f.tracker])).then(r=>r.rows[0]);
   async function quote(f:Fixture,uid=owner,extra:Record<string,unknown>={}){const t=(await getRankTracker(f.project,owner,f.tracker)).tracker;const q=await quoteRankCheck(f.project,uid,f.tracker,{requestId:randomUUID(),connectionId:f.connection,revision:t.revision,keywordsRevision:t.keywordsRevision,method:'queued',...extra},send);assert.ok(q);return q.run;}
-  async function body(f:Fixture,quoteId:string,extra:Record<string,unknown>={}){return {requestId:randomUUID(),revision:(await current(f)).authoredRevision,quoteId,maximumUsd:'0.010000',interval:'daily',timezone:'UTC',hour:9,minute:0,...extra};}
+  async function body(f:Fixture,quoteId:string,extra:Record<string,unknown>={}){return {requestId:randomUUID(),revision:(await current(f)).authoredRevision,quoteId,interval:'daily',timezone:'UTC',hour:9,minute:0,...extra};}
   const approve=(f:Fixture,input:unknown,uid=owner)=>approveRankSchedule(f.project,uid,f.tracker,input);
   const schedule={interval:'daily',timezone:'America/New_York',hour:1,minute:30};
   async function noPaidWork(){assert.equal((await pool.query('SELECT count(*)::integer AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::integer AS n FROM rank_dispatch')).rows[0].n,0);if((await pool.query("SELECT to_regclass('pgboss.job') AS name")).rows[0].name)assert.equal((await pool.query('SELECT count(*)::integer AS n FROM pgboss.job')).rows[0].n,0);assert.equal(unexpected,0);}
@@ -64,12 +64,12 @@ export async function runRankSchedulingChecks(){
     const monthly=await previewRankSchedule(f.project,owner,f.tracker,{interval:'monthly',timezone:'UTC',hour:9,minute:0});for(const item of monthly.occurrences){const date=new Date(item.utc),next=new Date(date.getTime()+86400000);assert.equal(next.getUTCDate(),1);}
     assert.equal(accountCalls,calls);await noPaidWork();console.log('PASS reader-safe metadata, owner-only approval/preview, exact five calendar occurrences and zero provider work');
 
-    const pair=await Promise.all([approve(f,input),approve(f,input)]);assert.equal(pair.filter(r=>r.replayed).length,1);assert.equal(pair[0].schedule.approval!.id,pair[1].schedule.approval!.id);assert.equal(pair[0].schedule.approvalStale,false);
+    const pair=await Promise.all([approve(f,input),approve(f,input)]);assert.equal(pair.filter(r=>r.replayed).length,1);assert.equal(pair[0].schedule.approval!.id,pair[1].schedule.approval!.id);assert.equal(pair[0].schedule.approvalStale,false);assert.equal(Object.hasOwn(pair[0].schedule.approval!,'maximumUsd'),false);
     const approved=await raw(f);assert.equal(approved.authored_revision,input.revision+1);assert.equal(approved.revision,1);assert.equal(approved.keywords_revision,2,'Adding keywords changes keyword revision only.');
-    assert.equal(approved.approval_max_micros,'10000');assert.equal(approved.approval_account_fingerprint_version,2);assert.equal(approved.approval_user_id,owner);assert.ok(approved.next_due_at>approved.approved_at);assert.equal((await pool.query('SELECT status FROM rank_run WHERE id=$1',[q.id])).rows[0].status,'quoted');
+    assert.equal(approved.approval_max_micros,(await pool.query('SELECT estimate_micros FROM rank_run WHERE id=$1',[q.id])).rows[0].estimate_micros,'Owner decision D3: approval_max_micros is a dormant record of the approved quote total.');assert.equal(approved.approval_account_fingerprint_version,2);assert.equal(approved.approval_user_id,owner);assert.ok(approved.next_due_at>approved.approved_at);assert.equal((await pool.query('SELECT status FROM rank_run WHERE id=$1',[q.id])).rows[0].status,'quoted');
     const publicText=JSON.stringify(await current(f));for(const secret of ['fingerprint','request_hash','encrypted_credentials','never-live'])assert.ok(!publicText.includes(secret));
-    await assert.rejects(approve(f,{...input,maximumUsd:'0.020000'}),fails(409));await assert.rejects(approve(f,input,secondOwner),fails(409));
-    assert.equal((await approve(f,{...input,maximumUsd:'0.01'})).replayed,true);await noPaidWork();console.log('PASS atomic actor-bound approval receipts, exact microUSD ceiling and no quote consumption or paid work');
+    await assert.rejects(approve(f,{...input,maximumUsd:'0.010000'}),fails(400));await assert.rejects(approve(f,{...input,hour:10}),fails(409));await assert.rejects(approve(f,input,secondOwner),fails(409));
+    assert.equal((await approve(f,structuredClone(input))).replayed,true);await noPaidWork();console.log('PASS atomic actor-bound approval receipts, removed ceiling field with the quote total recorded (D3) and no quote consumption or paid work');
 
     const disabled=await disableRankSchedule(f.project,owner,f.tracker,{requestId:randomUUID(),revision:(await current(f)).authoredRevision});assert.equal(disabled.schedule.enabled,false);assert.equal(disabled.schedule.nextDueAt,null);assert.ok(disabled.schedule.staleReasons.includes('disabled'));assert.equal(disabled.schedule.approval!.id,approved.approval_id);
     const replay=await approve(f,input);assert.equal(replay.replayed,true);assert.equal(replay.schedule.enabled,false,'A delayed approval retry cannot re-enable a disabled grant.');
@@ -81,13 +81,14 @@ export async function runRankSchedulingChecks(){
     console.log('PASS disable/re-enable requires a fresh grant, stale retries stay disabled, names/pins preserve scope and paid changes invalidate it');
 
     const bad=await fixture(),badQuote=await quote(bad),badInput=await body(bad,badQuote.id);
-    for(const maximumUsd of ['0','0.003999','-1','1e2','1\n','1000000.000001','1.0000001'])await assert.rejects(approve(bad,{...badInput,requestId:randomUUID(),maximumUsd}),fails(400));
+    // Owner decision D3: every maximumUsd is refused, including amounts the removed ceiling used to accept.
+    for(const maximumUsd of ['0','0.003999','0.010000','1','-1','1e2','1\n','1000000.000001','1.0000001'])await assert.rejects(approve(bad,{...badInput,requestId:randomUUID(),maximumUsd}),fails(400));
     await assert.rejects(approve(bad,{...badInput,revision:1}),fails(409));await assert.rejects(approve(bad,badInput,secondOwner),fails(403));await assert.rejects(approve(foreign,await body(foreign,badQuote.id)),fails(404));
     const keywords=(await getRankTracker(bad.project,owner,bad.tracker)).keywords;
     for(const extra of [{method:'live'},{keywordIds:keywords.map(k=>k.id)}]){const unsuitable=await quote(bad,owner,extra);await assert.rejects(approve(bad,await body(bad,unsuitable.id)),fails(409));}
     const removed=await changeRankKeywords(bad.project,owner,bad.tracker,'remove',{requestId:randomUUID(),revision:(await current(bad)).authoredRevision,keywordIds:[keywords[0].id]});await changeRankKeywords(bad.project,owner,bad.tracker,'add',{requestId:randomUUID(),revision:removed.tracker.authoredRevision,keywords:[keywords[0].keyword],matchCase:true});await assert.rejects(approve(bad,await body(bad,badQuote.id)),fails(409));
     const fresh=await quote(bad);await archiveRankTracker(bad.project,owner,bad.tracker,{requestId:randomUUID(),revision:(await current(bad)).authoredRevision,archived:true});await assert.rejects(approve(bad,await body(bad,fresh.id)),fails(409));await noPaidWork();
-    console.log('PASS full-quote, actor, revision, exact ceiling, live/subset rejection, remove/recreate and archive boundaries');
+    console.log('PASS full-quote, actor, revision, removed ceiling field (D3), live/subset rejection, remove/recreate and archive boundaries');
 
     const stale=await fixture(),staleQuote=await quote(stale);await approve(stale,await body(stale,staleQuote.id));
     await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[stale.workspace,owner]);assert.ok((await current(stale,viewer)).schedule.staleReasons.includes('approver_no_longer_owner'));
@@ -128,7 +129,7 @@ export async function runRankSchedulingChecks(){
     assert.equal((await request(route+'/preview','POST',schedule,owner,{origin:'https://outside.example.com'})).status,403);
     for(const action of ['preview','approve','disable'])for(const uid of [admin,editor,viewer])assert.equal((await request(route+'/'+action,'POST',action==='preview'?schedule:action==='approve'?hi:{requestId:randomUUID(),revision:hi.revision},uid)).status,404);
     for(const [path,method]of [[route,'POST'],[route+'/preview','GET'],[route+'/approve','PUT'],[route+'/disable','DELETE']])assert.equal((await request(path,method,method==='GET'?undefined:{})).status,405);
-    assert.equal((await request(route+'?other=1')).status,400);assert.equal((await request(route+'/approve?other=1','POST',hi)).status,400);assert.equal((await request(route+'/approve','POST','{')).status,400);
+    assert.equal((await request(route+'?other=1')).status,400);assert.equal((await request(route+'/approve?other=1','POST',hi)).status,400);assert.equal((await request(route+'/approve','POST','{')).status,400);assert.equal((await request(route+'/approve','POST',{...hi,maximumUsd:'1'})).status,400);
     assert.equal((await request(route+'/approve','POST',{...hi,padding:'x'.repeat(8192)})).status,413);
     const httpPreview=await request(route+'/preview','POST',schedule);assert.equal(httpPreview.status,200);assert.equal((await httpPreview.json()).occurrences.length,5);
     const save=await request(route+'/approve','POST',hi);assert.equal(save.status,200);const saved=await save.json();assert.equal(saved.replayed,false);assert.equal(saved.schedule.enabled,true);assert.equal((await (await request(route+'/approve','POST',hi)).json()).replayed,true);
