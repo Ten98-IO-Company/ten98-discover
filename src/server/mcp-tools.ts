@@ -22,6 +22,9 @@ import {getRankDistribution} from './rank-distribution.ts';
 import {getRankMatrix} from './rank-matrix.ts';
 import {listSavedKeywords,listSavedKeywordTags} from './saved-keywords.ts';
 import {savedKeywordFilterKeys} from './saved-keyword-input.ts';
+import {listGoogleConnections,readGoogleImport} from './google-jobs.ts';
+import {getDomains} from './domains.ts';
+import {getDomainRedirectChecks} from './domain-redirects.ts';
 
 export const mcpResponseBytes=8*1024*1024;
 const id=z.uuid(),date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/),key=z.string().length(64).regex(/^[a-f0-9]+$/);
@@ -76,6 +79,10 @@ export const mcpTools=[
   {name:'ten98_read_rank_matrix',scope:'rank:read',description:'Read the recent-check matrix for one tracker and device: up to 26 recent started checks as columns and 50 keywords per page with a scoped nextCursor. Expired, incompatible and missing cells stay explicit; runLimit is 1–26 (default 12). No provider call.',schema:tracker.extend({query:z.strictObject({device:z.enum(['desktop','mobile']),search:z.string().max(200).optional(),pinned:z.enum(['true','false']).optional(),runLimit:z.string().regex(/^[1-9]\d?$/).optional(),cursor:cursor512.optional()})})},
   {name:'ten98_list_saved_keywords',scope:'keywords:read',description:'Query saved keywords with the native filters, 50/100/250 per page and a scoped cursor bound to the list and metric revisions. Returns retained metrics and the first 250 tags; never refreshes, exports or calls a provider.',schema:savedKeywordList},
   {name:'ten98_list_saved_keyword_tags',scope:'keywords:read',description:'List saved-keyword tags with assignment counts, 250 per page with a scoped cursor. Reads saved data only.',schema:z.strictObject({projectId:id,cursor:cursor512.optional()})},
+  {name:'ten98_list_google_sources',scope:'google:read',description:'List the Search Console and GA4 sources of a project with their latest 20 saved import receipts. Never returns tokens, the Google app configuration or credentials; no import, refresh, inspection or Google call.',schema:z.strictObject({projectId:id})},
+  {name:'ten98_read_google_snapshot',scope:'google:read',description:'Read one saved Google report snapshot: 50 rows per page from offset (0–10000; organic overviews are one complete snapshot at offset 0). Running, failed and expired snapshots return no rows; no Google call.',schema:z.strictObject({projectId:id,importId:id,query:z.strictObject({offset:z.string().regex(/^(?:0|[1-9][0-9]{0,4})$/).optional()}).optional()})},
+  {name:'ten98_list_domains',scope:'domains:read',description:'List the stored domain registry rows of a project (owner/admin keys only): role, verification state and expected target. Never returns proof values; a key creates no canonical row, so an unvisited project lists none. No DNS call.',schema:z.strictObject({projectId:id})},
+  {name:'ten98_list_domain_redirect_checks',scope:'domains:read',description:'Read the latest 20 saved redirect-check receipts of one domain (owner/admin keys only). Never starts a check or makes a DNS or HTTP request.',schema:z.strictObject({projectId:id,domainId:id})},
 ] as const;
 export function availableTools(principal:ApiKeyPrincipal){return mcpTools.filter(tool=>tool.scope===null||principal.scopes.includes(tool.scope));}
 export function mcpToolError(error:unknown):CallToolResult {
@@ -100,7 +107,7 @@ export function createNativeMcpServer(token:string,state:McpRequestState,limit:M
       const principal=tool.scope===null?await authenticateApiKey(token):await authorizeApiKey(token,state.principal.workspaceId,tool.scope as ApiKeyScope);
       if(principal.userId!==state.principal.userId||principal.workspaceId!==state.principal.workspaceId)throw new FoundationError(401,'Authority changed.');
       if(tool.name==='ten98_whoami')return mcpResult({userId:principal.userId,workspaceId:principal.workspaceId,scopes:principal.scopes,tools:availableTools(principal).map(item=>item.name)});
-      const args=raw as {projectId:string;promptId?:string;trackerId?:string;visitorKey?:string;query?:Record<string,string>;requestId?:string};
+      const args=raw as {projectId:string;promptId?:string;trackerId?:string;importId?:string;domainId?:string;visitorKey?:string;query?:Record<string,string>;requestId?:string};
       const target=await getDatabase().pool.query('SELECT id FROM project WHERE id=$1 AND workspace_id=$2',[args.projectId,principal.workspaceId]);
       if(!target.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
       const query=new URLSearchParams(args.query),authority={kind:'api-key' as const,token};
@@ -127,6 +134,10 @@ export function createNativeMcpServer(token:string,state:McpRequestState,limit:M
         case 'ten98_read_rank_tracker':await limit(`rank-read:${principal.userId}`,120);result=await getRankTracker(args.projectId,principal.userId,args.trackerId!,token);break;
         case 'ten98_read_rank_distribution':await limit(`rank-report:${principal.userId}`,30);result=await getRankDistribution(args.projectId,principal.userId,args.trackerId!,query,token);break;
         case 'ten98_read_rank_matrix':await limit(`rank-report:${principal.userId}`,30);result=await getRankMatrix(args.projectId,principal.userId,args.trackerId!,query,token);break;
+        case 'ten98_list_google_sources':await limit(`google:read:${principal.userId}`,120);result=await listGoogleConnections(args.projectId,principal.userId,token);break;
+        case 'ten98_read_google_snapshot':await limit(`google:read:${principal.userId}`,120);result=await readGoogleImport(args.projectId,principal.userId,args.importId!,query.get('offset')??0,token);break;
+        case 'ten98_list_domains':await limit(`domain-settings:${principal.userId}`,60);result=await getDomains(args.projectId,principal.userId,token);break;
+        case 'ten98_list_domain_redirect_checks':await limit(`domain-redirect:${principal.userId}:read`,60);result=await getDomainRedirectChecks(args.projectId,principal.userId,args.domainId!,token);break;
         case 'ten98_list_saved_keywords':case 'ten98_list_saved_keyword_tags':{
           await limit(`saved-keyword:${principal.userId}`,120);await limit(`saved-keyword-read:${principal.userId}`,60);
           const {projectId,...input}=raw as Record<string,unknown>;

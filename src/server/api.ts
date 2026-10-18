@@ -169,7 +169,8 @@ export async function handleApi(request: Request): Promise<Response> {
       const promptRead=promptApiRoute&&request.method==='GET'&&(!promptApiRoute[2]||!!promptApiRoute[3]&&(!promptApiRoute[4]||promptApiRoute[4]==='versions'));
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
       // Content families admitted by scope; method and scope are explicit per row, nothing else matches.
-      // Rank catalog/locations/schedule/runs/results/history/keywords and every saved-keyword write, export or refresh never match.
+      // Rank catalog/locations/schedule/runs/results/history/keywords and every saved-keyword write, export or refresh never match;
+      // nor do the Google app, callback, connect, property, disconnect, import and inspection routes, or any domain write.
       const scopedRoutes:[RegExp,'GET'|'POST',ApiKeyScope][]=[
         [new RegExp(`^/api/projects/(${id})/context(?:/research-log)?$`,'i'),'GET','context:read'],
         [new RegExp(`^/api/projects/(${id})/context/update$`,'i'),'POST','context:write'],
@@ -178,6 +179,8 @@ export async function handleApi(request: Request): Promise<Response> {
         [new RegExp(`^/api/projects/(${id})/rank-trackers(?:/${id}(?:/distribution|/matrix)?)?$`,'i'),'GET','rank:read'],
         // Case-sensitive: the handler classifies read-only POSTs by exact lowercase words, so a spelling variant must not pass as a read.
         [new RegExp(`^/api/projects/(${id})/saved-keywords/(?:list|tags/list)$`),'POST','keywords:read'],
+        [new RegExp(`^/api/projects/(${id})/google(?:/imports/${id})?$`,'i'),'GET','google:read'],
+        [new RegExp(`^/api/projects/(${id})/domains(?:/${id}/redirect-checks)?$`,'i'),'GET','domains:read'],
       ];
       const scoped=scopedRoutes.find(([route,method])=>request.method===method&&route.test(path));
       if(promptApiRoute&&(promptRead||promptWrite)) {
@@ -250,7 +253,7 @@ export async function handleApi(request: Request): Promise<Response> {
       return json(await collectNative(request, event.siteKey, event, extractAnalyticsPeer(request)), 202, cors);
     }
     if (!principal && request.method === 'POST' && request.headers.get('origin') !== config.appUrl) throw new FoundationError(403, 'This action must originate from the application.');
-    const googleResponse = await handleGoogle(request);
+    const googleResponse = await handleGoogle(request, principal ? { userId: principal.userId, token: apiToken! } : undefined);
     if (googleResponse) return googleResponse;
     const oidcResponse = await handleOidc(request);
     if (oidcResponse) return oidcResponse;
@@ -833,7 +836,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if(redirectRoute){
       if(url.search)throw new FoundationError(400,'Redirect checks do not accept query parameters.');
       await limit(`domain-redirect:${user.id}:read`,60);
-      if(request.method==='GET')return json(await getDomainRedirectChecks(redirectRoute[1],user.id,redirectRoute[2]));
+      if(request.method==='GET')return json(await getDomainRedirectChecks(redirectRoute[1],user.id,redirectRoute[2],apiToken??undefined));
       if(request.method==='POST'){
         await limit(`domain-redirect:${user.id}:write`,10);
         return json(await startDomainRedirectCheck(redirectRoute[1],user.id,redirectRoute[2],await readJson(request,4096)),202);
@@ -844,7 +847,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if (domainRoute) {
       if (url.search) throw new FoundationError(400, 'Domain settings do not accept query parameters.');
       await limit(`domain-settings:${user.id}`, 60);
-      if (request.method === 'GET' && !domainRoute[2]) return json(await getDomains(domainRoute[1], user.id));
+      if (request.method === 'GET' && !domainRoute[2]) return json(await getDomains(domainRoute[1], user.id, apiToken ?? undefined));
       if (request.method === 'POST') {
         const input = await readJson(request, 4096);
         if (!domainRoute[2]) return json(await addDomain(domainRoute[1], user.id, input), 201);

@@ -44,6 +44,9 @@
     "listAnnotations",
     "listCohorts",
     "listContextResearch",
+    "listDomainRedirectChecks",
+    "listDomains",
+    "listGoogleSources",
     "listProjects",
     "listPromptVersions",
     "listPrompts",
@@ -60,6 +63,7 @@
     "readAttribution",
     "readCohort",
     "readContext",
+    "readGoogleSnapshot",
     "readJourneys",
     "readLinkedActivity",
     "readPrompt",
@@ -86,7 +90,8 @@
    "migrations": [
     "0006_api_keys",
     "0041_api_prompt_scopes",
-    "0062_api_content_scopes"
+    "0062_api_content_scopes",
+    "0066_google_domains_scopes"
    ]
   },
   "P06": {
@@ -96,6 +101,9 @@
     "listAnnotations",
     "listCohorts",
     "listContextResearch",
+    "listDomainRedirectChecks",
+    "listDomains",
+    "listGoogleSources",
     "listPromptVersions",
     "listPrompts",
     "listRankTrackers",
@@ -106,6 +114,7 @@
     "readAnalytics",
     "readAttribution",
     "readContext",
+    "readGoogleSnapshot",
     "readJourneys",
     "readPrompt",
     "readRankDistribution",
@@ -124,6 +133,9 @@
     "ten98_list_annotations",
     "ten98_list_cohorts",
     "ten98_list_context_research",
+    "ten98_list_domain_redirect_checks",
+    "ten98_list_domains",
+    "ten98_list_google_sources",
     "ten98_list_prompt_versions",
     "ten98_list_prompts",
     "ten98_list_rank_trackers",
@@ -134,6 +146,7 @@
     "ten98_read_analytics",
     "ten98_read_attribution",
     "ten98_read_context",
+    "ten98_read_google_snapshot",
     "ten98_read_journeys",
     "ten98_read_linked_activity",
     "ten98_read_prompt",
@@ -656,12 +669,28 @@
    ]
   },
   "P57": {
+   "operations": [
+    "listGoogleSources",
+    "readGoogleSnapshot"
+   ],
+   "mcpTools": [
+    "ten98_list_google_sources",
+    "ten98_read_google_snapshot"
+   ],
    "migrations": [
     "0015_google_imports",
     "0044_google_ads_imports"
    ]
   },
   "P58": {
+   "operations": [
+    "listGoogleSources",
+    "readGoogleSnapshot"
+   ],
+   "mcpTools": [
+    "ten98_list_google_sources",
+    "ten98_read_google_snapshot"
+   ],
    "migrations": [
     "0015_google_imports",
     "0044_google_ads_imports",
@@ -684,6 +713,9 @@
     "listAnnotations",
     "listCohorts",
     "listContextResearch",
+    "listDomainRedirectChecks",
+    "listDomains",
+    "listGoogleSources",
     "listProjects",
     "listPromptVersions",
     "listPrompts",
@@ -700,6 +732,7 @@
     "readAttribution",
     "readCohort",
     "readContext",
+    "readGoogleSnapshot",
     "readJourneys",
     "readLinkedActivity",
     "readPrompt",
@@ -725,6 +758,9 @@
     "ten98_list_annotations",
     "ten98_list_cohorts",
     "ten98_list_context_research",
+    "ten98_list_domain_redirect_checks",
+    "ten98_list_domains",
+    "ten98_list_google_sources",
     "ten98_list_prompt_versions",
     "ten98_list_prompts",
     "ten98_list_rank_trackers",
@@ -735,6 +771,7 @@
     "ten98_read_analytics",
     "ten98_read_attribution",
     "ten98_read_context",
+    "ten98_read_google_snapshot",
     "ten98_read_journeys",
     "ten98_read_linked_activity",
     "ten98_read_prompt",
@@ -828,11 +865,23 @@
    ]
   },
   "P79": {
+   "operations": [
+    "listDomains"
+   ],
+   "mcpTools": [
+    "ten98_list_domains"
+   ],
    "migrations": [
     "0011_domains"
    ]
   },
   "P80": {
+   "operations": [
+    "listDomainRedirectChecks"
+   ],
+   "mcpTools": [
+    "ten98_list_domain_redirect_checks"
+   ],
    "migrations": [
     "0018_domain_redirect_checks"
    ]

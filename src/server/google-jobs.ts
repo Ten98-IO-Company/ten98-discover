@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import type { PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
+import { withContentProject } from './project-context.ts';
 import { getBoss } from './jobs.ts';
 import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection } from './google.ts';
 import { GoogleRequestError, googleRequest } from './google-http.ts';
@@ -17,8 +19,12 @@ export function googleImportDto(row: ImportRow) {
   return { id: row.id, report: row.report, from: row.date_from, to: row.date_to, status: row.status, dataStatus: row.data_expired_at ? 'expired' : 'available', pages: row.pages, rowCount: row.row_count, diagnostic: row.diagnostic, createdAt: row.created_at, completedAt: row.completed_at };
 }
 
-export async function listGoogleConnections(projectId: string, userId: string) {
-  return googleProjectTransaction(projectId, userId, false, async (client, _workspaceId, role) => {
+// Saved-snapshot readers. Under a key they take the content gate (workspace SHARE, 5 s bounds, key rechecked after admission,
+// before publication and on the error path); every writer of snapshot content (pages, publication, expiry, source configuration) holds the workspace
+// FOR UPDATE, so a bearer read never sees a half-published or half-expired snapshot. The worker's status-only failure updates (an import marked failed,
+// a source marked for reconnect) run on the pool without it, so a read may observe such a status change. The cookie path keeps googleProjectTransaction unchanged.
+export async function listGoogleConnections(projectId: string, userId: string, apiToken?: string) {
+  const run = async (client: PoolClient, role: string) => {
     const app = (await client.query("SELECT * FROM google_app WHERE id='instance'")).rows[0];
     const connections = await client.query('SELECT * FROM google_connection WHERE project_id=$1 ORDER BY created_at,id', [projectId]);
     const metadata = [];
@@ -26,8 +32,11 @@ export async function listGoogleConnections(projectId: string, userId: string) {
       const imports = await client.query<ImportRow>(`SELECT ${importFields} FROM google_import i WHERE connection_id=$1 ORDER BY created_at DESC,id DESC LIMIT 20`, [row.id]);
       metadata.push({ ...googleConnectionDto(row, app?.revision), imports: imports.rows.map(googleImportDto) });
     }
-    return { role, app: { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true }, connections: metadata };
-  });
+    // The instance app configuration is operator data, so a key never receives it.
+    return apiToken === undefined ? { role, app: { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true }, connections: metadata } : { role, connections: metadata };
+  };
+  return apiToken === undefined ? googleProjectTransaction(projectId, userId, false, (client, _workspaceId, role) => run(client, role))
+    : withContentProject(projectId, userId, false, (client, project) => run(client, project.role), apiToken, false, 'google:read');
 }
 
 export async function enqueueGoogleImport(projectId: string, userId: string, connectionId: string, value: unknown) {
@@ -54,10 +63,10 @@ export async function enqueueGoogleImport(projectId: string, userId: string, con
   });
 }
 
-export async function readGoogleImport(projectId: string, userId: string, importId: string, offsetValue: unknown) {
+export async function readGoogleImport(projectId: string, userId: string, importId: string, offsetValue: unknown, apiToken?: string) {
   googleInput(z.uuid(), importId);
   const offset = googleInput(z.coerce.number().int().min(0).max(10000), offsetValue ?? 0);
-  return googleProjectTransaction(projectId, userId, false, async client => {
+  const run = async (client: PoolClient) => {
     const row = (await client.query<ImportRow>(`SELECT ${importFields} FROM google_import i WHERE id=$1 AND project_id=$2`, [importId, projectId])).rows[0];
     if (!row) throw new FoundationError(404, 'Google report not found or unavailable.');
     const definition = googleReports[row.report];
@@ -78,7 +87,8 @@ export async function readGoogleImport(projectId: string, userId: string, import
     if (ga4OrganicReports.includes(row.report) && Buffer.byteLength(JSON.stringify(result), 'utf8') > 2097152) throw new FoundationError(503, 'The complete organic report is too large. Choose a smaller date range.');
     if (isGa4CommerceReport(row.report) && Buffer.byteLength(JSON.stringify(result), 'utf8') > 2097152) throw new FoundationError(503, 'The complete GA4 report is too large. Choose a smaller date range.');
     return result;
-  });
+  };
+  return apiToken === undefined ? googleProjectTransaction(projectId, userId, false, run) : withContentProject(projectId, userId, false, run, apiToken, false, 'google:read');
 }
 
 export async function runGoogleImport(importId: string): Promise<void> {

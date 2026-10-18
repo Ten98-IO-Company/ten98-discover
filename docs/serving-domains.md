@@ -10,6 +10,8 @@ A project has one immutable canonical origin and can collect from additional ver
 
 The canonical origin keeps its existing exact scheme and port, including a development HTTP origin. Its registry proof does not change that original authorization. A verified redirect alias remains excluded. A serving proof for one project does not authorize that hostname for another project.
 
+A workspace API key with `domains:read`, issued by and still held by a current owner or admin, can list the stored registry through `GET /api/projects/:projectId/domains` and the matching MCP tool. It never creates the canonical row that the **Domains** page creates lazily, so a project whose page nobody has opened lists none; `project.canonicalHost` still names the canonical origin. Every registry write stays cookie-only. See [native API](native-api.md#stored-record-routes).
+
 ## Revocation and consent
 
 Revoking, removing, reissuing the proof for, or changing the role of an eligible serving domain stops its collection until it is eligible again. These changes serialize with native ingestion, API-key ingestion and public configuration under the project's database lock. A request already completed before revocation remains a valid historical observation; requests waiting behind the committed revocation recheck eligibility and fail.

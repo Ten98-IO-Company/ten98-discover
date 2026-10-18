@@ -10,6 +10,8 @@ Only a currently verified, unrevoked `redirect_alias` can start a check. The bro
 
 The receipt copies the exact hostname, expected target, verification time and domain revision. Configuration/proof changes increment that revision. Current owner/admin membership and the same live proof/configuration are checked under workspace then project locks before execution and before publication. A change while the request is in flight marks its receipt stale and discards its observation. Duplicate workers do not repeat a dispatched check. Missing/terminal queue jobs and overdue starts/runs are reconciled to explicit failure; a late completion cannot resurrect one. These are best-effort manual observations, not guaranteed remote delivery or automatic retries.
 
+A workspace API key with `domains:read`, held by a current owner or admin issuer, can read the latest 20 receipts through `GET /api/projects/:projectId/domains/:domainId/redirect-checks` and the matching MCP tool. The read takes the workspace SHARE lock with five-second bounds and answers 503 while a writer holds the workspace longer; starting a check stays cookie-only. See [native API](native-api.md#stored-record-routes).
+
 ## Network boundary
 
 The initial request is `https://<alias>/`. Later hops may use HTTPS port 443 or HTTP port 80, with normal TLS certificate/hostname verification for HTTPS. There are at most eight redirects and nine responses, a 2 KiB URL limit, 16 KiB response-header limit, five seconds per DNS/request hop and 30 seconds overall. The worker issues GET requests and destroys response bodies after headers; it sends no workspace cookies, authorization, referrer or provider credentials.

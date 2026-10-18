@@ -6,6 +6,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
+import { withContentProject } from './project-context.ts';
 
 const DOMAIN_LIMIT = 50;
 const specialSuffixes = ['localhost', 'local', 'internal', 'invalid', 'test', 'example', 'onion', 'home.arpa'];
@@ -80,6 +81,18 @@ export async function withDomainProject<T>(projectId: unknown, userId: unknown, 
   } finally { client.release(); }
 }
 
+/** Bearer read variant: the content gate (workspace SHARE, 5 s bounds, key rechecked after admission, before publication and on
+ * the error path) for current owners/admins. Every registry and redirect-check writer holds the workspace FOR UPDATE, so the read
+ * never interleaves with one. It runs no canonical INSERT, so a key never writes and lists stored rows only: under SHARE two
+ * concurrent first reads could race on the partial canonical unique index, which the ON CONFLICT arbiter above does not name
+ * (inferred from PostgreSQL ON CONFLICT semantics, not executed). */
+export function withDomainRead<T>(projectId: unknown, userId: unknown, apiToken: string, operation: (client: PoolClient, project: Project) => Promise<T>): Promise<T> {
+  return withContentProject(projectId, userId, false, async (client, project) => {
+    if (project.role !== 'owner' && project.role !== 'admin') throw new FoundationError(404, 'Project not found or unavailable.');
+    return operation(client, projectDto({ id: project.id, origin: project.origin }));
+  }, apiToken, false, 'domains:read');
+}
+
 async function stateDto(client: PoolClient, project: Project) {
   const result = await client.query<DomainRow>('SELECT * FROM project_domain WHERE project_id=$1 ORDER BY (role=\'canonical\') DESC,hostname', [project.id]);
   return { project, domains: result.rows.map(row => ({
@@ -113,8 +126,8 @@ function expectedTarget(project: Project, hostname: string, details: z.infer<typ
   return target;
 }
 
-export async function getDomains(projectId: unknown, userId: unknown) {
-  return withDomainProject(projectId, userId, stateDto);
+export async function getDomains(projectId: unknown, userId: unknown, apiToken?: string) {
+  return apiToken === undefined ? withDomainProject(projectId, userId, stateDto) : withDomainRead(projectId, userId, apiToken, stateDto);
 }
 
 export async function addDomain(projectId: unknown, userId: unknown, input: unknown) {

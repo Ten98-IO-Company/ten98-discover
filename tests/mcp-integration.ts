@@ -43,7 +43,7 @@ export async function runMcpChecks(){
     const data=(response:Awaited<ReturnType<typeof rpc>>)=>{assert.equal(response.status,200,JSON.stringify(response.wire));assert.equal(response.wire.result?.isError,undefined,JSON.stringify(response.wire));assert.ok(response.bytes<=8*1024*1024);assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['mcp-session-id'],undefined);const result=response.wire.result;assert.deepEqual(JSON.parse(result.content[0].text),result.structuredContent);return result.structuredContent;};
     for(const modern of [true,false]){
       const listed=await rpc('tools/list',{},all.token,modern);assert.equal(listed.status,200);assert.deepEqual(listed.wire.result.tools.map((x:any)=>x.name),mcpTools.map(t=>t.name));assert.equal(listed.headers['mcp-session-id'],undefined);
-      const who=data(await call('ten98_whoami',{},all.token,modern));assert.equal(who.workspaceId,workspace);assert.equal(who.userId,ownerId);assert.equal(who.tools.length,28);
+      const who=data(await call('ten98_whoami',{},all.token,modern));assert.equal(who.workspaceId,workspace);assert.equal(who.userId,ownerId);assert.equal(who.tools.length,32);
     }
     const discovery=await rpc('server/discover');assert.equal(discovery.status,200);assert.equal(discovery.wire.result.capabilities.tools.listChanged,false);for(const cap of ['tasks','resources','prompts','sampling'])assert.equal(discovery.wire.result.capabilities[cap],undefined);
     const init=await rpc('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'native-protocol-fixture',version:'1'}},all.token,false);assert.equal(init.status,200);assert.equal(init.wire.result.protocolVersion,'2025-11-25');
@@ -409,6 +409,71 @@ export async function runMcpChecks(){
           }
           assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
           reportEvidence.groups.push('seo-authored-reads-six-tools-projection-exclusions-one-wait-dual-rate-parity');console.log('PASS additive rank tracker/report and saved-keyword read equivalence over direct, bearer HTTP and both MCP transports with the bearer projection, excluded neighbours refused, foreign tenancy, one observed revocation wait, dual saved-keyword rate parity and zero provider work');
+        }
+
+        // Additive Google snapshot and domain registry reads (P57, P58, P79, P80): google:read for every role, domains:read for current owners/admins, seeded by direct SQL with no provider, DNS or HTTP work.
+        {
+          const {listGoogleConnections,readGoogleImport}=await import('../src/server/google-jobs.ts');
+          const {getDomains}=await import('../src/server/domains.ts');
+          const {getDomainRedirectChecks}=await import('../src/server/domain-redirects.ts');
+          const gp=await makeProject(),googleKey=await makeKey(ru,['google:read']),domainsKey=await makeKey(ru,['domains:read']),connectionId=randomUUID(),importId=randomUUID(),domainId=randomUUID();
+          assert.deepEqual((await rpc('tools/list',{},googleKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_google_sources','ten98_read_google_snapshot']);
+          assert.deepEqual((await rpc('tools/list',{},domainsKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_domains','ten98_list_domain_redirect_checks']);
+          await pool.query("INSERT INTO google_connection(id,workspace_id,project_id,name,provider,revision,app_revision,status) VALUES($1,$2,$3,'MCP synthetic source','gsc',1,1,'disconnected')",[connectionId,rw,gp]);
+          await pool.query(`INSERT INTO google_import(id,connection_id,project_id,user_id,request_id,connection_revision,app_revision,report,date_from,date_to,status,pages,row_count,source,quality,completed_at)
+            VALUES($1,$2,$3,$4,$5,1,1,'gsc_daily','2026-01-01','2026-01-01','completed',1,1,'{"provider":"gsc","propertyId":"sc-domain:mcp-fixture.com"}','{"warnings":[],"metadata":{}}',clock_timestamp())`,[importId,connectionId,gp,ru,randomUUID()]);
+          await pool.query(`INSERT INTO google_import_page(import_id,page,rows) VALUES($1,0,'[{"dimensions":["2026-01-01"],"metrics":{"clicks":0,"impressions":1,"ctr":0,"position":null}}]')`,[importId]);
+          await pool.query("INSERT INTO project_domain(id,project_id,hostname,role,expected_target_host,verified_at) VALUES($1,$2,'alias.mcp-fixture.com','redirect_alias','target.mcp-fixture.com',clock_timestamp())",[domainId,gp]);
+          await pool.query(`INSERT INTO domain_redirect_check(id,workspace_id,project_id,domain_id,user_id,request_id,domain_revision,hostname,expected_target_host,verified_at,status,diagnostic,completed_at)
+            SELECT $1,p.workspace_id,p.id,d.id,$3,$4,d.redirect_revision,d.hostname,d.expected_target_host,d.verified_at,'stale','Synthetic MCP receipt',clock_timestamp() FROM project p JOIN project_domain d ON d.project_id=p.id WHERE p.id=$5 AND d.id=$2`,[randomUUID(),domainId,ru,randomUUID(),gp]);
+          const domainRows=async()=>(await pool.query('SELECT count(*)::int AS n FROM project_domain WHERE project_id=$1',[gp])).rows[0].n as number;
+          const reads:{name:string;path:string;key:{token:string};args:Record<string,unknown>;read:()=>Promise<unknown>}[]=[
+            {name:'ten98_list_google_sources',path:'google',key:googleKey,args:{},read:()=>listGoogleConnections(gp,ru,googleKey.token)},
+            {name:'ten98_read_google_snapshot',path:'google/imports/'+importId,key:googleKey,args:{importId},read:()=>readGoogleImport(gp,ru,importId,0,googleKey.token)},
+            {name:'ten98_read_google_snapshot',path:'google/imports/'+importId+'?offset=1',key:googleKey,args:{importId,query:{offset:'1'}},read:()=>readGoogleImport(gp,ru,importId,'1',googleKey.token)},
+            {name:'ten98_list_domains',path:'domains',key:domainsKey,args:{},read:()=>getDomains(gp,ru,domainsKey.token)},
+            {name:'ten98_list_domain_redirect_checks',path:'domains/'+domainId+'/redirect-checks',key:domainsKey,args:{domainId},read:()=>getDomainRedirectChecks(gp,ru,domainId,domainsKey.token)},
+          ];
+          const results:Record<string,any>={};
+          for(const spec of reads){
+            const expected=wire(await spec.read()),native=await http('/api/projects/'+gp+'/'+spec.path,{authorization:'Bearer '+spec.key.token});
+            assert.equal(native.status,200,JSON.stringify(native.wire));assert.equal(native.complete,true);assert.equal(native.headers['cache-control'],'no-store');assert.deepEqual(native.wire,expected);
+            for(const modern of [true,false])assert.deepEqual(data(await call(spec.name,{projectId:gp,...spec.args},spec.key.token,modern)),expected);
+            results[spec.path]=expected;
+          }
+          assert.deepEqual(Object.keys(results.google).sort(),['connections','role']);assert.deepEqual(results.google.connections.map((c:any)=>[c.id,c.imports.map((i:any)=>i.id)]),[[connectionId,[importId]]]);
+          assert.deepEqual(Object.keys(wire(await listGoogleConnections(gp,ru))).sort(),['app','connections','role'],'Only the cookie-shaped list carries the app configuration.');
+          assert.equal(results['google/imports/'+importId].rows.length,1);assert.equal(results['google/imports/'+importId].import.dataStatus,'available');assert.deepEqual(results['google/imports/'+importId+'?offset=1'].rows,[]);
+          assert.deepEqual(results.domains.domains.map((d:any)=>[d.id,d.status]),[[domainId,'verified']]);assert.equal(results.domains.project.canonicalVerifiable,false);assert.equal(await domainRows(),1,'No key read created a registry row.');
+          assert.deepEqual(results['domains/'+domainId+'/redirect-checks'].checks.map((c:any)=>c.status),['stale']);
+          for(const [name,token,args] of [['ten98_list_google_sources',domainsKey.token,{}],['ten98_read_google_snapshot',reportKey.token,{importId}],['ten98_list_domains',googleKey.token,{}],['ten98_list_domain_redirect_checks',reportKey.token,{domainId}]] as const){const denied=await call(name,{projectId:gp,...args},token);assert.ok(denied.wire.error);assert.equal(denied.wire.result,undefined);}
+          assert.equal((await http('/api/projects/'+gp+'/google',{authorization:'Bearer '+domainsKey.token})).status,403);assert.equal((await http('/api/projects/'+gp+'/domains',{authorization:'Bearer '+googleKey.token})).status,403);
+          // google:read survives demotion to viewer; domains:read lapses below admin.
+          const demoted=await reportActor(),demotedGoogle=await makeKey(demoted.userId,['google:read']),demotedDomains=await makeKey(demoted.userId,['domains:read']);
+          for(const role of ['editor','viewer']){
+            await pool.query('UPDATE membership SET role=$3 WHERE workspace_id=$1 AND user_id=$2',[rw,demoted.userId,role]);
+            assert.deepEqual((await rpc('tools/list',{},demotedDomains.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami'],role);assert.equal((await http('/api/projects/'+gp+'/domains',{authorization:'Bearer '+demotedDomains.token})).status,403,role);
+            assert.deepEqual((await rpc('tools/list',{},demotedGoogle.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_google_sources','ten98_read_google_snapshot'],role);
+            assert.deepEqual(data(await call('ten98_list_google_sources',{projectId:gp},demotedGoogle.token)),{...results.google,role},role);
+          }
+          for(const [name,token] of [['ten98_list_google_sources',googleKey.token],['ten98_list_domains',domainsKey.token]] as const){const foreign=await call(name,{projectId:foreignProject},token);assert.equal(foreign.status,200);assert.equal(foreign.wire.result.structuredContent.error.status,404);assert.equal(JSON.stringify(foreign.wire).includes(foreignProject),false);}
+          assert.equal((await call('ten98_read_google_snapshot',{projectId:gp,importId:randomUUID()},googleKey.token)).wire.result.structuredContent.error.status,404);
+          assert.equal((await call('ten98_list_domain_redirect_checks',{projectId:gp,domainId:randomUUID()},domainsKey.token)).wire.result.structuredContent.error.status,404);
+          const rateActor=await reportActor(),rateGoogle=await makeKey(rateActor.userId,['google:read']),rateDomains=await makeKey(rateActor.userId,['domains:read']);
+          for(const [limitKey,maximum,name,path,key,args] of [['google:read:'+rateActor.userId,120,'ten98_list_google_sources','google',rateGoogle,{}],['domain-settings:'+rateActor.userId,60,'ten98_list_domains','domains',rateDomains,{}],['domain-redirect:'+rateActor.userId+':read',60,'ten98_list_domain_redirect_checks','domains/'+domainId+'/redirect-checks',rateDomains,{domainId}]] as const){
+            await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),$2)ON CONFLICT(key,minute)DO UPDATE SET count=$2",[limitKey,maximum]);
+            assert.equal((await call(name,{projectId:gp,...args},key.token)).wire.result.structuredContent.error.status,429,name);assert.equal((await http('/api/projects/'+gp+'/'+path,{authorization:'Bearer '+key.token})).status,429,path);
+          }
+          for(const [table,name,pattern,scope] of [['google_import','ten98_list_google_sources','SELECT i.*,i.date_from::text AS date_from%','google:read'],['project_domain','ten98_list_domains','SELECT * FROM project_domain WHERE project_id=$1 ORDER BY%','domains:read']] as const){
+            const key=await makeKey(ru,[scope]),lock=await pool.connect();let pending:ReturnType<typeof call>|undefined;
+            try{await lock.query('BEGIN');await lock.query('LOCK TABLE '+table+' IN ACCESS EXCLUSIVE MODE');
+              pending=call(name,{projectId:gp},key.token);void pending.catch(()=>{});await waiting(lock,pattern);
+              await pool.query('UPDATE api_key SET revoked_at=clock_timestamp()WHERE id=$1',[key.key.id]);await lock.query('COMMIT');const result=await pending;assert.equal(result.status,401);assert.ok(result.wire.error);assert.equal(result.wire.result,undefined);
+              reportEvidence.waits.push({tool:name,action:'revocation',status:result.status});persist();
+            }finally{await lock.query('ROLLBACK').catch(()=>{});lock.release();await pending?.catch(()=>{});}
+          }
+          assert.equal(await domainRows(),1);assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
+          reportEvidence.groups.push('google-domains-four-tools-projection-owner-admin-tenancy-two-waits-rate-parity');console.log('PASS additive Google source/snapshot and domain registry/redirect-receipt read equivalence over direct, bearer HTTP and both MCP transports, no app configuration or canonical INSERT under a key, google:read for viewers and domains:read for owners/admins only, foreign tenancy, native rate parity, two observed revocation waits and zero provider work');
         }
         reportEvidence.phase='passed';
       }catch(error){reportEvidence.phase='failed';reportEvidence.failure={name:error instanceof Error?error.name:'Error',message:error instanceof Error?error.message.slice(0,2000):'Unknown failure'};throw error;}
