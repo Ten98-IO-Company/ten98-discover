@@ -11,6 +11,7 @@ import type {SessionReadAuthority} from './session-explorer.ts';
 import {geographyFields,type GeoField} from '../lib/analytics-geography.ts';
 import {journeyStepSchema} from '../lib/journeys.ts';
 import {attributionFields,attributionLimits,attributionMethod,type AttributionModel,type AttributionResult} from '../lib/attribution.ts';
+import {internalNavigationSql,selfReferralSql} from './analytics-dimensions.ts';
 
 const ownNames=['model','conversionKind','conversionValue'];
 const names=new Set(['from','to','timeZone','kind','propertyKey','propertyType','propertyValue','cohortId','cohortRevision','predicates',...explorerFilters,...ownNames]);
@@ -61,17 +62,18 @@ export async function projectAttribution(projectId:string,authority:SessionReadA
     (${kindSlot}='pageview' AND s.event_name='page_view' AND s.path=${valueSlot}) OR
     (${kindSlot}='custom' AND s.event_name<>'page_view' AND s.event_name=${valueSlot})),
    keyed_conversions AS MATERIALIZED(SELECT * FROM conversions WHERE source='browser' AND visitor_id IS NOT NULL AND visit_id IS NOT NULL),
-   converted AS MATERIALIZED(SELECT visitor_id,max(received_at) AS latest_conversion_at FROM keyed_conversions GROUP BY visitor_id),
-   touch_candidates AS MATERIALIZED(SELECT e.id,e.visitor_id,e.received_at,
-    NULLIF(${metadata("e.dimensions->'referrerHost'",2048)},'') AS referrer,
+   converted AS MATERIALIZED(SELECT visitor_id,min(received_at) AS first_conversion_at,max(received_at) AS latest_conversion_at FROM keyed_conversions GROUP BY visitor_id),
+   touch_candidates AS MATERIALIZED(SELECT e.id,e.visitor_id,e.received_at,${internalNavigationSql('e')} AS internal,
+    CASE WHEN ${selfReferralSql('e')} THEN NULL ELSE NULLIF(${metadata("e.dimensions->'referrerHost'",2048)},'') END AS referrer,
     ${['source','medium','campaign','content','term'].map(field=>`${metadata(`CASE WHEN jsonb_typeof(e.dimensions->'campaign')='object' THEN e.dimensions->'campaign'->'${field}' END`,200)} AS campaign_${field}`).join(',')}
     FROM event e JOIN converted c ON c.visitor_id=e.visitor_id JOIN target p ON p.id=e.project_id CROSS JOIN bounds b
     WHERE e.source='browser' AND e.visit_id IS NOT NULL AND e.received_at>=b.start AND e.received_at<b.finish
      AND (e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date
      AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
-     ${input.model==='last-click'?'AND e.received_at<c.latest_conversion_at':''}),
-   touch_ties AS(SELECT *,count(*) OVER(PARTITION BY visitor_id,received_at) AS timestamp_count FROM touch_candidates),
-   selected AS MATERIALIZED(SELECT DISTINCT ON(visitor_id) * FROM touch_ties ORDER BY visitor_id,received_at ${order},id ${order}),
+     ${input.model==='last-click'?'AND e.received_at<c.latest_conversion_at':'AND e.received_at<=c.first_conversion_at'}),
+   touch_ties AS(SELECT *,count(*) OVER(PARTITION BY visitor_id,internal,received_at) AS timestamp_count FROM touch_candidates),
+   -- Internal navigation (an untagged self-referral) is the touch only when the key has no other candidate.
+   selected AS MATERIALIZED(SELECT DISTINCT ON(visitor_id) * FROM touch_ties ORDER BY visitor_id,internal,received_at ${order},id ${order}),
    dimension_fields(field) AS(VALUES ${attributionFields.map(field=>`('${field}')`).join(',')}),
    touch_values AS MATERIALIZED(SELECT field,value FROM selected s CROSS JOIN LATERAL(VALUES
     ('referrer',s.referrer),('campaignSource',s.campaign_source),('campaignMedium',s.campaign_medium),('campaignName',s.campaign_campaign),('campaignContent',s.campaign_content),('campaignTerm',s.campaign_term))v(field,value)),
