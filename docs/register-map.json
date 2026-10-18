@@ -57,6 +57,8 @@
     "listSavedKeywordTags",
     "listSegments",
     "listSessions",
+    "listSiteAuditIssues",
+    "listSiteAudits",
     "querySavedKeywords",
     "readAnalytics",
     "readAnnotation",
@@ -79,6 +81,7 @@
     "readRevenueSession",
     "readSegment",
     "readSession",
+    "readSiteAudit",
     "readTeam",
     "readWebPerformance",
     "restorePrompt",
@@ -94,7 +97,8 @@
     "0006_api_keys",
     "0041_api_prompt_scopes",
     "0062_api_content_scopes",
-    "0066_google_domains_scopes"
+    "0066_google_domains_scopes",
+    "0067_audits_read_scope"
    ]
   },
   "P06": {
@@ -114,6 +118,8 @@
     "listSavedKeywordTags",
     "listSegments",
     "listSessions",
+    "listSiteAuditIssues",
+    "listSiteAudits",
     "querySavedKeywords",
     "readAnalytics",
     "readAttribution",
@@ -129,6 +135,7 @@
     "readRealtime",
     "readRetentionReport",
     "readSession",
+    "readSiteAudit",
     "restorePrompt",
     "updateContext",
     "updatePrompt"
@@ -150,6 +157,8 @@
     "ten98_list_saved_keywords",
     "ten98_list_segments",
     "ten98_list_sessions",
+    "ten98_list_site_audit_issues",
+    "ten98_list_site_audits",
     "ten98_read_analytics",
     "ten98_read_attribution",
     "ten98_read_context",
@@ -165,6 +174,7 @@
     "ten98_read_realtime",
     "ten98_read_retention",
     "ten98_read_session",
+    "ten98_read_site_audit",
     "ten98_restore_prompt",
     "ten98_update_context",
     "ten98_update_prompt",
@@ -662,11 +672,25 @@
    ]
   },
   "P53": {
+   "operations": [
+    "listSiteAudits",
+    "readSiteAudit"
+   ],
+   "mcpTools": [
+    "ten98_list_site_audits",
+    "ten98_read_site_audit"
+   ],
    "migrations": [
     "0019_site_audits"
    ]
   },
   "P54": {
+   "operations": [
+    "listSiteAuditIssues"
+   ],
+   "mcpTools": [
+    "ten98_list_site_audit_issues"
+   ],
    "migrations": [
     "0019_site_audits",
     "0032_site_audit_body"
@@ -678,6 +702,14 @@
    ]
   },
   "P56": {
+   "operations": [
+    "listSiteAudits",
+    "readSiteAudit"
+   ],
+   "mcpTools": [
+    "ten98_list_site_audits",
+    "ten98_read_site_audit"
+   ],
    "migrations": [
     "0019_site_audits",
     "0032_site_audit_body"
@@ -741,6 +773,8 @@
     "listSavedKeywordTags",
     "listSegments",
     "listSessions",
+    "listSiteAuditIssues",
+    "listSiteAudits",
     "querySavedKeywords",
     "readAnalytics",
     "readAnnotation",
@@ -763,6 +797,7 @@
     "readRevenueSession",
     "readSegment",
     "readSession",
+    "readSiteAudit",
     "readTeam",
     "readWebPerformance",
     "restorePrompt",
@@ -787,6 +822,8 @@
     "ten98_list_saved_keywords",
     "ten98_list_segments",
     "ten98_list_sessions",
+    "ten98_list_site_audit_issues",
+    "ten98_list_site_audits",
     "ten98_read_analytics",
     "ten98_read_attribution",
     "ten98_read_context",
@@ -802,6 +839,7 @@
     "ten98_read_realtime",
     "ten98_read_retention",
     "ten98_read_session",
+    "ten98_read_site_audit",
     "ten98_restore_prompt",
     "ten98_update_context",
     "ten98_update_prompt",

@@ -34,6 +34,7 @@ const SCOPES: { value: string; label: string }[] = [
   { value: 'keywords:read', label: 'Read saved keywords' },
   { value: 'google:read', label: 'Read Google sources and saved report snapshots' },
   { value: 'domains:read', label: 'Read domains and redirect checks' },
+  { value: 'audits:read', label: 'Read site audit history and issues' },
 ]
 
 export function ApiKeysPanel({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {
