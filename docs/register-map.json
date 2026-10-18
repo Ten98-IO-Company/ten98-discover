@@ -806,14 +806,16 @@
     "0044_google_ads_imports",
     "0046_ga4_report_inventory",
     "0049_google_organic_reports",
-    "0053_ga4_commerce_reports"
+    "0053_ga4_commerce_reports",
+    "0064_remove_meta_google_ads"
    ]
   },
   "P77": {
    "migrations": [
     "0026_meta_imports",
     "0027_meta_report_profiles",
-    "0028_meta_campaign_inventory"
+    "0028_meta_campaign_inventory",
+    "0064_remove_meta_google_ads"
    ]
   },
   "P78": {
