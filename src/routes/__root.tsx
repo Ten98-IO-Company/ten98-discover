@@ -4,7 +4,7 @@ import stylesheet from '../styles.css?url';
 
 export const Route = createRootRoute({
   head: () => ({
-    meta: [{ charSet: 'utf-8' }, { name: 'viewport', content: 'width=device-width, initial-scale=1' }, { title: 'ten98-monitor' }],
+    meta: [{ charSet: 'utf-8' }, { name: 'viewport', content: 'width=device-width, initial-scale=1' }, { title: 'ten98 Discover' }],
     links: [{ rel: 'stylesheet', href: stylesheet }],
   }),
   // Server-rendered documents only: the nonce exists in production SSR (src/router.tsx), server routes answer with

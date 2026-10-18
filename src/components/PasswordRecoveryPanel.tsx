@@ -1,3 +1,4 @@
+import { AuthLayout } from './AuthLayout'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, ApiError } from '../lib/api'
 
@@ -43,8 +44,8 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
     }
   }
 
-  return <main className='center'><section className='card auth' aria-labelledby='recovery-title'>
-    <p className='auth-brand'>ten98 / monitor</p><h1 id='recovery-title'>{value.kind === 'request' ? 'Reset your password' : 'Choose a new password'}</h1>
+  return <AuthLayout><section className='card auth' aria-labelledby='recovery-title'>
+    <p className='auth-brand'>Your Discover workspace</p><h1 id='recovery-title'>{value.kind === 'request' ? 'Reset your password' : 'Choose a new password'}</h1>
     {value.kind === 'request' && availability === 'loading' && <p role='status'>Checking email recovery…</p>}
     {value.kind === 'request' && availability === 'disabled' && <p role='status'>Email recovery is not configured for this installation. Contact the installation operator, or return to sign-in and use your linked identity provider.</p>}
     {value.kind === 'request' && availability === 'error' && <p role='alert'>Email recovery availability could not be checked. Return to sign-in and try again.</p>}
@@ -63,5 +64,5 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
     {error && <p role='alert' className='alert'>{error}</p>}
     {value.kind === 'reset' && <button type='button' className='btn' disabled={busy} onClick={onRequest}>Request a new link</button>}
     <button type='button' className='btn' disabled={busy} onClick={() => onSignIn()}>Back to sign in</button>
-  </section></main>
+  </section></AuthLayout>
 }
