@@ -5,6 +5,7 @@ import { disconnectGoogle, getGoogleApp, googleCallback, googleSignedIn, listGoo
 import { enqueueGoogleImport, listGoogleConnections, readGoogleImport } from './google-jobs.ts';
 import { readJson } from './validation.ts';
 import { inspectGoogleUrls } from './google-inspection.ts';
+import { requireWorkspaceFactor } from './teams.ts';
 
 function json(value: unknown, status = 200, additional?: HeadersInit) { return Response.json(value, { status, headers: { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...additional } }); }
 async function limit(key: string, maximum: number) {
@@ -25,6 +26,7 @@ export async function handleGoogle(request: Request, bearer?: { userId: string; 
   if (!['GET', 'POST'].includes(request.method)) return json({ error: 'Method not allowed.' }, 405);
   if (request.method === 'POST' && request.headers.get('origin') !== getConfig().appUrl) throw new FoundationError(403, 'This action must originate from the application.');
   const session = bearer ? null : await googleSignedIn(request), userId = bearer?.userId ?? session!.user.id;
+  await requireWorkspaceFactor(path, userId);
   await limit(`google:${request.method === 'GET' ? 'read' : 'write'}:${userId}`, request.method === 'GET' ? 120 : 30);
   if (path === '/api/google/app') return json(request.method === 'GET' ? await getGoogleApp(userId) : await saveGoogleApp(userId, await readJson(request)));
   if (!project) return json({ error: 'Not found.' }, 404);

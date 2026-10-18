@@ -49,6 +49,12 @@ export async function runMcpChecks(){
     const init=await rpc('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'native-protocol-fixture',version:'1'}},all.token,false);assert.equal(init.status,200);assert.equal(init.wire.result.protocolVersion,'2025-11-25');
     const subscription=await rpc('subscriptions/listen',{subscriptions:[]});assert.equal(subscription.status,200);assert.ok(subscription.wire.error);assert.equal(subscription.complete,true);
     console.log('PASS actual HTTP modern/legacy discovery, safe whoami, finite transports and no advertised extra capabilities');
+    // The lane owner has no verified factor: while the workspace requires one, the key is refused on every invocation, then resumes.
+    await pool.query('INSERT INTO workspace_two_factor_requirement(workspace_id) VALUES($1)',[workspace]);
+    try{const suspended=await rpc('tools/list');assert.equal(suspended.status,401);assert.equal(suspended.wire.error.message,'A valid native Bearer API key is required.');}
+    finally{await pool.query('DELETE FROM workspace_two_factor_requirement WHERE workspace_id=$1',[workspace]);}
+    assert.equal((await rpc('tools/list')).status,200);assert.equal((await pool.query('SELECT 1 FROM api_key WHERE id=$1 AND revoked_at IS NULL',[all.key.id])).rowCount,1);
+    console.log('PASS MCP refuses a key whose issuer lacks the factor a workspace two-factor requirement demands, without revoking it, and resumes when the requirement is lifted');
 
     const date=(await pool.query("SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD') AS date")).rows[0].date,calendar={from:date,to:date,timeZone:'UTC'};
     assert.equal(data(await call('ten98_read_analytics',{projectId:project,query:{from:date,to:date,compare:'prev',geoDetail:'city',geoSearch:'',geoPeriod:'comparison'}})).totals.pageViews,1);

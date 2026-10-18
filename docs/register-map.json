@@ -30,9 +30,13 @@
    ]
   },
   "P04": {
+   "routes": [
+    "POST /api/workspaces/{workspaceId}/two-factor"
+   ],
    "migrations": [
     "0004_account_security",
-    "0009_oidc_account_security"
+    "0009_oidc_account_security",
+    "0068_workspace_two_factor"
    ]
   },
   "P05": {
@@ -182,8 +186,12 @@
    ]
   },
   "P07": {
+   "routes": [
+    "POST /api/workspaces/{workspaceId}/two-factor"
+   ],
    "migrations": [
-    "0045_account_preferences"
+    "0045_account_preferences",
+    "0068_workspace_two_factor"
    ]
   },
   "P08": {
