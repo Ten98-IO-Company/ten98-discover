@@ -170,7 +170,8 @@ export async function handleApi(request: Request): Promise<Response> {
       const promptWrite=promptApiRoute&&request.method==='POST'&&(promptApiRoute[2]==='bulk'||['update','archive','restore'].includes(promptApiRoute[4]));
       // Content families admitted by scope; method and scope are explicit per row, nothing else matches.
       // Rank catalog/locations/schedule/checks/keyword writes/matrix export and every saved-keyword write, export or refresh never match;
-      // nor do the Google app, callback, connect, property, disconnect, import and inspection routes, or any domain write.
+      // nor do the Google app, callback, connect, property, disconnect, import and inspection routes, or any domain write;
+      // nor audit setup, pages, page detail, links, export, start, cancel or delete ('setup' never matches the id pattern).
       const scopedRoutes:[RegExp,'GET'|'POST',ApiKeyScope][]=[
         [new RegExp(`^/api/projects/(${id})/context(?:/research-log)?$`,'i'),'GET','context:read'],
         [new RegExp(`^/api/projects/(${id})/context/update$`,'i'),'POST','context:write'],
@@ -181,6 +182,7 @@ export async function handleApi(request: Request): Promise<Response> {
         [new RegExp(`^/api/projects/(${id})/saved-keywords/(?:list|tags/list)$`),'POST','keywords:read'],
         [new RegExp(`^/api/projects/(${id})/google(?:/imports/${id})?$`,'i'),'GET','google:read'],
         [new RegExp(`^/api/projects/(${id})/domains(?:/${id}/redirect-checks)?$`,'i'),'GET','domains:read'],
+        [new RegExp(`^/api/projects/(${id})/audits(?:/${id}(?:/issues)?)?$`,'i'),'GET','audits:read'],
       ];
       const scoped=scopedRoutes.find(([route,method])=>request.method===method&&route.test(path));
       if(promptApiRoute&&(promptRead||promptWrite)) {
@@ -464,14 +466,14 @@ export async function handleApi(request: Request): Promise<Response> {
       const [,projectId,runOrSetup,action,pageId,links]=auditRoute;
       await limit(`audits:${user.id}:${request.method==='GET'?'read':'write'}`,request.method==='GET'?120:10);
       if(request.method==='GET'){
-        if(!runOrSetup)return json(await listSiteAudits(projectId,user.id,url.searchParams));
+        if(!runOrSetup)return json(await listSiteAudits(projectId,user.id,url.searchParams,apiToken??undefined));
         if(runOrSetup==='setup'&&!action){if(url.search)throw new FoundationError(400,'Audit setup does not accept query parameters.');return json(await getSiteAuditSetup(projectId,user.id));}
         if(runOrSetup!=='setup'){
-          if(!action){if(url.search)throw new FoundationError(400,'Audit details do not accept query parameters.');return json(await getSiteAudit(projectId,user.id,runOrSetup));}
+          if(!action){if(url.search)throw new FoundationError(400,'Audit details do not accept query parameters.');return json(await getSiteAudit(projectId,user.id,runOrSetup,apiToken??undefined));}
           if(action==='pages'&&!pageId)return json(await listSiteAuditPages(projectId,user.id,runOrSetup,url.searchParams));
           if(action==='pages'&&pageId&&links)return json(await listSiteAuditLinks(projectId,user.id,runOrSetup,pageId,url.searchParams));
           if(action==='pages'&&pageId&&!links){if(url.search)throw new FoundationError(400,'Page details do not accept query parameters.');return json(await getSiteAuditPage(projectId,user.id,runOrSetup,pageId));}
-          if(action==='issues'&&!pageId)return json(await listSiteAuditIssues(projectId,user.id,runOrSetup,url.searchParams));
+          if(action==='issues'&&!pageId)return json(await listSiteAuditIssues(projectId,user.id,runOrSetup,url.searchParams,apiToken??undefined));
         }
       }
       if(request.method==='POST'){

@@ -43,7 +43,7 @@ export async function runMcpChecks(){
     const data=(response:Awaited<ReturnType<typeof rpc>>)=>{assert.equal(response.status,200,JSON.stringify(response.wire));assert.equal(response.wire.result?.isError,undefined,JSON.stringify(response.wire));assert.ok(response.bytes<=8*1024*1024);assert.equal(response.headers['cache-control'],'no-store');assert.equal(response.headers['mcp-session-id'],undefined);const result=response.wire.result;assert.deepEqual(JSON.parse(result.content[0].text),result.structuredContent);return result.structuredContent;};
     for(const modern of [true,false]){
       const listed=await rpc('tools/list',{},all.token,modern);assert.equal(listed.status,200);assert.deepEqual(listed.wire.result.tools.map((x:any)=>x.name),mcpTools.map(t=>t.name));assert.equal(listed.headers['mcp-session-id'],undefined);
-      const who=data(await call('ten98_whoami',{},all.token,modern));assert.equal(who.workspaceId,workspace);assert.equal(who.userId,ownerId);assert.equal(who.tools.length,35);
+      const who=data(await call('ten98_whoami',{},all.token,modern));assert.equal(who.workspaceId,workspace);assert.equal(who.userId,ownerId);assert.equal(who.tools.length,38);
     }
     const discovery=await rpc('server/discover');assert.equal(discovery.status,200);assert.equal(discovery.wire.result.capabilities.tools.listChanged,false);for(const cap of ['tasks','resources','prompts','sampling'])assert.equal(discovery.wire.result.capabilities[cap],undefined);
     const init=await rpc('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'native-protocol-fixture',version:'1'}},all.token,false);assert.equal(init.status,200);assert.equal(init.wire.result.protocolVersion,'2025-11-25');
@@ -494,6 +494,60 @@ export async function runMcpChecks(){
           }
           assert.equal(await domainRows(),1);assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
           reportEvidence.groups.push('google-domains-four-tools-projection-owner-admin-tenancy-two-waits-rate-parity');console.log('PASS additive Google source/snapshot and domain registry/redirect-receipt read equivalence over direct, bearer HTTP and both MCP transports, no app configuration or canonical INSERT under a key, google:read for viewers and domains:read for owners/admins only, foreign tenancy, native rate parity, two observed revocation waits and zero provider work');
+        }
+
+        // Additive site audit reads (P53, P54, P56): audits:read for every role over the native audit gate, seeded by direct SQL with no crawl, queue or website work.
+        {
+          const {listSiteAudits,getSiteAudit,listSiteAuditIssues}=await import('../src/server/site-audits.ts');
+          const ap=await makeProject(),auditsKey=await makeKey(ru,['audits:read']),runId=randomUUID(),issueId=randomUUID();
+          assert.deepEqual((await rpc('tools/list',{},auditsKey.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_site_audits','ten98_read_site_audit','ten98_list_site_audit_issues']);
+          await pool.query(`WITH stamp AS (SELECT clock_timestamp() AS at) INSERT INTO site_audit_run(id,workspace_id,project_id,user_id,request_id,request_hash,origin,config,status,created_at,completed_at,deadline_at,queue_job_id)
+            SELECT $1,$2,$3,$4,gen_random_uuid(),repeat('a',64),'https://audit.mcp-report.test','{"mode":"static","startPath":"/","maxPages":50}'::jsonb,'completed',at,at,at+interval '30 minutes',gen_random_uuid() FROM stamp`,[runId,rw,ap,ru]);
+          await pool.query("INSERT INTO site_audit_issue(id,run_id,issue_key,rule_version,code,severity,details) VALUES($1,$2,repeat('b',64),'static-graph-v1','orphan-page','info','{}')",[issueId,runId]);
+          const reads:{name:string;path:string;args:Record<string,unknown>;read:()=>Promise<unknown>}[]=[
+            {name:'ten98_list_site_audits',path:'audits',args:{},read:()=>listSiteAudits(ap,ru,new URLSearchParams(),auditsKey.token)},
+            {name:'ten98_list_site_audits',path:'audits?limit=1',args:{query:{limit:'1'}},read:()=>listSiteAudits(ap,ru,new URLSearchParams('limit=1'),auditsKey.token)},
+            {name:'ten98_read_site_audit',path:'audits/'+runId,args:{runId},read:()=>getSiteAudit(ap,ru,runId,auditsKey.token)},
+            {name:'ten98_list_site_audit_issues',path:'audits/'+runId+'/issues',args:{runId},read:()=>listSiteAuditIssues(ap,ru,runId,new URLSearchParams(),auditsKey.token)},
+            {name:'ten98_list_site_audit_issues',path:'audits/'+runId+'/issues?severity=info&limit=1',args:{runId,query:{severity:'info',limit:'1'}},read:()=>listSiteAuditIssues(ap,ru,runId,new URLSearchParams('severity=info&limit=1'),auditsKey.token)},
+          ];
+          const results:Record<string,any>={};
+          for(const spec of reads){
+            const expected=wire(await spec.read()),native=await http('/api/projects/'+ap+'/'+spec.path,{authorization:'Bearer '+auditsKey.token});
+            assert.equal(native.status,200,JSON.stringify(native.wire));assert.equal(native.complete,true);assert.equal(native.headers['cache-control'],'no-store');assert.deepEqual(native.wire,expected);
+            for(const modern of [true,false])assert.deepEqual(data(await call(spec.name,{projectId:ap,...spec.args},auditsKey.token,modern)),expected);
+            results[spec.path]=expected;
+          }
+          assert.deepEqual(wire(await getSiteAudit(ap,ru,runId)),results['audits/'+runId],'The key read equals the member read, canCancel and canDelete included.');
+          assert.deepEqual(results.audits.runs.map((r:any)=>[r.id,r.status,r.dataStatus]),[[runId,'completed','available']]);
+          assert.deepEqual(results['audits/'+runId+'/issues'].issues.map((i:any)=>[i.id,i.pageId,i.code]),[[issueId,null,'orphan-page']]);
+          assert.deepEqual(results['audits/'+runId+'/issues'].groups,[{code:'orphan-page',severity:'info',retainedFindingCount:1,affectedUrlCount:0,unassignedFindingCount:1}]);assert.equal(results['audits/'+runId+'/issues'].matchingRetainedCount,1);
+          for(const [name,args] of [['ten98_list_site_audits',{}],['ten98_read_site_audit',{runId}],['ten98_list_site_audit_issues',{runId}]] as const){const denied=await call(name,{projectId:ap,...args},reportKey.token);assert.ok(denied.wire.error);assert.equal(denied.wire.result,undefined);}
+          for(const suffix of ['audits','audits/'+runId,'audits/'+runId+'/issues','audits/setup','audits/'+runId+'/pages'])assert.equal((await http('/api/projects/'+ap+'/'+suffix,{authorization:'Bearer '+(suffix.endsWith('setup')||suffix.endsWith('pages')?auditsKey.token:reportKey.token)})).status,403,suffix);
+          // audits:read stays on the viewer allowlist; the run DTO reports the issuer's current role.
+          const demoted=await reportActor(),demotedAudits=await makeKey(demoted.userId,['audits:read']);
+          for(const role of ['editor','viewer']){
+            await pool.query('UPDATE membership SET role=$3 WHERE workspace_id=$1 AND user_id=$2',[rw,demoted.userId,role]);
+            assert.deepEqual((await rpc('tools/list',{},demotedAudits.token)).wire.result.tools.map((t:any)=>t.name),['ten98_whoami','ten98_list_site_audits','ten98_read_site_audit','ten98_list_site_audit_issues'],role);
+            const viewed=data(await call('ten98_read_site_audit',{projectId:ap,runId},demotedAudits.token));assert.equal(viewed.role,role);assert.equal(viewed.run.canDelete,false,role);
+          }
+          for(const [name,args] of [['ten98_list_site_audits',{}],['ten98_read_site_audit',{runId}]] as const){const foreign=await call(name,{projectId:foreignProject,...args},auditsKey.token);assert.equal(foreign.status,200);assert.equal(foreign.wire.result.structuredContent.error.status,404);assert.equal(JSON.stringify(foreign.wire).includes(foreignProject),false);}
+          assert.equal((await call('ten98_read_site_audit',{projectId:ap,runId:randomUUID()},auditsKey.token)).wire.result.structuredContent.error.status,404);
+          assert.equal((await call('ten98_list_site_audit_issues',{projectId:ap,runId:randomUUID()},auditsKey.token)).wire.result.structuredContent.error.status,404);
+          const rateActor=await reportActor(),rateAudits=await makeKey(rateActor.userId,['audits:read']);
+          await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),120)ON CONFLICT(key,minute)DO UPDATE SET count=120",['audits:'+rateActor.userId+':read']);
+          assert.equal((await call('ten98_list_site_audits',{projectId:ap},rateAudits.token)).wire.result.structuredContent.error.status,429);assert.equal((await http('/api/projects/'+ap+'/audits',{authorization:'Bearer '+rateAudits.token})).status,429);
+          {
+            const key=await makeKey(ru,['audits:read']),lock=await pool.connect();let pending:ReturnType<typeof call>|undefined;
+            try{await lock.query('BEGIN');await lock.query('LOCK TABLE site_audit_issue IN ACCESS EXCLUSIVE MODE');
+              pending=call('ten98_list_site_audit_issues',{projectId:ap,runId},key.token);void pending.catch(()=>{});await waiting(lock,'SELECT i.id,i.page_id AS "pageId"%');
+              await pool.query('UPDATE api_key SET revoked_at=clock_timestamp()WHERE id=$1',[key.key.id]);await lock.query('COMMIT');const result=await pending;assert.equal(result.status,401);assert.ok(result.wire.error);assert.equal(result.wire.result,undefined);
+              reportEvidence.waits.push({tool:'ten98_list_site_audit_issues',action:'revocation',status:result.status});persist();
+            }finally{await lock.query('ROLLBACK').catch(()=>{});lock.release();await pending?.catch(()=>{});}
+          }
+          assert.deepEqual((await pool.query('SELECT raw_expired_at,data_expired_at,status FROM site_audit_run WHERE id=$1',[runId])).rows,[{raw_expired_at:null,data_expired_at:null,status:'completed'}],'Reads of a current run latch nothing and change no lifecycle.');
+          assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
+          reportEvidence.groups.push('site-audits-three-tools-viewer-tenancy-one-wait-rate-parity');console.log('PASS additive site audit list/detail/issues read equivalence over direct, bearer HTTP and both MCP transports, equal to the member read, cookie-only setup and pages refused, audits:read for every role, foreign tenancy, native rate parity, one observed revocation wait and zero provider work');
         }
         reportEvidence.phase='passed';
       }catch(error){reportEvidence.phase='failed';reportEvidence.failure={name:error instanceof Error?error.name:'Error',message:error instanceof Error?error.message.slice(0,2000):'Unknown failure'};throw error;}

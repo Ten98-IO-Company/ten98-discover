@@ -2,6 +2,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
+import {authorizeApiKey} from './api-keys.ts';
 import {getDatabase} from './db.ts';
 import {normalizePublicHostname} from './domains.ts';
 import {getBoss} from './jobs.ts';
@@ -33,7 +34,7 @@ export type AuditRunRow={
 };
 export type AuditProject={id:string;workspaceId:string;origin:string};
 export type AuditLock={client:PoolClient;project:AuditProject;run:AuditRunRow|null;role:AuditRole|null};
-type ActorTarget={projectId:string;runId?:string;actor:{userId:string;permission:'read'|'manage'}};
+type ActorTarget={projectId:string;runId?:string;actor:{userId:string;permission:'read'|'manage'};apiToken?:string};
 type InternalTarget={runId:string;internal:true;claim?:true};
 const managers=['owner','admin'];
 const active=['queued','running','cancelling'];
@@ -51,18 +52,23 @@ export async function withAuditLock<T>(target:ActorTarget|InternalTarget,operati
  const internal='internal' in target;
  const runId=target.runId===undefined?undefined:parse(z.uuid(),target.runId);
  const actor=internal?null:{userId:parse(z.uuid(),target.actor.userId),permission:target.actor.permission};
- const read=actor?.permission==='read';
+ const read=actor?.permission==='read',token=internal?undefined:target.apiToken,actorProject=internal?undefined:parse(z.uuid(),target.projectId);
+ if(token!==undefined&&!read)throw new FoundationError(403,'The API key does not permit this action.');
  const client=await getDatabase().pool.connect();
+ // Bearer reads bind the key's current issuer to this actor after lock admission, before commit and on the error path (project-context.ts contract).
+ const keyCheck=async(ws:string)=>{if((await authorizeApiKey(token!,ws,'audits:read',client)).userId!==actor!.userId)throw missing();};
+ let workspaceId:string|undefined;
  try{
   await client.query('BEGIN');
-  if(read)await client.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s'");
+  if(read)await client.query(`SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='${token===undefined?30:5}s'`);
   // ponytail: one global claim gate matches the initial one-active-run installation limit.
   if(internal&&target.claim)await client.query("SELECT pg_advisory_xact_lock(hashtextextended('ten98.site-audit.claim.v1',0))");
-  const projectId=internal?(await client.query('SELECT project_id FROM site_audit_run WHERE id=$1',[runId])).rows[0]?.project_id:parse(z.uuid(),target.projectId);
+  const projectId=internal?(await client.query('SELECT project_id FROM site_audit_run WHERE id=$1',[runId])).rows[0]?.project_id:actorProject;
   const hint=projectId?(await client.query('SELECT workspace_id FROM project WHERE id=$1',[projectId])).rows[0]:null;
   if(!hint){if(internal){await client.query('COMMIT');return null;}throw missing();}
-  const lock=read?'SHARE':'UPDATE';
+  const lock=read?'SHARE':'UPDATE';workspaceId=hint.workspace_id;
   const workspace=await client.query(`SELECT id FROM workspace WHERE id=$1 FOR ${lock}`,[hint.workspace_id]);
+  if(token!==undefined)await keyCheck(hint.workspace_id);
   const project=(await client.query<AuditProject>(`SELECT id,workspace_id AS "workspaceId",origin FROM project WHERE id=$1 AND workspace_id=$2 FOR ${lock}`,[projectId,hint.workspace_id])).rows[0];
   if(!workspace.rowCount||!project){if(internal){await client.query('COMMIT');return null;}throw missing();}
   let role:AuditRole|null=null;
@@ -72,8 +78,11 @@ export async function withAuditLock<T>(target:ActorTarget|InternalTarget,operati
   const run=runId?(await client.query<AuditRunRow>('SELECT * FROM site_audit_run WHERE id=$1 AND project_id=$2 FOR UPDATE',[runId,project.id])).rows[0]??null:null;
   if(runId&&!run){if(internal){await client.query('COMMIT');return null;}throw missing();}
   if(actor&&run)Object.assign(run,(await markSiteAuditReadExpiry(client,project.id,[run.id]))[0]);
-  const result=await operation({client,project,run,role});await client.query('COMMIT');return result;
- }catch(error){await client.query('ROLLBACK').catch(()=>{});if(read&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Audit results are busy. Try again shortly.');throw error;}finally{client.release();}
+  const result=await operation({client,project,run,role});if(token!==undefined)await keyCheck(project.workspaceId);await client.query('COMMIT');return result;
+ }catch(error){await client.query('ROLLBACK').catch(()=>{});
+  // Stale key authority outranks the read's own 404/409/503, rechecked on this connection even when the lock wait itself failed.
+  if(token!==undefined){const ws=workspaceId??(await client.query<{workspace_id:string}>('SELECT workspace_id FROM project WHERE id=$1',[actorProject])).rows[0]?.workspace_id;if(ws!==undefined)await keyCheck(ws);}
+  if(read&&['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Audit results are busy. Try again shortly.');throw error;}finally{client.release();}
 }
 
 /** Caller already holds W/P/run. Refusal must permit safe terminalization after revocation. */
@@ -181,11 +190,11 @@ export function parseAuditListQuery(params:URLSearchParams,kind:'runs'|'pages'|'
  return {limit,cursor:params.get('cursor'),coverage,resourceKind,code,severity,pageId,direction,...fields};
 }
 function requireRun(run:AuditRunRow|null){if(!run)throw missing();if(run.deleted_at)throw gone();return run;}
-function actorTarget(projectId:string,userId:string,runId?:string,manage=false):ActorTarget{return {projectId,runId,actor:{userId,permission:manage?'manage':'read'}};}
+function actorTarget(projectId:string,userId:string,runId?:string,manage=false,apiToken?:string):ActorTarget{return {projectId,runId,actor:{userId,permission:manage?'manage':'read'},apiToken};}
 const runDtoColumns='id,project_id,domain_id,origin,config,status,phase,created_at,started_at,completed_at,deadline_at,stop_reason,coverage,summary,request_count,html_pages_started,sitemap_documents_started,frontier_count,edge_count,budget_charged_bytes,wire_bytes,http_decoded_bytes,decoded_bytes,raw_expired_at,data_expired_at,deleted_at';
-export async function listSiteAudits(projectId:string,userId:string,params:URLSearchParams){
+export async function listSiteAudits(projectId:string,userId:string,params:URLSearchParams,apiToken?:string){
  const query=parseAuditListQuery(params,'runs'),scope={projectId,list:'audits'},before=cursor(query.cursor,scope);
- return withAuditLock(actorTarget(projectId,userId),async({client,role})=>{
+ return withAuditLock(actorTarget(projectId,userId,undefined,false,apiToken),async({client,role})=>{
   if(before&&!(await client.query('SELECT id FROM site_audit_run WHERE id=$1 AND project_id=$2 AND deleted_at IS NULL',[before,projectId])).rowCount)throw new FoundationError(400,'This audit cursor is no longer available.');
   const rows=(await client.query<AuditRunRow>(`SELECT ${runDtoColumns} FROM site_audit_run WHERE project_id=$1 AND deleted_at IS NULL
    AND ($2::uuid IS NULL OR (created_at,id)<(SELECT created_at,id FROM site_audit_run WHERE id=$2 AND project_id=$1)) ORDER BY created_at DESC,id DESC LIMIT $3 FOR UPDATE`,[projectId,before,query.limit+1])).rows;
@@ -194,7 +203,7 @@ export async function listSiteAudits(projectId:string,userId:string,params:URLSe
   return {role:role!,runs:rows.slice(0,query.limit).map(row=>auditRunDto(row,role)),nextCursor:rows.length>query.limit?nextCursor(rows[query.limit-1].id,scope):null};
  });
 }
-export async function getSiteAudit(projectId:string,userId:string,runId:string){return withAuditLock(actorTarget(projectId,userId,runId),async({run,role})=>({role:role!,run:auditRunDto(requireRun(run),role)}));}
+export async function getSiteAudit(projectId:string,userId:string,runId:string,apiToken?:string){return withAuditLock(actorTarget(projectId,userId,runId,false,apiToken),async({run,role})=>({role:role!,run:auditRunDto(requireRun(run),role)}));}
 
 type PageRow={title_preview:string|null;title_length:number|null;body_capture_state:'not_recorded'|'available'|'empty'|'unavailable'|'over_limit';body_extraction_version:string|null;body_text:string|null;body_present:boolean;body_bytes:number|null;id:string;url:string;resource_kind:'html'|'robots'|'sitemap';state:string;discovered_start:boolean;discovered_link:boolean;discovered_sitemap:boolean;link_depth:number|null;sitemap_depth:number;observed_at:Date|null;http_status:number|null;fetch_state:CrawlPageInput['fetchState'];analysis_coverage:CrawlCoverage;reasons:string[];facts:CrawlFacts|null;response_time_ms:number|null;evidence:Record<string,unknown>|null;evidence_recorded:boolean;evidence_truncated:boolean};
 const pageColumns='p.id,p.url,p.resource_kind,p.state,p.discovered_start,p.discovered_link,p.discovered_sitemap,p.link_depth,p.sitemap_depth,p.observed_at,p.http_status,p.fetch_state,p.analysis_coverage,p.reasons,p.facts,p.response_time_ms,p.evidence_recorded,p.evidence_truncated,p.body_capture_state,p.body_extraction_version';
@@ -410,9 +419,9 @@ export async function getSiteAuditPage(projectId:string,userId:string,runId:stri
  if(result===null)throw new FoundationError(410,'Audit page data expired under this workspace’s retention policy.');
  return result;
 }
-export async function listSiteAuditIssues(projectId:string,userId:string,runId:string,params:URLSearchParams){
+export async function listSiteAuditIssues(projectId:string,userId:string,runId:string,params:URLSearchParams,apiToken?:string){
  const query=parseAuditListQuery(params,'issues'),scope={projectId,runId,list:'issues',code:query.code,severity:query.severity,pageId:query.pageId},before=cursor(query.cursor,scope);
- return withAuditLock(actorTarget(projectId,userId,runId),async({client,run:saved,role})=>{
+ return withAuditLock(actorTarget(projectId,userId,runId,false,apiToken),async({client,run:saved,role})=>{
   const run=requireRun(saved),base={role:role!,run:auditRunDto(run,role),findingsComplete:run.summary?.findingsComplete??false,countBasis:'retained' as const};
   if(run.data_expired_at)return {...base,issues:[],groups:null,nextCursor:null,matchingRetainedCount:null};
   if(query.pageId)await scopedPage(client,run.id,query.pageId);

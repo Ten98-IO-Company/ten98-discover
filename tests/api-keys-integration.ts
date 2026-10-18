@@ -43,7 +43,7 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
 
   const input = { name: 'Input check', scopes: ['projects:read'] };
   for (const invalid of [null, {}, { ...input, name: ' ' }, { ...input, name: 'x'.repeat(81) }, { ...input, extra: true },
-    { ...input, scopes: [] }, { ...input, scopes: ['projects:read', 'projects:read'] }, { ...input, scopes: ['paid:run'] }, { ...input, scopes: ['audits:read'] }, { ...input, scopes: ['domains:write'] }, { ...input, scopes: ['google:write'] },
+    { ...input, scopes: [] }, { ...input, scopes: ['projects:read', 'projects:read'] }, { ...input, scopes: ['paid:run'] }, { ...input, scopes: ['audits:write'] }, { ...input, scopes: ['domains:write'] }, { ...input, scopes: ['google:write'] },
     { ...input, expiresInDays: 0 }, { ...input, expiresInDays: 366 }, { ...input, expiresInDays: 1.5 }, { ...input, expiresInDays: null }]) {
     await rejects(createApiKey(workspaceId, options.ownerId, invalid), 400, 'Invalid key fields must be rejected.');
   }
