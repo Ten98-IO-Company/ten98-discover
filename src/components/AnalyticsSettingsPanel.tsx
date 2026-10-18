@@ -2,6 +2,7 @@ import {useEffect, useId, useRef, useState} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
 import {AnalyticsResetPanel} from './AnalyticsResetPanel';
 import {ProjectDeletePanel} from './ProjectDeletePanel';
+import {WebsiteSharePanel} from './WebsiteSharePanel';
 import type {ProjectDeleteInput} from '../lib/project-delete';
 import type {AnalyticsResetInput} from '../lib/analytics-reset';
 import type {GeographyReadiness} from '../lib/analytics-geography';
@@ -556,6 +557,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
           </div>
         </div>
       )}
+      {canEdit&&<WebsiteSharePanel key={'share:'+dangerOwner} projectId={projectId} isCurrent={isCurrent} onUnauthorized={()=>unauthorizedRef.current()}/>}
       {canEdit&&deletion}
       {resetAccepted===dangerOwner&&<p role="status">Reset accepted. Earlier analytics is unavailable. Any remaining stored-data cleanup continues in bounded background batches.</p>}
       {canEdit&&<AnalyticsResetPanel key={'reset:'+dangerOwner} projectId={projectId} userId={userId} authorityOwner={dangerOwner} isCurrent={isCurrent} pendingRequest={resetRequest} disabled={pending||loading||dirty||resetBusy||deleteRequest.current!==null} onBusy={setResetBusy} onUnauthorized={()=>unauthorizedRef.current()} onReset={()=>{if(isCurrent()){setDangerEpoch(dangerEpoch+1);setResetAccepted(authorityOwner+'/'+(dangerEpoch+1));reload();}}}/>}

@@ -87,7 +87,9 @@ export type BoardSummaryResult={version:'native-board-summary-v1';projectId:stri
 const sharePublication={label:text(120,1).refine(value=>value.trim()===value),theme:z.enum(['light','dark']),boardRevision,
  selectedCardIds:z.array(uuid).min(1).max(boardLimits.cards).refine(ids=>new Set(ids).size===ids.length).transform(ids=>ids.sort()),
  scope:text(20000,1),allowFilter:z.boolean(),ongoingLive:z.boolean(),expiresAt:z.iso.datetime({precision:3})};
-const shareToken=z.string().length(43).regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+export const shareToken=z.string().length(43).regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+/** One fresh canonical 32-byte base64url capability secret, generated in the owner's browser once per create intent. */
+export function newShareToken(){const bytes=crypto.getRandomValues(new Uint8Array(32));return btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');}
 export const boardShareCreate=z.object({requestId:uuid,...sharePublication,token:shareToken}).strict();
 export const boardSharePublish=z.object({requestId:uuid,revision:boardRevision,...sharePublication}).strict();
 export const boardShareRevoke=z.object({requestId:uuid,revision:boardRevision}).strict();
@@ -175,7 +177,15 @@ export function parseHostedBoardShare(path:string,search:string,fragment:string)
  if(!match||!uuid.safeParse(match[1]).success||!shareToken.safeParse(token).success)return null;
  return{shareId:match[1],token};
 }
+// Website share links are /share/websites/{lowercase uuid}#{token}: no slug label, no query, same canonical fragment secret.
+export function parseHostedWebsiteShare(path:string,search:string,fragment:string):{shareId:string;token:string}|null{
+ if(search!=='')return null;
+ const match=/^\/share\/websites\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(path),token=fragment.startsWith('#')?fragment.slice(1):fragment;
+ if(!match||!uuid.safeParse(match[1]).success||!shareToken.safeParse(token).success)return null;
+ return{shareId:match[1],token};
+}
 // Refuse malformed capability wire before initial router hash canonicalization; valid links stay untouched.
 export function scrubMalformedHostedBoardShareFragment(location:Pick<Location,'pathname'|'search'|'hash'>,history:Pick<History,'state'|'replaceState'>):void{
  if(location.pathname.startsWith('/share/boards/')&&location.hash&&!parseHostedBoardShare(location.pathname,location.search,location.hash))history.replaceState(history.state,'',location.pathname+location.search);
+ if(location.pathname.startsWith('/share/websites/')&&location.hash&&!parseHostedWebsiteShare(location.pathname,location.search,location.hash))history.replaceState(history.state,'',location.pathname+location.search);
 }
