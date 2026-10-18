@@ -6,7 +6,7 @@ import {getDatabase} from './db.ts';
 import {publicTrackingSettings, trackingConsentEpoch} from './native-analytics.ts';
 import {collectionOriginAllowed} from './collection-origins.ts';
 
-export const PROVIDERS = ['meta', 'ga4', 'google_ads', 'cloudflare', 'tiktok', 'linkedin', 'microsoft_ads', 'pinterest', 'snapchat', 'x'] as const;
+const PROVIDERS = ['meta', 'ga4', 'google_ads', 'cloudflare', 'tiktok', 'linkedin', 'microsoft_ads', 'pinterest', 'snapchat', 'x'] as const;
 export const CANONICAL_EVENTS = ['page_view', 'sign_up', 'generate_lead', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'refund'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export type CanonicalEvent = (typeof CANONICAL_EVENTS)[number];
@@ -14,8 +14,6 @@ export type Environment = 'live' | 'test';
 
 const environmentSchema = z.enum(['live', 'test']);
 const idSchema = z.uuid();
-// RegExp `$` permits a final newline; identifiers and scalar fields must match every byte.
-function fullMatch(pattern: RegExp, value: string) { return pattern.exec(value)?.[0] === value; }
 
 const ASSET_PATTERNS: Record<Provider, RegExp> = {
   meta: /^\d{1,25}$/,
@@ -97,16 +95,16 @@ function parseOr400<S extends z.ZodTypeAny>(schema: S, input: unknown, fallback:
 
 function dynamicTargetError(provider: Provider, assetId: string, target: string): string | null {
   if (provider === 'google_ads') {
-    return fullMatch(/^[A-Za-z0-9_-]{1,100}$/, target) ? null : 'Invalid conversion label';
+    return /^[A-Za-z0-9_-]{1,100}$/.test(target) ? null : 'Invalid conversion label';
   }
   if (provider === 'linkedin') {
-    if (!fullMatch(/^\d{1,20}$/, target)) return 'Invalid conversion rule ID';
+    if (!/^\d{1,20}$/.test(target)) return 'Invalid conversion rule ID';
     const value = Number(target);
     return Number.isSafeInteger(value) && value > 0 ? null : 'Invalid conversion rule ID';
   }
   if (provider === 'x') {
     const match = /^tw-([A-Za-z0-9]{3,20})-([A-Za-z0-9]{1,64})$/.exec(target);
-    return match !== null && match[0] === target && match[1] === assetId ? null : 'Invalid event ID for this asset';
+    return match !== null && match[1] === assetId ? null : 'Invalid event ID for this asset';
   }
   return 'Target must be omitted for this provider';
 }
@@ -126,7 +124,7 @@ const destinationSchema = z.object({
   ownershipConfirmed: z.boolean(),
   mappings: z.array(mappingSchema).max(8),
 }).strict().superRefine((destination, ctx) => {
-  if (!fullMatch(ASSET_PATTERNS[destination.provider], destination.assetId)) {
+  if (!ASSET_PATTERNS[destination.provider].test(destination.assetId)) {
     ctx.addIssue({code: z.ZodIssueCode.custom, message: 'Invalid asset ID format'});
   }
   const seen = new Set<string>();
@@ -165,10 +163,10 @@ const configurationSchema = z.object({
 });
 
 const eventPropertiesSchema = z.object({
-  value: z.string().refine(v => fullMatch(/^(?:0|[1-9]\d{0,6})(?:\.\d{1,6})?$/, v) && Number(v) <= 1_000_000).optional(),
+  value: z.string().refine(v => /^(?:0|[1-9]\d{0,6})(?:\.\d{1,6})?$/.test(v) && Number(v) <= 1_000_000).optional(),
   currency: z.string().regex(/^[A-Z]{3}$/).refine(c => c !== 'XXX' && c !== 'XTS' && CURRENCIES.has(c)).optional(),
-  transactionId: z.string().refine(v => fullMatch(/^[A-Za-z0-9_.:-]{1,128}$/, v)).optional(),
-  itemId: z.string().refine(v => fullMatch(/^[A-Za-z0-9_.:-]{1,128}$/, v)).optional(),
+  transactionId: z.string().refine(v => /^[A-Za-z0-9_.:-]{1,128}$/.test(v)).optional(),
+  itemId: z.string().refine(v => /^[A-Za-z0-9_.:-]{1,128}$/.test(v)).optional(),
 }).strict().superRefine((properties, ctx) => {
   if ((properties.value === undefined) !== (properties.currency === undefined)) {
     ctx.addIssue({code: z.ZodIssueCode.custom, message: 'value and currency must be provided together'});
@@ -312,6 +310,7 @@ async function withAuthorizedState<T>(
   userId: string,
   environment: Environment,
   operation: (client: PoolClient, project: LockedProject, state: StateRow) => Promise<T>,
+  expectedVersion?: number,
 ): Promise<T> {
   const client = await getDatabase().pool.connect();
   try {
@@ -337,6 +336,7 @@ async function withAuthorizedState<T>(
       'SELECT draft, draft_version, active_revision FROM tracking_state WHERE project_id = $1 AND environment = $2 FOR UPDATE',
       [projectId, environment],
     );
+    if (expectedVersion !== undefined && stateResult.rows[0].draft_version !== expectedVersion) throw new FoundationError(409, 'Draft version conflict');
     const result = await operation(client, {id: row.id as string, origin: row.origin as string}, stateResult.rows[0] as StateRow);
     await client.query('COMMIT');
     return result;
@@ -435,48 +435,38 @@ const draftBodySchema = z.object({expectedVersion: z.number().int().min(0), conf
 const previewBodySchema = z.object({expectedVersion: z.number().int().min(0), event: z.unknown(), consent: z.unknown()}).strict();
 const publishBodySchema = z.object({expectedVersion: z.number().int().min(0)}).strict();
 const rollbackBodySchema = z.object({expectedVersion: z.number().int().min(0), revisionId: z.string().uuid()}).strict();
+const ids = (projectId: unknown, userId: unknown, environment: unknown) => [parseOr400(environmentSchema, environment, 'Invalid environment'), parseOr400(idSchema, projectId, 'Invalid project id'), parseOr400(idSchema, userId, 'Invalid user id')] as const;
 
 export async function getDestinations(projectId: unknown, userId: unknown, environment: unknown) {
-  const env = parseOr400(environmentSchema, environment, 'Invalid environment');
-  const pid = parseOr400(idSchema, projectId, 'Invalid project id');
-  const uid = parseOr400(idSchema, userId, 'Invalid user id');
+  const [env, pid, uid] = ids(projectId, userId, environment);
   return withAuthorizedState(pid, uid, env, (client, project) => managementDto(client, project, env));
 }
 
 export async function saveDestinationsDraft(projectId: unknown, userId: unknown, environment: unknown, input: unknown) {
-  const env = parseOr400(environmentSchema, environment, 'Invalid environment');
-  const pid = parseOr400(idSchema, projectId, 'Invalid project id');
-  const uid = parseOr400(idSchema, userId, 'Invalid user id');
+  const [env, pid, uid] = ids(projectId, userId, environment);
   const body = parseOr400(draftBodySchema, input, 'Invalid draft request');
-  return withAuthorizedState(pid, uid, env, async (client, project, state) => {
-    if (state.draft_version !== body.expectedVersion) throw new FoundationError(409, 'Draft version conflict');
+  return withAuthorizedState(pid, uid, env, async (client, project) => {
     const configuration = parseDestinationConfiguration(body.configuration);
     await client.query(
       'UPDATE tracking_state SET draft = $1, draft_version = draft_version + 1 WHERE project_id = $2 AND environment = $3',
       [JSON.stringify(configuration), pid, env],
     );
     return managementDto(client, project, env);
-  });
+  }, body.expectedVersion);
 }
 
 export async function previewDestinations(projectId: unknown, userId: unknown, environment: unknown, input: unknown) {
-  const env = parseOr400(environmentSchema, environment, 'Invalid environment');
-  const pid = parseOr400(idSchema, projectId, 'Invalid project id');
-  const uid = parseOr400(idSchema, userId, 'Invalid user id');
+  const [env, pid, uid] = ids(projectId, userId, environment);
   const body = parseOr400(previewBodySchema, input, 'Invalid preview request');
   return withAuthorizedState(pid, uid, env, async (_client, _project, state) => {
-    if (state.draft_version !== body.expectedVersion) throw new FoundationError(409, 'Draft version conflict');
     return previewConfiguration(state.draft, body.event, body.consent);
-  });
+  }, body.expectedVersion);
 }
 
 export async function publishDestinations(projectId: unknown, userId: unknown, environment: unknown, input: unknown) {
-  const env = parseOr400(environmentSchema, environment, 'Invalid environment');
-  const pid = parseOr400(idSchema, projectId, 'Invalid project id');
-  const uid = parseOr400(idSchema, userId, 'Invalid user id');
+  const [env, pid, uid] = ids(projectId, userId, environment);
   const body = parseOr400(publishBodySchema, input, 'Invalid publish request');
   return withAuthorizedState(pid, uid, env, async (client, project, state) => {
-    if (state.draft_version !== body.expectedVersion) throw new FoundationError(409, 'Draft version conflict');
     const configuration = parseDestinationConfiguration(state.draft);
     assertPublishable(configuration);
     const revisionId = await insertRevision(client, pid, env, configuration, uid, null);
@@ -485,16 +475,13 @@ export async function publishDestinations(projectId: unknown, userId: unknown, e
       [revisionId, pid, env],
     );
     return managementDto(client, project, env);
-  });
+  }, body.expectedVersion);
 }
 
 export async function rollbackDestinations(projectId: unknown, userId: unknown, environment: unknown, input: unknown) {
-  const env = parseOr400(environmentSchema, environment, 'Invalid environment');
-  const pid = parseOr400(idSchema, projectId, 'Invalid project id');
-  const uid = parseOr400(idSchema, userId, 'Invalid user id');
+  const [env, pid, uid] = ids(projectId, userId, environment);
   const body = parseOr400(rollbackBodySchema, input, 'Invalid rollback request');
-  return withAuthorizedState(pid, uid, env, async (client, project, state) => {
-    if (state.draft_version !== body.expectedVersion) throw new FoundationError(409, 'Draft version conflict');
+  return withAuthorizedState(pid, uid, env, async (client, project) => {
     const historical = await client.query(
       'SELECT id, configuration FROM tracking_revision WHERE id = $1 AND project_id = $2 AND environment = $3',
       [body.revisionId, pid, env],
@@ -508,7 +495,7 @@ export async function rollbackDestinations(projectId: unknown, userId: unknown, 
       [JSON.stringify(configuration), revisionId, pid, env],
     );
     return managementDto(client, project, env);
-  });
+  }, body.expectedVersion);
 }
 
 export async function getPublicDestinations(siteKey: unknown, environment: unknown, origin: unknown) {

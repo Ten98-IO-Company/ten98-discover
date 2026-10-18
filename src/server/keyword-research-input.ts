@@ -2,7 +2,7 @@ import {toUSVString} from 'node:util';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 
-export const keywordModes = ['overview','ideas'] as const;
+const keywordModes = ['overview','ideas'] as const;
 export type KeywordMode = typeof keywordModes[number];
 export type KeywordRequest = {connectionId:string;mode:KeywordMode;keywords:string[];locationCode:number;languageCode:string;limit:25|50|100};
 export type KeywordMarket = {locationCode:number;locationName:string;languageCode:string;languageName:string};
@@ -13,7 +13,7 @@ export const keywordCatalogEndpoint = 'https://api.dataforseo.com/v3/dataforseo_
 export const keywordAccountEndpoint = 'https://api.dataforseo.com/v3/appendix/user_data';
 export const keywordReconcileEndpoint = 'https://api.dataforseo.com/v3/dataforseo_labs/id_list';
 
-export function keywordBad(message='Check the keyword research fields and try again.'):never {throw new FoundationError(400,message);}
+function keywordBad(message='Check the keyword research fields and try again.'):never {throw new FoundationError(400,message);}
 export function validText(value:unknown,max:number):value is string {return typeof value==='string'&&value.length>0&&value.length<=max&&toUSVString(value)===value&&!/[\x00-\x1f\x7f]/.test(value);}
 export function normalizeKeyword(value:string) {
   if(toUSVString(value)!==value||/[\x00-\x1f\x7f]/.test(value))keywordBad();
@@ -43,7 +43,7 @@ export function providerMicros(value:unknown):bigint {
   return digits/divisor;
 }
 export function microUsd(value:bigint):string {return `${value/1_000_000n}.${String(value%1_000_000n).padStart(6,'0')}`;}
-export function keywordTag(id:string){return `ten98:keyword:${id}`;}
+function keywordTag(id:string){return `ten98:keyword:${id}`;}
 export function keywordPayload(request:KeywordRequest,id:string){return {keywords:request.keywords,location_code:request.locationCode,language_code:request.languageCode,include_clickstream_data:false,include_serp_info:false,...(request.mode==='ideas'?{ignore_synonyms:true,closely_variants:false,limit:request.limit,offset:0}:{}),tag:keywordTag(id)};}
 export function matchesKeywordPayload(data:unknown,request:KeywordRequest,id:string) {
   if(!data||typeof data!=='object'||Array.isArray(data))return false;

@@ -100,7 +100,7 @@
   }
   function heatmapReply(v,c) {
     if(!replayKeys(v,['accepted','reason','captureId','token','createdAt','deadlineAt','uploadUntil','settings','limits']) || typeof v.accepted!=='boolean' || typeof v.captureId!=='string' || !replayUuid.test(v.captureId) || v.captureId.length!==36 || v.reason!==(v.accepted?null:'not_sampled') ||
-      (v.accepted?typeof v.token!=='string'||v.token.length>4096||!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$(?![\s\S])/.test(v.token):v.token!==null) ||
+      (v.accepted?typeof v.token!=='string'||v.token.length>4096||!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(v.token):v.token!==null) ||
       !replayKeys(v.settings,['enabled','sampleRate']) || v.settings.enabled!==true || v.settings.sampleRate!==c.settings.sampleRate || !replayKeys(v.limits,Object.keys(heatmapLimits)) || Object.keys(heatmapLimits).some(function(k){return v.limits[k]!==heatmapLimits[k];}))return false;
     return ['createdAt','deadlineAt','uploadUntil'].every(function(k){try{return new Date(v[k]).toISOString()===v[k];}catch(_){return false;}}) && Date.parse(v.deadlineAt)-Date.parse(v.createdAt)===300000 && Date.parse(v.uploadUntil)-Date.parse(v.deadlineAt)===60000;
   }
@@ -201,7 +201,7 @@
   function replayReply(value, settings, terminal) {
     if (!replayKeys(value,['accepted','reason','recordingId','token','createdAt','deadlineAt','uploadUntil','settings','limits']) || typeof value.accepted !== 'boolean' ||
       typeof value.recordingId !== 'string' || value.recordingId.length!==36 || !replayUuid.test(value.recordingId) || value.reason !== (value.accepted ? null : 'not_sampled') ||
-      (value.accepted ? !(terminal && value.token === null) && (typeof value.token !== 'string' || value.token.length > 4096 || !/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$(?![\s\S])/.test(value.token)) : value.token !== null) ||
+      (value.accepted ? !(terminal && value.token === null) && (typeof value.token !== 'string' || value.token.length > 4096 || !/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(value.token)) : value.token !== null) ||
       JSON.stringify(value.settings) !== JSON.stringify(settings) || !replayKeys(value.limits,Object.keys(replayLimits)) || Object.keys(replayLimits).some(function (key) { return value.limits[key] !== replayLimits[key]; })) return false;
     return ['createdAt','deadlineAt','uploadUntil'].every(function (key) { try { return new Date(value[key]).toISOString() === value[key]; } catch (_) { return false; } }) &&
       Date.parse(value.deadlineAt)-Date.parse(value.createdAt) === settings.maxDurationMs && Date.parse(value.uploadUntil)-Date.parse(value.deadlineAt) === 60000;

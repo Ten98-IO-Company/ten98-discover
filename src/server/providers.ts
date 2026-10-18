@@ -6,13 +6,10 @@ import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
 import { credentialKeys, decryptCredentials, encryptCredentials } from './credential-vault.ts';
 
-export const moneyInput = z.string().regex(/^(?:0|[1-9]\d{0,6})(?:\.\d{1,6})?$/).pipe(z.string().refine(value => {
-  const [whole, fraction = ''] = value.split('.');
-  return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0')) <= 1_000_000_000_000n;
-}, 'Use a USD amount from 0 to 1,000,000 with at most six decimal places.'));
+export const micros = (value: string) => { const [whole, fraction = ''] = value.split('.'); return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0')); };
+export const moneyInput = z.string().regex(/^(?:0|[1-9]\d{0,6})(?:\.\d{1,6})?$/).pipe(z.string().refine(value => micros(value) <= 1_000_000_000_000n, 'Use a USD amount from 0 to 1,000,000 with at most six decimal places.'));
 export function usdMicros(value: string): bigint {
-  const [whole, fraction = ''] = moneyInput.parse(value).split('.');
-  return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0'));
+  return micros(moneyInput.parse(value));
 }
 export function usd(value: string | bigint | number): string {
   const amount = BigInt(value);

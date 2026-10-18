@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
-import { providerTransaction, usdMicros, moneyInput } from './providers.ts';
+import { providerTransaction, usdMicros, moneyInput, micros } from './providers.ts';
 
 const reservationInput = z.object({ connectionId: z.uuid(), requestKey: z.uuid(), operation: z.string().regex(/^[a-z][a-z0-9_.:-]{0,119}$/),
   estimateUsd: moneyInput.refine(value => usdMicros(value) > 0n), inputHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
@@ -73,8 +73,7 @@ export async function dispatchSpend(workspaceId: string, userId: string, request
 export async function settleSpend(client: PoolClient, workspaceId: string, requestId: string, actualUsd: string | null, providerReference: string | null = null) {
   z.uuid().parse(workspaceId); z.uuid().parse(requestId);
   if (providerReference !== null) z.string().min(1).max(512).parse(providerReference);
-  const [whole, fraction = ''] = actualUsd === null ? [] : actualInput.parse(actualUsd).split('.');
-  const reported = whole === undefined ? null : BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0'));
+  const reported = actualUsd === null ? null : micros(actualInput.parse(actualUsd));
   // The current ledger stores at most $1M per charge. Keep larger reports uncertain and block spending;
   // callers must persist provider evidence and inspect this outcome before treating a job as settled.
   const actual = reported === null || reported > 1_000_000_000_000n ? null : reported.toString();

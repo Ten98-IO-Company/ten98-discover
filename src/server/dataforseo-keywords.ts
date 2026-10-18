@@ -97,7 +97,7 @@ export async function requestKeywordResearch(credentials:unknown,request:Keyword
 export function parseKeywordReconciliation(response:{httpStatus:number;body:unknown},request:KeywordRequest,id:string) {
   const items=successfulFree(response);if(items.length>=1000)invalid();
   const matches=items.filter(item=>object(item)&&item.url===new URL(keywordEndpoints[request.mode]).pathname.slice(1)&&matchesKeywordPayload(item.metadata,request,id));
-  if(matches.length!==1||!object(matches[0])||!validText(matches[0].id,128)||typeof matches[0].status!=='string'||!/^\d{5}$(?![\s\S])/.test(matches[0].status)||!finalTaskStatus(Number(matches[0].status)))invalid();
+  if(matches.length!==1||!object(matches[0])||!validText(matches[0].id,128)||typeof matches[0].status!=='string'||!/^\d{5}$/.test(matches[0].status)||!finalTaskStatus(Number(matches[0].status)))invalid();
   return {reference:matches[0].id,cost:microUsd(providerMicros(matches[0].cost)),statusCode:Number(matches[0].status)};
 }
 export async function reconcileKeywordCharge(credentials:unknown,request:KeywordRequest,id:string,dispatchedAt:Date,send:typeof fetch=fetch) {

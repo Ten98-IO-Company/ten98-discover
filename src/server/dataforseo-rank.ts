@@ -11,7 +11,7 @@ const object=(v:unknown):v is ObjectValue=>!!v&&typeof v==='object'&&!Array.isAr
 function invalid():never{throw new Error('Unsupported DataForSEO rank response.');}
 function bad():never{throw new FoundationError(400,'Check the rank request or catalog selection.');}
 const code=(v:unknown):v is number=>Number.isInteger(v)&&Number(v)>0&&Number(v)<=2147483647;
-const taskIdPattern=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$(?![\s\S])/;
+const taskIdPattern=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 function freeRows(response:DataforseoResponse,url:string,maximum:number){
   const body=response.body;
   if(response.httpStatus!==200||!object(body)||body.status_code!==20000||providerMicros(body.cost)!==0n||body.tasks_count!==1||body.tasks_error!==0||!Array.isArray(body.tasks)||body.tasks.length!==1)invalid();
@@ -31,7 +31,7 @@ export function parseRankLocations(response:DataforseoResponse):Omit<RankCatalog
   const raw=freeRows(response,rankSerpEndpoints.locations,300_000);if(!raw.length)invalid();
   const rows:RankLocation[]=[],byCode=new Map<number,RankLocation>(),countries=new Map<string,RankLocation>(),groups=new Map<string,{rows:number;hasRoot:boolean}>();
   for(const value of raw){
-    if(!object(value)||!code(value.location_code)||!validText(value.location_name,200)||!validText(value.location_type,80)||typeof value.country_iso_code!=='string'||!/^[A-Z]{2}$(?![\s\S])/.test(value.country_iso_code)||(value.location_code_parent!==null&&!code(value.location_code_parent)))invalid();
+    if(!object(value)||!code(value.location_code)||!validText(value.location_name,200)||!validText(value.location_type,80)||typeof value.country_iso_code!=='string'||!/^[A-Z]{2}$/.test(value.country_iso_code)||(value.location_code_parent!==null&&!code(value.location_code_parent)))invalid();
     const row:RankLocation={code:value.location_code,name:value.location_name,parentCode:value.location_code_parent,type:value.location_type,countryIso:value.country_iso_code,countryCode:0};
     if(byCode.has(row.code))invalid();byCode.set(row.code,row);rows.push(row);
     const group=groups.get(row.countryIso)??{rows:0,hasRoot:false};group.rows++;group.hasRoot ||= row.parentCode===null;groups.set(row.countryIso,group);

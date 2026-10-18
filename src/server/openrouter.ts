@@ -10,12 +10,12 @@ import {legacyOpenRouterModels,openRouterModelId,openRouterProviderName,openRout
 import {requireCatalogModels} from './openrouter-models.ts';
 import {validateExecutionPayload} from './openrouter-input.ts';
 
-export const openRouterBase='https://openrouter.ai/api/v1';
+const openRouterBase='https://openrouter.ai/api/v1';
 const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==='object'&&!Array.isArray(v);
 function invalid():never{throw new Error('Unsupported OpenRouter evidence.');}
 const positiveInteger=(v:unknown):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>0&&v<=2_000_000;
-export function generationId(value:unknown):value is string{return typeof value==='string'&&/^gen-[0-9A-Za-z-]{1,124}$(?![\s\S])/.test(value);}
-function apiKey(credentials:unknown){if(!object(credentials)||typeof credentials.apiKey!=='string'||!/^[^\s]{1,4096}$(?![\s\S])/.test(credentials.apiKey))invalid();return credentials.apiKey;}
+export function generationId(value:unknown):value is string{return typeof value==='string'&&/^gen-[0-9A-Za-z-]{1,124}$/.test(value);}
+function apiKey(credentials:unknown){if(!object(credentials)||typeof credentials.apiKey!=='string'||!/^[^\s]{1,4096}$/.test(credentials.apiKey))invalid();return credentials.apiKey;}
 export function keyFingerprint(credentials:unknown){return createHash('sha256').update('ten98.openrouter.key.v1:'+apiKey(credentials)).digest('hex');}
 export function executionActor(userId:string){return createHmac('sha256',getConfig().authSecret).update('ten98.openrouter.actor.v1:'+userId).digest('hex');}
 async function responseJson(response:Response){
@@ -126,7 +126,7 @@ export function openRouterRefusal(body:unknown,httpStatus:number,headerId:string
   return {cost:'0.000000',reference:null,result:null,
     diagnostic:httpStatus===402?'OpenRouter refused this request before running it: the account or API key has no credit left, or its in-flight spending limit was reached. No charge was recorded. Add credits or raise the key limit at OpenRouter, then prepare a new quote.'
       :'OpenRouter refused this request before running it: a key, guardrail or workspace budget set at OpenRouter is spent. No charge was recorded. Raise or reset that budget at OpenRouter, then prepare a new quote.',
-    evidence:{source:'refusal',httpStatus,limitSource:typeof source==='string'&&/^[a-z0-9_]{1,64}$(?![\s\S])/.test(source)?source:null,generationId:null,reportedCost:null}};
+    evidence:{source:'refusal',httpStatus,limitSource:typeof source==='string'&&/^[a-z0-9_]{1,64}$/.test(source)?source:null,generationId:null,reportedCost:null}};
 }
 export function parseExecutionOutcome(body:unknown,httpStatus:number,headerId:string|null,route:RouteSnapshot,dispatchedAt:Date):ExecutionOutcome{
   const refused=openRouterRefusal(body,httpStatus,headerId);if(refused)return refused;

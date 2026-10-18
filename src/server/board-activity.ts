@@ -1,11 +1,10 @@
 import type {BoardShareReadContext} from './analytics-scope.ts';
 import type {PoolClient} from 'pg';
 import type {BoardActivityResult,BoardDimensionResult,BoardSummaryResult} from '../lib/boards.ts';
-import {recordedDimensionSql} from './analytics-dimensions.ts';
+import {recordedDimensionSql,analyticsCustomVisitsSql} from './analytics-dimensions.ts';
 import {FoundationError} from './auth.ts';
 import {analyticsPopulation} from './analytics-population.ts';
 import {analyticsSummarySql,hideAnalyticsSummary} from './analytics.ts';
-import {analyticsCustomVisitsSql} from './analytics-dimensions.ts';
 import type {explorerQuery} from './explorer-input.ts';
 import {retentionCoverage} from './retention.ts';
 

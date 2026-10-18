@@ -23,7 +23,7 @@ const settingsInput = z.object({
   collectionMode: z.enum(['consent-first', 'cookieless']).optional(),
   captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),captureGeography:z.boolean().optional(),capturePerformance:z.boolean().optional(),
   excludeBots: z.boolean(),linkIdentities:z.boolean().optional(),replay:replaySettings.optional(),heatmap:heatmapSettings.optional(),
-  excludedPaths: z.array(z.string().min(1).max(256).regex(/^\/[^?#\u0000-\u001f\u007f]*$(?![\s\S])/).refine(value => { try { decodeURIComponent(value); return toUSVString(value) === value; } catch { return false; } })).max(50),
+  excludedPaths: z.array(z.string().min(1).max(256).regex(/^\/[^?#\u0000-\u001f\u007f]*$/).refine(value => { try { decodeURIComponent(value); return toUSVString(value) === value; } catch { return false; } })).max(50),
 }).strict();
 export type AnalyticsSettings = z.infer<typeof settingsInput>;
 type Project = { id: string; origin: string; analytics_settings: AnalyticsSettings; analytics_epoch: string; analytics_revision: number; destination_epoch: string | null };

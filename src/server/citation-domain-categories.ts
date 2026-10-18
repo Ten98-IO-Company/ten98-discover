@@ -4,11 +4,10 @@
 // Server-only domain classification. Holds the large hardcoded domain lists
 // (including the ~25k-entry editorial set) and `categorizeDomain`. Importing
 // this from a client module would bloat the browser bundle — keep it confined to
-// server functions. Client code imports types/config from `./domain-categories`.
+// server functions.
 
 import {
 	type CitationCategory,
-	FORUM_DOMAINS,
 	hasDeveloperPath,
 	inDomainSet,
 	inferPageType,
@@ -720,18 +719,6 @@ const INSTITUTIONAL_DOMAINS = new Set([
 	"govt.nz",
 ]);
 
-function isSocialMediaDomain(domain: string): boolean {
-	return inDomainSet(domain, SOCIAL_MEDIA_DOMAINS);
-}
-
-function isPrWireDomain(domain: string): boolean {
-	return inDomainSet(domain, PR_WIRE_DOMAINS);
-}
-
-function isReviewDomain(domain: string): boolean {
-	return inDomainSet(domain, REVIEW_DOMAINS);
-}
-
 function isEcommerceDomain(domain: string): boolean {
 	if (inDomainSet(domain, ECOMMERCE_DOMAINS)) return true;
 	if (ECOMMERCE_HOST_PREFIX_RE.test(domain)) return true;
@@ -742,22 +729,6 @@ function isDeveloperDomain(domain: string): boolean {
 	if (inDomainSet(domain, DEVELOPER_DOMAINS)) return true;
 	if (DEVELOPER_HOST_PREFIX_EXCEPTIONS.has(domain)) return false;
 	return DEVELOPER_HOST_PREFIX_RE.test(domain) || CODE_HOST_MIRROR_RE.test(domain);
-}
-
-function isReferenceDomain(domain: string): boolean {
-	return inDomainSet(domain, REFERENCE_DOMAINS);
-}
-
-function isEditorialDomain(domain: string): boolean {
-	return inDomainSet(domain, EDITORIAL_DOMAIN_SET);
-}
-
-function hasEditorialHostPrefix(domain: string): boolean {
-	return EDITORIAL_HOST_PREFIX_RE.test(domain);
-}
-
-function hasPrHostPrefix(domain: string): boolean {
-	return PR_HOST_PREFIX_RE.test(domain);
 }
 
 function isInstitutionalDomain(domain: string): boolean {
@@ -780,17 +751,17 @@ function isInstitutionalDomain(domain: string): boolean {
  *  as a store. */
 const DOMAIN_CATEGORY_CHECKS: [(domain: string) => boolean, CitationCategory][] = [
 	[isForumDomain, "social"],
-	[isPrWireDomain, "pr"],
-	[isReviewDomain, "reviews"],
+	[(d) => inDomainSet(d, PR_WIRE_DOMAINS), "pr"],
+	[(d) => inDomainSet(d, REVIEW_DOMAINS), "reviews"],
 	[isEcommerceDomain, "ecommerce"],
-	[isSocialMediaDomain, "social"],
+	[(d) => inDomainSet(d, SOCIAL_MEDIA_DOMAINS), "social"],
 	[isDeveloperDomain, "developer"],
-	[isReferenceDomain, "reference"],
-	[isEditorialDomain, "editorial"],
+	[(d) => inDomainSet(d, REFERENCE_DOMAINS), "reference"],
+	[(d) => inDomainSet(d, EDITORIAL_DOMAIN_SET), "editorial"],
 	[isInstitutionalDomain, "institutional"],
 	// Last: a university or agency newsroom (news.mit.edu) is institutional first.
-	[hasEditorialHostPrefix, "editorial"],
-	[hasPrHostPrefix, "pr"],
+	[(d) => EDITORIAL_HOST_PREFIX_RE.test(d), "editorial"],
+	[(d) => PR_HOST_PREFIX_RE.test(d), "pr"],
 ];
 
 export function categorizeDomain(
@@ -802,24 +773,6 @@ export function categorizeDomain(
 	if (inDomainSet(domain, competitorDomains)) return "competitor";
 	return DOMAIN_CATEGORY_CHECKS.find(([matches]) => matches(domain))?.[1] ?? "other";
 }
-
-/**
- * The curated domain lists categorizeDomain consults, in precedence order. Exported
- * so a test can assert they're mutually exclusive: a domain in two lists would be
- * silently resolved by whichever is checked first (the slickdeals class of bug). The
- * ~25k editorial set is intentionally excluded — it's the catch-all checked last, so
- * overlaps with the specific lists above are expected (and harmless), not bugs.
- */
-export const CURATED_DOMAIN_LISTS: { name: string; domains: Set<string> }[] = [
-	{ name: "forum", domains: FORUM_DOMAINS },
-	{ name: "pr", domains: PR_WIRE_DOMAINS },
-	{ name: "reviews", domains: REVIEW_DOMAINS },
-	{ name: "ecommerce", domains: ECOMMERCE_DOMAINS },
-	{ name: "social", domains: SOCIAL_MEDIA_DOMAINS },
-	{ name: "developer", domains: DEVELOPER_DOMAINS },
-	{ name: "reference", domains: REFERENCE_DOMAINS },
-	{ name: "institutional", domains: INSTITUTIONAL_DOMAINS },
-];
 
 const EDITORIAL_PAGE_TYPES = new Set(["article", "listicle", "howto", "comparison", "review"]);
 

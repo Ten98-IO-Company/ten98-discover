@@ -26,7 +26,7 @@ export function promptCacheKey(workspaceId:string,projectId:string,input:Executi
 // Limits bound exponentiation and payload parsing, not provider pricing assumptions.
 export function decimal(value:string){
   if(typeof value!=='string'||value.length>100)throw new Error('Unsupported decimal.');
-  const m=/^(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d{1,2}))?$(?![\s\S])/.exec(value);
+  const m=/^(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d{1,2}))?$/.exec(value);
   if(!m)throw new Error('Unsupported decimal.');
   const exponent=Number(m[3]??0),fraction=m[2]??'';
   if(Math.abs(exponent)>36||fraction.length>36)throw new Error('Unsupported decimal precision.');
@@ -56,7 +56,7 @@ export function parseOpenRouterJson(text:string):any{
     }return value;
   });
 }
-export function exactJsonNumber(value:string){return (JSON as NativeJson).rawJSON(decimalText(value));}
+function exactJsonNumber(value:string){return (JSON as NativeJson).rawJSON(decimalText(value));}
 export type RouteSnapshot={model:OpenRouterModel;tag:string;providerName:string;promptCapacity:number;completionCapacity:number;promptPrice:string;completionPrice:string;requestPrice:string;estimateMicros:string;profile?:OpenRouterRequestProfile;contextLength?:number};
 export function validateExecutionPayload(messages:RenderedInput,route:RouteSnapshot,maxCompletionTokens:number,structured=false){
  if(!openRouterRouteIdentity(route))throw new FoundationError(409,'The saved model route is unsupported. Prepare a new quote.');

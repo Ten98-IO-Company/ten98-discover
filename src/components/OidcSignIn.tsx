@@ -4,7 +4,7 @@ import { api, errMsg } from '../lib/api';
 interface Provider { id: string; name: string }
 
 // Only http(s) URLs may be navigated to; plain http is limited to loopback for local tests.
-function httpUrl(s: string): string | null {
+export function httpUrl(s: string): string | null {
   try {
     const u = new URL(s);
     if (u.protocol === 'https:') return u.toString();

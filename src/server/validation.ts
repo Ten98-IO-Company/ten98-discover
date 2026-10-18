@@ -99,12 +99,7 @@ export async function readJson(request: Request, maxBytes = 8192): Promise<unkno
   } finally {
     reader.releaseLock();
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+  const bytes = Buffer.concat(chunks, total);
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);

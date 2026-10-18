@@ -8,18 +8,18 @@ export type SpecializedDraft = {
   ownership: string; entityId: string; publisherCategory: string; pageType: string; sourceType: string;
   productAttribution: 'all' | 'brand' | 'competitor' | 'other';
 };
-export type SpecializedCounts = { answers: string; annotations: string; prompts: string; pages?: string };
-export type SpecializedGroupActions = { canPages: boolean; canPrompts: boolean; canEvidence: boolean };
-export type SpecializedGroupRow = {
+type SpecializedCounts = { answers: string; annotations: string; prompts: string; pages?: string };
+type SpecializedGroupActions = { canPages: boolean; canPrompts: boolean; canEvidence: boolean };
+type SpecializedGroupRow = {
   id: string; label: string; details: string[];
   current: SpecializedCounts; previous: SpecializedCounts;
   currentActions: SpecializedGroupActions; previousActions: SpecializedGroupActions;
 };
-export type SpecializedPromptRowView = {
+type SpecializedPromptRowView = {
   id: string; preview: string; details: string[]; counts: SpecializedCounts;
   statusLabel: string | null; coverageLabel: string | null; canEvidence: boolean;
 };
-export type SpecializedEvidenceRowView = {
+type SpecializedEvidenceRowView = {
   id: string; requestedAt: string; model: string; promptLabel: string;
   retainedUrl: string; safeHref: string | null; retainedTitle: string | null;
   retainedOrder: string; groupedUrl: string; classification: string[]; canOpenComparison: boolean;

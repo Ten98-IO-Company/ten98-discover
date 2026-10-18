@@ -105,7 +105,6 @@ export function readSessionResponse(value:unknown,params:URLSearchParams,project
     }else if(v.cohort||q.cohort)return fail();
     if(v.selection.status==='unavailable'){if(v.rows!==null||v.totalKeys!==null)return fail();}
     else if(!v.rows||v.totalKeys===null||v.rows.length>v.paging.limit||v.rows.length>v.totalKeys||new Set(v.rows.map(row=>row.visitorKey)).size!==v.rows.length||v.rows.some(row=>row.events<1||row.events!==row.pageViews+row.customEvents||row.visits<1||row.firstAt>row.lastAt))return fail();
-    if(v.sessionProperties?.selection.status==='unavailable'&&v.selection.status!=='unavailable')return fail();
   }
   return v as SessionList|SessionDetail;
 }

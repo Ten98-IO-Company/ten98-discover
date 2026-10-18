@@ -1,6 +1,5 @@
 import type {NormalizedProperties} from '../server/analytics-input.ts';
 
-export const revenueVersion='native-revenue-event-v1' as const;
 export const revenuePropertyNames=['ten98_revenue_version','ten98_revenue_kind','ten98_revenue_amount','ten98_revenue_currency'] as const;
 // Pinned from Node24.19.0 / ICU78.3 Intl.supportedValuesOf('currency').
 // Browser/server runtime upgrades cannot silently change the accepted catalog.
@@ -16,7 +15,7 @@ export function normalizeRevenueProperties(eventName:string,properties:Normalize
  if(eventName==='page_view'||declared.length!==revenuePropertyNames.length||declared.some(key=>!reserved.has(key)))return invalid();
  const values=revenuePropertyNames.map(key=>{const property=properties[key];return property?.type==='string'?property.value:invalid();});
  const[version,kind,amount,currency]=values;
- if(version!=='1'||!['sale','refund'].includes(kind)||!/^(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{1,4})?$(?![\s\S])/.test(amount)||!/^[A-Z]{3}$(?![\s\S])/.test(currency)||currency==='XXX'||currency==='XTS'||!currencies.has(currency))return invalid();
+ if(version!=='1'||!['sale','refund'].includes(kind)||!/^(?:0|[1-9][0-9]{0,14})(?:\.[0-9]{1,4})?$/.test(amount)||!/^[A-Z]{3}$/.test(currency)||currency==='XXX'||currency==='XTS'||!currencies.has(currency))return invalid();
  const[whole,fraction='']=amount.split('.'),fixed=whole+'.'+fraction.padEnd(4,'0');
  if(BigInt(whole+fraction.padEnd(4,'0'))===0n)return invalid();
  return{...properties,ten98_revenue_amount:{type:'string',value:fixed}};
@@ -26,7 +25,7 @@ export function normalizeRevenueProperties(eventName:string,properties:Normalize
 export const revenueReportVersion='native-revenue-report-v1' as const;
 export const revenueReportLimits={responseBytes:2*1024*1024,queryCharacters:65536,pageSize:100} as const;
 export function revenueUnits(value:string):bigint{
- if(!/^-?(?:0|[1-9][0-9]{0,39})\.[0-9]{4}$(?![\s\S])/.test(value)||value==='-0.0000')throw new TypeError('Invalid exact revenue amount.');
+ if(!/^-?(?:0|[1-9][0-9]{0,39})\.[0-9]{4}$/.test(value)||value==='-0.0000')throw new TypeError('Invalid exact revenue amount.');
  return BigInt(value.replace('.',''));
 }
 export function revenueDecimal(value:bigint):string{

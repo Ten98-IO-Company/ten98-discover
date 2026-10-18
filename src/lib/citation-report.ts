@@ -15,10 +15,10 @@ const object=(v:unknown):v is Record<string,any>=>v!==null&&typeof v==='object'&
 const integer=(v:unknown,max=100000):v is number=>Number.isSafeInteger(v)&&Number(v)>=0&&Number(v)<=max;
 const text=(v:unknown,max=2048,min=0):v is string=>typeof v==='string'&&v.length>=min&&v.length<=max&&!/[\x00-\x1f\x7f\uD800-\uDFFF]/u.test(v);
 const prose=(v:unknown,max=2*1024*1024):v is string=>typeof v==='string'&&v.length<=max&&!/[\x00\uD800-\uDFFF]/u.test(v);
-const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$(?![\s\S])/i.test(v);
-const hex=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{64}$(?![\s\S])/.test(v);
-const stamp=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$(?![\s\S])/.test(v)&&Number.isFinite(Date.parse(v));
-const day=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\d$(?![\s\S])/.test(v)&&!v.startsWith('0000')&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
+const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+const hex=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
+const stamp=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$/.test(v)&&Number.isFinite(Date.parse(v));
+const day=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\d$/.test(v)&&!v.startsWith('0000')&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
 const member=(v:unknown,values:readonly string[])=>typeof v==='string'&&values.includes(v);
 const equal=(v:unknown,expected:object,keys:string[])=>object(v)&&Object.keys(v).length===keys.length&&keys.every(k=>v[k]===(expected as any)[k]);
 
@@ -61,13 +61,13 @@ function part(v:unknown,p:CitationPeriod):boolean{return object(v)&&count(v.coun
 export function validCitationReport(value:unknown,f:CitationFilters,n:CitationNavigation,pageIndex:number):value is CitationReport {
   try{return report(value,f,n,pageIndex);}catch{return false;}
 }
+const localDayIn=(timeZone:string)=>{const formatter=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'});return (timestamp:string)=>{const parts=formatter.formatToParts(new Date(timestamp)),p=(type:string)=>parts.find(p=>p.type===type)!.value;return `${p('year')}-${p('month')}-${p('day')}`;};};
 function report(v:unknown,f:CitationFilters,n:CitationNavigation,pageIndex:number):v is CitationReport {
-  if(!validCitationFilters(f)||!integer(pageIndex,8000)||!object(v)||!member(v.role,['owner','admin','editor','viewer'])||!equal(v.filters,f,filterKeys)||!equal(v.navigation,n,navigationKeys)||!stamp(v.asOf)||!integer(v.contextRevision,2147483647)||v.contextRevision<1||!hex(v.profileHash)||!hex(v.selectionRevision)||v.eligibilityVersion!=='retained-nonempty-stop-v1'||v.classifierVersion!=='elmo-3c673d0-native-axes-v1'||v.ownershipVersion!=='citation-host-suffix-v1'||!text(v.googleDomainsVersion,160)||!/^google-supported-2026-10-13-sha256-[a-f0-9]{64}$(?![\s\S])/.test(v.googleDomainsVersion)||v.label!=='Retained citation observations classified using current project context'||!Array.isArray(v.warnings)||v.warnings.length>10||!v.warnings.every((w:unknown)=>text(w)))return false;
+  if(!validCitationFilters(f)||!integer(pageIndex,8000)||!object(v)||!member(v.role,['owner','admin','editor','viewer'])||!equal(v.filters,f,filterKeys)||!equal(v.navigation,n,navigationKeys)||!stamp(v.asOf)||!integer(v.contextRevision,2147483647)||v.contextRevision<1||!hex(v.profileHash)||!hex(v.selectionRevision)||v.eligibilityVersion!=='retained-nonempty-stop-v1'||v.classifierVersion!=='elmo-3c673d0-native-axes-v1'||v.ownershipVersion!=='citation-host-suffix-v1'||!text(v.googleDomainsVersion,160)||!/^google-supported-2026-10-13-sha256-[a-f0-9]{64}$/.test(v.googleDomainsVersion)||v.label!=='Retained citation observations classified using current project context'||!Array.isArray(v.warnings)||v.warnings.length>10||!v.warnings.every((w:unknown)=>text(w)))return false;
   const length=1+(Date.parse(f.to)-Date.parse(f.from))/86400000,previousFrom=new Date(Date.parse(f.from)-length*86400000).toISOString().slice(0,10),previousTo=new Date(Date.parse(f.from)-86400000).toISOString().slice(0,10);
   if(!day(previousFrom)||!period(v.current,f.from,f.to)||!period(v.previous,previousFrom,previousTo)||v.current.coverage.attempted+v.previous.coverage.attempted>1000||!object(v.axes)||!axes(v.axes.current,v.current.citedExecutions,v.current.annotations)||!axes(v.axes.previous,v.previous.citedExecutions,v.previous.annotations))return false;
   if(!Array.isArray(v.entities)||v.entities.length<1||v.entities.length>101||new Set(v.entities.map((e:any)=>e?.id)).size!==v.entities.length||!v.entities.every((e:unknown,i:number)=>object(e)&&(i===0?e.id==='brand':uuid(e.id))&&prose(e.label,512)&&e.label.length>0)||f.entityId!==null&&!v.entities.some((e:any)=>e.id===f.entityId))return false;
-  const ids=v.entities.map((e:any)=>e.id),formatter=new Intl.DateTimeFormat('en-CA',{timeZone:f.timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
-  const localDay=(timestamp:string)=>{const parts=formatter.formatToParts(new Date(timestamp)),p=(type:string)=>parts.find(p=>p.type===type)!.value;return `${p('year')}-${p('month')}-${p('day')}`;};
+  const ids=v.entities.map((e:any)=>e.id),localDay=localDayIn(f.timeZone);
   if(v.periodOpen!==(f.to>=localDay(v.asOf)))return false;
   const status=!v.current.coverage.attempted?'no_data':!v.previous.coverage.attempted?'no_previous':!v.current.eligibleAnswers||!v.previous.eligibleAnswers?'unavailable':v.periodOpen?'in_progress':v.current.coverage.eligible*10<v.current.coverage.attempted*9||v.previous.coverage.eligible*10<v.previous.coverage.attempted*9?'incomplete':'ready';
   if(!object(v.changes)||v.changes.status!==status||v.changes.countBasis!=='annotation_occurrences'||!object(v.changes.counts)||!citationChanges.every(k=>integer(v.changes.counts[k],400000)&&(status==='ready'||v.changes.counts[k]===0)))return false;
@@ -106,8 +106,7 @@ export type CitationEvidenceScope={period:'current'|'previous';from:string;to:st
 export function validCitationEvidence(r:unknown,f:CitationFilters,scope:CitationEvidenceScope):r is CitationEvidence {
   try{
     if(!validCitationFilters(f))return false;
-    const formatter=new Intl.DateTimeFormat('en-CA',{timeZone:f.timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
-    const localDay=(timestamp:string)=>{const parts=formatter.formatToParts(new Date(timestamp)),p=(type:string)=>parts.find(p=>p.type===type)!.value;return `${p('year')}-${p('month')}-${p('day')}`;};
+    const localDay=localDayIn(f.timeZone);
     if(!object(r)||!hex(r.id)||!hex(r.urlId)||![r.executionId,r.comparisonId,r.promptId,r.versionId].every(uuid)||r.period!==scope.period||!scope.eligible(r.executionId)||!stamp(r.requestedAt)||!day(r.date)||localDay(r.requestedAt)!==r.date||r.date<scope.from||r.date>scope.to||!openRouterModelId(r.model)||f.model!==null&&r.model!==f.model||f.promptId!==null&&r.promptId!==f.promptId||!integer(r.retainedCitationIndex,99)||!retained(r.retainedUrl)||(r.retainedTitle!==null&&!prose(r.retainedTitle))||!prose(r.groupedUrl,20480)||citationSafeHref(r.groupedUrl)===null||r.hostname!==citationRetainedHost(r.retainedUrl)||r.trackable!==(r.hostname!==null)||scope.urlId!=null&&r.urlId!==scope.urlId)return false;
     const c=r.classification,o=c?.ownership;
     if(!object(c)||!object(o)||typeof o.brand!=='boolean'||!Array.isArray(o.competitorIds)||o.competitorIds.length>100||!o.competitorIds.every((id:unknown,i:number)=>uuid(id)&&scope.competitorIds.includes(id)&&(i===0||o.competitorIds[i-1]<id))||o.ambiguous!==(o.competitorIds.length>1||o.brand&&o.competitorIds.length>0)||!member(c.publisherCategory,citationPublishers)||!member(c.automaticPublisherCategory,citationPublishers)||!member(c.publisherBasis,['override','elmo-automatic','unclassified'])||!member(c.pageType,citationPageTypes)||c.pageTypeBasis!=='elmo-url-title-heuristic-v1'||!member(c.sourceType,citationSources))return false;

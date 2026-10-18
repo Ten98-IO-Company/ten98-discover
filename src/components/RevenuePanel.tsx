@@ -5,7 +5,7 @@ import{z}from'zod';
 import{ApiError,errMsg}from'../lib/api';
 import{revenueNavigation,canonicalNavigation,navigationKey,parseNavigation,sessionNavigation,type NavigationSearch,type RevenueNavigation}from'../lib/navigation';
 import{revenueCurrencies,revenueCurrencyCatalogVersion,revenueReportLimits,revenueUnits,revenueDecimal,revenueAverage,revenueChannel,revenueChannels,revenueComparisonChanges,type RevenueComparisonSummary,type RevenueResult,type RevenueTotals,type RevenueBreakdown}from'../lib/revenue';
-import{geographyObservationSchema,serializeGeographyKey,type GeoField}from'../lib/analytics-geography';
+import{geographyObservationSchema,serializeGeographyKey}from'../lib/analytics-geography';
 import{environmentCatalog}from'../lib/analytics-environment';
 import{GeographyAttribution}from'./GeographyAttribution';
 import{geographyLabel}from'./GeographyCard';
@@ -23,7 +23,7 @@ function draftFrom(query:string|undefined):RevenueDraft|null{
  if(!['from','to','timeZone','currency'].every(key=>p.has(key)))return null;const dates=sessionNavigation(Object.fromEntries(['from','to','timeZone'].map(key=>[key,p.get(key)])));if(dates.sessionInvalid||!dates.from||!revenueCurrencies.includes(p.get('currency')!))return null;
  if(p.has('compare')){const mode=p.get('compare');if(mode!=='prev'&&mode!=='yoy')return null;base.compare=mode;}
  base.currency=p.get('currency')!;base.scope={...base.scope,from:dates.from,to:dates.to!,timeZone:dates.timeZone!};
- if(p.has('cohortId')||p.has('cohortRevision')){const id=p.get('cohortId'),revision=p.get('cohortRevision')??'';if(!z.uuid().safeParse(id).success||!/^[1-9][0-9]{0,9}$(?![\s\S])/.test(revision)||Number(revision)>2147483647)return null;base.cohort={id:id!,revision:Number(revision)};}
+ if(p.has('cohortId')||p.has('cohortRevision')){const id=p.get('cohortId'),revision=p.get('cohortRevision')??'';if(!z.uuid().safeParse(id).success||!/^[1-9][0-9]{0,9}$/.test(revision)||Number(revision)>2147483647)return null;base.cohort={id:id!,revision:Number(revision)};}
  for(const key of['from','to','timeZone','currency','cohortId','cohortRevision','compare'])p.delete(key);if(!p.has('kind'))p.set('kind','all');const filters=savedPredicates(p.toString());if(!filters)return null;base.scope={...base.scope,...filters};return base;
 }
 function paramsFrom(draft:RevenueDraft):{qs:string}|{error:string}{const built=buildParams({...draft.scope,groupBy:'event',groupProperty:''});if('error'in built)return built;if(!revenueCurrencies.includes(draft.currency))return{error:'Choose an exact supported currency code.'};const p=new URLSearchParams(built.qs);p.delete('groupBy');p.set('currency',draft.currency);if(draft.compare){if(!deriveAnalyticsComparison(draft.scope,draft.compare))return{error:'This comparison would fall outside the supported calendar dates.'};p.set('compare',draft.compare);}if(draft.cohort){p.set('cohortId',draft.cohort.id);p.set('cohortRevision',String(draft.cohort.revision));}return draftFrom(p.toString())?{qs:p.toString()}:{error:'These revenue dates or filters could not be verified.'};}

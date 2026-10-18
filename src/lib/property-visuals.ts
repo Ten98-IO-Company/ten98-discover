@@ -5,7 +5,7 @@ export type PropertyNumberStats={samples:number|null;sum:string|null;average:str
 
 // Native magnitudes are <=1e15 with <=324 fractional digits. Leave
 // room for exact population sums/averages, without accepting unbounded BigInts.
-export const propertyDecimal=(value:unknown):value is string=>typeof value==='string'&&value.length<=1024&&/^-?\d+(?:\.\d+)?$(?![\s\S])/.test(value);
+export const propertyDecimal=(value:unknown):value is string=>typeof value==='string'&&value.length<=1024&&/^-?\d+(?:\.\d+)?$/.test(value);
 export function comparePropertyDecimals(a:string,b:string):number{
   if(!propertyDecimal(a)||!propertyDecimal(b))throw new Error('Invalid property decimals.');
   const places=Math.max(a.split('.')[1]?.length??0,b.split('.')[1]?.length??0);
@@ -33,7 +33,7 @@ export function propertyDecimalScale(values:(string|null)[]):(number|null)[]{
 }
 
 export function propertyCalendarDay(value:unknown):value is string{
-  if(typeof value!=='string'||!/^(?:\d{4}|-000001|\+010000)-\d\d-\d\d$(?![\s\S])/.test(value))return false;
+  if(typeof value!=='string'||!/^(?:\d{4}|-000001|\+010000)-\d\d-\d\d$/.test(value))return false;
   const date=new Date(value+'T00:00:00.000Z');return Number.isFinite(date.getTime())&&date.toISOString().split('T')[0]===value;
 }
 export function propertyDateUnit(first:string,last:string):PropertyDateUnit{

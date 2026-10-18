@@ -24,7 +24,7 @@ export function contentPhraseMatches(body:string,phrase:string):boolean{
 }
 
 const text=(max:number)=>z.string().max(max).refine(v=>!/[\p{Cs}\u0000]/u.test(v));
-const hash=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/),stamp=z.iso.datetime(),count=z.number().int().nonnegative();
+const hash=z.string().regex(/^[a-f0-9]{64}$/),stamp=z.iso.datetime(),count=z.number().int().nonnegative();
 const pageQuery=z.object({coverage:z.enum(['unavailable','blocked','rate_limited','robots_disallowed','not_fetched','http_error','redirect','non_html','partial','shell','analyzed']).nullable(),resourceKind:z.literal('html'),search:text(800),searchIn:z.enum(auditPageSearchIn),sort:z.enum(auditPageSort),order:z.enum(auditPageOrder),expectedSelectionRevision:hash}).strict().refine(v=>normalizeAuditPageFields({search:v.search,searchIn:v.searchIn,sort:v.sort,order:v.order})!==null).transform(v=>({...v,...normalizeAuditPageFields({search:v.search,searchIn:v.searchIn,sort:v.sort,order:v.order})!}));
 export const contentCoverageInputSchema=z.object({captureId:z.uuid().transform(v=>v.toLowerCase()),auditRunId:z.uuid().transform(v=>v.toLowerCase()),pages:pageQuery}).strict();
 export const contentCoverageExportInputSchema=contentCoverageInputSchema.extend({expectedQueryReceiptHash:hash,expectedCorpusReceiptHash:hash}).strict();

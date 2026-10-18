@@ -16,15 +16,15 @@ function draftFrom(query:string|undefined):JourneyDraft|null{
  if(query.length>journeysLimits.queryCharacters)return null;const p=new URLSearchParams(query);
  for(const key of p.keys())if(!allowed.has(key)||p.getAll(key).length!==1)return null;
  if(['from','to','timeZone'].some(key=>p.has(key))){const nav=sessionNavigation(Object.fromEntries(['from','to','timeZone'].map(key=>[key,p.get(key)])));if(nav.sessionInvalid||!nav.from)return null;base.scope={...base.scope,from:nav.from,to:nav.to!,timeZone:nav.timeZone!};}
- if(p.has('steps')){if(!/^[2-7]$(?![\s\S])/.test(p.get('steps')!))return null;base.steps=p.get('steps')!;}
+ if(p.has('steps')){if(!/^[2-7]$/.test(p.get('steps')!))return null;base.steps=p.get('steps')!;}
  for(const prefix of ['start','end']as const)if(p.has(prefix+'Kind')||p.has(prefix+'Value')){const step=journeyStepSchema.safeParse({kind:p.get(prefix+'Kind'),value:p.get(prefix+'Value')});if(!step.success)return null;base[`${prefix}Kind`]=step.data.kind;base[`${prefix}Value`]=step.data.value;}
- if(p.has('cohortId')||p.has('cohortRevision')){const id=p.get('cohortId'),revision=p.get('cohortRevision')??'';if(!z.uuid().safeParse(id).success||!/^[1-9][0-9]{0,9}$(?![\s\S])/.test(revision)||Number(revision)>2147483647)return null;base.cohort={id:id!,revision:Number(revision)};}
+ if(p.has('cohortId')||p.has('cohortRevision')){const id=p.get('cohortId'),revision=p.get('cohortRevision')??'';if(!z.uuid().safeParse(id).success||!/^[1-9][0-9]{0,9}$/.test(revision)||Number(revision)>2147483647)return null;base.cohort={id:id!,revision:Number(revision)};}
  for(const key of ['from','to','timeZone','steps','startKind','startValue','endKind','endValue','cohortId','cohortRevision'])p.delete(key);if(!p.has('kind'))p.set('kind','all');
  const filters=savedPredicates(p.toString());if(!filters)return null;base.scope={...base.scope,...filters};return base;
 }
 function paramsFrom(draft:JourneyDraft):{qs:string}|{error:string}{
  const built=buildParams({...draft.scope,groupBy:'event',groupProperty:''});if('error'in built)return built;
- const p=new URLSearchParams(built.qs);p.delete('groupBy');if(!/^[2-7]$(?![\s\S])/.test(draft.steps))return{error:'Choose 2 to 7 observed steps.'};p.set('steps',draft.steps);
+ const p=new URLSearchParams(built.qs);p.delete('groupBy');if(!/^[2-7]$/.test(draft.steps))return{error:'Choose 2 to 7 observed steps.'};p.set('steps',draft.steps);
  for(const prefix of ['start','end']as const)if(draft[`${prefix}Kind`]){const step=journeyStepSchema.safeParse({kind:draft[`${prefix}Kind`],value:draft[`${prefix}Value`]});if(!step.success)return{error:`Enter a valid ${prefix==='start'?'first observed':'last shown'} page path or custom event name.`};p.set(prefix+'Kind',step.data.kind);p.set(prefix+'Value',step.data.value);}
  if(draft.cohort){p.set('cohortId',draft.cohort.id);p.set('cohortRevision',String(draft.cohort.revision));}if(p.toString().length>journeysLimits.queryCharacters||!draftFrom(p.toString()))return{error:'These journey filters could not be verified. Check the dates and values.'};return{qs:p.toString()};
 }
@@ -46,7 +46,7 @@ const resultSchema=z.object({version:z.literal('native-journeys-v1'),projectId:z
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 export function readJourneysResult(value:unknown,queryString:string,projectId:string):JourneysResult{
  const draft=draftFrom(queryString),parsed=resultSchema.safeParse(value);const fail=():never=>{throw Error('The journey response could not be verified. Refresh the applied scope.');};if(!draft||!parsed.success)return fail();
- const data=parsed.data as JourneysResult,p=new URLSearchParams(queryString),q=data.query,m=data.measurement,r=data.ranking,unavailable=data.selection.status==='unavailable';
+ const data=parsed.data as JourneysResult,q=data.query,m=data.measurement,r=data.ranking,unavailable=data.selection.status==='unavailable';
  const filters=Object.fromEntries(FILTERS.filter(([key])=>draft.scope.filters[key].on).map(([key])=>[key,draft.scope.filters[key].value]));
  const property=draft.scope.prop.on?{key:draft.scope.prop.key,type:draft.scope.prop.type,value:draft.scope.prop.type==='missing'?null:draft.scope.prop.type==='date'?preciseDate(JSON.parse(draft.scope.prop.value)):JSON.parse(draft.scope.prop.value)}:null;
  const advanced=buildAdvanced(draft.scope.advanced);if('error'in advanced)return fail();

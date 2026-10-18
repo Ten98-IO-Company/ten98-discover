@@ -41,14 +41,7 @@ function json(body: unknown, status = 200, source?: Response): Response {
   return Response.json(body, { status, headers });
 }
 
-async function limit(key: string, maximum: number) {
-  const { rows } = await getDatabase().pool.query(
-    `WITH expired AS (DELETE FROM request_limit WHERE minute < floor(extract(epoch FROM now()) / 60) - 60)
-     INSERT INTO request_limit(key,minute,count) VALUES($1,floor(extract(epoch FROM now()) / 60),1)
-     ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING count`, [key, maximum],
-  );
-  if (rows[0].count > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
-}
+type Limit = (key: string, maximum: number) => Promise<void>;
 
 async function transaction(run: (client: PoolClient, auth: Auth) => Promise<Response>): Promise<Response> {
   const client = await getDatabase().pool.connect();
@@ -194,7 +187,7 @@ export async function applyOidcAccountSecurity(client: PoolClient, request: Requ
   return json({ backupCodes: result.backupCodes }, 200, response);
 }
 
-export async function handleAccountSecurity(request: Request): Promise<Response | null> {
+export async function handleAccountSecurity(request: Request, limit: Limit): Promise<Response | null> {
   const url = new URL(request.url), path = url.pathname.replace(/\/$/, '');
   // Exact public routes only; the upstream callback/token and proof APIs stay private.
   if (['/api/auth/password-reset-status', '/api/auth/request-password-reset', '/api/auth/reset-password'].includes(url.pathname)) {
@@ -256,7 +249,7 @@ export async function handleAccountSecurity(request: Request): Promise<Response 
       return json({ ok: true });
     });
   }
-  if (path === '/api/account/preferences') return handleAccountPreferences(request);
+  if (path === '/api/account/preferences') return handleAccountPreferences(request, limit);
   const signIn = path === '/api/auth/sign-in/email';
   const challenge = path === '/api/auth/two-factor/verify-totp' || path === '/api/auth/two-factor/verify-backup-code';
   const status = path === '/api/account/security';
@@ -401,7 +394,7 @@ async function preferencesDto(client:PoolClient,userId:string):Promise<AccountPr
   return result.data;
 }
 
-async function handleAccountPreferences(request:Request):Promise<Response> {
+async function handleAccountPreferences(request:Request,limit:Limit):Promise<Response> {
   if(!['GET','POST'].includes(request.method)){const response=json({error:'Method not allowed.'},405);response.headers.set('allow','GET, POST');return response;}
   if(new URL(request.url).search)throw new FoundationError(400,'Account preferences do not accept query parameters.');
   const writing=request.method==='POST';
