@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
+import {useBlocker} from '@tanstack/react-router';
 import type { Environment, Provider, CanonicalEvent, Destination, Configuration, Consent } from '../server/destinations';
 
 interface CatalogEvent {
@@ -95,6 +96,7 @@ export function DestinationsPanel({
   onUnauthorized: () => void;
 }) {
   const [environment, setEnvironment] = useState<Environment>('live');
+  const confirmEnvironmentChange = useRef(() => true);
   return (
     <section aria-label="Destination management">
       <div className="card">
@@ -113,7 +115,7 @@ export function DestinationsPanel({
             <select
               id="destinations-environment"
               value={environment}
-              onChange={(e) => setEnvironment(e.target.value as Environment)}
+              onChange={(e) => { if (e.target.value !== environment && confirmEnvironmentChange.current()) setEnvironment(e.target.value as Environment); }}
             >
               <option value="live">Live</option>
               <option value="test">Test</option>
@@ -125,6 +127,7 @@ export function DestinationsPanel({
         key={`${projectId}:${userId}:${environment}`}
         projectId={projectId}
         environment={environment}
+        confirmEnvironmentChange={confirmEnvironmentChange}
         onUnauthorized={onUnauthorized}
       />
     </section>
@@ -134,15 +137,20 @@ export function DestinationsPanel({
 function DestinationsInner({
   projectId,
   environment,
+  confirmEnvironmentChange,
   onUnauthorized,
 }: {
   projectId: string;
   environment: Environment;
+  confirmEnvironmentChange: {current: () => boolean};
   onUnauthorized: () => void;
 }) {
   const [mgmt, setMgmt] = useState<ManagementDTO | null>(null);
   const [draft, setDraft] = useState<Configuration | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [pendingWrite, setPendingWrite] = useState(false);
+  const [conflicted, setConflicted] = useState(false);
+  const denied = useRef(false);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -170,12 +178,21 @@ function DestinationsInner({
   const unauthorizedRef = useRef(onUnauthorized);
   unauthorizedRef.current = onUnauthorized;
 
-  const busy = loading || mutating;
+  const busy = loading || mutating || pendingWrite || conflicted;
+  const hasChanges = () => !denied.current && !!mgmt && !!draft && (dirty || pendingWrite || conflicted);
+  const confirmNavigation = () => !hasChanges() || window.confirm(pendingWrite
+    ? 'This change may already be saved. Leave without checking the saved settings? No retry will be sent.'
+    : 'Discard unsaved destination changes? Your edits have not been saved.');
+  confirmEnvironmentChange.current = confirmNavigation;
+  useBlocker({shouldBlockFn: () => !confirmNavigation(), enableBeforeUnload: hasChanges});
 
   const url = (suffix: string) =>
     `/api/projects/${encodeURIComponent(projectId)}/destinations${suffix}?environment=${environment}`;
 
   const applyMgmt = (m: ManagementDTO) => {
+    denied.current = false;
+    setPendingWrite(false);
+    setConflicted(false);
     setMgmt(m);
     setDraft(structuredClone(m.draft));
     setDirty(false);
@@ -188,10 +205,14 @@ function DestinationsInner({
   const showError = (e: unknown) => {
     if (e instanceof ApiError) {
       if (e.status === 401) {
+        denied.current = true;
         unauthorizedRef.current();
         return;
       }
       if (e.status === 403 || e.status === 404) {
+        denied.current = true;
+        setPendingWrite(false);
+        setConflicted(false);
         setGone(true);
         setMgmt(null);
         setDraft(null);
@@ -201,10 +222,15 @@ function DestinationsInner({
         return;
       }
     }
+    if (e instanceof ApiError && e.status === 409) {
+      setConflicted(true); setPreview(null); setDryRunVersion(null); setAck(false);
+      setError('Settings changed in another tab. Your edits are kept. Reload saved settings before saving or publishing.');
+      return;
+    }
     setError(errMsg(e));
   };
 
-  const refresh = useCallback(async (notice?: string) => {
+  const refresh = useCallback(async () => {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -217,7 +243,7 @@ function DestinationsInner({
       );
       if (ac.signal.aborted || op !== opRef.current) return;
       setGone(false);
-      setError(notice ?? null);
+      setError(null);
       applyMgmt(m);
     } catch (e) {
       if (ac.signal.aborted || op !== opRef.current) return;
@@ -241,7 +267,7 @@ function DestinationsInner({
   }, [refresh]);
 
   const editDraft = (fn: (d: Configuration) => void) => {
-    if (busyRef.current || loading) return;
+    if (busyRef.current || loading || pendingWrite || conflicted) return;
     setDraft((prev) => {
       if (!prev) return prev;
       const next = structuredClone(prev);
@@ -255,8 +281,9 @@ function DestinationsInner({
   };
 
   const runMutation = async (suffix: string, body: unknown) => {
-    if (busyRef.current || loading || !mgmt) return;
+    if (busyRef.current || loading || pendingWrite || conflicted || !mgmt) return;
     busyRef.current = true;
+    setPendingWrite(true);
     const ac = new AbortController();
     abortRef.current?.abort();
     abortRef.current = ac;
@@ -269,11 +296,8 @@ function DestinationsInner({
       applyMgmt(result);
     } catch (e) {
       if (ac.signal.aborted || op !== opRef.current) return;
-      if (e instanceof ApiError && e.status === 409) {
-        await refresh('The server draft changed. The latest version is loaded; review it before trying again.');
-      } else {
-        showError(e);
-      }
+      if (e instanceof ApiError && [400, 401, 403, 404, 409, 413, 429].includes(e.status)) setPendingWrite(false);
+      showError(e);
     } finally {
       if (!ac.signal.aborted && op === opRef.current) {
         busyRef.current = false;
@@ -312,7 +336,7 @@ function DestinationsInner({
 
   const runPreview = async (e: FormEvent) => {
     e.preventDefault();
-    if (busyRef.current || loading || dirty || !mgmt) return;
+    if (busyRef.current || loading || dirty || pendingWrite || conflicted || !mgmt) return;
     busyRef.current = true;
     const ac = new AbortController();
     abortRef.current?.abort();
@@ -340,11 +364,7 @@ function DestinationsInner({
       setDryRunVersion(mgmt.draftVersion);
     } catch (err) {
       if (ac.signal.aborted || op !== opRef.current) return;
-      if (err instanceof ApiError && err.status === 409) {
-        await refresh('The server draft changed. The latest version is loaded; review it before trying again.');
-      } else {
-        showError(err);
-      }
+      showError(err);
     } finally {
       if (!ac.signal.aborted && op === opRef.current) {
         busyRef.current = false;
@@ -457,13 +477,15 @@ function DestinationsInner({
       <div className="card">
         <div className="row between">
           <h3>Configured destinations</h3>
+          {(dirty || pendingWrite || conflicted) && <button type="button" className="btn" disabled={loading || mutating} onClick={() => { if (window.confirm('Reload saved settings? This replaces your local edits with the saved settings.')) void refresh(); }}>Reload saved state</button>}
           <button type="button" className="btn primary" disabled={!dirty || busy} onClick={saveDraft}>
             Save draft
           </button>
         </div>
         {dirty && (
-          <p className="hint">You have unsaved changes. Dry-run and publish stay disabled until you save.</p>
+          <p className="hint">Unsaved changes. Save the draft before testing or publishing.</p>
         )}
+        {pendingWrite && !mutating && <p className="hint" role="status">We could not confirm whether this change was saved. Reload saved settings before making another change.</p>}
         <div className="row">
           <div className="field" style={{ minWidth: '14rem', flex: 1 }}>
             <label htmlFor="add-destination">Add a provider</label>

@@ -1,3 +1,4 @@
+import {Icon} from './CampaignUI';
 import { useEffect, useRef, useState } from 'react';
 import { api, errMsg } from '../lib/api';
 
@@ -66,19 +67,19 @@ export function OidcSignIn({invitationToken}: {invitationToken?: string}) {
   if (providers === null && !err) return <p role="status" className="dim">Loading sign-in options…</p>;
   if (providers === null) {
     return (
-      <div className="card">
+      <div className="account-access auth-provider-error">
         <p role="alert" className="alert">Could not load sign-in options: {err}</p>
-        <button type="button" className="btn ghost" onClick={() => setTick(t => t + 1)}>Try again</button>
+        <button type="button" className="btn button ghost" onClick={() => setTick(t => t + 1)}>Try again</button>
       </div>
     );
   }
   if (providers.length === 0) return null;
 
   return (
-    <div>
+    <div className="account-access auth-provider-list"><div className="or-divider">or continue with</div>
       {providers.map(p => (
-        <button key={p.id} type="button" className="btn ghost" disabled={pending} onClick={() => void start(p.id)}>
-          Continue with {p.name}
+        <button key={p.id} type="button" className="btn button full auth-provider-button" disabled={pending} onClick={() => void start(p.id)}>
+          <span aria-hidden="true"><Icon name="lock" size={17}/></span><span>Continue with {p.name}</span><span className="auth-provider-arrow" aria-hidden="true"><Icon name="arrow" size={16}/></span>
         </button>
       ))}
       {pending && <p role="status" className="dim">Contacting the provider…</p>}

@@ -1,7 +1,9 @@
+import { Brand, Icon } from '../components/CampaignUI'
 import { AuthLayout } from '../components/AuthLayout'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
@@ -143,6 +145,11 @@ function App() {
   const preferencesGeneration=useRef(0)
   const preferencesEntry=useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [toolSearch, setToolSearch] = useState('')
+  const menuButton = useRef<HTMLButtonElement>(null)
+  const menuWasOpen = useRef(false)
+  useEffect(() => { const media=window.matchMedia('(min-width:761px)'), hiddenSearch=window.matchMedia('(max-width:960px)'); const close=()=>{if(media.matches)setMenuOpen(false);if(hiddenSearch.matches)setToolSearch('')};media.addEventListener('change',close);hiddenSearch.addEventListener('change',close);return()=>{media.removeEventListener('change',close);hiddenSearch.removeEventListener('change',close)} }, [])
+  useEffect(() => { if(menuOpen)document.querySelector<HTMLElement>('.sidebar a, .sidebar select')?.focus();else if(menuWasOpen.current)menuButton.current?.focus();menuWasOpen.current=menuOpen }, [menuOpen])
   const mainRef = useRef<HTMLElement>(null)
   function showView(next: AppView) {
     updateView(next)
@@ -165,7 +172,7 @@ function App() {
 
   function go(next: NavigationSearch, replace = false) {
     if (!replace) setAppError('')
-    rememberIntent(next)
+    // The router commits intent after blockers accept; cancelled navigation keeps the current scope.
     void navigate({ search: next, hash: '', replace })
   }
 
@@ -177,10 +184,10 @@ function App() {
     const pending = callback.current
     callback.current = null
     if (!pending || pending.generation !== intent.current.generation) return
-    if (pending.value.kind === 'proof') go({ ...intent.current.search, view: 'identity' }, true)
+    if (pending.value.kind === 'proof') { go({ ...intent.current.search, view: 'identity' }, true); return true }
     if (pending.value.kind === 'google') {
       const value = pending.value
-      if (m.workspaces.some(workspace => workspace.id === value.workspace)) go({ workspace: value.workspace, project: value.project, view: value.kind }, true)
+      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: value.kind }, true); return true }
       else setAuthNotice({ kind: 'error', message: 'Authorization returned, but that workspace is no longer available. Choose a current workspace.' })
     }
   }
@@ -189,7 +196,7 @@ function App() {
     // Runs before router loading, including Back/Forward. A -> B -> A still
     // invalidates old navigation completions even when the final URL matches.
     const unsubscribe = router.subscribe('onBeforeNavigate', event => {
-      setMenuOpen(false)
+      setMenuOpen(false); setToolSearch('')
       const next = parseNavigation(event.toLocation.search)
       const previous = intent.current.search
       // The audit panel restores its drilldown trigger after the requested view commits.
@@ -204,7 +211,7 @@ function App() {
         beginRecovery({ kind: 'reset', token: reset.token })
         setInviteToken(''); setInviteSigningIn(false)
         // Scrub before boot or any API call; the capability remains only in this component's memory.
-        await navigate({ search: intent.current.search, hash: '', replace: true })
+        await navigate({ search: intent.current.search, hash: '', replace: true, ignoreBlocker: true })
         return
       }
       const value = parseCallback(window.location.hash)
@@ -223,7 +230,7 @@ function App() {
       else if (value.kind === 'google-error') setAuthNotice({ kind: 'error', message: 'Google reporting could not be connected. Start the connection again and grant read access.' })
       else if (value.kind === 'invalid' || value.kind === 'identity-error') setAuthNotice({ kind: 'error', message: 'The return link is invalid or ambiguous. Start the connection again, or reopen the original invitation.' })
       // Capabilities live only in memory. Let the router own its history entry.
-      await navigate({ search: intent.current.search, hash: '', replace: true })
+      await navigate({ search: intent.current.search, hash: '', replace: true, ignoreBlocker: true })
       if (!alive || sessionGeneration.current !== session || recoveryRef.current !== null) return
       if (currentMe.current) applyCallback(currentMe.current)
       else if (wasRecovery) { setPhase('loading'); void boot() }
@@ -302,15 +309,16 @@ function App() {
   },[phase,me?.user.id,accountPreferences.data])
   useEffect(()=>()=>{preferencesGeneration.current++;preferencesRequest.current?.abort()},[])
 
-  function enterApp(m: Me) {
+  function enterApp(m: Me, destination?: NavigationSearch) {
     oidcFactor.current = false
     if (currentMe.current?.user.id === m.user.id) m.user.name = currentMe.current.user.name
     currentMe.current = m; setMe(m)
     preferencesEntry.current=intent.current.search.view==='preferences'
     void loadAccountPreferences(m.user.id)
-    applyCallback(m)
+    const callbackNavigation = applyCallback(m)
     setPhase('app')
-    applyNavigation(m)
+    if (destination) go(destination, true)
+    else if (!callbackNavigation) applyNavigation(m)
   }
 
   function activateProject(id: string) {
@@ -352,13 +360,16 @@ function App() {
     const requestedProject = sameWorkspace ? available.find(p => p.id === requested.project) : undefined
     const project = view === 'new-project' ? undefined : requestedProject ?? (isProjectView(view) ? available[0] : undefined)
     if (requested.project && sameWorkspace && !requestedProject && view !== 'new-project') setAppError('That project is no longer available in this workspace. Choose a current project.')
-    activateProject(project?.id ?? '')
+    // Workspace tools keep a website selected in the shell without narrowing their URL or API scope.
+    const selectedProject = project ?? available.find(item => item.id === activeProject.current) ?? available[0]
+    activateProject(selectedProject?.id ?? '')
     setNavigationPending(false)
     const resolved = resolveNavigation(requested, workspaceId || undefined, project?.id, view)
     if (navigationKey(resolved) !== navigationKey(requested) || !canonicalNavigation(window.location.search, resolved)) go(resolved, true)
   }
 
   function resetSession() {
+    setMenuOpen(false); setToolSearch('')
     sessionGeneration.current += 1; bootGeneration.current += 1
     recoveryGeneration.current += 1; recoveryRef.current = null; setRecovery(null)
     preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;preferencesEntry.current=false
@@ -491,7 +502,7 @@ function App() {
       if (m.user.id !== expectedUser) { resetSession(); return }
       if (currentMe.current?.user.id === m.user.id) m.user.name = currentMe.current.user.name
       currentMe.current = m; setMe(m)
-      if (preferredId && intent.current.generation === navigation && m.workspaces.some(w => w.id === preferredId)) go({ workspace: preferredId, view: 'project' })
+      if (preferredId && intent.current.generation === navigation && m.workspaces.some(w => w.id === preferredId)) { go({ workspace: preferredId, view: 'project' }); return }
       applyNavigation(m)
     } catch (e) { if (sessionGeneration.current === session && !guardAuth(e) && intent.current.generation === navigation) throw e }
   }
@@ -502,8 +513,8 @@ function App() {
     try {
       const m = await api<Me>('/api/me')
       if (sessionGeneration.current !== session) return
-      if (intent.current.generation === navigation && m.workspaces.some(w => w.id === workspace)) go({ workspace, view: 'project' }, true)
-      enterApp(m)
+      const destination: NavigationSearch | undefined = intent.current.generation === navigation && m.workspaces.some(w => w.id === workspace) ? { workspace, view: 'project' } : undefined
+      enterApp(m, destination)
     }
     catch (e) {
       if (sessionGeneration.current !== session || intent.current.generation !== navigation) return
@@ -528,7 +539,8 @@ function App() {
     try {
       const out = await api<{ providerSignOutUrl?: string } | null>('/api/auth/sign-out', { method: 'POST', body: {} })
       if (sessionGeneration.current !== session) return
-      resetSession()
+      // End the editor before redirecting: a stale draft blocker must never delay sign-out.
+      flushSync(() => resetSession())
       // Provider sessions also end at the identity provider (RP-initiated sign-out); its page is the last stop.
       if (out?.providerSignOutUrl &&/^https?:\/\//.test(out.providerSignOutUrl)) { window.location.assign(out.providerSignOutUrl); return }
       go({ view: 'project' }, true)
@@ -578,6 +590,9 @@ function App() {
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
+  const toolQuery = toolSearch.trim().toLowerCase()
+  const accountView = ['preferences','security','identity'].includes(view)
+  const workspaceTool = ['boards','links','pixels'].includes(view)
   const pageTitles: Record<AppView, string> = {links:'Links',pixels:'Tracking images','tracked-share':'Shared report',heatmaps:'Heatmaps',boards:'Boards',replays:'Session replay',performance:'Web performance',revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
@@ -595,7 +610,7 @@ function App() {
   const explorerReturnState=view==='explore'&&me&&project&&search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)?{userId:me.user.id,workspace:workspaceId,project:project.id,href:routeLocation.href}:undefined
   const verifiedExplorerReturn=me&&project?readExplorerReturn('analyticsReturn'in routeLocation.state?routeLocation.state.analyticsReturn:null,me.user.id,workspaceId,project.id):null
   const pageScope = view === 'preferences' || view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
-  const projectDescriptions: Partial<Record<AppView, string>> = {heatmaps:'Explore sampled clicks and scroll depth on one retained page layout.',boards:'Arrange saved workspace analytics in charts, tables and notes.',replays:'Review and organize consented recordings, with masking and explicit gaps.',performance:'Measure page loading, responsiveness and layout stability from observed samples.',revenue:'Review recorded sales and refunds in one currency.',attribution: 'Compare recorded sources for your chosen conversion.', journeys: 'See frequent matching steps in retained native visits.', project: 'Understand how people find and use your website.', 'visitor-retention': 'See whether observed visitor keys return on later days.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose what your native analytics collects.', destinations: 'Manage your advertising and analytics tags from one snippet.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Connect your website with one lightweight snippet.', events: 'Inspect the latest events received from your website.', context: 'Keep your brand knowledge, competitors, key pages and research together.', prompts: 'Organize saved questions, review run costs and inspect model answers.', 'ai-search': 'Inspect explicitly captured ChatGPT consumer-search answers and their reported queries.', 'ai-insights': 'Review mentions and citations in retained prompt answers using current project context.', google: 'Import Search Console and GA4 reports without changing browser tracking.', sessions: 'Explore retained activity grouped by observed visitor keys. These keys are estimates and can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', 'domain-seo':'Find organic keywords a domain or URL ranks for in one market.', ranks: 'Track your search visibility across markets and devices.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
+  const projectDescriptions: Partial<Record<AppView, string>> = {heatmaps:'Review sampled clicks and scroll depth for a saved page layout.',boards:'Arrange charts, tables and notes from workspace reports.',replays:'Review consented recordings with masked fields and visible recording gaps.',performance:'Review page loading, responsiveness and layout shifts from collected samples.',revenue:'Review recorded sales and refunds in one currency.',attribution: 'Compare recorded sources for your chosen conversion.', journeys: 'See common steps in recorded visits.', project: 'Review traffic, pages and events.', 'visitor-retention': 'See how often estimated visitors return.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose which website data to collect.', destinations: 'Send analytics and conversion events through your tracker.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Add the tracker to your website.', events: 'Inspect the latest events received from your website.', context: 'Save your brand, competitors and page topics.', prompts: 'Save questions, review run costs and inspect answers.', 'ai-search': 'Review captured ChatGPT search answers and reported queries.', 'ai-insights': 'Review brand mentions and citations in saved prompt answers.', google: 'Import Search Console and GA4 reports without changing browser tracking.', sessions: 'Review activity grouped by estimated visitor keys. Keys can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', 'domain-seo':'Find organic keywords a domain or URL ranks for in one market.', ranks: 'Track search rankings by market and device.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
   const presentation={...accountPreferences,reload:()=>loadAccountPreferences(me!.user.id),accept:(data:AccountPreferencesDto)=>{
     if(sessionGeneration.current!==renderedSession||currentMe.current?.user.id!==me!.user.id||data.user.id!==me!.user.id)return false
@@ -608,126 +623,84 @@ function App() {
     preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;setAccountPreferences({data:null,loading:false,error:message})
   }}
   return (
-    <AccountPresentationContext.Provider value={presentation}><div className='shell'>
+    <AccountPresentationContext.Provider value={presentation}><div className='shell' onKeyDown={event=>{if(!menuOpen)return;if(event.key==='Escape'){setMenuOpen(false)}else if(event.key==='Tab'){const controls=Array.from(document.querySelectorAll<HTMLElement>('.sidebar a[href],.sidebar button:not(:disabled),.sidebar select:not(:disabled),.sidebar summary')).filter(node=>node.getClientRects().length&&!node.hidden);const first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}}}}>
       <a className='skip-link' href='#main-content' onClick={(event) => { event.preventDefault(); mainRef.current?.focus() }}>Skip to main content</a>
-      <aside className='side' aria-label='Application navigation'>
-        <div className='brand-row'><p className='brand'><span className='brand-mark' aria-hidden='true'>98</span><span>ten98<span className='brand-product'>Discover</span></span></p>
-          <button type='button' className='btn mobile-nav-toggle' aria-expanded={menuOpen} aria-controls='app-navigation' onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? 'Close menu' : 'Menu'}</button>
-        </div>
-        <div id='app-navigation' className={`side-body${menuOpen ? ' is-open' : ''}`}>
-        <div className='workspace-controls'>
-          {(me?.workspaces.length ?? 0) > 0 ? (
-            <div className='field'>
-              <label htmlFor='ws'>Workspace</label>
-              <select id='ws' value={workspaceId} onChange={(e) => changeWorkspace(e.target.value)}>
-                {(me?.workspaces ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
-            </div>
-          ) : <p className='dim'>No workspaces yet.</p>}
-          {workspace && <p className='hint'>Your workspace role: {workspace.role}</p>}
-        <details className='workspace-tools workspace-settings' open={view === 'team' || view === 'keys' || view === 'providers' || view === 'retention' || view === 'workspace'}>
-          <summary className={view === 'team' || view === 'keys' || view === 'providers' || view === 'retention' || view === 'workspace' ? 'proj active' : 'proj'}>Workspace settings</summary>
-          <nav aria-label='Workspace settings'>
-            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'team' ? 'proj active' : 'proj'} aria-current={view === 'team' ? 'page' : undefined} to='/' search={target('team')}>Manage team</Link>}
-            {workspace && ['owner', 'admin'].includes(workspace.role) && <Link className={view === 'keys' ? 'proj active' : 'proj'} aria-current={view === 'keys' ? 'page' : undefined} to='/' search={target('keys')}>ten98 API access</Link>}
-            {workspace?.role === 'owner' && <Link className={view === 'providers' ? 'proj active' : 'proj'} aria-current={view === 'providers' ? 'page' : undefined} to='/' search={target('providers')}>AI and search providers</Link>}
-            {workspace && <Link className={view === 'retention' ? 'proj active' : 'proj'} aria-current={view === 'retention' ? 'page' : undefined} to='/' search={target('retention')}>Data retention</Link>}
-            <Link className={view === 'workspace' ? 'proj active' : 'proj'} aria-current={view === 'workspace' ? 'page' : undefined} to='/' search={target('workspace')}>Create workspace</Link>
-          </nav>
-        </details>
-        </div>
-        {workspace&&<nav aria-label='Workspace boards'><Link className={view==='boards'?'proj active':'proj'} aria-current={view==='boards'?'page':undefined} to='/' search={{workspace:workspaceId,view:'boards'}}>Boards</Link></nav>}
-        {workspace&&<nav aria-label='Workspace measurement'><Link className={view==='links'?'proj active':'proj'} aria-current={view==='links'?'page':undefined} to='/' search={target('links')}>Links</Link><Link className={view==='pixels'?'proj active':'proj'} aria-current={view==='pixels'?'page':undefined} to='/' search={target('pixels')}>Tracking images</Link></nav>}
-        <nav aria-label='Projects'>
-          <p className='side-label'>Projects</p>
-          {projects === null && <p role='status' className='dim'>Loading…</p>}
-          {projects !== null && projects.length === 0 && <p className='dim'>None yet.</p>}
-          {projects !== null && projects.length > 0 && (
-            <ul className='proj-list'>
-              {projects.map((p) => (
-                <li key={p.id}>
-                  <Link to='/' search={target('project', p.id)} className={p.id === projectId ? 'proj active' : 'proj'} aria-current={p.id === projectId ? 'page' : undefined}>{p.name}</Link>
-                </li>
-              ))}
-            </ul>
-          )}
-          {canWrite && <Link to='/' search={target('new-project')} className='btn ghost'>+ New project</Link>}
-        </nav>
+      {menuOpen && <button type='button' className='sidebar-shade' aria-label='Close navigation' onClick={()=>{setMenuOpen(false)}}/>}
+      <aside id='app-navigation' className={`side sidebar${menuOpen?' visible':''}`} aria-label='Application navigation' role={menuOpen?'dialog':undefined} aria-modal={menuOpen||undefined}>
+        <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><Brand /></Link>
+        <div className='side-body sidebar-nav'>
+        {me!.workspaces.length>0 ? <div className='workspace-switch'><span className='workspace-avatar'>{(workspace?.name??'Workspace').slice(0,2).toUpperCase()}</span><div><label className='sr-only' htmlFor='ws'>Workspace</label><select id='ws' value={workspaceId} onChange={event=>changeWorkspace(event.target.value)}>{me!.workspaces.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select><small>{workspace?.role??'Member'} workspace</small></div><Icon name='chevron' size={15}/></div> : <p className='hint workspace-empty'>No workspaces yet.</p>}
+        <div className='project-switch'><Icon name='folder' size={16}/><label className='sr-only' htmlFor='active-project'>Project</label><select id='active-project' value={projectId} disabled={!projects?.length} onChange={event=>{setMenuOpen(false);go(target('project',event.target.value))}}>{!projectId&&<option value=''>{projects===null&&workspace?'Loading projects…':projects?.length?'Choose a project':'No projects yet'}</option>}{projects?.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</select>{canWrite&&<Link to='/' search={target('new-project')} className='icon-button' aria-label='Create project'><Icon name='plus' size={15}/></Link>}</div>
+        {toolQuery&&<div className='tool-search-status' role='status'><span>Tools matching “{toolSearch.trim()}”</span><button type='button' className='btn ghost' onClick={()=>setToolSearch('')}>Show all tools</button></div>}
+        {workspace&&<nav aria-label='Workspace measurement'><p className='nav-group'>Workspace</p><Link hidden={toolQuery!==''&&!'boards'.includes(toolQuery)} className={view==='boards'?'proj nav-item selected':'proj nav-item'} aria-current={view==='boards'?'page':undefined} to='/' search={{workspace:workspaceId,view:'boards'}}><Icon name='grid'/><span>Boards</span></Link><Link hidden={toolQuery!==''&&!'links'.includes(toolQuery)} className={view==='links'?'proj nav-item selected':'proj nav-item'} aria-current={view==='links'?'page':undefined} to='/' search={target('links')}><Icon name='link'/><span>Links</span></Link><Link hidden={toolQuery!==''&&!'tracking images'.includes(toolQuery)} className={view==='pixels'?'proj nav-item selected':'proj nav-item'} aria-current={view==='pixels'?'page':undefined} to='/' search={target('pixels')}><Icon name='image'/><span>Tracking images</span></Link></nav>}
         {project && workspace && <nav aria-label='Project sections' className='section-nav'>
-          <p className='side-label'>Measure</p>
-          <Link className={view === 'project' ? 'proj active' : 'proj'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={analyticsTarget('project')} state={previous=>({...previous,analyticsReturn:explorerReturnState&&readExplorerReturn(explorerReturnState,me!.user.id,workspaceId,project!.id)?explorerReturnState:undefined})}>Analytics</Link>
-          <Link className={view === 'realtime' ? 'proj active' : 'proj'} aria-current={view === 'realtime' ? 'page' : undefined} to='/' search={target('realtime')}>Realtime</Link>
-          <Link className={view === 'performance' ? 'proj active' : 'proj'} aria-current={view === 'performance' ? 'page' : undefined} to='/' search={target('performance')}>Performance</Link>
-          <Link className={view === 'replays' ? 'proj active' : 'proj'} aria-current={view === 'replays' ? 'page' : undefined} to='/' search={target('replays')}>Session replay</Link>
-          <Link className={view === 'heatmaps' ? 'proj active' : 'proj'} aria-current={view === 'heatmaps' ? 'page' : undefined} to='/' search={target('heatmaps')}>Heatmaps</Link>
-          <Link className={view === 'compare' ? 'proj active' : 'proj'} aria-current={view === 'compare' ? 'page' : undefined} to='/' search={analyticsTarget('compare')}>Compare</Link>
-          <Link className={view === 'campaigns' ? 'proj active' : 'proj'} aria-current={view === 'campaigns' ? 'page' : undefined} to='/' search={target('campaigns')}>UTM campaigns</Link>
-          <Link className={view === 'explore' ? 'proj active' : 'proj'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={exploreTarget()}>Explore</Link>
-          <Link className={view === 'sessions' ? 'proj active' : 'proj'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}>Sessions</Link>
-          <Link className={view === 'attribution' ? 'proj active' : 'proj'} aria-current={view === 'attribution' ? 'page' : undefined} to='/' search={target('attribution')}>Attribution</Link>
-          <Link className={view === 'journeys' ? 'proj active' : 'proj'} aria-current={view === 'journeys' ? 'page' : undefined} to='/' search={target('journeys')}>Journeys</Link>
-          <Link className={view === 'visitor-retention' ? 'proj active' : 'proj'} aria-current={view === 'visitor-retention' ? 'page' : undefined} to='/' search={target('visitor-retention')}>Retention</Link>
-          <Link className={view === 'revenue' ? 'proj active' : 'proj'} aria-current={view === 'revenue' ? 'page' : undefined} to='/' search={target('revenue')}>Revenue</Link>
-          <Link className={view === 'conversions' ? 'proj active' : 'proj'} aria-current={view === 'conversions' ? 'page' : undefined} to='/' search={target('conversions')}>Conversions</Link>
-          <Link className={view === 'events' ? 'proj active' : 'proj'} aria-current={view === 'events' ? 'page' : undefined} to='/' search={target('events')}>Recent events</Link>
-          <Link className={view === 'reports' ? 'proj active' : 'proj'} aria-current={view === 'reports' ? 'page' : undefined} to='/' search={target('reports')}>Reports</Link>
-          <Link className={view === 'google' ? 'proj active' : 'proj'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}>Google reports</Link>
-          <Link className={view === 'audits' ? 'proj active' : 'proj'} aria-current={view === 'audits' ? 'page' : undefined} to='/' search={target('audits')}>Site audits</Link>
-          <p className='side-label section-label'>Research</p>
-          <Link className={view === 'context' ? 'proj active' : 'proj'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}>Context</Link>
-          <Link className={view === 'prompts' ? 'proj active' : 'proj'} aria-current={view === 'prompts' ? 'page' : undefined} to='/' search={target('prompts')}>Prompts</Link>
-          <Link className={view === 'ai-insights' ? 'proj active' : 'proj'} aria-current={view === 'ai-insights' ? 'page' : undefined} to='/' search={target('ai-insights')}>AI insights</Link>
-          <Link className={view === 'ai-search' ? 'proj active' : 'proj'} aria-current={view === 'ai-search' ? 'page' : undefined} to='/' search={target('ai-search')}>AI search</Link>
-          <Link className={view === 'keywords' ? 'proj active' : 'proj'} aria-current={view === 'keywords' ? 'page' : undefined} to='/' search={target('keywords')}>Keywords</Link>
-          <Link className={view === 'domain-seo' ? 'proj active' : 'proj'} aria-current={view === 'domain-seo' ? 'page' : undefined} to='/' search={target('domain-seo')}>Domain SEO</Link>
-          <Link className={view === 'ranks' ? 'proj active' : 'proj'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}>Rank tracking</Link>
-          <p className='side-label section-label'>Connect</p>
-          <Link className={view === 'installation' ? 'proj active' : 'proj'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}>Install tracker</Link>
-          {['owner','admin'].includes(workspace.role) && <Link className={view === 'destinations' ? 'proj active' : 'proj'} aria-current={view === 'destinations' ? 'page' : undefined} to='/' search={target('destinations')}>Destinations</Link>}
-          <Link className={view === 'collection' ? 'proj active' : 'proj'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}>Collection and privacy</Link>
-          {['owner','admin'].includes(workspace.role) && <Link className={view === 'domains' ? 'proj active' : 'proj'} aria-current={view === 'domains' ? 'page' : undefined} to='/' search={target('domains')}>Domains</Link>}
+          <p className='nav-group'>Measure</p>
+          <Link hidden={toolQuery!==''&&!'analytics'.includes(toolQuery)} className={view === 'project' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={analyticsTarget('project')} state={previous=>({...previous,analyticsReturn:explorerReturnState&&readExplorerReturn(explorerReturnState,me!.user.id,workspaceId,project!.id)?explorerReturnState:undefined})}><Icon name='chart'/><span>Analytics</span></Link>
+          <Link hidden={toolQuery!==''&&!'realtime'.includes(toolQuery)} className={view === 'realtime' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'realtime' ? 'page' : undefined} to='/' search={target('realtime')}><Icon name='eye'/><span>Realtime</span></Link>
+          <Link hidden={toolQuery!==''&&!'performance'.includes(toolQuery)} className={view === 'performance' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'performance' ? 'page' : undefined} to='/' search={target('performance')}><Icon name='chart'/><span>Performance</span></Link>
+          <Link hidden={toolQuery!==''&&!'session replay'.includes(toolQuery)} className={view === 'replays' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'replays' ? 'page' : undefined} to='/' search={target('replays')}><Icon name='eye'/><span>Session replay</span></Link>
+          <Link hidden={toolQuery!==''&&!'heatmaps'.includes(toolQuery)} className={view === 'heatmaps' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'heatmaps' ? 'page' : undefined} to='/' search={target('heatmaps')}><Icon name='target'/><span>Heatmaps</span></Link>
+          <Link hidden={toolQuery!==''&&!'compare'.includes(toolQuery)} className={view === 'compare' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'compare' ? 'page' : undefined} to='/' search={analyticsTarget('compare')}><Icon name='layers'/><span>Compare</span></Link>
+          <Link hidden={toolQuery!==''&&!'utm campaigns'.includes(toolQuery)} className={view === 'campaigns' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'campaigns' ? 'page' : undefined} to='/' search={target('campaigns')}><Icon name='target'/><span>UTM campaigns</span></Link>
+          <Link hidden={toolQuery!==''&&!'explore'.includes(toolQuery)} className={view === 'explore' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={exploreTarget()}><Icon name='search'/><span>Explore</span></Link>
+          <Link hidden={toolQuery!==''&&!'sessions'.includes(toolQuery)} className={view === 'sessions' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}><Icon name='users'/><span>Sessions</span></Link>
+          <Link hidden={toolQuery!==''&&!'attribution'.includes(toolQuery)} className={view === 'attribution' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'attribution' ? 'page' : undefined} to='/' search={target('attribution')}><Icon name='layers'/><span>Attribution</span></Link>
+          <Link hidden={toolQuery!==''&&!'journeys'.includes(toolQuery)} className={view === 'journeys' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'journeys' ? 'page' : undefined} to='/' search={target('journeys')}><Icon name='arrow'/><span>Journeys</span></Link>
+          <Link hidden={toolQuery!==''&&!'retention'.includes(toolQuery)} className={view === 'visitor-retention' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'visitor-retention' ? 'page' : undefined} to='/' search={target('visitor-retention')}><Icon name='calendar'/><span>Retention</span></Link>
+          <Link hidden={toolQuery!==''&&!'revenue'.includes(toolQuery)} className={view === 'revenue' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'revenue' ? 'page' : undefined} to='/' search={target('revenue')}><Icon name='money'/><span>Revenue</span></Link>
+          <Link hidden={toolQuery!==''&&!'conversions'.includes(toolQuery)} className={view === 'conversions' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'conversions' ? 'page' : undefined} to='/' search={target('conversions')}><Icon name='target'/><span>Conversions</span></Link>
+          <Link hidden={toolQuery!==''&&!'recent events'.includes(toolQuery)} className={view === 'events' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'events' ? 'page' : undefined} to='/' search={target('events')}><Icon name='layers'/><span>Recent events</span></Link>
+          <Link hidden={toolQuery!==''&&!'reports'.includes(toolQuery)} className={view === 'reports' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'reports' ? 'page' : undefined} to='/' search={target('reports')}><Icon name='folder'/><span>Reports</span></Link>
+          <Link hidden={toolQuery!==''&&!'google reports'.includes(toolQuery)} className={view === 'google' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}><Icon name='chart'/><span>Google reports</span></Link>
+          <Link hidden={toolQuery!==''&&!'site audits'.includes(toolQuery)} className={view === 'audits' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'audits' ? 'page' : undefined} to='/' search={target('audits')}><Icon name='shield'/><span>Site audits</span></Link>
+          <p className='nav-group'>Research</p>
+          <Link hidden={toolQuery!==''&&!'context'.includes(toolQuery)} className={view === 'context' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}><Icon name='folder'/><span>Context</span></Link>
+          <Link hidden={toolQuery!==''&&!'prompts'.includes(toolQuery)} className={view === 'prompts' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'prompts' ? 'page' : undefined} to='/' search={target('prompts')}><Icon name='agent'/><span>Prompts</span></Link>
+          <Link hidden={toolQuery!==''&&!'ai insights'.includes(toolQuery)} className={view === 'ai-insights' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ai-insights' ? 'page' : undefined} to='/' search={target('ai-insights')}><Icon name='agent'/><span>AI insights</span></Link>
+          <Link hidden={toolQuery!==''&&!'ai search'.includes(toolQuery)} className={view === 'ai-search' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ai-search' ? 'page' : undefined} to='/' search={target('ai-search')}><Icon name='search'/><span>AI search</span></Link>
+          <Link hidden={toolQuery!==''&&!'keywords'.includes(toolQuery)} className={view === 'keywords' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'keywords' ? 'page' : undefined} to='/' search={target('keywords')}><Icon name='search'/><span>Keywords</span></Link>
+          <Link hidden={toolQuery!==''&&!'domain seo'.includes(toolQuery)} className={view === 'domain-seo' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'domain-seo' ? 'page' : undefined} to='/' search={target('domain-seo')}><Icon name='globe'/><span>Domain SEO</span></Link>
+          <Link hidden={toolQuery!==''&&!'rank tracking'.includes(toolQuery)} className={view === 'ranks' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}><Icon name='chart'/><span>Rank tracking</span></Link>
+          <p className='nav-group'>Connect</p>
+          <Link hidden={toolQuery!==''&&!'install tracker'.includes(toolQuery)} className={view === 'installation' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}><Icon name='key'/><span>Install tracker</span></Link>
+          {['owner','admin'].includes(workspace.role) && <Link hidden={toolQuery!==''&&!'destinations'.includes(toolQuery)} className={view === 'destinations' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'destinations' ? 'page' : undefined} to='/' search={target('destinations')}><Icon name='link'/><span>Destinations</span></Link>}
+          <Link hidden={toolQuery!==''&&!'collection and privacy'.includes(toolQuery)} className={view === 'collection' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'collection' ? 'page' : undefined} to='/' search={target('collection')}><Icon name='shield'/><span>Collection and privacy</span></Link>
+          {['owner','admin'].includes(workspace.role) && <Link hidden={toolQuery!==''&&!'domains'.includes(toolQuery)} className={view === 'domains' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'domains' ? 'page' : undefined} to='/' search={target('domains')}><Icon name='globe'/><span>Domains</span></Link>}
         </nav>}
         </div>
-        <details className='side-foot account-menu' open={view === 'preferences' || view === 'security' || view === 'identity' || view === 'google-app'}>
-          <summary className='account-summary' aria-label={`Account: ${me?.user.name || 'Account'}, ${me?.user.email ?? ''}`}>
-            <span className='account-summary-text'>
-              <span className='hint'>Account</span>
-              <span className='account-name'>{me?.user.name || 'Account'}</span>
-              <span className='account-email'>{me?.user.email}</span>
-            </span>
-          </summary>
-          <div className='account-menu-body'>
-          <nav aria-label='Account'>
-            <Link className={view === 'preferences' ? 'proj active' : 'proj'} aria-current={view === 'preferences' ? 'page' : undefined} to='/' search={target('preferences')}>Profile and appearance</Link>
-            <Link className={view === 'security' ? 'proj active' : 'proj'} aria-current={view === 'security' ? 'page' : undefined} to='/' search={target('security')}>Account security</Link>
-            <Link className={view === 'identity' ? 'proj active' : 'proj'} aria-current={view === 'identity' ? 'page' : undefined} to='/' search={target('identity')}>Identity sign-in</Link>
-          </nav>
-            {me?.instanceOperator && <nav className='instance-settings' aria-label='Instance settings'>
-              <p className='side-label'>Instance settings</p>
-              <p className='hint'>Applies across workspaces.</p>
-            {me?.instanceOperator && <Link className={view === 'google-app' ? 'proj active' : 'proj'} aria-current={view === 'google-app' ? 'page' : undefined} to='/' search={target('google-app')}>Google app setup</Link>}
-            </nav>}
-            <div className='account-signout'>
-              <button type='button' className='btn' disabled={signOutBusy} onClick={() => void signOut()}>{signOutBusy ? 'Signing out…' : 'Sign out'}</button>
-            </div>
-          </div>
-        </details>
+        <div className='sidebar-bottom'>
+          <Link className={`nav-item${['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)?' selected':''}`} to='/' search={target('preferences')}><Icon name='settings'/><span>Settings</span></Link>
+          <div className='account'><span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span><Link className='account-identity' to='/' search={target('preferences')}><strong>{me!.user.name||'Account'}</strong><small>{me!.user.email}</small></Link><button type='button' className='icon-button' aria-label='Sign out' title='Sign out' disabled={signOutBusy} onClick={()=>void signOut()}><Icon name='logout' size={16}/></button></div>
+        </div>
       </aside>
-      <main className='main' id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
-        <header className='app-bar'><div className='breadcrumbs'><span>{pageScope}</span>{project && projectView && <><span aria-hidden='true'>/</span><strong>{project.name}</strong></>}</div><span className='preview-badge'>Development preview</span></header>
-        <div className='page-content'>
+      <main className='main workspace-main' inert={menuOpen} id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
+        <header className='app-bar topbar'><div className='breadcrumb'><button type='button' ref={menuButton} className='icon-button mobile-menu mobile-nav-toggle' aria-label={menuOpen?'Close menu':'Menu'} aria-expanded={menuOpen} aria-controls='app-navigation' onClick={()=>setMenuOpen(!menuOpen)}><Icon name='menu'/></button><Icon name={accountView?'users':'folder'} size={16}/><span>{accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace'}</span><span className='crumb-slash' aria-hidden='true'>/</span><strong>{pageTitles[view]}</strong></div><div className='topbar-tools'><label className='search'><Icon name='search' size={16}/><span className='sr-only'>Find a tool</span><input type='search' placeholder='Find a tool…' value={toolSearch} onChange={event=>setToolSearch(event.target.value)}/></label><span className='preview-badge'>Development preview</span><Link className='avatar' aria-label='Your profile' to='/' search={target('preferences')}>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</Link></div></header>
+        <div className='page-content content'>
+        {['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)&&<nav className='tabs settings-navigation' aria-label='Settings sections'>
+          <Link className={view==='preferences'?'active':''} to='/' search={target('preferences')}>Your account</Link>
+          <Link className={view==='security'?'active':''} to='/' search={target('security')}>Security</Link>
+          <Link className={view==='identity'?'active':''} to='/' search={target('identity')}>Identity & SSO</Link>
+          {workspace&&['owner','admin'].includes(workspace.role)&&<Link className={view==='team'?'active':''} to='/' search={target('team')}>Workspace & access</Link>}
+          {workspace&&['owner','admin'].includes(workspace.role)&&<Link className={view==='keys'?'active':''} to='/' search={target('keys')}>API access</Link>}
+          {workspace?.role==='owner'&&<Link className={view==='providers'?'active':''} to='/' search={target('providers')}>Integrations</Link>}
+          {workspace&&<Link className={view==='retention'?'active':''} to='/' search={target('retention')}>Retention</Link>}
+          <Link className={view==='workspace'?'active':''} to='/' search={target('workspace')}>New workspace</Link>
+          {me!.instanceOperator&&<><Link className={view==='google-app'?'active':''} to='/' search={target('google-app')}>Google setup</Link></>}
+        </nav>}
+
+        {!projectView&&project&&<div className='context-return'><span>{workspaceTool?'Workspace tools include all projects.':'Selected project'}</span><Link className='btn ghost' to='/' search={target('project')}><Icon name='arrow' size={15}/>Return to {project.name}</Link></div>}
         {authNotice && <div role={authNotice.kind === 'error' ? 'alert' : 'status'} className={authNotice.kind === 'error' ? 'alert' : 'notice'}>{authNotice.message} <button className='btn ghost' onClick={() => setAuthNotice(null)}>Dismiss</button></div>}
         {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError} <button className='btn' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</button></div>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
-        {project && workspace && projectView && <header className='proj-head'>
-          <h1>{pageTitles[view]}</h1>
+        {project && workspace && projectView && <header className='proj-head page-heading'>
+          <span className='eyebrow'>{project.name}</span><h1>{pageTitles[view]}</h1>
           <p className='project-origin'>{project.origin}</p>
           {projectDescriptions[view] && view !== 'events' && view !== 'installation' && <p className='dim'>{projectDescriptions[view]}</p>}
         </header>}
-        {!projectView && view !== 'workspace' && view !== 'new-project' && <header className='proj-head'><h1>{pageTitles[view]}</h1>
+        {!projectView && view !== 'workspace' && view !== 'new-project' && <header className='proj-head page-heading'><span className='eyebrow'>{pageScope}</span><h1>{pageTitles[view]}</h1>
           {view === 'keys' && <p className='dim'>Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.</p>}
-          {view === 'providers' && <p className='dim'>Manage provider credentials and the paid-work pause for this workspace.</p>}
+          {view === 'providers' && <p className='dim'>Manage provider credentials and pause paid requests.</p>}
         </header>}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
@@ -766,8 +739,8 @@ function App() {
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
         </>}
-        {view === 'project' && !workspace && <section className='card'><p>No workspace is linked to this account.</p><Link className='btn primary' to='/' search={target('workspace')}>Create workspace</Link></section>}
-        {(view === 'new-project' || (view === 'project' && projects !== null)) && workspace && project === null && canWrite && (
+        {projectView && !workspace && <section className='card'><p>No workspace is linked to this account.</p><Link className='btn primary' to='/' search={target('workspace')}>Create workspace</Link></section>}
+        {(view === 'new-project' || (projectView && projects !== null && project === null)) && workspace && canWrite && (
           <section className='card onboarding-card' aria-labelledby='create-h'>
             <span className='eyebrow'>Website setup</span>
             <h1 id='create-h'>{projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'}</h1>
@@ -775,7 +748,7 @@ function App() {
             <CreateProjectForm key={workspaceId} onCreate={createProject} />
           </section>
         )}
-        {view === 'project' && workspace && projects !== null && project === null && !canWrite && (
+        {projectView && workspace && projects !== null && project === null && !canWrite && (
           <section className='card'>
             <h1>{projects.length ? 'Choose a project' : 'No project to show'}</h1>
             <p>{projects.length ? 'Select a project from the sidebar to view its analytics.' : 'Your role in this workspace is view-only. Ask a workspace admin to create a project or give you access to one.'}</p>
@@ -917,7 +890,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   return (
     <AuthLayout>
       <form className='card auth' onSubmit={(e) => void submit(e)}>
-        <p className='auth-brand'>Your Discover workspace</p><h1>Secure this installation</h1>
+        <div className='eyebrow'>Your Discover workspace</div><h1>Create owner account</h1>
         <p className='dim'>Create the owner account and its default workspace. The setup token comes from your server configuration.</p>
         <div className='field'><label htmlFor='su-token'>Setup token</label>
           <input id='su-token' type='password' autoComplete='off' required value={token} onChange={(e) => setToken(e.target.value)} /></div>
@@ -957,15 +930,14 @@ function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { in
   return (
     <AuthLayout>
       <form className='card auth' onSubmit={(e) => void submit(e)}>
-        <p className='auth-brand'>Your Discover workspace</p>
-        <h1>Sign in</h1>
+        <div className='eyebrow'>Your Discover workspace</div><h1>Sign in</h1>
         {notice && <p className={notice.kind === 'error' ? 'alert' : 'notice'} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.message}</p>}
         <div className='field'><label htmlFor='si-email'>Email</label>
           <input id='si-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} /></div>
         <div className='field'><label htmlFor='si-pw'>Password</label>
           <input id='si-pw' type='password' autoComplete='current-password' required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
         {error !== '' && <div role='alert' className='alert'>{error}</div>}
-        <button className='btn primary' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button className='btn primary' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}<Icon name='arrow' size={16}/></button>
         <button type='button' className='btn' disabled={busy} onClick={() => onForgot(email.trim())}>Forgot password?</button>
         {onCancel && <button type='button' className='btn' onClick={onCancel}>Back to invitation</button>}
         <div className='auth-providers'><OidcSignIn /></div>

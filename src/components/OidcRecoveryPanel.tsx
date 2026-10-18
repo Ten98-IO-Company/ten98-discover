@@ -1,3 +1,4 @@
+import {Icon} from './CampaignUI'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 
@@ -134,14 +135,14 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled }: {
   }
   if (loading && !security) return <p className='dim' role='status'>Loading identity recovery settings…</p>
   if (security?.hasPassword && !notice && !enrollment) return null
-  return <section className='card' aria-label='Identity account security' aria-busy={busy || loading}>
-    <h2>Identity account security</h2>
-    {error && <div className='alert' role='alert'>{error}<button className='btn' disabled={busy} onClick={() => void load()}>Reload settings</button></div>}
+  return <section className='account-settings identity-recovery panel settings-panel integration-settings-card' aria-label='Identity account security' aria-busy={busy || loading}>
+    <div className="provider-settings-heading"><span className="provider-initial"><Icon name="shield" size={18}/></span><div><h2>Identity account security</h2><p>Recovery for accounts connected to an identity provider</p></div></div>
+    {error && <div className='alert' role='alert'>{error}<button className='btn button' disabled={busy} onClick={() => void load()}>Reload settings</button></div>}
     {notice && <p role='status'>{notice}</p>}
     {security && !security.hasPassword && <>
       <p>Sign in again with your linked provider to change security settings. Adding a local recovery password is optional.</p>
-      {!proof && !enrollment && <div className='row'>
-        {identities.map(identity => <button type='button' className='btn' disabled={busy || loading} key={identity.id} onClick={() => start(identity.id)}>Verify with {identity.providerName}</button>)}
+      {!proof && !enrollment && <div className='row button-wrap'>
+        {identities.map(identity => <button type='button' className='btn button' disabled={busy || loading} key={identity.id} onClick={() => start(identity.id)}>Verify with {identity.providerName}</button>)}
         {!identities.length && <p>No enabled identity provider is available. Ask the installation operator to restore access to your provider.</p>}
       </div>}
       {proof && <form onSubmit={confirm}>
@@ -156,8 +157,8 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled }: {
             <div className='field'><label htmlFor='oidc-repeat-password'>Repeat recovery password</label><input id='oidc-repeat-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={repeat} onChange={event => setRepeat(event.target.value)} /></div></>}
           {security.user.twoFactorEnabled && <><div className='field'><label htmlFor='oidc-factor-type'>Existing second factor</label><select id='oidc-factor-type' value={recovery ? 'recovery' : 'totp'} onChange={event => { setRecovery(event.target.value === 'recovery'); setFactor('') }}><option value='totp'>Authenticator code</option><option value='recovery'>Recovery code</option></select></div>
             <div className='field'><label htmlFor='oidc-existing-factor'>{recovery ? 'Recovery code' : 'Authenticator code'}</label><input id='oidc-existing-factor' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} maxLength={recovery ? 21 : 6} required value={factor} onChange={event => setFactor(event.target.value)} /></div></>}
-          <button className='btn primary' type='submit'>Apply security change</button>
-          <button className='btn ghost' type='button' onClick={() => callbacks.current.onProofHandled()}>Cancel</button>
+          <button className='btn button primary' type='submit'>Apply security change</button>
+          <button className='btn button ghost' type='button' onClick={() => callbacks.current.onProofHandled()}>Cancel</button>
         </fieldset>
       </form>}
     </>}
@@ -166,8 +167,8 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled }: {
       <div className='field'><label htmlFor='oidc-recovery-codes'>New recovery codes</label><textarea id='oidc-recovery-codes' className='snippet' style={{ width: '100%' }} rows={10} readOnly value={enrollment.backupCodes.join('\n')} /></div>
       <p>Save these codes securely. They are shown once and each works once.</p>
       {enrollment.totpURI && setupKey(enrollment.totpURI) ? <form onSubmit={event => { event.preventDefault(); const code = enrollmentCode; setEnrollmentCode(''); void run(signal => api('/api/account/two-factor/verify', { method: 'POST', body: { code }, signal }), async () => { setEnrollment({ backupCodes: enrollment.backupCodes }); setNotice('Two-factor authentication is now on. Save your recovery codes.'); await load(null) }) }}>
-        <div className='field'><label htmlFor='oidc-enrollment-code'>Confirm authenticator code</label><input id='oidc-enrollment-code' autoComplete='one-time-code' inputMode='numeric' minLength={6} maxLength={6} pattern='[0-9]{6}' required disabled={busy} value={enrollmentCode} onChange={event => setEnrollmentCode(event.target.value)} /></div><button className='btn primary' disabled={busy}>Verify and turn on 2FA</button>
-      </form> : <button className='btn' disabled={busy || loading} onClick={() => setEnrollment(null)}>{enrollment.totpURI ? 'Restart authenticator setup' : 'I saved these codes'}</button>}
+        <div className='field'><label htmlFor='oidc-enrollment-code'>Confirm authenticator code</label><input id='oidc-enrollment-code' autoComplete='one-time-code' inputMode='numeric' minLength={6} maxLength={6} pattern='[0-9]{6}' required disabled={busy} value={enrollmentCode} onChange={event => setEnrollmentCode(event.target.value)} /></div><button className='btn button primary' disabled={busy}>Verify and turn on 2FA</button>
+      </form> : <button className='btn button' disabled={busy || loading} onClick={() => setEnrollment(null)}>{enrollment.totpURI ? 'Restart authenticator setup' : 'I saved these codes'}</button>}
     </>}
   </section>
 }

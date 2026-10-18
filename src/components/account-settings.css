@@ -1,0 +1,83 @@
+/* Campaign AccountSettings / IntegrationSettings layouts, adapted to Discover's existing account forms. */
+.account-settings { min-inline-size: 0; max-inline-size: none; overflow-wrap: anywhere; }
+.account-settings-grid, .account-security { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr); gap: 22px; align-items: start; }
+.account-settings .settings-panel { min-inline-size: 0; margin: 0; padding: 24px; }
+.account-settings .settings-panel > p { font-size: 13px; line-height: 1.7; margin: 8px 0 20px; }
+.account-settings .provider-settings-heading { display: flex; align-items: flex-start; gap: 12px; margin-block-end: 12px; }
+.account-settings .provider-settings-heading > div { flex: 1; min-inline-size: 0; }
+.account-settings .provider-settings-heading h2 { font-size: 17px; line-height: 1.5; margin: 0; }
+.account-settings .provider-settings-heading h3 { font-size: 15px; line-height: 1.5; margin: 0; }
+.account-settings .provider-settings-heading p { font-size: 12px; line-height: 1.7; color: var(--muted); margin: 3px 0 0; }
+.account-settings .provider-initial { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; inline-size: 37px; block-size: 37px; border: 1px solid var(--line); border-radius: 9px; background: var(--blue-tint); color: var(--blue); font-size: 15px; font-weight: 700; }
+.account-settings .provider-settings-heading > .badge { align-self: flex-start; }
+.account-settings .provider-source { font-size: 12px; color: var(--muted); padding: 14px 0 18px; border-block-end: 1px solid var(--line); margin: 0 0 19px; }
+.account-settings .settings-panel form { margin-block-start: 22px; }
+.account-settings .settings-panel form + form { padding-block-start: 22px; border-block-start: 1px solid var(--line); }
+.account-settings .settings-panel fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.account-settings .field { display: flex; flex-direction: column; gap: 8px; margin-block: 18px 17px; min-inline-size: 0; }
+.account-settings .field:first-child { margin-block-start: 0; }
+.account-settings .field > label { margin: 0; font-size: 13px; font-weight: 500; }
+.account-settings .field > p { margin: 0; }
+.account-settings .field input:not([type='radio']):not([type='checkbox']), .account-settings .field select, .account-settings .field textarea { inline-size: 100%; min-inline-size: 0; min-block-size: 44px; }
+.account-settings .field-help { display: block; font-size: 12px; line-height: 1.7; margin: 7px 0 17px; }
+.account-settings .field .field-help { margin: 0; }
+.account-settings .button-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.account-settings .button { min-block-size: 44px; max-inline-size: 100%; white-space: normal; }
+.account-settings .settings-panel .button { margin-block-start: 10px; }
+.account-settings .settings-panel .button-wrap > .button { margin-block-start: 0; }
+.account-settings details { min-inline-size: 0; margin-block-start: 18px; }
+.account-settings summary { cursor: pointer; min-block-size: 44px; padding-block: 12px; color: var(--ink); font-size: 13px; font-weight: 600; }
+.account-settings .settings-subheading { padding-block-start: 22px; margin: 22px 0 12px; border-block-start: 1px solid var(--line); font-size: 15px; font-weight: 600; }
+.account-settings .table-wrap { max-inline-size: 100%; overflow: auto; }
+.account-settings .mono, .identity-details dd { overflow-wrap: anywhere; }
+.account-settings-actions { margin-block-start: 22px; }
+.account-settings .preferences-theme { grid-column: 1 / -1; }
+.account-settings .preferences-theme .row { display: flex; gap: 12px; flex-wrap: wrap; }
+.account-settings .preferences-theme label { display: inline-flex; align-items: center; flex: 1; gap: 10px; min-block-size: 44px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 7px; font-size: 13px; cursor: pointer; margin: 0; }
+.account-settings .preferences-theme label:has(input:checked) { background: var(--blue-tint); border-color: var(--blue); color: var(--blue); }
+.account-settings .preferences-theme input { inline-size: auto; margin: 0; }
+.account-settings .preferences-preview { padding: 16px; background: var(--canvas); border: 1px solid var(--line); border-radius: 7px; }
+.account-settings .preferences-preview p { margin-block-end: 8px; }
+.account-settings .preferences-preview dl { margin: 0; }
+.account-settings .preferences-preview dd { margin-inline-start: 0; overflow-wrap: anywhere; }
+.account-security > .account-summary-card, .account-security > .account-sessions-card { grid-column: 1 / -1; }
+.account-security .account-summary-card .provider-source { border: 0; padding: 0; margin: 12px 0 0; }
+.account-security .account-sessions-card > .row { gap: 18px; flex-wrap: wrap; }
+.account-security .account-sessions-card .provider-settings-heading { margin: 0; }
+.identity-settings { display: grid; gap: 22px; }
+.identity-provider-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; margin-block: 18px; }
+.account-settings .identity-provider-card { padding: 23px 25px; min-inline-size: 0; margin-block: 18px; }
+.identity-provider-grid > .identity-provider-card { margin: 0; }
+.identity-provider-card .provider-settings-heading { flex-wrap: wrap; }
+.identity-details { display: grid; grid-template-columns: minmax(0,auto) minmax(0,1fr); gap: 8px 12px; font-size: 12px; line-height: 1.7; padding-block: 14px 18px; border-block: 1px solid var(--line); margin: 18px 0 0; }
+.identity-details dt { color: var(--muted); }
+.identity-details dd { margin: 0; min-inline-size: 0; }
+.identity-recovery { margin-block-end: 22px; }
+.account-access { min-inline-size: 0; overflow-wrap: anywhere; }
+.account-access .account-access-icon { display: inline-flex; align-items: center; justify-content: center; inline-size: 42px; block-size: 42px; border-radius: 11px; background: var(--blue-tint); color: var(--blue); margin-block-end: 18px; }
+.account-access .helper-note { color: var(--muted); font-size: 12px; line-height: 1.7; margin-block: 15px; }
+.account-access .field-help { font-size: 12px; line-height: 1.7; margin-block: 7px 17px; }
+.account-access .field { margin-block-end: 20px; }
+.account-access .button { min-block-size: 44px; max-inline-size: 100%; white-space: normal; }
+.account-access .button-wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-access .full { inline-size: 100%; }
+.auth-provider-list { display: grid; gap: 10px; }
+.auth-provider-list .auth-provider-button { display: flex; align-items: center; justify-content: center; inline-size: 100%; gap: 10px; padding: 10px 14px; margin: 0; }
+.auth-provider-button > span:first-child, .auth-provider-arrow { display: inline-flex; align-items: center; flex-shrink: 0; }
+.auth-provider-button > span:nth-child(2) { flex: 1; }
+.account-access .eyebrow { margin-block-end: 16px; }
+@media (max-width:1100px) {
+  .account-settings-grid, .account-security, .identity-provider-grid { grid-template-columns: minmax(0,1fr); }
+  .account-settings .settings-panel { padding: 20px; }
+  .account-settings .identity-provider-card { padding: 21px; }
+}
+@media (max-width:560px) {
+  .account-settings .provider-settings-heading { flex-wrap: wrap; gap: 9px; }
+  .account-settings .provider-settings-heading > div { flex-basis: calc(100% - 48px); }
+  .account-settings .provider-settings-heading > .badge { margin-inline-start: 46px; }
+  .account-settings .settings-panel, .account-settings .identity-provider-card { padding: 18px; }
+  .account-settings .button-wrap > .button, .account-settings-actions > .button { inline-size: 100%; }
+  .account-settings .preferences-theme label { flex-basis: 100%; }
+  .identity-details { grid-template-columns: minmax(0,1fr); gap: 4px; }
+  .identity-details dd + dt { margin-block-start: 10px; }
+}

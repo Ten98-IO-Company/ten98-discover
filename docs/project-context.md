@@ -14,6 +14,12 @@ Prompts have stable IDs, an optimistic revision, and immutable numbered text ver
 
 Lists paginate 50 entries and support active/archived/all, literal text search, user tag and branded classification filters. Histories paginate by immutable version number, independently of timestamps. System classification preserves Elmo's versioned substring heuristic; user branded/unbranded tags remain separate. Exactly one of those tags overrides the automatic result; both or neither use the automatic result. The heuristic can overmatch short brand terms. See THIRD_PARTY_NOTICES.md for source and MIT notice.
 
+## Local prompt discovery
+
+The prompt library offers **Discover prompts** for owners, admins and editors. It builds English starter questions locally from a topic and optional audience, brand or competitor. Saved key-page topics are optional input; no website is fetched. Questions are templates for organic AI/search research, not measured search demand, search volume or generated model answers.
+
+Select questions, review and edit them in the existing bulk-create form, then explicitly save. New drafts default to disabled; saving does not run, schedule or send them to a provider. Server duplicate checks, current permissions and exact-payload retry receipts remain authoritative. **Suggest prompts** remains the separate provider-backed flow, with explicit quote/start and usage accounting. Ad-network conversion destinations remain analytics forwarding, while advertising campaign management belongs in ten98-campaign.
+
 ## API and authorization
 
 The context routes accept a cookie session or an API key holding `context:read` (reads) or `context:write` (the CAS batch); `context:write` does not imply `context:read`, and a key issued before migration 0062 gains nothing automatically. Bearer calls hold the workspace SHARE lock for reads or UPDATE lock for the write under READ COMMITTED with five-second statement and lock-wait bounds, and the key's current authority is rechecked before publication or commit and again after a rollback, on the same connection and even when the lock wait itself failed. A bearer POST `/context/update` returns `{revision,replayed}` only; the cookie route keeps the full context DTO. The prompt routes keep their `prompts:read`/`prompts:write` gate. Writes recheck current owner/admin/editor membership after obtaining the workspace lock, then lock the project. Cookie reads use a repeatable-read snapshot; every read always filters by project.
