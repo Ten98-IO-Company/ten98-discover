@@ -54,6 +54,8 @@ function addressList(raw: unknown): BlockList {
   return list;
 }
 
+// The values change only at restart (or in tests that set process.env), so one parsed copy is kept per value set.
+let parsed: { key: string; config: { mode: unknown; trusted: BlockList; excluded: BlockList } } | null = null;
 function readConfig(env: NodeJS.ProcessEnv) {
   if (!env || typeof env !== 'object') configError();
   for (const key of ['ANALYTICS_NETWORK_MODE', 'ANALYTICS_TRUSTED_PROXIES', 'ANALYTICS_EXCLUDED_IPS']) {
@@ -62,11 +64,14 @@ function readConfig(env: NodeJS.ProcessEnv) {
   }
   const mode = ownValue(env, 'ANALYTICS_NETWORK_MODE') ?? 'off';
   const trustedRaw = ownValue(env, 'ANALYTICS_TRUSTED_PROXIES') ?? '', excludedRaw = ownValue(env, 'ANALYTICS_EXCLUDED_IPS') ?? '';
+  const key = JSON.stringify([mode, trustedRaw, excludedRaw]);
+  if (parsed?.key === key) return parsed.config;
   if (!['off', 'direct', 'proxy'].includes(mode as string)) configError();
   const trusted = addressList(trustedRaw), excluded = addressList(excludedRaw);
   // Neither list may run silently inert: proxy needs trusted peers, and off resolves no address to exclude.
   if (mode === 'proxy' && !(trustedRaw as string).trim() || mode === 'off' && (excludedRaw as string).trim()) configError();
-  return { mode, trusted, excluded };
+  parsed = { key, config: { mode, trusted, excluded } };
+  return parsed.config;
 }
 
 /** Explicit CLI validation; invalid settings never include addresses in errors. */
