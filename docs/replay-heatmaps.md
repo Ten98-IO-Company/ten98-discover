@@ -14,7 +14,7 @@ Save/rename requires currently retained raw recording. Unsave is allowed on an e
 
 ## Numeric heatmap collection
 
-Optional `analytics_settings.heatmap={enabled,sampleRate}` defaults off. Old settings forms omitting it preserve its current value; ordinary Analytics, performance and replay settings retain their old semantics. Heatmaps require explicit current Analytics consent and enabled configuration, independently of replay permission/configuration. Basic/cookieless analytics does not authorize this dataset.
+Optional `analytics_settings.heatmap={enabled,sampleRate}` defaults off. Old settings forms omitting it preserve its current value; ordinary Analytics, performance and replay settings retain their old semantics. Heatmaps require explicit current Analytics consent and enabled configuration, independently of replay permission/configuration, and a network address outside the installation `ANALYTICS_EXCLUDED_IPS` list. Basic/cookieless analytics does not authorize this dataset.
 
 `POST /api/heatmaps/begin` accepts strict `{siteKey,requestId,url,consent:{analytics:true,epoch}}`. It persists a single sample decision, settings binding, exact Origin/path and server clock. Response contains accepted/reason, captureId, token/null, createdAt, deadlineAt, uploadUntil, settings and limits. The capture is fixed at5 minutes with60 seconds to drain; retries do not extend it. Purpose-separated HMAC capabilities bind project, exact origin, capture, epoch, settings and expiry. Expired old batch capabilities cannot recreate data after purge. Begin tombstones have the existing derived-history lifetime; replaying an old Begin after its tombstone was deleted is a new Begin, not permission to reuse its old upload token.
 

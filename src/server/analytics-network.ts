@@ -22,18 +22,11 @@ function normalizeIp(value: unknown): string | null {
   }
 }
 
-function readConfig(env: NodeJS.ProcessEnv) {
-  if (!env || typeof env !== 'object') configError();
-  for (const key of ['ANALYTICS_NETWORK_MODE', 'ANALYTICS_TRUSTED_PROXIES']) {
-    const descriptor = Object.getOwnPropertyDescriptor(env, key);
-    if (descriptor && (!('value' in descriptor) || (descriptor.value !== undefined && typeof descriptor.value !== 'string'))) configError();
-  }
-  const mode = ownValue(env, 'ANALYTICS_NETWORK_MODE') ?? 'off';
-  const raw = ownValue(env, 'ANALYTICS_TRUSTED_PROXIES') ?? '';
-  if (!['off', 'direct', 'proxy'].includes(mode as string) || typeof raw !== 'string' || raw.length > 4096) configError();
+function addressList(raw: unknown): BlockList {
+  if (typeof raw !== 'string' || raw.length > 4096) configError();
   const entries = raw.trim() ? raw.split(',').map(value => value.trim()) : [];
-  if (entries.length > 32 || (mode === 'proxy' && entries.length === 0)) configError();
-  const trusted = new BlockList();
+  if (entries.length > 32) configError();
+  const list = new BlockList();
   for (const entry of entries) {
     const parts = entry.split('/');
     if (parts.length > 2) configError();
@@ -41,7 +34,7 @@ function readConfig(env: NodeJS.ProcessEnv) {
     if (address === null) configError();
     const family = isIP(address) === 4 ? 'ipv4' : 'ipv6';
     try {
-      if (parts.length === 1) trusted.addAddress(address, family);
+      if (parts.length === 1) list.addAddress(address, family);
       else {
         if (!/^(0|[1-9]\d{0,2})$/.test(parts[1])) configError();
         let prefix = Number(parts[1]);
@@ -52,13 +45,28 @@ function readConfig(env: NodeJS.ProcessEnv) {
           if (prefix < 96) configError();
           prefix -= 96;
         }
-        trusted.addSubnet(address, prefix, family);
+        list.addSubnet(address, prefix, family);
       }
     } catch {
       configError();
     }
   }
-  return { mode, trusted };
+  return list;
+}
+
+function readConfig(env: NodeJS.ProcessEnv) {
+  if (!env || typeof env !== 'object') configError();
+  for (const key of ['ANALYTICS_NETWORK_MODE', 'ANALYTICS_TRUSTED_PROXIES', 'ANALYTICS_EXCLUDED_IPS']) {
+    const descriptor = Object.getOwnPropertyDescriptor(env, key);
+    if (descriptor && (!('value' in descriptor) || (descriptor.value !== undefined && typeof descriptor.value !== 'string'))) configError();
+  }
+  const mode = ownValue(env, 'ANALYTICS_NETWORK_MODE') ?? 'off';
+  const trustedRaw = ownValue(env, 'ANALYTICS_TRUSTED_PROXIES') ?? '', excludedRaw = ownValue(env, 'ANALYTICS_EXCLUDED_IPS') ?? '';
+  if (!['off', 'direct', 'proxy'].includes(mode as string)) configError();
+  const trusted = addressList(trustedRaw), excluded = addressList(excludedRaw);
+  // Neither list may run silently inert: proxy needs trusted peers, and off resolves no address to exclude.
+  if (mode === 'proxy' && !(trustedRaw as string).trim() || mode === 'off' && (excludedRaw as string).trim()) configError();
+  return { mode, trusted, excluded };
 }
 
 /** Explicit CLI validation; invalid settings never include addresses in errors. */
@@ -100,4 +108,11 @@ export function resolveAnalyticsNetwork(request: Request, peerAddress?: string, 
     if (!isTrusted(address)) return address;
   }
   return null;
+}
+
+/** Umami IGNORE_IP equivalent over the trust-mode address only: headers never trigger it, and an unknown address is never excluded,
+ * so behind an edge that appends to a client-supplied X-Forwarded-For a malformed or over-long chain opts that client back in. */
+export function analyticsAddressExcluded(request: Request, peerAddress = extractAnalyticsPeer(request), env: NodeJS.ProcessEnv = process.env): boolean {
+  const address = resolveAnalyticsNetwork(request, peerAddress, env);
+  return address !== null && readConfig(env).excluded.check(address, isIP(address) === 4 ? 'ipv4' : 'ipv6');
 }

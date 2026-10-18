@@ -111,6 +111,27 @@ async function runDimensionRegressionChecks(pool:pg.Pool,workspace:string,owner:
  // The referrer dimension itself stays literal: the own host is still a recorded referrer value there.
  assert.equal((await explored('referrer'))['shop.test'],5);
  console.log('PASS self-referrals are no channel referrer in comparison and Explorer while the referrer dimension stays literal');
+ // The overview Top referrers card (P32) drops the five self-referrals and the view without a host, lists the rest literally and reconciles to the total.
+ const card=await projectAnalytics(channelProject,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02'}));
+ assert.deepEqual(card.referrers,[{host:'search.test',pageViews:1,visitors:null},{host:'shop.test',pageViews:1,visitors:null}]);
+ const cardViews=card.referrers.reduce((sum,row)=>sum+row.pageViews,0);
+ assert.equal(cardViews,channelRows.find(row=>row.key.value==='referrer_only')!.pageViews);assert.equal(cardViews+5+1,card.totals.pageViews);assert.equal(card.totals.pageViews,8);
+ console.log('PASS the overview top-referrers card excludes self-referrals and missing hosts, lists hosts literally and reconciles with referrer_only and total page views');
+ // Card ranking: estimated visitors first (none recorded ranks last as NULL, never 0), then page views, then host bytes; visitors count distinct ids.
+ const referredProject=await project(),referredVisitors=Array.from({length:6},(_,n)=>String(n+1).repeat(64));
+ await pool.query("INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) SELECT $1,unnest($2::text[]),'2024-02-28','2024-03-02'",[referredProject,referredVisitors]);
+ const referred=(host:string,visitor:string|null=null)=>event(referredProject,'page_view',{origin:'https://site.test',referrerHost:host},undefined,visitor,visitor);
+ for(let n=0;n<3;n++)await referred('a.test',referredVisitors[0]);
+ await referred('b.test',referredVisitors[1]);await referred('b.test',referredVisitors[2]);
+ for(let n=0;n<5;n++)await referred('c.test');
+ await referred('x10.test',referredVisitors[4]);await referred('x1.test',referredVisitors[3]);
+ await referred('f.test',referredVisitors[5]);await referred('f.test');
+ for(let n=0;n<15;n++)for(let v=0;v<6;v++)await referred('g'+String(n).padStart(2,'0')+'.test');
+ assert.deepEqual((await projectAnalytics(referredProject,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02'}))).referrers,[
+  {host:'b.test',pageViews:2,visitors:2},{host:'a.test',pageViews:3,visitors:1},{host:'f.test',pageViews:2,visitors:1},
+  {host:'x1.test',pageViews:1,visitors:1},{host:'x10.test',pageViews:1,visitors:1},
+  ...Array.from({length:15},(_,n)=>({host:'g'+String(n).padStart(2,'0')+'.test',pageViews:6,visitors:null}))]);
+ console.log('PASS the top-referrers card selects and ranks its top 20 by distinct estimated visitors, then page views, then host bytes, with no recorded visitor as null last');
 
  // Long common prefixes must stay bounded without conflating recorded keys and sentinel states.
  const unicodeProject=await project(),prefix='🧪'.repeat(124),extraVisitor='e'.repeat(64),extraVisit='f'.repeat(64);
@@ -151,9 +172,13 @@ async function runDimensionRegressionChecks(pool:pg.Pool,workspace:string,owner:
 
  const malformed=await project();for(const time of ['2024-02-28T12:00:00Z','2024-03-01T12:00:00Z'])for(let n=0;n<21;n++)for(let copy=0;copy<2;copy++)await event(malformed,'page_view',{referrerHost:'ref'+n+'.example.test'},time);
  const badEvent=await event(malformed,'page_view',{referrerHost:12});
+ // The overview card skips non-string hosts instead of refusing, and ties rank by host bytes ("C"), so ref9 falls outside the top 20.
+ const topReferrers=Array.from({length:21},(_,n)=>'ref'+n+'.example.test').sort((a,b)=>a<b?-1:a>b?1:0).slice(0,20).map(host=>({host,pageViews:2,visitors:null}));
+ assert.equal(topReferrers.some(row=>row.host==='ref9.example.test'),false);
  for(const time of ['2024-02-28T12:00:00Z','2024-03-01T12:00:00Z'])for(const value of [12,false,['x'],{unexpected:'x'},null]){
   await pool.query('UPDATE event SET dimensions=$2,received_at=$3 WHERE id=$1',[badEvent,{referrerHost:value},time]);
   await assert.rejects(projectAnalytics(malformed,owner,params('referrer')),{status:503});
+  assert.deepEqual((await projectAnalytics(malformed,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02'}))).referrers,topReferrers);
  }
  // Selection excludes the bad row; the refusal is scoped to the whole selected population.
  const narrowed=params('referrer');narrowed.set('selection',new URLSearchParams({referrer:'ref0.example.test'}).toString());assert.equal((await projectAnalytics(malformed,owner,narrowed)).dimensionComparison!.current.rows.length,1);

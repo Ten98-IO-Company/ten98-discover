@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { Socket } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { extractAnalyticsPeer, resolveAnalyticsNetwork, validateAnalyticsNetworkConfig } from '../src/server/analytics-network.ts';
+import { analyticsAddressExcluded, extractAnalyticsPeer, resolveAnalyticsNetwork, validateAnalyticsNetworkConfig } from '../src/server/analytics-network.ts';
 
 function request(forwarded?: string) {
   return new Request('http://localhost/api/collect', { headers: forwarded === undefined ? {} : { 'x-forwarded-for': forwarded } });
@@ -66,6 +66,37 @@ test('invalid configuration fails closed with redacted errors even when mode is 
     assert.throws(() => resolveAnalyticsNetwork(request(), '192.0.2.1', env));
   }
   assert.doesNotThrow(() => validateAnalyticsNetworkConfig({ ANALYTICS_TRUSTED_PROXIES: Array(32).fill('10.0.0.1').join(',') }));
+});
+
+test('excluded addresses match only the trust-mode address and invalid or inert lists fail closed with redacted errors', () => {
+  const list = { ANALYTICS_NETWORK_MODE: 'direct', ANALYTICS_EXCLUDED_IPS: '203.0.113.77/24, 2001:0db8::/32, 198.51.100.9' };
+  for (const peer of ['203.0.113.5', '::ffff:203.0.113.6', '2001:db8::1', '198.51.100.9']) assert.equal(analyticsAddressExcluded(request(), peer, list), true, peer);
+  assert.equal(analyticsAddressExcluded(request(), '198.51.100.7', list), false);
+  assert.equal(analyticsAddressExcluded(request(), '2001:db9::1', list), false);
+  assert.equal(analyticsAddressExcluded(request('203.0.113.5'), '198.51.100.7', list), false, 'headers cannot trigger');
+  assert.equal(analyticsAddressExcluded(request('198.51.100.7'), '203.0.113.5', list), true, 'headers cannot bypass');
+  assert.equal(analyticsAddressExcluded(request('203.0.113.5'), undefined, list), false, 'an unknown peer is never excluded');
+  assert.equal(analyticsAddressExcluded(request(), '::ffff:cb00:7105', { ANALYTICS_NETWORK_MODE: 'direct', ANALYTICS_EXCLUDED_IPS: '203.0.113.5' }), true);
+  assert.equal(analyticsAddressExcluded(request(), '::cb00:7105', { ANALYTICS_NETWORK_MODE: 'direct', ANALYTICS_EXCLUDED_IPS: '203.0.113.0/24' }), false, 'a native IPv6 address never matches an IPv4 rule');
+  assert.equal(analyticsAddressExcluded(request(), '198.51.100.7', direct), false);
+  const proxied = { ANALYTICS_NETWORK_MODE: 'proxy', ANALYTICS_TRUSTED_PROXIES: '10.0.0.0/24', ANALYTICS_EXCLUDED_IPS: '203.0.113.0/24' };
+  assert.equal(analyticsAddressExcluded(request('203.0.113.5'), '10.0.0.3', proxied), true);
+  assert.equal(analyticsAddressExcluded(request('203.0.113.5, 198.51.100.7'), '10.0.0.3', proxied), false);
+  assert.equal(analyticsAddressExcluded(request('203.0.113.5'), '192.0.2.9', proxied), false, 'an untrusted proxy peer resolves no address');
+  assert.equal(analyticsAddressExcluded(request('garbage, 203.0.113.5'), '10.0.0.3', proxied), false, 'a malformed chain resolves no address, so a client behind an appending edge can opt itself back in but never exclude anyone');
+  const invalid = [
+    { ANALYTICS_EXCLUDED_IPS: '203.0.113.0/24' }, { ANALYTICS_NETWORK_MODE: 'off', ANALYTICS_EXCLUDED_IPS: ' 203.0.113.5 ' },
+    ...['secret-sentinel', '10.0.0.1,,10.0.0.2', '10.0.0.0/33', '2001:db8::/129', '10.0.0.1/-1', '10.0.0.0/01', '::ffff:10.0.0.1/24', 'fe80::1%eth0', '10.0.0.0/24/1', '192.0.2.1:80', '[2001:db8::1]', '"192.0.2.1"', 'example.test',
+      Array(33).fill('192.0.2.1').join(','), ' '.repeat(4097)].map(ANALYTICS_EXCLUDED_IPS => ({ ANALYTICS_NETWORK_MODE: 'direct', ANALYTICS_EXCLUDED_IPS })),
+    Object.defineProperty({ ANALYTICS_NETWORK_MODE: 'direct' }, 'ANALYTICS_EXCLUDED_IPS', { get: () => '192.0.2.1', enumerable: true }),
+  ];
+  for (const env of invalid) {
+    assert.throws(() => validateAnalyticsNetworkConfig(env), (error: unknown) => error instanceof Error && 'code' in error && error.code === 'ANALYTICS_NETWORK_CONFIG' && error.message === 'Invalid analytics network configuration.' && Object.keys(error).join() === 'code' && error.cause === undefined);
+    assert.throws(() => analyticsAddressExcluded(request(), '192.0.2.1', env));
+  }
+  assert.equal(analyticsAddressExcluded(request(), '192.0.2.1', Object.assign(Object.create({ ANALYTICS_EXCLUDED_IPS: '192.0.2.1' }), direct)), false, 'an inherited list is ignored');
+  assert.doesNotThrow(() => validateAnalyticsNetworkConfig({ ANALYTICS_NETWORK_MODE: 'direct', ANALYTICS_EXCLUDED_IPS: Array(32).fill('192.0.2.1').join(',') }));
+  assert.doesNotThrow(() => validateAnalyticsNetworkConfig({ ANALYTICS_NETWORK_MODE: 'off', ANALYTICS_EXCLUDED_IPS: '  ' }));
 });
 
 test('inherited or accessor metadata cannot invent transport or enable a mode', () => {

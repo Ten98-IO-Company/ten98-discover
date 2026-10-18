@@ -10,7 +10,7 @@ import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geograp
 import {analyticsDimensions,analyticsSelectionFields,type AnalyticsDimension,type AnalyticsDimensionComparison,type AnalyticsDimensionMetrics,type AnalyticsDimensionRow} from '../lib/analytics-dimensions.ts';
 import {parseAdvancedPredicates,type AdvancedPredicates} from './advanced-predicate-input.ts';
 import {advancedPredicateSql} from './advanced-predicates.ts';
-import {analyticsDimensionValueSql,analyticsCustomVisitsSql} from './analytics-dimensions.ts';
+import {analyticsDimensionValueSql,analyticsCustomVisitsSql,selfReferralSql} from './analytics-dimensions.ts';
 import {serializeGeographyKey,type GeoField} from '../lib/analytics-geography.ts';
 
 export const analyticsSummarySql={
@@ -158,6 +158,11 @@ export async function projectAnalytics(projectId: string, userId: string, params
     ), pages AS (
       SELECT path,count(*) AS views FROM observations WHERE event_name='page_view'
       GROUP BY path ORDER BY views DESC,path ASC LIMIT 20
+    ), referrers AS (
+      SELECT h.host,count(*) AS views,CASE WHEN count(o.visitor_id)>0 THEN count(DISTINCT o.visitor_id) END AS visitors
+      FROM observations o CROSS JOIN LATERAL (SELECT o.dimensions->>'referrerHost' AS host) h
+      WHERE o.event_name='page_view' AND jsonb_typeof(o.dimensions->'referrerHost')='string' AND length(h.host) BETWEEN 1 AND 2048 AND NOT ${selfReferralSql('o')}
+      GROUP BY h.host ORDER BY visitors DESC NULLS LAST,views DESC,h.host COLLATE "C" ASC LIMIT 20
     ), names AS (
       SELECT event_name,count(*) AS total FROM observations WHERE event_name<>'page_view'
       GROUP BY event_name ORDER BY total DESC,event_name ASC LIMIT 20
@@ -196,6 +201,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
         'pageViews',COALESCE(b.views,0),'customEvents',COALESCE(b.custom,0)) ORDER BY c.day)
         FROM calendar c LEFT JOIN buckets b ON b.day=c.day),
       'pages',COALESCE((SELECT json_agg(json_build_object('path',path,'pageViews',views) ORDER BY views DESC,path ASC) FROM pages),'[]'::json),
+      'referrers',COALESCE((SELECT json_agg(json_build_object('host',host,'pageViews',views,'visitors',visitors) ORDER BY visitors DESC NULLS LAST,views DESC,host COLLATE "C" ASC) FROM referrers),'[]'::json),
       'events',COALESCE((SELECT json_agg(json_build_object('name',event_name,'count',total) ORDER BY total DESC,event_name ASC) FROM names),'[]'::json),
       'environment',json_build_object('version',$8::text,'filters',$7::jsonb,
         'browsers',COALESCE((SELECT json_agg(row ORDER BY visitors DESC NULLS LAST,pageviews DESC,value COLLATE "C" ASC NULLS LAST) FROM environment_rows WHERE field='browser'),'[]'::json),

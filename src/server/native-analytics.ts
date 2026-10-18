@@ -6,7 +6,7 @@ import { FoundationError } from './auth.ts';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { normalizeDimensions, normalizeProperties } from './analytics-input.ts';
-import { resolveAnalyticsNetwork } from './analytics-network.ts';
+import { analyticsAddressExcluded, resolveAnalyticsNetwork } from './analytics-network.ts';
 import { eventPath, InputError } from './validation.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import {recordIdentityLink} from './identity-links.ts';
@@ -99,7 +99,7 @@ export async function saveAnalyticsSettings(projectId: string, userId: string, r
 export type Observation = { eventId: string; name: string; url: string; properties?: unknown; dimensions?: unknown; context?: string; consent?: { analytics: true; epoch: string; replay?:true }; collection?:{mode:'cookieless';epoch:string} };
 // Caller holds the project publication gate. Read policy in a fresh statement
 // after waiting so collection and identify share the same current-consent rules.
-export async function nativeCollectionPolicy(client:PoolClient,request:Request,siteKey:string,input:Pick<Observation,'url'|'consent'|'collection'>,operation:'event'|'identify'|'replay'|'heatmap'){
+export async function nativeCollectionPolicy(client:PoolClient,request:Request,siteKey:string,input:Pick<Observation,'url'|'consent'|'collection'>,operation:'event'|'identify'|'replay'|'heatmap',peerAddress?:string){
   const result=await client.query<Project>(`SELECT p.*,r.consent_epoch AS destination_epoch FROM project p
     LEFT JOIN tracking_state s ON s.project_id=p.id AND s.environment='live'
     LEFT JOIN tracking_revision r ON r.id=s.active_revision AND r.project_id=p.id AND r.environment=s.environment
@@ -110,7 +110,7 @@ export async function nativeCollectionPolicy(client:PoolClient,request:Request,s
   // ponytail: conservative named-bot heuristic; use a reviewed maintained detector
   // when broader bot classification has measured fixtures and license approval.
   const excluded=!settings.enabled||analyticsPathExcluded(path,settings.excludedPaths)||request.headers.get('dnt')==='1'||request.headers.get('sec-gpc')==='1'||
-    (settings.excludeBots&&/bot\b|crawler|spider|headless|slurp/i.test(userAgent));
+    (settings.excludeBots&&/bot\b|crawler|spider|headless|slurp/i.test(userAgent))||analyticsAddressExcluded(request,peerAddress);
   const epoch=trackingConsentEpoch(project.analytics_epoch,project.destination_epoch);
   const basis=input.consent?.analytics===true&&input.consent.epoch===epoch&&!input.collection&&(operation!=='replay'||input.consent.replay===true)?'consent' as const:
     operation==='event'&&!input.consent&&input.collection?.mode==='cookieless'&&input.collection.epoch===epoch&&settings.collectionMode==='cookieless'?'cookieless' as const:null;
@@ -148,7 +148,7 @@ export async function collectNative(request: Request, siteKey: string, input: Ob
       await client.query('SELECT w.id FROM workspace w JOIN project p ON p.workspace_id=w.id WHERE p.public_key=$1 FOR SHARE OF w',[siteKey]);
       await client.query('SELECT id FROM project WHERE public_key=$1 FOR UPDATE',[siteKey]);
     }else await client.query('SELECT id FROM project WHERE public_key=$1 FOR SHARE', [siteKey]);
-    const {project,userAgent:ua,reason,basis}=await nativeCollectionPolicy(client,request,siteKey,input,'event');
+    const {project,userAgent:ua,reason,basis}=await nativeCollectionPolicy(client,request,siteKey,input,'event',peerAddress);
     if(reason){await client.query('COMMIT');return {accepted:false,reason};}
     // Preserve one database acceptance instant through the event/link fence;
     // Date is used only for monthly key/context derivation, never the fence.

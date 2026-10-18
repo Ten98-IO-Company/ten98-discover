@@ -27,6 +27,10 @@ test('strict raw scopes preserve valid literals, typed locations and explicit mi
 test('privacy refusals and fixed GET/HEAD response bytes do not claim consent or email opens',async()=>{
  const refusedHeaders:Record<string,string>[]=[{dnt:'1'},{'sec-gpc':'1'},{purpose:'prefetch'},{'sec-purpose':'prefetch;prerender'},{'user-agent':'Example crawler'}];for(const headers of refusedHeaders)assert.equal(trackedRequestRefused(new Request('https://app.example.com',{headers}),true),true);
  assert.equal(trackedRequestRefused(new Request('https://app.example.com',{'headers':{'user-agent':'Example browser'}}),true),false);
+ const names=['ANALYTICS_NETWORK_MODE','ANALYTICS_EXCLUDED_IPS'] as const,saved=names.map(name=>process.env[name]);
+ try{process.env.ANALYTICS_NETWORK_MODE='direct';process.env.ANALYTICS_EXCLUDED_IPS='203.0.113.0/24';
+  assert.equal(trackedRequestRefused(new Request('https://app.example.com'),false,'203.0.113.9'),true);assert.equal(trackedRequestRefused(new Request('https://app.example.com'),false,'198.51.100.7'),false);assert.equal(trackedRequestRefused(new Request('https://app.example.com'),false),false,'A plain request has no peer and is never excluded.');
+ }finally{names.forEach((name,index)=>{if(saved[index]===undefined)delete process.env[name];else process.env[name]=saved[index];});}
  const pixel=trackedHttpResponse('pixel',null),body=Buffer.from(await pixel.arrayBuffer());assert.deepEqual(body,trackedPixelBytes);assert.equal(body.toString('ascii',0,6),'GIF89a');assert.equal(body.readUInt16LE(6),1);assert.equal(body.readUInt16LE(8),1);assert.equal(pixel.headers.get('cache-control'),'no-store');assert.equal(pixel.headers.has('set-cookie'),false);assert.equal(pixel.headers.get('cross-origin-resource-policy'),'cross-origin');
  assert.equal((await trackedHttpResponse('pixel',null,true).arrayBuffer()).byteLength,0);const link=trackedHttpResponse('link','https://example.com/saved');assert.equal(link.status,302);assert.equal(link.headers.get('location'),'https://example.com/saved');assert.equal(await link.text(),'');assert.equal(link.headers.get('referrer-policy'),'no-referrer');
 });

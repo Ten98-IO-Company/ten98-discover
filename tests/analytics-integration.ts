@@ -42,6 +42,7 @@ export async function runAnalyticsChecks(options: { baseUrl: string; appUrl: str
     { date: '2024-03-01', pageViews: 2, customEvents: 2, coverage: 'complete' },
   ]);
   assert.deepEqual(report.data.pages, [{ path: '/alpha', pageViews: 2 }, { path: '/beta', pageViews: 1 }]);
+  assert.deepEqual(report.data.referrers, []);
   assert.deepEqual(report.data.events, [{ name: 'signup', count: 2 }, { name: 'purchase', count: 1 }]);
   assert.equal(new Date(report.data.lastReceivedAt).toISOString(), '2024-03-01T23:59:59.999Z');
   const empty = await request(`/api/projects/${project.id}/analytics?from=2024-02-29&to=2024-02-29`);
@@ -49,6 +50,7 @@ export async function runAnalyticsChecks(options: { baseUrl: string; appUrl: str
   assert.equal(empty.data.coverage.status, 'complete');
   assert.deepEqual(empty.data.totals, { pageViews: 0, customEvents: 0 });
   assert.deepEqual(empty.data.pages, []);
+  assert.deepEqual(empty.data.referrers, []);
   assert.equal(empty.data.lastReceivedAt, null);
   assert.equal((await request(`/api/projects/${project.id}/analytics?from=2026-02-29&to=2026-03-01`)).status, 400);
   assert.equal((await request(`/api/projects/${options.foreignProjectId}/analytics`)).status, 404);

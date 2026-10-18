@@ -42,3 +42,19 @@ test('one current policy authorizes basic events only; identify and privacy rema
   project.analytics_settings={...settings,collectionMode:'consent-first'};assert.equal((await nativeCollectionPolicy(client,request(),id,basic,'event')).reason,'consent_required');
   project.analytics_settings={...settings,enabled:false};assert.equal((await nativeCollectionPolicy(client,request(),id,basic,'event')).reason,'collection_disabled');
 });
+
+test('an installation-excluded network address disables every browser operation even with a full current grant',async()=>{
+  const id='00000000-0000-4000-8000-000000000001',epoch=trackingConsentEpoch(id,null),origin='https://site.example';
+  const settings={enabled:true,consentMode:'builtin',collectionMode:'cookieless',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:[]};
+  const project={id,origin,analytics_settings:settings,analytics_epoch:id,destination_epoch:null};
+  const client={async query(){return {rowCount:1,rows:[project]};}} as unknown as PoolClient;
+  const request=()=>new Request(origin,{headers:{origin,'user-agent':'Fixture browser'}});
+  const names=['ANALYTICS_NETWORK_MODE','ANALYTICS_EXCLUDED_IPS'] as const,saved=names.map(name=>process.env[name]);
+  try{
+    process.env.ANALYTICS_NETWORK_MODE='direct';process.env.ANALYTICS_EXCLUDED_IPS='203.0.113.0/24';
+    for(const operation of ['event','identify','replay','heatmap'] as const)assert.equal((await nativeCollectionPolicy(client,request(),id,{url:origin+'/',consent:{analytics:true,epoch,replay:true}},operation,'203.0.113.9')).reason,'collection_disabled',operation);
+    const basic={url:origin+'/',collection:{mode:'cookieless' as const,epoch}};
+    assert.equal((await nativeCollectionPolicy(client,request(),id,basic,'event','203.0.113.9')).reason,'collection_disabled');
+    for(const peer of ['198.51.100.7',undefined])assert.equal((await nativeCollectionPolicy(client,request(),id,basic,'event',peer)).basis,'cookieless',String(peer));
+  }finally{names.forEach((name,index)=>{if(saved[index]===undefined)delete process.env[name];else process.env[name]=saved[index];});}
+});

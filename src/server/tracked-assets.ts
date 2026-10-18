@@ -12,7 +12,7 @@ import {analyticsCalendarSql} from './analytics-scope.ts';
 import {geographyProjectionSql,geographyFilterSql,geographyKeySql} from './geography-sql.ts';
 import {retentionCoverage} from './retention.ts';
 import {analyticsIdentity} from './native-analytics.ts';
-import {extractAnalyticsPeer,resolveAnalyticsNetwork} from './analytics-network.ts';
+import {analyticsAddressExcluded,extractAnalyticsPeer,resolveAnalyticsNetwork} from './analytics-network.ts';
 import {analyticsEnvironment} from './analytics-environment.ts';
 import {collectGeography} from './analytics-geography.ts';
 import {normalizeDimensions} from './analytics-input.ts';
@@ -143,7 +143,7 @@ export async function readTrackedAssetShare(token:string){
 
 export const trackedPixelBytes=Buffer.from('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw','base64');
 export function trackedHttpResponse(kind:'link'|'pixel',destination:string|null,head=false){return new Response(head||kind==='link'?null:new Uint8Array(trackedPixelBytes),{status:kind==='link'?302:200,headers:{...headers,...kind==='link'?{location:destination!,'content-length':'0'}:{'content-type':'image/gif','content-length':String(trackedPixelBytes.length),'cross-origin-resource-policy':'cross-origin'}}});}
-export function trackedRequestRefused(request:Request,excludeBots:boolean){const ua=request.headers.get('user-agent')??'';return request.headers.get('dnt')==='1'||request.headers.get('sec-gpc')==='1'||/prefetch|prerender/i.test([request.headers.get('purpose'),request.headers.get('sec-purpose')].join(' '))||excludeBots&&/bot\b|crawler|spider|headless|slurp/i.test(ua);}
+export function trackedRequestRefused(request:Request,excludeBots:boolean,peerAddress=extractAnalyticsPeer(request)){const ua=request.headers.get('user-agent')??'';return request.headers.get('dnt')==='1'||request.headers.get('sec-gpc')==='1'||/prefetch|prerender/i.test([request.headers.get('purpose'),request.headers.get('sec-purpose')].join(' '))||excludeBots&&/bot\b|crawler|spider|headless|slurp/i.test(ua)||analyticsAddressExcluded(request,peerAddress);}
 export async function collectTrackedAsset(request:Request,kind:'link'|'pixel',publicKey:string,limit:Limit){
  const key=parse(trackedUuid,publicKey),client=await getDatabase().pool.connect();
  try{await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');await client.query("SET LOCAL statement_timeout='1s';SET LOCAL lock_timeout='250ms'");const target=(await client.query<{workspace_id:string}>('SELECT workspace_id FROM tracked_asset WHERE public_key=$1 AND kind=$2',[key,kind])).rows[0];if(!target)throw missing();
