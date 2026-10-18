@@ -326,9 +326,10 @@ function EnvironmentCard({data,busy,field,onFieldChange,onFilter,periodLabel}:{d
   </section>;
 }
 
-function DailyChart({ daily }: { daily: Daily[] }) {
+export function DailyChart({ daily, metrics = ['pageViews', 'customEvents'] }: { daily: Daily[]; metrics?: readonly ('pageViews' | 'customEvents')[] }) {
   if (daily.length === 0) return <p className="dim">No daily breakdown available for this range.</p>;
-  const max = Math.max(1, ...daily.flatMap((d) => [d.pageViews ?? 0, d.customEvents ?? 0]));
+  const pv = metrics.includes('pageViews'), ce = metrics.includes('customEvents');
+  const max = Math.max(1, ...daily.flatMap((d) => [pv ? d.pageViews ?? 0 : 0, ce ? d.customEvents ?? 0 : 0]));
   const slot = 12;
   const height = 160;
   const base = 170;
@@ -342,7 +343,7 @@ function DailyChart({ daily }: { daily: Daily[] }) {
         viewBox={`0 0 ${width} 180`}
         preserveAspectRatio="none"
         role="img"
-        aria-label={`Bar chart of daily page views and custom events in UTC, from ${first} to ${last}. Full numbers in the daily data table below.`}
+        aria-label={`Bar chart of daily ${[pv && 'page views', ce && 'custom events'].filter(Boolean).join(' and ')} in UTC, from ${first} to ${last}. Full numbers in the daily data table below.`}
       >
         {daily.map((d, i) => {
           if (d.coverage === 'unavailable') return <rect key={d.date} x={i * slot + 1} y={10} width={10} height={height} fill="currentColor" opacity={0.12}><title>{d.date}: unavailable after retention</title></rect>;
@@ -351,12 +352,12 @@ function DailyChart({ daily }: { daily: Daily[] }) {
           const x = i * slot;
           return (
             <g key={d.date}>
-              <rect className="analytics-bar-pv" x={x + 1} y={base - pvH} width={4.5} height={pvH}>
+              {pv && <rect className="analytics-bar-pv" x={x + 1} y={base - pvH} width={4.5} height={pvH}>
                 <title>{`${d.date}: ${d.pageViews} page views${d.coverage === 'partial' ? ' (partial day)' : ''}`}</title>
-              </rect>
-              <rect className="analytics-bar-ce" x={x + 6.5} y={base - ceH} width={4.5} height={ceH}>
+              </rect>}
+              {ce && <rect className="analytics-bar-ce" x={x + 6.5} y={base - ceH} width={4.5} height={ceH}>
                 <title>{`${d.date}: ${d.customEvents} custom events${d.coverage === 'partial' ? ' (partial day)' : ''}`}</title>
-              </rect>
+              </rect>}
             </g>
           );
         })}
@@ -367,12 +368,12 @@ function DailyChart({ daily }: { daily: Daily[] }) {
         <span>{last}</span>
       </div>
       <p className="analytics-legend">
-        <span className="analytics-key">
+        {pv && <span className="analytics-key">
           <span className="analytics-swatch analytics-swatch-pv" aria-hidden="true" /> Page views
-        </span>
-        <span className="analytics-key">
+        </span>}
+        {ce && <span className="analytics-key">
           <span className="analytics-swatch analytics-swatch-ce" aria-hidden="true" /> Custom events
-        </span>
+        </span>}
       </p>
       {daily.some(day => day.coverage !== 'complete') && <p className="hint">Shaded days are unavailable after retention. Partial days include only the retained portion; see the daily table.</p>}
     </>

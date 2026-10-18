@@ -274,6 +274,7 @@ try {
   for (const tag of scriptTags) assert.ok(tag.includes(`nonce="${landingNonce}"`), `${stage}: script tag without the header nonce: ${tag}`);
   assert.notEqual(expectDocumentHeaders('/', (await document('/')).response), landingNonce, `${stage}: the nonce must change on every request`);
   expectDocumentHeaders('/share/boards/<unknown>', (await document(`/share/boards/${randomUUID()}`)).response);
+  expectDocumentHeaders('/share/websites/<unknown>', (await document(`/share/websites/${randomUUID()}`)).response);
   expectDocumentHeaders('/nope', (await document('/nope')).response);
   const tracker = await document('/tracker.js');
   assert.equal(tracker.response.status, 200, `${stage}: GET /tracker.js answered ${tracker.response.status}`);

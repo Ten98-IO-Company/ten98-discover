@@ -1,8 +1,10 @@
 import {useEffect,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
-import {boardLimits,decodePublicBoardManifest,decodePublicBoardCard,parseHostedBoardShare,type PublicBoardCard} from '../lib/boards';
+import {boardLimits,decodePublicBoardManifest,decodePublicBoardCard,parseHostedBoardShare,parseHostedWebsiteShare,type PublicBoardCard} from '../lib/boards';
+import {decodePublicWebsiteShare,websiteShareLimits,type PublicWebsiteShare} from '../lib/website-shares';
 import {serializeGeographyKey,type GeoCountryKey} from '../lib/analytics-geography';
 import {Stats,Coverage,ActivityView,ScopeFields,scopeValue,rowStyle,cardLabel,n,atomLabel} from './BoardsPanel';
-import {CountryMap} from './GeographyCard';
+import {CountryMap,geographyLabel} from './GeographyCard';
+import {DailyChart} from './AnalyticsPanel';
 import {GeographyAttribution} from './GeographyAttribution';
 import {PropertyShares} from './ExplorerPanel';
 import {MinuteChart} from './RealtimePanel';
@@ -44,28 +46,30 @@ function PublicCard({value}:{value:PublicBoardCard}){
  return <>{retention}{body}{'evidenceIncomplete'in value.data&&value.data.evidenceIncomplete&&<p className="banner">Revenue evidence is incomplete. Missing observations can change attribution and totals; these are not lower bounds.</p>}</>;
 }
 class ShareReadError extends Error{constructor(readonly status=0){super(unavailable);}}
-async function request(path:string,token:string,signal:AbortSignal,body?:unknown):Promise<unknown>{
+async function request(path:string,token:string,signal:AbortSignal,body?:unknown,header='X-Ten98-Board-Share'):Promise<unknown>{
  const active=AbortSignal.any([signal,AbortSignal.timeout(25000)]);let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
- try{const response=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:active,headers:{'X-Ten98-Board-Share':token,...body===undefined?{}:{'Content-Type':'application/json'}},...body===undefined?{}:{body:JSON.stringify(body)}});
+ try{const response=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:active,headers:{[header]:token,...body===undefined?{}:{'Content-Type':'application/json'}},...body===undefined?{}:{body:JSON.stringify(body)}});
  if(!response.ok){await response.body?.cancel();throw new ShareReadError(response.status);}if(!response.body||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw new ShareReadError();
  reader=response.body.getReader();const decoder=new TextDecoder('utf-8',{fatal:true});let text='',bytes=0;for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.length;if(bytes>boardLimits.responseBytes)throw new ShareReadError();text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();return JSON.parse(text);
  }finally{await reader?.cancel().catch(()=>{});}
 }
 const fragmentValue=(value:string)=>value.startsWith('#')?value.slice(1):value;
 type ShareEntryCapture={owner:string;seenFragment:string;capturedFragment:string|null;rawFragment:string|null;scrubPending:boolean;version:number};
-export function SharedBoardPanel({path,search,fragment,entry,historyState}:{path:string;search:string;fragment:string;entry:string;historyState:object}){
+type ShareKind='boards'|'websites';
+const entryCopy={boards:{heading:'Shared board',loading:'Loading shared board…',malformed:'No board was requested.',parse:parseHostedBoardShare},websites:{heading:'Shared website',loading:'Loading shared website…',malformed:'No website data was requested.',parse:parseHostedWebsiteShare}} as const;
+export function SharedBoardPanel({kind='boards',path,search,fragment,entry,historyState}:{kind?:ShareKind;path:string;search:string;fragment:string;entry:string;historyState:object}){
  const held=useRef<ShareEntryCapture|null>(null),owner=JSON.stringify([entry,path,search]),seen=fragmentValue(fragment);
  let capture=held.current;
  if(!capture||capture.owner!==owner||capture.seenFragment!==seen&&!(capture.scrubPending&&seen==='')){capture={owner,seenFragment:seen,capturedFragment:null,rawFragment:null,scrubPending:false,version:(capture?.version??0)+1};held.current=capture;}
  else if(capture.seenFragment!==seen){capture.seenFragment=seen;capture.scrubPending=false;}
  const owned=capture,currentEntry=()=>held.current===owned&&window.location.pathname===path&&window.location.search===search&&owned.rawFragment!==null&&window.location.hash===owned.rawFragment;
  const captureFragment=()=>{if(held.current!==owned||window.location.pathname!==path||window.location.search!==search)return undefined;if(owned.capturedFragment===null){owned.capturedFragment=window.location.hash;owned.rawFragment=owned.capturedFragment;}return currentEntry()?owned.capturedFragment:undefined;};
- return <SharedEntry key={owned.version} path={path} search={search} historyState={historyState} captureFragment={captureFragment} currentEntry={currentEntry} beforeScrub={()=>{if(held.current===owned){owned.scrubPending=true;owned.rawFragment='';}}}/>;
+ return <SharedEntry key={owned.version} kind={kind} path={path} search={search} historyState={historyState} captureFragment={captureFragment} currentEntry={currentEntry} beforeScrub={()=>{if(held.current===owned){owned.scrubPending=true;owned.rawFragment='';}}}/>;
 }
-function SharedEntry({path,search,historyState,captureFragment,currentEntry,beforeScrub}:{path:string;search:string;historyState:object;captureFragment:()=>string|undefined;currentEntry:()=>boolean;beforeScrub:()=>void}){
- const [link,setLink]=useState<ReturnType<typeof parseHostedBoardShare>|undefined>(undefined);
- useEffect(()=>{const rawFragment=captureFragment();if(rawFragment===undefined)return;const parsed=parseHostedBoardShare(path,search,rawFragment);beforeScrub();if(rawFragment)window.history.replaceState(window.history.state??historyState,'',window.location.pathname+window.location.search);if(currentEntry())setLink(parsed);},[]);
- return link===undefined?<main className="boards-panel tracked-shared stack"><h1>Shared board</h1><p role="status">Loading shared board…</p></main>:link?<SharedSession link={link} currentEntry={currentEntry}/>:<main className="boards-panel tracked-shared stack"><h1>Shared board</h1><p role="alert">This link is incomplete or malformed. Open the original link from its owner. No board was requested.</p></main>;
+function SharedEntry({kind,path,search,historyState,captureFragment,currentEntry,beforeScrub}:{kind:ShareKind;path:string;search:string;historyState:object;captureFragment:()=>string|undefined;currentEntry:()=>boolean;beforeScrub:()=>void}){
+ const [link,setLink]=useState<ReturnType<typeof parseHostedBoardShare>|undefined>(undefined),copy=entryCopy[kind];
+ useEffect(()=>{const rawFragment=captureFragment();if(rawFragment===undefined)return;const parsed=copy.parse(path,search,rawFragment);beforeScrub();if(rawFragment)window.history.replaceState(window.history.state??historyState,'',window.location.pathname+window.location.search);if(currentEntry())setLink(parsed);},[]);
+ return link===undefined?<main className="boards-panel tracked-shared stack"><h1>{copy.heading}</h1><p role="status">{copy.loading}</p></main>:link?kind==='websites'?<SharedWebsiteSession link={link} currentEntry={currentEntry}/>:<SharedSession link={link} currentEntry={currentEntry}/>:<main className="boards-panel tracked-shared stack"><h1>{copy.heading}</h1><p role="alert">This link is incomplete or malformed. Open the original link from its owner. {copy.malformed}</p></main>;
 }
 function SharedSession({link,currentEntry}:{link:NonNullable<ReturnType<typeof parseHostedBoardShare>>;currentEntry:()=>boolean}){
  const [manifest,setManifest]=useState<Manifest|null>(null),[results,setResults]=useState<Record<string,PublicBoardCard>>({}),[error,setError]=useState(''),[busy,setBusy]=useState(false),[scope,setScope]=useState(''),[draft,setDraft]=useState(''),[filterError,setFilterError]=useState('');
@@ -88,4 +92,64 @@ function SharedSession({link,currentEntry}:{link:NonNullable<ReturnType<typeof p
  function apply(){try{const next=scopeValue(draft);setFilterError('');void refresh(next);}catch{setFilterError('Use valid dates, a named time zone and supported exact filters. Approved boundaries are checked by the server.');}}
  const params=new URLSearchParams(scope);
  return <main className="boards-panel tracked-shared stack" data-theme={manifest?.theme??'light'}><h1>Shared board</h1><div><button className="btn" disabled={busy||terminal.current} onClick={()=>void refresh()}>Refresh shared board</button></div>{busy&&<p role="status">Loading approved card data…</p>}{error&&<p role="alert" className="alert">{error}</p>}{manifest&&<><h2><bdi>{manifest.label}</bdi></h2><p>Approved board revision {manifest.boardRevision} · share revision {manifest.grantRevision} · expires <time>{manifest.expiresAt}</time>.</p><p>Historical scope: {params.get('from')} to {params.get('to')} · {params.get('timeZone')}. Live cards use their own fixed recent window{manifest.ongoingLive?'; ongoing live access is approved':'.'}.</p><details><summary>Approved scope and filters</summary><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{[...new URLSearchParams(manifest.scope)].map(([key,value])=>key+': '+value).join('\n')}</pre></details>{manifest.allowFilter&&<details><summary>Narrow this shared report</summary><ScopeFields value={draft} onChange={setDraft}/><button className="btn" disabled={busy} onClick={apply}>Apply approved filters</button>{filterError&&<p role="alert">{filterError}</p>}<p className="hint">The owner’s dates and fixed filters cannot be widened. Unsupported changes are refused, never silently removed.</p></details>}<section className="stack" aria-label="Shared board cards">{manifest.rows.map(row=><div className={'board-row board-columns-'+row.cards.length} key={row.id} style={rowStyle(row)}>{row.cards.map((card,i)=>card?<section className="card stack board-result" key={card.id} style={{minHeight:row.minHeight}}><h3>{card.title??cardLabel(card.type,card.type==='TextBlock'?null:{kind:card.entityKind})}</h3>{card.description&&<p>{card.description}</p>}{card.type!=='TextBlock'&&<p className="hint"><bdi>{card.entityLabel}</bdi></p>}{results[card.id]?<PublicCard value={results[card.id]}/>:<p role="status">Loading this approved card…</p>}</section>:<div className="card board-empty" aria-hidden="true" key={'empty-'+i}/>)}</div>)}</section></>}<p className="hint">Only the selected cards and approved scope are shared. Access is checked on every read and while this tab is visible. Visitor counts are estimates, not verified people. The secret was removed from the address bar; after reloading, reopen the original link.</p></main>;
+}
+const websiteUnavailable='This shared website is unavailable, revoked, expired or could not be verified.';
+const utcDay=(offsetDays=0)=>new Date(Date.now()+offsetDays*864e5).toISOString().slice(0,10);
+const touch={minHeight:44,maxWidth:'100%'};
+const metric=(value:number|null,unit='')=>value===null?'Unavailable':value.toFixed(1)+unit;
+function SharedWebsiteSession({link,currentEntry}:{link:NonNullable<ReturnType<typeof parseHostedWebsiteShare>>;currentEntry:()=>boolean}){
+ const [data,setData]=useState<PublicWebsiteShare|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[draft,setDraft]=useState(()=>({from:utcDay(-6),to:utcDay()})),[rangeError,setRangeError]=useState('');
+ const mounted=useRef(false),serial=useRef(0),active=useRef<AbortController|null>(null),terminal=useRef(false),paused=useRef(false),range=useRef(draft);
+ const purge=()=>{serial.current++;active.current?.abort();active.current=null;setData(null);setBusy(false);};
+ async function refresh(){
+  if(!mounted.current||!currentEntry()||document.hidden||active.current||terminal.current)return;
+  const ctrl=new AbortController(),generation=++serial.current,applied=range.current;active.current=ctrl;paused.current=false;setBusy(true);setError('');
+  const current=()=>mounted.current&&!ctrl.signal.aborted&&serial.current===generation&&!terminal.current&&currentEntry();
+  try{const decoded=decodePublicWebsiteShare(await request('/api/website-shares/'+link.shareId+'/read',link.token,ctrl.signal,applied,'X-Ten98-Website-Share'),link.shareId,applied);if(!current())return;if(!decoded)throw new ShareReadError();setData(decoded);}
+  catch(cause){if(!current())return;const status=cause instanceof ShareReadError?cause.status:0;if([401,403,404].includes(status))terminal.current=true;paused.current=true;purge();setError(status===400?'Choose a valid UTC date range of 1 to 366 days.':status===429?'This shared website was read too often. Wait a minute, then refresh.':websiteUnavailable);}
+  finally{if(active.current===ctrl){active.current=null;if(current())setBusy(false);}}
+ }
+ useLayoutEffect(()=>{mounted.current=true;return()=>{mounted.current=false;serial.current++;active.current?.abort();};},[]);
+ useEffect(()=>{void refresh();const visible=()=>{if(document.hidden)purge();else if(!paused.current)void refresh();},timer=setInterval(()=>{if(!document.hidden&&!paused.current)void refresh();},websiteShareLimits.refreshMs);document.addEventListener('visibilitychange',visible);return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',visible);};},[]);
+ useEffect(()=>{if(!data)return;let timer:ReturnType<typeof setTimeout>;const expire=()=>{const remaining=Date.parse(data.expiresAt)-Date.now();if(remaining>0){timer=setTimeout(expire,Math.min(remaining,2147483647));return;}terminal.current=true;purge();setError('This shared website has expired. Open a current link from its owner.');};expire();return()=>clearTimeout(timer);},[data]);
+ function apply(){
+  const day=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value)?Date.parse(value+'T00:00:00.000Z'):NaN,days=(day(draft.to)-day(draft.from))/864e5+1;
+  if(!(days>=1&&days<=366)){setRangeError('Choose a start date on or before the end date, 1 to 366 days, in UTC.');return;}
+  setRangeError('');range.current={...draft};active.current?.abort();active.current=null;void refresh();
+ }
+ const d=data,o=d?.overview,e=d?.events,l=d?.locations,environment=(rows:{value:string|null;pageViews:number;visitors:number|null}[])=>rows.map(row=>[<bdi>{row.value??'Not recorded'}</bdi>,n(row.pageViews),n(row.visitors)]);
+ return <main className="boards-panel tracked-shared stack"><h1>Shared website</h1>
+  <form className="row" style={{flexWrap:'wrap',alignItems:'end'}} onSubmit={event=>{event.preventDefault();apply();}}>
+   <label>From (UTC)<input className="input" type="date" required value={draft.from} onChange={event=>setDraft({...draft,from:event.target.value})} style={touch}/></label>
+   <label>To (UTC)<input className="input" type="date" required value={draft.to} onChange={event=>setDraft({...draft,to:event.target.value})} style={touch}/></label>
+   <button className="btn" type="submit" disabled={busy||terminal.current} style={touch}>Show these dates</button>
+   <button className="btn" type="button" disabled={busy||terminal.current} style={touch} onClick={()=>void refresh()}>Refresh shared website</button>
+  </form>
+  {rangeError&&<p role="alert">{rangeError}</p>}{busy&&<p role="status">Loading the shared website…</p>}{error&&<p role="alert" className="alert">{error}</p>}
+  {d&&<><h2><bdi>{d.label}</bdi></h2><p>{d.range.from} to {d.range.to} (UTC) · expires <time dateTime={d.expiresAt}>{d.expiresAt}</time>.</p><Coverage value={d.coverage.status}/>{d.coverage.retainedFrom&&<p className="hint">Retained from <time>{d.coverage.retainedFrom}</time>.</p>}
+   {o&&<section className="card stack" aria-label="Shared overview"><h3>Overview</h3>
+    <Stats values={[{label:'Recorded pageviews',value:n(o.pageViews)},{label:'Estimated visitors',value:n(o.visitors)},{label:'Observed visits',value:n(o.visits)},{label:'Bounce rate',value:metric(o.bounceRate,'%')},{label:'Average observed visit',value:metric(o.averageVisitSeconds,' s')}]}/>
+    <DailyChart daily={o.daily.map(day=>({...day,customEvents:null}))} metrics={['pageViews']}/>
+    <Table name="Daily pageviews" columns={['Date (UTC)','Recorded pageviews']} rows={o.daily.map(day=>[day.date,day.coverage==='unavailable'?'Unavailable':n(day.pageViews)])}/>
+    <Table name="Top pages" columns={['Path','Recorded pageviews']} rows={o.pages.map(row=>[<bdi>{row.path}</bdi>,n(row.pageViews)])}/>
+    <Table name="Top referrers" columns={['Referrer host','Recorded pageviews','Estimated visitors']} rows={o.referrers.map(row=>[<bdi>{row.host}</bdi>,n(row.pageViews),n(row.visitors)])}/>
+    <Table name="Browsers" columns={['Browser','Recorded pageviews','Estimated visitors']} rows={environment(o.browsers)}/>
+    <Table name="Operating systems" columns={['Operating system','Recorded pageviews','Estimated visitors']} rows={environment(o.operatingSystems)}/>
+    <Table name="Devices" columns={['Device','Recorded pageviews','Estimated visitors']} rows={environment(o.devices)}/>
+    {d.coverage.status!=='unavailable'&&<><CountryMap rows={o.countries}/><GeographyAttribution/></>}
+    <Table name="Countries" columns={['Country','Recorded pageviews','Estimated visitors']} rows={o.countries.map(row=>[<bdi>{geographyLabel(row.key)}</bdi>,n(row.pageViews),n(row.visitors)])}/>
+   </section>}
+   {e&&<section className="card stack" aria-label="Shared events"><h3>Events</h3>
+    <Stats values={[{label:'Recorded custom events',value:n(e.customEvents)}]}/>
+    <DailyChart daily={e.daily.map(day=>({...day,pageViews:null}))} metrics={['customEvents']}/>
+    <Table name="Daily custom events" columns={['Date (UTC)','Recorded custom events']} rows={e.daily.map(day=>[day.date,day.coverage==='unavailable'?'Unavailable':n(day.customEvents)])}/>
+    <Table name="Top custom events" columns={['Event name','Recorded events']} rows={e.names.map(row=>[<bdi>{row.name}</bdi>,n(row.count)])}/>
+   </section>}
+   {l&&<section className="card stack" aria-label="Shared locations"><h3>Regions and cities</h3>
+    <Table name="Regions" columns={['Region','Recorded pageviews','Estimated visitors']} rows={l.regions.map(row=>[<bdi>{geographyLabel(row.key,row.regionName)}</bdi>,n(row.pageViews),n(row.visitors)])}/>
+    <Table name="Cities" columns={['City','Recorded pageviews','Estimated visitors']} rows={l.cities.map(row=>[<bdi>{geographyLabel(row.key,row.regionName)}</bdi>,n(row.pageViews),n(row.visitors)])}/>
+    <GeographyAttribution/>
+   </section>}
+  </>}
+  <p className="hint">Only the sections its owner approved are shared, and access is checked again on every read while this tab is visible. Visitor counts are estimates, not verified people. The secret was removed from the address bar; after reloading, reopen the original link.</p></main>;
 }
