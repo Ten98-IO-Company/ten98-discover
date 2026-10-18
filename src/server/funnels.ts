@@ -85,7 +85,7 @@ export async function deleteAnalysis(projectId:unknown,userId:unknown,kind:Analy
   });
 }
 
-export const analysisMethod={version:'ten98-ordered-visitors-v1',unit:'estimated_visitors',filterScope:'all_steps',ordering:'strict_server_receipt_time',window:'adjacent_steps_inclusive_upper',equalTimestamps:'cannot_advance',funnelPath:'activity_at_path',goalPath:'pageviews_only',eventSteps:'custom_events_only',propertyComparison:'typed_case_sensitive_literal'} as const;
+const analysisMethod={version:'ten98-ordered-visitors-v1',unit:'estimated_visitors',filterScope:'all_steps',ordering:'strict_server_receipt_time',window:'adjacent_steps_inclusive_upper',equalTimestamps:'cannot_advance',funnelPath:'activity_at_path',goalPath:'pageviews_only',eventSteps:'custom_events_only',propertyComparison:'typed_case_sensitive_literal'} as const;
 function queryInput(params:URLSearchParams,witness:boolean){
   if(params.toString().length>22000)bad('The analysis query is too large.');
   const allowed=new Set(['revision','from','to','timeZone','propertyKey','propertyType','propertyValue',...explorerFilters,...(witness?['step','cursor']:[])]);

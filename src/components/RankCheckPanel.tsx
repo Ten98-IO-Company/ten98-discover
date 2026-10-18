@@ -23,7 +23,7 @@ const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[0-9a-
 const integer=(v:unknown,min=0,max=2147483647)=>Number.isSafeInteger(v)&&Number(v)>=min&&Number(v)<=max;
 const date=(v:unknown)=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT/.test(v)&&Number.isFinite(Date.parse(v));
 const nullableDate=(v:unknown)=>v===null||date(v);
-const money=(v:unknown):v is string=>typeof v==='string'&&v.length<=24&&/^(?:0|[1-9][0-9]*)\.[0-9]{6}$(?![\s\S])/.test(v);
+const money=(v:unknown):v is string=>typeof v==='string'&&v.length<=24&&/^(?:0|[1-9][0-9]*)\.[0-9]{6}$/.test(v);
 const role=(v:unknown):v is RankRole=>['owner','admin','editor','viewer'].includes(v as string);
 const writer=(v:RankRole|null)=>v!==null&&v!=='viewer';
 const distinct=(rows:Array<{id:string}>)=>new Set(rows.map(r=>r.id.toLowerCase())).size===rows.length;

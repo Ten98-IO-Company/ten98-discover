@@ -75,7 +75,7 @@ async function claim(runId:string,jobId:string,owner:string):Promise<AuditRunRow
  });
 }
 
-function discoveries(run:AuditRunRow,page:Page):Discovery{
+function discoveries(run:AuditRunRow):Discovery{
  return {candidates:[],edges:[],coverage:structuredClone(run.coverage),robotsFailure:null};
 }
 function candidate(discovery:Discovery,run:AuditRunRow,page:Page,raw:string,kind:CrawlDocumentKind,edge:Edge['kind'],nofollow=false,anchor:string|null=null){
@@ -192,7 +192,7 @@ async function dispatch(work:Work,page:Page,intervalMs:number):Promise<Page|null
 
 async function publish(work:Work,run:AuditRunRow,page:Page,download:CrawlDocumentObservation){
  const prepared=await prepareAuditObservation(page.resource_kind==='html'?{kind:'html',url:page.url,download,crawlDepth:page.link_depth,retainBodyText:run.config?.retainBodyText===true}:page.resource_kind==='robots'?{kind:'robots',url:page.url,download,policyOrigin:run.origin!}:{kind:'sitemap',url:page.url,download},work.controller.signal);
- const discovery=discoveries(run,page);
+ const discovery=discoveries(run);
  const redirect=!download.headers.challenge&&download.status!==null&&redirectStatuses.has(download.status);
  const transient=download.status===429||!download.headers.challenge&&([500,502,503,504].includes(download.status??0)||!download.complete&&['dns_error','network_error','timeout','incomplete_body'].includes(download.reason));
  const retry=transient&&page.attempts_started<2;
@@ -238,11 +238,10 @@ async function publish(work:Work,run:AuditRunRow,page:Page,download:CrawlDocumen
   }
   if(evidence!==null&&!retry)discovery.coverage.rawEvidenceRecorded=true;
   if(!retry&&page.resource_kind==='robots'&&!redirect){
-   const absent=!download.headers.challenge&&[404,410].includes(download.status??0);
    const valid=prepared.status==='prepared'&&prepared.kind==='robots'&&prepared.evaluation.policyStatus==='ready'&&download.complete;
-   if(absent||valid){
+   if(robotsAbsent||valid){
     const evaluation=prepared.status==='prepared'&&prepared.kind==='robots'?prepared.evaluation:null;
-    await client.query(`UPDATE site_audit_run SET robots_state=$2,robots_body=$3,robots_digest=$4,robots_fetched_at=$5 WHERE id=$1`,[work.id,absent?'absent':'present',valid&&download.complete?download.body:null,valid?evaluation!.digest:null,at]);
+    await client.query(`UPDATE site_audit_run SET robots_state=$2,robots_body=$3,robots_digest=$4,robots_fetched_at=$5 WHERE id=$1`,[work.id,robotsAbsent?'absent':'present',valid&&download.complete?download.body:null,valid?evaluation!.digest:null,at]);
     if(valid)discovery.coverage.rawEvidenceRecorded=true;
     const interval=Math.max(1000,Math.ceil((evaluation?.crawlDelaySeconds??0)*1000));
     await client.query('UPDATE site_audit_run SET next_request_at=greatest(next_request_at,$2) WHERE id=$1',[work.id,new Date(at.getTime()+interval)]);

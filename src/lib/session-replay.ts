@@ -10,7 +10,6 @@ const consent=z.object({analytics:z.literal(true),replay:z.literal(true),epoch:z
 export const replayBegin=z.object({siteKey:z.uuid(),requestId:z.uuid(),url,consent}).strict();
 export const replayUpload=replayBegin.omit({requestId:true}).extend({token:z.string().min(1).max(4096),sequence:z.number().int().min(0).max(replayLimits.chunks-1),final:z.boolean(),data:z.string().min(1).max(Math.ceil(replayLimits.chunkBytes*4/3))}).strict();
 export type ReplayBegin=z.infer<typeof replayBegin>;
-export type ReplayUpload=z.infer<typeof replayUpload>;
 const data=z.record(z.string(),z.unknown());
 export const replayEvent=z.object({type:z.number().int().min(0).max(4),timestamp:z.number().finite().int().nonnegative().max(8640000000000000),data}).strict().superRefine((v,c)=>{
  if(v.type===4&&!z.object({href:url,width:z.number().int().min(1).max(20000),height:z.number().int().min(1).max(20000)}).strict().safeParse(v.data).success)c.addIssue({code:'custom',message:'Invalid replay viewport metadata.'});

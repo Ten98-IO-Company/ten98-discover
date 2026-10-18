@@ -19,7 +19,7 @@ import { acceptVerifiedOidcInvitation, inspectInvitation } from './teams.ts';
 import { readJson } from './validation.ts';
 
 const origins = z.array(z.string().max(2048)).max(8).default([]);
-export const oidcSettingsInput = z.object({
+const oidcSettingsInput = z.object({
   name: z.string().trim().min(1).max(120),
   issuer: z.string().trim().min(1).max(2048),
   clientId: z.string().trim().min(1).max(512),

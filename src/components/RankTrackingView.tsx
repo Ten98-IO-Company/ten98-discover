@@ -2,8 +2,8 @@ import type * as React from 'react';
 import { RankTrackingFields, type RankTrackingFieldsValue, type RankLocationOption, type RankLanguageOption, type RankLocationOptions, type RankTrackingFieldErrors } from './RankTrackingFields';
 
 export type RankRole = 'owner' | 'admin' | 'editor' | 'viewer';
-export type RankDevices = 'desktop' | 'mobile' | 'both';
-export type RankFilter = 'active' | 'archived' | 'all';
+type RankDevices = 'desktop' | 'mobile' | 'both';
+type RankFilter = 'active' | 'archived' | 'all';
 export type RankTracker = {
   id: string; name: string; domain: string; countryCode: number; countryIso: string; locationCode: number;
   locationName: string; locationType: string; languageCode: string; languageName: string; devices: RankDevices;

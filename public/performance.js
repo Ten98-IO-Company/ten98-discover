@@ -9,11 +9,7 @@ var webVitals=function(t){"use strict";let n=-1;const e=()=>n,i=t=>{addEventList
 var h = window.__ten98FoundationHub;
 if (!h) return;
 h.startPerformance = function (callback) {
-  webVitals.onLCP(callback, {reportAllChanges: true});
-  webVitals.onINP(callback, {reportAllChanges: true});
-  webVitals.onCLS(callback, {reportAllChanges: true});
-  webVitals.onFCP(callback, {reportAllChanges: true});
-  webVitals.onTTFB(callback, {reportAllChanges: true});
+  ['onLCP', 'onINP', 'onCLS', 'onFCP', 'onTTFB'].forEach(function (name) { webVitals[name](callback, {reportAllChanges: true}); });
 };
 h.startPerformance.protocolVersion = 1;
 })();

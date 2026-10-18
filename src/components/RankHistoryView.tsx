@@ -1,7 +1,7 @@
 import type * as React from 'react';
 
 export type RankObservationFilters={device:'both'|'desktop'|'mobile';search:string;pinned:'all'|'true'|'false'};
-export type RankBaselineDisplay={days:1|7|30|90;change:string;source:string;targetAt:string;observedAt:string;position:string};
+type RankBaselineDisplay={days:1|7|30|90;change:string;source:string;targetAt:string;observedAt:string;position:string};
 export type RankLatestDisplay={id:string;keywordId:string;keyword:string;device:string;pinned:boolean;attempt:string;observation:string;coverage:string;observedAt:string;availability:string;baselines:readonly RankBaselineDisplay[]};
 export type RankObservationDisplay={id:string;runId:string;device:string;attemptedAt:string;observedAt:string;retrievedAt:string;outcome:string;position:string;coverage:string;target:string;compatibility:string;scope:string;availability:string;rankingUrl:string|null;diagnostic:string|null};
 export type RankHistoryViewProps={

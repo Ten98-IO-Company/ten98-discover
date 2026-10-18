@@ -8,8 +8,8 @@ export type CitationOwnershipFilter = 'untracked' | 'brand' | 'competitor' | 'am
 export type CitationChangeKind = 'newly_observed' | 'fewer_citations' | 'not_observed_now' | 'annotation_title_changed';
 export type CitationTaskKind = 'brand' | 'existing-competitor' | 'new-competitor' | 'category';
 export type CitationOption = { id: string; label: string };
-export type CitationCountsText = { answers: string; annotations: string; prompts: string };
-export type CitationPager = { label: string; canPrevious: boolean; canNext: boolean };
+type CitationCountsText = { answers: string; annotations: string; prompts: string };
+type CitationPager = { label: string; canPrevious: boolean; canNext: boolean };
 export type CitationFilterDraft = {
   grouping: CitationGrouping; query: string;
   ownership: CitationOwnershipFilter | 'all'; entityId: string;

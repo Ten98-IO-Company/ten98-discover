@@ -281,7 +281,7 @@ export async function handleApi(request: Request): Promise<Response> {
     if (googleResponse) return googleResponse;
     const oidcResponse = await handleOidc(request);
     if (oidcResponse) return oidcResponse;
-    const accountResponse = await handleAccountSecurity(request);
+    const accountResponse = await handleAccountSecurity(request, limit);
     if (accountResponse) return accountResponse;
     if (request.method === 'POST' && ['/api/invitations/inspect', '/api/invitations/accept'].includes(path)) {
       await limit('invitations:public', 60);

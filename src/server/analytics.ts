@@ -5,13 +5,12 @@ import { retentionCoverage } from './retention.ts';
 import {publicAnalyticsSettings} from './native-analytics.ts';
 import {environmentFields,environmentVersion,isEnvironmentFilter,type EnvironmentFilters,type AnalyticsEnvironment} from '../lib/analytics-environment.ts';
 import {deriveAnalyticsComparison,type AnalyticsComparisonMode,type AnalyticsComparison,type AnalyticsPeriodReport,type AnalyticsReport} from '../lib/analytics-comparison.ts';
-import {geographyFields,geographyFiltersValid,geographySearch,type GeographyFilters,type GeographyDetailIntent,type GeographyDetail} from '../lib/analytics-geography.ts';
+import {geographyFields,geographyFiltersValid,geographySearch,type GeographyFilters,type GeographyDetailIntent,type GeographyDetail,serializeGeographyKey,type GeoField} from '../lib/analytics-geography.ts';
 import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geographyReportSql,geographyDetailSql,geographyKeyOrderSql,applyGeographyCoverage} from './geography-sql.ts';
 import {analyticsDimensions,analyticsSelectionFields,type AnalyticsDimension,type AnalyticsDimensionComparison,type AnalyticsDimensionMetrics,type AnalyticsDimensionRow} from '../lib/analytics-dimensions.ts';
 import {parseAdvancedPredicates,type AdvancedPredicates} from './advanced-predicate-input.ts';
 import {advancedPredicateSql} from './advanced-predicates.ts';
 import {analyticsDimensionValueSql,analyticsCustomVisitsSql,selfReferralSql} from './analytics-dimensions.ts';
-import {serializeGeographyKey,type GeoField} from '../lib/analytics-geography.ts';
 
 export const analyticsSummarySql={
  visits:`visits AS (

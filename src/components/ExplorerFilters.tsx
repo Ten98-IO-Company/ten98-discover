@@ -295,4 +295,4 @@ return (<details>
         </details>);
 }
 export {KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls};
-export type {SessionSelection,FilterRow,AdvancedRow,AdvancedDraft,AdvancedIssue,Draft,Definition,SavedFilter,CohortRef};
+export type {SessionSelection,FilterRow,Draft,Definition,SavedFilter,CohortRef};

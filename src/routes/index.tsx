@@ -59,7 +59,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, performanceNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, resolveNavigation, projectView as isProjectView } from '../lib/navigation'
+import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, resolveNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: RouteEntry })

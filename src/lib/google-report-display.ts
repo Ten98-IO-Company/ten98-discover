@@ -53,13 +53,13 @@ const ga4Labels: Record<string, string> = {
 export const googleGa4ColumnLabel = (field: string) => Object.hasOwn(ga4Labels, field) ? ga4Labels[field] : field;
 /** GA4 decimals stay exactly as reported, including fractional key-event credit. */
 export function googleGa4MetricValue(field: string, value: unknown, currency: unknown): string {
-  if (typeof value !== 'string' || value.length > 100 || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$(?![\s\S])/.test(value)) return 'Unavailable';
+  if (typeof value !== 'string' || value.length > 100 || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value)) return 'Unavailable';
   return !['totalRevenue', 'purchaseRevenue', 'itemRevenue'].includes(field) ? value : typeof currency === 'string' && currencies.has(currency) ? `${currency} ${value}` : `${value} (currency unavailable)`;
 }
 
 export const organicOverviewMetrics = ['sessions','activeUsers','engagedSessions','engagementRate','keyEvents','transactions','purchaseRevenue'] as const;
 export function googleDecimalPlain(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 100 || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$(?![\s\S])/.test(value) || !Number.isFinite(Number(value))) return null;
+  if (typeof value !== 'string' || value.length > 100 || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value) || !Number.isFinite(Number(value))) return null;
   const [mantissa, exponent = '0'] = value.toLowerCase().split('e'), shift = Number(exponent);
   if (!Number.isInteger(shift) || Math.abs(shift) > 400) return null;
   const negative = mantissa.startsWith('-'), unsigned = negative ? mantissa.slice(1) : mantissa, [whole, fraction = ''] = unsigned.split('.'), digits = whole + fraction, point = whole.length + shift;

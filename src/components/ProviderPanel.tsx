@@ -42,7 +42,7 @@ interface ProvidersResponse {
   ledger: LedgerEntry[]
 }
 
-export interface ProviderPanelProps {
+interface ProviderPanelProps {
   workspaceId: string
   onUnauthorized: () => void
 }

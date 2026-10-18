@@ -13,7 +13,7 @@ import {parseCitationRedditCommunity,parseCitationSearchQuery} from './citation-
 type Period='current'|'previous';
 export type SpecializedFilters=CitationFilters&{productAttribution:'brand'|'competitor'|'other'|null};
 export type SpecializedNavigation={view:'reddit'|'reddit_pages'|'shopping'|'search'|'gaps'|'prompts'|'evidence';period:Period|null;groupId:string|null;gapPromptId:string|null;evidenceMode:'matching'|'gap_all'|null};
-export const specializedMethods={reddit:'reddit-path-community-v1',googleLabels:'google-retained-link-labels-elmo-v1',productAttribution:'google-product-name-elmo-v1',gaps:'prompt-period-domain-gap-v1'} as const;
+const specializedMethods={reddit:'reddit-path-community-v1',googleLabels:'google-retained-link-labels-elmo-v1',productAttribution:'google-product-name-elmo-v1',gaps:'prompt-period-domain-gap-v1'} as const;
 export type SpecializedGapSummary={status:'ready';evaluatedPrompts:number;promptsWithCompetitor:number;observedCandidates:number;confirmedCandidates:number;matchingCandidates:number}|
  {status:'brand_identity_unavailable';evaluatedPrompts:null;promptsWithCompetitor:null;observedCandidates:null;confirmedCandidates:null;matchingCandidates:null};
 export type SpecializedPeriod={from:string;to:string;open:boolean;coverage:InsightCoverage;eligibleAnswers:number|null;
@@ -39,7 +39,7 @@ export type SpecializedReport={role:ContentProject['role'];filters:SpecializedFi
 
 const periods=['current','previous'] as const,filterKeys=['from','to','timeZone','model','promptId','tag','urlGrouping','query','publisherCategory','pageType','sourceType','ownership','entityId','productAttribution'];
 const navigationKeys=['view','period','groupId','gapPromptId','evidenceMode','cursor'];
-const hex=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/),uuid=z.uuid();
+const hex=z.string().regex(/^[a-f0-9]{64}$/),uuid=z.uuid();
 const bad=()=>new FoundationError(400,'Check the specialized citation filters and try again.');
 const missing=()=>new FoundationError(404,'This citation target is unavailable in the selected report.');
 const changed=()=>new FoundationError(409,'The citation evidence or current context changed. Reload the report.');
@@ -156,7 +156,7 @@ function targetRows(selected:Selected,navigation:SpecializedNavigation):Citation
 }
 const cursorShape=z.object({scope:hex,revision:hex,offset:z.number().int().min(1).max(400000)}).strict();
 function offset(raw:string|null,scope:string,revision:string){if(raw===null)return 0;let value:unknown;
- try{if(!raw||raw.length>512||!/^[A-Za-z0-9_-]+$(?![\s\S])/.test(raw))throw bad();value=JSON.parse(Buffer.from(raw,'base64url').toString('utf8'));}catch{throw bad();}
+ try{if(!raw||raw.length>512||!/^[A-Za-z0-9_-]+$/.test(raw))throw bad();value=JSON.parse(Buffer.from(raw,'base64url').toString('utf8'));}catch{throw bad();}
  const parsed=cursorShape.safeParse(value);if(!parsed.success||parsed.data.scope!==scope)throw bad();if(parsed.data.revision!==revision)throw changed();return parsed.data.offset;}
 export async function getPromptCitationSpecializations(projectId:string,userId:string,params=new URLSearchParams(),signal?:AbortSignal):Promise<SpecializedReport>{
  const input=parse(params),check=deadline(signal);check();return withContentProject(projectId,userId,false,async(client,p)=>{

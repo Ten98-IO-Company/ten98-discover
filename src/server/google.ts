@@ -66,9 +66,8 @@ function appCredentials(app: App) {
   if (!parsed.success) throw new FoundationError(503, 'Google app credentials cannot be opened. Ask the operator to restore the keyring.');
   return parsed.data;
 }
-function appSecret(app: App): string { return appCredentials(app).clientSecret; }
 async function exchange(app: App, params: Record<string, string>, signal?: AbortSignal) {
-  const raw = await googleRequest('https://oauth2.googleapis.com/token', undefined, new URLSearchParams({ client_id: app.client_id, client_secret: appSecret(app), ...params }), signal);
+  const raw = await googleRequest('https://oauth2.googleapis.com/token', undefined, new URLSearchParams({ client_id: app.client_id, client_secret: appCredentials(app).clientSecret, ...params }), signal);
   const data = responseTokens.safeParse(raw);
   if (!data.success) throw new FoundationError(502, 'Google did not return a usable grant. Connect again and grant read access.');
   return data.data;
@@ -110,7 +109,7 @@ export async function getGoogleApp(userId: string) {
   return { configured: !!app, enabled: app?.enabled ?? false, testing: app?.testing ?? true, vaultConfigured: !!credentialKeys(), redirectUri: redirectUri(), operator, revision: app?.revision ?? 0, ...(operator && app ? { clientId: app.client_id } : {}) };
 }
 export async function saveGoogleApp(userId: string, value: unknown) {
-  const data = googleInput(z.object({ revision: z.number().int().nonnegative(), clientId: safeGoogleString(512).regex(/^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$(?![\s\S])/), clientSecret: token, enabled: z.boolean(), testing: z.boolean() }).strict(), value);
+  const data = googleInput(z.object({ revision: z.number().int().nonnegative(), clientId: safeGoogleString(512).regex(/^[A-Za-z0-9-]+\.apps\.googleusercontent\.com$/), clientSecret: token, enabled: z.boolean(), testing: z.boolean() }).strict(), value);
   const client = await getDatabase().pool.connect();
   try {
     await client.query('BEGIN'); await requireInstanceOperator(client, userId);
@@ -214,7 +213,7 @@ export async function listGoogleProperties(projectId: string, userId: string, co
     }
     const query = new URLSearchParams({ pageSize: '50', ...(data.pageToken ? { pageToken: data.pageToken } : {}) });
     const raw = await googleRequest(`https://analyticsadmin.googleapis.com/v1beta/accountSummaries?${query}`, accessToken);
-    const response = providerInput(z.object({ accountSummaries: z.array(z.object({ propertySummaries: z.array(z.object({ property: z.string().regex(/^properties\/[1-9]\d{0,19}$(?![\s\S])/), displayName: safeGoogleString(512) })).max(1000).default([]) })).max(50).default([]), nextPageToken: safeGoogleString(4096).optional() }), raw);
+    const response = providerInput(z.object({ accountSummaries: z.array(z.object({ propertySummaries: z.array(z.object({ property: z.string().regex(/^properties\/[1-9]\d{0,19}$/), displayName: safeGoogleString(512) })).max(1000).default([]) })).max(50).default([]), nextPageToken: safeGoogleString(4096).optional() }), raw);
     return { properties: response.accountSummaries.flatMap(account => account.propertySummaries.map(property => ({ id: property.property, name: property.displayName }))), nextPageToken: response.nextPageToken || null };
   });
 }
@@ -235,9 +234,9 @@ export async function selectGoogleProperty(projectId: string, userId: string, co
       const property = providerInput(z.object({ siteUrl: safeGoogleString(2048), permissionLevel: z.enum(['siteOwner', 'siteFullUser', 'siteRestrictedUser']) }), raw);
       if (property.siteUrl !== data.propertyId) throw new FoundationError(409, 'Google property access could not be confirmed.');
     } else {
-      googleInput(z.string().regex(/^properties\/[1-9]\d{0,19}$(?![\s\S])/), data.propertyId);
+      googleInput(z.string().regex(/^properties\/[1-9]\d{0,19}$/), data.propertyId);
       const raw = await googleRequest(`https://analyticsadmin.googleapis.com/v1beta/${data.propertyId}`, accessToken);
-      const property = providerInput(z.object({ name: z.string(), displayName: safeGoogleString(512), timeZone: safeGoogleString(120).min(1), currencyCode: z.string().regex(/^[A-Z]{3}$(?![\s\S])/) }), raw);
+      const property = providerInput(z.object({ name: z.string(), displayName: safeGoogleString(512), timeZone: safeGoogleString(120).min(1), currencyCode: z.string().regex(/^[A-Z]{3}$/) }), raw);
       if (property.name !== data.propertyId) throw new FoundationError(409, 'Google property access could not be confirmed.');
       name = property.displayName; timeZone = property.timeZone; currency = property.currencyCode;
     }
@@ -272,7 +271,7 @@ export async function disconnectGoogle(projectId: string, userId: string, connec
 
 export async function assertGoogleCredentialsReadable() {
   const app = (await getDatabase().pool.query<App>("SELECT * FROM google_app WHERE id='instance'")).rows[0];
-  if (app) appSecret(app);
+  if (app) appCredentials(app).clientSecret;
   const connections = await getDatabase().pool.query<GoogleConnection>('SELECT * FROM google_connection WHERE encrypted_tokens IS NOT NULL');
   for (const row of connections.rows) tokensInput.parse(decryptCredentials(row.encrypted_tokens, googleConnectionContext(row)));
   const flows = await getDatabase().pool.query('SELECT * FROM google_oauth_flow WHERE expires_at>now()');

@@ -316,16 +316,13 @@ function asSearch(v: unknown): string {
 }
 
 function asTerms(raw: unknown): string[] {
-  const items = asArray(raw, 0, 20);
-  const out: string[] = [];
-  for (const item of items) {
+  return dedupe(asArray(raw, 0, 20).map((item) => {
     const input = asText(item);
     if (input.length < 1 || input.length > 200) bad();
     const term = input.trim().toLowerCase();
     if (term.length < 1 || term.length > 200) bad();
-    out.push(term);
-  }
-  return dedupe(out);
+    return term;
+  }));
 }
 
 const CPC = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,6}))?(?![\s\S])/;

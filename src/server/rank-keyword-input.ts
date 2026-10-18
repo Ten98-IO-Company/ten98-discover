@@ -108,15 +108,7 @@ export function parseRankKeywordAdd(raw: unknown): RankKeywordAdd {
   return guard(() => {
     const rec = asRecord(raw, ADD_KEYS, ['requestId', 'revision', 'keywords']);
     const matchCase = Object.hasOwn(rec, 'matchCase') ? asBoolean(rec.matchCase) : false;
-    const seen = new Set<string>();
-    const keywords: string[] = [];
-    for (const entry of asBoundedList(rec.keywords)) {
-      const keyword = normalizeRankKeyword(entry, matchCase);
-      if (!seen.has(keyword)) {
-        seen.add(keyword);
-        keywords.push(keyword);
-      }
-    }
+    const keywords = [...new Set(asBoundedList(rec.keywords).map((entry) => normalizeRankKeyword(entry, matchCase)))];
     return { requestId: asUuid(rec.requestId), revision: asRevision(rec.revision), keywords, matchCase };
   });
 }
@@ -141,14 +133,5 @@ export function parseRankKeywordPin(raw: unknown): RankKeywordPin {
 }
 
 function asIdList(raw: unknown): string[] {
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const entry of asBoundedList(raw)) {
-    const id = asUuid(entry);
-    if (!seen.has(id)) {
-      seen.add(id);
-      ids.push(id);
-    }
-  }
-  return ids;
+  return [...new Set(asBoundedList(raw).map((entry) => asUuid(entry)))];
 }

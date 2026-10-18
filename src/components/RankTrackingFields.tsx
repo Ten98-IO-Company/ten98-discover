@@ -1,7 +1,7 @@
 import type * as React from 'react';
 
-export type RankDepth = 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90 | 100;
-export type RankPageCap = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+type RankDepth = 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90 | 100;
+type RankPageCap = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 export type RankTrackingFieldsValue = {
   domain: string;

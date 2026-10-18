@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
+import { httpUrl } from './OidcSignIn';
 
 interface PublicProvider { id: string; name: string }
 interface Identity { id: string; issuer: string; subject: string; createdAt: string; providerId: string; providerName: string; enabled: boolean }
@@ -10,18 +11,6 @@ interface Proof { password: string; code?: string; backupCode?: string }
 interface ProofInfo { id: string; purpose: 'test' | 'link' | 'account'; providerId: string; providerName: string; issuer: string; subject: string; email: string | null; emailVerified: boolean; expiresAt: string }
 type Mutation = { signal: AbortSignal; current: () => boolean; fail: (error: unknown, setError: (message: string) => void) => void };
 type Mutate = <T>(fn: (mutation: Mutation) => Promise<T>) => Promise<T | undefined>;
-
-// Only http(s) URLs may be navigated to; plain http is limited to loopback for local tests.
-function httpUrl(s: string): string | null {
-  try {
-    const u = new URL(s);
-    if (u.protocol === 'https:') return u.toString();
-    if (u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]')) return u.toString();
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 function lines(s: string): string[] {
   return s.split('\n').map(x => x.trim()).filter(Boolean);
@@ -35,7 +24,6 @@ export function OidcPanel(props: {userId: string; instanceOperator: boolean; pro
 function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofHandled}: {userId: string; instanceOperator: boolean; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void}) {
   const cb = useRef({onUnauthorized, onProofHandled});
   cb.current = {onUnauthorized, onProofHandled};
-  const unauthorized = () => cb.current.onUnauthorized();
 
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadErr, setLoadErr] = useState('');
@@ -189,15 +177,14 @@ function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofH
           vaultOk={opData?.vaultConfigured === true}
           busy={busy}
           mutate={mutate}
-          unauthorized={unauthorized}
           onDone={() => { cb.current.onProofHandled(); reload(); }}
           onCancel={() => cb.current.onProofHandled()}
           onExpire={() => setProofState('expired')}
         />
       )}
-      <AccountSection providers={publicProviders} identities={identities} hasPassword={hasPassword} busy={busy} mutate={mutate} unauthorized={unauthorized} reload={reload} />
+      <AccountSection providers={publicProviders} identities={identities} hasPassword={hasPassword} busy={busy} mutate={mutate} reload={reload} />
       {instanceOperator && (opData
-        ? <OperatorSection data={opData} busy={busy} mutate={mutate} unauthorized={unauthorized} reload={reload} />
+        ? <OperatorSection data={opData} busy={busy} mutate={mutate} reload={reload} />
         : (
           <section className="card">
             <h2>Identity providers (operator)</h2>
@@ -210,9 +197,9 @@ function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofH
   );
 }
 
-function ProofReview({proof, instanceOperator, vaultOk, busy, mutate, unauthorized, onDone, onCancel, onExpire}: {
+function ProofReview({proof, instanceOperator, vaultOk, busy, mutate, onDone, onCancel, onExpire}: {
   proof: ProofInfo; instanceOperator: boolean; vaultOk: boolean; busy: boolean; mutate: Mutate;
-  unauthorized: () => void; onDone: () => void; onCancel: () => void; onExpire: () => void;
+  onDone: () => void; onCancel: () => void; onExpire: () => void;
 }) {
   const [err, setErr] = useState('');
   const canEnable = proof.purpose === 'test' && instanceOperator;
@@ -265,8 +252,8 @@ function ProofReview({proof, instanceOperator, vaultOk, busy, mutate, unauthoriz
   );
 }
 
-function AccountSection({providers, identities, hasPassword, busy, mutate, unauthorized, reload}: {
-  providers: PublicProvider[]; identities: Identity[]; hasPassword: boolean; busy: boolean; mutate: Mutate; unauthorized: () => void; reload: () => void;
+function AccountSection({providers, identities, hasPassword, busy, mutate, reload}: {
+  providers: PublicProvider[]; identities: Identity[]; hasPassword: boolean; busy: boolean; mutate: Mutate; reload: () => void;
 }) {
   const selId = useId();
   const [err, setErr] = useState('');
@@ -350,8 +337,8 @@ function AccountSection({providers, identities, hasPassword, busy, mutate, unaut
   );
 }
 
-function OperatorSection({data, busy, mutate, unauthorized, reload}: {
-  data: OpData; busy: boolean; mutate: Mutate; unauthorized: () => void; reload: () => void;
+function OperatorSection({data, busy, mutate, reload}: {
+  data: OpData; busy: boolean; mutate: Mutate; reload: () => void;
 }) {
   const fid = useId();
   const [editingId, setEditingId] = useState<string | null>(null);
