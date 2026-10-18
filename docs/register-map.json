@@ -16,6 +16,9 @@
    "operations": [
     "readTeam"
    ],
+   "routes": [
+    "POST /api/workspaces/{workspaceId}/invitations"
+   ],
    "migrations": [
     "0001_foundation",
     "0002_teams",
