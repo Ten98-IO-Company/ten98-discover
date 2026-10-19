@@ -69,14 +69,10 @@ try {
       async function section(name: string) { await navigation(); await page.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click(); }
       async function settings(name: string) {
         await navigation();
-        const target = page.locator('#app-navigation').getByRole('link', { name, exact: true, includeHidden: true });
-        await target.waitFor({ state: 'attached' });
-        for (const disclosure of await target.locator('xpath=ancestor::details').all()) {
-          if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click();
-        }
-        await target.click();
+        await page.locator('#app-navigation').getByRole('link', { name: 'Settings', exact: true }).click();
+        await page.getByRole('navigation', { name: 'Settings sections', exact: true }).getByRole('link', { name, exact: true }).click();
       }
-      await settings('Google app setup');
+      await settings('Google setup');
       assert.equal(await page.getByLabel('Client secret', { exact: true }).inputValue(), '');
       assert.equal(await page.getByLabel(/Callback URI/).inputValue(), `${config.appUrl}/api/google/callback`);
       await section('Google reports');
@@ -90,7 +86,7 @@ try {
       assert.equal(await page.getByRole('alert').filter({ hasText: 'Google authorization returned.' }).count(), 0, 'A successful return must not be announced as an error.');
       assert.equal(new URL(page.url()).hash, '', 'OAuth state/code/target fragment must be cleared from browser history.');
       assert.equal(await page.getByLabel('Workspace', { exact: true }).inputValue(), fixture.workspaceId, 'Callback must select its authorized workspace, not the first membership.');
-      assert.equal(await page.getByRole('navigation', { name: 'Projects', exact: true }).getByRole('link', { name: 'Google imports fixture', exact: true }).getAttribute('aria-current'), 'page');
+      assert.equal(await page.getByLabel('Project', { exact: true }).inputValue(), fixture.projectId, 'Callback must select its authorized project.');
       const connection = page.locator('section').filter({ has: page.getByText('Browser Search Console', { exact: true }) }).last();
       await connection.getByRole('button', { name: 'Load available properties', exact: true }).click();
       await connection.getByRole('radio', { name: /sc-domain:example.test/ }).check();
@@ -236,13 +232,13 @@ try {
       await page.goto('about:blank');
       await page.goto(`${config.appUrl}/#google=connected&google-project=${fixture.projectId}&google-workspace=${fixture.workspaceId}`);
       await Promise.race([started, delay(15000).then(() => { throw new Error('Callback project request did not start.'); })]);
-      await settings('Account security');
+      await settings('Security');
       releaseTarget?.();
       await page.getByRole('heading', { name: 'Account', exact: true }).waitFor();
       await context.unroute(targetPath, holdTarget);
       await delay(150);
       assert.equal(await page.getByRole('heading', { name: 'Google reports', exact: true }).count(), 0, 'Delayed callback project loading must not override newer account navigation.');
-      await settings('Data retention');
+      await settings('Retention');
       await page.getByRole('button',{name:'Preview cleanup',exact:true}).click();
       for(const name of ['Analytics and identities','Imported reports and research','AI answers and other evidence'])await page.getByRole('heading',{name,exact:true}).waitFor();
       const expiryDetails=page.getByText('What stays and how expiry works',{exact:true});
@@ -296,7 +292,7 @@ try {
             await source.getByLabel('Report',{exact:true}).selectOption(report);await source.getByLabel('Start date',{exact:true}).fill('2024-03-01');await source.getByLabel('End date',{exact:true}).fill('2024-03-02');
             const accepted=op.waitForResponse((r:any)=>new URL(r.url()).pathname===`/api/projects/${organic.projectId}/google/connections/${organic.connectionId}/imports`&&r.request().method()==='POST').then(async(r:any)=>{assert.equal(r.status(),202);return r.json();});await source.getByRole('button',{name:'Import report snapshot',exact:true}).click();const receipt=await accepted;await organic.complete(receipt.import.id);await op.getByRole('button',{name:'Refresh status',exact:true}).click();await source.getByLabel('Snapshot',{exact:true}).selectOption(receipt.import.id);await source.locator('.google-snapshot-choice').getByText(/Selected:.*Completed/).waitFor();
             const captured=op.waitForResponse((r:any)=>new URL(r.url()).pathname===`/api/projects/${organic.projectId}/google/imports/${receipt.import.id}`).then(async(r:any)=>{assert.equal(r.status(),200);return r.json();});await source.locator('.google-snapshot-choice').getByRole('button',{name:'View snapshot',exact:true}).click();const native=await captured;assert.equal(native.import.report,report);assert.deepEqual(native.rows,organic.snapshots[report].rows);await source.getByRole('heading',{name:'Snapshot: '+label+' · 2024-03-01 to 2024-03-02',exact:true}).waitFor();
-            if(report==='ga4_organic_landing'){await source.getByRole('columnheader',{name:'Hostname',exact:true}).waitFor();await source.getByRole('cell',{name:'/landing-0',exact:true}).waitFor();}else{const comparison=source.getByRole('region',{name:'Organic range comparison'});assert.equal(native.quality.metadata.organic.current.values.activeUsers,'11');await comparison.getByRole('row').filter({has:op.getByRole('rowheader',{name:'Active users',exact:true})}).getByRole('cell',{name:'11',exact:true}).waitFor();await comparison.getByRole('img').waitFor();await comparison.getByLabel('Trend metric',{exact:true}).selectOption('purchaseRevenue');await comparison.getByRole('img',{name:/Purchase revenue/}).waitFor();await comparison.getByText('Quality and request provenance for all three stages',{exact:true}).click();await comparison.getByText('Committed observation: 1 report response · 0 compatibility checks · 2024-02-28 to 2024-02-29',{exact:true}).waitFor();assert.equal(await comparison.getByText(/sampled this report/).count(),1);if(report==='ga4_organic_weekly')await comparison.getByText(/not ISO week-years/).waitFor();}
+            if(report==='ga4_organic_landing'){await source.getByRole('columnheader',{name:'Hostname',exact:true}).waitFor();await source.getByRole('cell',{name:'/landing-0',exact:true}).waitFor();}else{const comparison=source.getByRole('region',{name:'Organic range comparison'});assert.equal(native.quality.metadata.organic.current.values.activeUsers,'11');await comparison.getByRole('row').filter({has:op.getByRole('rowheader',{name:'Active users',exact:true})}).getByRole('cell',{name:'11',exact:true}).waitFor();await comparison.getByRole('img').waitFor();await comparison.getByLabel('Trend metric',{exact:true}).selectOption('purchaseRevenue');await comparison.getByRole('img',{name:/Purchase revenue/}).waitFor();await comparison.getByText('Quality and request provenance for all three stages',{exact:true}).click();await comparison.getByText('Committed observation: 1 report response · 0 compatibility checks · 2024-02-28 to 2024-02-29',{exact:true}).waitFor();assert.equal(await comparison.getByRole('listitem').filter({hasText:/sampled this report/}).count(),1);if(report==='ga4_organic_weekly')await comparison.getByText(/not ISO week-years/).waitFor();}
             assert.ok((await source.getByRole('cell',{name:'AED -9007199254740993.1250',exact:true}).count())>=1);
           }
           await op.setViewportSize({width:320,height:900});assert.equal(await op.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await op.screenshot({path:'private/google-browser/organic-320-ltr.png',fullPage:true});await op.evaluate(()=>{document.documentElement.dir='rtl';document.body.style.zoom='2';});assert.equal(await op.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await source.getByLabel('Trend metric',{exact:true}).focus();await op.keyboard.press('Tab');assert.notEqual(await op.evaluate(()=>document.activeElement?.tagName),'BODY');await op.screenshot({path:'private/google-browser/organic-320-rtl-body-zoom200.png',fullPage:true});await op.evaluate(()=>{document.documentElement.dir='ltr';document.body.style.zoom='';});

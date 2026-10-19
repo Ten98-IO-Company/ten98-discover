@@ -47,12 +47,15 @@ export function parseDomainOutcome(response:{httpStatus:number;body:unknown},req
   outcome.reference=task.id;outcome.cost=microUsd(providerMicros(task.cost));outcome.diagnostic='The charge was recorded, but no readable result is available. A new run needs a new paid quote.';
   if(task.status_code!==20000||task.result_count!==1||!Array.isArray(task.result)||task.result.length!==1||!object(task.result[0]))invalid();
   const r=task.result[0],t=domainTarget(request.target,request.scope);
-  const items=r.items===null&&r.total_count===0&&r.items_count===0?[]:r.items;
-  const noPageData=request.report==='pages_v1'&&r.total_count===0&&r.items_count===0&&r.location_code===null&&r.language_code===null;
-  if(r.se_type!=='google'||r.target!==t.hostname||!noPageData&&(r.location_code!==request.locationCode||r.language_code!==request.languageCode)||!Number.isSafeInteger(r.total_count)||Number(r.total_count)<0||!Array.isArray(items)||items.length>request.limit||r.items_count!==items.length||Number(r.total_count)<items.length)invalid();
-  const base={source:'DataForSEO Labs / Google' as const,retrievedAt:now.toISOString(),target:request.target,scope:request.scope,locationCode:request.locationCode,languageCode:request.languageCode,returnedCount:items.length,totalCount:Number(r.total_count),limited:Number(r.total_count)>items.length};
+  // A live empty result can omit its total; zero returned rows do not prove a zero provider total.
+  const unknownTotal=r.total_count===null&&r.items===null&&r.items_count===0;
+  const items=r.items===null&&(r.total_count===0||unknownTotal)&&r.items_count===0?[]:r.items;
+  const noMarketData=(request.report===undefined||request.report==='pages_v1')&&(r.total_count===0||unknownTotal)&&r.items_count===0&&r.location_code===null&&r.language_code===null;
+  if(r.se_type!=='google'||r.target!==t.hostname||!noMarketData&&(r.location_code!==request.locationCode||r.language_code!==request.languageCode)||!unknownTotal&&(!Number.isSafeInteger(r.total_count)||Number(r.total_count)<0)||!Array.isArray(items)||items.length>request.limit||r.items_count!==items.length||!unknownTotal&&Number(r.total_count)<items.length)invalid();
+  const totalCount=unknownTotal?null:Number(r.total_count);
+  const base={source:'DataForSEO Labs / Google' as const,retrievedAt:now.toISOString(),target:request.target,scope:request.scope,locationCode:request.locationCode,languageCode:request.languageCode,returnedCount:items.length,totalCount,limited:totalCount===null?null:totalCount>items.length};
   if(request.report==='overview_v1'){
-   if(base.totalCount>1)invalid();const rows=items.map(v=>{if(!object(v)||v.se_type!=='google'||v.location_code!==request.locationCode||v.language_code!==request.languageCode)invalid();return metrics(v.metrics);});
+   if(base.totalCount!==null&&base.totalCount>1)invalid();const rows=items.map(v=>{if(!object(v)||v.se_type!=='google'||v.location_code!==request.locationCode||v.language_code!==request.languageCode)invalid();return metrics(v.metrics);});
    outcome.result={...base,report:request.report,rows};
   }else if(request.report==='pages_v1'){
    const rows=items.map(v=>pageRow(v,request));if(new Set(rows.map(v=>v.url)).size!==rows.length)invalid();outcome.result={...base,report:request.report,rows};

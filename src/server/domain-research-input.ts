@@ -66,7 +66,7 @@ export function matchesDomainPayload(value:unknown,request:DomainRequest,id:stri
  return Object.entries(expected).every(([key,v])=>JSON.stringify(actual[key])===JSON.stringify(v))&&(!Object.hasOwn(expected,'filters')?actual.filters==null:true);
 }
 export type DomainRow={keyword:string;position:number|null;searchVolume:number|null;estimatedTraffic:number|null;cpcUsd:string|null;keywordDifficulty:number|null;url:string;metricsUpdatedAt:string|null};
-export type DomainResult={source:'DataForSEO Labs / Google';retrievedAt:string;target:string;scope:DomainScope;locationCode:number;languageCode:string;rows:DomainRow[];returnedCount:number;totalCount:number;limited:boolean};
+export type DomainResult={source:'DataForSEO Labs / Google';retrievedAt:string;target:string;scope:DomainScope;locationCode:number;languageCode:string;rows:DomainRow[];returnedCount:number;totalCount:number|null;limited:boolean|null};
 // These are provider estimates. Null never means zero; no rating is derived here.
 export type DomainOrganicMetrics={rankedKeywords:number|null;estimatedTraffic:number|null;estimatedAdsValueUsd:number|null;rankDistribution:(number|null)[]};
 export type DomainPageRow={url:string;organic:DomainOrganicMetrics};

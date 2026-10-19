@@ -29,7 +29,7 @@ export async function runGoogleGa4Checks(browserCheck?:(fixture:GoogleGa4Browser
   if(process.env.GITHUB_ACTIONS==='true'){
     const database=new URL(config.databaseUrl);assert.equal(process.env.TEN98_ISOLATED_CI_DATABASE,'1');assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,'5432');assert.equal(database.pathname,'/ten98_google_ga4_ci');assert.doesNotMatch(config.databaseUrl,/[?#]/);
   }else{
-  assert.equal(new URL(config.databaseUrl).port,'55501');
+  assert.ok(['55501','55531'].includes(new URL(config.databaseUrl).port));
   assert.match(new URL(config.databaseUrl).pathname,/^\/ten98_(?:google_ga4|google_browser)_[a-f0-9]{12}$/);
   }
   for(const url of [config.appUrl,config.databaseUrl])assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname));

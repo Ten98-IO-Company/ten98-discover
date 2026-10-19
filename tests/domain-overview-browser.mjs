@@ -73,6 +73,17 @@ try{
  }
  await done('overview exact provider estimates, twelve rank buckets, unknown versus zero, empty data and draft-only drilldown',3);
 
+ for(const report of [null,'overview_v1','pages_v1','competitors_v1']){
+  const {page,context,model,view}=await open({report,patchResult:r=>Object.assign(r,{rows:[],returnedCount:0,totalCount:null,limited:null})});await view();
+  const receipt=page.getByRole('region',{name:'Domain research receipt'});await receipt.getByText('0 returned; provider total unavailable. Completeness is unknown.',{exact:true}).waitFor();assert.equal((await receipt.innerText()).includes('All matching provider rows returned.'),false);assert.equal((await receipt.innerText()).includes('Partial report;'),false);assert.equal(await button(page,'Download report CSV').isEnabled(),true);assert.equal(model.posts.length,0);await context.close();
+ }
+ await done('zero returned rows preserve unavailable provider totals and unknown completeness across all four observed Labs reports',4);
+
+ for(const patch of [{totalCount:null},{rows:[],returnedCount:0,totalCount:null,limited:false},{rows:[],returnedCount:0,totalCount:0,limited:null},{rows:[],returnedCount:1,totalCount:null,limited:null}]){
+  const {page,context,view}=await open({patchResult:r=>Object.assign(r,patch)});await view();await page.getByRole('alert').filter({hasText:'could not be verified'}).waitFor();assert.equal(await page.getByRole('region',{name:'Domain research receipt'}).count(),0);await context.close();
+ }
+ await done('unknown totals cannot excuse populated rows, false completeness or contradictory returned counts',4);
+
  for(const report of ['pages_v1','competitors_v1']){
   const {page,context,model,view}=await open({report});await view();const region=page.getByRole('region',{name:report==='pages_v1'?'Ranked page table':'Organic competitor table',exact:true});await region.waitFor();assert.equal(await region.locator('tbody tr').first().isVisible(),true);
   if(report==='pages_v1'){assert.equal(await region.getByRole('link').getAttribute('href'),'https://example.com/guide');await region.locator('details > summary').first().click();await button(page,'Use page in keyword draft (exact URL)').click();assert.equal(await page.getByLabel('Domain or URL',{exact:true}).inputValue(),'https://example.com/guide');assert.equal(await page.getByLabel('Scope',{exact:true}).inputValue(),'exact_url');assert.equal(await page.getByRole('combobox',{name:'Research report',exact:true}).inputValue(),'ranked_keywords');}
@@ -113,6 +124,6 @@ try{
   model.detailFault=403;await button(page,'Reload result').click();await page.getByRole('alert').first().waitFor();assert.equal(await page.evaluate(()=>window.domainOverviewFixture.unauthorized),0);await button(page,'Refresh receipts').click();await page.getByRole('combobox',{name:'Research report',exact:true}).waitFor();model.detailFault=401;await page.getByRole('region',{name:'Recent domain research'}).getByRole('button').first().click();await page.getByText('Your session expired.',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.domainOverviewFixture.unauthorized),1);assert.equal(await page.getByRole('region',{name:'Domain research receipt'}).count(),0);assert.equal(model.posts.length,0);await context.close();
  }
  await done('320/1440 LTR/RTL body CSS zoom2, real Tab controls/table and distinct project refusal versus session expiry',1);
- assert.equal(checks.length,8);assert.equal(checks.reduce((n,c)=>n+c.contexts,0),25);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:25,errors,external,screenshots:4,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
+ assert.equal(checks.length,10);assert.equal(checks.reduce((n,c)=>n+c.contexts,0),33);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:33,errors,external,screenshots:4,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
 }catch(error){await writeFile(output+'/failure.json',JSON.stringify({scope:'synthetic component checks',checks,error:String(error),stack:error?.stack,errors,external},null,2));throw error;}
 finally{for(const context of contexts)await context.close().catch(()=>{});await browser?.close();await server.close();}

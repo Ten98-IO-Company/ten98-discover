@@ -15,7 +15,8 @@ export function boundedOpenRouterMetadata<T>(value:T):T{
 }
 function price(v:unknown):string|null{try{return typeof v==='string'?decimalText(v):null;}catch{return null;}}
 export function modelCatalogRow(raw:unknown,today=new Date().toISOString().slice(0,10)):OpenRouterCatalogModel{
- if(!object(raw)||!openRouterModelId(raw.id)||!openRouterModelId(raw.canonical_slug)||!bounded(raw.name,256))throw invalid();
+ const name=object(raw)&&typeof raw.name==='string'?raw.name.replace(/^ +| +$/g,''):null;
+ if(!object(raw)||!openRouterModelId(raw.id)||!openRouterModelId(raw.canonical_slug)||!bounded(name,256))throw invalid();
  const pricing=object(raw.pricing)?raw.pricing:{},parameters=Array.isArray(raw.supported_parameters)&&raw.supported_parameters.length<=100&&raw.supported_parameters.every((p:unknown)=>bounded(p,80))?raw.supported_parameters:null;
  const promptPrice=price(pricing.prompt),completionPrice=price(pricing.completion),requestPrice=price(pricing.request===undefined?'0':pricing.request);
  let reason:string|null=null;
@@ -36,7 +37,7 @@ export function modelCatalogRow(raw:unknown,today=new Date().toISOString().slice
  if(promptPrice!==null&&completionPrice!==null&&requestPrice!==null&&[promptPrice,completionPrice,requestPrice].every(p=>decimal(p).coefficient===0n))reason='Free routes need a separate zero-reservation accounting profile.';
  if(raw.id.startsWith('openrouter/')||/:(?:online|nitro|floor)$/.test(raw.id))reason='Automatic model or routing aliases are not supported.';
  if(expirationDate!==null&&expirationDate<=today)reason='This model is retired or scheduled to retire today.';
- return {id:raw.id,canonicalSlug:raw.canonical_slug,name:raw.name,contextLength,maxCompletionTokens,promptPrice,completionPrice,requestPrice,
+ return {id:raw.id,canonicalSlug:raw.canonical_slug,name,contextLength,maxCompletionTokens,promptPrice,completionPrice,requestPrice,
   structuredOutput:!!parameters&&['structured_outputs','response_format'].every(p=>parameters.includes(p)),expirationDate,admission:reason?'unsupported':'candidate',reason};
 }
 // ponytail: one bounded public snapshot per process; replicas may differ until refresh.
@@ -48,7 +49,7 @@ export function cachedOpenRouterModels(now=Date.now()):OpenRouterCatalog{
 }
 export async function refreshOpenRouterCatalog(send:typeof fetch=fetch):Promise<OpenRouterCatalog>{
  if(!inFlight)inFlight=Promise.resolve().then(async()=>{try{
-  const signal=AbortSignal.timeout(openRouterCatalogLimits.timeoutMs),models:OpenRouterCatalogModel[]=[],ids=new Set<string>();let total:number|undefined,bytes=0;
+  const signal=AbortSignal.timeout(openRouterCatalogLimits.timeoutMs),models:OpenRouterCatalogModel[]=[],ids=new Set<string>();let total:number|undefined,received=0,bytes=0;
   for(let page=0;page<openRouterCatalogLimits.pages;page++){
    signal.throwIfAborted();const response=await send(`https://openrouter.ai/api/v1/models?output_modalities=text&offset=${page*openRouterCatalogLimits.pageSize}&limit=${openRouterCatalogLimits.pageSize}`,{headers:{accept:'application/json'},redirect:'error',credentials:'omit',signal});
    if(!response.ok||response.redirected||!/^application\/(?:[a-z0-9.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body){await response.body?.cancel();throw invalid();}
@@ -57,8 +58,14 @@ export async function refreshOpenRouterCatalog(send:typeof fetch=fetch):Promise<
    finally{signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
    if(!object(body)||!Array.isArray(body.data)||body.data.length>openRouterCatalogLimits.pageSize||!Number.isSafeInteger(body.total_count)||body.total_count<0||body.total_count>2000||!object(body.links)||!('next'in body.links))throw invalid();
    if(total!==undefined&&total!==body.total_count)throw invalid();total=body.total_count;
-   for(const raw of body.data){const row=modelCatalogRow(raw);if(ids.has(row.id))throw invalid();ids.add(row.id);models.push(row);}
-   if(total===undefined||models.length>total)throw invalid();const complete=models.length===total;
+   for(const raw of body.data){
+    // Pagination completeness counts every raw row; this native catalog excludes
+    // automatic latest aliases, which are not executable identities in this profile.
+    const alias=object(raw)&&typeof raw.id==='string'&&raw.id.length<=256&&raw.id.startsWith('~')&&raw.id.endsWith('-latest')&&openRouterModelId(raw.id.slice(1))&&raw.canonical_slug===raw.id;
+    const row=modelCatalogRow(alias?{...raw,id:raw.id.slice(1),canonical_slug:raw.canonical_slug.slice(1)}:raw);
+    if(ids.has(raw.id))throw invalid();ids.add(raw.id);if(!alias)models.push(row);
+   }
+   received+=body.data.length;if(total===undefined||received>total)throw invalid();const complete=received===total;
    const next=complete?null:`/api/v1/models?output_modalities=text&offset=${(page+1)*openRouterCatalogLimits.pageSize}&limit=${openRouterCatalogLimits.pageSize}`;
    if(complete){if(body.links.next!==null)throw invalid();models.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);const serialized=JSON.stringify(models),next={models,fetchedAt:new Date().toISOString(),revision:createHash('sha256').update(serialized).digest('hex')};
     // Both metadata routes need the envelope; execution setup also repeats candidate IDs.

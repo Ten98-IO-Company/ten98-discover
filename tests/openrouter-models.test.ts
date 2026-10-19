@@ -43,6 +43,26 @@ test('free catalog pagination is fixed, credential-free, bounded and replaced at
  assert.equal(cachedOpenRouterModels(Date.now()+openRouterCatalogLimits.ttlMs+1).status,'stale');
  await requireCatalogModels([model],async()=>{throw Error('fresh catalog must not fetch');},true);await assert.rejects(requireCatalogModels(['vendor/absent'],async()=>{throw Error('must not fetch');}),{status:409});
 });
+test('official latest aliases and space-padded display names cannot poison a complete native catalog',async()=>{
+ const aliases=[catalogRow('~openai/gpt-sol-latest'),...Array.from({length:499},(_,i)=>catalogRow('~fixture/model-'+i+'-latest'))];
+ const gemma={...catalogRow('google/gemma-4-26b-a4b-it'),canonical_slug:'google/gemma-4-26b-a4b-it-20260403',name:'Google: Gemma 4 26B A4B '};
+ const tars={...catalogRow('bytedance/ui-tars-1.5-7b'),name:'ByteDance: UI-TARS 7B '};
+ const rows=[...aliases,gemma,tars];let calls=0;
+ const current=await refreshOpenRouterCatalog(async(url)=>{const offset=Number(new URL(String(url)).searchParams.get('offset'));assert.equal(offset,calls++*500);return Response.json({data:rows.slice(offset,offset+500),total_count:502,links:{next:offset===0?'/api/v1/models?output_modalities=text&offset=500&limit=500':null}});});
+ assert.equal(calls,2);assert.equal(current.complete,true);assert.equal(current.models.length,2);
+ assert.deepEqual(current.models.map(m=>m.name),['ByteDance: UI-TARS 7B','Google: Gemma 4 26B A4B']);
+ assert.ok(current.models.every(m=>openRouterModelId(m.id)&&m.admission==='candidate'));
+ assert.equal(openRouterModelId('~openai/gpt-sol-latest'),false);assert.equal(executionInput.safeParse({connectionId:id,promptId:id,versionId:id,systemText:'',models:['~openai/gpt-sol-latest'],maxCompletionTokens:16,fundedCredits:true}).success,false);
+ await assert.rejects(requireCatalogModels(['~openai/gpt-sol-latest'],async()=>{throw Error('fresh catalog must not fetch');}),{status:409});
+ const original=JSON.stringify(current.models),revision=current.revision;
+ for(const data of [[aliases[0],aliases[0]],[{...aliases[0],canonical_slug:'~other/model-latest'}],[{...aliases[0],id:'~openai/not-a-latest-alias',canonical_slug:'~openai/not-a-latest-alias'}],[{...aliases[0],name:'bad\ud800'}],[{...gemma,name:'bad\n'}],[{...gemma,name:'   '}],[{...gemma,id:'google/../escape'}],[gemma,{...tars,name:'bad\u0000'}]]){
+  await assert.rejects(refreshOpenRouterCatalog(async()=>Response.json({data,total_count:data.length,links:{next:null}})),{status:502});
+  assert.equal(cachedOpenRouterModels().revision,revision);assert.equal(JSON.stringify(cachedOpenRouterModels().models),original);
+ }
+ await assert.rejects(refreshOpenRouterCatalog(async()=>Response.json({data:[aliases[0]],total_count:2,links:{next:null}})),{status:502});
+ assert.equal(cachedOpenRouterModels().revision,revision);
+ await refreshOpenRouterCatalog(async()=>Response.json({data:[catalogRow()],total_count:1,links:{next:null}}));
+});
 test('v2 routes choose a supported leaf by exact reservation and pin provider without changing legacy shape',()=>{
  const body=endpointBody();body.data.endpoints.push({...endpoint('compute'),pricing:{...endpoint().pricing,prompt:'0'}});body.data.endpoints.push({...endpoint('other/leaf','Other'),pricing:{...endpoint().pricing,prompt:'0.0000002'}});
  const route=parseRoute(model,body,2048,openRouterTextProfile);assert.equal(route.tag,'compute/region');assert.equal(route.estimateMicros,'13620');
