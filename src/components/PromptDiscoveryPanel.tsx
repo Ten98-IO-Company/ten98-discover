@@ -91,9 +91,9 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
 
   return <section className="card stack" aria-label="Prompt discovery">
     <div className="row between"><div><h2 ref={heading} tabIndex={-1}>Discover prompts</h2></div><button className="btn ghost" style={{minHeight: 44}} type="button" onClick={() => { if (confirmLeave()) { leaving.current = true; onBack(); } }}>Back to library</button></div>
-    <p>Build English questions from templates. These are not measured searches. No provider calls or charges.</p>
+    <p>Create starter questions in English, then review and save them. Free to use; these questions do not represent measured search demand.</p>
     {loading && <p role="status">Loading saved topics and competitors…</p>}
-    {readError && <div className="banner"><p role="alert">{readError}</p>{!lost && <button className="btn ghost" type="button" style={{minHeight: 44}} disabled={loading} onClick={() => void loadContext()}>Retry saved context</button>}</div>}
+    {readError && <div className="banner"><p role="alert">{readError}</p>{!lost && <button className="btn ghost" type="button" style={{minHeight: 44}} disabled={loading} onClick={() => void loadContext()}>Reload saved topics</button>}</div>}
     {!lost && <>
       <form className="stack" noValidate onSubmit={build}>
         <div className="field"><label htmlFor={id + '-topic'}>Topic</label><input id={id + '-topic'} value={topic} maxLength={100} required style={control} onChange={event => setTopic(event.target.value)} placeholder="For example, customer support software"/><p className="hint">Product, service or subject. Up to 100 characters.</p>{topic.trim().length > 100 && <p role="alert">Shorten this saved topic to 100 characters before building questions.</p>}</div>

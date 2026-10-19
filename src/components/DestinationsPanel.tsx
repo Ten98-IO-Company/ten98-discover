@@ -126,10 +126,9 @@ export function DestinationsPanel({
           <div style={{ maxWidth: '46rem' }}>
             <h2>Destinations</h2>
             <p className="dim">
-              This site loads one ten98 snippet. The vendor pixels you configure here are delivered through
-              it and stay separate from imports — editing destinations never changes the installed snippet.
-              Choose the Live or Test configuration. Test destinations still contact real vendor SDKs
-              after consent; use dedicated test asset IDs. Only the dry-run preview sends no vendor traffic.
+              Route website events to the providers you configure here through your existing ten98 snippet.
+              Choose Live or Test. Test destinations still contact real providers after consent; use
+              dedicated test asset IDs. The dry-run preview sends no provider traffic.
             </p>
           </div>
           <div className="field" style={{ minWidth: '9rem' }}>
@@ -717,9 +716,8 @@ function DestinationsInner({
       <div className="card">
         <h3>Dry-run preview</h3>
         <p className="dim">
-          Simulates routing against the saved draft. No provider traffic is sent, only payload field names
-          are returned — never payload values or visitor IDs — and “would invoke” is a routing result,
-          not a receipt of delivery.
+          Check which destinations would receive an event from the saved draft. No provider traffic is sent.
+          Results show field names without payload values or visitor IDs; they do not confirm delivery.
         </p>
         <form onSubmit={(e) => void runPreview(e)}>
           <div className="row">
@@ -786,7 +784,7 @@ function DestinationsInner({
           </div>
           <p className="hint">
             Empty fields are omitted. Enter value and currency together; purchase and refund also require
-            a transaction ID (validated by the API).
+            a transaction ID.
           </p>
           <fieldset disabled={busy || dirty} style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className="dim">Consent for this simulation</legend>
@@ -853,9 +851,7 @@ function DestinationsInner({
               </div>
             )}
             <p className="footnote">
-              Dry-run only: no provider traffic was sent and no receipt of delivery exists. A dry-run
-              where every route is blocked still counts as successful — it validates routing and consent
-              logic, not delivery.
+              A completed preview can show all routes blocked by consent or configuration. Review each reason before publishing.
             </p>
           </>
         )}
@@ -993,7 +989,7 @@ function DestinationsInner({
           className="snippet"
           readOnly
           rows={10}
-          value={SNIPPET}
+          value={SNIPPET.replace("environment: 'live'", `environment: '${environment}'`)}
           aria-label="Consent API usage example"
           style={{ width: '100%', resize: 'vertical' }}
         />

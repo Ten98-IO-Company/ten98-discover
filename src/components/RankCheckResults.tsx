@@ -42,13 +42,13 @@ export function RankCheckResults(p:RankCheckResultsProps):React.JSX.Element{
     <div className="card stack" style={{marginBottom:0,gap:'var(--space-3)'}}>
      <div className="row between"><span className="pill">{r.status}</span><span className="dim">{r.method} · {r.selection}</span></div>
      <p>{r.target}</p>
-     <div style={{display:'flex',flexWrap:'wrap',gap:'var(--space-3)'}}><span>{r.status==='skipped'?'No quote applied':'Quoted maximum $'+r.estimateUsd}</span><span>Known charges ${r.knownChargeUsd}</span><span>Charge status {r.costStatus}</span></div>
+     <div style={{display:'flex',flexWrap:'wrap',gap:'var(--space-3)'}}><span>{r.status==='skipped'?'No quote applied':'Quoted maximum $'+r.estimateUsd}</span><span>Known charges ${r.knownChargeUsd}</span><span>Charge status {{not_started:'Not started',pending:'Pending',uncertain:'Unconfirmed',final:'Confirmed'}[r.costStatus]}</span></div>
      {r.costStatus==='uncertain'&&<p className="alert" role="alert">Some charges are unresolved. Known charges are not the final total. Recovery does not submit another paid check; new paid work stays blocked until the charge is reconciled.</p>}
      {r.costStatus==='pending'&&<p className="hint">The provider is still processing work or confirming charges. Known charges are not the final total.</p>}
      {r.costStatus==='not_started'&&<p className="hint">{r.status==='skipped'?'No paid check started.':'This check has not started.'}</p>}
      {r.diagnostic!==null&&<p className="alert" role="alert">{r.diagnostic}</p>}
     </div>
-    {w&&r.canCancel&&<>{b('Cancel undispatched work',p.onCancel,p.locked)}<p className="hint">Only work not yet sent can be cancelled; dispatched work and charges remain.</p></>}
+    {w&&r.canCancel&&<>{b('Cancel remaining checks',p.onCancel,p.locked)}<p className="hint">Checks already sent will continue and may be charged.</p></>}
     {r.expired&&<p className="notice" role="status">Rank observations expired under workspace retention. The check outcome and financial receipt remain.</p>}
     {r.rawExpired&&!r.expired&&<p className="hint">Raw provider evidence expired; retained rank observations are shown below.</p>}
     <h3>Rank observations</h3>
@@ -64,7 +64,7 @@ export function RankCheckResults(p:RankCheckResultsProps):React.JSX.Element{
      <select id={p.prefix+'recovery'} value={p.recoveryConnectionId} onChange={e=>p.onRecoveryConnection(e.target.value)} disabled={p.locked}>
       <option value="">Choose connection</option>{p.connections.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
      </select>
-     <p className="hint">Use the provider account that received this check. The server verifies eligibility and evidence.</p>
+     <p className="hint">Choose the DataForSEO account used for this check to look up its original result and charge.</p>
      {p.connections.length===0&&b('Open providers',p.onOpenProviders,p.locked)}
     </div>}
     <div {...rg} aria-label="Provider request charges"><table style={tw}>

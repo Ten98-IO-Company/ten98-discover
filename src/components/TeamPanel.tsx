@@ -526,7 +526,7 @@ function TeamPanelContent(props: TeamPanelProps) {
             <div className='banner' role='status'>
               <p>
                 {inviteLink.delivery === 'accepted' ? (
-                  <><strong>Invitation emailed to {inviteLink.email}.</strong> If it does not arrive, copy the link below.</>
+                  <><strong>Invitation created for {inviteLink.email}.</strong> The email provider accepted the message; delivery is not confirmed. You can also copy the link below.</>
                 ) : inviteLink.delivery === 'failed' ? (
                   <><strong>Invitation created for {inviteLink.email}, but the email could not be sent.</strong> Copy the link
                   below and share it yourself.</>

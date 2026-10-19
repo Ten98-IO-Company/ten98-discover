@@ -88,12 +88,12 @@ function fmt(iso: string): string {
 
 function parseOrigin(raw: string): { origin?: string; error?: string } {
   const input = raw.trim()
-  if (input === '') return { error: 'Enter the website origin, for example https://example.com.' }
+  if (input === '') return { error: 'Enter the website address, for example https://example.com.' }
   let u: URL
-  try { u = new URL(input) } catch { return { error: 'That is not a valid URL. Use an origin like https://example.com.' } }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { error: 'Origin must use http:// or https://.' }
-  if (u.username !== '' || u.password !== '') return { error: 'Origin must not include a username or password.' }
-  if (u.pathname !== '/' || u.search !== '' || u.hash !== '') return { error: 'Origin must be scheme, host and port only, with no path, query or fragment.' }
+  try { u = new URL(input) } catch { return { error: 'Enter a valid website address, for example https://example.com.' } }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { error: 'The website address must start with http:// or https://.' }
+  if (u.username !== '' || u.password !== '') return { error: 'The website address must not include a username or password.' }
+  if (u.pathname !== '/' || u.search !== '' || u.hash !== '') return { error: 'Enter only the website address, without a page path, query or #fragment.' }
   return { origin: u.origin }
 }
 
@@ -151,9 +151,6 @@ function App() {
   useEffect(() => { const media=window.matchMedia('(min-width:761px)'), hiddenSearch=window.matchMedia('(max-width:960px)'); const close=()=>{if(media.matches)setMenuOpen(false);if(hiddenSearch.matches)setToolSearch('')};media.addEventListener('change',close);hiddenSearch.addEventListener('change',close);return()=>{media.removeEventListener('change',close);hiddenSearch.removeEventListener('change',close)} }, [])
   useEffect(() => { if(menuOpen)document.querySelector<HTMLElement>('.sidebar a, .sidebar select')?.focus();else if(menuWasOpen.current)menuButton.current?.focus();menuWasOpen.current=menuOpen }, [menuOpen])
   const mainRef = useRef<HTMLElement>(null)
-  function showView(next: AppView) {
-    updateView(next)
-  }
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
   const oidcProof = useRef<string | undefined>(undefined)
@@ -329,8 +326,12 @@ function App() {
     setEvents(null); setEventsError(''); setEventsBusy(false)
     setJobs(null); setJobError(''); setJobsBusy(false); setCheckBusy(false)
     setCopied('idle')
-    if (id) { void loadEvents(id); void loadJobs(id) }
+    if (id) void loadEvents(id)
   }
+
+  useEffect(() => {
+    if (phase === 'app' && view === 'installation' && projectId) void loadJobs(projectId)
+  }, [phase, view, projectId])
 
   function changeWorkspace(id: string) {
     go({ ...(id ? { workspace: id } : {}), view: 'project' })
@@ -349,7 +350,7 @@ function App() {
       setWorkspaceId(workspaceId); loadedProjects.current = null; setProjects(null); setProjectsError('')
       activateProject('')
     }
-    showView(view)
+    updateView(view)
     if (workspaceId && loadedProjects.current === null) {
       setNavigationPending(isProjectView(view))
       if (!projectsRequest.current) void loadProjects(workspaceId)
@@ -610,7 +611,6 @@ function App() {
   const explorerReturnState=view==='explore'&&me&&project&&search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)?{userId:me.user.id,workspace:workspaceId,project:project.id,href:routeLocation.href}:undefined
   const verifiedExplorerReturn=me&&project?readExplorerReturn('analyticsReturn'in routeLocation.state?routeLocation.state.analyticsReturn:null,me.user.id,workspaceId,project.id):null
   const pageScope = view === 'preferences' || view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
-  const projectDescriptions: Partial<Record<AppView, string>> = {heatmaps:'Review sampled clicks and scroll depth for a saved page layout.',boards:'Arrange charts, tables and notes from workspace reports.',replays:'Review consented recordings with masked fields and visible recording gaps.',performance:'Review page loading, responsiveness and layout shifts from collected samples.',revenue:'Review recorded sales and refunds in one currency.',attribution: 'Compare recorded sources for your chosen conversion.', journeys: 'See common steps in recorded visits.', project: 'Review traffic, pages and events.', 'visitor-retention': 'See how often estimated visitors return.', realtime: 'Watch recorded activity from the last 30 minutes.', reports: 'Create reports and share a saved snapshot with your team or clients.', collection: 'Choose which website data to collect.', destinations: 'Send analytics and conversion events through your tracker.', domains: 'Keep your serving domains and redirect aliases together.', installation: 'Add the tracker to your website.', events: 'Inspect the latest events received from your website.', context: 'Save your brand, competitors and page topics.', prompts: 'Save questions, review run costs and inspect answers.', 'ai-search': 'Review captured ChatGPT search answers and reported queries.', 'ai-insights': 'Review brand mentions and citations in saved prompt answers.', google: 'Import Search Console and GA4 reports without changing browser tracking.', sessions: 'Review activity grouped by estimated visitor keys. Keys can change over time.', explore: 'Break down events by campaign, page or property in your time zone.', keywords: 'Research keyword demand and ideas in your chosen market.', 'domain-seo':'Find organic keywords a domain or URL ranks for in one market.', ranks: 'Track search rankings by market and device.', audits: 'Inspect your site’s pages, technical findings and link coverage.', conversions: 'Measure the steps and outcomes that matter to your project.'}
 
   const presentation={...accountPreferences,reload:()=>loadAccountPreferences(me!.user.id),accept:(data:AccountPreferencesDto)=>{
     if(sessionGeneration.current!==renderedSession||currentMe.current?.user.id!==me!.user.id||data.user.id!==me!.user.id)return false
@@ -632,7 +632,7 @@ function App() {
         {me!.workspaces.length>0 ? <div className='workspace-switch'><span className='workspace-avatar'>{(workspace?.name??'Workspace').slice(0,2).toUpperCase()}</span><div><label className='sr-only' htmlFor='ws'>Workspace</label><select id='ws' value={workspaceId} onChange={event=>changeWorkspace(event.target.value)}>{me!.workspaces.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select><small>{workspace?.role??'Member'} workspace</small></div><Icon name='chevron' size={15}/></div> : <p className='hint workspace-empty'>No workspaces yet.</p>}
         <div className='project-switch'><Icon name='folder' size={16}/><label className='sr-only' htmlFor='active-project'>Project</label><select id='active-project' value={projectId} disabled={!projects?.length} onChange={event=>{setMenuOpen(false);go(target('project',event.target.value))}}>{!projectId&&<option value=''>{projects===null&&workspace?'Loading projects…':projects?.length?'Choose a project':'No projects yet'}</option>}{projects?.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</select>{canWrite&&<Link to='/' search={target('new-project')} className='icon-button' aria-label='Create project'><Icon name='plus' size={15}/></Link>}</div>
         {toolQuery&&<div className='tool-search-status' role='status'><span>Tools matching “{toolSearch.trim()}”</span><button type='button' className='btn ghost' onClick={()=>setToolSearch('')}>Show all tools</button></div>}
-        {workspace&&<nav aria-label='Workspace measurement'><p className='nav-group'>Workspace</p><Link hidden={toolQuery!==''&&!'boards'.includes(toolQuery)} className={view==='boards'?'proj nav-item selected':'proj nav-item'} aria-current={view==='boards'?'page':undefined} to='/' search={{workspace:workspaceId,view:'boards'}}><Icon name='grid'/><span>Boards</span></Link><Link hidden={toolQuery!==''&&!'links'.includes(toolQuery)} className={view==='links'?'proj nav-item selected':'proj nav-item'} aria-current={view==='links'?'page':undefined} to='/' search={target('links')}><Icon name='link'/><span>Links</span></Link><Link hidden={toolQuery!==''&&!'tracking images'.includes(toolQuery)} className={view==='pixels'?'proj nav-item selected':'proj nav-item'} aria-current={view==='pixels'?'page':undefined} to='/' search={target('pixels')}><Icon name='image'/><span>Tracking images</span></Link></nav>}
+        {workspace&&<nav aria-label='Workspace measurement'><p className='nav-group'>Workspace</p><Link hidden={toolQuery!==''&&!'boards'.includes(toolQuery)} className={view==='boards'?'proj nav-item selected':'proj nav-item'} aria-current={view==='boards'?'page':undefined} to='/' search={{workspace:workspaceId,view:'boards'}}><Icon name='grid'/><span>Boards</span></Link><Link hidden={toolQuery!==''&&!'links'.includes(toolQuery)} className={view==='links'?'proj nav-item selected':'proj nav-item'} aria-current={view==='links'?'page':undefined} to='/' search={target('links')}><Icon name='link'/><span>Links</span></Link><Link hidden={toolQuery!==''&&!'tracking images pixels'.includes(toolQuery)} className={view==='pixels'?'proj nav-item selected':'proj nav-item'} aria-current={view==='pixels'?'page':undefined} to='/' search={target('pixels')}><Icon name='image'/><span>Tracking images</span></Link></nav>}
         {project && workspace && <nav aria-label='Project sections' className='section-nav'>
           <p className='nav-group'>Measure</p>
           <Link hidden={toolQuery!==''&&!'analytics'.includes(toolQuery)} className={view === 'project' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={analyticsTarget('project')} state={previous=>({...previous,analyticsReturn:explorerReturnState&&readExplorerReturn(explorerReturnState,me!.user.id,workspaceId,project!.id)?explorerReturnState:undefined})}><Icon name='chart'/><span>Analytics</span></Link>
@@ -651,7 +651,7 @@ function App() {
           <Link hidden={toolQuery!==''&&!'conversions'.includes(toolQuery)} className={view === 'conversions' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'conversions' ? 'page' : undefined} to='/' search={target('conversions')}><Icon name='target'/><span>Conversions</span></Link>
           <Link hidden={toolQuery!==''&&!'recent events'.includes(toolQuery)} className={view === 'events' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'events' ? 'page' : undefined} to='/' search={target('events')}><Icon name='layers'/><span>Recent events</span></Link>
           <Link hidden={toolQuery!==''&&!'reports'.includes(toolQuery)} className={view === 'reports' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'reports' ? 'page' : undefined} to='/' search={target('reports')}><Icon name='folder'/><span>Reports</span></Link>
-          <Link hidden={toolQuery!==''&&!'google reports'.includes(toolQuery)} className={view === 'google' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}><Icon name='chart'/><span>Google reports</span></Link>
+          <Link hidden={toolQuery!==''&&!'google reports search console ga4'.includes(toolQuery)} className={view === 'google' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}><Icon name='chart'/><span>Google reports</span></Link>
           <Link hidden={toolQuery!==''&&!'site audits'.includes(toolQuery)} className={view === 'audits' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'audits' ? 'page' : undefined} to='/' search={target('audits')}><Icon name='shield'/><span>Site audits</span></Link>
           <p className='nav-group'>Research</p>
           <Link hidden={toolQuery!==''&&!'context'.includes(toolQuery)} className={view === 'context' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}><Icon name='folder'/><span>Context</span></Link>
@@ -659,7 +659,7 @@ function App() {
           <Link hidden={toolQuery!==''&&!'ai insights'.includes(toolQuery)} className={view === 'ai-insights' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ai-insights' ? 'page' : undefined} to='/' search={target('ai-insights')}><Icon name='agent'/><span>AI insights</span></Link>
           <Link hidden={toolQuery!==''&&!'ai search'.includes(toolQuery)} className={view === 'ai-search' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ai-search' ? 'page' : undefined} to='/' search={target('ai-search')}><Icon name='search'/><span>AI search</span></Link>
           <Link hidden={toolQuery!==''&&!'keywords'.includes(toolQuery)} className={view === 'keywords' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'keywords' ? 'page' : undefined} to='/' search={target('keywords')}><Icon name='search'/><span>Keywords</span></Link>
-          <Link hidden={toolQuery!==''&&!'domain seo'.includes(toolQuery)} className={view === 'domain-seo' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'domain-seo' ? 'page' : undefined} to='/' search={target('domain-seo')}><Icon name='globe'/><span>Domain SEO</span></Link>
+          <Link hidden={toolQuery!==''&&!'domain seo backlinks'.includes(toolQuery)} className={view === 'domain-seo' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'domain-seo' ? 'page' : undefined} to='/' search={target('domain-seo')}><Icon name='globe'/><span>Domain SEO</span></Link>
           <Link hidden={toolQuery!==''&&!'rank tracking'.includes(toolQuery)} className={view === 'ranks' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}><Icon name='chart'/><span>Rank tracking</span></Link>
           <p className='nav-group'>Connect</p>
           <Link hidden={toolQuery!==''&&!'install tracker'.includes(toolQuery)} className={view === 'installation' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'installation' ? 'page' : undefined} to='/' search={target('installation')}><Icon name='key'/><span>Install tracker</span></Link>
@@ -696,7 +696,6 @@ function App() {
         {project && workspace && projectView && <header className='proj-head page-heading'>
           <span className='eyebrow'>{project.name}</span><h1>{pageTitles[view]}</h1>
           <p className='project-origin'>{project.origin}</p>
-          {projectDescriptions[view] && view !== 'events' && view !== 'installation' && <p className='dim'>{projectDescriptions[view]}</p>}
         </header>}
         {!projectView && view !== 'workspace' && view !== 'new-project' && <header className='proj-head page-heading'><span className='eyebrow'>{pageScope}</span><h1>{pageTitles[view]}</h1>
           {view === 'keys' && <p className='dim'>Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.</p>}
@@ -744,7 +743,7 @@ function App() {
           <section className='card onboarding-card' aria-labelledby='create-h'>
             <span className='eyebrow'>Website setup</span>
             <h1 id='create-h'>{projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'}</h1>
-            <p className='dim'>Keep your website analytics, tracking tags and reports together. Start with a name and the website you want to measure.</p>
+            <p className='dim'>Enter a project name and website address.</p>
             <CreateProjectForm key={workspaceId} onCreate={createProject} />
           </section>
         )}
@@ -756,7 +755,7 @@ function App() {
         )}
         {view === 'project' && workspace && project !== null && (
           <>
-            {events?.total === 0 && <section className='connection-callout'><div><strong>Ready when your website is.</strong><p>Add the tracking snippet, then review Collection and privacy to choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Connect website</Link></section>}
+            {events?.total === 0 && <section className='connection-callout'><div><strong>No retained events available.</strong><p>Add the tracking snippet, then review Collection and privacy to choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Install tracker</Link></section>}
             <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onAppliedRange={rememberAnalyticsRange} onReturnToExplorer={verifiedExplorerReturn?()=>router.history.push(verifiedExplorerReturn):undefined} search={{...target('project'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('project'),...value})} onUnauthorized={unauthorized} />
           </>
         )}
@@ -834,7 +833,7 @@ function App() {
               <p className='dim'>Checks whether the background worker can receive and complete a job. Choose Refresh status to see its result.</p>
               {jobError !== '' && <div role='alert' className='alert'>{jobError}</div>}
               {jobs === null && jobError === '' && <p role='status' className='dim'>Loading checks…</p>}
-              {jobs !== null && jobs.length === 0 && <div className='empty'><p><strong>No checks yet.</strong> A worker check enqueues an internal job; once the separate worker finishes it, the result appears here.</p></div>}
+              {jobs !== null && jobs.length === 0 && <div className='empty'><p><strong>No checks yet.</strong> Run a check to verify that background processing is working.</p></div>}
               {jobs !== null && jobs.length > 0 && (
                 <ul className='jobs'>
                   {jobs.slice(0, 5).map((j) => (
@@ -982,7 +981,7 @@ function CreateProjectForm({ onCreate }: { onCreate: (name: string, origin: stri
     const n = name.trim()
     if (n === '') { setError('Enter a project name.'); return }
     const parsed = parseOrigin(origin)
-    if (!parsed.origin) { setError(parsed.error ?? 'Enter a valid origin.'); return }
+    if (!parsed.origin) { setError(parsed.error ?? 'Enter a valid website address.'); return }
     setBusy(true); setError('')
     try {
       await onCreate(n, parsed.origin)
@@ -995,9 +994,9 @@ function CreateProjectForm({ onCreate }: { onCreate: (name: string, origin: stri
     <form onSubmit={(e) => void submit(e)}>
       <div className='field'><label htmlFor='pn'>Project name</label>
         <input id='pn' autoComplete='off' required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></div>
-      <div className='field'><label htmlFor='po'>Website origin</label>
+      <div className='field'><label htmlFor='po'>Website address</label>
         <input id='po' inputMode='url' autoComplete='off' placeholder='https://example.com' required value={origin} onChange={(e) => setOrigin(e.target.value)} />
-        <p className='hint'>Scheme and host only, no path. The collector matches incoming events against this origin.</p></div>
+        <p className='hint'>Use your website address, for example https://example.com, without a page path.</p></div>
       {error !== '' && <div role='alert' className='alert'>{error}</div>}
       <button className='btn primary' disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button>
     </form>

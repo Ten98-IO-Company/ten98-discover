@@ -250,7 +250,7 @@ try {
   await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
   const create = await hold(`**/api/workspaces/${a.id}/projects`)
   await page.getByLabel('Project name', { exact: true }).fill('Created while navigating')
-  await page.getByLabel('Website origin', { exact: true }).fill('https://created.navigation.test')
+  await page.getByLabel('Website address', { exact: true }).fill('https://created.navigation.test')
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await create.began
   await link('Account security'); await heading('Account security'); create.release(); await create.remove(); await delay(200)
   await heading('Account security'); assert.equal(new URL(page.url()).searchParams.get('view'), 'security')
@@ -260,7 +260,7 @@ try {
   await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
   const roundTrip = await hold(`**/api/workspaces/${a.id}/projects`)
   await page.getByLabel('Project name', { exact: true }).fill('Earlier identical navigation')
-  await page.getByLabel('Website origin', { exact: true }).fill('https://round-trip.navigation.test')
+  await page.getByLabel('Website address', { exact: true }).fill('https://round-trip.navigation.test')
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await roundTrip.began
   await link('Account security'); await heading('Account security'); await link('+ New project'); await heading('Create a new project')
   roundTrip.release(); await roundTrip.remove(); await delay(150)
@@ -516,7 +516,7 @@ try {
   await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
   const oldSession = await hold(`**/api/workspaces/${a.id}/projects`, 401)
   await page.getByLabel('Project name', { exact: true }).fill('Old session response')
-  await page.getByLabel('Website origin', { exact: true }).fill('https://old-session.navigation.test')
+  await page.getByLabel('Website address', { exact: true }).fill('https://old-session.navigation.test')
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await oldSession.began
   await navigationLink('Account security') // Open account actions without leaving the pending project request.
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()

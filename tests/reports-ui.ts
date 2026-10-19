@@ -123,7 +123,7 @@ try {
   assert.equal(await oneTime.count(),0);assert.match(await (await context.request.get(firstUrl)).text(),/Concurrent version/);
   const firstRow=page.getByRole('row').filter({hasText:'Client alpha'});
   await firstRow.getByRole('button',{name:'Revoke link',exact:true}).click();
-  await firstRow.getByRole('button',{name:'Confirm revocation',exact:true}).click();
+  await firstRow.getByRole('button',{name:'Revoke link',exact:true}).click();
   await firstRow.getByText('Revoked',{exact:true}).waitFor();assert.equal((await context.request.get(firstUrl)).status(),404);
   await page.getByLabel('Link label',{exact:true}).fill('Current link');
   await page.getByRole('checkbox',{name:/I have reviewed saved revision 3/}).check();
@@ -131,7 +131,7 @@ try {
   const currentUrl=await oneTime.inputValue();
   const currentRow=page.getByRole('row').filter({hasText:'Current link'});
   await currentRow.getByRole('button',{name:'Revoke link',exact:true}).click();
-  await currentRow.getByRole('button',{name:'Confirm revocation',exact:true}).click();
+  await currentRow.getByRole('button',{name:'Revoke link',exact:true}).click();
   await currentRow.getByText('Revoked',{exact:true}).waitFor();assert.equal(await oneTime.count(),0);assert.equal((await context.request.get(currentUrl)).status(),404);
   console.log('PASS report UI: duplicate-submit lock, immutable snapshots, dirty-share gate, clipboard fallback and matching-link revocation clears the capability');
 
@@ -155,7 +155,7 @@ try {
   assert.equal(await panel.getByRole('button',{name:'Reports',exact:true}).isDisabled(),true);
   await page.getByRole('button',{name:'Cancel edits',exact:true}).click();
   assert.equal(await page.getByLabel('Template brief',{exact:true}).inputValue(),'Compare the previous month. <script>This is plain text.</script>');
-  await page.getByRole('button',{name:'Delete template',exact:true}).click();await page.getByRole('button',{name:'Confirm deletion',exact:true}).click();
+  await page.getByRole('button',{name:'Delete template',exact:true}).click();await page.getByRole('button',{name:'Delete template permanently',exact:true}).click();
   await page.getByText('Template deleted.',{exact:true}).waitFor();assert.equal((await request(`/api/projects/${project.id}/report-templates`)).templates.length,0);
   await panel.getByRole('button',{name:'Reports',exact:true}).click();await page.getByRole('button',{name:'Quarterly review',exact:true}).click();
 
@@ -188,7 +188,7 @@ try {
   await page.getByRole('button',{name:'New report',exact:true}).click();await page.getByLabel('Report title',{exact:true}).fill('Temporary deletion check');await page.getByLabel('HTML source',{exact:true}).fill('<p>Delete this fixture</p>');
   await page.getByRole('button',{name:'Save report',exact:true}).click();await page.getByRole('checkbox',{name:/I have reviewed saved revision 1/}).check();
   await page.getByRole('button',{name:'Create public link',exact:true}).click();await oneTime.waitFor();const deletedUrl=await oneTime.inputValue();
-  await page.getByRole('button',{name:'Delete report',exact:true}).click();await page.getByRole('button',{name:'Confirm deletion',exact:true}).click();
+  await page.getByRole('button',{name:'Delete report',exact:true}).click();await page.getByRole('button',{name:'Delete report permanently',exact:true}).click();
   await page.getByText('Report deleted. Its public links are now unavailable.',{exact:true}).waitFor();
   assert.equal((await context.request.get(deletedUrl)).status(),404);assert.equal((await request(`/api/projects/${otherProject.id}/reports`)).reports.length,0);
   console.log('PASS report UI: templates are reusable plain text; dirty navigation, deletion and late share/clipboard results cannot cross project boundaries');

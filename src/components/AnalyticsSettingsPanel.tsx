@@ -88,7 +88,7 @@ function locationReadiness(value:unknown):GeographyReadiness|undefined{
 
 const NETWORK_COPY: Record<NetworkMode, string> = {
   off: 'Off: page and event counts remain available, but visitor and visit estimates are unavailable until an operator configures a verified network path. Installing behind a proxy does not verify it on its own.',
-  direct: 'Direct: visitor estimates use the Node transport peer.',
+  direct: 'Direct: visitor estimates use the connection address.',
   proxy: 'Proxy: visitor estimates use a configured trusted proxy chain.',
 };
 
@@ -157,7 +157,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
         if (!alive || ctrl.signal.aborted || gen !== genRef.current || !isCurrent()) return;
         if(d.settings.replay!==undefined)replaySettings.parse(d.settings.replay);
         if(d.settings.heatmap!==undefined)heatmapSettings.parse(d.settings.heatmap);
-        verifiedOwner.current=authorityOwner;setData({...d,geography:locationReadiness(d.geography)});
+        verifiedOwner.current=authorityOwner;setData({...d,geography:locationReadiness(d.geography)});setHidden(false);
         setDraft(d.settings);
         setPathsText(d.settings.excludedPaths.join('\n'));
         setLoading(false);
@@ -275,7 +275,9 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
     return (
       <section className="card">
         <h2>Collection and privacy</h2>
-        <p className="dim">Analytics settings are not available for this project.</p>
+        <p className="dim">Analytics settings are not available for your current project access.</p>
+        {error&&<p className="alert" role="alert">{error} Choose Reload settings to check access again.</p>}
+        <button type="button" className="btn ghost" disabled={pending || loading} onClick={reload}>Reload settings</button>
         {deleteRequest.current&&deletion}
       </section>
     );
@@ -304,7 +306,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
     <section className="card" aria-busy={pending}>
       <h2>Collection and privacy</h2>
       <p className="hint">
-        Basic analytics can start without a consent choice. Explicit refusals, Do Not Track and Global Privacy Control stop collection.
+        Choose cookieless counts or consent-first collection. Explicit refusals, Do Not Track and Global Privacy Control stop collection.
       </p>
 
       {error && (
@@ -329,7 +331,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
         </div>
       )}
 
-      {savedOk && !dirty && <div className="banner">Settings saved.</div>}
+      {savedOk && !dirty && <div className="banner" role="status">Settings saved.</div>}
 
       <div className="field">
         <label className="row" htmlFor={`${uid}-enabled`}>
@@ -499,7 +501,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
         <p className="hint" id={`${uid}-paths-hint`}>
           One prefix per line, starting with / and without a query or fragment. A prefix like /private also excludes
           /private-area, and encoded equivalents are matched. Up to 50 prefixes, 256 characters each. Blank lines are
-          ignored. The server performs the final validation.
+          ignored.
         </p>
         {pathErrors.length > 0 && (
           <div className="alert" role="alert">

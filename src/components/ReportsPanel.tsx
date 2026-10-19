@@ -187,7 +187,7 @@ function ReportsView({projectId,onUnauthorized}:Props) {
         <button className={`btn ${reports?'primary':''}`} aria-pressed={reports} disabled={navDisabled} onClick={()=>switchTab('reports')}>Reports</button>
         <button className={`btn ${!reports?'primary':''}`} aria-pressed={!reports} disabled={navDisabled} onClick={()=>switchTab('report-templates')}>Templates</button>
       </div>
-      <p className='dim' style={{marginTop:12}}>{reports?'Save full HTML and share a static snapshot under this installation’s domain.':'Save reusable writing briefs. Templates are plain text and do not run or generate reports.'}</p>
+      <p className='dim' style={{marginTop:12}}>{reports?'Save an HTML report and share a fixed snapshot.':'Save reusable writing briefs. Templates do not generate reports automatically.'}</p>
       {dirty&&<p className='hint'>Save or cancel your edits before switching records or tabs.</p>}
       {pending&&<p role='status'>Working…</p>}
       {error&&<p className='alert' role='alert'>{error}</p>}
@@ -219,7 +219,7 @@ function ReportsView({projectId,onUnauthorized}:Props) {
         </div>
       </form>
       {conflict&&record&&<div className='alert'><p>The saved item changed. Your typed edits are still above. Reloading discards those edits and opens the latest saved version.</p><button className='btn' disabled={pending} onClick={()=>select(record.id,true)}>Reload saved version</button></div>}
-      {deleteConfirm&&record&&<div className='alert'><p>Delete “{label(record)}”? {reports?'This permanently removes the report and makes all its public links unavailable.':'This permanently removes the writing brief.'}</p><div className='row'><button className='btn' disabled={pending||dirty} onClick={remove}>Confirm deletion</button><button className='btn ghost' disabled={pending} onClick={()=>setDeleteConfirm(false)}>Keep {reports?'report':'template'}</button></div></div>}
+      {deleteConfirm&&record&&<div className='alert'><p>Delete “{label(record)}”? {reports?'This permanently removes the report and makes all its public links unavailable.':'This permanently removes the writing brief.'}</p><div className='row'><button className='btn' disabled={pending||dirty} onClick={remove}>Delete {reports?'report':'template'} permanently</button><button className='btn ghost' disabled={pending} onClick={()=>setDeleteConfirm(false)}>Keep {reports?'report':'template'}</button></div></div>}
       {preview&&record&&reports&&<div style={{marginTop:16}}><p className='hint'>Saved revision {record.revision}. Unsaved changes are not included.</p><iframe key={`${record.id}:${record.revision}`} title='Saved report preview' src={`${collection}/${record.id}/preview?revision=${record.revision}`} sandbox='' referrerPolicy='no-referrer' style={{width:'100%',height:450,border:'1px solid var(--line)',background:'white'}}/></div>}
     </section>}
 
@@ -236,7 +236,7 @@ function ReportsView({projectId,onUnauthorized}:Props) {
       <div className='row between' style={{marginTop:20}}><h2>Link history</h2><button className='btn' disabled={pending} onClick={()=>void run(async request=>{await readShares(request,record.id);})}>Refresh links</button></div>
       {shares.length===0?<p className='dim'>{sharesLoaded?'No public links have been created.':'Link history has not loaded. Choose Refresh links to try again.'}</p>:<div className='table-wrap'><table><thead><tr><th>Label</th><th>Revision</th><th>Expires</th><th>Status</th><th>Action</th></tr></thead><tbody>{shares.map(item=>{
         const state=item.revokedAt?'Revoked':Date.parse(item.expiresAt)<=Date.now()?'Expired':'Active';
-        return <tr key={item.id}><td style={{overflowWrap:'anywhere'}}>{item.label}</td><td>{item.reportRevision}</td><td>{date(item.expiresAt)}</td><td>{state}</td><td>{state==='Active'&&(revokeConfirm===item.id?<div><p>Revoke this link?</p><button className='btn' disabled={pending} onClick={()=>revoke(item.id)}>Confirm revocation</button><button className='btn ghost' disabled={pending} onClick={()=>setRevokeConfirm(null)}>Keep link</button></div>:<button className='btn' disabled={pending} onClick={()=>setRevokeConfirm(item.id)}>Revoke link</button>)}</td></tr>;
+        return <tr key={item.id}><td style={{overflowWrap:'anywhere'}}>{item.label}</td><td>{item.reportRevision}</td><td>{date(item.expiresAt)}</td><td>{state}</td><td>{state==='Active'&&(revokeConfirm===item.id?<div><p>Revoke this link?</p><button className='btn' disabled={pending} onClick={()=>revoke(item.id)}>Revoke link</button><button className='btn ghost' disabled={pending} onClick={()=>setRevokeConfirm(null)}>Keep link</button></div>:<button className='btn' disabled={pending} onClick={()=>setRevokeConfirm(item.id)}>Revoke link</button>)}</td></tr>;
       })}</tbody></table></div>}
       {sharesNext&&<button className='btn' disabled={pending} onClick={()=>void run(async request=>{await readShares(request,record.id,sharesNext);})}>Load more links</button>}
     </section>}

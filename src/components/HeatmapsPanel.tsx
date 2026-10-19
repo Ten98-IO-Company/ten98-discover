@@ -51,7 +51,7 @@ export function HeatmapsPanel({projectId,userId,query='',onNavigate,onUnauthoriz
      {pages.items.length===0?<p>{data.coverage==='unavailable'?'No retained page layouts are available.':'No observations match this applied range.'}</p>:<ul className="heatmap-choices">{pages.items.map(item=>{
       if('origin'in item){if(filter&&!item.path.toLowerCase().includes(filter.toLowerCase()))return null;return <li key={item.key}><button type="button" className="btn" disabled={busy} onClick={()=>navigate({from:applied.from,to:applied.to,mode:'geometries',origin:item.origin,path:item.path})}><span><bdi>{item.path}</bdi><small><bdi>{item.origin}</bdi></small></span><span>{count(item.captures)} captured documents</span></button></li>;}
       return <li key={item.key}><button type="button" className="btn" disabled={busy} onClick={()=>navigate({from:applied.from,to:applied.to,mode:'click',origin:applied.origin,path:applied.path,geometry:item.key})}><span>{layout(item.geometry)}</span><span>{count(item.captures)} captured documents</span></button></li>;
-     })}</ul>}{shownPages&&filter&&shownPages.length===0&&pages.items.length>0&&<p>No matching paths on this page of results.</p>}
+     })}</ul>}{shownPages&&filter&&shownPages.length===0&&pages.items.length>0&&<p>No matching paths on this page of results. <button type="button" className="btn" onClick={()=>setFilter('')}>Clear path filter</button></p>}
      <div className="row">{back.current.length>0&&<button type="button" className="btn" disabled={busy} onClick={previous}>Previous results</button>}<button type="button" className="btn" disabled={busy||pages.nextCursor===null} onClick={()=>{if(pages.nextCursor)navigate({...applied,cursor:pages.nextCursor});}}>Next 20 results</button></div><p className="hint">Live pages contain up to 20 results. Changing retention or new observations can change later pages.</p>
     </section>}
     {(clicks||scroll)&&<section className="card stack" aria-label="Selected layout heatmap"><div className="row"><h3>{geometry?layout(geometry):'Captured layout unavailable'}</h3><div className="row" aria-label="Heatmap type"><button type="button" className={applied.mode==='click'?'btn primary':'btn'} aria-pressed={applied.mode==='click'} disabled={busy||applied.mode==='click'} onClick={()=>navigate({...applied,mode:'click'})}>Clicks</button><button type="button" className={applied.mode==='scroll'?'btn primary':'btn'} aria-pressed={applied.mode==='scroll'} disabled={busy||applied.mode==='scroll'} onClick={()=>navigate({...applied,mode:'scroll'})}>Scroll depth</button></div></div>
@@ -89,7 +89,7 @@ function HistoricalBackground({projectId,query,owner,readEnabled,overlay,onRole,
     const value=await readReplayResponse('/api/projects/'+projectId+'/heatmaps/background?'+params,heatmapBackgroundPage,signal);if(!current())return;if(signal.aborted)throw Error('Historical sample load timed out.');
     if(value.projectId!==projectId||serialize(value.query)!==serialize(query))throw invalid();
     if(value.state!=='available'||!value.reference||!value.item){onRole(value.role);
-     setMessage(value.state==='expired'?'The historical sample expired. Numeric observations can have a different retention period.':value.state==='incomplete'?'The historical sample is incomplete. No missing page content was invented.':value.state==='unsupported'?'This historical sample cannot be aligned with the captured layout.':'No matching retained historical sample is available. Older numeric captures were not retroactively attached.');
+     setMessage(value.state==='expired'?'The historical sample expired. Numeric observations can have a different retention period.':value.state==='incomplete'?'The historical sample is incomplete. Numeric observations remain available.':value.state==='unsupported'?'This historical sample cannot be aligned with the captured layout.':'No matching retained historical sample is available. Older numeric captures were not retroactively attached.');
      return;
     }
     if(JSON.stringify(value.reference.geometry)!==JSON.stringify(overlay.geometry)||reference&&JSON.stringify(value.reference)!==JSON.stringify(reference))throw invalid();
@@ -118,7 +118,7 @@ function HistoricalBackground({projectId,query,owner,readEnabled,overlay,onRole,
   }catch(cause){
    if(!current())return;setPreview(null);
    if(cause instanceof InvalidReplay||cause instanceof ApiError&&[401,403,404].includes(cause.status)){onAccessLoss(cause);return;}
-   setMessage(cause instanceof ApiError&&cause.status===429?'Loading paused. Try again after a minute.':'The historical sample could not be loaded. Retry this free read; no recording or collection is started.');
+   setMessage(cause instanceof ApiError&&cause.status===429?'Loading paused. Try again after a minute.':'The historical sample could not be loaded. Choose Load historical sample to try again.');
   }finally{if(current())setBusy(false);if(operation.current===ctrl)operation.current=null;}
  }
  function cancel(){serial.current++;operation.current?.abort();operation.current=null;setBusy(false);setPreview(null);setMessage('Loading cancelled. Numeric observations were kept.');}

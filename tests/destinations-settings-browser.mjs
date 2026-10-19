@@ -52,7 +52,9 @@ try{
   return reply(body);
  });
  page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',e=>errors.push(e.message));
- await fresh();await edit();assert.equal(await unloadBlocked(),true);const initial=requests.length;
+ await fresh();const snippet=()=>page.getByLabel('Consent API usage example',{exact:true}),liveSnippet=await snippet().inputValue(),beforeSwitch=requests.length;assert.match(liveSnippet,/environment: 'live'/);assert.equal(await snippet().getAttribute('readonly'),'');
+ await cleanAction(()=>environment().selectOption('test'));await ready();assert.match(await snippet().inputValue(),/environment: 'test'/);assert.doesNotMatch(await snippet().inputValue(),/environment: 'live'/);await cleanAction(()=>environment().selectOption('live'));await ready();assert.equal(await snippet().inputValue(),liveSnippet);assert.deepEqual(requests.slice(beforeSwitch).map(request=>[request.method,request.environment]),[['GET','test'],['GET','live']]);pass('Consent example follows Test then Live using environment reads only, without mutations or vendor traffic');
+ await edit();assert.equal(await unloadBlocked(),true);const initial=requests.length;
  await confirmAction(false,()=>environment().selectOption('test'));assert.equal(await environment().inputValue(),'live');assert.equal(await asset().inputValue(),'G-DRAFT1234');assert.equal(requests.length,initial);assert.equal(await page.getByRole('checkbox',{name:'Enabled',exact:true}).isChecked(),true);assert.equal(await page.getByRole('checkbox',{name:'page_view',exact:true}).isChecked(),true);
  await asset().fill('G-KEPT1234');await confirmAction(false,()=>button('Reload saved state').click(),reloadMessage);assert.equal(await asset().inputValue(),'G-KEPT1234');assert.equal(requests.length,initial);
  await confirmAction(true,()=>environment().selectOption('test'));await ready();assert.equal(await environment().inputValue(),'test');assert.equal(await unloadBlocked(),false);assert.equal(requests.length,initial+1);assert.equal(requests.at(-1).method,'GET');

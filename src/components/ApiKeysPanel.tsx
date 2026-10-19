@@ -231,7 +231,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
   function statusPill(k: ApiKey) {
     if (k.revokedAt) return <span className="pill bad">Revoked</span>
     if (new Date(k.expiresAt).getTime() <= Date.now()) return <span className="pill bad">Expired</span>
-    return <span className="pill good">Active</span>
+    return <span className="pill">Not revoked</span>
   }
 
   const fmt = (iso: string) => new Date(iso).toLocaleDateString()
@@ -244,7 +244,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
     <>
       <div className="banner">
         API keys grant access to <strong>this workspace only</strong>, limited to the scopes you select.
-        A key works until it expires or you revoke it — the server checks scopes on every request.
+        Every request checks its expiry, scopes, current workspace access and two-factor requirement.
       </div>
 
       <p className="hint"><a href="/api/openapi.json" target="_blank" rel="noopener noreferrer">Open native API specification (JSON)</a></p>

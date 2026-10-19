@@ -60,7 +60,7 @@
 .alert{ background: var(--red-tint); border: 1px solid var(--color-danger); color: var(--danger); }
 .notice{ background: var(--blue-tint); border: 1px solid var(--color-accent); color: var(--blue); }
 .google-reports .stack{ display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
-.research-panel{ min-width: 0; overflow-wrap: anywhere; }
+.research-panel{ --control-md: var(--control-touch); min-width: 0; overflow-wrap: anywhere; }
 .prompt-recurring{ min-inline-size: 0; overflow-wrap: anywhere; --control-md: var(--control-touch); }
 .prompt-recurring label{ min-inline-size: 0; }
 .prompt-recurring :is(input:not([type='checkbox']), select){ inline-size: 100%; min-inline-size: 0; min-block-size: var(--control-touch); }
@@ -84,7 +84,7 @@
 .site-audits form .field{ min-inline-size: 0; max-inline-size: 100%; }
 .site-audits .audit-pages-table{ min-inline-size: 1000px; }
 .site-audits .audit-pages-table td:first-child, .site-audits .audit-pages-table td:nth-child(3){ min-inline-size: 160px; max-inline-size: 280px; overflow-wrap: anywhere; }
-.site-audits .audit-pages-table .audit-title-text{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.site-audits .audit-pages-table .audit-title-text{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; }
 .site-audits .audit-sort{ min-block-size: var(--control-touch); padding: var(--space-2); border: 0; background: transparent; color: inherit; font-weight: inherit; cursor: pointer; text-align: start; }
 .site-audits th[aria-sort='ascending'] .audit-sort, .site-audits th[aria-sort='descending'] .audit-sort{ color: var(--blue); text-decoration: underline; text-underline-offset: .2em; }
 .site-audits .audit-issue-group{ border-block-start: 1px solid var(--line); padding-block: 8px; }
@@ -267,6 +267,10 @@ tbody tr:last-child td{ border-bottom: 0; }
 .installation-panel .installation-help > summary{ cursor: pointer; min-height: var(--control-touch); display: list-item; padding-block: var(--space-2); }
 .diagnostics summary{ min-height: var(--control-touch); }
 .events-panel th:first-child, .events-panel td:first-child{ white-space: nowrap; }
+.utm-report, .utm-report .stack{ grid-template-columns: minmax(0,1fr); overflow-wrap: anywhere; }
+.utm-report :is(details,.row,label){ min-inline-size: 0; max-inline-size: 100%; }
+.utm-report .btn{ max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+.utm-report input:not([type="checkbox"]){ inline-size: 100%; }
 .utm-panels{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-4); }
 .utm-panel{ min-inline-size: 0; }
 .utm-toolbar{ grid-template-columns: repeat(3,minmax(0,1fr)); }

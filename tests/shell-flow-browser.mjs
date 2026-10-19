@@ -158,7 +158,7 @@ try {
   };
   const capture = async name => { await mkdir(evidence, {recursive:true}); await page.screenshot({path:resolve(evidence, name + '.png'), fullPage:true}); };
   const open = async view => {
-    const reads = [page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/jobs`)];
+    const reads = view === 'installation' ? [page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/jobs`)] : [];
     if (!holdEvents) reads.push(page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/events`));
     await Promise.all([page.goto(href(view)), ...reads]);
     await heading(view === 'events' ? 'Recent events' : 'Install tracker').waitFor();

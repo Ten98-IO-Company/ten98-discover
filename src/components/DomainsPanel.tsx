@@ -73,6 +73,7 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
   const nameRef = useRef<HTMLTextAreaElement | null>(null);
   const valueRef = useRef<HTMLTextAreaElement | null>(null);
   const proofRef = useRef<HTMLHeadingElement | null>(null);
+  const editRef = useRef<HTMLHeadingElement | null>(null);
   const addRef = useRef<HTMLDetailsElement | null>(null);
   const addedRef = useRef<string | null>(null);
 
@@ -81,6 +82,12 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
     proofRef.current?.focus();
     proofRef.current?.scrollIntoView({block: 'nearest'});
   }, [proof]);
+
+  useEffect(() => {
+    if (!edit) return;
+    editRef.current?.focus();
+    editRef.current?.scrollIntoView({block: 'nearest'});
+  }, [edit?.id]);
 
   useEffect(() => {
     if (!addedRef.current) return;
@@ -374,8 +381,6 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
           Refresh
         </button>
       </div>
-      <p className="hint">Keep your project website, additional serving domains and redirect aliases together.</p>
-
       {error && (
         <div className="banner alert" role="alert">
           {error}
@@ -476,7 +481,7 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
           )}
 
           <h3>Other domains and redirect aliases</h3>
-          <p className="hint">Verified serving domains can use this project’s snippet at their exact HTTPS origin on port 443. Subdomains and other ports need their own entries. Redirect aliases never enable collection.</p>
+          <p className="hint">Verified serving domains can use this project’s snippet at their exact HTTPS origin on port 443. Add each subdomain separately. Additional domains cannot use other ports. Redirect aliases never enable collection.</p>
           <details className="domain-add" ref={addRef}>
             <summary>Add another domain</summary>
           <form className="field" onSubmit={onAdd} aria-label="Add a domain">
@@ -640,9 +645,9 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
 
           {edit && editingDomain && (
             <form className="field" onSubmit={onSaveEdit} aria-label={`Edit ${editingDomain.hostname}`}>
-              <strong>
+              <h3 ref={editRef} tabIndex={-1}>
                 Edit <span className="mono">{editingDomain.hostname}</span>
-              </strong>
+              </h3>
               <span className="hint">The hostname itself cannot be changed.</span>
               <label htmlFor="dom-edit-role">Purpose</label>
               <select

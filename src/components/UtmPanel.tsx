@@ -74,12 +74,12 @@ export function UtmPanel({projectId,userId,onUnauthorized}:{projectId:string;use
       <div className="row"><button className="btn primary" type="submit" disabled={busy}>{busy?'Loading reports…':denied?'Reload access and apply':applied&&!unapplied?'Refresh reports':'Apply reports'}</button></div>
       {error&&<p className="alert" role="alert">{error}</p>}{unapplied&&<p className="hint" role="status">Unapplied changes. Results and CSV still describe the applied scope below.</p>}
     </form>
-    {appliedParams.has('from')&&<div className="card stack" aria-label="Applied UTM scope"><h3>Applied scope</h3><p>{appliedParams.get('from')} to {appliedParams.get('to')} · {appliedParams.get('timeZone')} · Pageviews</p>{utmFilterFields.filter(field=>appliedParams.has(field)).map(field=><p className="hint" key={field}>{labelOf(FILTERS,field)} equals <bdi>{JSON.stringify(appliedParams.get(field))}</bdi></p>)}<p className="hint">Five independent native report snapshots, with the same dates and exact filters. Shares use each field’s full observed tagged-pageview total, including values omitted from its top100 table; they are not shares of all traffic or visitors.</p></div>}
+    {appliedParams.has('from')&&<div className="card stack" aria-label="Applied UTM scope"><h3>Applied scope</h3><p>{appliedParams.get('from')} to {appliedParams.get('to')} · {appliedParams.get('timeZone')} · Pageviews</p>{utmFilterFields.filter(field=>appliedParams.has(field)).map(field=><p className="hint" key={field}>{labelOf(FILTERS,field)} equals <bdi>{JSON.stringify(appliedParams.get(field))}</bdi></p>)}<p className="hint">Shares use all observed pageviews tagged with that field, including values outside its top 100 table. They are not shares of all traffic or visitors.</p></div>}
     <div className="utm-panels">{utmFields.map(([field,label])=>{
       const panel=visible[field],result=panel.result,total=result?.totals.pageViews,rows=result?.breakdown.groups??[];
       return <section key={field} className="card stack utm-panel" aria-labelledby={`${uid}-${field}-heading`} aria-busy={panel.phase==='loading'}>
         <h3 id={`${uid}-${field}-heading`}>{label}</h3>
-        {panel.phase==='idle'&&<p className="hint">Apply reports to read this campaign field.</p>}
+        {panel.phase==='idle'&&<p className="hint">Choose dates and apply reports to view this campaign field.</p>}
         {panel.phase==='loading'&&<p role="status">Loading {label.toLowerCase()}…</p>}
         {panel.phase==='error'&&<><p className="alert" role="alert">{panel.error}</p><button className="btn" type="button" disabled={busy||denied} onClick={()=>void load([field],applied)}>Retry {label.toLowerCase()}</button></>}
         {panel.phase==='ready'&&result&&<>
@@ -92,7 +92,7 @@ export function UtmPanel({projectId,userId,onUnauthorized}:{projectId:string;use
             <div className="table-wrap" tabIndex={0} role="region" aria-label={`${label} exact values`}><table><thead><tr><th>{label}</th><th>Tagged pageviews</th><th>Share of tagged pageviews</th></tr></thead><tbody>{rows.map(row=><tr key={row.value as string}><td><bdi>{row.value as string}</bdi></td><td>{row.events}</td><td>{(row.events/total*100).toFixed(1)}%</td></tr>)}</tbody></table></div>
           </>}
           <button className="btn" type="button" onClick={()=>download(field,panel)}>Download {label.toLowerCase()} CSV</button>
-          <p className="hint dim">Downloads this exact applied native snapshot, including its bounded breakdown, daily rows and scope.</p>
+          <p className="hint dim">Includes the applied dates, filters, daily rows and returned campaign values.</p>
         </>}
       </section>;
     })}</div>

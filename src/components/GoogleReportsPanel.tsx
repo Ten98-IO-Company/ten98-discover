@@ -323,6 +323,7 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
       </div>
       {notice && <p role="status" className="hint">{notice}</p>}
       {err !== '' && <p role="alert" className="alert">{err}</p>}
+      {cErr !== '' && <p role="alert" className="alert">{cErr}</p>}
       {overview.connections.map(c => (
         <div key={c.id} hidden={selection !== c.id} className="google-source-panel">
         <ConnectionSection
@@ -354,7 +355,6 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
           </div>
           <button type="button" className="btn primary" style={BTN} disabled={pending || cBusy || cName.trim() === ''} onClick={() => void connect(cProvider, cName.trim())}>Connect to Google</button>
           <p className="hint">You are sent to Google to approve read-only access and then return here.</p>
-          {cErr !== '' && <p role="alert" className="alert">{cErr}</p>}
           </div>
         </details>
       )}
@@ -661,11 +661,11 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
         owner && appOn ? (
           <div className="stack">
             <p className="hint">Choose the property this connection reports on. The choice is permanent; add another connection for a different property.</p>
-            {!propsData && (
-              <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void loadProps()}>Load available properties</button>
+            {(!propsData || propsData.list.length === 0 && propsData.next === null) && (
+              <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void loadProps()}>{propsData ? 'Reload available properties' : 'Load available properties'}</button>
             )}
             {propsData && propsData.list.length === 0 && (
-              <p className="dim">No properties were returned for this Google account.</p>
+              <p className="dim">{propsData.next === null ? 'No properties were returned for this Google account.' : 'No properties on this page. Load more properties to continue.'}</p>
             )}
             {propsData && propsData.list.length > 0 && (
               <>
@@ -677,11 +677,11 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
                     </label>
                   ))}
                 </div>
-                {propsData.next !== null && (
-                  <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void loadProps(propsData.next ?? undefined)}>Load more properties</button>
-                )}
                 <button type="button" className="btn primary" style={BTN} disabled={busy || pick === ''} onClick={chooseProp}>Use this property</button>
               </>
+            )}
+            {propsData && propsData.next !== null && (
+              <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void loadProps(propsData.next ?? undefined)}>Load more properties</button>
             )}
           </div>
         ) : (

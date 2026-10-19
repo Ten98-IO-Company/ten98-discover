@@ -41,7 +41,7 @@ test('actual quote DTO validates exact per-route microUSD rounding, ordered sele
 });
 test('passive picker renders exact selections and pricing without selecting, refreshing or requesting a quote',()=>{
  let changes=0,refreshes=0;const html=renderToStaticMarkup(createElement(OpenRouterModelPicker,{catalog,selected:['retired/old-model'],maximum:2,disabled:false,refreshing:false,canRefresh:true,onChange:()=>changes++,onRefresh:()=>refreshes++}));
- assert.match(html,/retired\/old-model/);assert.match(html,/not in the saved catalog/);assert.match(html,/USD 0\.0000001/);assert.match(html,/\/ token/);assert.match(html,/Refresh models \(free metadata\)/);assert.match(html,/type="search"/);assert.match(html,/type="button"/);assert.equal(changes,0);assert.equal(refreshes,0);
+ assert.match(html,/retired\/old-model/);assert.match(html,/not in the saved catalog/);assert.match(html,/USD 0\.0000001/);assert.match(html,/\/ token/);assert.match(html,/Refresh model list/);assert.match(html,/type="search"/);assert.match(html,/type="button"/);assert.equal(changes,0);assert.equal(refreshes,0);
  const empty=renderToStaticMarkup(createElement(OpenRouterModelPicker,{catalog,selected:[],maximum:1,structured:true,disabled:false,refreshing:false,canRefresh:false,onChange:()=>changes++,onRefresh:()=>refreshes++}));assert.match(empty,/0 of 1 selected/);assert.ok(!empty.includes('checked=""'));assert.equal(changes,0);
 });
 test('bounded JSON transport checks complete bytes, fatal UTF8, refusals and cancellation without network',async()=>{

@@ -389,12 +389,12 @@ function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenR
     {navigation.auditInvalid&&<button className="btn" disabled={writing} onClick={()=>callbacks.current.onNavigate?.({},true)}>Open audit history</button>}
     {error&&<div className="alert" role="alert">{error} {!writing&&!setup&&<button className="btn" onClick={()=>{void loadSetup();void loadHistory();}}>Reload access</button>}</div>}
     {message&&<p className="notice" role="status">{message}</p>}
-    <p className="hint">Manual static HTML audit. Rendered pages, protected-site credentials, scheduling and Lighthouse are not available yet.</p>
+    <p className="hint">Check public HTML pages for technical issues. The audit does not run page JavaScript or measure Core Web Vitals.</p>
     {!view.runId?<>
       {errorBox('setup',()=>void loadSetup())}{busy.setup&&<p role="status">Loading audit setup…</p>}
       {managed&&setup&&<details className="card audit-launch" open><summary>{history.rows.length?'Start another audit':'Start an audit'}</summary>
         {!setup.origins.length&&!attempt?<div className="empty"><p>No eligible HTTPS domain. Add and verify a serving domain to run an audit.</p><button className="btn" disabled={writing} onClick={()=>callbacks.current.onOpenDomains()}>Manage domains</button></div>:<form onSubmit={e=>void start(e)}>
-          {setup.worker.status==='unavailable'&&<p className="banner">Worker unavailable. Queued audits expire 30 minutes after creation, including time spent waiting. Ask the operator to check the worker.</p>}
+          {setup.worker.status==='unavailable'&&<p className="banner">The audit service is unavailable. You can queue an audit, but it expires after 30 minutes, including waiting time. Ask your administrator to check the service.</p>}
           <fieldset className="audit-launch-fields" disabled={writing||!!attempt} style={{border:0,padding:0,margin:0}}>
             <div className="field"><label htmlFor={uid+'domain'}>Domain</label><select id={uid+'domain'} value={domain} onChange={e=>{chosenDomain.current=true;setDomain(e.target.value);}}><option value="">Choose a domain</option>{setup.origins.map(o=><option key={o.domainId??'canonical'} value={o.domainId??'canonical'}>{o.origin} · {o.authority==='canonical_project'?'Project origin':'Verified serving domain'}</option>)}</select></div>
             <div className="field"><label htmlFor={uid+'path'}>Start path</label><input id={uid+'path'} value={path} maxLength={2048} required onChange={e=>setPath(e.target.value)} aria-describedby={uid+'path-help'}/><p className="hint" id={uid+'path-help'}>Start with /. Queries and fragments are not supported. Other paths on this origin may be discovered.</p></div>

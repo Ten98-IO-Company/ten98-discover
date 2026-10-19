@@ -58,7 +58,7 @@ export function RankCheckView(p:RankCheckViewProps):React.JSX.Element{
      <p className="dim">Prices checked {q.priceAsOf} · Quote expires {q.expiresAt}</p>
     </div>
     {q.expired&&<p className="notice">This quote expired. Return to the tracker to prepare a new quote.</p>}
-    <p className="hint">This is an upper bound, not a final bill. Partial or uncertain provider outcomes remain visible until reconciled.</p>
+    <p className="hint">The final charge may be lower. Unfinished checks and unconfirmed charges stay visible until resolved.</p>
     {writer&&!q.expired&&!q.canStart&&<p className="hint">Only the requester can start an eligible quote.</p>}
    </>}
    {(q!==null||!p.conflict)&&<div className="row">

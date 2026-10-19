@@ -65,7 +65,9 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [mutating, setBusy] = useState(false)
+  const [reloadRequired, setReloadRequired] = useState(false)
   const busy = loading || mutating
+  const controlsOff = busy || reloadRequired
 
   const [cName, setCName] = useState('')
   const [cProvider, setCProvider] = useState<ProviderName>('openrouter')
@@ -147,10 +149,13 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
       }
       setData(d)
       setBPaused(d.budget.paused)
+      setReloadRequired(false)
+      setError(null)
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError' && ctrl.signal.aborted) return
       if (!current()) return
       if (e instanceof ApiError && handleAuthFailure(e)) return
+      setReloadRequired(true)
       setLoadError(errMsg(e))
     } finally {
       if (current()) setLoading(false)
@@ -174,7 +179,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     successMsg: string,
     afterSuccess?: () => void,
   ): Promise<void> => {
-    if (mutLockRef.current || loading || !data) return
+    if (mutLockRef.current || loading || reloadRequired || !data) return
     mutLockRef.current = true
     const id = ++reqIdRef.current
     abortRef.current?.abort()
@@ -194,7 +199,9 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
       if (e instanceof Error && e.name === 'AbortError' && ctrl.signal.aborted) return
       if (!current()) return
       if (e instanceof ApiError && handleAuthFailure(e)) return
-      setError(errMsg(e))
+      const uncertain = !(e instanceof ApiError) || e.status === 0 || e.status >= 500
+      if (uncertain || e instanceof ApiError && e.status === 409) setReloadRequired(true)
+      setError(uncertain ? `${errMsg(e)} The change may already be saved. Reload saved settings before making further changes.` : errMsg(e))
     } finally {
       mutLockRef.current = false
       if (mountedRef.current) setBusy(false)
@@ -210,7 +217,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
 
   const submitCreate = (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault()
-    if (mutLockRef.current || busy || !vaultOk || data === null) return
+    if (mutLockRef.current || controlsOff || !vaultOk || data === null) return
     const name = cName.trim()
     if (name.length === 0 || name.length > 120) {
       setError('Name must be between 1 and 120 characters.')
@@ -237,7 +244,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   }
 
   const openRotate = (c: ConnectionMeta) => {
-    if (mutLockRef.current || busy || !vaultOk) return
+    if (mutLockRef.current || controlsOff || !vaultOk) return
     clearSecrets()
     // Prefill metadata only; credentials are always blank.
     setRotateId(c.id)
@@ -251,7 +258,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
 
   const submitRotate = (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault()
-    if (mutLockRef.current || busy || rotateConn === null || !vaultOk) return
+    if (mutLockRef.current || controlsOff || rotateConn === null || !vaultOk) return
     const name = rName.trim()
     if (name.length === 0 || name.length > 120) {
       setError('Name must be between 1 and 120 characters.')
@@ -276,7 +283,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   }
 
   const revokeConn = (c: ConnectionMeta) => {
-    if (mutLockRef.current || busy || !data) return
+    if (mutLockRef.current || controlsOff || !data) return
     if (!window.confirm(`Permanently disconnect "${c.name}"? This cannot be undone.`)) return
     void runMutation(
       signal => api<unknown>(`${base}/${c.id}/revoke`, { method: 'POST', body: {}, signal }),
@@ -288,7 +295,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   }
 
   const checkConn = (c: ConnectionMeta) => {
-    if (mutLockRef.current || busy || !vaultOk) return
+    if (mutLockRef.current || controlsOff || !vaultOk) return
     // Explicit, read-only account check. Never fired automatically.
     void runMutation(
       signal => api<unknown>(`${base}/${c.id}/check`, { method: 'POST', body: {}, signal }),
@@ -298,7 +305,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
 
   const submitBudget = (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault()
-    if (mutLockRef.current || busy || !data) return
+    if (mutLockRef.current || controlsOff || !data) return
     if (!bPaused && !vaultOk) {
       setError('Pause provider work until credential storage is configured.')
       return
@@ -310,7 +317,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   }
 
   const retry = (
-    <button type="button" className="btn" onClick={() => { if (!mutLockRef.current) void load() }} disabled={loading || busy}>Retry</button>
+    <button type="button" className="btn" onClick={() => { if (!mutLockRef.current) void load() }} disabled={busy}>Reload saved settings</button>
   )
 
   return (
@@ -345,7 +352,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
             </div>
           )}
           {error !== null && (
-            <div className="alert" role="alert">{error}</div>
+            <div className="alert" role="alert">{error}{reloadRequired && loadError === null && <p>{retry}</p>}</div>
           )}
           {success !== null && (
             <div role="status" style={{ margin: '10px 0', padding: '10px 14px', background: 'var(--green-tint)', border: '1px solid var(--green)', borderRadius: 10, fontSize: '13.5px' }}>{success}</div>
@@ -389,9 +396,9 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                         <td>{c.lastCheckedAt === null ? 'Never' : new Date(c.lastCheckedAt).toLocaleString()}</td>
                         <td>
                           <div className="row">
-                            <button type="button" className="btn ghost" disabled={busy || !data.vaultConfigured} onClick={() => checkConn(c)}>Run check</button>
-                            <button type="button" className="btn ghost" disabled={busy || !data.vaultConfigured} onClick={() => openRotate(c)}>Rotate credentials</button>
-                            <button type="button" className="btn ghost" disabled={busy} onClick={() => revokeConn(c)}>Disconnect</button>
+                            <button type="button" className="btn ghost" disabled={controlsOff || !data.vaultConfigured} onClick={() => checkConn(c)}>Run check</button>
+                            <button type="button" className="btn ghost" disabled={controlsOff || !data.vaultConfigured} onClick={() => openRotate(c)}>Rotate credentials</button>
+                            <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => revokeConn(c)}>Disconnect</button>
                           </div>
                         </td>
                       </tr>
@@ -412,28 +419,28 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                 <div className="row" style={{ alignItems: 'flex-start' }}>
                   <div className="field" style={{ minWidth: 0, flex: '1 1 240px' }}>
                     <label htmlFor="rot-name">Name</label>
-                    <input id="rot-name" value={rName} onChange={e => setRName(e.target.value)} maxLength={120} autoComplete="off" disabled={busy || !data.vaultConfigured} />
+                    <input id="rot-name" value={rName} onChange={e => setRName(e.target.value)} maxLength={120} autoComplete="off" disabled={controlsOff || !data.vaultConfigured} />
                   </div>
                 </div>
                 {rotateConn.provider === 'openrouter' ? (
                   <div className="field">
                     <label htmlFor="rot-apikey">New OpenRouter API key</label>
-                    <input id="rot-apikey" type="password" autoComplete="off" maxLength={4096} value={rApiKey} onChange={e => setRApiKey(e.target.value)} disabled={busy || !data.vaultConfigured} />
+                    <input id="rot-apikey" type="password" autoComplete="off" maxLength={4096} value={rApiKey} onChange={e => setRApiKey(e.target.value)} disabled={controlsOff || !data.vaultConfigured} />
                   </div>
                 ) : (
                   <>
                     <div className="field">
                       <label htmlFor="rot-login">New DataForSEO API login email</label>
-                      <input id="rot-login" autoComplete="off" maxLength={254} value={rLogin} onChange={e => setRLogin(e.target.value)} disabled={busy || !data.vaultConfigured} />
+                      <input id="rot-login" autoComplete="off" maxLength={254} value={rLogin} onChange={e => setRLogin(e.target.value)} disabled={controlsOff || !data.vaultConfigured} />
                     </div>
                     <div className="field">
                       <label htmlFor="rot-password">New DataForSEO API password</label>
-                      <input id="rot-password" type="password" autoComplete="off" maxLength={4096} value={rPassword} onChange={e => setRPassword(e.target.value)} disabled={busy || !data.vaultConfigured} />
+                      <input id="rot-password" type="password" autoComplete="off" maxLength={4096} value={rPassword} onChange={e => setRPassword(e.target.value)} disabled={controlsOff || !data.vaultConfigured} />
                     </div>
                   </>
                 )}
                 <div className="row">
-                  <button type="submit" className="btn primary" disabled={busy || !data.vaultConfigured}>Rotate credentials</button>
+                  <button type="submit" className="btn primary" disabled={controlsOff || !data.vaultConfigured}>Rotate credentials</button>
                   <button type="button" className="btn" onClick={closeRotate} disabled={busy}>Cancel</button>
                 </div>
               </form>
@@ -446,11 +453,11 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
               <div className="row" style={{ alignItems: 'flex-start' }}>
                 <div className="field" style={{ minWidth: 0, flex: '1 1 240px' }}>
                   <label htmlFor="pc-name">Name</label>
-                  <input id="pc-name" value={cName} onChange={e => setCName(e.target.value)} maxLength={120} autoComplete="off" disabled={busy || !data.vaultConfigured} />
+                  <input id="pc-name" value={cName} onChange={e => setCName(e.target.value)} maxLength={120} autoComplete="off" disabled={controlsOff || !data.vaultConfigured} />
                 </div>
                 <div className="field" style={{ minWidth: 0, flex: '1 1 200px' }}>
                   <label htmlFor="pc-provider">Provider</label>
-                  <select id="pc-provider" value={cProvider} onChange={e => { setCProvider(e.target.value === 'dataforseo' ? 'dataforseo' : 'openrouter'); setCApiKey(''); setCLogin(''); setCPassword('') }} disabled={busy || !data.vaultConfigured}>
+                  <select id="pc-provider" value={cProvider} onChange={e => { setCProvider(e.target.value === 'dataforseo' ? 'dataforseo' : 'openrouter'); setCApiKey(''); setCLogin(''); setCPassword('') }} disabled={controlsOff || !data.vaultConfigured}>
                     <option value="openrouter">OpenRouter</option>
                     <option value="dataforseo">DataForSEO</option>
                   </select>
@@ -459,21 +466,21 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
               {cProvider === 'openrouter' ? (
                 <div className="field">
                   <label htmlFor="pc-apikey">OpenRouter API key</label>
-                  <input id="pc-apikey" type="password" autoComplete="off" maxLength={4096} value={cApiKey} onChange={e => setCApiKey(e.target.value)} disabled={busy || !data.vaultConfigured} />
+                  <input id="pc-apikey" type="password" autoComplete="off" maxLength={4096} value={cApiKey} onChange={e => setCApiKey(e.target.value)} disabled={controlsOff || !data.vaultConfigured} />
                 </div>
               ) : (
                 <>
                   <div className="field">
                     <label htmlFor="pc-login">DataForSEO API login email</label>
-                    <input id="pc-login" autoComplete="off" maxLength={254} value={cLogin} onChange={e => setCLogin(e.target.value)} disabled={busy || !data.vaultConfigured} />
+                    <input id="pc-login" autoComplete="off" maxLength={254} value={cLogin} onChange={e => setCLogin(e.target.value)} disabled={controlsOff || !data.vaultConfigured} />
                   </div>
                   <div className="field">
                     <label htmlFor="pc-password">DataForSEO API password</label>
-                    <input id="pc-password" type="password" autoComplete="off" maxLength={4096} value={cPassword} onChange={e => setCPassword(e.target.value)} disabled={busy || !data.vaultConfigured} />
+                    <input id="pc-password" type="password" autoComplete="off" maxLength={4096} value={cPassword} onChange={e => setCPassword(e.target.value)} disabled={controlsOff || !data.vaultConfigured} />
                   </div>
                 </>
               )}
-              <button type="submit" className="btn primary" disabled={busy || !data.vaultConfigured}>Save connection</button>
+              <button type="submit" className="btn primary" disabled={controlsOff || !data.vaultConfigured}>Save connection</button>
               {!data.vaultConfigured && <p className="hint">Saving is disabled until credential storage is configured.</p>}
             </form>
           </div>
@@ -481,7 +488,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
           <div className="card">
             <h2 id="provider-budget" tabIndex={-1}>External API spending</h2>
             <p className="hint">
-              Usage month: {data.budget.month}. Totals of this app's own requests this month (UTC); there is no app spending limit. Uncertain: requests whose charge is unknown; while any exists, new paid work is blocked until an owner reconciles it.
+              Spent covers this app's settled requests for {data.budget.month} (UTC). Reserved and Uncertain include outstanding requests from all months. There is no app spending limit. Unknown charges block new paid work until an owner reconciles them.
             </p>
             <div className="row" style={{ gap: 32, alignItems: 'baseline' }}>
               <div style={{ minWidth: 0 }}>
@@ -501,14 +508,14 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
               <div className="row" style={{ alignItems: 'flex-start' }}>
                 <div className="field" style={{ minWidth: 0 }}>
                   <label htmlFor="bl-paused">
-                    <input id="bl-paused" type="checkbox" style={{ width: 'auto', marginRight: 8 }} checked={bPaused} disabled={busy || (!data.vaultConfigured && bPaused)} onChange={e => setBPaused(e.target.checked)} />
+                    <input id="bl-paused" type="checkbox" style={{ width: 'auto', marginRight: 8 }} checked={bPaused} disabled={controlsOff || (!data.vaultConfigured && bPaused)} onChange={e => setBPaused(e.target.checked)} />
                     Pause paid provider work
                   </label>
-                  <p className="hint">Stops new paid work immediately; off for new workspaces.</p>
+                  <p className="hint">Pauses new paid work after saving; off for new workspaces.</p>
                   {!data.vaultConfigured && <p className="hint">Unpausing requires credential storage to be configured.</p>}
                 </div>
               </div>
-              <button type="submit" className="btn primary" disabled={busy}>Save pause setting</button>
+              <button type="submit" className="btn primary" disabled={controlsOff}>Save pause setting</button>
             </form>
           </div>
 

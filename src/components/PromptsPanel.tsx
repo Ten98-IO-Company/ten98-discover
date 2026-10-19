@@ -475,7 +475,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     setReturning(true);
     const access = accessRef.current;
     await load(null, applied, !saved, true);
-    if (saved && aliveRef.current && access === accessRef.current) setNotice('Suggested prompts were saved disabled. Current library filters still apply.');
+    if (saved && aliveRef.current && access === accessRef.current) setNotice('Suggested prompts saved. Tracking is off. Current library filters still apply.');
     if (aliveRef.current) setReturning(false);
   }
 
@@ -904,7 +904,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
                   </td>
                   <td>
                     <span className="pill">{p.archivedAt ? 'Archived' : 'Active'}</span>
-                    {p.enabled && <div className="dim">tracking preference on</div>}
+                    {p.enabled && <div className="dim">Included in tracking setup</div>}
                   </td>
                   <td>
                     <div className="row">

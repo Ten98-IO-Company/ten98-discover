@@ -284,7 +284,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       </section>
 
       <section className="panel settings-panel" aria-busy={busy === 'password'} aria-label="Password">
-        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="lock" size={18}/></span><div><h2>Password</h2><p>Keep your account secure</p></div></div>
+        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="lock" size={18}/></span><div><h2>Password</h2></div></div>
         {data.hasPassword ? (
           <form onSubmit={e => { e.preventDefault(); void submitPassword() }}>
             <p className="hint field-help">Changing your password signs out all other sessions.</p>
@@ -316,7 +316,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       </section>
 
       <section className="panel settings-panel" aria-busy={busy === 'enable' || busy === 'verify' || busy === 'disable' || busy === 'recovery'} aria-label="Two-factor authentication">
-        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="shield" size={18}/></span><div><h2>Two-factor authentication</h2><p>An extra layer of account protection</p></div>{twoFaOn ? <span className="pill badge good configured">On</span> : <span className="pill badge">Off</span>}</div>
+        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="shield" size={18}/></span><div><h2>Two-factor authentication</h2></div>{twoFaOn ? <span className="pill badge good configured">On</span> : <span className="pill badge">Off</span>}</div>
         {!data.hasPassword ? (
           <p className="hint field-help">A local password is required to manage two-factor authentication.</p>
         ) : (
