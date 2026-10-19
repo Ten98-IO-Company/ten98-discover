@@ -296,7 +296,7 @@ function TeamPanelContent(props: TeamPanelProps) {
     <div aria-busy={busy || loading}>
       {loading && <p className='dim' role='status'>Refreshing team…</p>}
       <div className='proj-head'>
-        <h1>{data.workspace.name}</h1>
+        <h2>{data.workspace.name}</h2>
         <p className='dim'>Your role: {data.role}</p>
         <button type='button' className='btn' disabled={busy} onClick={() => setReload(value => value + 1)}>Refresh team</button>
       </div>
