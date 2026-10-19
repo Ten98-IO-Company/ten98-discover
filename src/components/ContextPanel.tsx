@@ -1,4 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
+import {useBlocker} from '@tanstack/react-router';
 import {api, ApiError, errMsg} from '../lib/api';
 
 type Section = {key:string;title:string|null;content:string;updatedAt:string;updatedBy:string};
@@ -39,6 +40,8 @@ function ContextPanelInner({projectId,onUnauthorized}:{projectId:string;userId:s
   const alive=useRef(true),locked=useRef(false),generation=useRef(0),controller=useRef<AbortController|null>(null);
   const unauthorized=useRef(onUnauthorized);unauthorized.current=onUnauthorized;
   const formRef=useRef<HTMLFormElement|null>(null);
+  const unconfirmed=!!retry||busy==='Saving changes',protectExit=!!editor||conflict||unconfirmed;
+  useBlocker({shouldBlockFn:()=>protectExit&&!window.confirm(unconfirmed?'This save may already have succeeded. Leave and lose the option to retry it? Select Cancel to stay.':'Discard the unsaved project context form and leave? Select Cancel to stay.'),enableBeforeUnload:()=>protectExit});
   function begin(label:string) {
     if(locked.current) return null;
     locked.current=true;setBusy(label);setError('');setNotice('');

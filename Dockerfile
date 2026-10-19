@@ -4,6 +4,7 @@ FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7
 RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
+COPY vendor ./vendor
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY . .
 RUN pnpm build \

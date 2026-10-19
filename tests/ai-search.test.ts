@@ -106,10 +106,23 @@ test('financial admission requires own identity/path/task/payload/final status a
  const sparse=response() as any;sparse.body.tasks=new Array(1);assert.equal(parseAiSearchOutcome(sparse,request,id,now).charge.state,'unknown');
 });
 test('echoed request admits only exact requested fields and documented harmless consumer defaults',()=>{
- const accepted=response() as any;Object.assign(accepted.body.tasks[0].data,{api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',device:'desktop',os:'windows'});
+ const accepted=response() as any;Object.assign(accepted.body.tasks[0].data,{api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',postback_data:'advanced',device:'desktop',os:'windows'});
  assert.equal(parseAiSearchOutcome(accepted,request,id,now).charge.state,'known');
- for(const extra of [{api:'serp'},{function:'llm_responses'},{device:'mobile'},{model_name:'other-model'},{max_output_tokens:100000},{priority:2},{web_search:true}]){const raw=response() as any;Object.assign(raw.body.tasks[0].data,extra);assert.equal(parseAiSearchOutcome(raw,request,id,now).charge.state,'unknown');}
+ for(const extra of [{api:'serp'},{function:'llm_responses'},{device:'mobile'},{postback_data:'html'},{postback_data:'advanced\n'},{postback_data:null},{postback_url:'https://example.invalid/callback'},{model_name:'other-model'},{max_output_tokens:100000},{priority:2},{web_search:true}]){const raw=response() as any;Object.assign(raw.body.tasks[0].data,extra);assert.equal(parseAiSearchOutcome(raw,request,id,now).charge.state,'unknown');}
 });
+test('authentic advanced receipt format echo is admitted by exact request and retained receipt recovery',()=>{
+ // Observed free ID-list wire fields 2026-10-19; synthetic prompt and UUIDs. The original paid body was not retained.
+ const runId='00000000-0000-4000-8000-000000000001',taskId='00000000-0000-4000-8000-000000000002',prompt='What services does Example Ltd offer in Dubai?';
+ const selected={profileId:aiSearchProfileId,capturedPrompt:prompt,locationCode:2784,languageCode:'en'};
+ const captured={httpStatus:200,body:{status_code:20000,tasks_count:1,tasks_error:0,cost:0,tasks:[{id:'00000000-0000-4000-8000-000000000003',status_code:20000,path:['v3','ai_optimization','id_list'],cost:0,result_count:1,data:{api:'ai_optimization',function:'id_list',datetime_from:'2026-10-19 12:00:37 +00:00',datetime_to:'2026-10-19 12:04:07 +00:00',limit:1000,offset:0,sort:'asc',include_metadata:true},result:[{id:taskId,url:'v3/ai_optimization/chat_gpt/llm_scraper/live/advanced',datetime_posted:'2026-10-19 12:01:37 +00:00',datetime_done:'2026-10-19 12:02:02 +00:00',status:20000,cost:0.004,metadata:{api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',keyword:prompt,location_code:2784,language_code:'en',force_web_search:true,tag:'ten98:ai-search:00000000-0000-4000-8000-000000000001',postback_data:'advanced',device:'desktop',os:'windows'}}]}]}};
+ const binding={profileId:aiSearchProfileId,runId,payloadHash:canonicalHash({keyword:prompt,location_code:2784,language_code:'en',force_web_search:true,tag:'ten98:ai-search:00000000-0000-4000-8000-000000000001'}),dispatchedAt:'2026-10-19T12:01:37.135Z',asOf:'2026-10-19T12:04:07.203Z',providerTaskId:null};
+ const expected={providerTaskId:taskId,costUsd:'0.004000',statusCode:20000};
+ assert.deepEqual(parseAiSearchReconciliation(captured,selected,runId),expected);assert.deepEqual(parseAiSearchReconciliation(captured,binding),expected);
+ for(const patch of [{postback_data:'html'},{postback_data:'advanced\n'},{postback_data:null},{postback_url:'https://example.invalid/callback'},{priority:2},{force_web_search:false},{language_code:'fr'},{location_code:2840},{tag:'foreign'}]){const bad=copy(captured);Object.assign(bad.body.tasks[0].result[0].metadata,patch);assert.throws(()=>parseAiSearchReconciliation(bad,selected,runId));assert.throws(()=>parseAiSearchReconciliation(bad,binding));}
+ const duplicated=copy(captured);duplicated.body.tasks[0].result.push(copy(duplicated.body.tasks[0].result[0]));duplicated.body.tasks[0].result_count=2;assert.throws(()=>parseAiSearchReconciliation(duplicated,binding));
+ const charged=copy(captured);charged.body.cost=0.004;assert.throws(()=>parseAiSearchReconciliation(charged,binding));
+});
+
 test('known charge survives invalid content, final paid error, capacity and decoded-echo mismatch',()=>{
  for(const result of [{keyword:'changed',location_code:2840,language_code:'en'},{keyword:request.capturedPrompt,location_code:1,language_code:'en'},{keyword:request.capturedPrompt,location_code:2840,language_code:'en',markdown:'x'.repeat(250001)},{keyword:request.capturedPrompt,location_code:2840,language_code:'en',fan_out_queries:Array(101).fill('query')}]){
   const out=parseAiSearchOutcome(response(result),request,id,now);assert.equal(out.charge.state,'known');assert.deepEqual(out.content,{state:'unavailable',reason:'content_invalid'});

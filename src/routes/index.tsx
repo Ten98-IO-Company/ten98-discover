@@ -1,4 +1,5 @@
 import { Brand, Icon } from '../components/CampaignUI'
+import { Alert, Button, ResourceCard, TrackerStatus } from '@ten98/ui'
 import { AuthLayout } from '../components/AuthLayout'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
@@ -162,6 +163,7 @@ function App() {
   const activeProject = useRef('')
   const wsGen = useRef(0)
   const projGen = useRef(0)
+  const eventsRead = useRef(0)
 
   function rememberIntent(next: NavigationSearch) {
     if (navigationKey(next) !== navigationKey(intent.current.search)) intent.current = { search: next, generation: intent.current.generation + 1 }
@@ -330,7 +332,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (phase === 'app' && view === 'installation' && projectId) void loadJobs(projectId)
+    if (phase === 'app' && view === 'installation' && projectId) { void loadJobs(projectId); void loadEvents(projectId) }
   }, [phase, view, projectId])
 
   function changeWorkspace(id: string) {
@@ -422,13 +424,14 @@ function App() {
   }
 
   async function loadEvents(pid: string) {
-    const gen = projGen.current
+    const gen = projGen.current, read = ++eventsRead.current
+    const current = () => activeProject.current === pid && projGen.current === gen && eventsRead.current === read
     setEventsBusy(true); setEventsError('')
     try {
       const d = await api<EventsData>(`/api/projects/${pid}/events`)
-      if (activeProject.current === pid && projGen.current === gen) setEvents(d)
-    } catch (e) { if (activeProject.current === pid && projGen.current === gen && !guardAuth(e)) setEventsError(errMsg(e)) }
-    finally { if (activeProject.current === pid && projGen.current === gen) setEventsBusy(false) }
+      if (current()) setEvents(d)
+    } catch (e) { if (current() && !guardAuth(e)) { if (e instanceof ApiError && [403,404].includes(e.status)) setEvents(null); setEventsError(errMsg(e)) } }
+    finally { if (current()) setEventsBusy(false) }
   }
 
   async function loadJobs(pid: string) {
@@ -462,7 +465,7 @@ function App() {
       const d = await api<{ project: Project }>(`/api/workspaces/${wsId}/projects`, { method: 'POST', body: { name, origin } })
       if (!current()) return
       await loadProjects(wsId)
-      if (current() && intent.current.generation === navigation) go({ workspace: wsId, project: d.project.id, view: 'project' })
+      if (current() && intent.current.generation === navigation) go({ workspace: wsId, project: d.project.id, view: 'installation' })
     } catch (e) {
       if (!current() || guardAuth(e) || intent.current.generation !== navigation) return
       throw e
@@ -586,7 +589,7 @@ function App() {
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
   const canWrite = workspace !== undefined && ['owner', 'admin', 'editor'].includes(workspace.role)
   const project = projects?.find((p) => p.id === projectId) ?? null
-  const lastReceived = events !== null ? events.events[0]?.receivedAt ?? null : project?.lastEventAt ?? null
+  const lastReceived = events !== null ? events.events[0]?.receivedAt ?? null : eventsError ? null : project?.lastEventAt ?? null
   const appUrl = (status?.appUrl ?? '').replace(/\/+$/, '')
   const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
@@ -594,7 +597,7 @@ function App() {
   const toolQuery = toolSearch.trim().toLowerCase()
   const accountView = ['preferences','security','identity'].includes(view)
   const workspaceTool = ['boards','links','pixels'].includes(view)
-  const pageTitles: Record<AppView, string> = {links:'Links',pixels:'Tracking images','tracked-share':'Shared report',heatmaps:'Heatmaps',boards:'Boards',replays:'Session replay',performance:'Web performance',revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare analytics', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Prompt library', 'ai-search': 'AI search', 'ai-insights': 'AI insights', sessions: 'Session explorer', explore: 'Explore analytics', google: 'Google reports', 'google-app': 'Google app setup', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const pageTitles: Record<AppView, string> = {links:'Links',pixels:'Tracking images','tracked-share':'Shared report',heatmaps:'Heatmaps',boards:'Boards',replays:'Recordings',performance:'Web performance',revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare periods', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Saved prompts', 'ai-search': 'ChatGPT answers', 'ai-insights': 'Answer analysis', sessions: 'Visitor activity', explore: 'Traffic explorer', google: 'Google reports', 'google-app': 'Google app setup', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
     if(next==='project'&&view==='explore'&&search.workspace===workspaceId&&search.project===project?.id)return {...target(next),...explorerAnalyticsNavigation(search,analyticsApplied!==null&&analyticsApplied.userId===me?.user.id&&analyticsApplied.projectId===project?.id&&analyticsApplied.explorerEntry===routeLocation.state.__TSR_key?analyticsApplied:undefined)};
@@ -638,12 +641,12 @@ function App() {
           <Link hidden={toolQuery!==''&&!'analytics'.includes(toolQuery)} className={view === 'project' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'project' ? 'page' : undefined} to='/' search={analyticsTarget('project')} state={previous=>({...previous,analyticsReturn:explorerReturnState&&readExplorerReturn(explorerReturnState,me!.user.id,workspaceId,project!.id)?explorerReturnState:undefined})}><Icon name='chart'/><span>Analytics</span></Link>
           <Link hidden={toolQuery!==''&&!'realtime'.includes(toolQuery)} className={view === 'realtime' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'realtime' ? 'page' : undefined} to='/' search={target('realtime')}><Icon name='eye'/><span>Realtime</span></Link>
           <Link hidden={toolQuery!==''&&!'performance'.includes(toolQuery)} className={view === 'performance' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'performance' ? 'page' : undefined} to='/' search={target('performance')}><Icon name='chart'/><span>Performance</span></Link>
-          <Link hidden={toolQuery!==''&&!'session replay'.includes(toolQuery)} className={view === 'replays' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'replays' ? 'page' : undefined} to='/' search={target('replays')}><Icon name='eye'/><span>Session replay</span></Link>
+          <Link hidden={toolQuery!==''&&!'session replay recordings'.includes(toolQuery)} className={view === 'replays' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'replays' ? 'page' : undefined} to='/' search={target('replays')}><Icon name='eye'/><span>Recordings</span></Link>
           <Link hidden={toolQuery!==''&&!'heatmaps'.includes(toolQuery)} className={view === 'heatmaps' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'heatmaps' ? 'page' : undefined} to='/' search={target('heatmaps')}><Icon name='target'/><span>Heatmaps</span></Link>
-          <Link hidden={toolQuery!==''&&!'compare'.includes(toolQuery)} className={view === 'compare' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'compare' ? 'page' : undefined} to='/' search={analyticsTarget('compare')}><Icon name='layers'/><span>Compare</span></Link>
+          <Link hidden={toolQuery!==''&&!'compare periods analytics'.includes(toolQuery)} className={view === 'compare' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'compare' ? 'page' : undefined} to='/' search={analyticsTarget('compare')}><Icon name='layers'/><span>Compare periods</span></Link>
           <Link hidden={toolQuery!==''&&!'utm campaigns'.includes(toolQuery)} className={view === 'campaigns' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'campaigns' ? 'page' : undefined} to='/' search={target('campaigns')}><Icon name='target'/><span>UTM campaigns</span></Link>
-          <Link hidden={toolQuery!==''&&!'explore'.includes(toolQuery)} className={view === 'explore' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={exploreTarget()}><Icon name='search'/><span>Explore</span></Link>
-          <Link hidden={toolQuery!==''&&!'sessions'.includes(toolQuery)} className={view === 'sessions' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}><Icon name='users'/><span>Sessions</span></Link>
+          <Link hidden={toolQuery!==''&&!'explore analytics traffic explorer'.includes(toolQuery)} className={view === 'explore' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'explore' ? 'page' : undefined} to='/' search={exploreTarget()}><Icon name='search'/><span>Traffic explorer</span></Link>
+          <Link hidden={toolQuery!==''&&!'sessions visitor activity observed visitor keys'.includes(toolQuery)} className={view === 'sessions' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'sessions' ? 'page' : undefined} to='/' search={target('sessions')}><Icon name='users'/><span>Visitor activity</span></Link>
           <Link hidden={toolQuery!==''&&!'attribution'.includes(toolQuery)} className={view === 'attribution' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'attribution' ? 'page' : undefined} to='/' search={target('attribution')}><Icon name='layers'/><span>Attribution</span></Link>
           <Link hidden={toolQuery!==''&&!'journeys'.includes(toolQuery)} className={view === 'journeys' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'journeys' ? 'page' : undefined} to='/' search={target('journeys')}><Icon name='arrow'/><span>Journeys</span></Link>
           <Link hidden={toolQuery!==''&&!'retention'.includes(toolQuery)} className={view === 'visitor-retention' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'visitor-retention' ? 'page' : undefined} to='/' search={target('visitor-retention')}><Icon name='calendar'/><span>Retention</span></Link>
@@ -654,10 +657,10 @@ function App() {
           <Link hidden={toolQuery!==''&&!'google reports search console ga4'.includes(toolQuery)} className={view === 'google' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'google' ? 'page' : undefined} to='/' search={target('google')}><Icon name='chart'/><span>Google reports</span></Link>
           <Link hidden={toolQuery!==''&&!'site audits'.includes(toolQuery)} className={view === 'audits' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'audits' ? 'page' : undefined} to='/' search={target('audits')}><Icon name='shield'/><span>Site audits</span></Link>
           <p className='nav-group'>Research</p>
-          <Link hidden={toolQuery!==''&&!'context'.includes(toolQuery)} className={view === 'context' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}><Icon name='folder'/><span>Context</span></Link>
-          <Link hidden={toolQuery!==''&&!'prompts'.includes(toolQuery)} className={view === 'prompts' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'prompts' ? 'page' : undefined} to='/' search={target('prompts')}><Icon name='agent'/><span>Prompts</span></Link>
-          <Link hidden={toolQuery!==''&&!'ai insights'.includes(toolQuery)} className={view === 'ai-insights' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ai-insights' ? 'page' : undefined} to='/' search={target('ai-insights')}><Icon name='agent'/><span>AI insights</span></Link>
-          <Link hidden={toolQuery!==''&&!'ai search'.includes(toolQuery)} className={view === 'ai-search' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ai-search' ? 'page' : undefined} to='/' search={target('ai-search')}><Icon name='search'/><span>AI search</span></Link>
+          <Link hidden={toolQuery!==''&&!'project context business brief'.includes(toolQuery)} className={view === 'context' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'context' ? 'page' : undefined} to='/' search={target('context')}><Icon name='folder'/><span>Project context</span></Link>
+          <Link hidden={toolQuery!==''&&!'prompts saved prompts prompt library'.includes(toolQuery)} className={view === 'prompts' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'prompts' ? 'page' : undefined} to='/' search={target('prompts')}><Icon name='agent'/><span>Saved prompts</span></Link>
+          <Link hidden={toolQuery!==''&&!'ai insights answer analysis retained answers brand visibility'.includes(toolQuery)} className={view === 'ai-insights' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ai-insights' ? 'page' : undefined} to='/' search={target('ai-insights')}><Icon name='agent'/><span>Answer analysis</span></Link>
+          <Link hidden={toolQuery!==''&&!'ai search chatgpt answers query analysis'.includes(toolQuery)} className={view === 'ai-search' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ai-search' ? 'page' : undefined} to='/' search={target('ai-search')}><Icon name='search'/><span>ChatGPT answers</span></Link>
           <Link hidden={toolQuery!==''&&!'keywords'.includes(toolQuery)} className={view === 'keywords' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'keywords' ? 'page' : undefined} to='/' search={target('keywords')}><Icon name='search'/><span>Keywords</span></Link>
           <Link hidden={toolQuery!==''&&!'domain seo backlinks'.includes(toolQuery)} className={view === 'domain-seo' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'domain-seo' ? 'page' : undefined} to='/' search={target('domain-seo')}><Icon name='globe'/><span>Domain SEO</span></Link>
           <Link hidden={toolQuery!==''&&!'rank tracking'.includes(toolQuery)} className={view === 'ranks' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'ranks' ? 'page' : undefined} to='/' search={target('ranks')}><Icon name='chart'/><span>Rank tracking</span></Link>
@@ -694,8 +697,8 @@ function App() {
         {projectsError !== '' && <div role='alert' className='alert'>{projectsError} <button className='btn' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</button></div>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
         {project && workspace && projectView && <header className='proj-head page-heading'>
-          <span className='eyebrow'>{project.name}</span><h1>{pageTitles[view]}</h1>
-          <p className='project-origin'>{project.origin}</p>
+          <h1>{pageTitles[view]}</h1>
+          <p className='project-origin'><bdi>{project.name}</bdi> · <bdi>{project.origin}</bdi></p>
         </header>}
         {!projectView && view !== 'workspace' && view !== 'new-project' && <header className='proj-head page-heading'><span className='eyebrow'>{pageScope}</span><h1>{pageTitles[view]}</h1>
           {view === 'keys' && <p className='dim'>Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.</p>}
@@ -732,7 +735,7 @@ function App() {
         {view === 'ranks' && project && me && <Suspense fallback={<p role="status">Loading rank tracking…</p>}><RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} /></Suspense>}
         {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} />}
         {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
@@ -805,14 +808,13 @@ function App() {
             <section className='card installation-panel' aria-labelledby='snip-h'>
               <div className='row between installation-toolbar'>
                 <h2 id='snip-h'>Tracking snippet</h2>
-                <button className='btn primary' onClick={() => void copySnippet(snippet)}>Copy snippet</button>
+                <Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' || (events?.total ?? 0) > 0 ? 'secondary' : 'primary'} onClick={() => void copySnippet(snippet)}>Copy snippet</Button>
               </div>
-              <p>Add this tag to the pages served from <strong>{project.origin}</strong> or a verified HTTPS serving domain configured under Domains:</p>
+              <p>Add this tag inside the <code>&lt;head&gt;</code> of every page you want to measure on <strong>{project.origin}</strong>.</p>
               <pre className='snippet' role='region' aria-label='Tracking snippet' tabIndex={0}><code>{snippet}</code></pre>
               {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
               {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
-              <p className='dim footnote'>Install the snippet on the canonical origin or a verified HTTPS serving domain. Cookieless basic analytics starts with the current policy; consent-first analytics waits for a grant in Tracking preferences. Refresh events to confirm delivery. Explicit refusals and browser privacy signals stop collection.{isLocal ? ' This app is running on a localhost URL (including [::1]), so external websites cannot reach the collector until it is deployed at a public HTTPS address.' : ''}</p>
-              <Link className='btn' to='/' search={target('events')}>View recent events</Link>
+              <p className='dim footnote'>Use <Link to='/' search={target('domains')}>Domains</Link> for other serving domains. <Link to='/' search={target('collection')}>Collection and privacy</Link> controls consent and optional data. Browser privacy signals and explicit refusals stop collection.{isLocal ? ' External websites cannot reach this localhost collector; deploy it at a public HTTPS address first.' : ''}</p>
               <details className='installation-help'>
                 <summary>Custom events and collection details</summary>
                 <p className='dim footnote'>When collection is allowed, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Advertising pixels and visitor identification still need explicit consent.</p>
@@ -820,6 +822,20 @@ function App() {
                 <pre className='snippet' tabIndex={0} aria-label='HTML custom event example'><code>{'<button type="button" data-ten98-event="signup" data-ten98-event-plan="starter">Sign up</button>'}</code></pre>
                 <p className='dim footnote'>Only the nearest element with a declared event is tracked. Attribute properties are passed as strings; use the JavaScript call for numbers, arrays, nested properties or advertising conversion fields. Use fixed, non-personal values. Click tracking does not delay navigation, and delivery during navigation is best effort.</p>
               </details>
+            </section>
+            <section aria-label='Check website events' aria-busy={eventsBusy} style={{minWidth:0,overflowWrap:'anywhere'}}>
+              <ResourceCard title='Check that events arrive' description='Open your website, visit a page, then check for an event received by this project.' icon='chart'
+                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<Icon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Link style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} className={events !== null && events.total > 0 ? 'btn primary' : 'btn'} to='/' search={target('project')}>View analytics</Link></>}>
+                <TrackerStatus resource={project.origin}
+                  installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
+                  receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
+                {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
+                {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt}>{fmt(events.events[0].receivedAt)}</time>.</p>}
+                {events !== null && events.total === 0 && <p>No events in retained history. Confirm the tag is published, visit your website, then check again. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
+                {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
+                <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
+                <Link to='/' search={target('events')}>Inspect recent events</Link>
+              </ResourceCard>
             </section>
             <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>
             <section aria-labelledby='wc-h'>

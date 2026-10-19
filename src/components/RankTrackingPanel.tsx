@@ -3,7 +3,7 @@ import {useEffect,useId,useRef,useState} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {RankLocationOption,RankLanguageOption,RankLocationOptions,RankTrackingFieldErrors} from './RankTrackingFields';
-import {RankTrackingView,type RankRole,type RankTracker,type RankKeyword,type RankConnection,type RankDetail,type RankCreate,type RankEdit} from './RankTrackingView';
+import {RankTrackingView,type RankRole,type RankTracker,type RankKeyword,type RankConnection,type RankDetail,type RankCreate,type RankEdit,type RankSavedKeyword,type RankSavedKeywordPicker} from './RankTrackingView';
 import {RankCheckPanel,type RankCheckEntry} from './RankCheckPanel';
 import {RankHistoryPanel} from './RankHistoryPanel';
 import {RankSchedulePanel} from './RankSchedulePanel';
@@ -17,7 +17,7 @@ type CheckEntry=RankCheckEntry&{generation:number;returnToSchedule?:boolean};
 type ScheduleEntry={quoteId?:string;returnCheck?:CheckEntry};
 type State={role:RankRole|null;mode:'list'|'new'|'detail';loaded:boolean;filter:Filter;trackers:RankTracker[];nextCursor:string|null;connections:RankConnection[];vaultConfigured:boolean;detail:RankDetail|null;
   create:RankCreate;catalogReady:boolean;catalogNotice:string;countries:RankLocationOption[];languages:RankLanguageOption[];localLocations:RankLocationOptions;localOffset:number|null;appliedQuery:string;fieldErrors:RankTrackingFieldErrors;
-  editing:boolean;edit:RankEdit;adding:boolean;words:string;matchCase:boolean;selected:string[];dirty:boolean;reading:boolean;writing:boolean;pending:boolean;conflict:boolean;error:string;notice:string;focus:string|null};
+  editing:boolean;edit:RankEdit;adding:boolean;keywordSource:'paste'|'saved';savedKeywords:RankSavedKeywordPicker;words:string;matchCase:boolean;selected:string[];dirty:boolean;reading:boolean;writing:boolean;pending:boolean;conflict:boolean;error:string;notice:string;focus:string|null};
 const object=(v:unknown):v is Record<string,any>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const safeText=(v:unknown,max:number,min=1):v is string=>typeof v==='string'&&v.length>=min&&v.length<=max&&!v.includes('\0')&&!/[\uD800-\uDFFF]/u.test(v);
 const str=(v:unknown,max:number,min=1):v is string=>safeText(v,max,min)&&!/[\u0000-\u001f\u007f]/.test(v);
@@ -44,19 +44,20 @@ function validKeyword(v:unknown):v is RankKeyword{return object(v)&&uuid(v.id)&&
 function validDetail(v:unknown,expected?:string):v is RankDetail{return object(v)&&validRole(v.role)&&validTracker(v.tracker)&&(!expected||v.tracker.id===expected)&&Array.isArray(v.keywords)&&v.keywords.length===v.tracker.keywordCount&&v.keywords.every(validKeyword)&&new Set(v.keywords.map(k=>k.id.toLowerCase())).size===v.keywords.length&&(v.replayed===undefined||typeof v.replayed==='boolean');}
 function validList(v:unknown):v is {role:RankRole;vaultConfigured:boolean;connections:RankConnection[];trackers:RankTracker[];nextCursor:string|null}{return object(v)&&validRole(v.role)&&typeof v.vaultConfigured==='boolean'&&Array.isArray(v.connections)&&v.connections.every(c=>object(c)&&uuid(c.id)&&safeText(c.name,120)&&['untested','ok','error'].includes(c.checkStatus))&&Array.isArray(v.trackers)&&v.trackers.length<=50&&v.trackers.every(validTracker)&&new Set(v.trackers.map(t=>t.id.toLowerCase())).size===v.trackers.length&&(v.nextCursor===null||str(v.nextCursor,512));}
 const badResponse=()=>new Error('The server response could not be verified.');
+const blankSaved=():RankSavedKeywordPicker=>({query:'',appliedQuery:'',rows:[],selectedIds:[],total:0,nextCursor:null,revision:null,loading:false,error:'',notice:''});
 const blankLocal=():RankLocationOptions=>({query:'',options:[],loading:false,error:null,hasMore:false});
 const editFor=(tracker:RankTracker):RankEdit=>({name:tracker.name,devices:tracker.devices,depth:tracker.depth,maxCrawlPages:tracker.maxCrawlPages});
 function initial(origin:string):State{
   let domain='';try{domain=new URL(origin).hostname;}catch{/* An invalid parent origin cannot create a target. */}
   return {role:null,mode:'list',loaded:false,filter:'active',trackers:[],nextCursor:null,connections:[],vaultConfigured:false,detail:null,
     create:{name:domain,connectionId:'',value:{domain,countryLocationCode:'',targeting:'national',localLocationCode:'',languageCode:'',devices:'mobile',depth:10,maxCrawlPages:1}},catalogReady:false,catalogNotice:'',countries:[],languages:[],localLocations:blankLocal(),localOffset:null,appliedQuery:'',fieldErrors:{},
-    editing:false,edit:{name:'',devices:'mobile',depth:10,maxCrawlPages:1},adding:false,words:'',matchCase:false,selected:[],dirty:false,reading:false,writing:false,pending:false,conflict:false,error:'',notice:'',focus:null};
+    editing:false,edit:{name:'',devices:'mobile',depth:10,maxCrawlPages:1},adding:false,keywordSource:'paste',savedKeywords:blankSaved(),words:'',matchCase:false,selected:[],dirty:false,reading:false,writing:false,pending:false,conflict:false,error:'',notice:'',focus:null};
 }
 
 export function RankTrackingPanel(props:Props){return <RankController key={`${props.userId}:${props.workspaceId}:${props.projectId}`} {...props}/>;}
 function RankController(props:Props){
   const prefix=useId()+'-rank-',base=`/api/projects/${props.projectId}/rank-trackers`;
-  const [s,setState]=useState(()=>initial(props.origin)),state=useRef(s),operation=useRef<Operation|null>(null),intent=useRef<Intent|null>(null),alive=useRef(true);
+  const [s,setState]=useState(()=>initial(props.origin)),state=useRef(s),operation=useRef<Operation|null>(null),intent=useRef<Intent|null>(null),alive=useRef(true),savedCursors=useRef(new Set<string>());
   const [check,setCheck]=useState<CheckEntry|null>(null),checkGeneration=useRef(0),[observations,setObservations]=useState(false),[schedule,setSchedule]=useState<ScheduleEntry|null>(null);
   const [reporting,setReporting]=useState(false),[reportKeyword,setReportKeyword]=useState<string|null>(null);
   function patch(value:Partial<State>){if(!alive.current)return;state.current={...state.current,...value};setState(state.current);}
@@ -71,7 +72,7 @@ function RankController(props:Props){
     invalidate();const op={controller:new AbortController(),write};operation.current=op;patch({reading:!write,writing:write,error:'',notice:'',...(write?{pending:false}:{})});return op;
   }
   const current=(op:Operation)=>alive.current&&operation.current===op;
-  function finish(op:Operation){if(current(op)){operation.current=null;patch({reading:false,writing:false,localLocations:{...state.current.localLocations,loading:false}});}}
+  function finish(op:Operation){if(current(op)){operation.current=null;patch({reading:false,writing:false,localLocations:{...state.current.localLocations,loading:false},savedKeywords:{...state.current.savedKeywords,loading:false}});}}
   function purge(message:string,unauthorized=false){invalidate();intent.current=null;state.current=initial(props.origin);setState({...state.current,error:message});state.current={...state.current,error:message};if(unauthorized)props.onUnauthorized();}
   function failure(error:unknown,op:Operation){
     if(!current(op))return;
@@ -80,9 +81,9 @@ function RankController(props:Props){
     patch({error:errMsg(error)});
   }
   function role(next:RankRole){
-    patch({role:next});if(next==='viewer'){patch({editing:false,adding:false,selected:[],words:'',dirty:false,catalogReady:false,catalogNotice:'',countries:[],languages:[],localLocations:blankLocal(),create:initial(props.origin).create,...(state.current.mode==='new'?{mode:'list' as const}: {})});}
+    patch({role:next});if(next==='viewer'){savedCursors.current.clear();patch({editing:false,adding:false,keywordSource:'paste',savedKeywords:blankSaved(),selected:[],words:'',dirty:false,catalogReady:false,catalogNotice:'',countries:[],languages:[],localLocations:blankLocal(),create:initial(props.origin).create,...(state.current.mode==='new'?{mode:'list' as const}: {})});}
   }
-  function resetForms(){patch({dirty:false,editing:false,adding:false,words:'',matchCase:false,selected:[],fieldErrors:{}});}
+  function resetForms(){savedCursors.current.clear();patch({dirty:false,editing:false,adding:false,keywordSource:'paste',savedKeywords:blankSaved(),words:'',matchCase:false,selected:[],fieldErrors:{}});}
   async function loadList(filter:Filter,cursor?:string,focus?:string){
     const op=begin();if(!op)return;patch({mode:'list',filter,...(!cursor?{loaded:false,trackers:[],nextCursor:null,detail:null}:{})});
     try{const data=await api<unknown>(`${base}?${new URLSearchParams({archived:filter,...(cursor?{cursor}:{})})}`,{signal:op.controller.signal});if(!current(op))return;if(!validList(data))throw badResponse();
@@ -159,6 +160,48 @@ function RankController(props:Props){
   function cancelForm(){if(!canLeave())return;invalidate();resetForms();patch({reading:false,focus:'detail-heading'});}
   function archive(){const at=state.current;if(locked()||!writer(at.role)||!at.detail||!canLeave())return;const archived=at.detail.tracker.archivedAt===null;if(!window.confirm(archived?'Archive this tracker? Its keywords are kept.':'Reactivate this tracker? No rank check will start.'))return;mutate(`${base}/${at.detail.tracker.id}/archive`,{revision:at.detail.tracker.authoredRevision,archived},at.detail.tracker.id);}
   function add(){if(locked()||!writer(state.current.role)||state.current.detail?.tracker.archivedAt!==null||!canLeave())return;invalidate();resetForms();patch({reading:false,adding:true,focus:'add-heading'});}
+  function savedAuthoring(){const at=state.current;return !locked()&&!at.conflict&&writer(at.role)&&at.adding&&at.detail?.tracker.archivedAt===null;}
+  function keywordSource(source:'paste'|'saved'){
+    if(!savedAuthoring()||source===state.current.keywordSource)return;
+    invalidate();savedCursors.current.clear();patch({reading:false,keywordSource:source,savedKeywords:{...blankSaved(),notice:'Saved keyword selection cleared.'},notice:'Saved keyword selection cleared. Draft text is unchanged.'});
+    if(source==='saved')void loadSavedKeywords();
+  }
+  function savedKeywordQuery(query:string){if(savedAuthoring()&&state.current.keywordSource==='saved')patch({savedKeywords:{...state.current.savedKeywords,query}});}
+  async function loadSavedKeywords(more=false){
+    const at=state.current,picker=at.savedKeywords;
+    if(!savedAuthoring()||at.keywordSource!=='saved'||more&&(!picker.nextCursor||picker.loading||picker.revision===null))return;
+    const query=more?picker.appliedQuery:picker.query.trim().toLowerCase();
+    if(!str(query,200,0)){patch({savedKeywords:{...picker,error:'Enter a saved-keyword search up to 200 characters without control characters.'}});return;}
+    const op=begin();if(!op)return;
+    if(!more)savedCursors.current.clear();
+    patch({savedKeywords:{...(more?picker:{...blankSaved(),query:picker.query,appliedQuery:query,notice:'Saved keyword selection cleared for this search.'}),loading:true,error:''}});
+    try{
+      const data=await api<unknown>('/api/projects/'+props.projectId+'/saved-keywords/list',{method:'POST',body:{filters:{search:query},pageSize:50,...(more?{cursor:picker.nextCursor}:{})},signal:op.controller.signal});
+      if(!current(op))return;
+      if(!object(data)||!validRole(data.role)||!Number.isSafeInteger(data.revision)||data.revision<0||!Number.isSafeInteger(data.total)||data.total<0||!object(data.filters)||data.filters.search!==query||!Array.isArray(data.rows)||data.rows.length>50||data.rows.length>data.total||!data.rows.every(r=>object(r)&&uuid(r.id)&&str(r.keyword,500)&&int(r.locationCode,1,2147483647)&&str(r.languageCode,16))||new Set(data.rows.map(r=>r.id.toLowerCase())).size!==data.rows.length||(data.nextCursor!==null&&(!str(data.nextCursor,512)||!/^[A-Za-z0-9_-]+$/.test(data.nextCursor)||savedCursors.current.has(data.nextCursor))))throw badResponse();
+      const rows:RankSavedKeyword[]=data.rows.map(r=>({id:r.id,keyword:r.keyword,locationCode:r.locationCode,languageCode:r.languageCode}));
+      const combined=new Map((more?picker.rows:[]).map(r=>[r.id.toLowerCase(),r]));
+      if(more&&(data.revision!==picker.revision||data.total!==picker.total))throw new Error('The saved-keyword list changed. Search again to refresh the selection.');
+      for(const row of rows){const previous=combined.get(row.id.toLowerCase());if(previous&&(previous.keyword!==row.keyword||previous.locationCode!==row.locationCode||previous.languageCode!==row.languageCode))throw badResponse();combined.set(row.id.toLowerCase(),previous??row);}
+      if(combined.size>data.total||(data.nextCursor===null)!==(combined.size===data.total)||data.nextCursor!==null&&rows.length===0)throw badResponse();
+      role(data.role);if(!writer(data.role))return;
+      if(data.nextCursor!==null)savedCursors.current.add(data.nextCursor);
+      patch({savedKeywords:{...state.current.savedKeywords,appliedQuery:query,rows:[...combined.values()],selectedIds:more?state.current.savedKeywords.selectedIds:[],total:data.total,nextCursor:data.nextCursor,revision:data.revision,loading:false,error:''}});
+    }catch(e){failure(e,op);if(current(op))patch({savedKeywords:{...state.current.savedKeywords,loading:false,error:errMsg(e)}});}finally{finish(op);}
+  }
+  function selectSavedKeyword(id:string,checked:boolean){
+    const at=state.current;if(!savedAuthoring()||at.keywordSource!=='saved'||at.savedKeywords.loading||!at.savedKeywords.rows.some(r=>r.id===id))return;
+    patch({savedKeywords:{...at.savedKeywords,selectedIds:checked?[...new Set([...at.savedKeywords.selectedIds,id])]:at.savedKeywords.selectedIds.filter(value=>value!==id)}});
+  }
+  function selectAllSavedKeywords(checked:boolean){
+    const at=state.current;if(!savedAuthoring()||at.keywordSource!=='saved'||at.savedKeywords.loading)return;
+    patch({savedKeywords:{...at.savedKeywords,selectedIds:checked?at.savedKeywords.rows.map(r=>r.id):[]}});
+  }
+  function addSavedKeywordsToDraft(){
+    const at=state.current;if(!savedAuthoring()||at.keywordSource!=='saved'||at.savedKeywords.loading)return;
+    const selected=new Set(at.savedKeywords.selectedIds),words=at.savedKeywords.rows.filter(r=>selected.has(r.id)).map(r=>r.keyword);if(!words.length)return;
+    patch({words:at.words+(at.words&&!at.words.endsWith('\n')?'\n':'')+words.join('\n'),dirty:true,focus:'words',savedKeywords:{...at.savedKeywords,selectedIds:[],notice:words.length+' saved keyword(s) added to the editable draft. Use Add keywords to save.'}});
+  }
   function saveWords(){const at=state.current;if(!at.detail)return;const words=at.words.split(/\r?\n/).filter(w=>w.trim()!=='');if(words.length<1||words.length>2000||words.some(w=>!str(w,200))){patch({error:'Enter 1–2,000 nonempty lines, each up to 200 characters. A tracker can contain 1,000 unique keywords.'});return;}mutate(`${base}/${at.detail.tracker.id}/keywords/add`,{revision:at.detail.tracker.authoredRevision,keywords:words,matchCase:at.matchCase},at.detail.tracker.id);}
   function selection(id:string,checked:boolean){const at=state.current;if(locked()||at.conflict||!writer(at.role)||!at.detail?.keywords.some(k=>k.id===id))return;patch({selected:checked?[...new Set([...at.selected,id])]:at.selected.filter(k=>k!==id)});}
   function keywordMutation(kind:'pin'|'remove',pinned?:boolean){const at=state.current;if(locked()||!writer(at.role)||!at.detail||at.selected.length===0||!canLeave())return;if(kind==='remove'&&!window.confirm(`Remove ${at.selected.length} selected keyword(s)?`))return;mutate(`${base}/${at.detail.tracker.id}/keywords/${kind}`,{revision:at.detail.tracker.authoredRevision,keywordIds:at.selected,...(kind==='pin'?{pinned}:{})},at.detail.tracker.id);}
@@ -181,6 +224,7 @@ function RankController(props:Props){
     onChecks={()=>checks('history')} onPrepareCheck={()=>checks('setup')} onPrepareSelected={()=>checks('setup',true)} onObservations={latest} onSchedule={openSchedule} onReporting={openReporting}
     onRefresh={refresh} onFilter={filter=>{if(canLeave()){resetForms();void loadList(filter);}}} onMore={()=>{if(state.current.nextCursor&&!state.current.reading)void loadList(state.current.filter,state.current.nextCursor);}}
     onNew={newTracker} onOpen={open} onBack={back} onCreateChange={changeCreate} onCatalog={()=>void catalog()} onLocalQuery={localQuery} onSearchLocal={()=>void searchLocal()} onMoreLocal={()=>void searchLocal(true)} onCreate={createTracker} onCancelCreate={back}
+    onKeywordSource={keywordSource} onSavedKeywordQuery={savedKeywordQuery} onSearchSavedKeywords={()=>void loadSavedKeywords()} onMoreSavedKeywords={()=>void loadSavedKeywords(true)} onSelectSavedKeyword={selectSavedKeyword} onSelectAllSavedKeywords={selectAllSavedKeywords} onAddSavedKeywordsToDraft={addSavedKeywordsToDraft}
     onEdit={edit} onEditChange={changeEdit} onSaveEdit={saveEdit} onCancelEdit={cancelForm} onArchive={archive} onAdd={add} onWords={words=>{if(!locked())patch({words,dirty:true});}} onMatchCase={matchCase=>{if(!locked())patch({matchCase,dirty:true});}} onSaveWords={saveWords} onCancelWords={cancelForm}
     onSelect={selection} onSelectAll={checked=>{if(!locked()&&!state.current.conflict&&writer(state.current.role))patch({selected:checked?state.current.detail?.keywords.map(k=>k.id)??[]:[]});}} onPin={pinned=>keywordMutation('pin',pinned)} onRemove={()=>keywordMutation('remove')}
     onRetry={()=>{if(intent.current&&!operation.current?.write)void send(intent.current);}} onReload={refresh} onOpenProviders={()=>{if(state.current.role==='owner'&&canLeave()){resetForms();invalidate();props.onOpenProviders();}}}/>

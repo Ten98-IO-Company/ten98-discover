@@ -8,6 +8,7 @@ dist
 coverage
 test-results
 .kimi*
+.claude
 sessions
 logs
 private

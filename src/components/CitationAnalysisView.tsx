@@ -1,3 +1,5 @@
+import { EvidenceDetail } from '@ten98/ui';
+
 export type CitationPeriod = 'current' | 'previous';
 export type CitationGrouping = 'retained-fragment-v1' | 'elmo-url-v1';
 export type CitationReportView = 'urls' | 'domains' | 'categories' | 'page-types' | 'daily' | 'changes';
@@ -488,9 +490,13 @@ function EvidenceSection({ screen, props, ready, writer }: { screen: CitationEvi
           </select>
         </label>
       </div>
-      {screen.rows.length === 0 ? (
-        <p>{screen.emptyMessage}</p>
-      ) : (
+      <EvidenceDetail
+        label="Retained citation annotations"
+        scope={<span>{screen.sourceLabel} · {screen.periodLabel}</span>}
+        provenance="Verified retained annotation metadata. Answer content loads only when you explicitly open a comparison; row availability describes each retained answer receipt."
+        availability={screen.rows.length === 0 ? 'empty' : 'ready'}
+        message={screen.rows.length === 0 ? screen.emptyMessage : 'Retained annotations are available below. This does not mean answer content is loaded or that every answer receipt is still available.'}
+      >
         <div role="region" aria-label="Citation evidence rows" tabIndex={0} style={{ overflowX: 'auto' }}>
           <table className="table" style={{ minWidth: 1040 }}>
             <caption>Citation evidence</caption>
@@ -547,7 +553,7 @@ function EvidenceSection({ screen, props, ready, writer }: { screen: CitationEvi
             </tbody>
           </table>
         </div>
-      )}
+      </EvidenceDetail>
       <PagerControls pager={screen.pager} disabled={!ready} onPrevious={props.onPrevious} onNext={props.onNext} />
     </>
   );

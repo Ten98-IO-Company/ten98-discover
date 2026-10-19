@@ -2,7 +2,7 @@
 // Real SiteAuditPanel controller; own loopback Vite and synthetic intercepted API only.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {mkdir,readFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
@@ -18,6 +18,7 @@ let windowedIssues=false,issueResponsePatch=null,groupReadStatus=200,holdGroupKe
 let bodyEvidence,detailPatch={},listPatch={},envelopePatch={},detailStatus=200,detailRole,holdPage=false,heldPage=null,startMode=null,runReadStatus=200;
 let customPages=null,pageResponsePatch=null,pagesReadStatus=200,pageFixtureRevision=0,holdPages=false,heldPages=null;
 let exportMode=null;const exportCalls=[],downloads=[];
+let d14RequestStart=null;const requestCounts={legacy:{},d14:{}};
 function exportFixture(body){
  const params=new URLSearchParams({resourceKind:body.resourceKind});for(const key of ['coverage','search','searchIn','sort','order'])if(body[key]&&body[key]!==({searchIn:'url_title_meta',sort:'url',order:'asc'}[key]))params.set(key,body[key]);
  const scope=Object.fromEntries(['resourceKind','coverage','search','searchIn','sort','order'].map(key=>[key,params.get(key)])),revision=createHash('sha256').update(JSON.stringify([scope,pageFixtureRevision,run.status,run.rawEvidenceStatus])).digest('hex');
@@ -30,18 +31,21 @@ function exportFixture(body){
 const bodyVersion='static-dom-body-v1',captured=text=>({status:text===''?'empty':'available',version:bodyVersion,utf8Bytes:Buffer.byteLength(text),textIncluded:true,text});
 const pageDto=detail=>({...savedPage(),evidenceIncluded:detail,...bodyEvidence===undefined?{}:{bodyEvidence:detail?bodyEvidence:{...bodyEvidence,textIncluded:false,text:null}},...detail?detailPatch:listPatch});
 const requests=[],writes=[],errors=[],external=[];
-const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/site-audit-ux-vite-cache',appType:'custom',server:{host:'127.0.0.1',port:3103,strictPort:true,hmr:false}});
+const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/site-audit-ux-vite-cache',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/site-audit-ux-browser-fixture.tsx'],include:['react','react-dom/client','react/jsx-runtime','@tanstack/react-router','@ten98/ui']},appType:'custom',server:{host:'127.0.0.1',port:3103,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Audit UX synthetic fixture</title><div id="root"></div><script type="module" src="/tests/site-audit-ux-browser-fixture.tsx"></script></html>');});
 let browser;
 try{
- await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;console.log(JSON.stringify({ownedPid:process.pid,execPath:process.execPath,startedAt:new Date().toISOString(),origin}));
+ await server.listen();await server.warmupRequest('/tests/site-audit-ux-browser-fixture.tsx');const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;console.log(JSON.stringify({ownedPid:process.pid,execPath:process.execPath,startedAt:new Date().toISOString(),origin}));
  const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
  const context=await browser.newContext({viewport:{width:927,height:1270},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
  await context.addInitScript(()=>{const make=URL.createObjectURL,revoke=URL.revokeObjectURL,nativeFetch=window.fetch;window.auditExportBlobs=0;window.auditExportRevoked=0;window.auditExportAborts=0;URL.createObjectURL=function(...args){window.auditExportBlobs++;return make.apply(this,args);};URL.revokeObjectURL=function(...args){window.auditExportRevoked++;return revoke.apply(this,args);};window.fetch=async function(input,options){if(!window.auditExportStream||!String(input).endsWith('/pages/export'))return nativeFetch.call(this,input,options);const fixture=window.auditExportStream;window.auditExportStream=null;window.auditExportOptions={method:options.method,credentials:options.credentials,redirect:options.redirect,body:JSON.parse(options.body)};const data=new TextEncoder().encode(fixture.body);return new Response(new ReadableStream({start(controller){controller.enqueue(data.subarray(0,1));window.releaseAuditExport=()=>{try{controller.enqueue(data.subarray(1));controller.close();}catch{}};options.signal.addEventListener('abort',()=>{window.auditExportAborts++;controller.error(new DOMException('Synthetic aborted download','AbortError'));},{once:true});},cancel(){window.auditExportCancelled=true;} }),{status:200,headers:fixture.headers});};});page.on('download',download=>downloads.push(download));
  const reply=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return req.method()==='GET'?route.continue():route.abort();
-  requests.push(url.pathname+url.search);if(req.method()!=='GET'){
+  requests.push(url.pathname+url.search);assert.ok(requests.length<=1300,'Total API request cap exceeded');
+  const phase=d14RequestStart===null?'legacy':'d14',requestKey=req.method()+' '+url.pathname;requestCounts[phase][requestKey]=(requestCounts[phase][requestKey]??0)+1;
+  assert.ok(d14RequestStart===null?requests.length<=1200:requests.length-d14RequestStart<=100,phase+' API request cap exceeded');
+  if(req.method()!=='GET'){
    if(req.method()==='POST'&&url.pathname===B+'/'+runId+'/pages/export'){
     assert.equal(url.search,'');const body=req.postDataJSON();assert.deepEqual(Object.keys(body).sort(),['coverage','resourceKind','search','searchIn','sort','order','expectedSelectionRevision'].sort());exportCalls.push({path:url.pathname,body});const fixture=exportFixture(body),mode=exportMode;exportMode=null;
     if(typeof mode==='number')return reply(route,{error:mode===409?'These page results changed. Reload matching pages.':mode===410?'Audit page data expired under this workspace’s retention policy.':mode===413?'Audit export exceeds 64 MiB. Narrow the page filters.':'Synthetic export rejection'},mode);
@@ -338,4 +342,50 @@ try{
  await freshExport();run={...run,status:'running',phase:'pages',summary:null,completedAt:null,canCancel:true,canDelete:false};await button('Refresh status').click();await settle();assert.equal(await exportButton().isDisabled(),true);run=savedRun();await button('Refresh status').click();await settle();assert.equal(await exportButton().isEnabled(),true);
  for(const direction of ['ltr','rtl']){await page.setViewportSize({width:320,height:1000});await page.evaluate(direction=>document.documentElement.dir=direction,direction);await sizes();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);}await page.setViewportSize({width:927,height:1270});await page.evaluate(()=>document.documentElement.dir='ltr');await page.keyboard.press('Tab');await exportButton().focus();assert.notEqual(await exportButton().evaluate(node=>getComputedStyle(node).outlineStyle),'none');await page.keyboard.press('Enter');await page.waitForFunction(()=>window.auditExportBlobs===1);assert.equal(downloads.length,1);assert.equal(writes.length,mutationCount);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
  console.log('PASS retryable busy/size rejection, stale/raw409 explicit recovery, fresh scrubbed URL export, active disable,401/403/404/410 purge and320px LTRRTL44px keyboard action preserve mutation/privacy oracles.');
+ // D14: the existing controller owns refresh/authorization; the report describes only its saved aggregate.
+ const d14Baseline=requests.length;d14RequestStart=d14Baseline;console.log(JSON.stringify({d14BaselineApiRequests:d14Baseline,legacyRequestCounts:requestCounts.legacy,contexts:1}));assert.ok(d14Baseline<=1200);
+ const report=()=>panel().locator('.t98-report-root');
+ resetPages();customPages=null;role='owner';await fresh();assert.equal(await report().count(),1);
+ assert.equal(await report().getAttribute('data-status'),'ready');assert.equal(await report().getAttribute('aria-busy'),null);
+ const reportContext=await report().locator('.t98-report-context').textContent();assert.match(reportContext,/Pages analyzed.*9.*Pages attempted.*9.*Static HTML.*Finished /s);assert.match(reportContext,/Saved origin https:\/\/audit\.example/);assert.match(reportContext,/Start path \//);
+ assert.equal(await report().getByText('These results describe the pages observed in this static audit.',{exact:true}).isVisible(),true);
+ assert.equal(await report().getByRole('heading',{name:'No findings recorded in 9 analyzed pages',exact:true}).isVisible(),true);
+ assert.equal(await report().locator('.t98-report-retained').count(),0);
+ for(const patch of [
+  {status:'running',phase:'pages',completedAt:null,canCancel:true,canDelete:false},
+  {summary:{...summary(),findingsComplete:false,issuesDetected:12,issuesRetained:8}},
+  {coverage:{...savedRun().coverage,discoveryComplete:false}},
+  {summary:{...summary(),pagesAnalyzed:0,issuesDetected:2,issuesRetained:2}}
+ ]){run={...savedRun(),...patch};await fresh();assert.equal(await report().getAttribute('data-status'),'partial');if(run.summary.pagesAnalyzed===0)assert.equal(await report().getByRole('heading',{name:'No pages were fully analyzed.',exact:true}).isVisible(),true);}
+ run={...savedRun(),status:'failed',summary:null};await fresh();assert.equal(await report().count(),0);assert.equal(await panel().getByText('Summary not produced. Available observations can still be inspected.',{exact:true}).isVisible(),true);
+ run={...savedRun(),dataStatus:'expired',dataExpiredAt:at};await fresh();assert.equal(await report().getAttribute('data-status'),'ready');assert.equal(await report().getByRole('heading',{name:'Saved audit summary',exact:true}).isVisible(),true);assert.equal(await nav().count(),0);assert.equal(await button('Data retention').isVisible(),true);
+ run={...run,summary:{...summary(),findingsComplete:false}};await fresh();assert.equal(await report().getAttribute('data-status'),'partial');assert.equal(await panel().getByText('Detailed findings are a bounded subset of detected findings.',{exact:true}).isVisible(),true);
+ console.log('PASS D14 actual ReportPanel exposes observed analyzed/attempted scope, saved static source and labelled completion, ready zero, active/incomplete/bounded/zero-analyzed partial, null absence and retained aggregate after detail expiry.');
+
+ run=savedRun();await fresh();holdRun=true;await button('Refresh status').click();await panel().getByText('Refreshing saved audit status…',{exact:true}).waitFor();assert.ok(heldRun);assert.equal(await report().getAttribute('data-status'),'ready');assert.equal(await report().getAttribute('aria-busy'),null);assert.equal(await report().locator('.t98-report-retained').count(),0);
+ await reply(heldRun.route,{error:'Synthetic D14 refresh failed'},503);heldRun=null;await button('Retry refresh').waitFor();assert.equal(await report().getAttribute('data-status'),'ready');assert.equal(await report().getByRole('heading',{name:'No findings recorded in 9 analyzed pages',exact:true}).isVisible(),true);await button('Retry refresh').click();await page.waitForFunction(()=>![...document.querySelectorAll('button')].some(n=>n.textContent==='Retry refresh'));assert.equal(await report().getAttribute('data-status'),'ready');
+ console.log('PASS D14 held status refresh and failed native refresh preserve the saved report without invented report loading/error or retained-content state; native Retry recovers.');
+
+ for(const theme of ['light','dark'])for(const width of [320,1440]){
+  await page.setViewportSize({width,height:1000});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.style.zoom='1';document.body.style.zoom='1';},theme);
+  await page.evaluate(()=>{const visible=[...document.querySelectorAll('*')].filter(n=>n instanceof HTMLElement&&n.getClientRects().length&&getComputedStyle(n).visibility!=='hidden');window.auditD14Fonts=visible.map(node=>({node,original:node.style.fontSize,pixels:parseFloat(getComputedStyle(node).fontSize)}));for(const {node,pixels} of window.auditD14Fonts)node.style.fontSize=pixels*2+'px';});
+  assert.equal(await page.evaluate(()=>window.auditD14Fonts.every(({node,pixels})=>Math.abs(parseFloat(getComputedStyle(node).fontSize)-pixels*2)<0.05)),true);
+  assert.equal(await page.evaluate(()=>getComputedStyle(document.body).zoom),'1');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.equal(await report().evaluate(node=>node.scrollWidth<=node.clientWidth),true);await sizes();
+  const contrast=await report().evaluate(root=>{
+   const rgba=value=>{const n=value.match(/[\d.]+/g).map(Number);return [n[0],n[1],n[2],n[3]??1];},over=(top,bottom)=>{const a=top[3]+bottom[3]*(1-top[3]);return [0,1,2].map(i=>(top[i]*top[3]+bottom[i]*bottom[3]*(1-top[3]))/a).concat(a);},lum=color=>color.slice(0,3).map(v=>{v/=255;return v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4;}).reduce((v,c,i)=>v+c*[0.2126,0.7152,0.0722][i],0);
+   const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),failed=[];let text,min=Infinity;while(text=walker.nextNode()){const node=text.parentElement;if(!text.textContent.trim()||!node.getClientRects().length||getComputedStyle(node).visibility==='hidden')continue;const chain=[];for(let n=node;n;n=n.parentElement)chain.unshift(n);let bg=[255,255,255,1];for(const n of chain)bg=over(rgba(getComputedStyle(n).backgroundColor),bg);const fg=over(rgba(getComputedStyle(node).color),bg),a=lum(fg),b=lum(bg),ratio=(Math.max(a,b)+0.05)/(Math.min(a,b)+0.05);min=Math.min(min,ratio);if(ratio<4.5)failed.push({text:text.textContent,ratio});}return {min,failed};
+  });assert.deepEqual(contrast.failed,[]);assert.ok(contrast.min>=4.5);
+  await page.keyboard.press('Tab');await button('Refresh status').focus();assert.equal(await button('Refresh status').evaluate(n=>n===document.activeElement),true);assert.notEqual(await button('Refresh status').evaluate(n=>getComputedStyle(n).outlineStyle),'none');holdRun=true;await page.keyboard.press('Enter');await panel().getByText('Refreshing saved audit status…',{exact:true}).waitFor();assert.ok(heldRun);await reply(heldRun.route,heldRun.body);heldRun=null;await page.waitForFunction(()=>![...document.querySelectorAll('button')].find(n=>n.textContent==='Refresh status')?.disabled);
+  const screenshot=resolve('private/ui-pages-evidence/screenshots/d14-summary-'+theme+'-'+width+'-font2x.png');await page.screenshot({path:screenshot,fullPage:true,animations:'disabled'});console.log(JSON.stringify({syntheticScreenshot:screenshot,theme,width,allVisibleFontsDoubled:true,bodyZoom:1,minimumTextContrast:contrast.min}));
+  await page.evaluate(()=>{for(const {node,original} of window.auditD14Fonts)node.style.fontSize=original;delete window.auditD14Fonts;});
+ }
+ await page.evaluate(()=>{delete document.documentElement.dataset.theme;document.documentElement.style.zoom='';document.body.style.zoom='';});await page.setViewportSize({width:927,height:1270});
+ for(const status of [401,403,404]){run=savedRun();runReadStatus=200;await fresh();runReadStatus=status;await button('Refresh status').click();if(status===401)await page.getByRole('heading',{name:'Fixture signed out',exact:true}).waitFor();else await panel().getByRole('heading',{name:'Audit history',exact:true}).waitFor();assert.equal(await report().count(),0);}runReadStatus=200;
+ for(const field of ['projectId','userId']){run=savedRun();await fresh();holdRun=true;await button('Refresh status').click();await panel().getByText('Refreshing saved audit status…',{exact:true}).waitFor();assert.ok(heldRun);const late=heldRun;heldRun=null;await page.evaluate(field=>window.auditFixture.scope({projectId:field==='projectId'?'20000000-0000-4000-8000-000000000002':'20000000-0000-4000-8000-000000000001',userId:field==='userId'?'30000000-0000-4000-8000-000000000002':'30000000-0000-4000-8000-000000000001'}),field);await panel().getByRole('heading',{name:'Audit history',exact:true}).waitFor();await reply(late.route,late.body);assert.equal(await report().count(),0);}
+ assert.ok(requests.length-d14Baseline<=100);assert.equal(writes.length,mutationCount);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);console.log(JSON.stringify({d14AddedApiRequests:requests.length-d14Baseline,totalApiRequests:requests.length,d14RequestCounts:requestCounts.d14,contexts:1}));
+ console.log('PASS D14 light/dark320/1440 all-visible-element font2x, bodyzoom1,4.5 contrast, native keyboard refresh and401/403/404/project/user late-refresh purge preserve authority and mutation oracles.');
+}catch(error){
+ const failureRoot=resolve('private/ui-pages-evidence/screenshots');await mkdir(failureRoot,{recursive:true});const failedPage=browser?.contexts()?.[0]?.pages()?.[0];
+ try{if(failedPage){await failedPage.screenshot({path:resolve(failureRoot,'d14-summary-failure.png'),fullPage:true,animations:'disabled'});await writeFile(resolve(failureRoot,'d14-summary-failure.html'),await failedPage.content(),'utf8');}await writeFile(resolve(failureRoot,'d14-summary-failure.json'),JSON.stringify({error:error.stack,totalApiRequests:requests.length,d14AddedApiRequests:d14RequestStart===null?null:requests.length-d14RequestStart,requestCounts,errors,external,contexts:browser?.contexts().length??0},null,2),'utf8');}catch(diagnosticError){console.error('Failure diagnostic capture failed',diagnosticError);}
+ throw error;
 }finally{await browser?.close();await server.close();console.log('Audit UX fixture browser and loopback server closed.');}

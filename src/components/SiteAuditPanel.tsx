@@ -1,5 +1,6 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
+import {ReportPanel} from '@ten98/ui';
 import {auditCoverages,auditIssueCodes,auditNavigation,type AuditNavigation,type NavigationSearch} from '../lib/navigation';
 import {normalizeAuditPageFields,type AuditPageFields} from '../lib/site-audit-pages';
 
@@ -432,13 +433,17 @@ function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenR
           <p className="hint">Deadline {date(run.deadlineAt)} · Refreshed {date(updated)}</p>
         </>}
         {run.dataStatus==='expired'&&<p className="banner">Detailed audit results expired under this workspace's retention policy. Counts below are the saved audit summary. <button className="btn" disabled={writing} onClick={()=>callbacks.current.onOpenRetention()}>Data retention</button></p>}
-        {run.summary?<>
-          <h3 style={{margin:'var(--space-3) 0 var(--space-2)'}}>{run.dataStatus==='expired'?'Saved audit summary':active(run.status)?'Audit in progress':run.summary.pagesAnalyzed===0?'No pages were fully analyzed.':run.summary.issuesDetected===0?'No findings recorded in '+number(run.summary.pagesAnalyzed)+' analyzed pages':number(run.summary.issuesDetected)+' findings detected'}</h3>
-          <div className="row" style={{gap:'var(--space-4)'}}><p><span>Pages analyzed</span>: <strong>{number(run.summary.pagesAnalyzed)}</strong></p><p><span>Pages attempted</span>: <strong>{number(run.summary.pagesObserved)}</strong></p></div>
-          <p className="hint">These results describe the pages observed in this static audit.</p>
+        {run.summary?<ReportPanel
+          title={run.dataStatus==='expired'?'Saved audit summary':active(run.status)?'Audit in progress':run.summary.pagesAnalyzed===0?'No pages were fully analyzed.':run.summary.issuesDetected===0?'No findings recorded in '+number(run.summary.pagesAnalyzed)+' analyzed pages':number(run.summary.issuesDetected)+' findings detected'}
+          scope={<><div className="row" style={{gap:'var(--space-4)'}}><p><span>Pages analyzed</span>: <strong>{number(run.summary.pagesAnalyzed)}</strong></p><p><span>Pages attempted</span>: <strong>{number(run.summary.pagesObserved)}</strong></p></div><p className="hint">These results describe the pages observed in this static audit.</p></>}
+          source={<>Static HTML · Saved origin {run.origin} · Start path {run.config.startPath}</>}
+          asOf={run.completedAt?'Finished '+date(run.completedAt):'Unknown'}
+          status={run.status==='completed'&&run.summary.pagesAnalyzed>0&&run.summary.findingsComplete&&run.summary.issuesDetected<=run.summary.issuesRetained&&run.coverage.discoveryComplete&&run.coverage.linksComplete?'ready':'partial'}
+          reason={run.dataStatus==='expired'?'Saved aggregate only; detailed audit results expired.':'Saved audit aggregate; page freshness is not established.'}
+        >
           {(run.summary.pagesAnalyzed===0||run.summary.issuesDetected>run.summary.issuesRetained)&&<p>{number(run.summary.issuesDetected)} findings detected · {number(run.summary.issuesRetained)} findings retained.</p>}
           {(!run.summary.findingsComplete||run.summary.issuesDetected>run.summary.issuesRetained)&&<p className="banner">Detailed findings are a bounded subset of detected findings.</p>}
-        </>:<p className="notice">Summary not produced. Available observations can still be inspected.</p>}
+        </ReportPanel>:<p className="notice">Summary not produced. Available observations can still be inspected.</p>}
         {(!run.coverage.discoveryComplete||!run.coverage.linksComplete)&&<p className="banner">Coverage is incomplete. A low finding count does not mean the whole site is clear.</p>}
         <Reasons reasons={[...new Set([...run.coverage.reasons,...(run.stopReason?[run.stopReason]:[])])]}/>
         {!active(run.status)&&<p className="hint" role="status">Finished {date(run.completedAt)} · Refreshed {date(updated)}</p>}

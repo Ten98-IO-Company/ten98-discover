@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {createRoot} from 'react-dom/client';
+import {createMemoryHistory,createRootRoute,createRouter,RouterProvider} from '@tanstack/react-router';
 import {SessionReplayPanel} from '../src/components/SessionReplayPanel';
 import {HeatmapsPanel} from '../src/components/HeatmapsPanel';
 import {AnalyticsSettingsPanel} from '../src/components/AnalyticsSettingsPanel';
@@ -19,4 +20,5 @@ function Fixture(){
   {signedOut?<h1>Fixture signed out</h1>:shown?scope.mode==='settings'?<AnalyticsSettingsPanel projectId={scope.projectId} userId={scope.userId} onUnauthorized={props.onUnauthorized}/>:scope.mode==='replay'?<SessionReplayPanel {...props}/>:<HeatmapsPanel {...props}/>:<p>View unmounted</p>}
  </main>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture/>);
+const router=createRouter({routeTree:createRootRoute({component:Fixture}),history:createMemoryHistory({initialEntries:['/']})});
+createRoot(document.getElementById('root')!).render(<RouterProvider router={router}/>);

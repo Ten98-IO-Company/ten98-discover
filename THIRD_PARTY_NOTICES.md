@@ -1219,3 +1219,61 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## ten98 shared UI package 0.3.0
+
+`@ten98/ui` is consumed from the immutable local archive `vendor/ten98-ui-0.3.0.tgz`, SHA-256 `f73229fc6b2c7e14348a1dc77709d60e7110756d8ea5b4da30be5047ba05033f`. Source repository: https://github.com/Ten98-IO-Company/ten98-design-system . The archive contains its MIT license and shared Campaign/Discover attribution. It adds no runtime dependency; React and React DOM remain existing peer dependencies. Discover owns data, authorization, request identity, metric interpretation and native interactions. Library catalogue checks do not establish application or production acceptance.
+
+MIT License
+
+Copyright (c) 2026 Ten98
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### Shared UI patch 0.3.1
+
+The immutable patch archive is `vendor/ten98-ui-0.3.1.tgz`, SHA-256 `9f41f5e616e525d70767edcf138bf6131bc9bc14d86aea45b8c3a0c3d9c73eb8`. The 0.3.0 batch archive remains unchanged. This MIT patch wraps shared Button labels at enlarged text sizes; its JavaScript, declarations, API, peer dependencies and legacy application stylesheet are unchanged. The preceding Ten98 copyright and MIT license cover this patch.
+
+### Shared UI patch 0.3.2
+
+The immutable patch archive is `vendor/ten98-ui-0.3.2.tgz`, SHA-256 `a49025981cff0e1bd4dd936a90b644b437b8120852ca9d012b0d12bd14f45069`. Prior archives remain unchanged. This MIT patch uses the existing surface token at 85.1% alpha for the native topbar and the existing disabled-surface token for shared disabled fields. Its JavaScript, declarations, API and peer dependencies are unchanged. The preceding Ten98 copyright and MIT license cover this patch.
+
+### Shared UI patch 0.3.3
+
+The immutable patch archive is `vendor/ten98-ui-0.3.3.tgz`, SHA-256 `587d396d36e6cd654a6e451f9eb778062267fec2d96af90aed6800f1aa8c3b25`. Prior archives remain unchanged. This MIT patch makes the replay inactivity preference optional and uses the semantic disabled-text role for shared fields. No runtime dependencies, exports or peer requirements change. The preceding Ten98 copyright and MIT license cover this patch.
+
+### Shared UI patch 0.3.4
+
+The immutable patch archive is `vendor/ten98-ui-0.3.4.tgz`, SHA-256 `e36ab3615fad0bbeb8cf293a45cab62cd92c727163b49e11f95e150ea045d2fa`. Prior archives remain unchanged. This MIT patch constrains form-grid tracks and children and stacks them below 481px. All JavaScript, declarations, exports and peer requirements are unchanged. The preceding Ten98 copyright and MIT license cover this patch.
+
+### Shared UI patch 0.3.6
+
+The immutable patch archive is `vendor/ten98-ui-0.3.6.tgz`, SHA-256 `3f88760f2a27d46ecfd800c1fa690446155a7a0616d887f54d72efe2ac16a31f`, from Ten98 design-system commit `579cd75aeddc31b495f49bdd1de6609544c3dab0`. Prior archives remain unchanged. This MIT patch includes semantic theme and layout fixes, hidden-detail focus recovery, an optional numeric-evidence list label, and native controlled/uncontrolled multiline field forwarding. Runtime dependencies, exports and peer requirements are unchanged. Packaged review material is limited to Markdown; screenshots are excluded. The preceding Ten98 copyright and MIT license cover this patch.
+
+### Shared UI patch 0.3.8
+
+The immutable archive is `vendor/ten98-ui-0.3.8.tgz`, SHA-256 `516b3c91749011dc489219ee073e8b2239be2f83ecc05521a41019a6bf74660a`, from Ten98 design-system commit `7e7312956e49ecd5feb0329cad8c57937897206a`. Prior archives remain unchanged. This MIT patch includes the 0.3.7 action/navigation semantic colors and adaptive header minima with wrapping breadcrumbs. All JavaScript, declarations, runtime dependencies, exports and peer requirements are unchanged from 0.3.6. The preceding Ten98 copyright and MIT license cover this patch.
+
+### Shared UI patch 0.3.9
+
+The immutable archive is `vendor/ten98-ui-0.3.9.tgz`, SHA-256 `a69d149767871ca2bed463f4d1b0f0528c4d5593ddc6fce33a10700726771135`, from Ten98 design-system commit `6771bc32d889a96a333b45eead7ea52e1365ff99`. Prior archives remain unchanged. This MIT patch restores ReportPanel error alerts, makes ComparisonMetric unavailable values and tracks follow text sizing, and guards Settings grid children against overflow. Only the measurement and reporting JavaScript modules change; declarations, APIs, runtime dependencies, exports and peer requirements are unchanged. Packaged review material is Markdown; screenshots are excluded. The preceding Ten98 copyright and MIT license cover this patch.
+
+### Shared UI candidate 0.3.10
+
+The current dependency is the immutable development candidate `vendor/ten98-ui-0.3.10.tgz`, SHA-256 `a356965b7c0e19b718cb8c9334d1aca3f67cb4c2ed97885295e8485c0841f280`, from Ten98 design-system commit `9a94e7f78dc9c2029204f6cd8ccf32c4affdcb13`. Prior archives remain unchanged. This MIT patch adds an optional standard `aria-label` to ReportPanel so its accessible region name can differ from the visible title. Only the reporting JavaScript module and its declaration change; styles, runtime dependencies, exports and peer requirements are unchanged. Packaged review material is Markdown; screenshots are excluded. The preceding Ten98 copyright and MIT license cover this candidate.

@@ -1,6 +1,6 @@
 {
   "name": "ten98-monitor",
-  "version": "0.1.0-preview.6",
+  "version": "0.1.0-preview.7",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -25,6 +25,7 @@
     "@modelcontextprotocol/server": "2.3.1",
     "@tanstack/react-router": "1.170.42",
     "@tanstack/react-start": "1.168.61",
+    "@ten98/ui": "file:vendor/ten98-ui-0.3.10.tgz",
     "better-auth": "1.7.7",
     "detect-browser": "5.3.0",
     "drizzle-orm": "0.45.2",

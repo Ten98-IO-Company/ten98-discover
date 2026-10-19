@@ -23,15 +23,15 @@ function result(r){
  return {source:'DataForSEO Backlinks',retrievedAt:at,target:r.target,scope:r.scope,status:r.status,rankScale:'one_hundred',report:r.report,rows,returnedCount:rows.length,totalCount:r.report==='backlinks_overview_v1'?1:51,limited:r.report!=='backlinks_overview_v1',...r.report!=='backlinks_overview_v1'?{offset:r.offset,limit:r.limit,follow:r.follow,sourceHost:r.sourceHost??null,order:r.order}:{}};
 }
 const state=(role,runs)=>({role,vaultConfigured:true,spendingPaused:false,connections:[{id:ids.connection,name:'Synthetic saved connection',checkStatus:'ok'}],catalog:{updatedAt:null,markets:[]},runs});
-const checks=[],contexts=[],errors=[],external=[];
-const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/backlink-research-ui/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
+const checks=[],contexts=[],errors=[],external=[]; let apiRequests=0,costRequests=0,costMode=false; const costContexts=[];
+const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/backlink-research-ui/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/backlink-research-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-runtime','react/jsx-dev-runtime','@tanstack/react-router','@ten98/ui']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Backlink synthetic checks</title><div id="root"></div><script type="module" src="/tests/backlink-research-browser-fixture.tsx"></script></html>');});
 let browser,origin;
 const button=(p,name)=>p.getByRole('button',{name,exact:true});
 const select=(p,name)=>p.getByRole('combobox',{name,exact:true});
 const idle=p=>p.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Refresh receipts'&&!b.disabled));
 async function open({r=request(),role='owner',patchResult,detailFault,exportFault,startFault,ackFault,holdDetail=false,previous}={}){
- const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});contexts.push(context);
+ const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});(costMode?costContexts:contexts).push(context); assert.ok(costContexts.length<=12); assert.ok(contexts.length<=61,'Legacy context cap.');
  const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
  const current=receipt(r),model={role,run:current,runs:previous?[current,previous]:[current],results:new Map([[current.id,result(r)]]),calls:[],posts:[],details:0,detailFault,exportFault,startFault,ackFault,holdDetail,held:null,csv:'Source,DataForSEO Backlinks\r\nSynthetic fixture,not native CSV proof\r\n'};
  if(previous)model.results.set(previous.id,result(previous.request));patchResult?.(model.results.get(current.id));
@@ -39,7 +39,7 @@ async function open({r=request(),role='owner',patchResult,detailFault,exportFaul
  const reply=(route,value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const q=route.request(),url=new URL(q.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return q.method()==='GET'?route.continue():route.abort();
-  model.calls.push({path:url.pathname,method:q.method()});assert.equal(url.search,'');assert.ok(url.pathname===base||url.pathname.startsWith(base+'/')||url.pathname.startsWith('/api/projects/20000000-0000-4000-8000-000000000002/domain-research'));
+  assert.ok(costMode?++costRequests<=50:++apiRequests<=500,'Synthetic API request cap: 500 legacy / 50 added.'); model.calls.push({path:url.pathname,method:q.method()});assert.equal(url.search,'');assert.ok(url.pathname===base||url.pathname.startsWith(base+'/')||url.pathname.startsWith('/api/projects/20000000-0000-4000-8000-000000000002/domain-research'));
   if(url.pathname.includes('20000000-0000-4000-8000-000000000002'))return reply(route,state(model.role,[]));
   if(url.pathname===base)return reply(route,state(model.role,model.runs));
   if(q.method()==='POST'){
@@ -68,6 +68,7 @@ async function draft(page,report='backlinks_profile_v1',target='example.com'){
 }
 try{
  await mkdir(output,{recursive:true});await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
+ await server.warmupRequest('/tests/backlink-research-browser-fixture.tsx');await server.waitForRequestsIdle();
  const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
 
  for(const report of ['backlinks_overview_v1','backlinks_profile_v1'])for(const scope of ['domain','subdomains','subfolder','exact_url']){
@@ -166,6 +167,15 @@ try{
  done('both grouped tables retain 320/1440 LTR/RTL zoom2, native keyboard, escaped/empty anchors and irreversible observed expiry',2);
 
  assert.equal(checks.length,12);assert.equal(contexts.length,61);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
- await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:contexts.length,errors,external,screenshots:12,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
+ costMode=true;
+ for(const report of ['backlinks_overview_v1','backlinks_profile_v1','backlinks_referring_domains_v1','backlinks_anchors_v1']){
+  const r=report==='backlinks_overview_v1'?overviewRequest():report==='backlinks_profile_v1'?request():groupRequest(report),{page,context,model,view}=await open({r});await view();
+  const cost=page.locator('.t98-cost-root').filter({has:page.getByText('Research receipt and charge',{exact:true})});await cost.waitFor();assert.equal(await cost.getAttribute('data-state'),'settled');assert.equal(await cost.locator('dt').filter({hasText:'Settled price'}).locator('..').locator('dd').innerText(),'$0.012120');assert.ok((await cost.innerText()).includes(r.limit+' results maximum'));assert.ok((await cost.innerText()).includes(r.status+' backlinks'));assert.ok((await cost.innerText()).includes(ids.run));assert.equal(model.posts.length,0);await context.close();
+ }
+ for(const item of [{status:'running',chargeStatus:'dispatched',actualUsd:null,state:'pending'},{status:'uncertain',chargeStatus:'uncertain',actualUsd:null,state:'uncertain'},{status:'failed',chargeStatus:'settled',actualUsd:'0.000000',state:'settled'},{status:'cancelled',chargeStatus:'cancelled',actualUsd:null,state:'blocked'}]){
+  const {page,context,model,view}=await open();Object.assign(model.run,item,{canCancel:false});delete model.run.state;await view();const cost=page.locator('.t98-cost-root').filter({has:page.getByText('Research receipt and charge',{exact:true})});await cost.waitFor();assert.equal(await cost.getAttribute('data-state'),item.state);assert.equal(await cost.locator('dt').filter({hasText:'Settled price'}).locator('..').locator('dd').innerText(),item.actualUsd===null?'Settled amount unknown':'$0.000000');assert.equal(model.posts.length,0);await context.close();
+ }
+ assert.ok(costContexts.length<=12);assert.ok(costRequests<=50);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);console.log('PASS actual shared cost roots for all four backlink reports with exact prices, units, saved scope and pending/uncertain/known-zero/cancelled states');
+ await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:contexts.length,costChecks:{contexts:costContexts.length,apiRequests:costRequests},errors,external,screenshots:12,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
 }catch(error){await writeFile(output+'/failure.json',JSON.stringify({scope:'synthetic component checks',checks,error:String(error),stack:error?.stack,errors,external},null,2));throw error;}
-finally{for(const context of contexts)await context.close().catch(()=>{});if(browser)await browser.close();await server.close();}
+finally{for(const context of [...contexts,...costContexts])await context.close().catch(()=>{});if(browser)await browser.close();await server.close();}

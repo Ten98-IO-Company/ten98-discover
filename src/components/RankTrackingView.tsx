@@ -11,6 +11,11 @@ export type RankTracker = {
   keywordCount: number; archivedAt: string | null; createdAt: string; updatedAt: string;
   schedule: { interval: 'manual' | 'daily' | 'weekly' | 'monthly'; enabled: boolean; nextDueAt: string | null };
 };
+export type RankSavedKeyword = { id: string; keyword: string; locationCode: number; languageCode: string };
+export type RankSavedKeywordPicker = {
+  query: string; appliedQuery: string; rows: RankSavedKeyword[]; selectedIds: string[]; total: number;
+  nextCursor: string | null; revision: number | null; loading: boolean; error: string; notice: string;
+};
 export type RankKeyword = { id: string; keyword: string; matchCase: boolean; pinnedAt: string | null; createdAt: string };
 export type RankConnection = { id: string; name: string; checkStatus: 'untested' | 'ok' | 'error' };
 export type RankDetail = { role: RankRole; tracker: RankTracker; keywords: RankKeyword[]; replayed?: boolean };
@@ -23,6 +28,11 @@ export type RankTrackingViewProps = {
   detail: RankDetail | null; create: RankCreate; catalogReady: boolean; catalogNotice: string; countries: readonly RankLocationOption[];
   languages: readonly RankLanguageOption[]; localLocations: RankLocationOptions; fieldErrors: RankTrackingFieldErrors;
   editing: boolean; edit: RankEdit; adding: boolean; words: string; matchCase: boolean; selected: string[];
+  keywordSource: 'paste' | 'saved'; savedKeywords: RankSavedKeywordPicker;
+  onKeywordSource: (source: 'paste' | 'saved') => void; onSavedKeywordQuery: (query: string) => void;
+  onSearchSavedKeywords: () => void; onMoreSavedKeywords: () => void;
+  onSelectSavedKeyword: (id: string, checked: boolean) => void; onSelectAllSavedKeywords: (checked: boolean) => void;
+  onAddSavedKeywordsToDraft: () => void;
   onRefresh: () => void; onFilter: (v: RankFilter) => void; onMore: () => void; onNew: () => void;
   onOpen: (id: string) => void; onBack: () => void; onCreateChange: (v: RankCreate) => void; onCatalog: () => void;
   onLocalQuery: (v: string) => void; onSearchLocal: () => void; onMoreLocal: () => void; onCreate: () => void;
@@ -157,12 +167,65 @@ export function RankTrackingView(p: RankTrackingViewProps): React.JSX.Element {
               {writer && p.adding && (
               <form className="card stack" onSubmit={submit(p.onSaveWords)}>
                 <h3 id={pre + 'add-heading'} tabIndex={-1}>Add keywords</h3>
+                <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}>
+                  <legend>Keyword source</legend>
+                  <div className="row">
+                    <label className="row" style={{ minHeight: 44 }}><input type="radio" name={pre + 'keyword-source'} value="paste"
+                      checked={p.keywordSource === 'paste'} disabled={busy} onChange={() => p.onKeywordSource('paste')}
+                      style={{ width: 18, height: 44, minWidth: 18, minHeight: 44, padding: 0, margin: 0, flexShrink: 0 }} /> Paste</label>
+                    <label className="row" style={{ minHeight: 44 }}><input type="radio" name={pre + 'keyword-source'} value="saved"
+                      checked={p.keywordSource === 'saved'} disabled={busy} onChange={() => p.onKeywordSource('saved')}
+                      style={{ width: 18, height: 44, minWidth: 18, minHeight: 44, padding: 0, margin: 0, flexShrink: 0 }} /> Saved</label>
+                  </div>
+                </fieldset>
+                {p.keywordSource === 'saved' && (
+                <section className="stack" aria-label="Saved keyword source" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                  <p className="hint">Copy keywords saved in this project into the draft. Saved location and language are context only; this tracker's destination SERP settings stay unchanged.</p>
+                  <div className="row" style={{ alignItems: 'end' }}>
+                    <div className="field" style={{ flex: '1 1 12rem', minWidth: 0 }}><label htmlFor={pre + 'saved-keyword-query'}>Search saved keywords</label>
+                      <input id={pre + 'saved-keyword-query'} type="search" maxLength={200} value={p.savedKeywords.query} disabled={busy}
+                        onChange={(e) => p.onSavedKeywordQuery(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (!busy && !p.savedKeywords.loading) p.onSearchSavedKeywords(); } }} /></div>
+                    <button type="button" className="btn ghost" onClick={p.onSearchSavedKeywords} disabled={busy || p.savedKeywords.loading}>Search</button>
+                  </div>
+                  {p.savedKeywords.loading && <p className="dim" role="status">Loading saved keywords…</p>}
+                  {p.savedKeywords.error !== '' && <p className="alert" role="alert">{p.savedKeywords.error}</p>}
+                  {p.savedKeywords.notice !== '' && <p className="notice" role="status">{p.savedKeywords.notice}</p>}
+                  {p.savedKeywords.revision !== null && <p className="dim" role="status">{p.savedKeywords.rows.length} loaded of {p.savedKeywords.total} saved keywords · {p.savedKeywords.selectedIds.length} selected · {p.savedKeywords.total - p.savedKeywords.rows.length} more not loaded</p>}
+                  {!p.savedKeywords.loading && p.savedKeywords.error === '' && p.savedKeywords.revision === null && <p className="dim" role="status">Saved keywords have not loaded. Use Search to try again.</p>}
+                  {!p.savedKeywords.loading && p.savedKeywords.error === '' && p.savedKeywords.revision !== null && p.savedKeywords.rows.length === 0 && <p className="dim" role="status">{p.savedKeywords.appliedQuery === '' ? 'No saved keywords in this project.' : 'No saved keywords match this search.'}</p>}
+                  <div className="row">
+                    <span className="dim">{p.savedKeywords.selectedIds.length} selected</span>
+                    <button type="button" className="btn ghost" onClick={() => p.onSelectAllSavedKeywords(true)} disabled={busy || p.savedKeywords.loading || p.savedKeywords.rows.length === 0}>Select loaded</button>
+                    <button type="button" className="btn ghost" onClick={() => p.onSelectAllSavedKeywords(false)} disabled={busy || p.savedKeywords.loading || p.savedKeywords.selectedIds.length === 0}>Clear selection</button>
+                    {p.savedKeywords.nextCursor !== null && <button type="button" className="btn ghost" onClick={p.onMoreSavedKeywords} disabled={busy || p.savedKeywords.loading}>Load more</button>}
+                    <button type="button" className="btn primary" onClick={p.onAddSavedKeywordsToDraft} disabled={busy || p.savedKeywords.loading || p.savedKeywords.selectedIds.length === 0}
+                      style={{ maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>Add selected to draft</button>
+                  </div>
+                  {p.savedKeywords.rows.length > 0 && <ul className="stack" aria-label="Saved keyword results" tabIndex={0} style={{ maxHeight: 'min(24rem, 50vh)', overflowY: 'auto', overscrollBehaviorY: 'contain', listStyle: 'none', padding: 0, margin: 0, minWidth: 0 }}>
+                    {p.savedKeywords.rows.map((k) => <li className="card" key={k.id} style={{ minWidth: 0 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minHeight: 44, minWidth: 0 }}>
+                        <input type="checkbox" checked={p.savedKeywords.selectedIds.includes(k.id)} disabled={busy || p.savedKeywords.loading}
+                          onChange={(e) => p.onSelectSavedKeyword(k.id, e.target.checked)} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                          style={{ width: 18, height: 18, minWidth: 18, minHeight: 18, padding: 0, margin: 0, flexShrink: 0 }} />
+                        <span style={{ minWidth: 0 }}><bdi style={{ display: 'block', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{k.keyword}</bdi>
+                          <span className="hint" style={{ display: 'block' }}>Saved location <bdi>{k.locationCode}</bdi> · language <bdi>{k.languageCode}</bdi></span>
+                          {k.keyword.length > 200 && <span className="hint" style={{ display: 'block' }}>Longer than 200 characters. Edit this keyword in the draft before adding.</span>}
+                        </span>
+                      </label>
+                    </li>)}
+                  </ul>}
+
+                </section>
+                )}
                 <div className="field"><label htmlFor={pre + 'words'}>Keywords, one per line</label>
                   <textarea id={pre + 'words'} rows={6} maxLength={402000} value={p.words} disabled={p.locked}
                     onChange={(e) => p.onWords(e.target.value)} /></div>
-                <div className="field"><label htmlFor={pre + 'match-case'}>
+                <label className="row" htmlFor={pre + 'match-case'} style={{ minHeight: 44 }}>
                   <input id={pre + 'match-case'} type="checkbox" checked={p.matchCase} disabled={p.locked}
-                    onChange={(e) => p.onMatchCase(e.target.checked)} /> Preserve keyword case</label></div>
+                    style={{ width: 18, height: 18, minWidth: 18, minHeight: 18, padding: 0, margin: 0, flexShrink: 0 }}
+                    onChange={(e) => p.onMatchCase(e.target.checked)} /> Preserve keyword case</label>
                 <p className="hint">Lines are trimmed and lowercased by default; internal spaces, % and + are preserved. Up to 2,000 lines per add and 1,000 unique keywords in total; duplicates are ignored server-side.</p>
                 <div className="row">
                   <button type="submit" className="btn primary" disabled={busy}>Add keywords</button>

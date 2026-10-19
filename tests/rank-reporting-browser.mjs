@@ -33,11 +33,11 @@ function matrix(params){const paging=params.get('cursor'),word=params.get('searc
  if(variant==='no-checks')for(const r of rows)r.cells=[];
  return {role,trackerId:tid,source,target,enabledDevices:['mobile'],asOf,filters:{device:params.get('device'),search:word,...(pinned?{pinned}:{}),runLimit:Number(params.get('runLimit'))},keywordCount:word?rows.length:2,columns:variant==='no-checks'?[]:[column(1),column(2)],rows,nextCursor:paging||word||pinned?null:'page:2026-10-13T00:00:00.123456Z'};
 }
-const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/rank-reporting-vite-cache',appType:'custom',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
+const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/rank-reporting-vite-cache',appType:'custom',optimizeDeps:{entries:['tests/rank-reporting-browser-fixture.tsx']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(!['/','/parent','/elsewhere'].includes(req.url))return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rank reporting synthetic acceptance</title><div id="root"></div><script type="module" src="/tests/rank-reporting-browser-fixture.tsx"></script></html>');});
-let browser;
+let browser,syntheticApiRequests=0;
 try{
- await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
+ await server.listen();await server.warmupRequest('/tests/rank-reporting-browser-fixture.tsx');await server.waitForRequestsIdle();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
  const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
  const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));page.on('download',()=>downloads++);
  await context.addInitScript(()=>{const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);window.blobAudit={created:[],revoked:[]};URL.createObjectURL=v=>{const u=create(v);window.blobAudit.created.push(u);return u;};URL.revokeObjectURL=u=>{window.blobAudit.revoked.push(u);revoke(u);};});
@@ -45,7 +45,7 @@ try{
  const csv=(route,headers={})=>route.fulfill({status:200,headers:{'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="rank-matrix.csv"','x-export-row-count':'2',...headers},body:'"As of","Provider"\r\n"'+at+'","DataForSEO"\r\n"'+at+'","DataForSEO"\r\n'}).catch(()=>{});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname;if(url.origin!==origin){external.push(url.origin);return route.abort();}if(!path.startsWith('/api/'))return req.method()==='GET'?route.continue():route.abort();
-  calls.push({method:req.method(),path,query:Object.fromEntries(url.searchParams)});
+  assert.ok(++syntheticApiRequests<=100,'Synthetic API request cap exceeded');calls.push({method:req.method(),path,query:Object.fromEntries(url.searchParams)});
   if(req.method()==='POST'){assert.equal(path,trackerPath+'/matrix/export','Reporting must never write/quote/dispatch');exportBodies.push(req.postDataJSON());const mode=nextExport;nextExport=null;if(mode==='hold'){held={route,export:true};return;}if(mode==='mime')return csv(route,{'content-type':'text/html'});if(mode==='count')return csv(route,{'x-export-row-count':'1e2'});if(mode==='large')return csv(route,{'content-length':String(16*1024*1024+1)});if(typeof mode==='number')return send(route,{error:'Denied export'},mode);return csv(route);}
   assert.equal(req.method(),'GET');let data;
   if(path.endsWith('/distribution'))data=distribution(url.searchParams);
@@ -152,4 +152,4 @@ try{
  assert.deepEqual(layoutFindings,[],'Reporting has contained reflow and legible bounded table columns');assert.equal(exportBodies.length,roleWrites);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
  console.log('PASS320/360/768/1440 LTR/RTL, native markers,44px controls, exact long content, readable columns, keyboard scrolling, CSS200% reflow and forced colors without external/paid traffic.');
 
-}finally{await browser?.close();await server.close();}
+}finally{await browser?.close();await server.close();console.log('Synthetic API requests: '+syntheticApiRequests+'; browser contexts: '+(browser?1:0));}

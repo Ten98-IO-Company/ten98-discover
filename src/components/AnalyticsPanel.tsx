@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { AppliedFilters, EvidenceSummary } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
 import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, canonicalNavigation, navigationKey, parseNavigation, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
-import {useLocation} from '@tanstack/react-router';
+import {Link,useLocation} from '@tanstack/react-router';
 import { useAnnotations } from './AnnotationsPanel';
 import { deriveAnalyticsComparison, retentionCoverage, type AnalyticsComparison, type AnalyticsComparisonMode } from '../lib/analytics-comparison';
 import {geographyFields,parseGeographyKey,type GeographyFilters,type GeographyReport,type GeoField,type GeographyKey,type GeographyDetail,type GeographyDetailIntent} from '../lib/analytics-geography';
@@ -554,12 +555,12 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
         <AnalyticsExport key={queryKey+':'+readOwner} projectId={projectId} initial={exportDraft} unsupported={exportUnsupported} readOwner={readOwner+':'+String(reqRef.current)} readEnabled={exportEnabled} isParentCurrent={exportCurrent} onAccessLoss={exportAccessLost}/>        {compareView&&<div className="analytics-comparison-mode"><label htmlFor={`${uid}-compare`}>Compare with</label><select id={`${uid}-compare`} value={mode} disabled={busy||invalid} onChange={e=>navigate({...intent,analyticsFrom:from,analyticsTo:to,analyticsCompare:e.target.value as AnalyticsComparisonMode})}><option value="prev">Previous period</option><option value="yoy">Previous year</option></select></div>}
       </section>
       {!invalid&&(compareView||selection?.query)&&<SelectionControls key={queryKey} value={selection!.draft} busy={busy||Boolean(view.denied)} onApply={applySelection}/>}
-      {!invalid&&Boolean(selection?.draft.fields.length)&&<section className="card analytics-environment-filters" aria-label="Applied report selection"><strong>{compareView?'Applied to both periods':'Applied to all analytics'}</strong><div className="row">{selection!.draft.fields.map(row=><button type="button" className="btn" key={row.field} disabled={busy} aria-label={`Remove ${selectionLabel(row.field)} selection`} onClick={()=>{const built=buildAdvanced({...selection!.draft,fields:selection!.draft.fields.filter(item=>item.field!==row.field)});if('error'in built)return;applySelection(built.predicates?new URLSearchParams({predicates:JSON.stringify(built.predicates)}).toString():undefined);}}>{selectionLabel(row.field)} {row.operator==='eq'?`is ${JSON.stringify(row.value)}`:row.operator==='exists'?'is recorded':'is missing'} <span aria-hidden="true">×</span></button>)}</div></section>}
+      {!invalid&&Boolean(selection?.draft.fields.length)&&<section className="card analytics-environment-filters" aria-label="Applied report selection"><AppliedFilters label={compareView?'Selection applied to both periods':'Selection applied to all analytics'} filters={selection!.draft.fields.map(row=>({id:row.field,label:selectionLabel(row.field),operator:'is',value:row.operator==='eq'?JSON.stringify(row.value):row.operator==='exists'?'recorded':'missing',removeLabel:`Remove ${selectionLabel(row.field)} selection`}))} disabled={busy} onRemove={field=>{const built=buildAdvanced({...selection!.draft,fields:selection!.draft.fields.filter(item=>item.field!==field)});if('error'in built)return;applySelection(built.predicates?new URLSearchParams({predicates:JSON.stringify(built.predicates)}).toString():undefined);}}/></section>}
       {compareView&&!invalid&&<section className="card analytics-dimension-selector"><label htmlFor={`${uid}-dimension`}>Compare dimension</label><select id={`${uid}-dimension`} value={dimension} disabled={busy||Boolean(view.denied)} onChange={e=>navigate({...intent,analyticsFrom:from,analyticsTo:to,analyticsDimension:e.target.value as AnalyticsDimension})}>{analyticsDimensions.map(field=><option key={field} value={field}>{dimensionLabels[field]}</option>)}</select><p className="hint">One dimension for both periods. Each list contains up to 20 categories. Recorded screen is physical screen size, not viewport. Recorded channel uses saved campaign tags and referrer presence; it is not a full first-channel-per-visit classifier.</p></section>}
       {compareView&&!invalid&&(derived?<section className="card analytics-comparison-ranges" aria-label="Applied comparison periods"><div><strong>Current period</strong><p>{from} to {to} (UTC) · {derived.alignment.currentDays} {derived.alignment.currentDays===1?'day':'days'}</p></div><div><strong>{mode==='yoy'?'Previous year':'Previous period'}</strong><p>{derived.range.from} to {derived.range.to} (UTC) · {derived.alignment.comparisonDays} {derived.alignment.comparisonDays===1?'day':'days'}</p></div>{derived.alignment.currentDays!==derived.alignment.comparisonDays&&<p className="notice">These periods have different day counts because calendar years differ. The chart keeps all {derived.alignment.slots} days and leaves unmatched days unavailable.</p>}{derived.alignment.overlapDays>0&&<p className="notice">The selected periods overlap by {derived.alignment.overlapDays} {derived.alignment.overlapDays===1?'day':'days'}. Some observations can occur in both periods.</p>}</section>:<div className="alert" role="alert"><p>Choose later dates or a different comparison mode so the previous period stays on or after 1970-01-01.</p><button type="button" className="btn" onClick={()=>applyRange(lastDays(7))}>Reset comparison dates</button></div>)}
-      {!invalid&&Object.keys(filters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied environment filters"><strong>{compareView?'Applied to both periods':'Applied to all analytics'}</strong><div className="row">{environmentFields.filter(field=>filters[field]!==undefined).map(field=><button type="button" className="btn" key={field} disabled={busy} aria-label={`Remove ${environmentLabels[field]} filter: ${environmentValue(field,filters[field]!)}`} onClick={()=>{const next={...intent};delete next[analyticsNavigationNames[field]];navigate(next);}}>{environmentLabels[field]}: {environmentValue(field,filters[field]!)} <span aria-hidden="true">×</span></button>)}<button type="button" className="btn ghost" disabled={busy} onClick={()=>{const next={...intent};for(const field of environmentFields)delete next[analyticsNavigationNames[field]];navigate(next);}}>Clear environment filters</button></div><p className="hint">{compareView?'Both period cards, daily comparison and period reports':'Overview, daily activity, top pages, custom events and environment'} use these same required filters.</p></section>}
+      {!invalid&&Object.keys(filters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied environment filters"><AppliedFilters label={compareView?'Environment applied to both periods':'Environment applied to all analytics'} filters={environmentFields.filter(field=>filters[field]!==undefined).map(field=>({id:field,label:environmentLabels[field],value:environmentValue(field,filters[field]!),removeLabel:`Remove ${environmentLabels[field]} filter: ${environmentValue(field,filters[field]!)}`}))} disabled={busy} onRemove={field=>{const next={...intent};delete next[analyticsNavigationNames[field as EnvironmentField]];navigate(next);}}/><button type="button" className="btn ghost" disabled={busy} onClick={()=>{const next={...intent};for(const field of environmentFields)delete next[analyticsNavigationNames[field]];navigate(next);}}>Clear environment filters</button><p className="hint">{compareView?'Both period cards, daily comparison and period reports':'Overview, daily activity, top pages, custom events and environment'} use these same required filters.</p></section>}
 
-      {!invalid&&Object.keys(geographyFilters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied location filters"><strong>{compareView?'Applied to both periods':'Applied to all analytics'}</strong><div className="row">{geographyFields.filter(field=>geographyFilters[field]!==undefined).map(field=><button type="button" className="btn" key={field} disabled={busy} onClick={()=>{const next={...intent};delete next[geographyNavigationNames[field]];navigate(next);}}>{geographyLabels[field]}: <bdi>{geographyLabel(parseGeographyKey(field,geographyFilters[field])!)}</bdi> <span aria-hidden="true">×</span></button>)}<button type="button" className="btn ghost" disabled={busy} onClick={()=>{const next={...intent};for(const field of geographyFields)delete next[geographyNavigationNames[field]];navigate(next);}}>Clear location filters</button></div><p className="hint">All cards, daily data and reports use these same exact location filters.</p></section>}
+      {!invalid&&Object.keys(geographyFilters).length>0&&<section className="card analytics-environment-filters" aria-label="Applied location filters"><AppliedFilters label={compareView?'Location applied to both periods':'Location applied to all analytics'} filters={geographyFields.filter(field=>geographyFilters[field]!==undefined).map(field=>({id:field,label:geographyLabels[field],value:geographyLabel(parseGeographyKey(field,geographyFilters[field])!),removeLabel:`Remove ${geographyLabels[field]} filter`}))} disabled={busy} onRemove={field=>{const next={...intent};delete next[geographyNavigationNames[field as GeoField]];navigate(next);}}/><button type="button" className="btn ghost" disabled={busy} onClick={()=>{const next={...intent};for(const field of geographyFields)delete next[geographyNavigationNames[field]];navigate(next);}}>Clear location filters</button><p className="hint">All cards, daily data and reports use these same exact location filters.</p></section>}
 
       {routeReady&&view.error && (
         <div className="alert" role="alert">
@@ -587,6 +588,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                 {data.range.from} to {data.range.to} (UTC)
               </span>
             </div>
+            <EvidenceSummary variant="compact" title="Native analytics evidence" source="Native analytics" observedAt={data.lastReceivedAt?{label:`Last event received ${fmtUtc(data.lastReceivedAt)}.`,dateTime:data.lastReceivedAt}:undefined} availability={data.coverage.status==='unavailable'?'unavailable':hasData?'ready':'empty'} reason={data.coverage.status==='unavailable'?'This date range is unavailable after retention.':data.coverage.status==='partial'?'Counts and estimates cover only retained observations.':hasData?'The selected date range is retained.':'No events in this date range.'} coverage={{status:data.coverage.status,reason:'Retention describes stored history; traffic capture coverage is unknown.'}} basis="Last event received records ingestion, not report generation or provider observation. It does not establish collection freshness."/>
             {data.coverage.status !== 'complete' && <p className="alert" role="status">
               {data.coverage.status === 'unavailable' ? 'This date range is unavailable after retention.' : 'This date range is partial after retention. Counts and estimates cover only retained observations.'}
               {data.coverage.retainedFrom && ` History is retained from ${fmtUtc(data.coverage.retainedFrom)}. Extending retention cannot restore deleted data.`}
@@ -693,7 +695,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
         <>
           <section className="card analytics-breakdown">
             <h2>Top pages</h2>
-            <p className="hint">Up to 20 paths in this date range.</p>
+            <p className="hint">Up to 20 paths in this date range. Select a path to filter this report.</p>
             {data.pages.length === 0 ? (
               <p className="dim">{data.coverage.status === 'complete' ? 'No page views in this range.' : 'No page views are available in the retained portion.'}</p>
             ) : (
@@ -710,7 +712,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                   <tbody>
                     {data.pages.slice(0, 20).map((p) => (
                       <tr key={p.path}>
-                        <td className="mono analytics-path">{p.path}</td>
+                        <td className="mono analytics-path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('path',{type:'string',value:p.path})} aria-label={`Filter Path: ${p.path}`}><bdi dir="ltr">{p.path}</bdi></button></td>
                         <td className="analytics-num">{fmtNum(p.pageViews)}</td>
                       </tr>
                     ))}
@@ -722,7 +724,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
 
           <section className="card analytics-breakdown">
             <h2>Top custom events</h2>
-            <p className="hint">Up to 20 event names in this date range.</p>
+            <p className="hint">Up to 20 event names in this date range. Select an event to filter this report.</p>
             {data.events.length === 0 ? (
               <p className="dim">{data.coverage.status === 'complete' ? 'No custom events in this range.' : 'No custom events are available in the retained portion.'}</p>
             ) : (
@@ -739,7 +741,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                   <tbody>
                     {data.events.slice(0, 20).map((ev) => (
                       <tr key={ev.name}>
-                        <td className="mono analytics-path">{ev.name}</td>
+                        <td className="mono analytics-path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('event',{type:'string',value:ev.name})} aria-label={`Filter Event: ${ev.name}`}><bdi>{ev.name}</bdi></button></td>
                         <td className="analytics-num">{fmtNum(ev.count)}</td>
                       </tr>
                     ))}
@@ -754,7 +756,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             <h2>Top referrers</h2>
             <p className="hint">Up to 20 external referrer hosts in this date range. In-site navigation and page views without a recorded referrer are not listed; referrer capture is off by default and is turned on in Collection and privacy. Selecting a host filters every report by that referrer, including in-site navigation from it.</p>
             {data.referrers.length === 0 ? (
-              <p className="dim">{data.coverage.status === 'complete' ? 'No referrer hosts are recorded in this range.' : 'No referrer hosts are recorded in the retained portion.'}</p>
+              <><p className="dim">{data.coverage.status === 'complete' ? 'No referrer hosts are recorded in this range.' : 'No referrer hosts are recorded in the retained portion.'}</p>{data.coverage.status!=='unavailable'&&search?.workspace&&<><p className="hint">Referrer capture is optional. Collection changes apply to future events.</p><Link className="btn ghost" to="/" search={{workspace:search.workspace,project:projectId,view:'collection'}}>Review collection settings</Link></>}</>
             ) : (
               <div className="table-wrap">
                 <table>

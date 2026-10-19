@@ -83,7 +83,7 @@ async function fresh(scene){
 }
 const pass=name=>{console.log('PASS '+name);};
 try{
- server=await createServer({configFile:false,root,cacheDir:resolve(out,'vite-cache'),appType:'custom',publicDir:false,server:{fs:{strict:true,allow:[]},host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
+ server=await createServer({configFile:false,root,cacheDir:resolve(out,'vite-cache'),appType:'custom',publicDir:false,optimizeDeps:{noDiscovery:true,include:[]},server:{fs:{strict:true,allow:[]},host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res)=>{const url=new URL(req.url,'http://127.0.0.1');res.setHeader('cache-control','no-store');if(url.pathname==='/favicon.ico'){res.statusCode=204;res.end();return;}if(['/tracker.js','/destinations.js','/replay.js'].includes(url.pathname)){res.setHeader('content-type','text/javascript; charset=utf-8');res.end(readFileSync(resolve(root,'public'+url.pathname)));return;}if(url.pathname===recordPath||url.pathname===playerPath){res.setHeader('content-type','text/html; charset=utf-8');res.end(url.pathname===recordPath?recordHtml(['ltr','rtl'].includes(url.searchParams.get('direction'))?url.searchParams.get('direction'):'ltr',url.searchParams.get('gutter')==='1'):playerHtml());return;}res.statusCode=404;res.end();});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
  for(const scene of scenes){

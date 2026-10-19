@@ -11,7 +11,7 @@ import {withKeywordProject,keywordConnection,keywordCredentials} from './keyword
 import {dispatchSpend,settleSpend} from './spending.ts';
 import {microUsd} from './keyword-research-input.ts';
 import {rankQueue,getRankRun} from './rank-execution.ts';
-import {readRankPlan,rankGroupTasks,rankGroupPayload,rankPlanTotal,type RankPlan} from './rank-execution-plan.ts';
+import {readRankPlan,rankGroupTasks,rankGroupPayload,rankPlanTotal} from './rank-execution-plan.ts';
 import {parseRankBasePrices,type RankMethod} from './rank-serp-input.ts';
 import {readRankAccount,requestRankTasks,readRankTask} from './dataforseo-rank.ts';
 import {parseRankDispatchOutcome,type RankDispatchOutcome,type RankExpectedTask} from './rank-provider-outcome.ts';

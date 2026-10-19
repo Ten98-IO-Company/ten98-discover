@@ -17,28 +17,28 @@ function request(report){return {connectionId:ids.connection,target:'example.com
 function receipt(report,patch={}){return {id:ids.run,quoteId:ids.quote,request:request(report),status:'completed',createdAt:at,completedAt:at,estimateUsd:report==='overview_v1'?'0.010200':'0.015000',actualUsd:report==='overview_v1'?'0.010100':'0.012120',chargeStatus:'settled',canCancel:false,diagnostic:null,resultExpired:false,...patch};}
 function result(report){const rows=report==='overview_v1'?[metrics()]:report==='pages_v1'?[{url:'https://example.com/guide',organic:metrics()}]:report==='competitors_v1'?[{domain:'competitor.example.org',sharedKeywords:0,averagePosition:null,fullDomain:metrics({estimatedTraffic:900}),targetOverlap:metrics({estimatedTraffic:3,estimatedAdsValueUsd:0})}]:[{keyword:'Synthetic keyword',position:1,searchVolume:null,estimatedTraffic:0,cpcUsd:null,keywordDifficulty:null,url:'https://example.com/guide',metricsUpdatedAt:null}];return {source:'DataForSEO Labs / Google',retrievedAt:at,target:'example.com',scope:'subdomains',locationCode:2840,languageCode:'en',...report?{report}:{},rows,returnedCount:rows.length,totalCount:report==='overview_v1'?1:101,limited:report!=='overview_v1'};}
 function overview(role,run){return {role,vaultConfigured:true,spendingPaused:false,connections:[{id:ids.connection,name:'Synthetic saved connection',checkStatus:'ok'}],catalog:{updatedAt:at,markets:[{locationCode:2840,locationName:'United States',languageCode:'en',languageName:'English'}]},runs:run?[run]:[]};}
-const checks=[],contexts=[],errors=[],external=[];
-const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/domain-overview-ui/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
+const checks=[],contexts=[],errors=[],external=[]; let apiRequests=0,costRequests=0,costMode=false; const costContexts=[];
+const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/domain-overview-ui/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/domain-overview-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-runtime','react/jsx-dev-runtime','@tanstack/react-router','@ten98/ui']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Domain overview synthetic checks</title><div id="root"></div><script type="module" src="/tests/domain-overview-browser-fixture.tsx"></script></html>');});
 let browser,origin;
 const button=(page,name)=>page.getByRole('button',{name,exact:true});
 const idle=page=>page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Refresh receipts'&&!b.disabled));
-async function open({report='overview_v1',role='owner',patchResult,detailFault,exportFault,startFault,holdDetail=false}={}){
- const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});contexts.push(context);
- const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
+async function open({report='overview_v1',role='owner',patchResult,detailFault,exportFault,startFault,holdDetail=false,panel='domain',noConnections=false,spendingPaused=false,clock=false}={}){
+ const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});(costMode?costContexts:contexts).push(context); assert.ok(costContexts.length<=12); assert.ok(contexts.length<=45,'Legacy context cap.');
+ const page=await context.newPage();if(clock)await page.clock.install();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
  const model={role,run:receipt(report),result:result(report),calls:[],details:0,detailFault,exportFault,startFault,holdDetail,held:null,csv:'Source,DataForSEO Labs / Google\r\nSynthetic fixture,not native CSV proof\r\n',posts:[]};
- model.holdEntered=new Promise(yes=>{model.markHeld=yes;});
+ model.holdEntered=new Promise(yes=>{model.markHeld=yes;}); model.startHeld=new Promise(yes=>{model.markStartHeld=yes;});
  patchResult?.(model.result);
  const reply=(route,value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const q=route.request(),url=new URL(q.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return q.method()==='GET'?route.continue():route.abort();
-  model.calls.push({path:url.pathname,method:q.method()});assert.equal(url.search,'');assert.ok(url.pathname===base||url.pathname.startsWith(base+'/')||url.pathname.startsWith('/api/projects/20000000-0000-4000-8000-000000000002/domain-research'),'Only the two synthetic owned project routes are allowed.');
+  assert.ok(costMode?++costRequests<=50:++apiRequests<=500,'Synthetic API request cap: 500 legacy / 50 added.'); model.calls.push({path:url.pathname,method:q.method()});assert.equal(url.search,'');assert.ok(url.pathname===base||url.pathname.startsWith(base+'/')||url.pathname===base.replace('/domain-research','/keyword-research')||url.pathname.startsWith('/api/projects/20000000-0000-4000-8000-000000000002/domain-research'),'Only the two synthetic owned project routes are allowed.');
   const currentBase=url.pathname.replace(/\/domain-research.*$/,'/domain-research');
-  if(url.pathname===currentBase)return reply(route,overview(model.role,model.run));
+  if(url.pathname===currentBase)return reply(route,{...overview(model.role,panel==='keywords'?null:model.run),spendingPaused,...(noConnections?{connections:[]}:{})});
   if(q.method()==='POST'){
    const body=q.postDataJSON();model.posts.push({path:url.pathname,body});
    if(url.pathname.endsWith('/quote')){const stamp=new Date().toISOString(),estimate=(10000n+200n*BigInt(body.limit)).toString().padStart(7,'0');return reply(route,{role:model.role,quote:{id:ids.quote,request:body,connectionName:'Synthetic saved connection',priceAsOf:stamp,expiresAt:new Date(Date.parse(stamp)+300000).toISOString(),perTaskUsd:'0.010000',perItemUsd:'0.000200',estimateUsd:estimate.slice(0,-6)+'.'+estimate.slice(-6),upperItems:body.limit}});}
-   if(url.pathname.endsWith('/runs')){if(model.startFault==='lost'&&model.posts.filter(p=>p.path.endsWith('/runs')).length===1)return route.abort('failed');const quoted=model.posts.findLast(p=>p.path.endsWith('/quote')).body;model.run=receipt(quoted.report,{request:quoted,status:'queued',completedAt:null,actualUsd:null,chargeStatus:'reserved',canCancel:true});if(model.startFault==='viewer')model.role='viewer';return reply(route,{role:model.role,run:model.run},202);}
+   if(url.pathname.endsWith('/runs')){if(model.holdStart){await new Promise(yes=>{model.releaseStart=yes;model.markStartHeld();});model.holdStart=false;}if(model.startFault==='lost'&&model.posts.filter(p=>p.path.endsWith('/runs')).length===1)return route.abort('failed');const quoted=model.posts.findLast(p=>p.path.endsWith('/quote')).body;model.run=receipt(quoted.report,{request:quoted,status:'queued',completedAt:null,actualUsd:null,chargeStatus:'reserved',canCancel:true});if(model.startFault==='viewer')model.role='viewer';return reply(route,{role:model.role,run:model.run},202);}
    throw Error('Unexpected synthetic write: '+url.pathname);
   }
   if(url.pathname.endsWith('/export')){if(typeof model.exportFault==='number')return reply(route,{error:'Synthetic export refusal'},model.exportFault);const value={role:model.role,run:{...model.run},csv:model.csv,rowCount:model.result.returnedCount};if(typeof model.exportFault==='function')model.exportFault(value);return reply(route,value);}
@@ -49,14 +49,28 @@ async function open({report='overview_v1',role='owner',patchResult,detailFault,e
   }
   throw Error('Unexpected synthetic read: '+url.pathname);
  });
- await page.goto(origin);await button(page,'Refresh receipts').waitFor();await page.getByRole('combobox',{name:'Research report',exact:true}).waitFor();
+ await page.goto(origin+(panel==='keywords'?'?fixture=keywords':''));if(panel==='domain'){await button(page,'Refresh receipts').waitFor();await page.getByRole('combobox',{name:'Research report',exact:true}).waitFor();}else await page.getByRole('region',{name:'Keyword research',exact:true}).getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
  const view=async()=>{await page.getByRole('region',{name:'Recent domain research'}).getByRole('button').first().click();await idle(page);};
  return {page,context,model,view};
 }
 const done=async(name,items)=>{checks.push({name,contexts:items});console.log('PASS '+name);};
 try{
  await mkdir(output,{recursive:true});await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
+ await server.warmupRequest('/tests/domain-overview-browser-fixture.tsx');await server.waitForRequestsIdle();
  const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+
+ for(const panel of ['domain','keywords'])for(const role of ['owner','admin','editor','viewer']){
+  const {page,context,model}=await open({panel,role,noConnections:true});const setup=page.getByRole('link',{name:'Set up DataForSEO',exact:true});assert.equal(await setup.count(),role==='owner'?1:0);
+  if(role==='owner'){assert.equal(await setup.isVisible(),true);const url=new URL(await setup.getAttribute('href'),origin);assert.equal(url.pathname,'/');assert.deepEqual(Object.fromEntries(url.searchParams),{workspace:'10000000-0000-4000-8000-000000000001',project:'20000000-0000-4000-8000-000000000001',view:'providers'});await setup.focus();assert.equal(await setup.evaluate(el=>el===document.activeElement),true);}else await page.getByText(/Ask a workspace owner/).first().waitFor();
+  if(panel==='domain')assert.equal(await button(page,'Prepare quote').isDisabled(),true);else assert.equal(await button(page,'Prepare quote').count(),0);assert.equal(model.posts.length,0,'Setup guidance must not call a provider, refresh a catalog or start paid work.');await context.close();
+ }
+ await done('missing DataForSEO connection gives owners a scoped setup link and other roles an owner-contact action without writes',8);
+
+ for(const role of ['owner','admin','editor','viewer']){
+  const {page,context,model}=await open({role,spendingPaused:true});const manage=page.getByRole('link',{name:'Providers and spending',exact:true});assert.equal(await manage.count(),role==='owner'?1:0);assert.equal(await page.getByRole('link',{name:'Set up DataForSEO',exact:true}).count(),0);
+  if(role==='owner'){assert.equal(await manage.isVisible(),true);assert.deepEqual(Object.fromEntries(new URL(await manage.getAttribute('href'),origin).searchParams),{workspace:'10000000-0000-4000-8000-000000000001',project:'20000000-0000-4000-8000-000000000001',view:'providers'});}else await page.getByText(/Ask a workspace owner to review Providers and spending/).waitFor();assert.equal(model.posts.length,0);await context.close();
+ }
+ await done('paused research with an existing connection gives only owners a scoped spending-settings link and other roles an owner-contact action without writes',4);
 
  for(const report of [undefined,'overview_v1','pages_v1','competitors_v1']){
   const {page,context,model}=await open({report});await page.getByRole('combobox',{name:'Research report',exact:true}).selectOption(report??'ranked_keywords');await page.getByLabel('Domain or URL',{exact:true}).fill('https://www.example.com/guide?ignored=1');await page.getByLabel('Market and language',{exact:true}).selectOption('2840:en');
@@ -124,6 +138,50 @@ try{
   model.detailFault=403;await button(page,'Reload result').click();await page.getByRole('alert').first().waitFor();assert.equal(await page.evaluate(()=>window.domainOverviewFixture.unauthorized),0);await button(page,'Refresh receipts').click();await page.getByRole('combobox',{name:'Research report',exact:true}).waitFor();model.detailFault=401;await page.getByRole('region',{name:'Recent domain research'}).getByRole('button').first().click();await page.getByText('Your session expired.',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.domainOverviewFixture.unauthorized),1);assert.equal(await page.getByRole('region',{name:'Domain research receipt'}).count(),0);assert.equal(model.posts.length,0);await context.close();
  }
  await done('320/1440 LTR/RTL body CSS zoom2, real Tab controls/table and distinct project refusal versus session expiry',1);
- assert.equal(checks.length,10);assert.equal(checks.reduce((n,c)=>n+c.contexts,0),33);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:33,errors,external,screenshots:4,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
+ assert.equal(checks.length,12);assert.equal(checks.reduce((n,c)=>n+c.contexts,0),45);assert.deepEqual(errors,[]);assert.deepEqual(external,[]); costMode=true;
+ for(const item of [
+  {status:'queued',chargeStatus:'reserved',actualUsd:null,state:'pending'},
+  {status:'running',chargeStatus:'dispatched',actualUsd:null,state:'pending'},
+  {status:'completed',chargeStatus:'settled',actualUsd:'0.010100',state:'settled'},
+  {status:'failed',chargeStatus:'settled',actualUsd:'0.000000',state:'settled'},
+  {status:'failed',chargeStatus:'settled',actualUsd:null,state:'blocked'},
+  {status:'queued',chargeStatus:'uncertain',actualUsd:null,state:'uncertain'},
+  {status:'cancelled',chargeStatus:'cancelled',actualUsd:null,state:'blocked'},
+  {status:'completed',chargeStatus:'settled',actualUsd:'0.010100',resultExpired:true,state:'settled'}
+ ]){
+  const {page,context,model,view}=await open();Object.assign(model.run,item,{canCancel:false});delete model.run.state;await view();
+  const cost=page.locator('.t98-cost-root').filter({has:page.getByText('Research receipt and charge',{exact:true})});await cost.waitFor();assert.equal(await cost.getAttribute('data-state'),item.state);
+  assert.equal(await cost.locator('dt').filter({hasText:'Estimated price'}).locator('..').locator('dd').innerText(),'$0.010200');
+  assert.equal(await cost.locator('dt').filter({hasText:'Settled price'}).locator('..').locator('dd').innerText(),item.actualUsd===null?'Settled amount unknown':'$'+item.actualUsd);
+  assert.ok((await cost.innerText()).includes('Actual consumed units unavailable'));assert.equal(model.posts.length,0);
+  if(item.resultExpired)await page.getByText('Report rows expired under current retention. The quote and charge receipt remain.',{exact:true}).waitFor();await context.close();
+ }
+ {
+  const {page,context,model}=await open();await page.clock.install();await page.getByRole('combobox',{name:'Research report',exact:true}).selectOption('overview_v1');await page.getByLabel('Domain or URL',{exact:true}).fill('example.com');await page.getByLabel('Market and language',{exact:true}).selectOption('2840:en');await button(page,'Prepare quote').click();
+  const cost=page.getByRole('region',{name:'Paid research quote'}).locator('.t98-cost-root');await cost.waitFor();assert.equal(await cost.getAttribute('data-state'),'quoted');await cost.getByText('No settled charge reported',{exact:true}).waitFor();assert.ok((await cost.innerText()).includes('$0.010000'));assert.ok((await cost.innerText()).includes('$0.000200'));assert.ok((await cost.innerText()).includes('Pricing as of'));assert.equal(model.posts.length,1);
+  for(const width of [320,1440])for(const theme of ['light','dark']){
+   await page.setViewportSize({width,height:1000});await page.emulateMedia({colorScheme:theme});
+   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.body.style.zoom='1';for(const el of document.querySelectorAll('[data-cost-font]')){el.style.fontSize=el.dataset.costFont;delete el.dataset.costFont;}},theme);
+   const themeSettle=await page.evaluate(async()=>{const button=document.querySelector('.t98-cost-root button'),sample=()=>({foreground:getComputedStyle(button).color,background:getComputedStyle(button).backgroundColor});document.documentElement.getBoundingClientRect();const before=sample(),animations=document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity),active=animations.map(a=>({playState:a.playState,currentTime:a.currentTime,duration:a.effect?.getComputedTiming().duration}));await Promise.all(animations.map(a=>a.finished.catch(()=>{})));await new Promise(yes=>requestAnimationFrame(()=>requestAnimationFrame(yes)));return {before,after:sample(),active,remaining:document.getAnimations().filter(a=>a.playState==='running').length};});
+   const before=await cost.evaluate(root=>[root,...root.querySelectorAll('*')].filter(el=>el instanceof HTMLElement&&el.getClientRects().length&&el.textContent.trim()).map(el=>({tag:el.tagName,font:getComputedStyle(el).fontSize,text:el.textContent.trim().slice(0,100)})));
+   assert.ok(before.length>10);const proof=await cost.evaluate(root=>{
+    const els=[root,...root.querySelectorAll('*')].filter(el=>el instanceof HTMLElement&&el.getClientRects().length&&el.textContent.trim());const px=els.map(el=>parseFloat(getComputedStyle(el).fontSize));els.forEach((el,i)=>{el.dataset.costFont=el.style.fontSize;el.style.fontSize=px[i]*2+'px';});
+    const rgb=c=>c.match(/[\d.]+/g).map(Number),lum=c=>c.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((v,n,i)=>v+n*[.2126,.7152,.0722][i],0);
+    return els.map((el,i)=>{const cs=getComputedStyle(el);let p=el,bg;while(p){bg=rgb(getComputedStyle(p).backgroundColor);if(bg.length<4||bg[3]>0)break;p=p.parentElement;}bg=p?bg:[255,255,255];const a=lum(rgb(cs.color)),b=lum(bg);return {tag:el.tagName,text:el.textContent.trim().slice(0,100),foreground:cs.color,background:bg,font:parseFloat(cs.fontSize),expected:px[i]*2,contrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};});
+   });assert.ok(proof.every(v=>Math.abs(v.font-v.expected)<.1));assert.ok(proof.every(v=>v.contrast>=4.5),JSON.stringify({width,theme,themeSettle,proof}));assert.equal(await page.evaluate(()=>document.body.style.zoom),'1');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+   await writeFile(output+'/cost-'+width+'-'+theme+'-font-proof.json',JSON.stringify({scope:'Synthetic component only; explicit 2x visible HTMLElement text font sizes, body CSS zoom 1',themeSettle,before,proof},null,2));await page.screenshot({path:output+'/cost-'+width+'-'+theme+'-font2x.png',fullPage:true});
+  }
+  await button(page,'Prepare quote').focus();await page.keyboard.press('Tab');assert.equal(await button(page,'Start paid research').evaluate(el=>el===document.activeElement),true);
+  model.holdStart=true;await page.keyboard.press('Enter');await model.startHeld;assert.equal(await cost.getAttribute('data-state'),'pending');await cost.getByText('No settled charge reported',{exact:true}).waitFor();assert.equal(model.posts.filter(p=>p.path.endsWith('/runs')).length,1);assert.deepEqual(Object.keys(model.posts.at(-1).body).sort(),['quoteId','requestKey']);assert.equal(model.posts.at(-1).body.quoteId,ids.quote);model.releaseStart();await page.getByText('Run receipt saved.',{exact:true}).waitFor();await context.close();
+ }
+ {
+  const {page,context,model}=await open({startFault:'lost',clock:true});await page.getByRole('combobox',{name:'Research report',exact:true}).selectOption('overview_v1');await page.getByLabel('Domain or URL',{exact:true}).fill('example.com');await page.getByLabel('Market and language',{exact:true}).selectOption('2840:en');await button(page,'Prepare quote').click();const cost=page.getByRole('region',{name:'Paid research quote'}).locator('.t98-cost-root');await cost.waitFor();assert.equal(await cost.getAttribute('data-state'),'quoted');await page.clock.fastForward(301000);await page.waitForFunction(()=>document.querySelector('.t98-cost-root')?.dataset.state==='expired');assert.equal(await button(page,'Start paid research').isDisabled(),true);assert.equal(model.posts.length,1);
+  await context.close();
+ }
+ {
+  const {page,context,model}=await open({startFault:'lost',clock:true});await page.getByRole('combobox',{name:'Research report',exact:true}).selectOption('overview_v1');await page.getByLabel('Domain or URL',{exact:true}).fill('example.com');await page.getByLabel('Market and language',{exact:true}).selectOption('2840:en');await button(page,'Prepare quote').click();const cost=page.getByRole('region',{name:'Paid research quote'}).locator('.t98-cost-root');await cost.waitFor();assert.equal(await cost.getAttribute('data-state'),'quoted');await button(page,'Start paid research').click();await button(page,'Retry same start').waitFor();assert.equal(await cost.getAttribute('data-state'),'uncertain');await page.clock.fastForward(301000);assert.equal(await cost.getAttribute('data-state'),'uncertain');assert.equal(await button(page,'Retry same start').isEnabled(),true);const first=model.posts.filter(p=>p.path.endsWith('/runs'))[0].body;await button(page,'Retry same start').click();await page.getByText('Run receipt saved.',{exact:true}).waitFor();assert.deepEqual(model.posts.filter(p=>p.path.endsWith('/runs'))[1].body,first);await context.close();
+ }
+ assert.ok(costContexts.length<=12);assert.ok(costRequests<=50);assert.deepEqual(errors,[]);assert.deepEqual(external,[]);console.log('PASS shared cost receipt states, exact six-decimal prices, unknown/zero, retained expiry, quote expiry, held native Start and same-key recovery plus four 2x-font/contrast captures');
+ await writeFile(output+'/evidence.json',JSON.stringify({scope:'synthetic source component UI; not native/provider/compiled proof',checks,contexts:45,costChecks:{contexts:costContexts.length,apiRequests:costRequests,screenshots:4},errors,external,screenshots:4,source:{panel:createHash('sha256').update(await readFile('src/components/DomainResearchPanel.tsx')).digest('hex')}},null,2));console.log('Evidence: '+output+'/evidence.json');
 }catch(error){await writeFile(output+'/failure.json',JSON.stringify({scope:'synthetic component checks',checks,error:String(error),stack:error?.stack,errors,external},null,2));throw error;}
-finally{for(const context of contexts)await context.close().catch(()=>{});await browser?.close();await server.close();}
+finally{for(const context of [...contexts,...costContexts])await context.close().catch(()=>{});await browser?.close();await server.close();}

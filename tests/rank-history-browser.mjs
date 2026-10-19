@@ -16,18 +16,18 @@ const emptyBaselines=()=>[1,7,30,90].map(days=>({days,targetAt:new Date(Date.par
 const alpha=()=>({keywordId:kid(1),keyword:'literal alpha % +',matchCase:true,pinnedAt:asOf,device:'mobile',latestAttempt:recent,latestObservation:latest,observationStatus:'available',baselines:emptyBaselines().map((b,i)=>({...b,source:i===0?'at_or_before':'earliest_available',observation:i<2?old:i===2?absolute:latest,change:i<2?2:null}))});
 const beta=()=>({keywordId:kid(2),keyword:'beta',matchCase:false,pinnedAt:null,device:'mobile',latestAttempt:{...observation(5,null),status:'uncertain'},latestObservation:null,observationStatus:'unavailable',baselines:emptyBaselines()});
 const gamma=()=>({keywordId:kid(3),keyword:'gamma',matchCase:false,pinnedAt:null,device:'desktop',latestAttempt:null,latestObservation:null,observationStatus:'not_checked',baselines:emptyBaselines()});
-const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/rank-history-vite-cache',appType:'custom',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
+const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/rank-history-vite-cache',appType:'custom',optimizeDeps:{entries:['tests/rank-history-browser-fixture.tsx']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url!=='/'&&req.url!=='/elsewhere')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rank history synthetic acceptance</title><div id="root"></div><script type="module" src="/tests/rank-history-browser-fixture.tsx"></script></html>');});
-let browser;
+let browser,syntheticApiRequests=0;
 try{
- await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
+ await server.listen();await server.warmupRequest('/tests/rank-history-browser-fixture.tsx');await server.waitForRequestsIdle();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
  const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
  const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(10000);const errors=[],external=[],calls=[];let role='viewer',nextRead=null,held=null,expire=false,removed=false,stress=false,pagedTimes=false;
  const longKeyword='K'.repeat(194)+' % + x',longDomain='a'.repeat(241)+'.example.com',longDiagnostic='D'.repeat(2048),longUrl='https://example.com/'+('u'.repeat(4096-'https://example.com/'.length));
  const send=(route,data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());if(url.origin!==origin){external.push(url.origin);return route.abort();}if(!url.pathname.startsWith('/api/'))return req.method()==='GET'?route.continue():route.abort();
-  assert.equal(req.method(),'GET','History never writes or quotes');calls.push({path:url.pathname,query:Object.fromEntries(url.searchParams)});
+  assert.equal(req.method(),'GET','History never writes or quotes');assert.ok(++syntheticApiRequests<=100,'Synthetic API request cap exceeded');calls.push({path:url.pathname,query:Object.fromEntries(url.searchParams)});
   const paging=url.searchParams.get('cursor');let data;
   if(url.pathname==='/api/projects/'+otherPid+'/rank-trackers/'+tid+'/results')data={role:'viewer',trackerId:tid,target,enabledDevices:'mobile',asOf,rows:[],nextCursor:null};
   else if(url.pathname===path+'/results'){
@@ -104,4 +104,4 @@ try{
  }
  nextRead=403;await page.getByRole('button',{name:'Refresh history',exact:true}).click();await page.getByRole('button',{name:'Reload access',exact:true}).waitFor();for(const width of [320,360,768,1440])await check('denied root '+width,async()=>{await page.setViewportSize({width,height:1000});await targets();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.equal(await page.locator('main summary').count(),0);});
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);assert.deepEqual(findings,[],'Every R03 layout, visibility, draft and legibility check must pass');console.log('PASS native filter hierarchy, exact draft/Apply/Refresh semantics, visible qualifications, all-width44px targets, long-text legibility, keyboard/RTL/zoom/forced colors and read-only recovery.');
-}finally{await browser?.close();await server.close();}
+}finally{await browser?.close();await server.close();console.log('Synthetic API requests: '+syntheticApiRequests+'; browser contexts: '+(browser?1:0));}

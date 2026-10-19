@@ -1,3 +1,4 @@
+@import '@ten98/ui/styles.css';
 @import './design-tokens.css';
 @import './campaign-ui.css';
 @import './components/account-settings.css';
@@ -331,9 +332,12 @@ tbody tr:last-child td{ border-bottom: 0; }
 .board-columns-3{grid-template-columns:var(--board-tracks,repeat(3,minmax(0,1fr)))}
 .board-columns-4{grid-template-columns:var(--board-tracks,repeat(4,minmax(0,1fr)))}
 .board-row>.card{min-width:0;align-content:start;overflow-wrap:anywhere}
-.board-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,130px),1fr));gap:var(--space-4);margin:0}
+.board-row>div.board-result{display:grid;min-width:0;overflow-wrap:anywhere;background:var(--surface);border-radius:calc(var(--t98-radius) + 2px)}
+.board-row>div.board-result>.card{margin:0}
+.board-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14ch),1fr));gap:var(--space-4);margin:0}
 .board-stats dt{font-size:var(--text-sm);color:var(--muted)}
 .board-stats dd{font-size:1.5rem;font-weight:650;margin:4px 0 0}
+.board-stats dd.board-stat-status{font-size:1rem;font-weight:500}
 .boards-panel .table-wrap{min-width:0;max-width:100%;overflow:auto}
 .boards-panel table{min-width:560px}
 .board-week-scroll{max-inline-size:100%;min-inline-size:0;overflow:auto}

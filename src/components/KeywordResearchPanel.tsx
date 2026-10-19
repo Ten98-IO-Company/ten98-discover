@@ -1,6 +1,7 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import {Link} from '@tanstack/react-router';
+import {RunCostSummary} from '@ten98/ui';
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
 
@@ -330,7 +331,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   if(quoteExpired)startBlockers.push('the quote expired — prepare a new one');
 
   return <section className="research-panel keyword-research stack" style={{display:'grid',gap:16,minWidth:0}} aria-busy={busy} aria-label="Keyword research">
-    <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>AI and search providers</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
+    <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>{st.connections.length===0?'Set up DataForSEO':'AI and search providers'}</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
     {!isOwner&&<p className="hint">Ask a workspace owner to manage AI and search providers or the paid-work pause. Your current role can still view saved results.</p>}
     {st.spendingPaused&&<div className="alert" role="alert">Spending is paused for this workspace. Saved history and results below remain available; new paid research is disabled.</div>}
     {msg&&<p role="status">{msg}</p>}
@@ -339,9 +340,9 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     {canResearch&&(!st.vaultConfigured?
       <div className="alert" role="alert">Credential storage is not configured. Ask the installation operator to enable it, then ask a workspace owner to add a DataForSEO connection in AI and search providers. Adding a connection cannot fix missing credential storage.</div>
     :st.connections.length===0?
-      <div className="alert" role="alert">No DataForSEO connection is saved yet. {isOwner ? 'Add one in AI and search providers, then return here.' : 'Ask a workspace owner to add one in AI and search providers, then reload access.'}</div>
+      <div className="alert" role="alert">No DataForSEO connection is saved yet. {isOwner ? 'Choose Set up DataForSEO to add one, then return here.' : 'Ask a workspace owner to add one in AI and search providers, then reload access.'}</div>
     :
-      <details className="card" open={formOpen} onToggle={event=>setFormOpen(event.currentTarget.open)}><summary>New keyword research</summary><form className="stack" onSubmit={prepareQuote}><fieldset disabled={writing||lostStart} style={{border:0,padding:0,minWidth:0,display:'grid',gap:14}}><legend>Research inputs</legend>
+      <details className="card" open={formOpen} onToggle={event=>setFormOpen(event.currentTarget.open)}><summary>New keyword research</summary><form className="stack" onSubmit={prepareQuote}><fieldset disabled={writing||lostStart} style={{border:0,padding:0,minWidth:0,display:'grid',gridTemplateColumns:'minmax(0,1fr)',gap:14}}><legend>Research inputs</legend>
         <div>
           <label htmlFor={uid+'-conn'}>Provider connection</label>
           <select id={uid+'-conn'} style={{width:'100%'}} value={connId} onChange={e=>edit(()=>setConnId(e.target.value))} required>
@@ -397,12 +398,16 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
       <p>{quote.request.mode==='overview'
         ?quote.request.keywords.length+' keywords'
         :'Seed "'+(quote.request.keywords[0]??'')+'"'} · {market?market.locationName+' / '+market.languageName:'location '+quote.request.locationCode+', language '+quote.request.languageCode} · connection {quote.connectionName} · up to {quote.upperItems} billed items</p>
-      <details><summary>Exact quoted keywords</summary><ol>{quote.request.keywords.map(keyword=><li key={keyword} style={{overflowWrap:'anywhere'}}>{keyword}</li>)}</ol></details><div className="metric-grid">
-        <div><div className="metric-value">${quote.estimateUsd}</div><div className="metric-label">Reserved upper estimate</div></div>
-        <div><div className="metric-value">${quote.perTaskUsd}</div><div className="metric-label">Per task</div></div>
-        <div><div className="metric-value">${quote.perItemUsd}</div><div className="metric-label">Per item</div></div>
-      </div>
-      <p className="hint">Quote expires {dt(quote.expiresAt)}. Prices observed {dt(quote.priceAsOf)}; a 5-minute quote is not a provider price guarantee. This covers spending requested by this app, not all usage on the provider account. The quote itself charges nothing — only the button below authorizes paid research.</p>
+      <details><summary>Exact quoted keywords</summary><ol>{quote.request.keywords.map(keyword=><li key={keyword} style={{overflowWrap:'anywhere'}}>{keyword}</li>)}</ol></details>
+      <RunCostSummary title="Quote cost" state={lostStart?'uncertain':quoteExpired?'expired':st.spendingPaused||!st.vaultConfigured?'blocked':'quoted'}
+        scope={<span>{quote.request.mode} · {quote.request.keywords.join(', ')} · {market?market.locationName+' / '+market.languageName:'location '+quote.request.locationCode+', language '+quote.request.languageCode} · connection {quote.connectionName}</span>}
+        units={<span>Up to {quote.upperItems} billed items · per task ${quote.perTaskUsd} · per item ${quote.perItemUsd}</span>}
+        estimatedPrice={'$'+quote.estimateUsd}
+        settledPrice={lostStart?undefined:'No settled charge reported'}
+        quoteExpiryLabel={dt(quote.expiresAt)}
+        receipt={<span>Quote {quote.id} · prices observed {dt(quote.priceAsOf)}</span>}
+        reason={lostStart?'The start response was lost; this run may already exist and its charge is unknown.':quoteExpired?'The quote expired; prepare a new quote before starting.':startBlockers.length?'Start unavailable: '+startBlockers.join('; ')+'.':'Review the exact inputs and estimate before authorizing paid research.'}
+        warnings="A 5-minute quote is not a provider price guarantee. This covers spending requested by this app, not all usage on the provider account. The quote itself charges nothing — only the button below authorizes paid research."/>
       {lostStart?
         <div className="alert" role="alert">
           <p>The start request was sent but the response was lost, so this run may already exist. Retrying sends the exact same request (same quote ID and request key); no new charge key is created and paid work is never silently retried.</p>
@@ -421,7 +426,14 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     {selected&&<div className="card stack" aria-label="Selected run">
       <h3 ref={resultHeading} tabIndex={-1}>{selected.mode==='overview'?'Keyword overview':'Keyword ideas'} results</h3>
       <p>{statusLabel(selected)} · created {dt(selected.createdAt)}{selected.completedAt?' · finished '+dt(selected.completedAt):''} · {selected.mode} · {selected.keywords.length} {selected.mode==='overview'?'keywords':'seed'} · {selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.locationCode+', language '+selected.languageCode}</p>
-      <p className="hint">{chargeNote(selected)}</p>
+      <RunCostSummary title="Run cost" state={selected.chargeStatus==='uncertain'||selected.status==='uncertain'?'uncertain':selected.actualUsd!=null?'settled':selected.chargeStatus==='reserved'||selected.chargeStatus==='dispatched'?'pending':selected.chargeStatus==='cancelled'?'blocked':'uncertain'}
+        scope={<span>{selected.mode} · {selected.keywords.join(', ')} · {selMarket?selMarket.locationName+' / '+selMarket.languageName:'location '+selected.locationCode+', language '+selected.languageCode}</span>}
+        units={<span>{selected.keywords.length} {selected.mode==='overview'?'keywords':'seed'} · requested limit {selected.request.limit}</span>}
+        estimatedPrice={'$'+selected.estimateUsd}
+        settledPrice={selected.chargeStatus==='uncertain'||selected.status==='uncertain'?undefined:selected.actualUsd!=null?'$'+selected.actualUsd:selected.chargeStatus==='cancelled'?'Charge cancelled; no settled charge reported.':undefined}
+        receipt={'Run '+selected.id}
+        reason={chargeNote(selected)}/>
+
       {selected.diagnostic&&<p className="hint">Diagnostic: {selected.diagnostic}</p>}
       {(selected.status==='queued'||selected.status==='running')&&<p role="status" className="dim">{pollDead?'Automatic status checks stopped.':selected.status==='queued'?'Waiting in queue; checking status every 2 seconds.':'Running; checking status every 2 seconds.'}</p>}
       <div className="row"><button type="button" className="btn" onClick={()=>void selectRun(selected.id)} disabled={writing}>Check status</button></div>

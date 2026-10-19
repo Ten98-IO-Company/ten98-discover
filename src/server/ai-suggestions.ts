@@ -13,7 +13,7 @@ import {keyFingerprint,executionActor,executionRequestBody,readSuggestionRoute} 
 import {openRouterTextProfile} from '../lib/openrouter-models.ts';
 import {insertPromptInTransaction} from './prompts.ts';
 import {suggestionQuoteInput,suggestionStartInput,suggestionActionInput,suggestionAcceptInput,suggestionProfiles,suggestionMessages,
- suggestionBodyHash,suggestionTextKey,suggestionModel,type SuggestionInput,type SuggestionSnapshot,type SuggestionProposal} from './ai-suggestion-input.ts';
+ suggestionTextKey,suggestionModel,type SuggestionInput,type SuggestionSnapshot,type SuggestionProposal} from './ai-suggestion-input.ts';
 
 export const suggestionQueue='ai-suggestion';
 export const suggestionSelect=`SELECT r.*,q.connection_id,q.connection_revision,q.key_fingerprint,q.request_actor,q.input,q.snapshot,q.messages,q.route,q.input_hash,q.snapshot_hash,q.input_purged_at,

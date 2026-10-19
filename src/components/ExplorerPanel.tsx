@@ -1,3 +1,4 @@
+import {AppliedFilters,EvidenceSummary} from '@ten98/ui';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {analyticsFieldLimit,analyticsSelectionFields} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
@@ -698,6 +699,20 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
       {(phase==='error'||phase==='unavailable')&&(accessDenied.current&&pending?<button className="btn" type="button" disabled={savedBusy} onClick={()=>void readSaved(undefined,false,undefined,true)}>Reload saved-filter access</button>:<button className="btn" type="button" onClick={refresh}>Retry</button>)}
 
       {phase==='ok'&&result&&t&&(<>
+        <AppliedFilters label="Applied Explorer scope" filters={[
+          {id:'range',label:'Dates',value:`${result.range.from} to ${result.range.to}`},
+          {id:'zone',label:'Time zone',value:result.range.timeZone},
+          {id:'kind',label:'Event kind',value:labelOf(KINDS,result.query.kind)},
+          {id:'group',label:'Group by',value:result.query.fields?result.query.fields.map(field=>labelOf(GROUPS,field)).join(' + '):`${labelOf(GROUPS,result.query.groupBy??'event')}${result.query.groupProperty?`: ${JSON.stringify(result.query.groupProperty)}`:''}`},
+          ...Object.entries(result.query.filters).map(([id,value])=>({id,label:labelOf(FILTERS,id),value:fieldValueLabel(id,value)})),
+          ...(result.query.property?[{id:'property',label:`Property ${JSON.stringify(result.query.property.key)} (${result.query.property.type})`,value:result.query.property.type==='missing'?'Missing / uncollected':JSON.stringify(result.query.property.value)}]:[]),
+          ...(result.cohort?[{id:'cohort',label:'Cohort',value:`${result.cohort.item.definition.name} · Revision ${result.cohort.item.revision}`}]:[]),
+        ]}/>
+        <EvidenceSummary variant="compact" title="Native Explorer evidence" source="Native Explorer retained observations"
+          availability={t.events===null?'unavailable':t.events===0?'empty':'ready'}
+          reason={`Retention coverage: ${result.coverage.status}. Capture coverage is unknown.${t.events===0?' No matching retained events.':''}`}
+          coverage={{status:result.coverage.status,reason:result.coverage.retainedFrom?`Retained from ${result.coverage.retainedFrom}.`:'No retention boundary.'}}
+          basis={`${result.range.from} to ${result.range.to} (${result.range.timeZone}); selected local dates within ${result.range.start} inclusive to ${result.range.end} exclusive.`}/>
         {result.cohort&&(cohortMembershipUnavailable||result.cohort.membership.countsAreLowerBounds||cohortDeleted.current.has(result.cohort.item.id))&&<p className={cohortMembershipUnavailable?'alert':'banner'} role="status">{cohortDeleted.current.has(result.cohort.item.id)?'The applied cohort was deleted. Review its details before applying again.':cohortMembershipUnavailable?'Membership evidence is unavailable. Report counts below are unavailable.':'Some membership evidence is missing. Report counts below are observed lower bounds.'}</p>}
         {result.sessionProperties&&<SessionStatus scope={result.sessionProperties} label="Report session properties"/>}
         {result.cohort?.sessionProperties&&<SessionStatus scope={result.cohort.sessionProperties} label="Qualification session properties"/>}

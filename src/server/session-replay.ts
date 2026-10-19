@@ -8,7 +8,7 @@ import {analyticsPathExcluded,nativeCollectionPolicy,publicAnalyticsSettings,tra
 import {contentCursor,readContentCursor} from './project-context.ts';
 import {eventPath} from './validation.ts';
 import type {ReplayEventLocator} from '../lib/replay-heatmaps.ts';
-import {replayBegin,replayUpload,replaySettings,defaultReplaySettings,replayLimits,replaySummary,replayChunkDto,readReplayChunk,reassembleReplay,type ReplayBegin,type ReplayPart,type ReplaySettings} from '../lib/session-replay.ts';
+import {replayBegin,replayUpload,defaultReplaySettings,replayLimits,replaySummary,replayChunkDto,readReplayChunk,reassembleReplay,type ReplayBegin,type ReplayPart,type ReplaySettings} from '../lib/session-replay.ts';
 
 const invalid=()=>new FoundationError(400,'Check the replay request and bounded chunk bytes.');
 const absent=()=>new FoundationError(404,'Recording not found or unavailable.');

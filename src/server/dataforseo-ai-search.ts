@@ -50,7 +50,7 @@ export function parseAiSearchAccount(response:DataforseoResponse,binding:{key:st
 function matchesPayload(value:unknown,request:AiSearchRequest,id:string){
  if(!object(value))return false;const expected=aiSearchPayload(request,id);
  // Do not bind another task with added model/paid options to this fixed quote.
- const defaults:Record<string,string>={api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',device:'desktop',os:'windows'};
+ const defaults:Record<string,string>={api:'ai_optimization',function:'llm_scraper',se:'chat_gpt',postback_data:'advanced',device:'desktop',os:'windows'};
  return Object.entries(expected).every(([key,v])=>own(value,key)&&value[key]===v)
   &&Object.keys(value).every(key=>Object.hasOwn(expected,key)||Object.hasOwn(defaults,key)&&value[key]===defaults[key]);
 }

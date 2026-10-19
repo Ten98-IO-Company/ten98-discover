@@ -195,7 +195,7 @@ try{
  await page.getByLabel('Select literal C++ %20',{exact:true}).check();
  await check('native settings retain keyword selection',async()=>{const count=calls.length;await openSettings();await settings().click();assert.equal(await page.getByLabel('Select literal C++ %20',{exact:true}).isChecked(),true);assert.equal(await page.getByText('1 selected',{exact:true}).isVisible(),true);assert.equal(calls.length,count);await before(page.getByRole('button',{name:'Pin selected',exact:true}),page.getByRole('region',{name:'Keywords',exact:true}));});
  await page.getByRole('button',{name:'Pin selected',exact:true}).click();
- await page.getByText('Pinned',{exact:true}).waitFor();
+ await page.getByRole('cell',{name:'Pinned',exact:true}).waitFor();
  await openSettings();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Archive tracker',exact:true}).click();
  await page.getByRole('button',{name:'Reactivate tracker',exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Add keywords',exact:true}).count(),0);

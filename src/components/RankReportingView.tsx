@@ -90,7 +90,7 @@ export function RankReportingView(p:RankReportingViewProps):React.JSX.Element{
       <p className="dim">Population: {g.denominator}</p>
       <p className="dim">{g.observedCoverage}</p>
       <p className="dim">{g.top100Comparable}</p>
-      <table><tbody>{g.counts.map(c=><tr key={c.id}><th scope="row" style={{minWidth:140,overflowWrap:'normal'}}>{c.label}</th><td style={{minWidth:64,whiteSpace:'nowrap',textAlign:'end'}}>{c.value}</td></tr>)}</tbody></table>
+      <table style={{tableLayout:'fixed'}}><tbody>{g.counts.map(c=><tr key={c.id}><th scope="row" style={{minWidth:140,whiteSpace:'normal',overflowWrap:'anywhere'}}>{c.label}</th><td style={{width:64,minWidth:64,whiteSpace:'nowrap',textAlign:'end'}}>{c.value}</td></tr>)}</tbody></table>
      </section>)}
     </div>
    </>:<>

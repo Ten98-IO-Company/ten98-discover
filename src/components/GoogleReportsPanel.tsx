@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AppliedFilters, EvidenceSummary } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
@@ -184,11 +185,11 @@ export interface GoogleReportOps {
   refresh(serial: number, c: AbortController): Promise<void>;
 }
 
-export function GoogleReportsPanel({ projectId, userId, onUnauthorized }: { projectId: string; userId: string; onUnauthorized: () => void }) {
-  return <ReportsInner key={`${projectId}:${userId}`} projectId={projectId} onUnauthorized={onUnauthorized} />;
+export function GoogleReportsPanel({ projectId, userId, onUnauthorized, onOpenSetup }: { projectId: string; userId: string; onUnauthorized: () => void; onOpenSetup?: () => void }) {
+  return <ReportsInner key={`${projectId}:${userId}`} projectId={projectId} onUnauthorized={onUnauthorized} onOpenSetup={onOpenSetup} />;
 }
 
-function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnauthorized: () => void }) {
+function ReportsInner({ projectId, onUnauthorized, onOpenSetup }: { projectId: string; onUnauthorized: () => void; onOpenSetup?: () => void }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
@@ -307,8 +308,9 @@ function ReportsInner({ projectId, onUnauthorized }: { projectId: string; onUnau
 
   return (
     <div className="google-reports stack">
-      {!overview.app.configured && <p className="hint">The instance operator has not configured the Google OAuth app yet.</p>}
-      {overview.app.configured && !overview.app.enabled && <p className="hint">Google connections are disabled by the instance operator.</p>}
+      {!overview.app.configured && <p className="hint">Google connections have not been set up yet.{!onOpenSetup && ' Contact your instance operator to set them up.'}</p>}
+      {overview.app.configured && !overview.app.enabled && <p className="hint">Google connections are disabled.{!onOpenSetup && ' Contact your instance operator to review the setup.'}</p>}
+      {!appOn && onOpenSetup && <button type="button" className="btn primary" style={BTN} disabled={pending} onClick={onOpenSetup}>{overview.app.configured ? 'Review Google setup' : 'Set up Google'}</button>}
       {overview.app.configured && overview.app.testing && <p className="hint">The Google consent app is in testing mode; refresh tokens may expire after seven days.</p>}
       {!owner && <p className="hint">Only workspace owners can connect Google sources, choose properties, inspect indexed URLs, or queue imports. You can view existing connections and reports.</p>}
 
@@ -612,13 +614,30 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
       {snap && (
         <div className="stack google-snapshot" role="region" aria-labelledby={'snapshot-heading-' + conn.id}>
           <h3 id={'snapshot-heading-' + conn.id} ref={resultHeading} tabIndex={-1}>Snapshot: {reportLabel(snap.imp.report)} · {snap.imp.from} to {snap.imp.to}</h3>
-          <p className="hint">Showing snapshot requested {new Date(snap.imp.createdAt).toLocaleString()}{snapshotChoice !== snap.id ? ' · The selection above has changed. Choose View snapshot to replace these results.' : ''}</p>
+          {snap.source.provider === 'gsc' ? <>
+            <AppliedFilters label="Applied Search Console snapshot" filters={[
+              { id: 'snapshot', label: 'Snapshot', value: snap.id },
+              { id: 'provider', label: 'Source', value: PROVIDER_LABEL[snap.source.provider] },
+              { id: 'property', label: 'Property', value: `${snap.source.propertyName ?? 'Unavailable'}${snap.source.propertyId ? ` (${snap.source.propertyId})` : ''}` },
+              { id: 'report', label: 'Report', value: reportLabel(snap.imp.report) },
+              { id: 'range', label: 'Range', value: `${snap.imp.from} to ${snap.imp.to}` },
+              { id: 'timezone', label: 'Time zone', value: snap.source.timeZone ?? 'Unavailable' },
+            ]} pendingDraft={snapshotChoice !== snap.id ? 'The selected snapshot has changed. Choose View snapshot to replace these results.' : undefined} />
+            <EvidenceSummary variant="compact" title="Search Console snapshot evidence"
+              source={PROVIDER_LABEL[snap.source.provider]}
+              observedAt={{ label: `Import requested ${new Date(snap.imp.createdAt).toLocaleString()}`, dateTime: snap.imp.createdAt }}
+              freshness={{ status: 'unknown', reason: 'The import request time does not establish when Google last updated these measurements.' }}
+              coverage={snap.imp.status === 'partial' ? { status: 'partial', reason: 'The page limit was reached; this saved snapshot is incomplete.' } : undefined}
+              availability={snap.imp.dataStatus === 'expired' || !['completed', 'partial'].includes(snap.imp.status) ? 'unavailable' : snap.rows.length === 0 ? 'empty' : 'ready'}
+              basis={<>Snapshot status: {impStatus(snap.imp.status)}. A completed import does not establish complete Search Console measurement. Currency: {snap.source.currencyCode ?? 'Unavailable'}.</>}
+            />
+          </> : <p className="hint">Showing snapshot requested {new Date(snap.imp.createdAt).toLocaleString()}{snapshotChoice !== snap.id ? ' · The selection above has changed. Choose View snapshot to replace these results.' : ''}</p>}
           {snap.source.provider === 'ga4' && <p className="hint">{isGa4CommerceReport(snap.imp.report) ? ga4CommerceReports[snap.imp.report].description : organicReport(snap.imp.report) ? 'Organic Search session-channel measurements. Landing-page users and trend users are non-additive; only the separate dimensionless overview reports establish whole-range aggregates.' : 'Daily Google Analytics property measurements. User counts are non-additive; no whole-range user total is calculated from these rows. Engagement time is total seconds, not an average.'} Key events remain separate from advertising conversions and native analytics.</p>}
           <p>Snapshot status: {impStatus(snap.imp.status)}</p>
           {snap.imp.diagnostic && <p role="status" className="hint">{snap.imp.diagnostic}</p>}
-          <p className="dim">
+          {snap.source.provider !== 'gsc' && <p className="dim">
             Source: {PROVIDER_LABEL[snap.source.provider]} · Property: {snap.source.propertyName ?? 'Unavailable'}{snap.source.propertyId ? ` (${snap.source.propertyId})` : ''} · Range: {snap.imp.from} to {snap.imp.to} · Time zone: {snap.source.timeZone ?? 'Unavailable'} · Currency: {snap.source.currencyCode ?? 'Unavailable'}
-          </p>
+          </p>}
           {snap.imp.status === 'partial' && <p role="status" className="alert">Partial import: the page limit was reached, so this snapshot is incomplete.</p>}
           {snap.warnings.length > 0 && (
             <ul className="hint">{snap.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>

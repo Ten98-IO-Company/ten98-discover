@@ -3,15 +3,16 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
-import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {readCssSource} from './css-source.mjs';
 assert.equal(process.env.TEN98_DESIGN_TOKENS_BROWSER,'1','Explicit token-probe opt-in required');
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Supply an installed Playwright entry point');
 const evidence=resolve('private/design-token-evidence');
-const css=await readFile(resolve('src/design-tokens.css'),'utf8');
+const css=await readCssSource('src/design-tokens.css');
 const colors={
- canvas:['#F8F9FC','#10161F'],surface:['#FFFFFF','#17202C'],'surface-subtle':['#F5F4FA','#1D2938'],'surface-raised':['#FFFFFF','#223044'],text:['#252435','#EAF0F8'],'text-muted':['#696374','#ADB9CA'],'text-placeholder':['#68758A','#A0ADBF'],border:['#EAEAF1','#344258'],'border-control':['#8793A5','#788BA6'],accent:['#5943CE','#C2B6FF'],'accent-hover':['#4731B6','#D3CAFF'],'accent-active':['#3D2B9C','#E3DDFF'],'on-accent':['#FFFFFF','#2C2056'],'accent-subtle':['#EFECFC','#352A54'],success:['#176B49','#80D8AE'],'success-subtle':['#EAF5EF','#173C2D'],warning:['#825208','#F3CC78'],'warning-subtle':['#FFF5DC','#3E321B'],danger:['#B42318','#FFA399'],'danger-subtle':['#FEEDEB','#492A2A'],info:['#245AA8','#99C2FF'],'info-subtle':['#EDF4FF','#223751'],'disabled-text':['#68758A','#A0ADBF'],'disabled-surface':['#F5F4FA','#1D2938'],focus:['#5943CE','#C2B6FF'],'chart-1':['#5943CE','#C2B6FF'],'chart-2':['#14796F','#71CFC3'],'chart-3':['#926008','#E5BE73'],'chart-4':['#9A417F','#E7A0CC'],'chart-5':['#59687C','#B0BDD1'],overlay:['rgb(16 22 31 / 40%)','rgb(0 0 0 / 60%)'],
+ canvas:['#F8F9FC','#10161F'],surface:['#FFFFFF','#17202C'],'surface-subtle':['#F5F4FA','#1D2938'],'surface-raised':['#FFFFFF','#223044'],text:['#252435','#EAF0F8'],'text-muted':['#696374','#ADB9CA'],'text-placeholder':['#68758A','#A0ADBF'],border:['#EAEAF1','#344258'],'border-control':['#8793A5','#788BA6'],accent:['#5943CE','#C2B6FF'],'accent-hover':['#4731B6','#D3CAFF'],'accent-active':['#3D2B9C','#E3DDFF'],'on-accent':['#FFFFFF','#2C2056'],'accent-subtle':['#EFECFC','#352A54'],success:['#176B49','#80D8AE'],'success-subtle':['#EAF5EF','#173C2D'],warning:['#825208','#F3CC78'],'warning-subtle':['#FFF5DC','#3E321B'],danger:['#B42318','#FFA399'],'danger-subtle':['#FEEDEB','#492A2A'],info:['#245AA8','#99C2FF'],'info-subtle':['#EDF4FF','#223751'],'disabled-text':['#696374','#A0ADBF'],'disabled-surface':['#F5F4FA','#1D2938'],focus:['#5943CE','#C2B6FF'],'chart-1':['#5943CE','#C2B6FF'],'chart-2':['#14796F','#71CFC3'],'chart-3':['#926008','#E5BE73'],'chart-4':['#9A417F','#E7A0CC'],'chart-5':['#59687C','#B0BDD1'],overlay:['rgb(16 22 31 / 40%)','rgb(0 0 0 / 60%)'],
 };
 const fixed={
  'font-sans':'"Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif','font-heading':'"Aptos Display", "Segoe UI", sans-serif','font-mono':'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -47,7 +48,20 @@ try{
  const values=selector=>page.evaluate(({selector,colors,fixed})=>{const element=document.querySelector(selector),computed=getComputedStyle(element),probe=document.createElement('span');element.append(probe);const normalized={};for(const[name,pair]of Object.entries(colors)){probe.style.color='var(--color-'+name+')';const actual=getComputedStyle(probe).color;normalized[name]={actual,expected:pair.map(color=>{probe.style.color=color;return getComputedStyle(probe).color;})};}probe.remove();return{colors:normalized,fixed:Object.fromEntries(Object.keys(fixed).map(name=>[name,computed.getPropertyValue('--'+name).trim().replace(/[\s"']/g,'')])),scheme:computed.colorScheme};},{selector,colors,fixed});
  const compare=(result,dark,label)=>{for(const[name,value]of Object.entries(result.colors))assert.equal(value.actual,value.expected[dark?1:0],label+' '+name);for(const[name,value]of Object.entries(fixed))assert.equal(result.fixed[name],value.replace(/[\s"']/g,''),label+' '+name);assert.equal(result.scheme,dark?'dark':'light',label+' color-scheme');};
  await group('exact variables and all root/nested theme contexts',async()=>{
-  const declarations=await page.evaluate(()=>{const sheet=[...document.styleSheets].find(s=>s.href?.endsWith('/tokens.css')),properties=new Set(),bad=[];function inspect(rules){for(const rule of rules){if(rule instanceof CSSMediaRule){inspect(rule.cssRules);}else if(rule instanceof CSSStyleRule){for(const selector of rule.selectorText.split(',').map(s=>s.trim()))if(!/^:root$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/.test(selector))bad.push(selector);for(const property of rule.style){properties.add(property);if(!property.startsWith('--')&&property!=='color-scheme')bad.push(property);}}else bad.push(rule.cssText.slice(0,100));}}inspect(sheet.cssRules);return{properties:[...properties].sort(),bad};});
+  const declarations=await page.evaluate(()=>{
+   const sheet=[...document.styleSheets].find(s=>s.href?.endsWith('/tokens.css')),properties=new Set(),canonical=new Set(),bad=[];
+   function inspect(rules){for(const rule of rules){
+    if(rule instanceof CSSMediaRule){inspect(rule.cssRules);}
+    else if(rule instanceof CSSStyleRule){
+     const legacy=[...rule.style].some(property=>!property.startsWith('--t98-')&&property!=='color-scheme');
+     const scope=legacy?/^:root$|^\.t98-theme$|^\[data-theme\]$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/:/^:root$|^\.t98-theme$|^\[data-density=["']?(comfortable|compact)["']?\]$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/;
+     for(const selector of rule.selectorText.split(',').map(s=>s.trim()))if(!scope.test(selector))bad.push(selector);
+     for(const property of rule.style){(property.startsWith('--t98-')?canonical:properties).add(property);if(!property.startsWith('--')&&property!=='color-scheme')bad.push(property);}
+    }else bad.push(rule.cssText.slice(0,100));
+   }}
+   inspect(sheet.cssRules);return{properties:[...properties].sort(),canonical:[...canonical].sort(),bad};
+  });
+  assert.ok(declarations.canonical.includes('--t98-accent'),'The package canonical tokens are loaded');
   assert.deepEqual(declarations.bad,[],'Token file declares only variables/theme scopes');assert.deepEqual(declarations.properties,[...Object.keys(colors).map(k=>'--color-'+k),...Object.keys(fixed).map(k=>'--'+k),'color-scheme'].sort());
   for(const os of ['light','dark']){await page.emulateMedia({colorScheme:os});for(const mode of ['absent','light','dark','system']){await theme(mode);compare(await values('html'),mode==='dark'||mode==='system'&&os==='dark',os+'/'+mode);}
    await theme(os==='dark'?'light':'dark');for(const mode of ['light','dark','system']){await page.evaluate(mode=>{document.getElementById('nested')?.remove();const nested=document.createElement('section');nested.id='nested';nested.dataset.theme=mode;document.body.append(nested);},mode);compare(await values('#nested'),mode==='dark'||mode==='system'&&os==='dark',os+'/nested/'+mode);}}
