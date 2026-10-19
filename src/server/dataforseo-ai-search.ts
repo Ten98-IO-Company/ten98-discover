@@ -34,7 +34,7 @@ export function parseAiSearchCountries(response:DataforseoResponse):AiSearchCoun
 }
 export function parseAiSearchLanguages(response:DataforseoResponse):AiSearchLanguage[]{
  const rows=resultRows(response,aiSearchEndpoints.languages,1000),seen=new Set<string>(),languages:AiSearchLanguage[]=[];
- for(const row of rows){if(!object(row)||!own(row,'language_code')||typeof row.language_code!=='string'||!/^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(row.language_code)||!own(row,'language_name')||!validText(row.language_name,80)||seen.has(row.language_code))invalid();seen.add(row.language_code);languages.push({code:row.language_code,name:row.language_name});}
+ for(const row of rows){if(!object(row)||!own(row,'language_code')||typeof row.language_code!=='string'||!aiSearchRequestSchema.shape.languageCode.safeParse(row.language_code).success||!own(row,'language_name')||!validText(row.language_name,80)||seen.has(row.language_code))invalid();seen.add(row.language_code);languages.push({code:row.language_code,name:row.language_name});}
  if(languages.length===0)invalid();return languages.sort((a,b)=>a.code<b.code?-1:a.code>b.code?1:0);
 }
 export function assertAiSearchMarket(raw:unknown,countries:AiSearchCountry[],languages:AiSearchLanguage[]):AiSearchRequest{
@@ -117,7 +117,7 @@ function receiptPayload(metadata:unknown,id:string){
  if(!matchesPayload(metadata,request,id))invalid();return aiSearchPayload(request,id);
 }
 function chargeRow(row:unknown){
- if(!object(row)||!own(row,'id')||!uuid(row.id)||!own(row,'status')||typeof row.status!=='string'||!/^\d{5}$/.test(row.status)||!finalTaskStatuses.has(Number(row.status))||!own(row,'cost'))invalid();
+ if(!object(row)||!own(row,'id')||!uuid(row.id)||!own(row,'status')||!['string','number'].includes(typeof row.status)||!/^\d{5}$(?![\s\S])/.test(String(row.status))||!finalTaskStatuses.has(Number(row.status))||!own(row,'cost'))invalid();
  return {providerTaskId:row.id,costUsd:microUsd(providerMicros(row.cost)),statusCode:Number(row.status)};
 }
 export function parseAiSearchReconciliation(response:DataforseoResponse,raw:unknown,id?:string){

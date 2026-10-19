@@ -77,6 +77,8 @@ test('wallet refusals with an explicit zero cost settle $0 with the fixed text; 
 test('reconciliation binds exact Backlinks path/profile/page/tag and rejects ambiguous or truncated evidence',()=>{
  const receipt={id:'synthetic-backlink-task',url:'v3/backlinks/backlinks/live',metadata:backlinkPayload(profile,id),status:'20000',cost:0.024036};const free=(rows:unknown[])=>({httpStatus:200,body:{status_code:20000,cost:0,tasks_count:1,tasks:[{status_code:20000,cost:0,result:rows}]}});
  assert.deepEqual(parseBacklinkReconciliation(free([receipt]),profile,id),{reference:receipt.id,cost:'0.024036',statusCode:20000});
+ assert.deepEqual(parseBacklinkReconciliation(free([{...receipt,status:20000}]),profile,id),{reference:receipt.id,cost:'0.024036',statusCode:20000});
+ for(const status of [20000.1,20100,50000,NaN,Infinity,null,true,['20000'],'20000\n',' 20000','2e4'])assert.throws(()=>parseBacklinkReconciliation(free([{...receipt,status}]),profile,id));
  for(const rows of [[],[receipt,receipt],[{...receipt,url:'v3/dataforseo_labs/google/ranked_keywords/live'}],[{...receipt,status:'50000'}],[{...receipt,metadata:{...receipt.metadata,offset:25}}],Array.from({length:1000},()=>({}))])assert.throws(()=>parseBacklinkReconciliation(free(rows),profile,id));
 });
 test('bounded retained CSV preserves target/filter/page/metric meaning, formula safety and null versus zero',()=>{

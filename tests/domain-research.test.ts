@@ -60,6 +60,8 @@ test('reconciliation requires one complete exact tagged final receipt, including
  const receipt={id:'synthetic-task',url:'v3/dataforseo_labs/google/ranked_keywords/live',metadata:domainPayload(request,id),status:'20000',cost:0};
  const free=(items:unknown[])=>({httpStatus:200,body:{status_code:20000,cost:0,tasks_count:1,tasks:[{status_code:20000,cost:0,result:items}]}});
  assert.equal(parseDomainReconciliation(free([receipt]),request,id).cost,'0.000000');
+ assert.deepEqual(parseDomainReconciliation(free([{...receipt,status:20000}]),request,id),{reference:'synthetic-task',cost:'0.000000',statusCode:20000});
+ for(const status of [20000.1,20100,50000,NaN,Infinity,null,true,['20000'],'20000\n',' 20000','2e4'])assert.throws(()=>parseDomainReconciliation(free([{...receipt,status}]),request,id));
  for(const rows of [[],[receipt,receipt],Array.from({length:1000},()=>receipt),[{...receipt,status:'20100'}],[{...receipt,metadata:domainPayload(request,randomUUID())}]])assert.throws(()=>parseDomainReconciliation(free(rows),request,id));
 });
 

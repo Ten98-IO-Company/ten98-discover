@@ -70,6 +70,7 @@ test('recovery requires a unique complete exact task, captured time window and k
   const recoveredFinal=parseRankReconciliation(page([row]),'live',[expected],dispatched,now);
   assert.equal(recoveredFinal.finalMicros,'6000');assert.equal(recoveredFinal.tasks[0].state,'unavailable');
   assert.equal(recoveredFinal.tasks[0].providerTaskId,original.id);assert.equal(recoveredFinal.tasks[0].observation,null);
+  assert.equal(parseRankReconciliation(page([{...row,status:20000}]),'live',[expected],dispatched,now).finalMicros,'6000');
   for(const rows of [[],[row,row],Array(1000).fill(row),[{...row,datetime_posted:'2026-10-13 08:55:00 +00:00'}],[{...row,datetime_posted:'2026-10-13 09:05:00 +00:00'}],[{...row,status:'40403',cost:0}],[{...row,metadata:{...row.metadata,depth:10}}],[{...row,url:'v3/serp/google/organic/task_post'}],[{...row,id:row.id+'\n'}]]){
     assert.equal(parseRankReconciliation(page(rows),'live',[expected],dispatched,now).finalMicros,null);
   }
@@ -125,7 +126,8 @@ test('only explicitly harmless echoed defaults are admitted alongside the exact 
 test('control characters and unsupported status shapes cannot become charge evidence',()=>{
   const row=recoveryRow();
   for(const change of [
-    (r:any)=>r.status='20000\n',(r:any)=>r.status=['20000'],(r:any)=>r.status=20000,
+    (r:any)=>r.status='20000\n',(r:any)=>r.status=['20000'],(r:any)=>r.status=20000.1,
+    (r:any)=>r.status=true,(r:any)=>r.status=null,(r:any)=>r.status=NaN,(r:any)=>r.status=Infinity,(r:any)=>r.status=' 20000',(r:any)=>r.status='2e4',
     (r:any)=>r.datetime_posted+='\n',(r:any)=>r.datetime_posted+='\r',
     (r:any)=>r.id+='\n',(r:any)=>r.metadata.tag+='\0',
   ]){

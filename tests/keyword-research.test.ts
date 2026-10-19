@@ -72,7 +72,9 @@ test('provider response preserves unavailable versus zero and distinguishes char
 test('reconciliation requires one exact request and never treats absent metadata as zero cost',()=>{
  const match={id:'provider-task',url:'v3/dataforseo_labs/google/keyword_overview/live',metadata:keywordPayload(request,id),status:'20000',cost:0.01212};
  assert.equal(parseKeywordReconciliation(free([match]),request,id).cost,'0.012120');
- for(const status of ['20100','40601','40602','50000','50303','59999','20000\n',['20000'],20000,null])assert.throws(()=>parseKeywordReconciliation(free([{...match,status,cost:0}]),request,id));
+ // Authentic Labs ID-list metadata returns numeric 20000 (observed 2026-10-19), despite the documented string sample.
+ assert.deepEqual(parseKeywordReconciliation(free([{...match,status:20000}]),request,id),{reference:'provider-task',cost:'0.012120',statusCode:20000});
+ for(const status of ['20100','40601','40602','50000','50303','59999','20000\n',' 20000','2e4',['20000'],20000.1,20100,50000,NaN,Infinity,true,null])assert.throws(()=>parseKeywordReconciliation(free([{...match,status,cost:0}]),request,id));
  for(const rows of [[],[match,match],[{...match,metadata:{...match.metadata,location_code:2826}}],Array(1000).fill(match),[{...match,cost:null}]])assert.throws(()=>parseKeywordReconciliation(free(rows),request,id));
 });
 test('provider transport has fixed hosts, bounded bodies and one send without automatic paid retries',async()=>{

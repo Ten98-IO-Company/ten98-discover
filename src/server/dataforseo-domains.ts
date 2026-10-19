@@ -75,7 +75,7 @@ export function parseDomainReconciliation(response:{httpStatus:number;body:unkno
  const b=response.body;if(response.httpStatus!==200||!object(b)||b.status_code!==20000||providerMicros(b.cost)!==0n||b.tasks_count!==1||!Array.isArray(b.tasks)||b.tasks.length!==1||!object(b.tasks[0]))invalid();
  const task=b.tasks[0];if(task.status_code!==20000||providerMicros(task.cost)!==0n||!Array.isArray(task.result)||task.result.length>=1000)invalid();
  const matches=task.result.filter(v=>object(v)&&v.url==='v3/dataforseo_labs/google/'+domainEndpointName(request)+'/live'&&matchesDomainPayload(v.metadata,request,id));
- if(matches.length!==1||!object(matches[0])||!validText(matches[0].id,128)||typeof matches[0].status!=='string'||!/^\d{5}$/.test(matches[0].status)||!final.has(Number(matches[0].status)))invalid();
+ if(matches.length!==1||!object(matches[0])||!validText(matches[0].id,128)||!['string','number'].includes(typeof matches[0].status)||!/^\d{5}$(?![\s\S])/.test(String(matches[0].status))||!final.has(Number(matches[0].status)))invalid();
  return {reference:matches[0].id,cost:microUsd(providerMicros(matches[0].cost)),statusCode:Number(matches[0].status)};
 }
 export async function reconcileDomainCharge(credentials:unknown,request:DomainRequest,id:string,dispatchedAt:Date,send:typeof fetch=fetch){

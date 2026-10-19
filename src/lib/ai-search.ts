@@ -13,7 +13,7 @@ export const aiSearchEndpoints={
 const clean=(s:string)=>!/[\uD800-\uDFFF]/u.test(s)&&!/[\u0000-\u001f\u007f-\u009f]/.test(s);
 export const aiSearchRequestSchema=z.object({profileId:z.literal(aiSearchProfileId),
  capturedPrompt:z.string().min(1).max(2000).refine(v=>v.trim().length>0&&clean(v)&&v.replaceAll('%','%25').replaceAll('+','%2B').length<=2000),
- locationCode:z.number().int().min(1).max(2_147_483_647),languageCode:z.string().regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/),
+ locationCode:z.number().int().min(1).max(2_147_483_647),languageCode:z.string().regex(/^[a-z]{2,3}(?:-(?:[A-Z]{2}|[0-9]{3}|[A-Z][a-z]{3}))?$(?![\s\S])/),
 }).strict();
 export type AiSearchRequest=z.infer<typeof aiSearchRequestSchema>;
 export type AiSearchCountry={code:number;name:string;countryCode:string};

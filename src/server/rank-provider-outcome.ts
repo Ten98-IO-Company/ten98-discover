@@ -122,7 +122,7 @@ export function parseRankReconciliation(response:{httpStatus:number;body:unknown
       if(matches.length!==1)invalid();
       const row=matches[0];
       if(!providerId(row.id)||ids.has(row.id.toLowerCase())||(task.providerTaskId!==undefined&&task.providerTaskId!==row.id)||row.url!==new URL(rankSerpEndpoints[method]).pathname.slice(1)||!matchesRankPayload(row.metadata,task,phase)||
-        typeof row.status!=='string'||!/^\d{5}(?![\s\S])/.test(row.status)||typeof row.datetime_posted!=='string'||!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+00:00$/.test(row.datetime_posted))invalid();
+        !['string','number'].includes(typeof row.status)||!/^\d{5}(?![\s\S])/.test(String(row.status))||typeof row.datetime_posted!=='string'||!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+00:00$/.test(row.datetime_posted))invalid();
       const posted=new Date(row.datetime_posted.replace(' ','T').replace(' +00:00','+00:00'));
       if(!Number.isFinite(posted.getTime())||posted.toISOString().slice(0,19)!==row.datetime_posted.slice(0,19).replace(' ','T')||posted.getTime()<dispatchedAt.getTime()-60_000||posted.getTime()>Math.min(now.getTime(),dispatchedAt.getTime()+120_000))invalid();
       ids.add(row.id.toLowerCase());const cost=providerMicros(row.cost),status=Number(row.status),outcome={...unknownTask(task),providerTaskId:row.id,statusCode:status};

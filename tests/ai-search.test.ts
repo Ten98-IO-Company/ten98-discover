@@ -54,6 +54,19 @@ test('product-specific free catalogs are typed, complete before country projecti
  const inherited=free(aiSearchEndpoints.languages,[Object.create({language_code:'en',language_name:'English'})]);assert.throws(()=>parseAiSearchLanguages(inherited));
  const malformed=copy(countries);malformed.body.tasks[0].result_count=1;assert.throws(()=>parseAiSearchCountries(malformed));
 });
+test('authentic AI language region and script codes stay exact across catalog, quote, snapshot and payload',()=>{
+ // Literal public language rows observed 2026-10-19; neither code may poison the complete catalog.
+ const rows=[{language_name:'English',language_code:'en'},{language_name:'Espanol (Latinoamerica)',language_code:'es-419'},{language_name:'Serbian (Latin)',language_code:'sr-Latn'}];
+ const languages=parseAiSearchLanguages(free(aiSearchEndpoints.languages,rows));assert.deepEqual(languages.map(r=>r.code),['en','es-419','sr-Latn']);
+ for(const language of languages){
+  const selected=assertAiSearchMarket({...request,languageCode:language.code},[{code:2840,name:'United States',countryCode:'US'}],languages);
+  assert.equal(aiSearchPayload(selected,id).language_code,language.code);
+  assert.equal(aiSearchQuoteInput.parse({requestId:id,connectionId:id,promptId:id,versionId:id,locationCode:2840,languageCode:language.code,expectedCatalogRevision:'a'.repeat(64),acceptPublishedEstimate:true}).languageCode,language.code);
+  const snapshot=aiSearchSnapshotSchema.parse({version:1,request:selected,promptId:id,versionId:id,country:{code:2840,name:'United States',countryCode:'US'},language,catalogRevision:'a'.repeat(64),countriesHash:'b'.repeat(64),languagesHash:'c'.repeat(64),preparedAt:now.toISOString(),price:aiSearchPriceEvidence()});assert.equal(snapshot.language.code,language.code);
+ }
+ for(const language_code of ['es-419\n','sr-latn','es-41','es-419-extra','en_US','EN',3,null])assert.throws(()=>parseAiSearchLanguages(free(aiSearchEndpoints.languages,[...rows,{language_name:'Invalid',language_code}])));
+ assert.throws(()=>parseAiSearchLanguages(free(aiSearchEndpoints.languages,[...rows,rows[2]])));
+});
 test('reuses project-independent keyed v2 account identity, never interprets a price tree',()=>{
  const account=free('https://api.dataforseo.com/v3/appendix/user_data',[{login:'Test@Example.invalid',price:{unexpected:{value:'untrusted'}}}]);
  const a=parseAiSearchAccount(account,{key:'a'.repeat(32),version:2}),b=parseAiSearchAccount(account,{key:'b'.repeat(32),version:2});
@@ -125,6 +138,8 @@ test('untrusted provider timestamps/models stay unknown, not current defaults or
 test('reconciliation uniquely binds own tag/payload/endpoint and never repairs answer evidence',()=>{
  const row={id:reference,status:'20000',cost:0.004,url:path(aiSearchEndpoints.live).join('/'),metadata:aiSearchPayload(request,id)};
  assert.deepEqual(parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,[row]),request,id),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
+ assert.deepEqual(parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,[{...row,status:20000}]),request,id),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
+ for(const status of [20000.1,20100,50000,NaN,Infinity,null,true,['20000'],'20000\n',' 20000','2e4'])assert.throws(()=>parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,[{...row,status}]),request,id));
  for(const rows of [[],[row,row],[{...row,metadata:{...row.metadata,tag:'foreign'}}],[{...row,status:'20100'}],[{...row,cost:-1}],[{...row,url:'v3/serp/google/organic/live/advanced'}]])assert.throws(()=>parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,rows),request,id));
  assert.throws(()=>parseAiSearchReconciliation(free(aiSearchEndpoints.reconciliation,Array.from({length:1000},(_,i)=>({...row,id:i===0?reference:randomUUID()}))),request,id));
 });
@@ -166,6 +181,7 @@ test('retained receipt proves charge after raw prompt purge only with complete e
  function page(rows:unknown[]=[row]){const raw=free(aiSearchEndpoints.reconciliation,rows) as any;raw.body.tasks[0].data={api:'ai_optimization',function:'id_list',datetime_from:'2026-10-15 08:56:00 +00:00',datetime_to:'2026-10-15 08:59:30 +00:00',limit:1000,offset:0,sort:'asc',include_metadata:true};return raw;}
  const parse=parseAiSearchReconciliation as unknown as (response:unknown,binding:unknown)=>unknown;
  assert.deepEqual(parse(page(),binding),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
+ assert.deepEqual(parse(page([{...row,status:20000}]),binding),{providerTaskId:reference,costUsd:'0.004000',statusCode:20000});
  for(const patch of [{profileId:'other'},{payloadHash:'0'.repeat(64)},{providerTaskId:randomUUID()},{asOf:'2026-10-15T08:59:29.999Z'},{dispatchedAt:'2026-09-01T08:57:00.000Z'},{rawPrompt:request.capturedPrompt}])assert.throws(()=>parse(page(),{...binding,...patch}));
  for(const rows of [[row,row],[{...row,metadata:{...row.metadata,max_output_tokens:100000}}],[row,{...row,metadata:{...row.metadata,keyword:'different'}}],[{...row,datetime_posted:'2026-10-15 08:55:59 +00:00'}],[{...row,datetime_posted:'2026-10-15 08:59:31 +00:00'}],[{...row,datetime_posted:'2026-02-30 08:57:00 +00:00'}]])assert.throws(()=>parse(page(rows),binding));
  for(const patch of [{offset:1000},{limit:1},{include_metadata:false},{datetime_to:'2026-10-15 08:59:00 +00:00'},{priority:2}]){const raw=page();Object.assign(raw.body.tasks[0].data,patch);assert.throws(()=>parse(raw,binding));}
