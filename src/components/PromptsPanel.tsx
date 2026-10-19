@@ -646,7 +646,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
       returnFocus.current = null; requestAnimationFrame(() => document.getElementById('pl-bulk')?.focus());
     }} />;
   if (execution) return <PromptExecutionsPanel key={execution.generation} workspaceId={workspaceId} projectId={projectId} userId={userId}
-    entry={execution.entry} onBack={() => void backToLibrary()} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
+    entry={execution.entry} backLabel="Back to saved prompts" onBack={() => void backToLibrary()} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
   if (suggestions !== null) return <AiSuggestionsPanel key={suggestions} workspaceId={workspaceId} projectId={projectId} userId={userId}
     onBack={saved => void backFromSuggestions(saved)} onUnauthorized={() => { purge(); unauthorizedRef.current(); }} />;
   if (returning) return <section className="card"><p role="status">Checking access to the prompt library…</p></section>;
@@ -655,7 +655,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     <section className="card" aria-label="Prompt library">
       <div className="row between">
         <div>
-          <h2 ref={libraryHeading} tabIndex={-1}>Prompt library</h2>
+          <h2 ref={libraryHeading} tabIndex={-1}>Saved prompts</h2>
           <p className="footnote">Saved prompts stay idle until you start a run. Template discovery is free; model suggestions use provider credits.</p>
         </div>
         <div className="row">
@@ -912,7 +912,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
                         onClick={() => openExecution({kind: 'configure', promptId: p.id, versionId: p.currentVersionId, authoredText: p.text}, `pl-run-${p.id}`)} disabled={busy}>Review a run</button>}
                       <small>Model answers via OpenRouter</small>
                       {onAISearch&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>onAISearch(p.id,null,false)}>View web queries</button>}
-                      {onAISearch&&canEdit&&!p.archivedAt&&<button type="button" className="btn ghost" disabled={busy||!!retryAttempt} onClick={()=>onAISearch(p.id,p.currentVersionId,true)}>Capture AI search</button>}
+                      {onAISearch&&canEdit&&!p.archivedAt&&<button type="button" className="btn ghost" disabled={busy||!!retryAttempt} onClick={()=>onAISearch(p.id,p.currentVersionId,true)}>Capture ChatGPT answer</button>}
                       <button type="button" className="btn ghost" onClick={() => onVersions(p)} disabled={busy}>
                         View versions
                       </button>
@@ -985,7 +985,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
                   {canEdit && !versionsFor.archivedAt && <button id={`pl-version-run-${v.id}`} type="button" className="btn ghost"
                     onClick={() => openExecution({kind: 'configure', promptId: versionsFor.id, versionId: v.id, authoredText: v.text}, `pl-version-run-${v.id}`)} disabled={busy}>Review this version</button>}
                   {onAISearch&&<button type="button" className="btn ghost" disabled={busy} onClick={()=>onAISearch(versionsFor.id,v.id,false)}>View this version’s web queries</button>}
-                  {onAISearch&&canEdit&&!versionsFor.archivedAt&&<button type="button" className="btn ghost" disabled={busy||!!retryAttempt} onClick={()=>onAISearch(versionsFor.id,v.id,true)}>Capture this saved version</button>}
+                  {onAISearch&&canEdit&&!versionsFor.archivedAt&&<button type="button" className="btn ghost" disabled={busy||!!retryAttempt} onClick={()=>onAISearch(versionsFor.id,v.id,true)}>Capture ChatGPT answer</button>}
                 </li>
               ))}
             </ol>

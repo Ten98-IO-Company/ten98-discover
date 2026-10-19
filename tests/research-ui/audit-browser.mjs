@@ -55,7 +55,7 @@ try{
   const pages=p.getByRole('region',{name:'Recorded audit pages',exact:true});await pages.waitFor();
   await pages.getByRole('cell',{name:/^Disallowed by robots\s*Resource:\s*Excluded$/}).waitFor();
   await pages.getByRole('cell',{name:/^HTTP error\s*Resource:\s*Done$/}).waitFor();
-  const row=pages.getByRole('row').filter({has:page.getByRole('cell',{name:group.main.origin+'/',exact:true})});await row.getByRole('button',{name:'View page',exact:true}).click();
+  const row=pages.getByRole('row').filter({has:page.getByRole('button',{name:'View page: '+group.main.origin+'/',exact:true})});await row.getByRole('button',{name:'View page: '+group.main.origin+'/',exact:true}).click();
   await p.getByRole('heading',{name:'Title',exact:true}).waitFor();await p.getByText('Synthetic technical page',{exact:true}).waitFor();
   await page.waitForFunction(el=>document.activeElement===el,await p.getByRole('heading',{name:group.main.origin+'/',exact:true}).elementHandle());
   assert.equal(await p.locator('img,iframe,script').count(),0);await p.getByRole('region',{name:'Recorded page links',exact:true}).waitFor();
@@ -83,9 +83,9 @@ try{
 
   stage='late available page cannot restore expired details';
   await p.getByRole('button',{name:'← Back to results',exact:true}).click();await pages.waitFor();
-  await page.waitForFunction(el=>document.activeElement===el,await row.getByRole('button',{name:'View page',exact:true}).elementHandle());
+  await page.waitForFunction(el=>document.activeElement===el,await row.getByRole('button',{name:'View page: '+group.main.origin+'/',exact:true}).elementHandle());
   const held=await holdNextGet(page,'**'+B+'/'+run.id+'/pages/'+rootPage.id);cleanups.push(held.dispose);
-  await row.getByRole('button',{name:'View page',exact:true}).click();await bounded(held.entered);
+  await row.getByRole('button',{name:'View page: '+group.main.origin+'/',exact:true}).click();await bounded(held.entered);
   await pool.query('UPDATE site_audit_run SET data_expired_at=clock_timestamp() WHERE id=$1',[run.id]);
   await p.getByRole('button',{name:'Refresh status',exact:true}).click();await p.getByText(/Detailed audit results expired/).waitFor();
   held.release();await held.dispose();await page.waitForTimeout(100);

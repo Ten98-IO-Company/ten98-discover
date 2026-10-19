@@ -5,7 +5,7 @@ import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 assert.equal(process.env.TEN98_AI_INSIGHTS_VIEW_BROWSER,'1');
-const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/ai-insights-view-vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
+const server=await createServer({configFile:false,envDir:false,root:process.cwd(),cacheDir:'private/ai-insights-view-vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Retained AI insights display acceptance</title><div id="root"></div><script type="module" src="/tests/ai-insights-view-browser-fixture.tsx"></script></html>');});
 let browser;
 try{
@@ -23,7 +23,7 @@ try{
  // Native disabled controls suppress React events. Invoke the test-only bound
  // handler as well to verify its own capability check, independent of the DOM.
  const disabledNoops=async()=>{await clear();for(const control of await main.locator('button,input,select').all())if(await control.isDisabled())await control.evaluate(el=>{const key=Object.keys(el).find(k=>k.startsWith('__reactProps$'));if(!key)throw Error('React props missing');const props=el[key],changing=el.matches('input,select'),value=el.tagName==='SELECT'?[...el.options].find(o=>o.value!==el.value)?.value??el.value:'synthetic change',target={value};const event={target,currentTarget:target,preventDefault(){},stopPropagation(){}};if(changing)props.onChange?.(event);else props.onClick?.(event);});assert.deepEqual(await calls(),[],'Disabled bound handlers must be no-ops');};
- await page.goto(origin);await page.getByRole('heading',{name:'AI insights',exact:true}).waitFor();assert.equal(await page.locator('#ai-insights-view-heading').getAttribute('tabindex'),'-1');assert.deepEqual(await calls(),[]);
+ await page.goto(origin);await page.getByRole('heading',{name:'Answer analysis',exact:true}).waitFor();assert.equal(await page.locator('#ai-insights-view-heading').getAttribute('tabindex'),'-1');assert.deepEqual(await calls(),[]);
  assert.equal(await disclosure('Report filters').evaluate(el=>el.open),false);assert.equal(await disclosure('Selection details').evaluate(el=>el.open),false);await expand('Report filters');
  for(const label of ['From','To','Timezone','Model','Prompt','Current tag','Matching method','Find prompt'])assert.equal(await page.getByLabel(label,{exact:true}).count(),1,label);
  for(const label of ['From','To'])assert.equal(await page.getByLabel(label,{exact:true}).getAttribute('type'),'date');

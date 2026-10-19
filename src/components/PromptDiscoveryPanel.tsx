@@ -90,7 +90,7 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
   }
 
   return <section className="card stack" aria-label="Prompt discovery">
-    <div className="row between"><div><h2 ref={heading} tabIndex={-1}>Discover prompts</h2></div><button className="btn ghost" style={{minHeight: 44}} type="button" onClick={() => { if (confirmLeave()) { leaving.current = true; onBack(); } }}>Back to library</button></div>
+    <div className="row between"><div><h2 ref={heading} tabIndex={-1}>Discover prompts</h2></div><button className="btn ghost" style={{minHeight: 44}} type="button" onClick={() => { if (confirmLeave()) { leaving.current = true; onBack(); } }}>Back to saved prompts</button></div>
     <p>Create starter questions in English, then review and save them. Free to use; these questions do not represent measured search demand.</p>
     {loading && <p role="status">Loading saved topics and competitors…</p>}
     {readError && <div className="banner"><p role="alert">{readError}</p>{!lost && <button className="btn ghost" type="button" style={{minHeight: 44}} disabled={loading} onClick={() => void loadContext()}>Reload saved topics</button>}</div>}

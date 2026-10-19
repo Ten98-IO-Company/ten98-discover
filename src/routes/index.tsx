@@ -26,7 +26,6 @@ import { DomainsPanel } from '../components/DomainsPanel'
 import { ContextPanel } from '../components/ContextPanel'
 import { PromptsPanel } from '../components/PromptsPanel'
 import { AIInsightsPanel } from '../components/AIInsightsPanel'
-import { PromptExecutionsPanel, type ExecutionEntry } from '../components/PromptExecutionsPanel'
 import ReportsPanel from '../components/ReportsPanel'
 import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
 import { InvitePanel } from '../components/InvitePanel'
@@ -874,9 +873,7 @@ function App() {
 }
 
 function AIInsightsSection(props:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void;onBack:()=>void}) {
-  const [entry,setEntry]=useState<Extract<ExecutionEntry,{kind:'receipt'}>|null>(null)
-  return entry ? <PromptExecutionsPanel {...props} entry={entry} onBack={()=>setEntry(null)} backLabel='Back to AI insights' /> :
-    <AIInsightsPanel {...props} backLabel='Back to prompts' onOpenComparison={(comparisonId,promptId)=>{if(navigationId(comparisonId)&&navigationId(promptId))setEntry({kind:'receipt',comparisonId,promptId})}} />
+  return <AIInsightsPanel {...props} backLabel='Back to saved prompts' />
 }
 
 function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => Promise<void>; onSignInInstead: (email: string) => void }) {

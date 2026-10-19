@@ -86,7 +86,8 @@
 .site-audits .audit-pages-table{ min-inline-size: 1000px; }
 .site-audits .audit-pages-table td:first-child, .site-audits .audit-pages-table td:nth-child(3){ min-inline-size: 160px; max-inline-size: 280px; overflow-wrap: anywhere; }
 .site-audits .audit-pages-table .audit-title-text{ display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; }
-.site-audits .audit-sort{ min-block-size: var(--control-touch); padding: var(--space-2); border: 0; background: transparent; color: inherit; font-weight: inherit; cursor: pointer; text-align: start; }
+.site-audits .audit-sort, .site-audits .audit-page-link{ min-block-size: var(--control-touch); padding: var(--space-2); border: 0; background: transparent; color: inherit; font-weight: inherit; cursor: pointer; text-align: start; }
+.site-audits .audit-page-link{ max-inline-size: 100%; overflow-wrap: anywhere; color: var(--blue); text-decoration: underline; text-underline-offset: .2em; }
 .site-audits th[aria-sort='ascending'] .audit-sort, .site-audits th[aria-sort='descending'] .audit-sort{ color: var(--blue); text-decoration: underline; text-underline-offset: .2em; }
 .site-audits .audit-issue-group{ border-block-start: 1px solid var(--line); padding-block: 8px; }
 .site-audits .audit-issue-group > h3{ margin: 8px 0; }

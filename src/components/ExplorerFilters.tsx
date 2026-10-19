@@ -188,7 +188,7 @@ function readAdvanced(value:unknown):AdvancedDraft|null{
   }
   return 'error'in buildAdvanced(draft)?null:draft;
 }
-function focusAdvanced(id:string,issue?:AdvancedIssue){const root=document.getElementById(id) as HTMLDetailsElement|null;if(!root)return;root.open=true;const input=issue?.row?document.getElementById(`${id}-${issue.row}-${issue.part}`):root.querySelector<HTMLElement>('[data-pattern]');input?.focus();}
+function focusAdvanced(id:string,issue?:AdvancedIssue){const root=document.getElementById(id) as HTMLDetailsElement|null;if(!root)return;for(let parent:HTMLElement|null=root;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')(parent as HTMLDetailsElement).open=true;const input=issue?.row?document.getElementById(`${id}-${issue.row}-${issue.part}`):root.querySelector<HTMLElement>('[data-pattern]');input?.focus();}
 function validAdvancedResult(value:unknown,method:unknown,expected?:AdvancedPredicates){
   if(!expected)return value===undefined&&method===undefined;const draft=readAdvanced(value);if(!draft||!record(method))return false;const parsed=buildAdvanced(draft);
   return 'predicates'in parsed&&JSON.stringify(parsed.predicates)===JSON.stringify(expected)&&method.version==='native-flat-predicates-v1'&&method.requiredFilters==='all'&&method.fieldMatch===expected.match&&method.propertyMatch==='all'&&method.textSearch==='postgresql-lower-literal'&&method.regex==='postgresql-case-insensitive'&&method.dateComparison==='calendar-day-in-scope-timezone'&&(expected.sessionProperties?.length?method.sessionPropertyMatch==='all'&&method.sessionPropertyValues==='current-retained-at-report-snapshot':method.sessionPropertyMatch===undefined&&method.sessionPropertyValues===undefined);

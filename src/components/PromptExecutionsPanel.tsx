@@ -29,7 +29,7 @@ type Metadata={role:Role;models:Model[];catalog:OpenRouterCatalog|null;vaultConf
 type DetailResponse={role:Role;comparison:Comparison};
 type ReconcileResponse=DetailResponse&{reconciliation:{status:'matched'|'inconclusive';message:string}};
 export type ExecutionEntry={kind:'configure';promptId:string;versionId:string;authoredText:string}|{kind:'history'}|{kind:'receipt';comparisonId:string;promptId:string};
-type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void;backLabel?:string;onEvidenceExpired?:(evidence:{comparisonId:string;answerIds:string[];inputIds:string[]})=>void};
+type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEntry;onBack:()=>void;onUnauthorized:()=>void;backLabel?:string;initialExpiredAnswerIds?:string[];initialExpiredInputComparisonIds?:string[];onEvidenceExpired?:(evidence:{comparisonId:string;answerIds:string[];inputIds:string[]})=>void};
 type Screen='setup'|'quote'|'unknown'|'history'|'detail';
 type Attempt=Readonly<{quoteId:string;requestKey:string}>;
 type Operation={generation:number;controller:AbortController;write:boolean};
@@ -99,7 +99,7 @@ export function PromptExecutionsPanel(props:Props){
   const key=props.entry.kind==='configure'?`${props.entry.promptId}:${props.entry.versionId}`:props.entry.kind==='receipt'?`${props.entry.promptId}:${props.entry.comparisonId}`:'history';
   return <Panel key={`${props.userId}:${props.workspaceId}:${props.projectId}:${props.entry.kind}:${key}`} {...props}/>;
 }
-function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired}:Props){
+function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired,initialExpiredAnswerIds=[],initialExpiredInputComparisonIds=[]}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/prompt-executions',uid=useId();
   const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   const [metadata,setMetadata]=useState<Metadata|null>(null),[role,setRole]=useState<Role|null>(null);
@@ -115,7 +115,7 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
   const roleAuthority=useRef<{value:Role|null}>({value:null}),recurringAuthority=roleAuthority.current;
   const selection=useRef<string|null>(null),attemptRef=useRef<Attempt|null>(null),pollingUntil=useRef(0);
   const restoreReceipt=useRef(entry.kind==='receipt');
-  const expiredInputs=useRef(new Set<string>()),expiredResults=useRef(new Set<string>());
+  const expiredInputs=useRef(new Set(initialExpiredInputComparisonIds.filter(uuid))),expiredResults=useRef(new Set(initialExpiredAnswerIds.filter(uuid)));
   const initialized=useRef(false),notified=useRef(false),unauthorizedRef=useRef(onUnauthorized),backRef=useRef(onBack),expiryRef=useRef(onEvidenceExpired);
   unauthorizedRef.current=onUnauthorized;backRef.current=onBack;expiryRef.current=onEvidenceExpired;
   const heading=useRef<HTMLHeadingElement|null>(null),focusNext=useRef(true);

@@ -110,7 +110,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
   return (
     <div className="research-panel stack" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
       <div className="row" style={{ flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-        <h2 id={prefix + 'heading'} tabIndex={-1} style={{ marginRight: 'auto' }}>AI insights</h2>
+        <h2 id={prefix + 'heading'} tabIndex={-1} style={{ marginRight: 'auto' }}>Answer analysis</h2>
         <button type="button" className="btn btn-secondary" style={controlStyle} onClick={onBack}>{backLabel}</button>
         <button type="button" className="btn btn-secondary" style={controlStyle} disabled={busy}
           onClick={() => { if (busy) return; onReload(); }}>Reload insights</button>
@@ -384,6 +384,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                           <td>{ex.matches}</td>
                           <td style={{ minWidth: 150 }}>
                             <button type="button" className="btn btn-secondary" style={{ ...controlStyle, whiteSpace: 'nowrap' }}
+                              id={prefix + 'execution-' + ex.id}
                               aria-label={'Open comparison for execution ' + ex.id}
                               disabled={reportOff}
                               onClick={() => { if (reportOff) return; onOpenExecution(ex.id); }}>Open comparison</button>
