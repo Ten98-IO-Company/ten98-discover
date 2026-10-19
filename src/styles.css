@@ -217,6 +217,9 @@
 .big-num{ margin: 7px 0 2px; font-size: 30px; font-weight: 600; letter-spacing: -1px; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .snippet{ margin: 14px 0; padding: 18px; background: var(--color-surface-subtle); border: 1px solid var(--line); border-radius: 7px; font-family: var(--mono); font-size: var(--text-xs); overflow-x: auto; white-space: pre; }
 .table-wrap{ margin-top: 12px; overflow-x: auto; }
+.provider-connection-actions > .btn{ white-space: nowrap; }
+.provider-connection-diagnostic{ white-space: normal; overflow-wrap: anywhere; }
+.provider-spending-totals .big-num{ overflow-wrap: anywhere; }
 .domains-panel :is(button, input, select, summary){ min-height: var(--control-touch); }
 .domains-panel summary{ padding-block: 10px; cursor: pointer; font-weight: 500; }
 .domains-panel :is(p, bdi, td, dd){ overflow-wrap: anywhere; }

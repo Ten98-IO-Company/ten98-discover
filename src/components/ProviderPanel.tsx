@@ -371,7 +371,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                 <p>Save a connection below. It stays untested until you run a check.</p>
               </div>
             ) : (
-              <div className="table-wrap">
+              <div className="table-wrap" role="region" aria-label="Provider connections" tabIndex={0}>
                 <table style={{ minWidth: '52rem' }}>
                   <thead>
                     <tr>
@@ -385,17 +385,17 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                   <tbody>
                     {data.connections.map(c => (
                       <tr key={c.id}>
-                        <td style={{ minWidth: '10rem', maxWidth: '18rem', overflowWrap: 'anywhere' }}>{c.name}</td>
+                        <td style={{ minWidth: '10rem', maxWidth: '18rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{c.name}</td>
                         <td>{providerLabel(c.provider)}</td>
                         <td style={{ minWidth: '12rem' }}>
                           {c.checkStatus === 'ok' && <span className="pill good">Check passed</span>}
                           {c.checkStatus === 'error' && <span className="pill bad">Check failed</span>}
                           {c.checkStatus === 'untested' && <span className="pill">Saved — untested</span>}
-                          {c.diagnostic !== null && c.diagnostic !== '' && <p className="hint">{c.diagnostic}</p>}
+                          {c.diagnostic !== null && c.diagnostic !== '' && <p className="hint provider-connection-diagnostic">{c.diagnostic}</p>}
                         </td>
                         <td>{c.lastCheckedAt === null ? 'Never' : new Date(c.lastCheckedAt).toLocaleString()}</td>
                         <td>
-                          <div className="row">
+                          <div className="row provider-connection-actions">
                             <button type="button" className="btn ghost" disabled={controlsOff || !data.vaultConfigured} onClick={() => checkConn(c)}>Run check</button>
                             <button type="button" className="btn ghost" disabled={controlsOff || !data.vaultConfigured} onClick={() => openRotate(c)}>Rotate credentials</button>
                             <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => revokeConn(c)}>Disconnect</button>
@@ -490,7 +490,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
             <p className="hint">
               Spent covers this app's settled requests for {data.budget.month} (UTC). Reserved and Uncertain include outstanding requests from all months. There is no app spending limit. Unknown charges block new paid work until an owner reconciles them.
             </p>
-            <div className="row" style={{ gap: 32, alignItems: 'baseline' }}>
+            <div className="row provider-spending-totals" style={{ gap: 32, alignItems: 'baseline' }}>
               <div style={{ minWidth: 0 }}>
                 <span className="dim">Spent</span>
                 <div className="big-num">${data.budget.spentUsd}</div>
@@ -542,8 +542,8 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                     {data.ledger.map(l => (
                       <tr key={l.id}>
                         <td className="dim">{new Date(l.createdAt).toLocaleString()}</td>
-                        <td style={{ minWidth: '10rem', maxWidth: '18rem', overflowWrap: 'anywhere' }}>{connName(l.connectionId)}</td>
-                        <td style={{ minWidth: '10rem', maxWidth: '20rem', overflowWrap: 'anywhere' }}>{l.operation}</td>
+                        <td style={{ minWidth: '10rem', maxWidth: '18rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{connName(l.connectionId)}</td>
+                        <td style={{ minWidth: '10rem', maxWidth: '20rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{l.operation}</td>
                         <td><span className="pill">{l.status}</span></td>
                         <td className="mono">${l.estimateUsd}</td>
                         <td className="mono">{l.actualUsd === null ? 'Pending' : `$${l.actualUsd}`}</td>
