@@ -1,5 +1,6 @@
 import React from 'react';
 import {createRoot} from 'react-dom/client';
+import {createRootRoute,createRoute,createRouter,Outlet,RouterProvider} from '@tanstack/react-router';
 import {ProjectDeletePanel} from '../src/components/ProjectDeletePanel';
 import {AnalyticsSettingsPanel} from '../src/components/AnalyticsSettingsPanel';
 import type {ProjectDeleteInput} from '../src/lib/project-delete';
@@ -12,4 +13,6 @@ function Fixture(){
  const full=new URLSearchParams(location.search).get('parent')==='1',props={workspaceId:wid,projectId:current,userId:account,readOwner:String(entry),readEnabled:lease.current.enabled,isCurrent,onUnauthorized:()=>setDenied(n=>n+1),onDeleted:()=>{setDeleted(n=>n+1);setMounted(false);}};
  return <><nav aria-label="Synthetic identity controls" className="row" style={{flexWrap:'wrap'}}><button className="btn" onClick={()=>{lease.current.entry++;setAccount(value=>value===user?user.replace(/1$/,'2'):user);}}>Change account</button><button className="btn" onClick={()=>{lease.current.entry++;setProject(value=>value===project?project.replace(/1$/,'2'):project);}}>Change project</button><button className="btn" onClick={()=>{lease.current.entry++;render(n=>n+1);}}>Recheck current access</button><button className="btn" onClick={()=>{lease.current.entry++;setWorkspace(value=>value===workspace?workspace.replace(/1$/,'2'):workspace);}}>Change workspace</button></nav><output aria-label="Unauthorized callbacks">{denied}</output><output aria-label="Deleted callbacks">{deleted}</output><main className="card stack" style={{maxWidth:900,margin:'16px auto',minWidth:0}}><h1>Website data</h1><p>Synthetic component fixture. No website or database is connected.</p>{mounted&&(full?<AnalyticsSettingsPanel {...props}/>:<ProjectDeletePanel {...props} authorityOwner={String(entry)} pendingRequest={pending}/>)}</main></>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture/>);
+// WebsiteSharePanel registers a navigation blocker, so the full settings panel needs a router.
+const root=createRootRoute({component:()=><Outlet/>}),index=createRoute({getParentRoute:()=>root,path:'/',component:Fixture});
+createRoot(document.getElementById('root')!).render(<RouterProvider router={createRouter({routeTree:root.addChildren([index])})}/>);
