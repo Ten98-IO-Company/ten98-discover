@@ -69,6 +69,24 @@ try {
   const revoked=await publicPage.reload({waitUntil:'networkidle'});assert.equal(revoked.status(),404);
   await publicPage.getByRole('heading',{name:'Report unavailable'}).waitFor();
   assert.equal(await publicPage.getByRole('heading',{name:'Isolated static report'}).count(),0);
+  const themeBackgrounds:string[]=[];
+  for(const colorScheme of ['light','dark'] as const) {
+    await publicPage.emulateMedia({colorScheme});
+    for(const width of [1440,390]) {
+      await publicPage.setViewportSize({width,height:900});
+      await publicPage.getByRole('heading',{name:'Report unavailable',exact:true}).waitFor({state:'visible'});
+      assert.equal(await publicPage.locator('.t98-auth-layout').count(),1);
+      assert.equal(await publicPage.locator('html').getAttribute('data-theme'),'system');
+      assert.equal(await publicPage.locator('meta[name="viewport"]').getAttribute('content'),'width=device-width, initial-scale=1');
+      const geometry=await publicPage.locator('.t98-auth-layout').evaluate((element:HTMLElement)=>({
+        overflow:document.documentElement.scrollWidth>innerWidth+1,background:getComputedStyle(element).backgroundColor,
+      }));
+      assert.equal(geometry.overflow,false,'The shared public error layout must fit narrow screens.');
+      if(width===1440) themeBackgrounds.push(geometry.background);
+    }
+  }
+  assert.notEqual(themeBackgrounds[0],themeBackgrounds[1],'The script-free public error follows the system theme.');
+  assert.equal(hits,0,'The shared public error must not make outbound resource requests.');
   console.log('PASS Edge: real authenticated preview and public share block scripts, parent/cookie/storage access, navigation and all external resources; static CSS/SVG/data images render; revocation reload is 404');
 } finally {
   await browser?.close();trap.closeAllConnections();await new Promise<void>(resolve=>trap.close(()=>resolve()));await closeDatabase();

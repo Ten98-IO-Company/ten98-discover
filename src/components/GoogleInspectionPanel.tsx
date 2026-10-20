@@ -1,4 +1,5 @@
 import {useId,useState} from 'react';
+import {AppField} from '@ten98/ui/app';
 import {ApiError,errMsg} from '../lib/api';
 import {googleInspectionBatch,googleInspectionInput,type GoogleInspectionBatch} from '../server/google-inspection-input';
 import type {GoogleReportOps} from './GoogleReportsPanel';
@@ -49,8 +50,8 @@ export function GoogleInspectionPanel({projectId,connection,ops}:{projectId:stri
  };
  return <details className="stack" style={{minWidth:0}}><summary style={{minHeight:44,cursor:'pointer'}}>Inspect indexed URLs</summary><div className="stack">
   <p className="hint">Read Google’s indexed version for this saved property. This does not fetch the live page or request indexing. Only workspace owners can make this external request.</p>
-  <div className="field"><label htmlFor={`${uid}-urls`}>URLs — one per line, up to 10</label><textarea id={`${uid}-urls`} dir="ltr" rows={4} maxLength={40970} disabled={ops.busy} value={urls} onChange={e=>setUrls(e.target.value)} /></div>
-  <div className="field"><label htmlFor={`${uid}-language`}>Result language (optional)</label><input id={`${uid}-language`} dir="ltr" maxLength={80} placeholder="en-US" disabled={ops.busy} value={language} onChange={e=>setLanguage(e.target.value)}/><p className="hint">Use a language tag such as ar or en-GB. The default is en-US.</p></div>
+  <AppField label="URLs — one per line, up to 10" multiline id={`${uid}-urls`} dir="ltr" rows={4} maxLength={40970} disabled={ops.busy} value={urls} onChange={e=>setUrls(e.target.value)} />
+  <div><AppField label="Result language (optional)" id={`${uid}-language`} dir="ltr" maxLength={80} placeholder="en-US" disabled={ops.busy} value={language} onChange={e=>setLanguage(e.target.value)} aria-describedby={`${uid}-language-help`}/><p id={`${uid}-language-help`} className="hint">Use a language tag such as ar or en-GB. The default is en-US.</p></div>
   <button type="button" className="btn primary" style={{minHeight:44}} disabled={ops.busy||!urls.trim()} onClick={()=>void submit()}>Inspect URLs</button>
   {ops.busy&&<p role="status">A Google action is in progress…</p>}{error&&<p role="alert" className="alert">{error}</p>}
   {result&&<section aria-label="Last URL inspection" className="stack" style={{overflowWrap:'anywhere'}}>

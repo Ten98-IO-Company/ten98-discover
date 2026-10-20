@@ -1,6 +1,7 @@
 import { Brand, Icon } from '../components/CampaignUI'
 import { Alert, Button, ResourceCard, TrackerStatus, useSidebarNavigation, AccountMenu, SidebarFooter } from '@ten98/ui'
 import { AuthLayout } from '../components/AuthLayout'
+import { AppField } from '@ten98/ui/app'
 import { version as appVersion } from '../../package.json'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
@@ -568,7 +569,7 @@ function App() {
 
   if (phase === 'error') {
     return (
-      <AuthLayout>
+      <AuthLayout title='Unable to load account access'>
         <div className='card auth'>
           <div role='alert' className='alert'>{pageError}</div>
           <button className='btn primary' onClick={() => { setPhase('loading'); void boot() }}>Try again</button>
@@ -900,24 +901,17 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   }
 
   return (
-    <AuthLayout>
+    <AuthLayout title='Create owner account' description='Create the owner account and its default workspace. The setup token comes from your server configuration.'>
       <form className='card auth' onSubmit={(e) => void submit(e)}>
-        <div className='eyebrow'>Your Discover workspace</div><h1>Create owner account</h1>
-        <p className='dim'>Create the owner account and its default workspace. The setup token comes from your server configuration.</p>
-        <div className='field'><label htmlFor='su-token'>Setup token</label>
-          <input id='su-token' type='password' autoComplete='off' required value={token} onChange={(e) => setToken(e.target.value)} /></div>
-        <div className='field'><label htmlFor='su-name'>Your name</label>
-          <input id='su-name' autoComplete='name' required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></div>
-        <div className='field'><label htmlFor='su-email'>Email</label>
-          <input id='su-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-        <div className='field'><label htmlFor='su-pw'>Password</label>
-          <input id='su-pw' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={password} onChange={(e) => setPassword(e.target.value)} />
-          <p className='hint'>At least 12 characters.</p></div>
-        <div className='field'><label htmlFor='su-ws'>Workspace name</label>
-          <input id='su-ws' autoComplete='organization' required maxLength={120} value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} /></div>
+        <AppField label='Setup token' aria-label='Setup token' id='su-token' type='password' autoComplete='off' required value={token} onChange={(e) => setToken(e.target.value)} />
+        <AppField label='Your name' aria-label='Your name' id='su-name' autoComplete='name' required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+        <AppField label='Email' aria-label='Email' id='su-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />
+        <AppField label='Password' aria-label='Password' id='su-pw' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={password} onChange={(e) => setPassword(e.target.value)} aria-describedby='su-pw-help' />
+        <p id='su-pw-help' className='hint field-help'>At least 12 characters.</p>
+        <AppField label='Workspace name' aria-label='Workspace name' id='su-ws' autoComplete='organization' required maxLength={120} value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} />
         {error !== '' && <div role='alert' className='alert'>{error}</div>}
         {ownerExists && <p className='row'><button type='button' className='btn' onClick={() => onSignInInstead(email.trim())}>Sign in instead</button></p>}
-        <button className='btn primary' disabled={busy}>{busy ? 'Creating…' : 'Create owner account'}</button>
+        <button className='btn primary full' disabled={busy}>{busy ? 'Creating…' : 'Create owner account'}</button>
       </form>
     </AuthLayout>
   )
@@ -940,17 +934,13 @@ function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { in
   }
 
   return (
-    <AuthLayout>
+    <AuthLayout title='Sign in' footer={<button type='button' className='btn' disabled={busy} onClick={() => onForgot(email.trim())}>Forgot password?</button>}>
       <form className='card auth' onSubmit={(e) => void submit(e)}>
-        <div className='eyebrow'>Your Discover workspace</div><h1>Sign in</h1>
         {notice && <p className={notice.kind === 'error' ? 'alert' : 'notice'} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.message}</p>}
-        <div className='field'><label htmlFor='si-email'>Email</label>
-          <input id='si-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-        <div className='field'><label htmlFor='si-pw'>Password</label>
-          <input id='si-pw' type='password' autoComplete='current-password' required value={password} onChange={(e) => setPassword(e.target.value)} /></div>
+        <AppField label='Email' aria-label='Email' id='si-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />
+        <AppField label='Password' aria-label='Password' id='si-pw' type='password' autoComplete='current-password' required value={password} onChange={(e) => setPassword(e.target.value)} />
         {error !== '' && <div role='alert' className='alert'>{error}</div>}
-        <button className='btn primary' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}<Icon name='arrow' size={16}/></button>
-        <button type='button' className='btn' disabled={busy} onClick={() => onForgot(email.trim())}>Forgot password?</button>
+        <button className='btn primary full' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}<Icon name='arrow' size={16}/></button>
         {onCancel && <button type='button' className='btn' onClick={onCancel}>Back to invitation</button>}
         <div className='auth-providers'><OidcSignIn /></div>
       </form>
@@ -972,10 +962,8 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
     catch (e) { setError(errMsg(e)) }
     finally { locked.current = false; setBusy(false) }
   }
-  return <AuthLayout><form className='card auth' onSubmit={event => void submit(event)}>
-    <p className='auth-brand'>Your Discover workspace</p><h1>Verify your sign-in</h1><p>{recovery ? 'Enter one unused recovery code. Each code can only be used once.' : 'Enter the six-digit code from your authenticator app.'}</p>
-    <div className='field'><label htmlFor='factor-code'>{recovery ? 'Recovery code' : 'Authenticator code'}</label>
-      <input id='factor-code' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} value={code} onChange={event => setCode(event.target.value)} maxLength={recovery ? 21 : 6} required disabled={busy} /></div>
+  return <AuthLayout title='Verify your sign-in' description={recovery ? 'Enter one unused recovery code. Each code can only be used once.' : 'Enter the six-digit code from your authenticator app.'}><form className='card auth' onSubmit={event => void submit(event)}>
+    <AppField label={recovery ? 'Recovery code' : 'Authenticator code'} aria-label={recovery ? 'Recovery code' : 'Authenticator code'} id='factor-code' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} value={code} onChange={event => setCode(event.target.value)} maxLength={recovery ? 21 : 6} required disabled={busy} />
     {error && <div className='alert' role='alert'>{error}</div>}
     <div className='row'><button className='btn primary' disabled={busy}>{busy ? 'Verifying…' : 'Verify'}</button>
       <button type='button' className='btn' disabled={busy} onClick={() => { setRecovery(!recovery); setCode(''); setError('') }}>{recovery ? 'Use authenticator' : 'Use a recovery code'}</button>

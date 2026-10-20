@@ -2,3 +2,6 @@
 *.png binary
 *.jpg binary
 *.webp binary
+# Preserve the pinned vendor prefixes and exact adapter wrapper bytes.
+public/replay.js -text
+public/performance.js -text

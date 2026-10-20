@@ -1,4 +1,5 @@
 import {Icon} from './CampaignUI';
+import { AppField } from '@ten98/ui/app';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
@@ -156,7 +157,7 @@ function InvitePanelContent(props: InvitePanelProps) {
     <div className="account-access invitation-access">
       <p className="eyebrow">WORKSPACE INVITATION</p>
       <span className="account-access-icon" aria-hidden="true"><Icon name="users" size={20}/></span>
-      <h1>You’re invited to join {info.workspaceName}</h1>
+      <h1 className='t98-auth-title'>You’re invited to join {info.workspaceName}</h1>
       <p className="helper-note">
         This invitation is for <strong>{info.email}</strong> as <strong>{info.role}</strong> and expires on{' '}
         {formatDate(info.expiresAt)}.
@@ -198,34 +199,34 @@ function InvitePanelContent(props: InvitePanelProps) {
               <p>
                 Create an account for <strong>{info.email}</strong> to accept this invitation.
               </p>
-              <div className='field'>
-                <label htmlFor='invite-name'>Your name</label>
-                <input
-                  id='invite-name'
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  autoComplete='name'
-                  maxLength={120}
-                  required
-                  disabled={busy}
-                />
-                <p className='hint field-help'>1–120 characters.</p>
-              </div>
-              <div className='field'>
-                <label htmlFor='invite-password'>Password</label>
-                <input
-                  id='invite-password'
-                  type='password'
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete='new-password'
-                  minLength={12}
-                  maxLength={128}
-                  required
-                  disabled={busy}
-                />
-                <p className='hint field-help'>12–128 characters.</p>
-              </div>
+              <AppField
+                label='Your name'
+                aria-label='Your name'
+                id='invite-name'
+                value={name}
+                onChange={e => setName(e.target.value)}
+                autoComplete='name'
+                maxLength={120}
+                required
+                disabled={busy}
+                aria-describedby='invite-name-help'
+              />
+              <p id='invite-name-help' className='hint field-help'>1–120 characters.</p>
+              <AppField
+                label='Password'
+                aria-label='Password'
+                id='invite-password'
+                type='password'
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete='new-password'
+                minLength={12}
+                maxLength={128}
+                required
+                disabled={busy}
+                aria-describedby='invite-password-help'
+              />
+              <p id='invite-password-help' className='hint field-help'>12–128 characters.</p>
             </>
           )}
           <div className='row button-wrap'>

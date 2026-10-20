@@ -85,21 +85,8 @@ tbody tr:last-child td { border-block-end:0; }
 .empty-icon { display:inline-flex; align-items:center; justify-content:center; inline-size:48px; block-size:48px; border-radius:12px; background:var(--color-accent-subtle); color:var(--color-accent); }
 .empty p { max-inline-size:40ch; }
 .center { display:grid; place-items:center; min-block-size:100dvh; padding:24px; }
-.auth-story .brand { padding:0; }
-.auth-story .eyebrow,.auth-story p:not(.auth-story-title),.auth-story > small,.auth-channels { color:light-dark(#695476,var(--color-text-muted)); }
-.auth-story :is(h1,.auth-story-title) { color:light-dark(#785793,var(--color-text)); }
-.auth-story :is(h1,.auth-story-title) em { color:light-dark(#5943ce,var(--color-accent)); }
-.auth-channels span { display:inline-flex; gap:7px; align-items:center; }
 :is(.auth-form-inner,.t98-auth-fields) > .auth { padding:0; margin:0; border:0; border-radius:0; box-shadow:none; inline-size:100%; }
-.auth-form .auth-brand { color:var(--color-accent); font-size:11px; font-weight:650; letter-spacing:1.5px; text-transform:uppercase; margin-block-end:15px; }
-.auth-form :is(h1,h2) { font-size:27px; letter-spacing:-.8px; line-height:1.3; margin-block-end:12px; }
-.auth-form .auth-description,.auth-form h2+p { color:var(--color-text-muted); font-size:13px; line-height:1.7; margin-block-end:30px; }
-.auth-form .auth .field { margin-block-end:17px; }
-.auth-form :is(input:not([type='checkbox']):not([type='radio']),select,.btn,.button) { min-block-size:43px; }
-.auth-form .auth .primary { inline-size:100%; display:flex; margin-block-start:25px; }
-.auth-form .auth > .btn:not(.primary) { margin-block-start:12px; }
 .auth-provider-list .or-divider { inline-size:100%; }
-.auth-footnote { color:var(--color-text-muted); }
 .auth-provider-list .btn { margin-block-start:0; }
 .or-divider { color:var(--color-text-muted); }
 .connection-callout { display:flex; justify-content:space-between; align-items:center; gap:18px; padding:20px; margin-block-end:22px; background:var(--color-accent-subtle); border:1px solid var(--color-border); border-radius:9px; }
@@ -154,10 +141,6 @@ dialog::backdrop { background:var(--color-overlay); backdrop-filter:blur(3px); }
 .auth-form :is(input:not([type='checkbox']):not([type='radio']),select,.btn,.button) { min-block-size:44px; }
 
 .sr-only { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-
-/* Preserve native Campaign light colors while following the shared dark theme roles. */
-.auth-story .brand { color:light-dark(#252435,var(--color-text)); }
-.auth-story .brand small { color:light-dark(#676373,var(--color-text-muted)); }
 
 input:not([type='checkbox']):not([type='radio']):disabled,select:disabled,textarea:disabled,.btn.primary:disabled,.btn.ghost:disabled,:is(.btn,.button):disabled:hover { color:var(--color-disabled-text); background:var(--color-disabled-surface); border-color:var(--color-border-control); opacity:1; box-shadow:none; }
 

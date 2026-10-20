@@ -1,5 +1,6 @@
 import {Icon} from './CampaignUI'
 import { AuthLayout } from './AuthLayout'
+import { AppField } from '@ten98/ui/app'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, ApiError } from '../lib/api'
 
@@ -46,7 +47,7 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
   }
 
   return <AuthLayout><section className='card auth auth-form-inner account-access password-recovery-access' aria-labelledby='recovery-title'>
-    <p className='eyebrow'>Your Discover workspace</p><span className="account-access-icon" aria-hidden="true"><Icon name="lock" size={20}/></span><h1 id='recovery-title'>{value.kind === 'request' ? 'Reset your password' : 'Choose a new password'}</h1>
+    <p className='eyebrow'>Your Discover workspace</p><span className="account-access-icon" aria-hidden="true"><Icon name="lock" size={20}/></span><h1 id='recovery-title' className='t98-auth-title'>{value.kind === 'request' ? 'Reset your password' : 'Choose a new password'}</h1>
     {value.kind === 'request' && availability === 'loading' && <p role='status'>Checking email recovery…</p>}
     {value.kind === 'request' && availability === 'disabled' && <p role='status'>Email recovery is not configured for this installation. Contact the installation operator, or return to sign-in and use your linked identity provider.</p>}
     {value.kind === 'request' && availability === 'error' && <p role='alert'>Email recovery availability could not be checked. Return to sign-in and try again.</p>}
@@ -54,9 +55,10 @@ export function PasswordRecoveryPanel({ value, initialEmail, onRequest, onSignIn
       {value.kind === 'reset' && <p>The link works once. After a successful reset, existing sessions are signed out. Existing two-factor authentication and recovery codes are unchanged.</p>}
       {value.kind === 'reset' && invalid && !error && <p role='alert'>This reset link is invalid or incomplete. Reopen the original email or request a new link. Reloading this page clears the link from memory.</p>}
       {(value.kind === 'request' && availability === 'enabled' || value.kind === 'reset' && !invalid) && <form className='stack' onSubmit={event => void submit(event)}>
-        {value.kind === 'request' ? <div className='field'><label htmlFor='recovery-email'>Account email</label><input id='recovery-email' type='email' autoComplete='email' required maxLength={254} value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /></div> : <>
-          <div className='field'><label htmlFor='recovery-password'>New password</label><input id='recovery-password' type='password' autoComplete='new-password' required minLength={12} maxLength={128} value={password} disabled={busy} onChange={event => setPassword(event.target.value)} /><p className='hint field-help'>12–128 characters.</p></div>
-          <div className='field'><label htmlFor='recovery-confirm'>Confirm new password</label><input id='recovery-confirm' type='password' autoComplete='new-password' required minLength={12} maxLength={128} value={confirmation} disabled={busy} onChange={event => setConfirmation(event.target.value)} /></div>
+        {value.kind === 'request' ? <AppField label='Account email' aria-label='Account email' id='recovery-email' type='email' autoComplete='email' required maxLength={254} value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /> : <>
+          <AppField label='New password' aria-label='New password' id='recovery-password' type='password' autoComplete='new-password' required minLength={12} maxLength={128} value={password} disabled={busy} onChange={event => setPassword(event.target.value)} aria-describedby='recovery-password-help' />
+          <p id='recovery-password-help' className='hint field-help'>12–128 characters.</p>
+          <AppField label='Confirm new password' aria-label='Confirm new password' id='recovery-confirm' type='password' autoComplete='new-password' required minLength={12} maxLength={128} value={confirmation} disabled={busy} onChange={event => setConfirmation(event.target.value)} aria-describedby='recovery-password-help' />
           <p className='hint field-help'>The reset link is kept only in this open page. If you reload or close it, reopen the email.</p>
         </>}
         <button className='btn button primary full' disabled={busy}>{busy ? value.kind === 'request' ? 'Requesting link…' : 'Changing password…' : value.kind === 'request' ? 'Send reset link' : 'Change password'}</button>

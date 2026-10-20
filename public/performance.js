@@ -9,7 +9,9 @@ var webVitals=function(t){"use strict";let n=-1;const e=()=>n,i=t=>{addEventList
 var h = window.__ten98FoundationHub;
 if (!h) return;
 h.startPerformance = function (callback) {
-  ['onLCP', 'onINP', 'onCLS', 'onFCP', 'onTTFB'].forEach(function (name) { webVitals[name](callback, {reportAllChanges: true}); });
+  /** @type {Ten98Tracker.VitalReporter[]} */
+  var reporters = ['onLCP', 'onINP', 'onCLS', 'onFCP', 'onTTFB'];
+  reporters.forEach(function (name) { webVitals[name](callback, {reportAllChanges: true}); });
 };
 h.startPerformance.protocolVersion = 1;
 })();

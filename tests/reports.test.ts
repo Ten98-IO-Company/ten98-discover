@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {parse, type DefaultTreeAdapterTypes as Html} from 'parse5';
 import {FoundationError} from '../src/server/auth.ts';
-import {reportDocument, sanitizeReportHtml, saveReport,createReportShare} from '../src/server/reports.ts';
+import {reportDocument, sanitizeReportHtml, saveReport,createReportShare,handleReportShare} from '../src/server/reports.ts';
 
 function elements(source:string) {
   const result:Html.Element[]=[], pending:Html.ParentNode[]=[parse(source)];
@@ -74,4 +74,35 @@ test('invalid PostgreSQL text is rejected at input boundaries without echoing na
     await assert.rejects(saveReport(id,id,{name:'Valid',brief:invalid},undefined,true),rejected);
     await assert.rejects(createReportShare(id,id,id,{label:invalid,revision:1,expiresAt:'2030-01-01T00:00:00Z'}),rejected);
   }
+});
+
+test('missing public reports reuse shared presentation without changing their security contract',async()=>{
+  const headers={
+    'cache-control':'no-store, max-age=0','content-type':'text/html; charset=utf-8',
+    'cross-origin-resource-policy':'same-origin',
+    'content-security-policy':"sandbox; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+    'permissions-policy':'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+    'referrer-policy':'no-referrer','x-content-type-options':'nosniff','x-robots-tag':'noindex, nofollow, noarchive',
+  };
+  const missing=await handleReportShare(new Request('https://app.invalid/share/request-private-sentinel?token=private-token'));
+  assert.equal(missing.status,404);
+  assert.deepEqual(Object.fromEntries(missing.headers),headers);
+  const body=await missing.text();
+  assert.match(body,/class="t98-auth-layout auth-shell/);
+  assert.match(body,/class="t98-auth-title">Report unavailable<\/h1>/);
+  assert.match(body,/<html lang="en" data-theme="system">/);
+  assert.match(body,/<meta name="viewport" content="width=device-width, initial-scale=1">/);
+  assert.match(body,/<style>[\s\S]*\.t98-auth-layout/);
+  assert.equal(body.includes('request-private-sentinel'),false);
+  assert.equal(body.includes('private-token'),false);
+  assert.equal(elements(body).some(element=>['script','link','form','iframe'].includes(element.tagName)),false);
+  for(const method of ['HEAD','POST','PATCH']) {
+    const response=await handleReportShare(new Request(method==='HEAD'?'https://app.invalid/share/invalid':`https://app.invalid/share/example-${'a'.repeat(43)}`,{method}));
+    assert.equal(response.status,404);
+    assert.deepEqual(Object.fromEntries(response.headers),headers);
+    assert.equal(await response.text(),method==='HEAD'?'':body);
+  }
+  const authored=reportDocument('<h1>Saved snapshot</h1><script>active()</script>');
+  assert.deepEqual(Object.fromEntries(authored.headers),headers);
+  assert.equal(await authored.text(),'<!DOCTYPE html>\n<html><head></head><body><h1>Saved snapshot</h1></body></html>');
 });
