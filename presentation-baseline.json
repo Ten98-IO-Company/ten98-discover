@@ -1,0 +1,316 @@
+{
+  "src/components/AIComparisonView.tsx": {
+    "element": 165,
+    "styling": 118
+  },
+  "src/components/AIContentCoveragePanel.tsx": {
+    "element": 203,
+    "styling": 35
+  },
+  "src/components/AIContentSupportPanel.tsx": {
+    "element": 173,
+    "styling": 38
+  },
+  "src/components/AIInsightsPanel.tsx": {
+    "element": 5,
+    "styling": 9
+  },
+  "src/components/AIInsightsView.tsx": {
+    "element": 225,
+    "styling": 163
+  },
+  "src/components/AIQueryAnalysisPanel.tsx": {
+    "element": 158,
+    "styling": 35
+  },
+  "src/components/AISearchPanel.tsx": {
+    "stylesheet": 1,
+    "element": 174,
+    "styling": 48
+  },
+  "src/components/AccountPreferencesPanel.tsx": {
+    "element": 67,
+    "styling": 35
+  },
+  "src/components/AccountSecurityPanel.tsx": {
+    "element": 134,
+    "styling": 80
+  },
+  "src/components/AiSuggestionsPanel.tsx": {
+    "element": 186,
+    "styling": 138
+  },
+  "src/components/AnalysisCriteriaFields.tsx": {
+    "element": 50,
+    "styling": 16
+  },
+  "src/components/AnalyticsPanel.tsx": {
+    "stylesheet": 1,
+    "element": 398,
+    "styling": 221
+  },
+  "src/components/AnalyticsResetPanel.tsx": {
+    "element": 16,
+    "styling": 17
+  },
+  "src/components/AnalyticsSettingsPanel.tsx": {
+    "element": 125,
+    "styling": 92
+  },
+  "src/components/AnnotationsPanel.tsx": {
+    "element": 68,
+    "styling": 53
+  },
+  "src/components/ApiKeysPanel.tsx": {
+    "element": 72,
+    "styling": 51
+  },
+  "src/components/AttributionPanel.tsx": {
+    "stylesheet": 1,
+    "element": 97,
+    "styling": 29
+  },
+  "src/components/AuthLayout.tsx": {
+    "element": 13,
+    "styling": 3
+  },
+  "src/components/BoardsPanel.tsx": {
+    "element": 357,
+    "styling": 157
+  },
+  "src/components/CitationAnalysisPanel.tsx": {
+    "element": 1,
+    "styling": 1
+  },
+  "src/components/CitationAnalysisView.tsx": {
+    "element": 290,
+    "styling": 257
+  },
+  "src/components/CitationSpecializationsPanel.tsx": {
+    "element": 1,
+    "styling": 1
+  },
+  "src/components/CitationSpecializationsView.tsx": {
+    "element": 202,
+    "styling": 216
+  },
+  "src/components/ContextPanel.tsx": {
+    "element": 139,
+    "styling": 108
+  },
+  "src/components/ConversionsPanel.tsx": {
+    "element": 148,
+    "styling": 79
+  },
+  "src/components/DestinationsPanel.tsx": {
+    "element": 175,
+    "styling": 127
+  },
+  "src/components/DomainResearchPanel.tsx": {
+    "element": 254,
+    "styling": 105
+  },
+  "src/components/DomainsPanel.tsx": {
+    "element": 148,
+    "styling": 87
+  },
+  "src/components/ExplorerFilters.tsx": {
+    "element": 119,
+    "styling": 42
+  },
+  "src/components/ExplorerPanel.tsx": {
+    "element": 529,
+    "styling": 222
+  },
+  "src/components/GeographyAttribution.tsx": {
+    "element": 3,
+    "styling": 1
+  },
+  "src/components/GeographyCard.tsx": {
+    "stylesheet": 1,
+    "element": 95,
+    "styling": 52
+  },
+  "src/components/GoogleAppPanel.tsx": {
+    "element": 39,
+    "styling": 29
+  },
+  "src/components/GoogleInspectionPanel.tsx": {
+    "element": 39,
+    "styling": 18
+  },
+  "src/components/GoogleReportsPanel.tsx": {
+    "element": 181,
+    "styling": 122
+  },
+  "src/components/HeatmapsPanel.tsx": {
+    "element": 126,
+    "styling": 49
+  },
+  "src/components/InvitePanel.tsx": {
+    "element": 38,
+    "styling": 26
+  },
+  "src/components/JourneysPanel.tsx": {
+    "stylesheet": 1,
+    "element": 114,
+    "styling": 47
+  },
+  "src/components/KeywordResearchPanel.tsx": {
+    "element": 174,
+    "styling": 80
+  },
+  "src/components/OidcPanel.tsx": {
+    "element": 175,
+    "styling": 101
+  },
+  "src/components/OidcRecoveryPanel.tsx": {
+    "element": 57,
+    "styling": 26
+  },
+  "src/components/OidcSignIn.tsx": {
+    "element": 12,
+    "styling": 10
+  },
+  "src/components/OpenRouterModelPicker.tsx": {
+    "element": 34,
+    "styling": 16
+  },
+  "src/components/PasswordRecoveryPanel.tsx": {
+    "element": 18,
+    "styling": 11
+  },
+  "src/components/ProjectDeletePanel.tsx": {
+    "element": 16,
+    "styling": 18
+  },
+  "src/components/PromptDiscoveryPanel.tsx": {
+    "element": 57,
+    "styling": 41
+  },
+  "src/components/PromptExecutionsPanel.tsx": {
+    "element": 181,
+    "styling": 81
+  },
+  "src/components/PromptRecurringPanel.tsx": {
+    "element": 65,
+    "styling": 29
+  },
+  "src/components/PromptsPanel.tsx": {
+    "element": 152,
+    "styling": 108
+  },
+  "src/components/ProviderPanel.tsx": {
+    "element": 139,
+    "styling": 84
+  },
+  "src/components/RankCheckResults.tsx": {
+    "element": 102,
+    "styling": 55
+  },
+  "src/components/RankCheckView.tsx": {
+    "element": 64,
+    "styling": 45
+  },
+  "src/components/RankHistoryView.tsx": {
+    "element": 124,
+    "styling": 73
+  },
+  "src/components/RankReportingView.tsx": {
+    "element": 124,
+    "styling": 94
+  },
+  "src/components/RankScheduleView.tsx": {
+    "element": 100,
+    "styling": 62
+  },
+  "src/components/RankTrackingFields.tsx": {
+    "element": 64,
+    "styling": 41
+  },
+  "src/components/RankTrackingPanel.tsx": {
+    "element": 2
+  },
+  "src/components/RankTrackingView.tsx": {
+    "element": 196,
+    "styling": 133
+  },
+  "src/components/RealtimePanel.tsx": {
+    "stylesheet": 1,
+    "element": 147,
+    "styling": 69
+  },
+  "src/components/ReportsPanel.tsx": {
+    "element": 101,
+    "styling": 60
+  },
+  "src/components/RetentionPanel.tsx": {
+    "element": 70,
+    "styling": 78
+  },
+  "src/components/RetentionReportPanel.tsx": {
+    "stylesheet": 1,
+    "element": 116,
+    "styling": 55
+  },
+  "src/components/RevenuePanel.tsx": {
+    "stylesheet": 1,
+    "element": 262,
+    "styling": 105
+  },
+  "src/components/SavedKeywordFilterFields.tsx": {
+    "element": 76,
+    "styling": 29
+  },
+  "src/components/SavedKeywordRefreshPanel.tsx": {
+    "element": 59,
+    "styling": 27
+  },
+  "src/components/SavedKeywordsPanel.tsx": {
+    "element": 147,
+    "styling": 63
+  },
+  "src/components/SessionExplorerPanel.tsx": {
+    "element": 227,
+    "styling": 94
+  },
+  "src/components/SessionReplayPanel.tsx": {
+    "element": 109,
+    "styling": 67
+  },
+  "src/components/SharedBoardPanel.tsx": {
+    "element": 113,
+    "styling": 41
+  },
+  "src/components/SiteAuditPanel.tsx": {
+    "element": 332,
+    "styling": 154
+  },
+  "src/components/TeamPanel.tsx": {
+    "element": 112,
+    "styling": 46
+  },
+  "src/components/TrackedAssetsPanel.tsx": {
+    "element": 252,
+    "styling": 90
+  },
+  "src/components/UtmPanel.tsx": {
+    "element": 65,
+    "styling": 28
+  },
+  "src/components/WebPerformancePanel.tsx": {
+    "element": 109,
+    "styling": 60
+  },
+  "src/components/WebsiteSharePanel.tsx": {
+    "element": 50,
+    "styling": 52
+  },
+  "src/routes/__root.tsx": {
+    "element": 3
+  },
+  "src/routes/index.tsx": {
+    "element": 231,
+    "styling": 179
+  }
+}

@@ -18,8 +18,8 @@ importers:
         specifier: 1.168.61
         version: 1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0))
       '@ten98/runtime':
-        specifier: file:vendor/ten98-runtime-0.1.7.tgz
-        version: file:vendor/ten98-runtime-0.1.7.tgz
+        specifier: file:vendor/ten98-runtime-0.1.8.tgz
+        version: file:vendor/ten98-runtime-0.1.8.tgz
       '@ten98/ui':
         specifier: file:vendor/ten98-ui-0.3.22.tgz
         version: file:vendor/ten98-ui-0.3.22.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -533,9 +533,9 @@ packages:
     resolution: {integrity: sha512-uhOeFyxLcU41HzvrxsGpiWdcMbScY1EDgbZ5K7DVRMYInbLYWAC0EA/kx9wXAoSM8q82bUG2hRl8+EAjE6XAbA==}
     engines: {node: '>=20.19'}
 
-  '@ten98/runtime@file:vendor/ten98-runtime-0.1.7.tgz':
-    resolution: {integrity: sha512-RFiGWjTsg4jE32xGXfNi/R7oZyRGlH3Pm0t3Vjv9nc+sTMHWvcaHtTeQ+QEgj9Bgxbp8aDlr6exCRkEkWixtPA==, tarball: file:vendor/ten98-runtime-0.1.7.tgz}
-    version: 0.1.7
+  '@ten98/runtime@file:vendor/ten98-runtime-0.1.8.tgz':
+    resolution: {integrity: sha512-wpsGIqhGgtORMPaOKrMonzVUm3lNsK4JsYT2pMFgV38jtW0ClNm26JI3nnGfD9qhu+gSuk1bl3ISw61KtvKlww==, tarball: file:vendor/ten98-runtime-0.1.8.tgz}
+    version: 0.1.8
     engines: {node: '>=24.0.0 <25'}
 
   '@ten98/ui@file:vendor/ten98-ui-0.3.22.tgz':
@@ -1963,7 +1963,7 @@ snapshots:
 
   '@tanstack/virtual-file-routes@1.162.0': {}
 
-  '@ten98/runtime@file:vendor/ten98-runtime-0.1.7.tgz': {}
+  '@ten98/runtime@file:vendor/ten98-runtime-0.1.8.tgz': {}
 
   '@ten98/ui@file:vendor/ten98-ui-0.3.22.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
