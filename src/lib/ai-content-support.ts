@@ -1,3 +1,4 @@
+import {workspaceRoles} from '@ten98/runtime';
 import {z} from 'zod';
 import {contentCoverageInputSchema,projectContentCoverageInputSchema} from './ai-content-coverage.ts';
 import {usdText} from './ai-search.ts';
@@ -10,7 +11,7 @@ const micros=(v:string)=>{const [whole,fraction='']=v.split('.');return BigInt(w
 // Reuse the existing client-side money grammar, then bound/require positivity.
 const money=usdText.pipe(z.string().refine(v=>micros(v)<=1_000_000_000_000n)),positiveMoney=money.pipe(z.string().refine(v=>micros(v)>0n));
 const model=z.string().refine(v=>openRouterModelId(v)&&!v.startsWith('openrouter/')&&!/:(online|nitro|floor)$/.test(v));
-const role=z.enum(['owner','admin','editor','viewer']),stamp=z.iso.datetime({precision:6}),count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const role=z.enum(workspaceRoles),stamp=z.iso.datetime({precision:6}),count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const contentSupportSourceSchema=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('capture'),selection:contentCoverageInputSchema}).strict(),
  z.object({kind:z.literal('project'),selection:projectContentCoverageInputSchema}).strict(),

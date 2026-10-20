@@ -1,8 +1,8 @@
 import {useEffect,useId,useRef,useState,type CSSProperties} from 'react';
 import {useBlocker} from '@tanstack/react-router';
+import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {api,ApiError,errMsg} from '../lib/api';
 
-type Role='owner'|'admin'|'editor'|'viewer';
 type Range={from:string;to:string;timeZone:string};
 type Definition={date:string;allDay:boolean;note:string};
 type DayDefinition={day:string;timeZone:string;allDay:true;note:string};
@@ -14,7 +14,7 @@ type Props={projectId:string;userId:string;range:Range|null;readOwner?:string;re
 const record=(v:unknown):v is Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const clean=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length<=max&&!v.includes('\0')&&new TextDecoder().decode(new TextEncoder().encode(v))===v;
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v);
-const roleValue=(v:unknown):v is Role=>['owner','admin','editor','viewer'].includes(v as string);
+const roleValue=(v:unknown):v is Role=>workspaceRoles.includes(v as Role);
 const writable=(v:Role|null)=>v==='owner'||v==='admin'||v==='editor';
 const dayValue=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v+'T00:00:00Z'))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v&&v>='1970-01-01'&&v<='9998-12-31';
 const instantValue=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v)&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString()===v&&v>='1970'&&v<'9999';

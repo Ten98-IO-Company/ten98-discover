@@ -1,10 +1,9 @@
 #!/bin/sh
-# Linux/macOS host helper. No Docker socket is mounted into a container.
+# POSIX shell host helper. No Docker socket is mounted into a container.
 set -eu
 umask 077
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
-case "$(uname -s)" in Linux|Darwin) ;; *) fail 'Use the native Windows Docker steps in docs/docker-setup.md.' ;; esac
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 case "$PWD" in *,*) fail 'Move the checkout to a path without commas before using Docker bind mounts.' ;; esac
 [ "$#" -eq 0 ] || [ "$#" -eq 4 ] || fail 'Usage: sh scripts/deploy.sh [local|proxy|caddy APP_URL APP_PORT PROJECT_NAME]'

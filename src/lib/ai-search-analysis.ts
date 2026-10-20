@@ -1,3 +1,4 @@
+import {workspaceRoles} from '@ten98/runtime';
 import {z} from 'zod';
 import {aiSearchProfileId} from './ai-search.ts';
 
@@ -41,7 +42,7 @@ const promptRef=z.object({promptId:z.uuid(),versionId:z.uuid(),observations:atte
 const query=z.object({key:text(4000),observations:attempts,distinctPromptCount:attempts,versionCount:attempts,eligibleAnswers:attempts,mentions:attempts,rate:fraction,runIds:z.array(z.uuid()).max(1000),promptRefs:z.array(promptRef).max(1000)}).strict();
 export type AiQueryRow=z.infer<typeof query>;
 const words=z.object({totalDistinct:count.max(20000),returned:count.max(60),rows:z.array(z.object({word:text(4000),count,isStop:z.boolean()}).strict()).max(60)}).strict();
-export const aiQueryReportSchema=z.object({role:z.enum(['owner','admin','editor','viewer']),projectId:z.uuid(),profileId:z.literal(aiSearchProfileId),asOf:z.iso.datetime(),resolvedRange:z.object({from:z.string().nullable(),to:z.string(),timeZone:z.string()}).strict(),filters:aiQueryFiltersSchema,
+export const aiQueryReportSchema=z.object({role:z.enum(workspaceRoles),projectId:z.uuid(),profileId:z.literal(aiSearchProfileId),asOf:z.iso.datetime(),resolvedRange:z.object({from:z.string().nullable(),to:z.string(),timeZone:z.string()}).strict(),filters:aiQueryFiltersSchema,
  contextRevision:z.number().int().positive(),profileHash:z.string().regex(/^[a-f0-9]{64}$/),selectionRevision:z.string().regex(/^[a-f0-9]{64}$/),
  versions:z.object({evidence:z.literal('dfs-chatgpt-reported-fields-v1'),derivation:z.literal('immutable-prompt-trim-lower-v1'),words:z.literal('elmo-ascii-words-3c673d0-v1')}).strict(),label:z.literal('Recomputed from retained captures using current brand context'),warnings:z.array(text(2048)).max(10),brand:z.object({id:z.literal('brand'),name:text(512),aliases:z.array(text(512)).max(20),domains:z.array(text(253)).max(20)}).strict(),
  coverageBeforeModel:aiQueryCoverageSchema,coverage:aiQueryCoverageSchema,totals,

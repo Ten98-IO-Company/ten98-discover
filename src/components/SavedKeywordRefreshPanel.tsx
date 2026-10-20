@@ -1,14 +1,13 @@
+import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {useEffect,useId,useRef,useState} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {KeywordSelection} from './SavedKeywordsPanel';
 
-type Role='owner'|'admin'|'editor'|'viewer';
 type Request={connectionId:string;mode:'overview';keywords:string[];locationCode:number;languageCode:string;limit:100};
 type Child={quoteId:string;request:Request;targetIds:string[];estimateUsd:string;priceAsOf:string;runId?:string|null;status?:string;chargeStatus?:string|null;actualUsd?:string|null;diagnostic?:string|null;resultExpired?:boolean};
 type Quote={id:string;createdAt:string;expiresAt:string;connectionName:string;targetCount:number;estimateUsd:string;children:Child[]};
 type Plan=Quote&{startedAt:string|null;status:string;canCancel:boolean};
 type Setup={role:Role;vaultConfigured:boolean;spendingPaused:boolean;connections:{id:string;name:string;checkStatus:string}[]};
-const roles=['owner','admin','editor','viewer'];
 const uuid=(v:unknown)=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const amount=(v:unknown)=>typeof v==='string'&&/^(?:0|[1-9]\d*)\.\d{6}$/.test(v);
 const date=(v:unknown)=>typeof v==='string'&&Number.isFinite(Date.parse(v));
@@ -28,10 +27,10 @@ export function SavedKeywordRefreshPanel({projectId,active,selection,setup,onUna
   useEffect(()=>{setRole(setup.role);},[setup.role]);
   function stopRead(){epoch.current++;controller.current?.abort();controller.current=null;setReading(false);}
   function fail(e:unknown){setError(errMsg(e));if(e instanceof ApiError&&[401,403,404].includes(e.status)){stopRead();setPlan(null);setPlans([]);setQuote(null);pendingRef.current=null;setPending(null);roleLost.current(e);}}
-  function apply(data:{role:Role;plan:Plan},id?:string){if(!roles.includes(data?.role)||!validPlan(data.plan)||id&&data.plan.id!==id)throw new Error('The refresh response was incomplete. Check status again.');setRole(data.role);setPlan(data.plan);setPlans(old=>[data.plan,...old.filter(p=>p.id!==data.plan.id)].slice(0,20));if(polls.current.id!==data.plan.id)polls.current={id:data.plan.id,count:0};}
+  function apply(data:{role:Role;plan:Plan},id?:string){if(!workspaceRoles.includes(data?.role)||!validPlan(data.plan)||id&&data.plan.id!==id)throw new Error('The refresh response was incomplete. Check status again.');setRole(data.role);setPlan(data.plan);setPlans(old=>[data.plan,...old.filter(p=>p.id!==data.plan.id)].slice(0,20));if(polls.current.id!==data.plan.id)polls.current={id:data.plan.id,count:0};}
   async function read(id?:string){
     if(writeRef.current||pendingRef.current)return;stopRead();const token=new AbortController(),generation=epoch.current;controller.current=token;setReading(true);setError('');
-    try{const response=await api<{role:Role;plan:Plan;plans:Plan[]}>(base+'/refreshes'+(id?'/'+id:''),{signal:token.signal});if(!alive.current||token.signal.aborted||generation!==epoch.current)return;if(id)apply(response,id);else{if(!roles.includes(response?.role)||!Array.isArray(response.plans)||!response.plans.every(validPlan))throw new Error('Refresh history could not be read. Reload it.');setRole(response.role);setPlans(response.plans);}}
+    try{const response=await api<{role:Role;plan:Plan;plans:Plan[]}>(base+'/refreshes'+(id?'/'+id:''),{signal:token.signal});if(!alive.current||token.signal.aborted||generation!==epoch.current)return;if(id)apply(response,id);else{if(!workspaceRoles.includes(response?.role)||!Array.isArray(response.plans)||!response.plans.every(validPlan))throw new Error('Refresh history could not be read. Reload it.');setRole(response.role);setPlans(response.plans);}}
     catch(e){if(alive.current&&!token.signal.aborted&&generation===epoch.current)fail(e);}
     finally{if(alive.current&&generation===epoch.current){setReading(false);controller.current=null;}}
   }
@@ -46,7 +45,7 @@ export function SavedKeywordRefreshPanel({projectId,active,selection,setup,onUna
     try{
       sent=true;const result=await api<{role:Role;quote:Quote;plan:Plan;catalog?:{markets:unknown[]};reconciliation?:{message:string}}>(kind==='catalog'?'/api/projects/'+projectId+'/keyword-research/catalog':base+path,{method:'POST',body});if(!alive.current||generation!==epoch.current)return;
       if(kind==='catalog'){if(!Array.isArray(result?.catalog?.markets))throw new Error('The supported markets could not be read. Try again.');setQuote(null);setMessage('Supported markets updated. Prepare a new quote.');return;}
-      if(!roles.includes(result?.role))throw new Error('The server acknowledgement was incomplete.');
+      if(!workspaceRoles.includes(result?.role))throw new Error('The server acknowledgement was incomplete.');
       if(kind==='quote'){if(!validQuote(result.quote))throw new Error('The price quote could not be read. Prepare it again.');setRole(result.role);setQuote(result.quote);setClock(Date.now());}
       else{if(kind==='start'&&(!quote||!validPlan(result.plan)||!sameQuote(quote,result.plan)))throw new Error('The start acknowledgement did not match the approved quote.');apply(result,kind==='start'?(body as {quoteId:string}).quoteId:plan?.id);if(kind==='start'){pendingRef.current=null;setPending(null);setQuote(null);}setMessage(kind==='cancel'?'Undispatched work was cancelled. Any incurred charges remain recorded.':kind==='reconcile'?result.reconciliation?.message??'The current charge status is shown below.':'Refresh started. Each market request is tracked below.');}
     }catch(e){if(alive.current&&generation===epoch.current){if(kind==='start'&&sent&&(!(e instanceof ApiError)||e.status===0||e.status>=500))setError(errMsg(e)+' The start may have been accepted. Retry the same request.');else{if(kind==='start'){pendingRef.current=null;setPending(null);}fail(e);}}}

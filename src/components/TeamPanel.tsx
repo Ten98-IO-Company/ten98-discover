@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { workspaceRoles, type WorkspaceRole as Role } from '@ten98/runtime';
 import { api, ApiError, errMsg } from '../lib/api';
-
-type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 
 type Member = { userId: string; name: string; email: string; role: Role };
 type Invitation = { id: string; email: string; role: Role; expiresAt: string };
@@ -14,7 +13,6 @@ type TeamData = {
   invitations: Invitation[];
 };
 
-const ALL_ROLES: readonly Role[] = ['owner', 'admin', 'editor', 'viewer'];
 const INVITE_ROLES: readonly Role[] = ['admin', 'editor', 'viewer'];
 const LIMITED_ROLES: readonly Role[] = ['editor', 'viewer'];
 
@@ -106,7 +104,7 @@ function TeamPanelContent(props: TeamPanelProps) {
 
   const myRole = data?.role ?? null;
   const canManage = myRole === 'owner' || myRole === 'admin';
-  const roleOptions = myRole === 'owner' ? ALL_ROLES : LIMITED_ROLES;
+  const roleOptions = myRole === 'owner' ? workspaceRoles : LIMITED_ROLES;
   const inviteRoles = myRole === 'owner' ? INVITE_ROLES : LIMITED_ROLES;
   const transferTarget = data?.members.find(member => member.userId === transferTo && member.userId !== userId);
 

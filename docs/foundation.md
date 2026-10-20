@@ -19,6 +19,16 @@ Optional runners use the externally supplied `PLAYWRIGHT_MODULE`; URL navigation
 - Docker with Compose (recommended path; no host Node/pnpm required)
 - Native development only: Node 24 and pnpm 11.19.0 (via corepack)
 
+## Stack and migration ownership
+
+The application uses TypeScript with React, TanStack Start/Router, Vite and Nitro on Node 24. PostgreSQL stores application data and pg-boss jobs. Shared presentation comes from `@ten98/ui`; shared server mechanisms come from `@ten98/runtime`.
+
+JavaScript in `public/` is served directly to websites: the tracker loads the consent-controlled destinations, performance and replay scripts. Standalone `.mjs` files provide Node setup/verification commands and browser/integration test runners. They are entrypoints, not duplicate compiled copies of the TypeScript app. Docker host commands use one POSIX shell procedure; application runtime code has no PowerShell dependency.
+
+`src/server/schema.ts` supplies the authentication tables to Better Auth’s Drizzle adapter. Other features use parameterized PostgreSQL queries through `pg`. `pnpm migrate` applies the ordered SQL files in `migrations/`, verifying their recorded checksums; changing the Drizzle declarations alone does not migrate the database. Keep applied migrations immutable and add a new migration for database changes.
+
+PL/pgSQL is PostgreSQL’s procedural language for database functions and triggers. The prompt-history and execution-link triggers enforce database invariants across insertion/update paths; `rank_next_due` implements calendar scheduling using database timezone rules. They are part of the native SQL migrations. Replacing them with an ORM table declaration would lose that behavior. Drizzle also supports [custom SQL migrations](https://orm.drizzle.team/docs/kit-custom-migrations) for DDL its schema generator does not cover. See [PostgreSQL’s PL/pgSQL documentation](https://www.postgresql.org/docs/current/plpgsql-structure.html).
+
 ## Quickstart (Docker)
 
 ```sh
@@ -26,7 +36,7 @@ sh scripts/deploy.sh local http://localhost:3000 3000 ten98-monitor
 # open http://localhost:3000
 ```
 
-- Follow the [Docker setup guide](docker-setup.md) for native Windows commands, existing/bundled HTTPS, safe reruns, backups and upgrades. This is a source-built development deployment, not a published release image.
+- Follow the [Docker setup guide](docker-setup.md) for the shared POSIX shell procedure (including Windows through WSL2), existing/bundled HTTPS, safe reruns, backups and upgrades. This is a source-built development deployment, not a published release image.
 - Setup generates an exclusive private `.env` with independent 32-byte database/auth/bootstrap secrets and an encryption keyring. It refuses to overwrite saved configuration. Native development retains `pnpm run setup:local` (not the `pnpm setup` builtin).
 - Docker startup does **not** auto-migrate; the separate `migrate` run is required. `postgres` starts via the migrate service's healthy dependency.
 - Compose binds `127.0.0.1:3000` only; the database is never published.

@@ -20,7 +20,7 @@ From a checkout of the version you intend to run, with Docker and Compose instal
 sh scripts/deploy.sh local http://localhost:3000 3000 ten98-monitor
 ```
 
-Open the configured address and use the privately generated bootstrap token to claim the owner account. Follow [Docker setup](docs/docker-setup.md) for native Windows commands, HTTPS, backups, safe reruns and upgrades. This is a source-built development deployment. The [foundation runbook](docs/foundation.md) covers native development, migrations and current limitations.
+Open the configured address and use the privately generated bootstrap token to claim the owner account. Follow [Docker setup](docs/docker-setup.md) for the shared POSIX shell procedure (including Windows through WSL2), HTTPS, backups, safe reruns and upgrades. This is a source-built development deployment. The [foundation runbook](docs/foundation.md) covers native development, migrations and current limitations.
 
 ## Code and contribution
 

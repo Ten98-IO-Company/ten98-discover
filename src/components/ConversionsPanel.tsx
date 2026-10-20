@@ -1,11 +1,11 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {FunnelBreakdown} from '@ten98/ui';
+import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {api,ApiError,errMsg} from '../lib/api';
 import {MatchFields,PropertyFields,type MatchDraft,type PropertyDraft} from './AnalysisCriteriaFields';
 import type {AnalysisDefinition,AnalysisStep,PropertyPredicate} from '../server/funnel-input';
 import type {AnalysisItem,AnalysisKind,AnalysisResult,AnalysisWitnessResult} from '../server/funnels';
 
-type Role='owner'|'admin'|'editor'|'viewer';
 type Props={projectId:string;userId:string;onUnauthorized:()=>void};
 type StepDraft=MatchDraft&{pageViewsOnly:boolean;properties:PropertyDraft[]};
 type DefinitionDraft={name:string;description:string;windowMinutes:string;steps:StepDraft[];condition:MatchDraft};
@@ -39,8 +39,7 @@ function scopeParams(scope:Scope):string{
   return p.toString();
 }
 const record=(v:unknown):v is Record<string,unknown>=>typeof v==='object'&&v!==null&&!Array.isArray(v);
-const roles=['owner','admin','editor','viewer'];
-const roleValue=(v:unknown):v is Role=>typeof v==='string'&&roles.includes(v);
+const roleValue=(v:unknown):v is Role=>typeof v==='string'&&workspaceRoles.includes(v as Role);
 const metric=(v:unknown)=>v===null||typeof v==='number'&&Number.isFinite(v)&&v>=0;
 const rateValue=(v:unknown)=>metric(v)&&(v===null||(v as number)<=1);
 const matchValue=(v:unknown)=>record(v)&&['path','event'].includes(String(v.type))&&['exact','prefix','suffix','contains'].includes(String(v.match))&&typeof v.value==='string';

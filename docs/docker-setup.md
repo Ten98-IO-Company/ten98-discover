@@ -16,7 +16,9 @@ Use Docker Engine 28 or newer with Linux containers, and Compose supporting `up 
 
 Caddy needs correct DNS and external reachability to obtain and renew certificates. Its local healthcheck does not prove certificate issuance or remote reachability. Certificate state persists in `caddy_data`; never treat it as disposable cache. No DNS-provider credentials or Cloudflare subscription are required by this recipe. [Automatic HTTPS](https://caddyserver.com/docs/automatic-https), [official Caddy image](https://hub.docker.com/_/caddy)
 
-## Linux or macOS: one host command
+## One POSIX shell procedure
+
+Use a POSIX shell with Docker CLI access on Linux or macOS. On Windows, run the same commands inside a WSL2 distribution with [Docker Desktop WSL integration enabled](https://docs.docker.com/desktop/features/wsl/#enable-docker-in-a-wsl-2-distribution), keeping the checkout in that distribution’s Linux filesystem. No separate PowerShell procedure is maintained.
 
 From a checkout of the exact version you intend to run:
 
@@ -43,31 +45,6 @@ The existing configuration is validated and retained. The app and worker stop be
 
 The helper supports local Unix/named-pipe Docker contexts only. Run it on the Docker host, not against a remote TCP/SSH context. It does not read `.env` as shell code. Generated files request POSIX mode `0600`; on Windows-backed Docker Desktop mounts, Windows ACLs determine actual access, so inspect those permissions privately. Compose environment variables are visible to a host operator with Docker privileges; this is not encrypted secret storage. The backend also supports `_FILE` secrets for operator-managed recipes. [Compose secrets](https://docs.docker.com/compose/how-tos/use-secrets/)
 
-## Native Windows: Docker commands
-
-Use PowerShell in the checkout and Docker Desktop with Linux containers. This path does not require Git Bash or host Node. Use a new project name and confirm it has no existing containers or volumes before creating fresh credentials:
-
-```powershell
-docker version
-docker compose version
-docker volume ls --filter label=com.docker.compose.project=ten98-monitor
-docker ps -a --filter label=com.docker.compose.project=ten98-monitor
-docker build -t ten98-monitor:setup-helper .
-docker run --rm --network none --mount "type=bind,source=$($PWD.Path),target=/setup" --workdir /setup ten98-monitor:setup-helper node /app/scripts/docker-setup.mjs storage
-docker run --rm --network none --mount "type=bind,source=$($PWD.Path),target=/setup" --workdir /setup ten98-monitor:setup-helper node /app/scripts/docker-setup.mjs setup local http://localhost:3000 3000 ten98-monitor
-docker run --rm --network none --mount "type=bind,source=$($PWD.Path),target=/setup" --workdir /setup ten98-monitor:setup-helper node /app/scripts/docker-setup.mjs inspect
-$env:TEN98_IMAGE = 'ten98-monitor:ten98-monitor'
-docker tag ten98-monitor:setup-helper $env:TEN98_IMAGE
-docker compose --env-file .env -p ten98-monitor config --quiet
-docker compose --env-file .env -p ten98-monitor run --rm migrate
-docker compose --env-file .env -p ten98-monitor up -d --no-build --wait --wait-timeout 180 web worker
-docker compose --env-file .env -p ten98-monitor exec -T worker node src/server/cli.ts diagnose worker
-```
-
-Check each command succeeds before continuing. Do not run `setup` over an existing file or when the chosen project already has state; restore the original configuration. On a rerun, keep `.env`, stop web/worker before migration, and skip secret generation. Ensure the shell has no unrelated app-secret/origin variables: Compose gives those precedence over `.env`. Do not use `docker compose config` without `--quiet` in logs, because expanded configuration contains secrets.
-
-For public access, replace `local` and its URL with the selected mode and HTTPS origin. With bundled Caddy, add `-f compose.yaml -f compose.caddy.yaml` to each Compose command and include `caddy` in the final `up` service list. An existing-proxy deployment uses the base Compose file. The app port remains loopback-only.
-
 ## Existing installations and verification
 
 The new helper intentionally does not adopt an old `.env` automatically. Preserve its original database password, auth secret, bootstrap token and all encryption keys. Determine its existing Compose project name with `docker compose ls`, then privately add `DEPLOYMENT_MODE`, `COMPOSE_PROJECT_NAME` and `TEN98_IMAGE=ten98-monitor:YOUR_PROJECT_NAME` to that file. Keep the origin/port unchanged. The helper builds that project-specific image; persisting its name also keeps later manual Compose commands on the same image. An older installation without a keyring should use the normal manual Compose path until its matching application version's documented key initialization is complete; never replace keys protecting existing data. The application uses this keyring for provider and OIDC credentials; see [encryption keys and upgrades](foundation.md#encryption-keys-and-upgrades).
@@ -88,7 +65,7 @@ The base installation does not download or mount a location database. `compose.g
 
 Build the selected application version first, using the existing project-specific image name from your saved configuration. The explicit installer accepts only a named release listed on the official DB-IP City Lite page; it verifies the published uncompressed SHA-1, bounded decompression, the actual City Lite reader metadata and a local SHA-256 before replacing `city.mmdb`. It retains a `city.json` provenance receipt. There is no boot download or updater. October 2026 is the example release below; choose the release actually listed when installing.
 
-On Linux/macOS, run from the checkout, replacing `YOUR_PROJECT_NAME` with the existing project name:
+From the same POSIX shell and checkout, replace `YOUR_PROJECT_NAME` with the existing project name:
 
 ```sh
 mkdir -p data/geography
@@ -101,7 +78,7 @@ docker compose --env-file .env -p YOUR_PROJECT_NAME -f compose.yaml -f compose.g
 docker compose --env-file .env -p YOUR_PROJECT_NAME -f compose.yaml -f compose.geo.yaml up -d --no-build --force-recreate --wait --wait-timeout 180 web
 ```
 
-On native Windows, create `data/geography` with `New-Item -ItemType Directory -Force -Path .\data\geography`, then use the same installer container command without the `--user` option and with `--mount "type=bind,source=$($PWD.Path)\data\geography,target=/geo"`. Run it as one PowerShell line; do not use POSIX backslash continuations. Check `$LASTEXITCODE` before running the complete Compose commands. A host with Node 24 and the checked-out dependencies can instead run `node scripts/analytics-geo.mjs 2026-10`.
+A host with Node 24 and the checked-out dependencies can instead run `node scripts/analytics-geo.mjs 2026-10`.
 
 The downloaded database is separately CC BY 4.0; the application stays MIT. The data directory is already excluded from Git and Docker build context. Keep the directory readable by the image's nonroot user, and do not put secrets there. The receipt records source, license, build, byte length and hashes; the running reader independently hashes the actual file and does not trust the receipt. A failure between the two atomic renames can leave an older receipt, so use the reader's actual build/hash when checking readiness. No service is restarted by the installer itself.
 

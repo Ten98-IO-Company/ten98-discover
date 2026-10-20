@@ -1,5 +1,6 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {z} from 'zod';
+import {workspaceRoles} from '@ten98/runtime';
 import {ReplayControls,VisualEvidenceFrame} from '@ten98/ui';
 import {ApiError} from '../lib/api';
 import {savedReplayPoint,savedReplayList,savedReplayAck,savedReplayWrite,type HeatmapOverlay,type SavedReplayWrite} from '../lib/replay-heatmaps';
@@ -8,7 +9,7 @@ import {accountLocaleMapping} from '../lib/account-preferences';
 import {boundedTree,reassembleReplay,replaySummary,replayChunkDto,replayLimits,type ReplaySummary,type ReplayEvent} from '../lib/session-replay';
 
 type Props={projectId:string;userId:string;query?:string;onNavigate:(query:string)=>void;onUnauthorized:()=>void;onSettings?:()=>void;readOwner?:string;readEnabled?:boolean};
-const role=z.enum(['owner','admin','editor','viewer']),instant=z.string().datetime(),cursor=z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/),after=z.number().int().min(0).max(1023);
+const role=z.enum(workspaceRoles),instant=z.string().datetime(),cursor=z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/),after=z.number().int().min(0).max(1023);
 const listDto=z.object({role,asOf:instant,retainedFrom:instant,items:z.array(replaySummary).max(20),nextCursor:cursor.nullable()}).strict();
 const detailDto=z.object({role,asOf:instant,item:replaySummary}).strict();
 const chunksDto=detailDto.extend({chunks:z.array(replayChunkDto).max(4),nextAfter:after.nullable()}).strict();

@@ -10,18 +10,11 @@ GPT owns planning, design, complex work, testing after completion, and final sig
 
 ## Install and authenticate
 
-Official Windows PowerShell installation, requiring Git for Windows but no preinstalled Node:
+Install the native CLI using the [official instructions for your environment](https://moonshotai.github.io/kimi-code/en/guides/getting-started.html). The application has no Kimi runtime dependency. Verify the installation before use:
 
-```powershell
-irm https://code.kimi.com/kimi-code/install.ps1 | iex
-```
-
-Then open a new terminal in the development repository:
-
-```powershell
+```sh
 kimi --version
 kimi doctor
-kimi
 ```
 
 Inside the CLI, run `/login` and complete Kimi Code OAuth in the browser. Kimi Platform API-key login is an alternative. The user completes authentication; keys and tokens never enter this repository or task output. For later updates use `kimi upgrade`, then verify the installed version again. [Official getting-started instructions](https://moonshotai.github.io/kimi-code/en/guides/getting-started.html)
@@ -46,34 +39,19 @@ The official IDs are `k3-256k` and `k3`. K3 requires Plus/Moderato or above; 1M 
 | Docker/runbook edits from agreed deployment design | Kimi | GPT executes independent deployment/recovery validation |
 | Final V1 parity, testing, release signoff | GPT | Every agreed requirement evidenced and checked |
 
-The default repository profile, [`agents/kimi-text-only.md`](../agents/kimi-text-only.md), declares `tools: []` and `subagents: []`. It can transform supplied public text only. Custom agent allowlists are enforced by the CLI; prompts alone are not a sandbox. More capable profiles require the isolated worker described below. No orchestration framework or default background automation is planned. [Agent documentation](https://moonshotai.github.io/kimi-code/en/customization/agents.html)
+The default repository profile, [`agents/kimi-text-only.md`](../agents/kimi-text-only.md), declares `tools: []` and `subagents: []`. It can transform supplied public text only. Custom agent allowlists are enforced by the CLI; prompts alone are not a sandbox. Filesystem or shell tools require the isolated worker specified under [Budget, boundaries, and escalation](#budget-boundaries-and-escalation). No orchestration framework or default background automation is planned. [Agent documentation](https://moonshotai.github.io/kimi-code/en/customization/agents.html)
 
-For Windows skill-assisted drafting, use the [bounded runner](../scripts/kimi-draft.ps1) and [Skill-only profile](../agents/kimi-skill-drafter.md). First copy only reviewed Markdown skills into a separate public task directory, review the prompt, and choose a **new**, empty output path outside any checkout. Do not point it at your whole skills/home directory. The runner rejects project/global instructions, MCP/plugin configuration and hooks that need separate review; it requires explicit thinking enabled in the existing CLI configuration. It does not change global settings or apply drafts.
-
-```powershell
-pwsh -NoProfile -File .\scripts\kimi-draft.ps1 `
-  -PromptFile C:\public-task\prompt.md `
-  -SkillsDirectory C:\public-task\reviewed-skills `
-  -OutputDirectory C:\scratch\new-kimi-draft `
-  -TimeoutSeconds 600
-```
-
-Use actual absolute local paths whose parent directories already exist. The runner pins the reviewed native CLI and model, passes arguments without a shell, drains output privately, and kills only its own process tree at the deadline. Exit 2 means a prerequisite failed; 124 means timeout. Its runnable offline check uses a fake local child and spends no Kimi quota:
-
-```powershell
-. ./scripts/kimi-draft.ps1
-Test-KimiDraftProcess
-```
+The [Skill-only profile](../agents/kimi-skill-drafter.md) permits only reviewed Markdown skills and approved public inputs. Tool profiles supplement isolation; they do not provide it. The repository provides no automated drafting launcher. Automated text-only or Skill-only drafting requires a reviewed platform-neutral runner that verifies the CLI/model, thinking and maximum effort, rejects unreviewed instructions/configuration/hooks, creates a clean task directory, captures output privately, and enforces a numeric deadline by stopping only its own process tree. Do not bypass these checks with a direct print-mode command. Use fresh native workers for coding under the contributor gates.
 
 ## Run one bounded task
 
-1. GPT defines the requirement, design, file allowlist, acceptance check, and budget.
-2. Supply approved public text to a tool-free or curated Skill-only drafting profile; use an isolated worker before enabling filesystem or shell tools.
-3. Kimi produces the bounded patch; no new dependency without GPT review.
-4. Kimi may implement/run checks; GPT independently tests completed work and reviews the diff.
-5. GPT accepts or requests repair; after two failed repair attempts escalate instead of looping.
+1. GPT defines the requirement, design, file allowlist, acceptance checks, verified model/effort, numeric deadline, and available usage allowance. Missing usage counters do not remove the deadline.
+2. For text-only or Skill-only drafting, supply only approved public inputs through a reviewed bounded runner. Kimi returns draft text; GPT applies it after review.
+3. Filesystem writes and command execution require the separately verified isolated worker below. Only that worker may implement files or run its allowed checks; no new dependency without GPT review.
+4. GPT independently tests completed work and reviews the diff.
+5. GPT accepts or requests repair. After two failed repair attempts, stop and return the minimal diff, failing check and unresolved decisions to GPT.
 
-The text-only profile was used for the earlier supervised planning tasks recorded in the [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/kimi-first-development-implementation-history-72DK8lZMWu). New drafting tasks use the bounded runner above; launching the CLI directly bypasses its deadline, clean working directory, version check and maximum-effort preflight. Do not reintroduce a direct-launch shortcut when reusing the historical text-only profile.
+The text-only profile was used for the earlier supervised planning tasks recorded in the [implementation archive](https://wiki.ten98.io/s/ten98-docs/p/kimi-first-development-implementation-history-72DK8lZMWu). Those records do not authorize an unbounded launcher or tool access.
 
 `-p` uses automatic permissions, regardless of the manual interactive default, and cannot combine with `--plan`, `--auto`, or `--yolo`. The empty tool/delegation allowlists are essential here. A prompt or `explore` profile does not isolate filesystem/network access sufficiently for untrusted code. `kimi doctor` checks configuration without editing it. [CLI reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-command.html)
 

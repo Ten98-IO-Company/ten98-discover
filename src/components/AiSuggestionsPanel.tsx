@@ -1,10 +1,10 @@
+import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {useEffect,useId,useRef,useState,type CSSProperties,type FormEvent} from 'react';
 import {Link,useBlocker} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,legacyOpenRouterModels,type OpenRouterCatalog} from '../lib/openrouter-models';
 import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelReservation,type ModelQuoteRoute} from './OpenRouterModelPicker';
 
-type Role='owner'|'admin'|'editor'|'viewer';
 type Profile={id:string;model:string|null;label:string;admission:'benchmark'};
 type Context={project:{id:string;name:string;origin:string};role:Role;revision:number;profile:{name:string;aliases:string[];citationDomains:string[]};sections:{key:string;title:string;content:string}[];competitors:{id:string;name:string;primaryDomain:string}[]};
 type Input={requestId:string;connectionId:string;contextRevision:number;profileId:string;model?:string;benchmark:true;fundedCredits:true;topic:string;country:string;language:string;sectionKeys:string[];competitorIds:string[];excludedPrompts:string[]};
@@ -23,7 +23,6 @@ type Draft={text:string;tags:string;selected:boolean};
 type Operation={generation:number;controller:AbortController;signal:AbortSignal;write:boolean};
 type Props={workspaceId:string;projectId:string;userId:string;onBack:(saved:boolean)=>void;onUnauthorized:()=>void};
 const sectionNames:Record<string,string>={business_overview:'Business overview',current_goal:'Current goal',positioning:'Positioning',writing_preferences:'Writing preferences'};
-const roles:Role[]=['owner','admin','editor','viewer'];
 const dynamicProfile='catalog-text-schema-v1',legacyProfiles=['benchmark-mini-v1','benchmark-standard-v1','benchmark-nano-v1','benchmark-4-1-mini-v1'];
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(v);
 const hash=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
@@ -44,7 +43,7 @@ const touch:CSSProperties={minHeight:44};
 const fill:CSSProperties={width:'100%',minWidth:0,minHeight:44};
 const checkLabel:CSSProperties={display:'flex',alignItems:'center',gap:'var(--space-2, 8px)',minHeight:44};
 class AccessResponseError extends Error {}
-function checkedRole(v:unknown):Role{if(!roles.includes(v as Role))throw new AccessResponseError('Access could not be verified. Reload access.');return v as Role;}
+function checkedRole(v:unknown):Role{if(!workspaceRoles.includes(v as Role))throw new AccessResponseError('Access could not be verified. Reload access.');return v as Role;}
 function validGuards(v:Guards|null){return v===null||!!v&&revision(v.proposalRevision)&&revision(v.contextRevision)&&hash(v.topicLibraryHash);}
 function validSnapshot(s:Snapshot|null,projectId:string){
   return s===null||!!s&&s.project?.id===projectId&&typeof s.project.name==='string'&&typeof s.project.origin==='string'&&revision(s.contextRevision)&&typeof s.profile?.name==='string'&&texts(s.profile.aliases)&&texts(s.profile.citationDomains)&&typeof s.topic==='string'&&typeof s.country==='string'&&typeof s.language==='string'&&hash(s.snapshotHash)&&hash(s.topicLibraryHash)&&texts(s.excludedPrompts)&&Array.isArray(s.sections)&&s.sections.every(x=>x&&Object.hasOwn(sectionNames,x.key)&&typeof x.content==='string')&&Array.isArray(s.competitors)&&s.competitors.every(x=>x&&uuid(x.id)&&typeof x.name==='string'&&typeof x.domain==='string')&&Array.isArray(s.existingPrompts)&&s.existingPrompts.every(x=>x&&uuid(x.id)&&uuid(x.versionId)&&revision(x.revision)&&typeof x.text==='string')&&Array.isArray(s.evidence)&&s.evidence.every(x=>x&&typeof x.id==='string'&&['profile','section','competitor'].includes(x.kind)&&hash(x.sha256));
