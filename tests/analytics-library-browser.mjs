@@ -4,12 +4,12 @@ import assert from 'node:assert/strict';
 import {defaultStringifySearch} from '@tanstack/react-router';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {createServer} from 'vite';
 import {deriveAnalyticsComparison} from '../src/lib/analytics-comparison.ts';
 import {environmentVersion} from '../src/lib/analytics-environment.ts';
 import {analyticsDimensions} from '../src/lib/analytics-dimensions.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_ANALYTICS_LIBRARY_BROWSER,'1');
 const workspace='10000000-0000-4000-8000-000000000001',project='20000000-0000-4000-8000-000000000001',other='20000000-0000-4000-8000-000000000002';
 const base={workspace,project,view:'project'},dates={analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29'},sources=['src/components/AnalyticsPanel.tsx','src/components/analytics.css','src/lib/navigation.ts','src/routes/index.tsx','tests/navigation.test.ts','tests/analytics-library-browser-fixture.tsx','tests/analytics-library-browser.mjs'];
@@ -53,7 +53,7 @@ server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return n
 let browser,context;const groups=[],layouts=[],out='private/analytics-library-ui-evidence';
 try{
  await mkdir(out,{recursive:true});await server.listen();await server.environments.client.warmupRequest('/tests/analytics-library-browser-fixture.tsx');await server.environments.client.depsOptimizer?.scanProcessing;await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));assert.equal(server.httpServer.address().address,'127.0.0.1');const origin='http://127.0.0.1:'+server.httpServer.address().port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});const page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));
+ browser=await launchChromium();context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});const page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));
  const holdRequest=(route,body)=>{
   const request=route.request(),completion=new Promise((resolve,reject)=>{
    const cleanup=()=>{clearTimeout(timer);context.off('requestfinished',finished);context.off('requestfailed',failed);};

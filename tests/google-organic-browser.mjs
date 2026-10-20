@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {createHash,randomBytes} from 'node:crypto';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_GOOGLE_ORGANIC_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE&&process.env.TEN98_GOOGLE_ORGANIC_BROWSER_APPROVAL);
 const root=process.cwd(),hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex'),approval=JSON.parse(readFileSync(process.env.TEN98_GOOGLE_ORGANIC_BROWSER_APPROVAL,'utf8'));
@@ -53,7 +53,7 @@ try{
  server=await createServer({configFile:false,root,cacheDir:out+'/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Google organic synthetic component acceptance</title><div id="root"></div><script type="module" src="/tests/google-organic-browser-fixture.tsx"></script></html>');});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
- const{chromium}=await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+ browser=await launchChromium({args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
 
  for(const[zone,lastDay,today]of[['America/Los_Angeles','2025-12-30','2025-12-31'],['Pacific/Kiritimati','2025-12-31','2026-01-01']]){
   const data=fixture(zone);data.conn.imports=[];let posts=0;

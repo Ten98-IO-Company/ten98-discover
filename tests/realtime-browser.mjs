@@ -3,10 +3,10 @@
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {createServer} from 'vite';
 import {environmentVersion} from '../src/lib/analytics-environment.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_REALTIME_BROWSER,'1');
 const workspace='10000000-0000-4000-8000-000000000001',project='20000000-0000-4000-8000-000000000001',other='20000000-0000-4000-8000-000000000002',asOf='2026-10-15T12:00:15.250Z',key='a'.repeat(64),secondKey='b'.repeat(64),activeKey='c'.repeat(64),base={workspace,project,view:'realtime'};
 const sources=['src/components/RealtimePanel.tsx','src/components/realtime.css','src/routes/index.tsx','src/lib/navigation.ts','tests/navigation.test.ts','tests/realtime-browser-fixture.tsx','tests/realtime-browser.mjs'];
@@ -41,7 +41,7 @@ server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return n
 let browser;
 try{
  await mkdir('private/realtime-ui-evidence',{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()!=='error')return;const location=message.location().url,expected=location.startsWith(origin+'/api/projects/')&&location.endsWith('/realtime')&&/^Failed to load resource: the server responded with a status of (401|403|404|503)/.test(message.text());if(!expected)errors.push(message.text());});await page.clock.install({time:new Date(asOf)});
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()!=='error')return;const location=message.location().url,expected=location.startsWith(origin+'/api/projects/')&&location.endsWith('/realtime')&&/^Failed to load resource: the server responded with a status of (401|403|404|503)/.test(message.text());if(!expected)errors.push(message.text());});await page.clock.install({time:new Date(asOf)});
  const reply=(route,body,code=200)=>route.fulfill({status:code,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();if(request.method()!=='GET'){writes.push(url.pathname);return route.abort();}assert.equal(url.search,'');assert.match(url.pathname,new RegExp('^/api/projects/('+project+'|'+other+')/realtime$'));reads.push(url.pathname);if(status!==200)return reply(route,{error:'Synthetic realtime unavailable'},status);const body=makeSnapshot(url.pathname.includes(other));if(hold){hold=false;held={route,body};return;}return reply(route,body);});
  const panel=()=>page.getByRole('region',{name:'Realtime analytics',exact:true}),button=name=>panel().getByRole('button',{name,exact:true}),metric=name=>page.locator('.realtime-stat').filter({has:page.getByText(name,{exact:true})}).locator('p'),settled=async()=>page.waitForFunction(()=>[...document.querySelectorAll('h1')].some(node=>node.textContent==='Fixture signed out')||document.querySelector('.realtime')?.getAttribute('aria-busy')==='false');

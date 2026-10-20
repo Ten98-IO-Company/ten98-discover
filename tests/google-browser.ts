@@ -11,6 +11,7 @@ import { runRetentionBatch } from '../src/server/retention.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { runGoogleChecks } from './google-integration.ts';
 import { runGoogleGa4Checks } from './google-ga4-integration.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Production client/SSR assets, actual API functions, PostgreSQL and queue worker;
 // only Google HTTP endpoints and the Google consent page are synthetic fixtures.
@@ -21,7 +22,6 @@ const config = getConfig(), origin = new URL(config.appUrl);
 assert.ok(['localhost','127.0.0.1'].includes(origin.hostname));
 const appPort = Number(origin.port), ssrPort = Number(process.env.GOOGLE_BROWSER_SSR_PORT ?? appPort + 1);
 assert.ok(appPort > 1024 && ssrPort > 1024 && ssrPort !== appPort);
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE!);
 let browser: any;
 try {
   await runGoogleChecks(async fixture => {
@@ -49,7 +49,7 @@ try {
       for (let n = 0; n < 100; n++) { try { if ((await fetch(`http://127.0.0.1:${ssrPort}/`)).ok) break; } catch {} await delay(100); if (n === 99) throw new Error('Production SSR fixture did not start.'); }
       await new Promise<void>((resolve, reject) => { front.once('error', reject); front.listen(appPort, '127.0.0.1', resolve); });
       await getDatabase().pool.query("UPDATE installation SET claimed=true WHERE id='instance'");
-      browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true });
+      browser = await launchChromium();
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
       let external = 0, pageErrors = 0;
       await context.route('**/*', async (route: any) => {

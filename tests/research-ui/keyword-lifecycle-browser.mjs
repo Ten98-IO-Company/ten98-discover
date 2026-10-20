@@ -7,11 +7,10 @@ import {runKeyword} from './jobs.mjs';
 import {getDatabase,closeDatabase} from '../../src/server/db.ts';
 import {stopJobs} from '../../src/server/jobs.ts';
 fixtureGuard();
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
 
 const {pool}=getDatabase();let session,stage='initial';const cleanups=[];
 async function phase(label){
-  await session?.browser.close();const group=await createKeywordCase(label);session=await browserSession(chromium,group.owner);const {page}=session;
+  await session?.browser.close();const group=await createKeywordCase(label);session=await browserSession(group.owner);const {page}=session;
   await page.goto(href(group,'keywords'),{waitUntil:'networkidle'});
   const panel=page.locator('section[aria-label="Keyword research"]');await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
   return {group,page,panel,B:'/api/projects/'+group.main.id+'/keyword-research'};

@@ -8,13 +8,12 @@ import {getDatabase,closeDatabase} from '../../src/server/db.ts';
 import {stopJobs} from '../../src/server/jobs.ts';
 
 fixtureGuard();
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
 const args=process.argv.slice(2);assert.ok(args.length===0||args.length===1&&/^[a-z][a-z-]{0,19}$/.test(args[0]),'Optional argument: a fresh lowercase/hyphen audit suffix, maximum 20 characters.');
 const phaseLabel=label=>label+(args.length?'-'+args[0]:'');
 const {pool}=getDatabase();let session,stage='initial';const cleanups=[];
 const panel=page=>page.locator('section[aria-label="Site audits"]');
 async function begin(group){
-  await session?.browser.close();session=await browserSession(chromium,group.owner);const page=session.page;
+  await session?.browser.close();session=await browserSession(group.owner);const page=session.page;
   await page.goto(href(group,'audits'),{waitUntil:'networkidle'});await panel(page).getByRole('heading',{name:'Audit history',exact:true}).waitFor();
   await panel(page).getByLabel('Domain',{exact:true}).waitFor();return page;
 }

@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomBytes} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_HEATMAP_GEOMETRY_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),entry='tests/heatmap-geometry-browser.mjs',hash=path=>createHash('sha256').update(readFileSync(path)).digest('hex'),before=hash(resolve(root,entry));
 const out=resolve(root,'private/replay-heatmaps/geometry-browser-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
@@ -52,7 +52,7 @@ try{
   res.setHeader('content-type','text/html; charset=utf-8');res.setHeader('Content-Security-Policy',"worker-src 'none'");res.end(html({direction,zoom}));
  });
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+ browser=await launchChromium({args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
  for(const config of matrix){
   context=await browser.newContext({viewport:{width:config.width,height:config.height},locale:'en-US'});context.setDefaultTimeout(8000);context.on('serviceworker',()=>{evidence.unexpected.push({kind:'serviceworker'});save();});
   const record={...config,qualification:'CSS zoom only; no browser/pinch zoom claimed.',samples:[],wheel:[],resize:null,growth:null};evidence.contexts.push(record);save();

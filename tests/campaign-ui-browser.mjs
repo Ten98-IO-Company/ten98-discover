@@ -4,8 +4,8 @@
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_CAMPAIGN_UI_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),out=resolve('private/campaign-ui-evidence'),unexpected=[],errors=[],requests=[],passed=[];
@@ -148,7 +148,7 @@ try{
  await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.environments.client.transformRequest('/tests/account-preferences-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();
  const optimizer=server.environments.client.depsOptimizer;await optimizer.scanProcessing;await Promise.all(Object.values(optimizer.metadata.discovered).map(d=>d.processing));
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({headless:true,channel:process.env.PLAYWRIGHT_CHANNEL??'msedge'});
+ browser=await launchChromium();
  await fresh({mode:'setup'});await page.getByRole('heading',{name:'Create owner account',exact:true}).waitFor();assert.equal(await page.getByLabel('Setup token',{exact:true}).getAttribute('type'),'password');assert.equal(await page.getByLabel('Password',{exact:true}).getAttribute('minlength'),'12');await authGeometry('Owner setup');pass('Actual owner setup fields, split/stacked Campaign layout and seven LTR/RTL widths.');
  await fresh();await page.getByRole('heading',{name:'Sign in',exact:true}).waitFor();await page.getByRole('button',{name:'Continue with Example organization',exact:true}).waitFor();assert.equal(await page.locator('.or-divider').count(),1);await brandAndAuthChrome();await authThemePairs();await authGeometry('Sign in');await page.getByLabel('Email',{exact:true}).focus();assert.equal((await style(page.getByLabel('Email',{exact:true}))).outline,'3px');await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:out+'/signin-desktop.png'});await viewport(360);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:out+'/signin-mobile.png'});
  await page.getByLabel('Email',{exact:true}).fill(user.email);await page.getByLabel('Password',{exact:true}).fill('Synthetic-password-only');await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.getByRole('heading',{name:'Verify your sign-in',exact:true}).waitFor();await authGeometry('Second factor');await page.getByRole('button',{name:'Use a recovery code',exact:true}).click();assert.equal(await page.getByLabel('Recovery code',{exact:true}).getAttribute('inputmode'),'text');await page.getByRole('button',{name:'Back to sign in',exact:true}).click();await page.getByRole('heading',{name:'Sign in',exact:true}).waitFor();await page.getByRole('button',{name:'Forgot password?',exact:true}).click();await page.getByRole('heading',{name:'Reset your password',exact:true}).waitFor();await page.getByLabel('Account email',{exact:true}).waitFor();await authGeometry('Password recovery');pass('Exact Campaign brand/SVG/orbit/form and native sign-in/factor/recovery UI transitions; no real authentication claimed.');

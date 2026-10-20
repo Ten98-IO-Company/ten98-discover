@@ -2,10 +2,9 @@
 import assert from 'node:assert/strict';
 import {readFile,mkdir,writeFile} from 'node:fs/promises';
 import {createHash,randomBytes} from 'node:crypto';
-import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import {googleInspectionBatch} from '../src/server/google-inspection-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_GOOGLE_INSPECTION_BROWSER,'1');assert.ok(process.env.TEN98_GOOGLE_INSPECTION_DTOS);assert.ok(process.env.PLAYWRIGHT_MODULE);
 const source=await readFile(process.env.TEN98_GOOGLE_INSPECTION_DTOS),fixture=JSON.parse(source),{scope,snapshots}=fixture;
 for(const key of ['complete','partial','empty','cancelled','deadline'])assert.equal(googleInspectionBatch.safeParse(snapshots[key]).success,true,key);
@@ -19,7 +18,7 @@ try{
  server=await createServer({configFile:false,root:process.cwd(),cacheDir:out+'/vite-cache',appType:'custom',optimizeDeps:{entries:['tests/google-inspection-browser-fixture.tsx']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});
  server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Inspection fixture</title><div id="root"></div><script type="module" src="/tests/google-inspection-browser-fixture.tsx"></script></html>');});await server.listen();
  const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin=`http://127.0.0.1:${address.port}`;
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
+ browser=await launchChromium();context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
  await context.addInitScript(value=>{window.__inspectionFixture=value;},{projectId:scope.projectId,userId:scope.ownerId});
  const reply=(route,data,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'cache-control':'no-store'},body:JSON.stringify(data)});
  await context.route('**/*',async route=>{

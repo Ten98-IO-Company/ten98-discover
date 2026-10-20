@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_CITATION_VIEW_BROWSER,'1');
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/citation-view-vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/citation-view-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@ten98/ui']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Citation presentation acceptance</title><div id="root"></div><script type="module" src="/tests/citation-view-browser-fixture.tsx"></script></html>');});
@@ -12,7 +12,7 @@ let browser,page;
 const evidenceDir=resolve('private/citation-view-evidence');
 try{
  await server.listen();await server.warmupRequest('/tests/citation-view-browser-fixture.tsx');const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(7000);
  const errors=[],outbound=[],dialogs=[];let requests=0;page.on('pageerror',error=>errors.push(error.message));page.on('dialog',async dialog=>{dialogs.push(dialog.type());await dialog.dismiss();});
  await context.route('**/*',route=>{const request=route.request(),url=new URL(request.url());if(++requests>100||url.origin!==origin||url.pathname.startsWith('/api/')||request.method()!=='GET'||['fetch','xhr'].includes(request.resourceType())){outbound.push(request.method()+' '+url.pathname);return route.abort();}return route.continue();});

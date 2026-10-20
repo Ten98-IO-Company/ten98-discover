@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_PROMPT_DISCOVERY_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),out=resolve(root,'private/prompt-discovery-browser/run-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
 const sources=['src/components/PromptsPanel.tsx','src/components/PromptDiscoveryPanel.tsx','src/lib/prompt-discovery.ts','src/lib/api.ts','tests/prompt-discovery-browser-fixture.tsx','tests/prompt-discovery-browser.mjs'];
@@ -57,7 +57,7 @@ async function release(record,body,status=200){try{await reply(record.route,body
 try{
  server=await createServer({configFile:false,envDir:false,root,cacheDir:out+'/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@tanstack/react-router','zod']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synthetic prompt discovery</title><div id="root"></div><script type="module" src="/tests/prompt-discovery-browser-fixture.tsx"></script></html>');});await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;
- await server.environments.client.transformRequest('/tests/prompt-discovery-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();const optimizer=server.environments.client.depsOptimizer;await optimizer.scanProcessing;await Promise.all(Object.values(optimizer.metadata.discovered).map(item=>item.processing));const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({headless:true,channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',args:['--disable-background-networking']});
+ await server.environments.client.transformRequest('/tests/prompt-discovery-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();const optimizer=server.environments.client.depsOptimizer;await optimizer.scanProcessing;await Promise.all(Object.values(optimizer.metadata.discovered).map(item=>item.processing));browser=await launchChromium({args:['--disable-background-networking']});
 
  const capturePrompt=savedPrompt({text:'Capture exact saved question?',topic:'Capture'}),savedVersion={id:randomUUID(),number:1,text:'Earlier saved question?',createdAt:'2026-10-18T00:00:00.000Z',createdBy:'Synthetic author'};
  await fresh({items:[capturePrompt],versions:[savedVersion]});await button('Capture ChatGPT answer').click();assert.deepEqual(JSON.parse(await page.getByLabel('AI search callbacks',{exact:true}).innerText()),[[capturePrompt.id,capturePrompt.currentVersionId,true]]);await button('View versions').click();await page.getByText('Earlier saved question?',{exact:true}).waitFor();await button('Capture ChatGPT answer').nth(1).click();assert.deepEqual(JSON.parse(await page.getByLabel('AI search callbacks',{exact:true}).innerText()),[[capturePrompt.id,capturePrompt.currentVersionId,true],[capturePrompt.id,savedVersion.id,true]]);assert.equal(posts().length,0);

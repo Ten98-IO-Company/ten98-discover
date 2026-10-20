@@ -2,10 +2,10 @@
 // Node24: TEN98_WORKSPACE_NAV_BROWSER=1 PLAYWRIGHT_MODULE=<installed entry> node tests/workspace-navigation-browser.mjs
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import {mkdir,writeFile,readFile} from 'node:fs/promises';
 import {randomUUID,createHash} from 'node:crypto';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_WORKSPACE_NAV_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
@@ -82,7 +82,7 @@ async function analytics(expected){await click('Analytics','project');await shel
 try{
  await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.environments.client.transformRequest('/tests/account-preferences-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();const optimizer=server.environments.client.depsOptimizer;await optimizer.scanProcessing;await Promise.all(Object.values(optimizer.metadata.discovered).map(d=>d.processing));
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({headless:true,channel:process.env.PLAYWRIGHT_CHANNEL??'msedge'});
+ browser=await launchChromium();
  await fresh(query('project',W,P2));await shell(P2);
  await settledFrame();const workerReads=()=>requests.filter(r=>r.path.endsWith('/jobs')).length;assert.equal(workerReads(),0,'Analytics does not reconcile worker checks in the background');
  const workerRead=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/jobs'));await click('Install tracker','installation');await workerRead;await page.locator('details.diagnostics > summary').click();await page.getByText('No checks yet.',{exact:true}).waitFor();assert.equal(workerReads(),1,'Install tracker loads its own worker history');

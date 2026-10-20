@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_CITATION_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE,'Supply an installed Playwright module explicitly.');
 const pid='30000000-0000-4000-8000-000000000001',otherPid='30000000-0000-4000-8000-000000000002',uid=(p,n)=>`${p}0000000-0000-4000-8000-${String(n).padStart(12,'0')}`,hash=s=>createHash('sha256').update(s).digest('hex'),hostile='<img src=x onerror=alert(1)>',base=`/api/projects/${pid}`,endpoint=base+'/prompt-insights/citations';
 const publisher=['editorial','reviews','ecommerce','social','developer','pr','reference','institutional','other'],types=['homepage','article','listicle','howto','comparison','review','product','doc','forum','video','info','search','shopping','other'],sources=['publisher','google_shopping','google_search','google_wrapper','unclassified'],owners=['untracked','brand','competitor','ambiguous'],changes=['newly_observed','fewer_citations','not_observed_now','annotation_title_changed'],kinds=['eligible','queued','running','no_answer','empty','truncated','content_filtered','expired','invalid'];
@@ -13,7 +13,7 @@ const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'p
 server.middlewares.use((req,res,next)=>{if(req.url!=='/'&&req.url!=='/away')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Citation controller acceptance</title><div id="root"></div><script type="module" src="/tests/citation-browser-fixture.tsx"></script></html>');});
 let browser,page,stage='startup';const evidence=resolve('private/citation-controller-evidence');
 try{
- await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port,{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({headless:true,...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{}});
+ await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;browser=await launchChromium();
  const browserContext=await browser.newContext({viewport:{width:1440,height:1000},timezoneId:'UTC',serviceWorkers:'block'}),calls=[],outbound=[],errors=[],downloads=[];
  await browserContext.addInitScript(()=>{const make=URL.createObjectURL,revoke=URL.revokeObjectURL;window.createdBlobs=0;window.revokedBlobs=0;URL.createObjectURL=function(...args){window.createdBlobs++;return make.apply(this,args);};URL.revokeObjectURL=function(...args){window.revokedBlobs++;return revoke.apply(this,args);};});
  let role='editor',ctx=initialContext(),revision=hash('original'),readMode=null,insightMode=null,contextMode=null,writeMode=null,exportMode=null,held=null,expired=false,receiptExpired=false,metadataExpired=false,empty=false;const receipts=new Map();

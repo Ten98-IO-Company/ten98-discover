@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_KEYWORD_COST_BROWSER,'1');
 const started=Date.now(),id=n=>`${n}0000000-0000-4000-8000-000000000001`,pid=id(3),cid=id(4),rid=id(5),qid=id(6),at='2026-10-19T12:00:00.000Z';
 const request={connectionId:cid,mode:'overview',keywords:['native keyword','second keyword'],locationCode:2840,languageCode:'en',limit:100};
@@ -17,8 +17,7 @@ const calls=[],outbound=[],errors=[],json=(route,data,status=200)=>route.fulfill
 const totalDeadline=setTimeout(()=>{console.error('Keyword cost 120-second deadline exceeded');process.exitCode=1;void browser?.close();void server.close();},120000);
 try{
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');
- browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{})});context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block',reducedMotion:'reduce'});
+ browser=await launchChromium();context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block',reducedMotion:'reduce'});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname;
   if(url.origin!==origin){outbound.push(url.href);return route.abort();}if(!path.startsWith('/api/'))return route.continue();

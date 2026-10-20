@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 import {readFileSync} from 'node:fs';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_CONTEXT_EXIT_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);
 const W='10000000-0000-4000-8000-000000000001',P='20000000-0000-4000-8000-000000000001',U='30000000-0000-4000-8000-000000000001',stamp='2026-10-19T00:00:00Z';
@@ -68,7 +68,7 @@ async function saved(){await page.getByText('Changes saved. No provider work was
 try{
  await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.environments.client.transformRequest('/tests/context-exit-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();const optimizer=server.environments.client.depsOptimizer;await optimizer.scanProcessing;await Promise.all(Object.values(optimizer.metadata.discovered).map(item=>item.processing));
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+ browser=await launchChromium();
  await fresh();
  const appVersion=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version;
  assert.equal(await page.locator('.sidebar').getByRole('button',{name:'Sign out',exact:true}).count(),0);

@@ -7,7 +7,6 @@ import {runKeyword} from './jobs.mjs';
 import {getDatabase,closeDatabase} from '../../src/server/db.ts';
 import {stopJobs} from '../../src/server/jobs.ts';
 fixtureGuard();
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
 
 assert.ok(process.argv.length<=3,'Optional argument: a fresh lowercase-hyphen core fixture label.');
 const group=process.argv[2]?await createKeywordCase(process.argv[2]):(await readFixture()).groups.keyword,{pool}=getDatabase();
@@ -15,7 +14,7 @@ let session,stage='initial',held;
 const B='/api/projects/'+group.main.id+'/keyword-research';
 try{
   assert.equal((await pool.query('SELECT count(*) AS n FROM keyword_research_run WHERE project_id=$1',[group.main.id])).rows[0].n,'0','This acceptance runner needs its unused seeded keyword group.');
-  session=await browserSession(chromium,group.owner);const {page}=session;
+  session=await browserSession(group.owner);const {page}=session;
   const initialCounts=await providerCounts();
   await page.goto(href(group,'keywords'),{waitUntil:'networkidle'});
   await page.getByRole('heading',{name:'Keyword research',exact:true}).last().waitFor();
@@ -88,7 +87,7 @@ try{
   stage='Region market selection retains exact quote and result scope';
   const regionCounts=await providerCounts();
   for(const [label,locationCode,languageCode,locationName] of [['region-taiwan',2158,'zh-TW','Taiwan'],['region-hong-kong-english',2344,'en','Hong Kong'],['region-hong-kong-chinese',2344,'zh-TW','Hong Kong']]){
-    const regionGroup=await createKeywordCase(label),regionSession=await browserSession(chromium,regionGroup.owner);
+    const regionGroup=await createKeywordCase(label),regionSession=await browserSession(regionGroup.owner);
     try{
       const {page}=regionSession,B='/api/projects/'+regionGroup.main.id+'/keyword-research';
       await page.goto(href(regionGroup,'keywords'),{waitUntil:'networkidle'});

@@ -9,13 +9,13 @@ import {addDomain,issueDomainChallenge,verifyDomain} from '../src/server/domains
 import {executeDomainRedirectCheck} from '../src/server/domain-redirects.ts';
 import {stopJobs} from '../src/server/jobs.ts';
 import type {RedirectTransport} from '../src/server/domain-redirect-network.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Production UI/API with a synthetic DNS/HTTP worker transport, never a public request.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
 const config=getConfig();
 for(const value of [config.appUrl,config.databaseUrl])assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(value).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE);
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE!);
 let browser:any,stage='setup';const releases:(()=>void)[]=[];
 try{
   await assertSchema();const {pool}=getDatabase(),user=randomUUID(),password=randomBytes(24).toString('base64url'),email=`${user}@redirect-browser.integration.test`;
@@ -28,7 +28,7 @@ try{
     const proof=await issueDomainChallenge(projectId,user,row.id,{});await verifyDomain(projectId,user,row.id,{},async()=>[[proof.challenge.value]]);return row;}
   stage='alias fixture';const first=await alias('alias-browser.example.com'),lost=await alias('lost-browser.example.com');
   await pool.query("UPDATE installation SET claimed=true WHERE id='instance'");
-  stage='browser launch';browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  stage='browser launch';browser=await launchChromium();
   const context=await browser.newContext({viewport:{width:1440,height:1000}});let external=0,errors=0;
   await context.route('**/*',(route:any)=>{if(new URL(route.request().url()).origin!==config.appUrl){external++;return route.abort();}return route.continue();});
   stage='browser sign in';const signin=await context.request.post(`${config.appUrl}/api/auth/sign-in/email`,{headers:{origin:config.appUrl},data:{email,password}});assert.equal(signin.status(),200);

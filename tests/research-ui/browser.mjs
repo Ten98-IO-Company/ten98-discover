@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fixtureGuard,appUrl,evidenceDir} from './guard.mjs';
+import {launchChromium} from '../helpers/playwright.mjs';
 
 export function deferred(){let done;const promise=new Promise(resolve=>done=resolve);return {promise,resolve:done};}
 export async function bounded(promise,ms=30_000){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Synthetic browser coordination timed out.')),ms);})]);}finally{clearTimeout(timer);}}
@@ -9,8 +10,8 @@ export async function providerCounts(){
   let lines;try{lines=await readFile(resolve(evidenceDir,'research-provider-calls.ndjson'),'utf8');}catch(error){if(error.code==='ENOENT')return {};throw error;}
   return lines.trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).reduce((counts,event)=>({...counts,[event.operation]:(counts[event.operation]??0)+1}),{});
 }
-export async function browserSession(chromium,user){
-  fixtureGuard();const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+export async function browserSession(user){
+  fixtureGuard();const browser=await launchChromium();
   const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage(),errors=[],outbound=[];
   page.on('pageerror',error=>errors.push(error));
   await context.route('**/*',route=>{

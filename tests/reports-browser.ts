@@ -7,6 +7,7 @@ import {getConfig} from '../src/server/config.ts';
 import {closeDatabase,getDatabase,assertSchema} from '../src/server/db.ts';
 import {createWorkspace} from '../src/server/teams.ts';
 import {createReportShare,revokeReportShare,saveReport} from '../src/server/reports.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Optional browser acceptance runner: installed tooling is supplied by the operator, never bundled in production.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1','Browser checks require an isolated local fixture.');
@@ -14,7 +15,6 @@ const config=getConfig(),local=['localhost','127.0.0.1','[::1]'];
 assert.ok(local.includes(new URL(config.appUrl).hostname)&&local.includes(new URL(config.databaseUrl).hostname));
 const playwrightPath=process.env.PLAYWRIGHT_MODULE;
 assert.ok(playwrightPath,'Set PLAYWRIGHT_MODULE to an installed Playwright module URL.');
-const {chromium}=await import(playwrightPath);
 let hits=0;
 const trap=createServer((_request,response)=>{hits++;response.writeHead(200,{'content-type':'text/plain'});response.end('Unexpected report request');});
 await new Promise<void>((resolve,reject)=>{trap.once('error',reject);trap.listen(0,'127.0.0.1',resolve);});
@@ -31,7 +31,7 @@ try {
   const html=`<!doctype html><html><head><title>Static report</title><style>@import url('${trapUrl}/style'); @font-face{font-family:leak;src:url('${trapUrl}/font')} body{font-family:leak, sans-serif;background-image:url('${trapUrl}/css');color:rgb(12,34,56)}</style><base href="${trapUrl}/"><meta http-equiv="refresh" content="0;url=${trapUrl}/refresh"></head><body><h1>Isolated static report</h1><p id="result">Safe content</p><script>window.reportExecuted=true;parent.reportExecuted=true;fetch('${trapUrl}/script')</script><img src="${trapUrl}/img" onerror="window.reportExecuted=true"><img id="chart" src="${png}" alt="One pixel chart"><svg viewBox="0 0 10 10"><rect width="8" height="5" fill="blue"/><foreignObject><iframe src="${trapUrl}/foreign"></iframe></foreignObject><script>window.reportExecuted=true</script><use href="${trapUrl}/svg"/></svg><a id="navigate" href="${trapUrl}/navigate" target="_top" ping="${trapUrl}/ping">Link text</a><form action="${trapUrl}/submit"><input name="secret"><button>Submit</button></form><iframe src="${trapUrl}/frame"></iframe><object data="${trapUrl}/object"></object></body></html>`;
   const report=(await saveReport(projectId,userId,{title:'Sandbox evidence',html})).report;
   const share=await createReportShare(projectId,userId,report.id,{label:'Sandbox test',revision:1,expiresAt:new Date(Date.now()+86400000).toISOString()});
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   const context=await browser.newContext();
   const signIn=await context.request.post(`${config.appUrl}/api/auth/sign-in/email`,{headers:{origin:config.appUrl},data:{email,password}});
   assert.equal(signIn.status(),200,'Fixture sign-in must establish a real cookie session.');

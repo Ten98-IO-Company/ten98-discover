@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {createHash,randomBytes} from 'node:crypto';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import {execFileSync} from 'node:child_process';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_WEBSITE_SHARE_EXIT_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const control=process.env.TEN98_WEBSITE_SHARE_EXIT_CONTROL==='1';
 const root=process.cwd(),out=resolve('private/swarm/share-exit-'+randomBytes(5).toString('hex'));mkdirSync(out,{recursive:true});
@@ -52,7 +52,7 @@ async function run(){
  server=await createServer({plugins:baseline?[{name:'original-website-share-control',enforce:'pre',transform(code,id){return id.replaceAll('\\','/').endsWith('/src/components/WebsiteSharePanel.tsx')?baseline:null;}}]:[],configFile:false,envDir:false,root,cacheDir:out+'/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/website-share-exit-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@tanstack/react-router','zod']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});
  server.middlewares.use((request,response,next)=>{if(request.url?.split('?')[0]!=='/')return next();response.setHeader('content-type','text/html');response.end('<!doctype html><html lang="en"><meta charset="utf-8"><title>Website share exit fixture</title><div id="root"></div><script type="module" src="/tests/website-share-exit-browser-fixture.tsx"></script></html>');});
  await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;await server.environments.client.warmupRequest('/tests/website-share-exit-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await server.environments.client.depsOptimizer?.scanProcessing;await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(value=>value.processing));
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+ browser=await launchChromium();
  if(control){await fresh();await draft();await navigate('preferences');await wait(()=>dialogs.length===1||new URL(page.url()).searchParams.get('view')==='preferences');assert.equal(dialogs.length,1,'Original source fails to protect the website-share draft on router exit');return;}
  await fresh();await draft();await btn('New public link').click();assert.equal(dialogs.length,1);await sameDraft('Unsaved public link');await btn('Cancel').click();assert.equal(dialogs.length,2);await sameDraft('Unsaved public link');accept=true;await btn('Cancel').click();assert.equal(await name().count(),0);await navigate('preferences');await away();assert.equal(dialogs.length,3);pass('Local New and Cancel protect drafts; confirmed discard and clean navigation work');
  await fresh();await draft('Sidebar draft');await page.getByRole('link',{name:'Settings',exact:true}).click();await wait(()=>dialogs.length===1);await sameDraft('Sidebar draft');await navigate('preferences');await wait(()=>dialogs.length===2);await sameDraft('Sidebar draft');accept=true;await navigate('preferences');await away();assert.equal(dialogs.length,3);await page.evaluate(()=>history.back());await btn('New public link').waitFor();assert.equal(await name().count(),0);pass('Actual sidebar and router cancellation keep draft/parent mounted; acceptance discards it');

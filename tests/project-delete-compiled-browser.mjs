@@ -4,11 +4,10 @@
 // Then creates a public website link on the surviving website and opens it in a fresh context (sections, fragment scrub, capability-only reads, 44 px, revoke, reload).
 import assert from 'node:assert/strict';assert.equal(process.env.TEN98_PROJECT_DELETE_COMPILED,'1');assert.match(process.env.BASE_URL??'',/^http:\/\/127\.0\.0\.1:\d+$/,'Point BASE_URL at a local throwaway server; never a saved installation.');
 import {writeFile} from 'node:fs/promises';
-import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
+import {launchChromium} from './helpers/playwright.mjs';
 const base=process.env.BASE_URL,out=process.env.OUT_DIR,token=process.env.BOOTSTRAP_TOKEN;
-const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);
-const browser=await chromium.launch({channel:'msedge',headless:true});const evidence={steps:[],errors:[],api:[],csp:null};
+const browser=await launchChromium();const evidence={steps:[],errors:[],api:[],csp:null};
 const context=await browser.newContext({viewport:{width:1440,height:1000}});
 // Every frame reports Content-Security-Policy violations as console errors, so a blocked script, style, image or frame fails the harness.
 await context.addInitScript(()=>document.addEventListener('securitypolicyviolation',e=>console.error('csp '+e.effectiveDirective+' '+e.blockedURI)));

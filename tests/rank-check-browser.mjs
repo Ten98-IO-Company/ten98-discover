@@ -4,9 +4,9 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_RANK_CHECK_BROWSER,'1');
 const pid='20000000-0000-4000-8000-000000000001',cid='40000000-0000-4000-8000-000000000001',tid='50000000-0000-4000-8000-000000000001';
 const base='/api/projects/'+pid,trackerPath=base+'/rank-trackers/'+tid,at='2026-10-13T09:00:00.000Z';
@@ -18,7 +18,7 @@ server.middlewares.use((req,res,next)=>{if(req.url!=='/'&&req.url!=='/elsewhere'
 let browser;
 try{
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(10000);
  const errors=[],external=[],calls=[],posts=[],runs=new Map(),receipts=new Map();let role='owner',vault=true,nextWrite=null,nextRead=null,held=null,starts=0;
  const scheduleReceipts=new Set();let scheduleRevision=tracker.authoredRevision,schedule={enabled:false,approvalStale:false,interval:'manual',timezone:null,hour:null,minute:null,weekday:null,nextDueAt:null,approval:null,staleReasons:[]};

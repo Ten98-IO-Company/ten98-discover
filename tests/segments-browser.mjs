@@ -13,13 +13,14 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {normalizeProperties} from '../src/server/analytics-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_SEGMENTS_BROWSER,'1');
 const config=getConfig(),db=new URL(config.databaseUrl),app=new URL(config.appUrl);
 assert.ok(['127.0.0.1','localhost','[::1]'].includes(db.hostname));assert.equal(db.port,'55501');assert.match(db.pathname,/^\/ten98_segments_browser_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');
 assert.equal(app.origin,'http://127.0.0.1:3099');
 for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE','PGOPTIONS','DATABASE_URL_FILE'])assert.equal(process.env[key],undefined);
-assert.ok(process.env.PLAYWRIGHT_MODULE);const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
+assert.ok(process.env.PLAYWRIGHT_MODULE);
 await assertSchema();const {pool}=getDatabase(),userId=randomUUID(),workspaceId=randomUUID(),projectId=randomUUID();
 const email=randomUUID()+'@segments-browser.integration.test',password=randomBytes(24).toString('base64url');
 const endpoint='/api/projects/'+projectId+'/segments',explore='/api/projects/'+projectId+'/explore';
@@ -32,7 +33,7 @@ try{
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspaceId,userId]);
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Saved filter sample',$3,$4,'infinity')",[projectId,workspaceId,'https://'+projectId+'.integration.test',randomUUID()]);
   for(const [path,value] of [[literal,0],[literal,false],['/other',0]])await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at,properties,dimensions) VALUES($1,$2,'signup',$3,$4,$5,$6)",[randomUUID(),projectId,path,day+'T12:00:00Z',JSON.stringify(normalizeProperties({value})),JSON.stringify({campaign:{source:''}})]);
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true});let outbound=0;
   await context.route('**/*',async route=>{if(new URL(route.request().url()).origin===config.appUrl)await route.continue();else{outbound++;await route.abort();}});
   assert.equal((await context.request.post(config.appUrl+'/api/auth/sign-in/email',{headers:{origin:config.appUrl},data:{email,password}})).status(),200);

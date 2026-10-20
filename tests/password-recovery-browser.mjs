@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_PASSWORD_RECOVERY_BROWSER, '1');
 assert.ok(process.env.TEN98_PASSWORD_RECOVERY_BROWSER_APPROVAL && process.env.PLAYWRIGHT_MODULE);
 const root = process.cwd(), hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -90,7 +90,7 @@ try {
   assert.ok(Object.keys(optimizer.metadata.optimized).length > 0, 'Cold dependency bundles must be committed before browser navigation.');
   for (const dependency of pendingDependencies) assert.ok(optimizer.metadata.optimized[dependency.id], dependency.id + ' was not committed.');
   startupPhase('optimizer-commit-complete'); startupPhase('browser-launch-start');
-  const { chromium } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href); browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true, args: ['--disable-background-networking', '--disable-component-update', '--disable-domain-reliability'] });
+   browser = await launchChromium({args: ['--disable-background-networking', '--disable-component-update', '--disable-domain-reliability']});
   startupPhase('browser-launch-complete');
 
   for (const account of ['synthetic@example.com', 'unknown@example.com']) {

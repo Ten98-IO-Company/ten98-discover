@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {createHash,randomBytes} from 'node:crypto';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_GOOGLE_COMMERCE_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const connectionsOnly=process.argv.includes('--connections-only');
 const root=process.cwd(),out=resolve('private/ga4-commerce-ui/browser-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
@@ -49,7 +49,7 @@ try{
  server=await createServer({configFile:false,root,cacheDir:out+'/vite-cache',appType:'custom',optimizeDeps:{entries:['tests/google-commerce-browser-fixture.tsx']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});
  server.middlewares.use((request,response,next)=>{if(request.url?.split('?')[0]!=='/')return next();response.setHeader('content-type','text/html');response.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Commerce report synthetic component acceptance</title><div id="root"></div><script type="module" src="/tests/google-commerce-browser-fixture.tsx"></script></html>');});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;if(!connectionsOnly){await server.environments.client.warmupRequest('/tests/google-commerce-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));}
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+ browser=await launchChromium();
  for(const[configured,enabled,instanceOperator,role]of[[false,false,true,'owner'],[true,false,true,'viewer'],[true,true,true,'owner'],[false,false,false,'owner'],[true,false,false,'owner'],[true,true,false,'viewer']]){
   const data=fixture();data.overview.app={configured,enabled,testing:false};data.overview.role=role;data.overview.connections=[];const requestCount=evidence.requests.length;
   await fresh(data,async()=>false,{selectedScope:{...scope,instanceOperator}});assert.equal(evidence.requests.length,requestCount+1);assert.equal(evidence.requests.at(-1).method,'GET');assert.equal(await page.evaluate(()=>window.googleCommerceFixture.setupOpens()),0);

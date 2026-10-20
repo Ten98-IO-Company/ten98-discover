@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {randomUUID,createHash} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_BACKLINK_RESEARCH_BROWSER,'1');
 const output=resolve('private/backlink-research-ui/browser/run-'+randomUUID().replaceAll('-','').slice(0,12));
@@ -69,7 +69,7 @@ async function draft(page,report='backlinks_profile_v1',target='example.com'){
 try{
  await mkdir(output,{recursive:true});await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.warmupRequest('/tests/backlink-research-browser-fixture.tsx');await server.waitForRequestsIdle();
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+ browser=await launchChromium();
 
  for(const report of ['backlinks_overview_v1','backlinks_profile_v1'])for(const scope of ['domain','subdomains','subfolder','exact_url']){
   const {page,context,model}=await open();const target=scope==='subfolder'?'http://www.example.com/Guide/':scope==='exact_url'?'http://www.example.com/Guide/':'https://www.example.com/';

@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomBytes} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_MODELS_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);assert.ok(process.env.TEN98_MODELS_BROWSER_APPROVAL);
 const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex'),root=process.cwd();
@@ -176,7 +176,7 @@ try{
  server=await createServer({configFile:false,root,cacheDir:resolve(out,'vite-cache'),appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@tanstack/react-router']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dynamic model component acceptance</title><div id="root"></div><script type="module" src="/tests/openrouter-models-browser-fixture.tsx"></script></html>');});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');owned.push('http://127.0.0.1:'+address.port);
- const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({headless:true,...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{}});
+ browser=await launchChromium();
  if(evidence.mode==='recovery-red'){await recovery();pass('genuine413 recovery through current prompt metadata');}
  else{
   await fresh({mode:'picker',scope:scope(),catalog:C.catalogOwner.catalog},async()=>false);await page.getByText('0 of 2 selected.',{exact:false}).waitFor();const before=evidence.requests.length;

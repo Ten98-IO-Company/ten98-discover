@@ -7,7 +7,6 @@ import {runPrompt} from './jobs.mjs';
 import {getDatabase,closeDatabase} from '../../src/server/db.ts';
 import {stopJobs} from '../../src/server/jobs.ts';
 fixtureGuard();
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
 
 const args=process.argv.slice(2),lifecycleOnly=args.length===2&&args[0]==='--lifecycle-only'&&/^[a-z][a-z-]{0,19}$/.test(args[1]);
 assert.ok(args.length===0||lifecycleOnly,'Optional arguments: --lifecycle-only NEW-LOWERCASE-LABEL (maximum 20 letters/hyphens).');
@@ -15,7 +14,7 @@ const phaseLabel=label=>label+(lifecycleOnly?'-'+args[1]:'');
 const {pool}=getDatabase();let session,stage='initial';const cleanup=[];
 const execution=page=>page.locator('section[aria-label="Prompt execution"]');
 const library=page=>page.locator('section[aria-label="Prompt library"]');
-async function begin(group){await session?.browser.close();session=await browserSession(chromium,group.owner);await session.page.goto(href(group,'prompts'),{waitUntil:'networkidle'});await library(session.page).getByRole('button',{name:'Recent runs',exact:true}).waitFor();return session.page;}
+async function begin(group){await session?.browser.close();session=await browserSession(group.owner);await session.page.goto(href(group,'prompts'),{waitUntil:'networkidle'});await library(session.page).getByRole('button',{name:'Recent runs',exact:true}).waitFor();return session.page;}
 async function filter(page,text,status='active'){
   const lib=library(page);await lib.getByLabel('Text contains',{exact:true}).fill(text);await lib.getByLabel('Status',{exact:true}).selectOption(status);
   const response=page.waitForResponse(response=>response.url().includes('/prompts?')&&response.request().method()==='GET');await lib.getByRole('button',{name:'Apply filters',exact:true}).click();await response;

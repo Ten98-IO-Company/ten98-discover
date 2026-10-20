@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_PROMPT_RECEIPT_BROWSER,'1');
 const id=n=>`${n}0000000-0000-4000-8000-000000000001`,pid=id(3),cid=id(4),prompt=id(5),version=id(6),run=id(7),quote=id(8),connection=id(9),at='2026-10-13T12:00:00.000Z';
 const input={connectionId:connection,promptId:prompt,versionId:version,systemText:'Private copied system',models:['openai/gpt-4o-mini'],maxCompletionTokens:1024,fundedCredits:true};
@@ -19,7 +19,7 @@ const json=(route,data,status=200)=>route.fulfill({status,contentType:'applicati
 const until=async test=>{const end=Date.now()+10000;while(!await test()){if(Date.now()>end)assert.fail('Controlled receipt timed out.');await new Promise(r=>setTimeout(r,10));}};
 try{
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{}),headless:true});const context=await browser.newContext({viewport:{width:1100,height:850},serviceWorkers:'block'});
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1100,height:850},serviceWorkers:'block'});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname;if(url.origin!==origin){outbound.push(path);return route.abort();}if(!path.startsWith('/api/'))return route.continue();assert.ok(++requestTotal<=100,'Synthetic API request cap exceeded');calls.push({method:req.method(),path});
   const base='/api/projects/'+pid+'/prompt-executions';if(path==='/api/projects/'+pid.replace(/1$/,'2')+'/prompt-executions')return json(route,{error:'New project access denied'},404);if(!path.startsWith(base)){outbound.push(path);return route.abort();}

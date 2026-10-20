@@ -6,6 +6,7 @@ import {claimInstallation} from '../src/server/auth.ts';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
 import {createWorkspace,removeMember} from '../src/server/teams.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Real local UI acceptance. Playwright is optional operator tooling, not an application dependency.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
@@ -13,7 +14,6 @@ const config=getConfig();
 assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(config.appUrl).hostname));
 assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(config.databaseUrl).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Set PLAYWRIGHT_MODULE to the installed Playwright module URL.');
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
 let browser:any,releaseProjects:(()=>void)|undefined;
 try {
   await assertSchema();
@@ -27,7 +27,7 @@ try {
     await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,$3,$2,$4)',[randomUUID(),userId,'credential',await hashPassword(password)]);
     await createWorkspace(userId,{name:'Report UI checks'});
   }
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   const context=await browser.newContext({viewport:{width:1280,height:900}});
   const request=async(path:string,body?:unknown)=>{
     const response=body===undefined?await context.request.get(config.appUrl+path):await context.request.post(config.appUrl+path,{headers:{origin:config.appUrl},data:body});

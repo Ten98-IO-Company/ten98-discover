@@ -2,12 +2,11 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {mkdir,writeFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {readCssSource} from './css-source.mjs';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {AppField} from '@ten98/ui/app';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_DESIGN_SYSTEM_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);
 const [styles,tokens,analytics,campaign,account]=await Promise.all(['src/styles.css','src/design-tokens.css','src/components/analytics.css','src/campaign-ui.css','src/components/account-settings.css'].map(file=>readCssSource(file)));
@@ -22,7 +21,7 @@ const server=createServer((req,res)=>{const path=new URL(req.url,'http://localho
 let browser;
 try{
  await new Promise(done=>server.listen(0,'127.0.0.1',done));const origin='http://127.0.0.1:'+server.address().port;
- const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({headless:true,channel:process.env.PLAYWRIGHT_CHANNEL||'msedge'});
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce',colorScheme:'dark',serviceWorkers:'block'});
  await context.route('**/*',route=>{const req=route.request(),url=new URL(req.url());if(req.method()==='GET'&&url.origin===origin)return route.continue();outbound.push(req.url());return route.abort();});
  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(origin);

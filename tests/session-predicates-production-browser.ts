@@ -10,11 +10,11 @@ import assert from 'node:assert/strict';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Root supplies one built app and a fresh owned fixture. This runner never starts
 // a service, migrates, mocks an API result, or contacts another origin.
@@ -84,8 +84,7 @@ try{
   const mark=(message:string)=>{completed.push(message);console.log('PASS '+message);};
   mark('Real HTTP identify and event collection share rotating keys, preserve distinct event/profile values and retain genuinely unidentified traffic.');
 
-  const module=process.env.PLAYWRIGHT_MODULE!,{chromium}=await import(module.startsWith('file:')?module:pathToFileURL(resolve(module)).href);
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',(route:any)=>{const target=new URL(route.request().url());if(target.origin===origin)return route.continue();external.push(target.origin);return route.abort();});
   assert.equal((await context.request.post(origin+'/api/auth/sign-in/email',{headers:{origin},data:{email,password},maxRedirects:0})).status(),200);

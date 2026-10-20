@@ -10,13 +10,12 @@ async function closeExplore(target:any){
 }
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
-import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {createServer} from 'vite';
 import {sessionListQuery} from '../src/server/session-explorer-input.ts';
 import {parseSegmentDefinition} from '../src/server/segment-input.ts';
 import {parseCohortDefinition} from '../src/server/cohort-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_SESSION_EXPLORER_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const evidence='private/session-explorer-browser-root-evidence',project='20000000-0000-4000-8000-000000000001',workspace='10000000-0000-4000-8000-000000000001',savedId='40000000-0000-4000-8000-000000000001',cohortId='50000000-0000-4000-8000-000000000001';
 const keyA='a'.repeat(64),keyB='b'.repeat(64),visitA='c'.repeat(64),visitB='d'.repeat(64),at='2026-10-14T12:00:00.000Z',cutoff='2026-07-14T12:00:00.000Z';
@@ -55,7 +54,7 @@ try{await mkdir(evidence,{recursive:true});await server.listen();
  try{await Promise.race([(async()=>{const client=server.environments.client;await client.warmupRequest('/tests/session-explorer-browser-fixture.tsx');await client.waitForRequestsIdle();await Promise.all(Object.values(client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));})(),new Promise<never>((_,reject)=>{setupTimer=setTimeout(()=>reject(new Error('Session fixture setup exceeded30000ms.')),30000);})]);}finally{clearTimeout(setupTimer);}
  console.log(JSON.stringify({fixtureStartupMs:Math.round(performance.now()-setupStarted),browserTimeoutMs:6000}));
  const address=server.httpServer!.address();assert.ok(address&&typeof address==='object');assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE!)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',(e:Error)=>errors.push(e.message));
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',(e:Error)=>errors.push(e.message));
  const reply=(r:any,body:any,status=200)=>r.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
  await context.route('**/*',async(r:any)=>{const request=r.request(),url=new URL(request.url()),path=url.pathname;if(url.origin!==origin){external.push(url.href);return r.abort();}if(!path.startsWith('/api/'))return request.method()==='GET'?r.continue():r.abort();assert.equal(request.method(),'GET');reads.push({path,query:url.search.slice(1)});assert.ok(reads.length<=400,'Synthetic session suite exceeded400 API requests.');
   if(path.endsWith('/linked-activity')){if(access)return reply(r,{error:'Project access unavailable'},access);if(linkedConflict&&url.searchParams.has('cursor'))return reply(r,{error:'Activity changed'},409);return reply(r,linkedResponse(url.searchParams,path.split('/sessions/')[1].split('/')[0]));}

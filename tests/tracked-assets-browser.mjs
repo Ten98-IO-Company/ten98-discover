@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {createHash,randomBytes} from 'node:crypto';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import React from 'react';
 import {renderToString} from 'react-dom/server';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_TRACKED_ASSETS_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),out=resolve(root,'private/tracked-assets-ui/browser-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
 const files=['src/components/TrackedAssetsPanel.tsx','src/components/GeographyCard.tsx','src/lib/tracked-assets.ts','src/lib/navigation.ts','src/routes/index.tsx','src/styles.css','src/design-tokens.css','tests/tracked-assets-browser-fixture.tsx','tests/tracked-assets-browser.mjs'];
@@ -93,7 +93,7 @@ try{
  assert.ok(sharedMarkup.includes('Loading shared report…'));assert.equal(sharedMarkup.includes('malformed'),false);assert.equal(sharedMarkup.includes(publicToken),false);
  server.middlewares.use((req,res,next)=>{const path=req.url?.split('?')[0],hydrate=path==='/__tracked_share_hydration';if(path!=='/'&&!hydrate)return next();res.setHeader('content-type','text/html;charset=utf-8');res.setHeader('Content-Security-Policy',"worker-src 'none'");res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tracked assets synthetic App acceptance</title><div id="root"'+(hydrate?' data-hydrate-shared="true"':'')+'>'+(hydrate?sharedMarkup:'')+'</div><script type="module" src="/tests/tracked-assets-browser-fixture.tsx"></script></html>');});
  const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;assert.ok(await server.environments.client.transformRequest('/tests/tracked-assets-browser-fixture.tsx'));await server.environments.client.waitForRequestsIdle();const optimizer=server.environments.client.depsOptimizer;assert.ok(optimizer);await optimizer.scanProcessing;await Promise.all(Object.values(optimizer.metadata.discovered).map(value=>value.processing));
- const{chromium}=await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);browser=await chromium.launch({...(process.env.PLAYWRIGHT_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH}:{channel:process.env.PLAYWRIGHT_CHANNEL??'msedge'}),headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+ browser=await launchChromium({...(process.env.PLAYWRIGHT_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH}:{}),args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
 
  for(const role of['owner','admin','editor','viewer']){
   await fresh({role,search:selected(assetA,'settings')});await readyItem();assert.equal(await page.getByLabel('Name',{exact:true}).isDisabled(),role==='viewer');assert.equal(await button('Sharing').count(),['owner','admin'].includes(role)?1:0);assert.equal(await page.getByRole('navigation',{name:'Workspace measurement',exact:true}).getByRole('link',{name:'Tracking images',exact:true}).count(),1);await button('Back to links').click();await readyList();assert.equal(await button('Create link').isDisabled(),role==='viewer');assert.equal(posts().length,0);assert.equal(new URL(page.url()).searchParams.has('project'),false);

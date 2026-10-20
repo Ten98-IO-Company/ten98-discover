@@ -3,10 +3,9 @@
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash,randomBytes} from 'node:crypto';
-import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import {catalog,previewConfiguration} from '../src/server/destinations.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_DESTINATION_SETTINGS_BROWSER,'1');
 const out='private/destination-settings/run-'+randomBytes(5).toString('hex');await mkdir(out,{recursive:true});
 const files=['src/components/DestinationsPanel.tsx','src/server/destinations.ts','public/destinations.js','tests/destinations-settings-browser-fixture.tsx','tests/destinations-settings-browser.mjs'];
@@ -27,7 +26,7 @@ try{
  server=await createServer({configFile:false,root:process.cwd(),cacheDir:out+'/vite-cache',appType:'custom',optimizeDeps:{entries:['tests/destinations-settings-browser-fixture.tsx']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});
  server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/tests/destinations-settings-browser-fixture.tsx"></script></html>');});
  await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;await server.environments.client.warmupRequest('/tests/destinations-settings-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:'msedge',headless:true});context=await browser.newContext({serviceWorkers:'block'});
+ browser=await launchChromium();context=await browser.newContext({serviceWorkers:'block'});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());if(url.origin!==origin){external.push(req.method()+' '+url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();
   const item={method:req.method(),path:url.pathname,environment:url.searchParams.get('environment'),body:req.postDataJSON()};requests.push(item);if(!/^\/api\/projects\/[^/]+\/destinations(?:\/(draft|preview|publish|rollback))?$/.test(url.pathname))throw Error('Unexpected synthetic API path');

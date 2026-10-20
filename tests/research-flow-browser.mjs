@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve,sep} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import {aiQueryFilters,aiQueryRange,aiQueryReportSchema} from '../src/lib/ai-search-analysis.ts';
 import {aiSearchProfileId} from '../src/lib/ai-search.ts';
 import {aggregateAiSearchQueries} from '../src/server/ai-search-analysis.ts';
 import {normalizeDfsChatgptSearchEvidence} from '../src/server/ai-search-evidence.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Synthetic UI regression only; authentic SQL/quote/start acceptance remains separate.
 const out=resolve('private/swarm/research-flow-browser');await mkdir(out,{recursive:true});
@@ -38,7 +38,7 @@ try{
  server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synthetic research task flow</title><div id="root"></div><script type="module" src="/tests/research-flow-browser-fixture.tsx"></script></html>');});
  await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;
  let timer;try{await Promise.race([(async()=>{await server.environments.client.warmupRequest('/tests/research-flow-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(value=>value.processing));})(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Fixture warmup exceeded 30 seconds')),30000);})]);}finally{clearTimeout(timer);}
- const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:1440,height:1100},serviceWorkers:'block'});assert.ok(++contexts<=24,'Context cap exceeded');page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',error=>errors.push(error.message));
  await context.route('**/*',async route=>{try{
   const req=route.request(),url=new URL(req.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();assert.ok(++requests<=100,'API request cap exceeded');

@@ -9,6 +9,7 @@ import {mkdir, readFile, readdir, writeFile} from 'node:fs/promises';
 import {resolve, relative, sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {gzipSync} from 'node:zlib';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_RANK_LOADING_BROWSER, '1', 'Explicit production-fixture opt-in required');
 const cwd = process.cwd(), artifactDir = resolve(cwd, 'private/rank-loading-browser');
@@ -57,8 +58,7 @@ const measurements = {manifest: manifests[0], manifestSha256: hash(manifestText)
 await mkdir(artifactDir, {recursive: true});
 console.log('PASS emitted manifest: rank implementation is a dynamic chunk outside the initial static graph.');
 
-const {chromium} = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href : 'playwright');
-const browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true});
+const browser = await launchChromium();
 const results = [], fixtureData = {me: null, projects: null};
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const rankApi = path => /^\/api\/projects\/[^/]+\/rank-trackers(?:\/|$)/.test(path);

@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_AI_INSIGHTS_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Supply an installed Playwright module explicitly.');
 const pid='30000000-0000-4000-8000-000000000001',otherPid='30000000-0000-4000-8000-000000000002',promptId='40000000-0000-4000-8000-000000000001',prompt2='40000000-0000-4000-8000-000000000002',eid=n=>'50000000-0000-4000-8000-'+String(n).padStart(12,'0'),cid=n=>'60000000-0000-4000-8000-'+String(n).padStart(12,'0');
@@ -15,7 +15,7 @@ const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'p
 server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI insights controller acceptance</title><div id="root"></div><script type="module" src="/tests/ai-insights-browser-fixture.tsx"></script></html>');});
 let browser,page,stage='startup';const evidence=resolve('private/ai-insights-controller-evidence');
 try{
- await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port,{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({headless:true,...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{}});
+ await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:1440,height:1000},timezoneId:'UTC',serviceWorkers:'block'}),errors=[],outbound=[],calls=[],downloads=[];
  await context.addInitScript(()=>{const create=URL.createObjectURL,revoke=URL.revokeObjectURL;window.createdBlobs=0;window.revokedBlobs=0;URL.createObjectURL=function(...args){window.createdBlobs++;return create.apply(this,args);};URL.revokeObjectURL=function(...args){window.revokedBlobs++;return revoke.apply(this,args);};});
  let currentRole='viewer',readMode=null,promptMode=null,exportMode=null,comparisonMode='deny',held=null,revision='a'.repeat(64),expired=false;

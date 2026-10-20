@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {isAbsolute, relative, resolve, sep} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_SHELL_FLOW_BROWSER, '1', 'Explicit isolated-shell opt-in required.');
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Supply the existing Playwright module.');
@@ -25,8 +25,6 @@ assert.match(workspace ?? '', uuid); assert.match(project ?? '', uuid);
 assert.equal(typeof fixture.state, 'string');
 const statePath = resolve(fixture.state);
 assert.ok(insidePrivate(statePath), 'Authentication state must remain in private artifacts.');
-const moduleUrl = process.env.PLAYWRIGHT_MODULE.startsWith('file:') ? process.env.PLAYWRIGHT_MODULE : pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href;
-const {chromium} = await import(moduleUrl);
 const evidence = resolve('private/shell-flow-browser');
 const website = 'https://' + 'source-'.repeat(8) + 'fixture.example.test';
 const publicKey = 'synthetic-shell-public-key';
@@ -56,7 +54,7 @@ const calls = {events:0, jobs:0, check:0, signOut:0}, unexpected = [], errors = 
 const json = (route, reply) => route.fulfill({status:reply.status ?? 200, contentType:'application/json', body:JSON.stringify(reply.body)});
 
 try {
-  browser = await chromium.launch({headless:true, channel:process.env.PLAYWRIGHT_CHANNEL ?? 'msedge'});
+  browser = await launchChromium();
   const context = await browser.newContext({storageState:statePath, viewport:{width:1440,height:900}, locale:'en-US', timezoneId:'UTC', serviceWorkers:'block'});
   await context.addInitScript(() => {
     window.__shellClipboardWrites = [];

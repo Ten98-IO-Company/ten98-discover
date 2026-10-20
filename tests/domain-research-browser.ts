@@ -9,6 +9,7 @@ import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {handleApi} from '../src/server/api.ts';
 import {runDomainResearchChecks} from './domain-research-integration.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Production client/SSR assets + actual source handleApi/PG. Only the bounded
 // in-memory DataForSEO transport in the native suite is synthetic. This is a
@@ -17,7 +18,7 @@ assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.ok(process.env.PLAYW
 const config=getConfig(),origin=new URL(config.appUrl),appPort=Number(origin.port),ssrPort=Number(process.env.DOMAIN_BROWSER_SSR_PORT??appPort+1);
 assert.equal(origin.hostname,'127.0.0.1');assert.ok(appPort>1024&&ssrPort>1024&&appPort!==ssrPort);
 const transport=globalThis.fetch,{toNodeHandler}=createRequire(import.meta.resolve('nitro/package.json'))('srvx/node');
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE!);let browser:any;
+let browser:any;
 try{await runDomainResearchChecks(async fixture=>{
  const output=resolve('private/domain-seo/browser/'+Date.now()),pool=getDatabase().pool;await mkdir(output,{recursive:true});
  const finance=async()=>({rows:(await pool.query("SELECT id,status,actual_micros FROM provider_request WHERE operation='domain.ranked_keywords' ORDER BY id")).rows,jobs:(await pool.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='domain-research'")).rows[0].n}),before=await finance();
@@ -29,7 +30,7 @@ try{await runDomainResearchChecks(async fixture=>{
   await new Promise<void>((yes,no)=>{front.once('error',no);front.listen(appPort,'127.0.0.1',yes);});
   // Explicit native fixture claim; existing encrypted provider account identity is untouched.
   await pool.query("UPDATE installation SET claimed=true WHERE id='instance'");
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   async function open(actor:typeof fixture.owner){const context=await browser.newContext({viewport:{width:1440,height:1000}}),bodies=new WeakMap<object,Promise<Buffer>>();context.on('response',(r:any)=>{if(new URL(r.url()).origin===config.appUrl&&new URL(r.url()).pathname.startsWith('/api/')){const p=r.body();p.catch(()=>{});bodies.set(r,p);}});await context.route('**/*',(route:any)=>{if(new URL(route.request().url()).origin!==config.appUrl){external++;return route.abort();}return route.continue();});const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',()=>errors++);await page.goto(config.appUrl);await page.getByLabel('Email',{exact:true}).fill(actor.email);await page.getByLabel('Password',{exact:true}).fill(fixture.password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.getByLabel('Workspace',{exact:true}).waitFor();await page.goto(config.appUrl+'/?workspace='+fixture.workspaceId+'&project='+fixture.projectId+'&view=domain-seo');await page.getByRole('button',{name:'Refresh receipts',exact:true}).waitFor();return {context,page,bodies};}
   const read=async(r:any,bodies:WeakMap<object,Promise<Buffer>>)=>{assert.equal(r.status(),200);const pending=bodies.get(r);assert.ok(pending,'Capture actual bytes as soon as the native response arrives.');const bytes=await pending;assert.ok(bytes.length<=2097152);const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));actual.push({path:new URL(r.url()).pathname,status:r.status(),body:bytes.toString('utf8')});return value;};
   let ownerPage:any,ownerContext:any,ownerBodies:WeakMap<object,Promise<Buffer>>|undefined;

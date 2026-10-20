@@ -2,9 +2,9 @@
 // TEN98_SETTINGS_RECOVERY_BROWSER=1 PLAYWRIGHT_MODULE=<installed entry> node tests/settings-recovery-browser.mjs
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_SETTINGS_RECOVERY_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const W='10000000-0000-4000-8000-000000000001',P='20000000-0000-4000-8000-000000000001',U='30000000-0000-4000-8000-000000000001',C='40000000-0000-4000-8000-000000000001',stamp='2026-10-19T00:00:00.000Z';
 const connection=()=>({id:C,name:'Synthetic provider',provider:'openrouter',revision:1,createdAt:stamp,updatedAt:stamp,lastCheckedAt:null,checkStatus:'untested',diagnostic:null});
@@ -22,7 +22,7 @@ async function attempt(kind){if(kind==='create'){await page.locator('#pc-name').
 try{
  await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.environments.client.transformRequest('/tests/settings-recovery-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await server.environments.client.depsOptimizer.scanProcessing;await Promise.all(Object.values(server.environments.client.depsOptimizer.metadata.discovered).map(d=>d.processing));
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({headless:true,channel:process.env.PLAYWRIGHT_CHANNEL??'msedge'});
+ browser=await launchChromium();
  for(const kind of ['create','rotate','revoke','check','pause']){
   let posts=0,reads=0,failRead=false,model=provider();await fresh('providers',call=>{if(call.method==='GET'&&call.path===`/api/workspaces/${W}/providers`){reads++;return{status:failRead?503:200,body:failRead?{error:'Synthetic saved-state read failure'}:model};}if(call.method==='POST'&&call.path.startsWith(`/api/workspaces/${W}/`)){posts++;if(kind==='create')model.connections.push({...connection(),id:C.replace(/1$/,'2'),name:'Unknown connection'});return{status:503,body:{error:'Synthetic unknown result'}};}});await providerReady();await attempt(kind);await page.getByRole('alert').filter({hasText:'The change may already be saved'}).waitFor();assert.equal(posts,1);assert.equal(reads,1,'Unknown writes never cause an automatic read/retry');for(const label of ['Save connection','Save pause setting','Run check','Disconnect'])assert.equal(await button(label).isDisabled(),true,kind+' blocks sibling '+label);assert.equal(await page.locator('#pc-apikey').inputValue(),'');
   failRead=true;await button('Reload saved settings').click();await page.getByText('Synthetic saved-state read failure',{exact:true}).waitFor();assert.equal(await button('Save connection').isDisabled(),true);assert.equal(posts,1);failRead=false;await button('Reload saved settings').first().click();await providerReady();assert.equal(posts,1);assert.equal(reads,3);if(kind==='create')await page.getByRole('cell',{name:'Unknown connection',exact:true}).waitFor();

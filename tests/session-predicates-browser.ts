@@ -11,12 +11,12 @@ async function closeExplore(target:any){
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
 import {explorerQuery} from '../src/server/explorer-input.ts';
 import {parseSegmentDefinition} from '../src/server/segment-input.ts';
 import {parseCohortDefinition} from '../src/server/cohort-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_SESSION_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const projectId='20000000-0000-4000-8000-000000000001',savedId='40000000-0000-4000-8000-000000000001',cohortId='50000000-0000-4000-8000-000000000001',at='2026-03-08T05:00:00.000Z';
 const evidence='private/session-ui-evidence',originals=['tests/saved-filters-browser.mjs','tests/annotations-browser.mjs','tests/cohorts-browser.mjs','tests/advanced-filters-browser.mjs','tests/advanced-filters-browser-fixture.tsx'];
@@ -42,7 +42,7 @@ const server=await createServer({configFile:false,root:process.cwd(),cacheDir:ev
 server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Session filter fixture</title><div id="root"></div><script type="module" src="/tests/advanced-filters-browser-fixture.tsx"></script></html>');});
 let browser:any;let groups=0;
 try{await mkdir(evidence,{recursive:true});await server.listen();const address=server.httpServer!.address();assert.ok(address&&typeof address==='object');assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE!)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',(e:Error)=>errors.push(e.message));
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',(e:Error)=>errors.push(e.message));
  const reply=(r:any,body:unknown,status=200)=>r.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
  await context.route('**/*',async(r:any)=>{const request=r.request(),url=new URL(request.url()),path=url.pathname;if(url.origin!==origin){external.push(url.href);return r.abort();}if(!path.startsWith('/api/'))return request.method()==='GET'?r.continue():r.abort();
   if(path.endsWith('/explore')){queries.push(url.search.slice(1));if(reportMode==='timeout')return reply(r,{error:'Query took too long'},503);const q=explorerQuery(url.searchParams);if(q.predicates?.sessionProperties?.some((v:any)=>v.operator==='regex'&&v.value==='['))return reply(r,{error:'Check the regular expression in the additional filters.'},400);return reply(r,report(url.searchParams));}

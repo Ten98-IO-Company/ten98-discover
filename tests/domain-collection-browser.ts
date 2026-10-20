@@ -8,6 +8,7 @@ import { assertSchema, closeDatabase, getDatabase } from '../src/server/db.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { addDomain, issueDomainChallenge, verifyDomain } from '../src/server/domains.ts';
 import { saveAnalyticsSettings } from '../src/server/native-analytics.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Actual production app + tracker + loader, with synthetic HTTPS documents and
 // transport forwarded only to the loopback app. No public DNS or vendor traffic.
@@ -15,7 +16,6 @@ assert.equal(process.env.TEN98_INTEGRATION_TEST, '1');
 const config = getConfig();
 for (const value of [config.appUrl, config.databaseUrl]) assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(new URL(value).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Supply an installed Playwright module URL.');
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE!);
 const canonical = 'https://canonical.example.com', serving = 'https://serving.example.com', collector = 'https://collector.example.com';
 const siteKey = randomUUID(), projectId = randomUUID(), userId = randomUUID();
 let browser: any;
@@ -35,7 +35,7 @@ try {
   const domain = registered.domains.find(row => row.hostname === 'serving.example.com')!;
   const proof = await issueDomainChallenge(projectId, userId, domain.id, {});
   await verifyDomain(projectId, userId, domain.id, {}, async name => { assert.equal(name, proof.challenge.name); return [[proof.challenge.value]]; });
-  browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true });
+  browser = await launchChromium();
   const context = await browser.newContext();
   const blocked: string[] = [], pageErrors: string[] = [], events: any[] = [];
   await context.route('**/*', async (route: any) => {

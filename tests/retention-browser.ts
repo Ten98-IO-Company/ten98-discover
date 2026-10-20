@@ -7,6 +7,7 @@ import { getConfig } from '../src/server/config.ts';
 import { assertSchema, closeDatabase, getDatabase } from '../src/server/db.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { runRetentionBatch } from '../src/server/retention.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Optional real-browser acceptance. Use a separately supplied browser module,
 // never an extra production dependency or a deployment/customer database.
@@ -14,7 +15,6 @@ assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
 const config=getConfig(),local=['localhost','127.0.0.1','[::1]'];
 assert.ok(local.includes(new URL(config.appUrl).hostname)&&local.includes(new URL(config.databaseUrl).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Supply an installed Playwright module URL.');
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE!);
 let browser:any,releasePreview:(()=>void)|undefined;
 try {
   await assertSchema();
@@ -32,7 +32,7 @@ try {
   await runRetentionBatch(projectId);
   await pool.query("UPDATE project SET retention_next_run_at='infinity' WHERE id=$1",[projectId]);
   await pool.query("UPDATE installation SET claimed=true WHERE id='instance'");
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   const context=await browser.newContext({viewport:{width:360,height:800}});
   const external:string[]=[];
   await context.route('**/*',async(route:any)=>{
