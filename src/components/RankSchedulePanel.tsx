@@ -2,9 +2,10 @@ import {useEffect,useId,useRef,useState} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import {RankScheduleView,type ScheduleForm,type ScheduleInfo,type SchedulePreview,type ScheduleQuote} from './RankScheduleView';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={workspaceId:string;projectId:string;userId:string;trackerId:string;trackerName:string;quoteId?:string;knownQuoteExpiresAt?:string;backLabel?:string;onUnauthorized:()=>void;onBack:()=>void;onPrepareQuote:()=>void};
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type Envelope={role:Role;trackerId:string;authoredRevision:number;canManage:boolean;schedule:ScheduleInfo;replayed?:boolean};
 type Calendar={interval:'daily'|'weekly'|'monthly';timezone:string;hour:number;minute:number;weekday:number|null};
 type Intent={kind:'approve'|'disable';body:Record<string,unknown>;revision:number;calendar?:Calendar};
@@ -16,7 +17,7 @@ const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[0-9a-
 const integer=(v:unknown,min:number,max:number)=>Number.isInteger(v)&&Number(v)>=min&&Number(v)<=max;
 const date=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT/.test(v)&&v.length<=40&&Number.isFinite(Date.parse(v));
 const nullableDate=(v:unknown)=>v===null||date(v);
-const role=(v:unknown):v is Role=>['owner','admin','editor','viewer'].includes(v as string);
+const role=(v:unknown):v is Role=>workspaceRoles.includes(v as WorkspaceRole);
 const money=(v:unknown):v is string=>typeof v==='string'&&v.length<=14&&/^(?:0|[1-9]\d{0,6})\.\d{6}(?![\s\S])/.test(v)&&BigInt(v.replace('.',''))<=1_000_000_000_000n;
 const micros=(v:string)=>BigInt(v.replace('.',''));
 function validSchedule(v:unknown,id:string):v is Envelope{

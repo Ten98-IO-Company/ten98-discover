@@ -1,8 +1,9 @@
 import {Fragment, useCallback, useEffect, useId, useRef, useState} from 'react';
 import type {FormEvent} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
+import type {WorkspaceRole} from '@ten98/runtime';
 
-type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+type Role = WorkspaceRole;
 type CategoryKey = 'rawAnalytics' | 'replay' | 'rawProviderEvidence' | 'derivedHistory';
 type CategoryMap = Record<CategoryKey, string>;
 

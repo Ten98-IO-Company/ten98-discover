@@ -6,11 +6,12 @@ import {contentSupportQuoteInputSchema,contentSupportStartInputSchema,contentSup
 import type {OpenRouterCatalog} from '../lib/openrouter-models';
 import {OpenRouterModelPicker,modelApi,readModelCatalog,modelUnavailableReason,validModelReservation} from './OpenRouterModelPicker';
 import {readSupportList,readSupportQuote,readSupportRun,supportQueryId,supportSource,supportSourceKey,supportReceipt,sameSupportReceipt,quoteCurrent,type SupportRole,type SupportList,type SupportSourceReport} from './ai-content-support-ui';
+import {workspaceRoles} from '@ten98/runtime';
 
 type Props={workspaceId:string;projectId:string;report?:SupportSourceReport;alive:()=>boolean;onUnauthorized:()=>void;onDenied:()=>void;onRole:(role:SupportRole)=>void;onClose:()=>void};
 type Run=ContentSupportRunDto['run'];type Quote=ContentSupportQuoteDto['quote'];
 type Attempt={kind:'quote'|'start'|'cancel'|'reconcile';path:string;body:Record<string,unknown>;keys?:string[];quote?:Quote;runId?:string};
-const roleSchema=z.enum(['owner','admin','editor','viewer']),url=z.string().max(2048).url().refine(v=>{const u=new URL(v);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password;});
+const roleSchema=z.enum(workspaceRoles),url=z.string().max(2048).url().refine(v=>{const u=new URL(v);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password;});
 const pageSchema=z.object({id:z.uuid(),url,bodyEvidence:z.object({status:z.enum(['available','empty','not_recorded','pending','unavailable','over_limit','expired','invalid']),version:z.string().nullable(),utf8Bytes:z.number().int().nonnegative().max(65536).nullable(),textIncluded:z.literal(false),text:z.null()})});
 type Page=z.infer<typeof pageSchema>;
 const pageListSchema=z.object({role:roleSchema,run:z.object({id:z.uuid(),projectId:z.uuid(),status:z.string(),dataStatus:z.enum(['available','expired'])}),pages:z.array(pageSchema).max(100),selectionRevision:z.string().regex(/^[a-f0-9]{64}$/).nullable(),matchingRetainedCount:z.number().int().nonnegative().max(10000).nullable(),nextCursor:z.string().max(4096).nullable()});

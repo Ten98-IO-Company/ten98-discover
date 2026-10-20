@@ -3,8 +3,9 @@ import {api,ApiError,errMsg} from '../lib/api';
 import {ReportPanel} from '@ten98/ui';
 import {auditCoverages,auditIssueCodes,auditNavigation,type AuditNavigation,type NavigationSearch} from '../lib/navigation';
 import {normalizeAuditPageFields,type AuditPageFields} from '../lib/site-audit-pages';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type Status='queued'|'running'|'cancelling'|'completed'|'partial'|'failed'|'cancelled';
 type Coverage='unavailable'|'blocked'|'rate_limited'|'robots_disallowed'|'not_fetched'|'http_error'|'redirect'|'non_html'|'partial'|'shell'|'analyzed';
 type Setup={role:Role;canStart:boolean;origins:{domainId:string|null;origin:string;authority:'canonical_project'|'verified_serving'}[];limits:{defaultPages:number;maxPages:number;maxMinutes:number;requestsPerSecond:number;bodyCapacityBytes:number;frontier:number;edges:number;sitemapDocuments:number;sitemapDepth:number};worker:{status:'ready'|'unavailable';lastHeartbeatAt:string|null}};
@@ -78,7 +79,7 @@ const issueAdvice:Record<string,[string,string]>={
 const number=(n:number|null|undefined)=>n==null?'Unavailable':n.toLocaleString();
 const record=(v:unknown):v is Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v);
-const roleValue=(v:unknown):v is Role=>['owner','admin','editor','viewer'].includes(v as string);
+const roleValue=(v:unknown):v is Role=>workspaceRoles.includes(v as WorkspaceRole);
 const count=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
 const strings=(v:unknown):v is string[]=>Array.isArray(v)&&v.every(x=>typeof x==='string');
 const timestamp=(v:unknown)=>typeof v==='string'&&Number.isFinite(Date.parse(v));

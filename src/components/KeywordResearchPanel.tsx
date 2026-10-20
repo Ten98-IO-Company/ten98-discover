@@ -4,8 +4,9 @@ import {Link} from '@tanstack/react-router';
 import {RunCostSummary} from '@ten98/ui';
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type Mode='overview'|'ideas';
 type Market={locationCode:number;locationName:string;languageCode:string;languageName:string};
 type Req={connectionId:string;mode:Mode;keywords:string[];locationCode:number;languageCode:string;limit:25|50|100};
@@ -164,7 +165,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   async function access(op:Operation){
     const s=await api<State>(B,{signal:op.controller.signal});
     if(!current(op))return null;
-    if(!['owner','admin','editor','viewer'].includes(s?.role)||typeof s.vaultConfigured!=='boolean'||typeof s.spendingPaused!=='boolean'||!Array.isArray(s.connections)||s.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(s.runs)||!s.runs.every(validSummary)||!Array.isArray(s.catalog?.markets)||!nullableDate(s.catalog.updatedAt)||s.catalog.markets.some(m=>!m||!Number.isSafeInteger(m.locationCode)||typeof m.locationName!=='string'||typeof m.languageCode!=='string'||typeof m.languageName!=='string'))throw new Error('The saved state could not be read. Reload access.');
+    if(!workspaceRoles.includes(s?.role as WorkspaceRole)||typeof s.vaultConfigured!=='boolean'||typeof s.spendingPaused!=='boolean'||!Array.isArray(s.connections)||s.connections.some(c=>!c||!uuid(c.id)||typeof c.name!=='string'||!['untested','ok','error'].includes(c.checkStatus))||!Array.isArray(s.runs)||!s.runs.every(validSummary)||!Array.isArray(s.catalog?.markets)||!nullableDate(s.catalog.updatedAt)||s.catalog.markets.some(m=>!m||!Number.isSafeInteger(m.locationCode)||typeof m.locationName!=='string'||typeof m.languageCode!=='string'||typeof m.languageName!=='string'))throw new Error('The saved state could not be read. Reload access.');
     applyState(s);return s;
   }
   function runFrom(value:unknown):Run{

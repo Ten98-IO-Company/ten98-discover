@@ -1,7 +1,8 @@
 import type * as React from 'react';
 import { RankTrackingFields, type RankTrackingFieldsValue, type RankLocationOption, type RankLanguageOption, type RankLocationOptions, type RankTrackingFieldErrors } from './RankTrackingFields';
+import type {WorkspaceRole} from '@ten98/runtime';
 
-export type RankRole = 'owner' | 'admin' | 'editor' | 'viewer';
+export type RankRole = WorkspaceRole;
 type RankDevices = 'desktop' | 'mobile' | 'both';
 type RankFilter = 'active' | 'archived' | 'all';
 export type RankTracker = {

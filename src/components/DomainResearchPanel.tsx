@@ -5,8 +5,9 @@ import {RunCostSummary} from '@ten98/ui';
 import type {DomainRequest,DomainScope,DomainReport,DomainOrganicMetrics} from '../server/domain-research-input';
 import {citationPublicHost} from '../lib/citation-report';
 import type {BacklinkRequest,BacklinkResult,DomainResearchRequest,DomainResearchResult} from '../server/backlink-research-input';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type Summary={id:string;quoteId:string;request:DomainResearchRequest;status:'queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'reconciled';createdAt:string;completedAt:string|null;estimateUsd:string;actualUsd:string|null;chargeStatus:'reserved'|'dispatched'|'settled'|'uncertain'|'cancelled'};
 type Receipt=Summary&{canCancel:boolean;diagnostic:string|null;resultExpired:boolean};
 type Run=Receipt&{result:DomainResearchResult|null};
@@ -24,7 +25,7 @@ const text=(v:unknown,max:number)=>typeof v==='string'&&v.length<=max&&!/[\x00\u
 const date=(v:unknown)=>typeof v==='string'&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString()===v;
 const amount=(v:unknown)=>typeof v==='string'&&/^(?:0|[1-9]\d{0,6})\.\d{6}$/.test(v)&&BigInt(v.replace('.',''))<=1000000000000n;
 const metric=(v:unknown,max=Number.MAX_SAFE_INTEGER,integer=false)=>v===null||typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=max&&(!integer||Number.isSafeInteger(v));
-const role=(v:unknown):v is Role=>['owner','admin','editor','viewer'].includes(String(v));
+const role=(v:unknown):v is Role=>workspaceRoles.includes(String(v) as WorkspaceRole);
 function isBacklink(r:{report?:unknown}):r is BacklinkRequest{return r.report==='backlinks_overview_v1'||r.report==='backlinks_profile_v1'||r.report==='backlinks_referring_domains_v1'||r.report==='backlinks_anchors_v1';}
 function backlinkUrl(value:unknown):URL|null{try{if(typeof value!=='string'||!text(value,4096)||/[\\\s]/u.test(value))return null;const u=new URL(value);if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.port||!citationPublicHost(u.hostname))return null;decodeURIComponent(u.pathname);return u;}catch{return null;}}
 function backlinkCanonical(value:string,scope:DomainScope):string|null{const u=backlinkUrl(value.includes('://')?value:'https://'+value);if(!u||value!==value.trim()||value.includes('?')||value.includes('#'))return null;if(scope==='domain'||scope==='subdomains')return u.pathname==='/'?u.hostname.replace(/^www\./,''):null;if(!/^https?:\/\//i.test(value))return null;if(scope==='subfolder'){u.pathname=u.pathname.replace(/\/+$/,'');if(u.pathname==='/')return null;}return new TextEncoder().encode(u.href).byteLength<=2048?u.href:null;}

@@ -17,6 +17,7 @@ import {GeographyAttribution} from './GeographyAttribution';
 import {environmentCatalog,environmentFields,type EnvironmentField} from '../lib/analytics-environment';
 import type {PropertyReport} from '../server/explorer';
 import {propertyWeekdays,propertyDecimal,comparePropertyDecimals,propertyDecimalScale,validPropertyDateSummary,validPropertyNumberStats} from '../lib/property-visuals';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Coverage='complete'|'partial'|'unavailable';
 
@@ -39,10 +40,10 @@ export interface ExploreResult{
 }
 
 const GROUPS=[['event','Event name'],['path','Path'],['origin','Origin'],['referrer','Referrer'],['language','Language'],['browser','Browser'],['os','OS'],['device','Device'],['country','Country'],['region','Region'],['city','City'],['campaignSource','Campaign source'],['campaignMedium','Campaign medium'],['campaignName','Campaign name'],['campaignTerm','Campaign term'],['campaignContent','Campaign content'],['screenWidth','Screen width'],['screenHeight','Screen height'],['hostname','Hostname'],['screen','Recorded screen'],['channel','Recorded channel'],['property','Property']] as const;
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type SaveAttempt={kind:'create'|'update'|'delete';id?:string;body:{requestId:string;revision?:number;definition?:Definition}};
 type CohortEditor={item:SavedFilter|null;name:string;draft:Draft};
-const roleValue=(value:unknown):value is Role=>['owner','admin','editor','viewer'].includes(value as string);
+const roleValue=(value:unknown):value is Role=>workspaceRoles.includes(value as WorkspaceRole);
 const canSave=(role:Role|null)=>role==='owner'||role==='admin'||role==='editor';
 function tupleFields(raw:string|null):string[]|null{
   try{const fields:unknown=JSON.parse(raw??'null');return Array.isArray(fields)&&fields.length>=1&&fields.length<=3&&new Set(fields).size===fields.length&&fields.every(field=>GROUPS.some(([key])=>key!=='property'&&key===field))?fields:null;}catch{return null;}

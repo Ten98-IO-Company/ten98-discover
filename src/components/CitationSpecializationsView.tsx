@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export type SpecializedView = 'reddit' | 'shopping' | 'search' | 'gaps';
 export type SpecializedPeriodId = 'current' | 'previous';
@@ -35,7 +36,7 @@ export type SpecializedScreen =
   | { kind: 'prompts' | 'gaps'; rows: SpecializedPromptRowView[] }
   | { kind: 'evidence'; basisLabel: string; rows: SpecializedEvidenceRowView[] };
 export type CitationSpecializationsViewProps = {
-  prefix: string; role: 'owner' | 'admin' | 'editor' | 'viewer' | null;
+  prefix: string; role: WorkspaceRole | null;
   reading: boolean; exporting: boolean; error: string | null; notice: string | null;
   backLabel: string; canReload: boolean; canExport: boolean;
   report: null | {

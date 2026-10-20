@@ -14,10 +14,11 @@ import {normalizeAuditPageFields} from '../lib/site-audit-pages.ts';
 import {csvCell} from './explorer-input.ts';
 import {contentCoverageLimits,contentPageStates} from '../lib/ai-content-coverage.ts';
 import type {ContentPage,ContentPageState} from './ai-content-coverage.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export const siteAuditQueue='site-audit';
 export const siteAuditLimits=Object.freeze({defaultPages:50,maxPages:1000,maxMinutes:30,requestsPerSecond:1,bodyCapacityBytes:524288000,frontier:10000,edges:100000,sitemapDocuments:20,sitemapDepth:3});
-export type AuditRole='owner'|'admin'|'editor'|'viewer';
+export type AuditRole=WorkspaceRole;
 export type AuditStatus='queued'|'running'|'cancelling'|'completed'|'partial'|'failed'|'cancelled';
 export type AuditConfig={retainBodyText?:boolean;mode:'static';startPath:string;startUrl:string;maxPages:number;requestLimit:number;bodyCapacityBytes:number;frontierLimit:number;edgeLimit:number;sitemapDocuments:number;sitemapDepth:number;minIntervalMs:number;maxAttempts:2;userAgent:'TenMonitorBot/1.0';robotsProductToken:'TenMonitorBot'};
 export type AuditCoverage={reasons:string[];discoveryComplete:boolean;linksComplete:boolean;scopeExclusions:number;rawEvidenceRecorded:boolean;queryExclusions?:number;externalExclusions?:number;frontierOmissions?:number;edgeOmissions?:number;sitemapUnavailable?:number;unavailablePages?:number;unfetchedPages?:number};

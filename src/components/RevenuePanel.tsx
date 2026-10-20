@@ -13,6 +13,7 @@ import{initialDraft,buildParams,savedPredicates,buildAdvanced,readAdvanced,valid
 import{deriveAnalyticsComparison,type AnalyticsComparisonMode}from'../lib/analytics-comparison';
 import{revenueCalendarPresets,revenueCalendarRange,revenueCalendarMonthCount,adjacentRevenueCalendarRange}from'../lib/revenue-calendar';
 import'./revenue.css';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type RevenueDraft={scope:Draft;currency:string;cohort:CohortRef|null;compare:AnalyticsComparisonMode|null};
 type PickerKind='segments'|'cohorts';
@@ -155,7 +156,7 @@ function RevenueInner({projectId,search,onNavigate,onUnauthorized,onOpenActivity
   const current=()=>!controller.signal.aborted&&pickerRequest.current===controller&&pickerGeneration.current===token&&currentScope.current===captured;
   try{
    const value=await readReport(`/api/projects/${projectId}/${kind}${item?'/'+encodeURIComponent(item.id):cursor?'?'+new URLSearchParams({cursor}):''}`,controller.signal);if(!current())return;
-   if(!record(value)||typeof value.role!=='string'||!['owner','admin','editor','viewer'].includes(value.role))throw Error('Access to saved filters could not be verified. Refresh the list.');
+   if(!record(value)||typeof value.role!=='string'||!workspaceRoles.includes(value.role as WorkspaceRole))throw Error('Access to saved filters could not be verified. Refresh the list.');
    const valid=(v:unknown):v is SavedFilter=>kind==='cohorts'?validCohort(v,projectId):validSaved(v,projectId);
    if(item){
     if(!valid(value.item)||value.item.id!==item.id)throw Error('This saved item could not be verified. Refresh the list.');

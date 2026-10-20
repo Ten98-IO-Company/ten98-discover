@@ -6,6 +6,7 @@ import {readRetentionReport,retentionLimitation,retentionLimits,retentionOffsets
 import {ExactFilterControls,AdvancedControls,AdvancedSummary,initialDraft,draftFilterQuery,savedPredicates,buildAdvanced,preciseDate,patchLocationFilters,fieldValueLabel,FILTERS,KINDS,TIMEZONES,validCohort,record,clean,uuid,focusAdvanced,num,type Draft,type CohortRef,type SavedFilter} from './ExplorerFilters';
 import {GeographyAttribution} from './GeographyAttribution';
 import './retention-report.css';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={projectId:string;userId:string;search:NavigationSearch;onNavigate:(value:RetentionNavigation,replace?:boolean)=>void;onUnauthorized:()=>void;onOpenExplore:()=>void};
 type Intent={params:URLSearchParams;query:RetentionQuery;draft:Draft;cohort:CohortRef|null};
@@ -68,7 +69,7 @@ function RetentionReportInner({projectId,search,onNavigate,onUnauthorized,onOpen
   async function readReferences(id?:string,expected?:number,more=false){
     referenceRequest.current?.abort();const controller=new AbortController(),token=++referenceGeneration.current,current=scope;referenceRequest.current=controller;setReferenceBusy(true);setReferenceError('');
     try{const value=await api<unknown>(`${base}/cohorts${id?'/'+encodeURIComponent(id):more&&cursor?'?cursor='+encodeURIComponent(cursor):''}`,{signal:controller.signal});if(!mounted.current||controller.signal.aborted||token!==referenceGeneration.current||activeScope.current!==current)return;
-      if(!record(value)||!['owner','admin','editor','viewer'].includes(String(value.role)))throw new Error('The saved cohort could not be verified.');
+      if(!record(value)||!workspaceRoles.includes(String(value.role) as WorkspaceRole))throw new Error('The saved cohort could not be verified.');
       if(id){if(!validCohort(value.item,projectId))throw new Error('The saved cohort could not be verified.');const item=value.item as SavedFilter;if(expected!==undefined&&item.revision!==expected)throw new Error('This cohort changed. Load its current version to review before applying.');setReference(item);setSelected(item.id);setCohort({id:item.id,revision:item.revision});setItems(old=>[item,...old.filter(row=>row.id!==item.id)]);}
       else{if(!Array.isArray(value.items)||value.items.length>50||!value.items.every(item=>validCohort(item,projectId))||value.nextCursor!==null&&!clean(value.nextCursor,4096))throw new Error('The saved cohorts could not be verified.');const received=value.items as SavedFilter[];setItems(old=>more?[...old,...received.filter(item=>!old.some(row=>row.id===item.id))]:received);setCursor(value.nextCursor as string|null);}
     }catch(e){if(mounted.current&&!controller.signal.aborted&&token===referenceGeneration.current&&activeScope.current===current){denied(e);setReference(null);setReferenceError(errMsg(e));}}finally{if(mounted.current&&token===referenceGeneration.current&&activeScope.current===current)setReferenceBusy(false);}

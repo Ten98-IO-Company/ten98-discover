@@ -1,7 +1,8 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
+import type {WorkspaceRole} from '@ten98/runtime';
 
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type Tab='reports'|'report-templates';
 type Summary={id:string;title?:string;name?:string;revision:number;createdAt:string;updatedAt:string};
 type Detail=Summary&{html?:string;brief?:string};

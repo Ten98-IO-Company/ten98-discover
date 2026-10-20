@@ -5,8 +5,9 @@ import {FoundationError} from './auth.ts';
 import {authorizeApiKey,type ApiKeyScope} from './api-keys.ts';
 import {getDatabase} from './db.ts';
 import {canonicalHash,contextHost,contextPatch,parse,sectionKeys,type CitationPublisherCategory} from './context-input.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
-export type ContentProject={id:string;name:string;origin:string;role:'owner'|'admin'|'editor'|'viewer'};
+export type ContentProject={id:string;name:string;origin:string;role:WorkspaceRole};
 export async function withContentProject<T>(projectId:unknown,userId:unknown,write:boolean,work:(client:PoolClient,project:ContentProject)=>Promise<T>,apiToken?:string,nativeRead=false,scope:ApiKeyScope=write?'prompts:write':'prompts:read'):Promise<T> {
   const pid=parse(z.uuid(),projectId),uid=parse(z.uuid(),userId),client=await getDatabase().pool.connect();
   let workspaceId:string|undefined;

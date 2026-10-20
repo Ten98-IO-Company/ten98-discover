@@ -8,8 +8,9 @@ import type {AiQueryReport} from '../lib/ai-search-analysis';
 import {readAISearch} from './AIQueryAnalysisPanel';
 import {AIContentSupportPanel} from './AIContentSupportPanel';
 import {supportSourceKey} from './ai-content-support-ui';
+import {workspaceRoles} from '@ten98/runtime';
 
-const role=z.enum(['owner','admin','editor','viewer']),stamp=z.iso.datetime(),hash=z.string().regex(/^[a-f0-9]{64}$/),count=z.number().int().nonnegative().max(10000);
+const role=z.enum(workspaceRoles),stamp=z.iso.datetime(),hash=z.string().regex(/^[a-f0-9]{64}$/),count=z.number().int().nonnegative().max(10000);
 const url=z.string().max(2048).refine(value=>{try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password;}catch{return false;}});
 // Validate only metadata used by this selector. Full page/body rendering stays in Site audit.
 const runSchema=z.object({id:z.uuid(),projectId:z.uuid(),origin:url,status:z.enum(['queued','running','cancelling','completed','partial','failed','cancelled']),completedAt:stamp.nullable(),dataStatus:z.enum(['available','expired']),rawEvidenceStatus:z.enum(['available','expired','not_recorded']),config:z.object({mode:z.literal('static'),retainBodyText:z.boolean().optional()})});

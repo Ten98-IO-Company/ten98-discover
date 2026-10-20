@@ -1,6 +1,7 @@
 import {useState} from 'react';
 import type {InsightCoverage, InsightMetric} from '../server/prompt-insights';
 import {percentText, trendSvg, trendY} from './ai-trend-svg';
+import type {WorkspaceRole} from '@ten98/runtime';
 export type AIInsightsDraft = {
   from: string; to: string; timeZone: string; model: string;
   promptId: string; tag: string;
@@ -9,7 +10,7 @@ export type AIInsightsDraft = {
 
 export type AIInsightsViewProps = {
   prefix: string;
-  role: 'owner' | 'admin' | 'editor' | 'viewer' | null;
+  role: WorkspaceRole | null;
   reading: boolean; exporting: boolean;
   error: string; notice: string; filterError: string; dirty: boolean;
   draft: AIInsightsDraft;

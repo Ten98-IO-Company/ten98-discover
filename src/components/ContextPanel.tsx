@@ -1,12 +1,13 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api, ApiError, errMsg} from '../lib/api';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 type Section = {key:string;title:string|null;content:string;updatedAt:string;updatedBy:string};
 type Competitor = {id:string;primaryDomain:string;domains:string[];name:string|null;aliases:string[];notes:string|null;updatedAt:string;updatedBy:string};
 type KeyPage = {id:string;url:string;role:'hub'|'spoke'|'money'|'other';topic:string|null;notes:string|null;updatedAt:string;updatedBy:string};
 type Research = {id:string;entryDate:string;summary:string;createdAt:string;createdBy:string};
-type Context = {project:{id:string;name:string;origin:string};role:'owner'|'admin'|'editor'|'viewer';revision:number;profile:{name:string;aliases:string[]};sections:Section[];missingSections:string[];customSections:Section[];competitors:Competitor[];keyPages:KeyPage[];researchLog:Research[];researchLogNextCursor:string|null;reportTemplates:{id:string;name:string;preview:string;truncated:boolean}[];reportTemplatesTruncated:boolean};
+type Context = {project:{id:string;name:string;origin:string};role:WorkspaceRole;revision:number;profile:{name:string;aliases:string[]};sections:Section[];missingSections:string[];customSections:Section[];competitors:Competitor[];keyPages:KeyPage[];researchLog:Research[];researchLogNextCursor:string|null;reportTemplates:{id:string;name:string;preview:string;truncated:boolean}[];reportTemplatesTruncated:boolean};
 const sectionTitles = {business_overview:'Business overview',current_goal:'Current goal',positioning:'Positioning',writing_preferences:'Writing preferences'} as const;
 type SectionKey = keyof typeof sectionTitles;
 type Editor =

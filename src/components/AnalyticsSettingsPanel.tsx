@@ -8,8 +8,9 @@ import type {AnalyticsResetInput} from '../lib/analytics-reset';
 import type {GeographyReadiness} from '../lib/analytics-geography';
 import {defaultReplaySettings,replaySettings,type ReplaySettings} from '../lib/session-replay';
 import {defaultHeatmapSettings,heatmapSettings} from '../lib/replay-heatmaps';
+import type {WorkspaceRole} from '@ten98/runtime';
 
-type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+type Role = WorkspaceRole;
 type NetworkMode = 'off' | 'direct' | 'proxy';
 
 interface Settings {

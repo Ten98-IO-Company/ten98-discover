@@ -10,8 +10,9 @@ import {parseKeywordRequest,type KeywordMarket,type KeywordRequest} from './keyw
 import {parseSavedKeywordRefreshQuote,parseSavedKeywordRefreshStart} from './saved-keyword-input.ts';
 import {resolveSavedRefreshTargets,assertSavedRefreshTargets,markSavedRefreshAttempt,type SavedKeywordTarget} from './saved-keywords.ts';
 import {withKeywordProject,keywordConnection,keywordCredentials,savedKeywordTargets,keywordQueue,reconcileKeywordResearch} from './keyword-research.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 const writers=['owner','admin','editor'],readers=[...writers,'viewer'];
 type RunStatus='queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'reconciled';
 type ChargeStatus='reserved'|'dispatched'|'uncertain'|'settled'|'cancelled';

@@ -5,8 +5,9 @@ import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,type OpenRouterCatalog} from '../lib/openrouter-models';
 import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelReservation,modelUsdMicros,type ModelQuoteRoute} from './OpenRouterModelPicker';
 import {PromptRecurringPanel} from './PromptRecurringPanel';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type Model=string;
 type Status='queued'|'running'|'completed'|'failed'|'uncertain'|'cancelled'|'reconciled';
 type Charge='reserved'|'dispatched'|'uncertain'|'settled'|'cancelled';
@@ -33,7 +34,7 @@ type Props={workspaceId:string;projectId:string;userId:string;entry:ExecutionEnt
 type Screen='setup'|'quote'|'unknown'|'history'|'detail';
 type Attempt=Readonly<{quoteId:string;requestKey:string}>;
 type Operation={generation:number;controller:AbortController;write:boolean};
-const roles:Role[]=['owner','admin','editor','viewer'];
+const roles:readonly Role[]=workspaceRoles;
 const statuses:Status[]=['queued','running','completed','failed','uncertain','cancelled','reconciled'];
 const charges:Charge[]=['reserved','dispatched','uncertain','settled','cancelled'];
 const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);

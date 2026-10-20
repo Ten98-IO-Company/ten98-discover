@@ -9,6 +9,7 @@ import {contentCursor,readContentCursor} from './project-context.ts';
 import {eventPath} from './validation.ts';
 import type {ReplayEventLocator} from '../lib/replay-heatmaps.ts';
 import {replayBegin,replayUpload,defaultReplaySettings,replayLimits,replaySummary,replayChunkDto,readReplayChunk,reassembleReplay,type ReplayBegin,type ReplayPart,type ReplaySettings} from '../lib/session-replay.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 const invalid=()=>new FoundationError(400,'Check the replay request and bounded chunk bytes.');
 const absent=()=>new FoundationError(404,'Recording not found or unavailable.');
@@ -19,7 +20,7 @@ function sign(body:string){return createHmac('sha256',getConfig().authSecret).up
 function token(row:Row){const body=Buffer.from(JSON.stringify({version:1,id:row.id,projectId:row.project_id,origin:row.origin,epoch:row.epoch,settingsHash:row.settings_hash,until:row.upload_until.getTime()})).toString('base64url');return body+'.'+sign(body);}
 export function readToken(value:string){try{if(!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(value))throw changed();const[body,signature]=value.split('.');if(!timingSafeEqual(Buffer.from(signature,'hex'),Buffer.from(sign(body),'hex')))throw changed();const raw=Buffer.from(body,'base64url');if(raw.toString('base64url')!==body)throw changed();return epochToken.parse(JSON.parse(raw.toString('utf8')));}catch{throw changed();}}
 type Row={id:string;project_id:string;request_id:string;request_hash:string;origin:string;entry_path:string|null;epoch:string;settings:ReplaySettings;settings_hash:string;sampled:boolean;created_at:Date;deadline_at:Date;upload_until:Date;chunk_count:number;byte_count:number;last_sequence:number|null;first_event_timestamp:string|null;last_event_timestamp:string|null;complete:boolean;missing_fragments:number|null};
-type Scope={role:'owner'|'admin'|'editor'|'viewer';cutoff:string;heatmapCutoff:string;at:string};
+type Scope={role:WorkspaceRole;cutoff:string;heatmapCutoff:string;at:string};
 export function summary(row:Row,expired=false){return replaySummary.parse({id:row.id,createdAt:row.created_at.toISOString(),deadlineAt:row.deadline_at.toISOString(),origin:row.origin,entryPath:expired?null:row.entry_path,settings:row.settings,chunkCount:expired?0:row.chunk_count,bytes:expired?0:row.byte_count,lastSequence:expired?null:row.last_sequence,complete:!expired&&row.complete,missingChunks:expired||row.last_sequence===null?null:row.last_sequence+1-row.chunk_count,missingFragments:expired?null:row.missing_fragments,resultExpired:expired});}
 export async function transaction<T>(work:(client:PoolClient)=>Promise<T>){const client=await getDatabase().pool.connect();try{await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");const result=await work(client);await client.query('COMMIT');return result;}catch(error){await client.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string}).code??''))throw new FoundationError(503,'Replay is temporarily unavailable. Retry only the same recording or chunk.');throw error;}finally{client.release();}}
 async function collection<T>(request:Request,input:ReplayBegin|z.infer<typeof replayUpload>,work:(client:PoolClient,projectId:string,settings:ReplaySettings,epoch:string,at:Date)=>Promise<T>){return transaction(async client=>{

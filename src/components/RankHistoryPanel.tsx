@@ -3,6 +3,7 @@ import {api,ApiError,errMsg} from '../lib/api';
 import type {RankRole,RankTracker} from './RankTrackingView';
 import type {RankHistoryTarget,RankHistoryObservation,RankLatestRow,RankBaseline} from '../server/rank-history';
 import {RankHistoryView,type RankObservationFilters,type RankLatestDisplay,type RankObservationDisplay} from './RankHistoryView';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={workspaceId:string;projectId:string;userId:string;tracker:RankTracker;active?:boolean;entryKeywordId?:string;backLabel?:'Back to tracker'|'Back to reporting';onUnauthorized:()=>void;onBack:()=>void;onOpenRun:(id:string)=>void};
 type Keyword={id:string;keyword:string;matchCase:boolean;removed:boolean};
@@ -16,7 +17,7 @@ const uuid=(v:unknown):v is string=>typeof v==='string'&&v.length===36&&/^[0-9a-
 const integer=(v:unknown,min=0,max=2147483647)=>Number.isSafeInteger(v)&&Number(v)>=min&&Number(v)<=max;
 const date=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT/.test(v)&&Number.isFinite(Date.parse(v));
 const nullableDate=(v:unknown)=>v===null||date(v);
-const role=(v:unknown):v is RankRole=>['owner','admin','editor','viewer'].includes(v as string);
+const role=(v:unknown):v is RankRole=>workspaceRoles.includes(v as WorkspaceRole);
 const cursor=(v:unknown)=>v===null||text(v,512,1);
 const target=(v:unknown):v is RankHistoryTarget=>object(v)&&text(v.domain,253,1)&&integer(v.locationCode,1)&&text(v.languageCode,16,1)&&integer(v.depth,10,100)&&v.depth%10===0&&integer(v.maxCrawlPages,1,10);
 const status=['pending','ranked','not_found','failed','uncertain','cancelled','unavailable'];

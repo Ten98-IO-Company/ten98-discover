@@ -7,10 +7,11 @@ import {analyticsDay,applyGeographyFilter,geographyNavigationNames,type Analytic
 import {isEnvironmentFilter,environmentCatalog} from '../lib/analytics-environment';
 import {geographyFiltersValid,parseGeographyKey,serializeGeographyKey,type GeographyKey,type GeoCountryKey} from '../lib/analytics-geography';
 import {CountryMap,geographyLabel} from './GeographyCard';
+import {workspaceRoles} from '@ten98/runtime';
 
 type Kind='link'|'pixel';
 type Props={workspaceId:string;userId:string;role:string;kind:Kind;appUrl:string;query?:string;readOwner?:string;readEnabled?:boolean;onNavigate:(query:string,kind?:Kind)=>void;onUnauthorized:()=>void};
-const role=z.enum(['owner','admin','editor','viewer']),stamp=z.iso.datetime({offset:true}),cursor=z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/),count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),text=(max:number)=>z.string().max(max).refine(v=>!/[\u0000\uD800-\uDFFF]/u.test(v));
+const role=z.enum(workspaceRoles),stamp=z.iso.datetime({offset:true}),cursor=z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/),count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),text=(max:number)=>z.string().max(max).refine(v=>!/[\u0000\uD800-\uDFFF]/u.test(v));
 const label=text(120).min(1).refine(v=>v===v.trim());
 const meta={id:trackedUuid,workspaceId:trackedUuid,name:label,publicUrl:text(2048),revision:trackedRevision,createdAt:stamp,updatedAt:stamp};
 const itemDto=z.union([trackedAssetInput.options[0].extend(meta),trackedAssetInput.options[1].extend(meta)]);

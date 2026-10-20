@@ -7,8 +7,9 @@ import {contentReceipt} from './project-context.ts';
 import {withKeywordProject,keywordConnection} from './keyword-research.ts';
 import {readRankPlan,rankPlanTotal,type RankPlan,type RankPlanTask} from './rank-execution-plan.ts';
 import {parseRankSerpRequest} from './rank-serp-input.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
-const readers=['owner','admin','editor','viewer'];
+const readers=[...workspaceRoles];
 const calendarFields={interval:z.enum(['daily','weekly','monthly']),timezone:z.string().min(1).max(100).refine(v=>cleanText(v)&&v.trim()===v&&!/[\x00-\x1f\x7f]/.test(v)),hour:z.number().int().min(0).max(23),minute:z.number().int().min(0).max(59),weekday:z.number().int().min(0).max(6).nullable().default(null)};
 const calendar=z.object(calendarFields).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);
 const approveInput=z.object({requestId:z.uuid(),revision,quoteId:z.uuid(),...calendarFields}).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);

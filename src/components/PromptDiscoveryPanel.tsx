@@ -3,12 +3,13 @@ import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api, ApiError, errMsg} from '../lib/api';
 import {buildPromptQuestions, promptDiscoveryIntents, type PromptDiscoveryIntent} from '../lib/prompt-discovery';
+import {workspaceRoles} from '@ten98/runtime';
 
 type Props = {projectId: string; onUse: (questions: string[], topic: string) => void; onBack: () => void; onAccessLoss: (status: number, message: string) => void};
 const text = (maximum: number) => z.string().max(maximum).refine(value => !value.includes('\0') && new TextDecoder().decode(new TextEncoder().encode(value)) === value);
 const contextSchema = z.object({
   project: z.object({id: z.uuid()}),
-  role: z.enum(['owner', 'admin', 'editor', 'viewer']),
+  role: z.enum(workspaceRoles),
   profile: z.object({name: text(120).min(1)}),
   keyPages: z.array(z.object({topic: text(200).nullable()})).max(100),
   competitors: z.array(z.object({id: z.uuid(), name: text(120).nullable(), primaryDomain: text(253).min(1)})).max(100),

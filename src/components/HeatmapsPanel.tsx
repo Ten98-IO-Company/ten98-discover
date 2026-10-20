@@ -4,6 +4,7 @@ import {ApiError} from '../lib/api';
 import {readHeatmapQuery,heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll,heatmapBackgroundPage,type HeatmapOverlay,type ReplayEventLocator,type HeatmapQuery} from '../lib/replay-heatmaps';
 import {InvalidReplay,readReplayResponse,ReplayPreview} from './SessionReplayPanel';
 import {boundedTree,reassembleReplay,type ReplayEvent} from '../lib/session-replay';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 type Props={projectId:string;userId:string;query?:string;onNavigate:(query:string)=>void;onUnauthorized:()=>void;onSettings?:()=>void;readOwner?:string;readEnabled?:boolean};
 const schema=z.union([heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll]);
@@ -71,7 +72,7 @@ export function HeatmapsPanel({projectId,userId,query='',onNavigate,onUnauthoriz
  </section>;
 }
 
-function HistoricalBackground({projectId,query,owner,readEnabled,overlay,onRole,onAccessLoss}:{projectId:string;query:HeatmapQuery;owner:string;readEnabled:boolean;overlay:HeatmapOverlay;onRole:(role:'owner'|'admin'|'editor'|'viewer')=>void;onAccessLoss:(cause:unknown)=>void}){
+function HistoricalBackground({projectId,query,owner,readEnabled,overlay,onRole,onAccessLoss}:{projectId:string;query:HeatmapQuery;owner:string;readEnabled:boolean;overlay:HeatmapOverlay;onRole:(role:WorkspaceRole)=>void;onAccessLoss:(cause:unknown)=>void}){
  const [busy,setBusy]=useState(false),[message,setMessage]=useState('No historical sample has been loaded. Numeric observations remain available.'),[progress,setProgress]=useState(0),[preview,setPreview]=useState<{events:ReplayEvent[];duration:number;at:string}|null>(null);
  const operation=useRef<AbortController|null>(null),serial=useRef(0),mounted=useRef(false),live=useRef({owner,readEnabled});live.current={owner,readEnabled};
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;serial.current++;operation.current?.abort();};},[]);

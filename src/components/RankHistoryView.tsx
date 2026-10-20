@@ -1,11 +1,12 @@
 import type * as React from 'react';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export type RankObservationFilters={device:'both'|'desktop'|'mobile';search:string;pinned:'all'|'true'|'false'};
 type RankBaselineDisplay={days:1|7|30|90;change:string;source:string;targetAt:string;observedAt:string;position:string};
 export type RankLatestDisplay={id:string;keywordId:string;keyword:string;device:string;pinned:boolean;attempt:string;observation:string;coverage:string;observedAt:string;availability:string;baselines:readonly RankBaselineDisplay[]};
 export type RankObservationDisplay={id:string;runId:string;device:string;attemptedAt:string;observedAt:string;retrievedAt:string;outcome:string;position:string;coverage:string;target:string;compatibility:string;scope:string;availability:string;rankingUrl:string|null;diagnostic:string|null};
 export type RankHistoryViewProps={
- prefix:string;backLabel?:'Back to tracker'|'Back to reporting';role:'owner'|'admin'|'editor'|'viewer'|null;phase:'latest'|'keyword';reading:boolean;loaded:boolean;error:string;
+ prefix:string;backLabel?:'Back to tracker'|'Back to reporting';role:WorkspaceRole|null;phase:'latest'|'keyword';reading:boolean;loaded:boolean;error:string;
  target:string;enabledDevices:string;asOf:string;filters:RankObservationFilters;filterDirty:boolean;appliedFilters:string;
  latest:readonly RankLatestDisplay[];keyword:string;removed:boolean;observations:readonly RankObservationDisplay[];nextCursor:string|null;
  onFilters:(value:RankObservationFilters)=>void;onApply:()=>void;onRefresh:()=>void;onMore:()=>void;onBack:()=>void;onLatest:()=>void;

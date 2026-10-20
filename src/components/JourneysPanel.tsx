@@ -10,6 +10,7 @@ import {GeographyAttribution} from './GeographyAttribution';
 import {initialDraft,buildParams,savedPredicates,buildAdvanced,validAdvancedResult,focusAdvanced,validSessionSelection,validSaved,validCohort,qualificationDraft,preciseDate,ExactFilterControls,AdvancedControls,AdvancedSummary,SessionStatus,patchLocationFilters,TIMEZONES,FILTERS,KINDS,fieldValueLabel,record,type Draft,type FilterRow,type SavedFilter,type CohortRef} from './ExplorerFilters';
 import {useLocation} from '@tanstack/react-router';
 import './journeys.css';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type JourneyDraft={scope:Draft;steps:string;startKind:''|'pageview'|'custom';startValue:string;endKind:''|'pageview'|'custom';endValue:string;cohort:CohortRef|null};
 const allowed=new Set(['from','to','timeZone','kind','propertyKey','propertyType','propertyValue','predicates','cohortId','cohortRevision','steps','startKind','startValue','endKind','endValue',...FILTERS.map(([key])=>key)]);
@@ -121,7 +122,7 @@ function JourneysInner({projectId,search,onNavigate,onUnauthorized}:Props){
   const current=()=>!controller.signal.aborted&&epoch===savedEpoch.current&&owner===currentRoute.current&&(!id||intent===currentDraftKey.current);
   try{
    const data=await fetchResult('/api/projects/'+encodeURIComponent(projectId)+'/'+kind+(id?'/'+encodeURIComponent(id):cursor?'?'+new URLSearchParams({cursor}):''),AbortSignal.any([controller.signal,AbortSignal.timeout(20000)]));if(!current())return;
-   if(!record(data)||typeof data.role!=='string'||!['owner','admin','editor','viewer'].includes(data.role)){denyAccess(403);throw Error('Saved scope access could not be verified.');}
+   if(!record(data)||typeof data.role!=='string'||!workspaceRoles.includes(data.role as WorkspaceRole)){denyAccess(403);throw Error('Saved scope access could not be verified.');}
    const role=data.role as string,valid=kind==='segments'?validSaved:validCohort;
    if(id){
     if(!valid(data.item,projectId)||data.item.id!==id)throw Error('This saved scope could not be verified. Reload the list.');const item=data.item;

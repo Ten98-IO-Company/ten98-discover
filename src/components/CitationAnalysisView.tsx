@@ -1,4 +1,5 @@
 import { EvidenceDetail } from '@ten98/ui';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export type CitationPeriod = 'current' | 'previous';
 export type CitationGrouping = 'retained-fragment-v1' | 'elmo-url-v1';
@@ -80,7 +81,7 @@ export type CitationTaskScreen = {
   help: string; canSave: boolean; canCancel: boolean; saveLabel: string;
 };
 export type CitationAnalysisViewProps = {
-  prefix: string; role: 'owner' | 'admin' | 'editor' | 'viewer' | null;
+  prefix: string; role: WorkspaceRole | null;
   reading: boolean; exporting: boolean; writeState: 'idle' | 'saving' | 'unknown';
   error: string | null; notice: string | null;
   backLabel: string; reloadLabel: string; canLeave: boolean; canReload: boolean;

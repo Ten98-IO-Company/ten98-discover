@@ -1,13 +1,14 @@
 import {z} from 'zod';
 import {analyticsDay} from './navigation.ts';
 import {replaySummary,replayChunkDto} from './session-replay.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
 const clean=(value:string)=>!/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(value);
 const name=z.string().trim().min(1).max(100).refine(clean),revision=z.number().int().min(0).max(2147483647);
 export const savedReplay=z.object({name:name.nullable(),revision,savedAt:z.string().datetime().nullable()}).strict().refine(v=>(v.name===null)===(v.savedAt===null)&&(v.name===null||v.revision>0));
 export const savedReplayWrite=z.object({requestId:z.uuid(),revision,action:z.enum(['save','rename','unsave']),name:name.nullable()}).strict().refine(v=>v.action==='unsave'?v.name===null:v.name!==null);
 export type SavedReplayWrite=z.infer<typeof savedReplayWrite>;
-const role=z.enum(['owner','admin','editor','viewer']);
+const role=z.enum(workspaceRoles);
 export const savedReplayPoint=z.object({role,asOf:z.string().datetime(),item:replaySummary,saved:savedReplay}).strict();
 export const savedReplayAck=z.object({role,request:savedReplayWrite.safeExtend({recordingId:z.uuid()}),appliedRevision:revision,replayed:z.boolean()}).strict();
 export const savedReplayList=z.object({role,asOf:z.string().datetime(),retainedFrom:z.string().datetime(),items:z.array(z.object({recording:replaySummary,saved:savedReplay}).strict()).max(20),nextCursor:z.string().max(512).nullable()}).strict();

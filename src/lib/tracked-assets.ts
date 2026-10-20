@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import type {GeographyKey} from './analytics-geography.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export const trackedAssetVersion='native-tracked-assets-v1' as const;
 export const trackedAssetLimits=Object.freeze({bodyBytes:16384,responseBytes:2097152,pageSize:20,groups:100});
@@ -17,7 +18,7 @@ export const trackedShareInput=z.object({requestId:trackedUuid,assetRevision:tra
  sections:z.array(z.enum(trackedShareSections)).min(1).max(3).refine(v=>new Set(v).size===v.length),expiresAt:z.iso.datetime({offset:true}),
  token:z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).strict();
 export type TrackedAssetFields=z.infer<typeof trackedAssetInput>;
-export type TrackedAssetRole='owner'|'admin'|'editor'|'viewer';
+export type TrackedAssetRole=WorkspaceRole;
 export type TrackedAssetItem=TrackedAssetFields&{id:string;workspaceId:string;publicUrl:string;revision:number;createdAt:string;updatedAt:string};
 export type TrackedAssetAck={requestId:string;operation:'create'|'update'|'delete'|'share-create'|'share-revoke';assetId:string;appliedRevision:number;shareId?:string};
 export type TrackedAssetWrite={workspaceId:string;role:TrackedAssetRole;ack:TrackedAssetAck;item:TrackedAssetItem|null;deleted:boolean;replayed:boolean;share?:TrackedAssetShare|null};

@@ -1,10 +1,11 @@
 import {z} from 'zod';
 import {contentSupportContract,contentSupportQuoteInputSchema,contentSupportQuoteDtoSchema,contentSupportRunDtoSchema,type ContentSupportQuoteInput,type ContentSupportQuoteDto,type ContentSupportRunDto} from '../lib/ai-content-support.ts';
 import {contentCoverageReportSchema,projectContentCoverageReportSchema,type ContentCoverageReport,type ProjectContentCoverageReport} from '../lib/ai-content-coverage.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
 export type SupportRole=ContentSupportRunDto['role'];
 export type SupportSourceReport=ContentCoverageReport|ProjectContentCoverageReport;
-const uuid=z.uuid(),role=z.enum(['owner','admin','editor','viewer']),cursor=z.string().min(1).max(4096).nullable();
+const uuid=z.uuid(),role=z.enum(workspaceRoles),cursor=z.string().min(1).max(4096).nullable();
 const connection=z.object({id:uuid,name:z.string().min(1).max(120),revision:z.number().int().positive(),checkStatus:z.enum(['untested','ok','error'])}).strict();
 const list=z.object({version:z.literal('ai-content-support-list-v1'),role,projectId:uuid,canQuote:z.boolean(),admission:z.literal('owner-evaluation'),semanticConclusions:z.literal('unverified'),connections:z.array(connection),runs:z.array(contentSupportRunDtoSchema.shape.run).max(20),nextCursor:cursor}).strict();
 export type SupportList=z.infer<typeof list>;

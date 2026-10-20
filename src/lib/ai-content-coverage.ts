@@ -1,6 +1,7 @@
 import {z} from 'zod';
 import {auditPageOrder,auditPageSearchIn,auditPageSort,normalizeAuditPageFields} from './site-audit-pages.ts';
 import {aiQueryFilters,aiQueryFiltersSchema,aiQueryReportSchema} from './ai-search-analysis.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
 export const contentCoverageMethod='literal-phrase-boundary-v1' as const;
 export const contentCoverageLimits=Object.freeze({selectedPages:10000,readablePages:1000,rawBytes:8*1024*1024,queries:100,work:100_000_000,responseBytes:2*1024*1024,examples:5});
@@ -33,7 +34,7 @@ export const contentPageStates=['available','empty','not_recorded','unavailable'
 const reference=z.object({id:z.uuid(),url:text(2048).refine(v=>{try{const u=new URL(v);return ['http:','https:'].includes(u.protocol)&&!u.username&&!u.password;}catch{return false;}}),observedAt:stamp,extractionVersion:z.literal('static-dom-body-v1'),bodySha256:hash,auditRunId:z.uuid()}).strict();
 const queryRow=z.object({key:text(4000).min(1),firstIndex:count.max(99),indexes:z.array(count.max(99)).min(1).max(100),state:z.enum(['found','not_found_in_readable_pages','not_assessed']),matchedPageCount:count.max(1000),assessedPageCount:count.max(1000),unassessableSelectedPageCount:count.max(10000),examples:z.array(reference).max(5),returnedExamples:count.max(5),exampleLimit:z.literal(5)}).strict();
 const crawlCoverage=z.object({reasons:z.array(text(200)).max(100),discoveryComplete:z.boolean(),linksComplete:z.boolean(),scopeExclusions:count,rawEvidenceRecorded:z.boolean(),queryExclusions:count.optional(),externalExclusions:count.optional(),frontierOmissions:count.optional(),edgeOmissions:count.optional(),sitemapUnavailable:count.optional(),unavailablePages:count.optional(),unfetchedPages:count.optional()}).strict();
-export const contentCoverageReportSchema=z.object({version:z.literal('ai-content-literal-v1'),role:z.enum(['owner','admin','editor','viewer']),projectId:z.uuid(),snapshotAt:stamp,asOf:stamp,applied:contentCoverageInputSchema,
+export const contentCoverageReportSchema=z.object({version:z.literal('ai-content-literal-v1'),role:z.enum(workspaceRoles),projectId:z.uuid(),snapshotAt:stamp,asOf:stamp,applied:contentCoverageInputSchema,
  queryReceiptHash:hash,corpusReceiptHash:hash,querySource:z.object({captureId:z.uuid(),quoteId:z.uuid(),promptId:z.uuid(),versionId:z.uuid(),requestedAt:stamp,quoteCreatedAt:stamp,receivedAt:stamp.nullable(),providerObservedAt:stamp.nullable(),rawState:z.enum(['retained','not_recorded','invalid','expired']),queryState:z.enum(['reported','reported_empty','not_recorded','invalid','raw_unavailable']),rawQueryCount:count.max(100).nullable(),blankQueries:count.max(100).nullable(),echoQueries:count.max(100).nullable()}).strict(),
  audit:z.object({id:z.uuid(),origin:text(2048),currentProjectOrigin:text(2048),status:z.enum(['completed','partial','failed','cancelled']),completedAt:stamp,retainBodyText:z.boolean(),mode:z.literal('static'),startPath:text(2048),maxPages:count.max(1000),coverage:crawlCoverage,observationRange:z.object({from:stamp.nullable(),to:stamp.nullable()}).strict()}).strict(),
  policy:z.object({revision:count.min(1),rawProviderEvidenceDays:count.min(1),derivedHistoryDays:count.min(1)}).strict(),

@@ -3,10 +3,11 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 export const apiKeyScopes = ['projects:read', 'projects:write', 'analytics:read', 'events:write', 'team:read', 'prompts:read', 'prompts:write', 'context:read', 'context:write', 'segments:read', 'annotations:read', 'rank:read', 'keywords:read', 'google:read', 'domains:read', 'audits:read'] as const;
 export type ApiKeyScope = typeof apiKeyScopes[number];
-type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+type Role = WorkspaceRole;
 export type ApiKeyDto = {
   id: string; workspaceId: string; issuerUserId: string; name: string; scopes: ApiKeyScope[];
   createdAt: Date; expiresAt: Date; revokedAt: Date | null;
@@ -110,7 +111,7 @@ export async function authenticateApiKey(token: string, client?: Pick<PoolClient
        AND (u."twoFactorEnabled" OR NOT EXISTS (SELECT 1 FROM workspace_two_factor_requirement r WHERE r.workspace_id=k.workspace_id))`, [digest(token)],
   );
   const principal = result.rows[0];
-  if (!principal || !['owner', 'admin', 'editor', 'viewer'].includes(principal.role)) invalidKey();
+  if (!principal || !workspaceRoles.includes(principal.role as WorkspaceRole)) invalidKey();
   return { ...principal, scopes: principal.scopes.filter((scope) => apiKeyScopes.includes(scope) && allows(principal.role, scope)) };
 }
 

@@ -8,6 +8,7 @@ import {AIComparisonPanel} from './AIComparisonPanel';
 import {CitationAnalysisPanel} from './CitationAnalysisPanel';
 import {CitationSpecializationsPanel} from './CitationSpecializationsPanel';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={userId:string;workspaceId:string;projectId:string;onUnauthorized:()=>void;onBack:()=>void;backLabel:string;onOpenComparison?:(comparisonId:string,promptId:string)=>void};
 type Role=PromptInsightsReport['role'];
@@ -26,7 +27,7 @@ const text=(v:unknown,max=2048,min=0):v is string=>typeof v==='string'&&v.length
 const multiline=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length<=max&&!/[\x00\uD800-\uDFFF]/u.test(v);
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const hex=(v:unknown)=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
-const role=(v:unknown):v is Role=>['owner','admin','editor','viewer'].includes(v as string);
+const role=(v:unknown):v is Role=>workspaceRoles.includes(v as WorkspaceRole);
 const integer=(v:unknown,max=1000)=>Number.isSafeInteger(v)&&Number(v)>=0&&Number(v)<=max;
 const cursor=(v:unknown,max=2048)=>v===null||text(v,max,1);
 const stamp=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$/.test(v)&&Number.isFinite(Date.parse(v));

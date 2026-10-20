@@ -8,9 +8,10 @@ import {explorerFilters,explorerQuery} from './explorer-input.ts';
 import {analyticsScopeSql,analyticsScopeValues,boardShareAnalyticsScopeSql,boardShareProjectTargetSql,boardShareSqlBudget,type BoardShareReadContext} from './analytics-scope.ts';
 import {retentionCoverage} from './retention.ts';
 import {parseAnalysisDefinition,type AnalysisDefinition,type Match,type PropertyPredicate} from './funnel-input.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export type AnalysisKind='funnel'|'goal';
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 export type AnalysisItem={id:string;projectId:string;revision:number;definition:AnalysisDefinition;createdAt:string;updatedAt:string};
 export type AnalysisResult={
   role:Role;item:AnalysisItem;range:{from:string;to:string;timeZone:string;start:string;end:string};query:ReturnType<typeof explorerQuery>;

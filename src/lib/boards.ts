@@ -2,6 +2,7 @@ import {geographyFields,serializeGeographyKey,type GeographyKey} from './analyti
 import {z} from 'zod';
 import {revenueCurrencies} from './revenue.ts';
 import type {AnalyticsPeriodReport} from './analytics-comparison.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export const boardLimits=Object.freeze({cards:40,rows:40,columns:4,bodyBytes:196608,previewBodyBytes:51200,responseBytes:2097152,pageSize:20});
 export const boardCardTypes=['WebsiteMetricsBar','EventsMetricsBar','Goal','Funnel','WebsiteChart','UTM','RealtimeHeader','RealtimeChart','RealtimeActiveUsers','RevenueMetricsBar','RevenueChart','RevenueMetricsTable','MetricsTable','WorldMap','WeeklyTraffic','EventsChart','TextBlock'] as const;
@@ -55,7 +56,7 @@ export const boardDefinition=z.object({schemaVersion:z.literal(1),name:text(120,
  if(count>boardLimits.cards)ctx.addIssue({code:'custom',message:'A board supports at most40 cards.'});
 });
 export type BoardDefinition=z.infer<typeof boardDefinition>;
-export type BoardRole='owner'|'admin'|'editor'|'viewer';
+export type BoardRole=WorkspaceRole;
 export type BoardItem={id:string;workspaceId:string;revision:number;definition:BoardDefinition;createdAt:string;updatedAt:string};
 export type BoardAck={requestId:string;operation:'create'|'update'|'clone'|'delete';boardId:string;appliedRevision:number};
 export type BoardWriteResult={workspaceId:string;role:BoardRole;ack:BoardAck;item:BoardItem|null;deleted:boolean;replayed:boolean};

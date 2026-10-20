@@ -12,6 +12,7 @@ import {getConfig} from './config.ts';
 import {getDatabase} from './db.ts';
 import {readJson} from './validation.ts';
 import {cleanText,text,revision as revisionInput} from './context-input.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 const htmlNamespace = 'http://www.w3.org/1999/xhtml';
 const svgNamespace = 'http://www.w3.org/2000/svg';
@@ -33,7 +34,7 @@ const nameInput=text(120,1);
 const reportInput=z.object({title:nameInput,html:z.string().min(1).max(1048576)}).strict();
 const templateInput=z.object({name:nameInput,brief:z.string().trim().min(1).max(20000).refine(cleanText)}).strict();
 const cursorInput=z.object({at:z.iso.datetime(),id:idInput}).strict();
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type PageRow={id:string;createdAt:Date};
 
 function rasterData(value:string) {
