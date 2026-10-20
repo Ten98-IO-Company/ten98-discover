@@ -1,5 +1,7 @@
 # Native bearer API contract
 
+The OpenAPI document retains the development API contract identifier `0.0.0-foundation` in `info.version`; this is separate from the installed application release. A release tag or application version change does not revise that API contract identifier. The OpenAPI schema dialect remains `3.1.2`.
+
 This development increment documents 51 implemented operations: 18 project/team/analytics operations, including Journeys, observed-key Retention, observed Attribution, real-user web performance and three current-period Revenue readers, seven authored-prompt operations, 19 authored-content operations (project context, saved filters and cohorts, annotations, rank trackers, reports and history, saved keywords) and seven stored-record reads (Google report sources and snapshots, the domain registry and its redirect-check receipts, site audit history, run detail and issues). It does not complete the 81-requirement register, expose paid prompt execution, or implement a generic HTTP batch dispatcher. The separately documented MCP transport has its own fixed tool inventory.
 
 `GET /api/openapi.json` returns a static OpenAPI 3.1.2 document before configuration, database readiness and installation setup checks. It accepts no query or body, uses relative server `/`, and does not reflect request hosts or credentials. Other methods return 405. There is no hosted documentation renderer, CDN or automatic provider request. The document describes bearer access; browser cookie routes and the separate public tracker are not its inventory.

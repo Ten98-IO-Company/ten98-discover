@@ -1,4 +1,3 @@
-import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {createRootRoute,createRouter,Outlet,RouterProvider} from '@tanstack/react-router';
 import {Route as applicationRoute} from '../src/routes/index';

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mayGrantWorkspaceRole as mayGrant, workspaceRoles, type WorkspaceRole as Role } from '@ten98/runtime';
+import { mayGrantWorkspaceRole as mayGrant, mayManageWorkspaceMember, workspaceRoles, type WorkspaceRole as Role } from '@ten98/runtime';
 import type { PoolClient } from 'pg';
 import { hashPassword } from 'better-auth/crypto';
 import { z } from 'zod';
@@ -184,7 +184,7 @@ export async function changeRole(workspaceId: string, userId: string, targetUser
     const actor = await managerRole(client, workspaceId, userId);
     const target = await client.query<{ role: Role }>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, targetUserId]);
     if (!target.rows[0]) throw new FoundationError(404, 'Member not found or unavailable.');
-    requireGrant(actor, target.rows[0].role); requireGrant(actor, role);
+    if (!mayManageWorkspaceMember(actor, target.rows[0].role, role)) throw new FoundationError(403, 'Only an owner can manage owners and administrators.');
     await preserveOwner(client, workspaceId, target.rows[0].role, role);
     await client.query('UPDATE membership SET role=$1 WHERE workspace_id=$2 AND user_id=$3', [role, workspaceId, targetUserId]);
     await client.query(
@@ -223,7 +223,7 @@ export async function removeMember(workspaceId: string, userId: string, targetUs
     const actor = await managerRole(client, workspaceId, userId);
     const target = await client.query<{ role: Role }>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, targetUserId]);
     if (!target.rows[0]) throw new FoundationError(404, 'Member not found or unavailable.');
-    requireGrant(actor, target.rows[0].role);
+    if (!mayManageWorkspaceMember(actor, target.rows[0].role)) throw new FoundationError(403, 'Only an owner can manage owners and administrators.');
     await preserveOwner(client, workspaceId, target.rows[0].role);
     await client.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2', [workspaceId, targetUserId]);
     await client.query(

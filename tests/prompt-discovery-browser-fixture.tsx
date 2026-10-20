@@ -1,4 +1,4 @@
-import React, {useEffect,useState} from 'react';
+import {useEffect,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {createRootRoute,createRoute,createRouter,Link,Outlet,RouterProvider} from '@tanstack/react-router';
 import {PromptsPanel} from '../src/components/PromptsPanel';

@@ -5,7 +5,7 @@ import {BoardsPanel,BoardShareManager} from '../src/components/BoardsPanel';
 import type {BoardItem,BoardRole} from '../src/lib/boards';
 import {ApiError} from '../src/lib/api';
 import '../src/styles.css';
-const w='46000000-0000-4000-8000-000000000001',u='46000000-0000-4000-8000-000000000002',a='46000000-0000-4000-8000-000000000003',b='46000000-0000-4000-8000-000000000004',card='46000000-0000-4000-8000-000000000005';
+const w='46000000-0000-4000-8000-000000000001',u='46000000-0000-4000-8000-000000000002',a='46000000-0000-4000-8000-000000000003',card='46000000-0000-4000-8000-000000000005';
 const scope='from=2026-10-01&to=2026-10-01&timeZone=UTC';
 // Explicit synthetic decoded-body seam: an actual fulfilled Response reader has reached done;
 // hold only its completed read before the existing component decoder/publication. No backend proof.

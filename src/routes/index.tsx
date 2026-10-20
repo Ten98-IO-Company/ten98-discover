@@ -1,6 +1,7 @@
 import { Brand, Icon } from '../components/CampaignUI'
-import { Alert, Button, ResourceCard, TrackerStatus } from '@ten98/ui'
+import { Alert, Button, ResourceCard, TrackerStatus, useSidebarNavigation, AccountMenu, SidebarFooter } from '@ten98/ui'
 import { AuthLayout } from '../components/AuthLayout'
+import { version as appVersion } from '../../package.json'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -61,7 +62,7 @@ function RankTrackingLoadFailed() {
 }
 import { SiteAuditPanel } from '../components/SiteAuditPanel'
 import { ConversionsPanel } from '../components/ConversionsPanel'
-import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationId, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, resolveNavigation, projectView as isProjectView } from '../lib/navigation'
+import { aiSearchIntentQuery, readAISearchIntent, analyticsNavigation, explorerNavigation, auditNavigation, retentionNavigation, allowedView, canonicalNavigation, navigationKey, parseCallback, parsePasswordResetFragment, parseNavigation, resolveNavigation, projectView as isProjectView } from '../lib/navigation'
 import type { AppView, CallbackIntent, NavigationSearch } from '../lib/navigation'
 
 export const Route = createFileRoute('/')({ validateSearch: parseNavigation, component: RouteEntry })
@@ -147,9 +148,9 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolSearch, setToolSearch] = useState('')
   const menuButton = useRef<HTMLButtonElement>(null)
-  const menuWasOpen = useRef(false)
-  useEffect(() => { const media=window.matchMedia('(min-width:761px)'), hiddenSearch=window.matchMedia('(max-width:960px)'); const close=()=>{if(media.matches)setMenuOpen(false);if(hiddenSearch.matches)setToolSearch('')};media.addEventListener('change',close);hiddenSearch.addEventListener('change',close);return()=>{media.removeEventListener('change',close);hiddenSearch.removeEventListener('change',close)} }, [])
-  useEffect(() => { if(menuOpen)document.querySelector<HTMLElement>('.sidebar a, .sidebar select')?.focus();else if(menuWasOpen.current)menuButton.current?.focus();menuWasOpen.current=menuOpen }, [menuOpen])
+  const sidebarRef = useRef<HTMLElement>(null)
+  const sidebar = useSidebarNavigation({ open: menuOpen, onOpenChange: setMenuOpen, sidebarRef, triggerRef: menuButton })
+  useEffect(() => { const media=window.matchMedia('(max-width:960px)'); const clear=()=>{if(media.matches)setToolSearch('')};media.addEventListener('change',clear);return()=>media.removeEventListener('change',clear) }, [])
   const mainRef = useRef<HTMLElement>(null)
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
@@ -625,10 +626,10 @@ function App() {
     preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;setAccountPreferences({data:null,loading:false,error:message})
   }}
   return (
-    <AccountPresentationContext.Provider value={presentation}><div className='shell' onKeyDown={event=>{if(!menuOpen)return;if(event.key==='Escape'){setMenuOpen(false)}else if(event.key==='Tab'){const controls=Array.from(document.querySelectorAll<HTMLElement>('.sidebar a[href],.sidebar button:not(:disabled),.sidebar select:not(:disabled),.sidebar summary')).filter(node=>node.getClientRects().length&&!node.hidden);const first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}}}}>
+    <AccountPresentationContext.Provider value={presentation}><div className='shell'>
       <a className='skip-link' href='#main-content' onClick={(event) => { event.preventDefault(); mainRef.current?.focus() }}>Skip to main content</a>
-      {menuOpen && <button type='button' className='sidebar-shade' aria-label='Close navigation' onClick={()=>{setMenuOpen(false)}}/>}
-      <aside id='app-navigation' className={`side sidebar${menuOpen?' visible':''}`} aria-label='Application navigation' role={menuOpen?'dialog':undefined} aria-modal={menuOpen||undefined}>
+      {sidebar.modal && <button type='button' className='sidebar-shade' aria-label='Close navigation' onClick={()=>{setMenuOpen(false)}}/>}
+      <aside {...sidebar.sidebarProps} ref={sidebarRef} id='app-navigation' className={`side sidebar${menuOpen?' visible':''}`} aria-label='Application navigation'>
         <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><Brand /></Link>
         <div className='side-body sidebar-nav'>
         {me!.workspaces.length>0 ? <div className='workspace-switch'><span className='workspace-avatar'>{(workspace?.name??'Workspace').slice(0,2).toUpperCase()}</span><div><label className='sr-only' htmlFor='ws'>Workspace</label><select id='ws' value={workspaceId} onChange={event=>changeWorkspace(event.target.value)}>{me!.workspaces.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select><small>{workspace?.role??'Member'} workspace</small></div><Icon name='chevron' size={15}/></div> : <p className='hint workspace-empty'>No workspaces yet.</p>}
@@ -670,13 +671,12 @@ function App() {
           {['owner','admin'].includes(workspace.role) && <Link hidden={toolQuery!==''&&!'domains'.includes(toolQuery)} className={view === 'domains' ? 'proj nav-item selected' : 'proj nav-item'} aria-current={view === 'domains' ? 'page' : undefined} to='/' search={target('domains')}><Icon name='globe'/><span>Domains</span></Link>}
         </nav>}
         </div>
-        <div className='sidebar-bottom'>
+        <SidebarFooter version={appVersion}>
           <Link className={`nav-item${['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)?' selected':''}`} to='/' search={target('preferences')}><Icon name='settings'/><span>Settings</span></Link>
-          <div className='account'><span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span><Link className='account-identity' to='/' search={target('preferences')}><strong>{me!.user.name||'Account'}</strong><small>{me!.user.email}</small></Link><button type='button' className='icon-button' aria-label='Sign out' title='Sign out' disabled={signOutBusy} onClick={()=>void signOut()}><Icon name='logout' size={16}/></button></div>
-        </div>
+        </SidebarFooter>
       </aside>
-      <main className='main workspace-main' inert={menuOpen} id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
-        <header className='app-bar topbar'><div className='breadcrumb'><button type='button' ref={menuButton} className='icon-button mobile-menu mobile-nav-toggle' aria-label={menuOpen?'Close menu':'Menu'} aria-expanded={menuOpen} aria-controls='app-navigation' onClick={()=>setMenuOpen(!menuOpen)}><Icon name='menu'/></button><Icon name={accountView?'users':'folder'} size={16}/><span>{accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace'}</span><span className='crumb-slash' aria-hidden='true'>/</span><strong>{pageTitles[view]}</strong></div><div className='topbar-tools'><label className='search'><Icon name='search' size={16}/><span className='sr-only'>Find a tool</span><input type='search' placeholder='Find a tool…' value={toolSearch} onChange={event=>setToolSearch(event.target.value)}/></label><span className='preview-badge'>Development preview</span><Link className='avatar' aria-label='Your profile' to='/' search={target('preferences')}>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</Link></div></header>
+      <main {...sidebar.contentProps} className='main workspace-main' id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
+        <header className='app-bar topbar'><div className='breadcrumb'><button type='button' ref={menuButton} className='icon-button mobile-menu mobile-nav-toggle' aria-label={menuOpen?'Close menu':'Menu'} aria-expanded={menuOpen} aria-controls='app-navigation' onClick={()=>setMenuOpen(!menuOpen)}><Icon name='menu'/></button><Icon name={accountView?'users':'folder'} size={16}/><span>{accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace'}</span><span className='crumb-slash' aria-hidden='true'>/</span><strong>{pageTitles[view]}</strong></div><div className='topbar-tools'><label className='search'><Icon name='search' size={16}/><span className='sr-only'>Find a tool</span><input type='search' placeholder='Find a tool…' value={toolSearch} onChange={event=>setToolSearch(event.target.value)}/></label><span className='preview-badge'>Development preview</span><AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu></div></header>
         <div className='page-content content'>
         {['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)&&<nav className='tabs settings-navigation' aria-label='Settings sections'>
           <Link className={view==='preferences'?'active':''} to='/' search={target('preferences')}>Your account</Link>

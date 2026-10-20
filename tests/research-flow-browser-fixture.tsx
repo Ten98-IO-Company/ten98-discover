@@ -1,4 +1,3 @@
-import * as React from 'react';
 import {createRoot} from 'react-dom/client';
 import {createRootRoute,createRoute,createRouter,RouterProvider,Outlet,useLocation,defaultStringifySearch} from '@tanstack/react-router';
 import {AISearchPanel} from '../src/components/AISearchPanel';

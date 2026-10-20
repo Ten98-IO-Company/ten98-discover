@@ -146,9 +146,10 @@ export async function verifyOidcIdentity(settings: DiscoveredSettings, idToken: 
       return webcrypto.subtle.importKey('jwk', key as JsonWebKey, algorithm, false, ['verify']);
     },
     verifyClaims: (claims) => {
+      // JOSE maxTokenAge owns age validation; the app enforces required OIDC claims and azp rules.
       if (typeof claims.sub !== 'string' || claims.sub.length < 1 || claims.sub.length > 512
         || typeof claims.exp !== 'number' || typeof claims.iat !== 'number'
-        || claims.iat > Date.now() / 1000 + 30 || (claims.azp !== undefined && claims.azp !== settings.clientId)
+        || (claims.azp !== undefined && claims.azp !== settings.clientId)
         || (Array.isArray(claims.aud) && claims.aud.length > 1 && claims.azp !== settings.clientId)) return false;
       const email = z.string().trim().toLowerCase().email().max(254).safeParse(claims.email);
       verifiedClaims = {

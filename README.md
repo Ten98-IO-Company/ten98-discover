@@ -24,10 +24,11 @@ Open the configured address and use the privately generated bootstrap token to c
 
 ## Code and contribution
 
-For the owner-requested continuation, read [Claude handoff](CLAUDE.md). This branch preserves incomplete work and its known failures.
+For current contributor scope and accepted owner decisions, read [Codex continuation](CLAUDE.md).
 
 - [Contributor ownership and guardrails](AGENTS.md), [Kimi/GPT workflow](docs/kimi-workflow.md).
 - [Implementation and security contracts](docs), including [tracking and measurement](docs/tracking.md), [Google imports](docs/google-reports.md), [rank tracking](docs/rank-tracking.md) and [AI insights](docs/ai-insights.md).
+- Boundary contracts: [explicit identity links](docs/explicit-identity-links.md), [Sessions and Journeys navigation](docs/report-navigation.md), and [static audit admission and pacing](docs/site-audit-policy.md).
 - [Third-party provenance and complete license notices](THIRD_PARTY_NOTICES.md). This is an independent combined project, not an official product of the upstream projects.
 
 With Node 24 and pnpm 11.19.0 installed:

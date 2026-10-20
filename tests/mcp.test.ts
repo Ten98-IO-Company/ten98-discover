@@ -100,3 +100,15 @@ test('official SDK emits finite modern and legacy catalog responses without sess
     }finally{await handler.close();}
   }
 });
+
+test('MCP implementation version follows the application package at initialization',async()=>{
+  const handler=createMcpHandler(()=>createNativeMcpServer('unused',{principal,committed:false},async()=>assert.fail()),{legacy:'stateless',responseMode:'auto',maxSubscriptions:0,keepAliveMs:0,maxRequestBodySize:262144});
+  try{
+    const response=await handler.fetch(new Request('http://127.0.0.1:3111/api/mcp',{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-11-25'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'version-fixture',version:'1'}}})}));
+    assert.equal(response.status,200);
+    const text=await response.text(),wire=JSON.parse(text.startsWith('{')?text:text.split('\n').find(line=>line.startsWith('data: {'))!.slice(6));
+    const version=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version;
+    assert.equal(wire.result.serverInfo.version,version);
+    assert.equal(wire.result.protocolVersion,'2025-11-25');
+  }finally{await handler.close();}
+});

@@ -3,9 +3,6 @@ async function editExplore(target:any){
   if(await button.count()){if(!await dialog.isVisible())await button.click();const presets=dialog.locator('details.explorer-presets');if(!await presets.evaluate((node:any)=>node.open))await presets.locator(':scope > summary').click();}
   return target;
 }
-async function closeExplore(target:any){
-  const dialog=target.getByRole('dialog',{name:'Explore filters',exact:true});if(await dialog.isVisible())await dialog.getByRole('button',{name:'Close filters',exact:true}).click();return target;
-}
 import assert from 'node:assert/strict';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';

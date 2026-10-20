@@ -11,7 +11,7 @@ svg { flex-shrink:0; }
 .brand small { color:var(--color-text-muted); }
 .brand-link { display:block; flex-shrink:0; }
 .sidebar { inline-size:var(--campaign-sidebar); min-inline-size:0; inset-inline-start:0; inset-inline-end:auto; inset-block:0; left:auto; border:0; border-inline-end:1px solid var(--color-border); }
-.sidebar-nav { min-block-size:0; flex:1; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; padding-block-end:16px; }
+.sidebar-nav { overscroll-behavior:contain; padding-block-end:16px; }
 .workspace-switch { min-inline-size:0; }
 .workspace-switch > div { min-inline-size:0; flex:1; }
 .workspace-switch select, .project-switch select { min-inline-size:0; inline-size:100%; text-overflow:ellipsis; }
@@ -28,7 +28,6 @@ svg { flex-shrink:0; }
 .account-identity strong,.account-identity small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .account-identity strong { font-size:12px; }
 .account-identity small { margin-block-start:3px; font-size:11px; color:var(--color-text-muted); }
-.avatar { color:#7f6045; }
 .workspace-main { margin-left:0; margin-inline-start:var(--campaign-sidebar); inline-size:calc(100% - var(--campaign-sidebar)); width:auto; }
 .topbar { min-inline-size:0; background:var(--color-surface); }
 .breadcrumb { min-inline-size:0; color:var(--color-text-muted); }
@@ -91,7 +90,7 @@ tbody tr:last-child td { border-block-end:0; }
 .auth-story :is(h1,.auth-story-title) { color:light-dark(#785793,var(--color-text)); }
 .auth-story :is(h1,.auth-story-title) em { color:light-dark(#5943ce,var(--color-accent)); }
 .auth-channels span { display:inline-flex; gap:7px; align-items:center; }
-.auth-form-inner > .auth { padding:0; margin:0; border:0; border-radius:0; box-shadow:none; inline-size:100%; }
+:is(.auth-form-inner,.t98-auth-fields) > .auth { padding:0; margin:0; border:0; border-radius:0; box-shadow:none; inline-size:100%; }
 .auth-form .auth-brand { color:var(--color-accent); font-size:11px; font-weight:650; letter-spacing:1.5px; text-transform:uppercase; margin-block-end:15px; }
 .auth-form :is(h1,h2) { font-size:27px; letter-spacing:-.8px; line-height:1.3; margin-block-end:12px; }
 .auth-form .auth-description,.auth-form h2+p { color:var(--color-text-muted); font-size:13px; line-height:1.7; margin-block-end:30px; }

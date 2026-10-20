@@ -8,7 +8,6 @@ import {handleApi} from '../src/server/api.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {normalizeProperties} from '../src/server/analytics-input.ts';
 import {exploreAnalytics} from '../src/server/explorer.ts';
-import {parseSegmentDefinition} from '../src/server/segment-input.ts';
 import {listSegments,getSegment,saveSegment,deleteSegment} from '../src/server/segments.ts';
 
 const definition=(query='',name='Saved filter')=>({schemaVersion:1 as const,name,query});

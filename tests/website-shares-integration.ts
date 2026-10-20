@@ -20,7 +20,7 @@ import {quarantineRestoredSpending} from '../src/server/restore-quarantine.ts';
 import {normalizeProperties} from '../src/server/analytics-input.ts';
 import {saveBoard,createBoardShare} from '../src/server/boards.ts';
 import {listWebsiteShares,createWebsiteShare,revokeWebsiteShare,readWebsiteShare} from '../src/server/website-shares.ts';
-import {decodePublicWebsiteShare,projectWebsiteShare,websiteShareSections,type PublicWebsiteShare,type WebsiteShareSection} from '../src/lib/website-shares.ts';
+import {decodePublicWebsiteShare,projectWebsiteShare,websiteShareSections,type WebsiteShareSection} from '../src/lib/website-shares.ts';
 
 const status=(n:number)=>(error:unknown)=>!!error&&typeof error==='object'&&'status'in error&&error.status===n;
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');

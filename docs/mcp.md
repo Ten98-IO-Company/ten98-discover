@@ -1,5 +1,7 @@
 # Native MCP
 
+The MCP implementation version (`serverInfo.version`) comes from the application package version, matching the displayed application version. MCP protocol versions describe wire compatibility and remain independent of application releases.
+
 This increment exposes 38 implemented native tools at `POST /api/mcp`. It uses the pinned official server/core SDK 2.3.1, modern protocol 2026-07-28 and the SDK's stateless legacy Streamable HTTP support. It is an incomplete P06 inventory: full pinned Elmo/OpenSEO tools, interactive OAuth authorization and paid-operation tools remain required work. It does not claim V1 completion or compatibility with an untested desktop client. See [native API](native-api.md) for the corresponding native contracts and [third-party notices](../THIRD_PARTY_NOTICES.md) for the SDK and bundled licenses.
 
 Use one `Authorization: Bearer t98k_…` header. These are native workspace API keys, not OAuth tokens. Cookie authentication, cookies combined with a bearer, alternate `x-api-key`, and URL query parameters are refused. No authorization-server metadata, registration or automatic browser sign-in is advertised. A present `Origin` must exactly equal configured `APP_URL`, including scheme and port; absent Origin is allowed. Empty, `null`, multiple or nonmatching origins are refused. There is no wildcard CORS. GET, DELETE and OPTIONS return 405.

@@ -9,7 +9,6 @@ import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase,migrationSources} from '../src/server/db.ts';
 import {projectRetentionReport,retentionReportCsv} from '../src/server/retention-report.ts';
 import {readRetentionReport,retentionLimits,type RetentionReport} from '../src/lib/retention-report.ts';
-import {retentionReportQuery} from '../src/server/retention-report-input.ts';
 import {saveCohort} from '../src/server/cohorts.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {handleApi} from '../src/server/api.ts';

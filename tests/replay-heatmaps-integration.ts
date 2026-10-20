@@ -12,7 +12,7 @@ import {createApiKey,revokeApiKey} from '../src/server/api-keys.ts';
 import {analyticsSettings,saveAnalyticsSettings,trackingConsentEpoch} from '../src/server/native-analytics.ts';
 import {beginSessionReplay,uploadSessionReplay} from '../src/server/session-replay.ts';
 import {associateHeatmapBackground,getHeatmapBackground,beginHeatmap,collectHeatmap,projectHeatmaps,saveReplay,getSavedReplay,listSavedReplays} from '../src/server/replay-heatmaps.ts';
-import {heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll,heatmapBackgroundPage,defaultHeatmapSettings} from '../src/lib/replay-heatmaps.ts';
+import {heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll,heatmapBackgroundPage} from '../src/lib/replay-heatmaps.ts';
 import {defaultReplaySettings} from '../src/lib/session-replay.ts';
 import {getRetention,previewRetention,saveRetention,runRetentionBatch} from '../src/server/retention.ts';
 import {quarantineRestoredSpending} from '../src/server/restore-quarantine.ts';

@@ -3,13 +3,13 @@ import {randomUUID,randomBytes} from 'node:crypto';
 import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase,migrationSources} from '../src/server/db.ts';
-import {getBoss,stopJobs} from '../src/server/jobs.ts';
+import {stopJobs} from '../src/server/jobs.ts';
 import {handleApi} from '../src/server/api.ts';
 import {createWorkspace} from '../src/server/teams.ts';
 import {createApiKey} from '../src/server/api-keys.ts';
 import {saveProvider,saveBudget,revokeProvider} from '../src/server/providers.ts';
-import {getDomainResearch,getDomainResearchRun,quoteDomainResearch,startDomainResearch,executeDomainResearch,cancelDomainResearch,reconcileDomainResearch,reconcileDomainResearchJobs,refreshDomainResearchMarkets} from '../src/server/domain-research.ts';
-import {domainPayload,domainRankedEndpoint,domainEndpoint,domainEndpointName,parseDomainRequest,type DomainRequest,type DomainReport} from '../src/server/domain-research-input.ts';
+import {getDomainResearch,getDomainResearchRun,quoteDomainResearch,startDomainResearch,executeDomainResearch,reconcileDomainResearch,reconcileDomainResearchJobs,refreshDomainResearchMarkets} from '../src/server/domain-research.ts';
+import {domainPayload,domainRankedEndpoint,parseDomainRequest,type DomainRequest,type DomainReport} from '../src/server/domain-research-input.ts';
 import {keywordAccountEndpoint,keywordCatalogEndpoint,keywordReconcileEndpoint} from '../src/server/keyword-research-input.ts';
 import {runRetentionBatch} from '../src/server/retention.ts';
 

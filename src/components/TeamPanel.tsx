@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { workspaceRoles, type WorkspaceRole as Role } from '@ten98/runtime';
+import { mayManageWorkspaceMember, workspaceRoles, type WorkspaceRole as Role } from '@ten98/runtime';
 import { api, ApiError, errMsg } from '../lib/api';
 
 type Member = { userId: string; name: string; email: string; role: Role };
@@ -109,9 +109,7 @@ function TeamPanelContent(props: TeamPanelProps) {
   const transferTarget = data?.members.find(member => member.userId === transferTo && member.userId !== userId);
 
   function canManageMember(m: Member): boolean {
-    if (!data) return false;
-    if (data.role === 'owner') return true;
-    return data.role === 'admin' && (m.role === 'editor' || m.role === 'viewer');
+    return mayManageWorkspaceMember(data?.role, m.role);
   }
 
   function canManageInvite(inv: Invitation): boolean {

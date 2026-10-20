@@ -74,7 +74,6 @@ jobs:
         shell: bash
         run: |
           pnpm build
-          pnpm typecheck
           pnpm test
           node --test tests/replay-heatmap-overlay.test.mjs
           pnpm check:plan

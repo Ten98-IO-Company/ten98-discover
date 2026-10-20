@@ -13,7 +13,7 @@ import {withContentProject} from '../src/server/project-context.ts';
 import {canonicalHash} from '../src/server/context-input.ts';
 import {normalizeDfsChatgptSearchEvidence} from '../src/server/ai-search-evidence.ts';
 import {aiSearchProfileId,aiSearchPriceEvidence,aiSearchSnapshotSchema} from '../src/lib/ai-search.ts';
-import {contentCoverageReportSchema,type ContentCoverageInput} from '../src/lib/ai-content-coverage.ts';
+import {contentCoverageReportSchema} from '../src/lib/ai-content-coverage.ts';
 import {getContentCoverage,exportContentCoverage,readContentCoverageSnapshot,confirmContentCoverageSnapshot} from '../src/server/ai-content-coverage.ts';
 import {listSiteAuditPages} from '../src/server/site-audits.ts';
 import {analyzeCrawlPage} from '../src/server/crawl-analysis.ts';

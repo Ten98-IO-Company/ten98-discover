@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
+import type {SupportQuoteRow,SupportRunRow} from './ai-content-support-rows.ts';
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
@@ -14,15 +15,15 @@ import {contentSupportQueue,withSupportProject,supportAudit,supportRunRow,suppor
 
 const changed=()=>new FoundationError(409,'The assessment or original provider identity changed.');
 export function contentSupportDisposition(cost:string|null,valid:boolean,current:boolean){return cost===null?'uncertain' as const:valid&&current?'completed' as const:'failed' as const;}
-async function withRun<T>(id:string,work:(c:PoolClient,p:SupportProject,r:any,q:any)=>Promise<T>){
- parse(z.uuid(),id);const ref=(await getDatabase().pool.query('SELECT project_id FROM ai_content_support_run WHERE id=$1',[id])).rows[0];if(!ref)throw new FoundationError(404,'Content assessment is unavailable.');
+async function withRun<T>(id:string,work:(c:PoolClient,p:SupportProject,r:SupportRunRow,q:SupportQuoteRow)=>Promise<T>){
+ parse(z.uuid(),id);const ref=(await getDatabase().pool.query<{project_id:string}>('SELECT project_id FROM ai_content_support_run WHERE id=$1',[id])).rows[0];if(!ref)throw new FoundationError(404,'Content assessment is unavailable.');
  return withSupportProject(ref.project_id,null,false,async(c,p)=>{
-  const hint=(await c.query('SELECT q.audit_run_id FROM ai_content_support_run r JOIN ai_content_support_quote q ON q.id=r.quote_id WHERE r.id=$1 AND r.project_id=$2',[id,p.id])).rows[0];if(!hint)throw changed();
+  const hint=(await c.query<{audit_run_id:string}>('SELECT q.audit_run_id FROM ai_content_support_run r JOIN ai_content_support_quote q ON q.id=r.quote_id WHERE r.id=$1 AND r.project_id=$2',[id,p.id])).rows[0];if(!hint)throw changed();
   await supportAudit(c,p,hint.audit_run_id);const r=await supportRunRow(c,p.id,id),q=await supportQuoteRow(c,p.id,r.quote_id);return work(c,p,r,q);
  },id);
 }
-async function actorProject(c:PoolClient,p:SupportProject,userId:string){return {...p,role:(await c.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2',[p.workspaceId,userId])).rows[0]?.role??null} as SupportProject;}
-function ledgerMatches(r:any,q:any){return r.ledger_input_hash===q.input_hash&&r.ledger_connection_id===q.connection_id&&r.ledger_user_id===q.user_id&&r.ledger_connection_revision===q.connection_revision&&r.ledger_operation==='ai.content.semantic'&&String(r.estimate_micros)===String(q.estimate_micros)&&r.user_id===q.user_id;}
+async function actorProject(c:PoolClient,p:SupportProject,userId:string){return {...p,role:(await c.query<{role:NonNullable<SupportProject['role']>}>('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2',[p.workspaceId,userId])).rows[0]?.role??null} as SupportProject;}
+function ledgerMatches(r:SupportRunRow,q:SupportQuoteRow){return r.ledger_input_hash===q.input_hash&&r.ledger_connection_id===q.connection_id&&r.ledger_user_id===q.user_id&&r.ledger_connection_revision===q.connection_revision&&r.ledger_operation==='ai.content.semantic'&&String(r.estimate_micros)===String(q.estimate_micros)&&r.user_id===q.user_id;}
 async function finish(id:string,owner:string,outcome:ExecutionOutcome,crashOnly=false){
  return withRun(id,async(c,p,r,q)=>{
   if(r.lease_owner!==owner||r.status!=='running'||!['dispatched','uncertain'].includes(r.charge_status)||crashOnly&&!r.lease_expired)return;
@@ -63,7 +64,7 @@ export async function executeContentSupport(id:string,send:typeof fetch=fetch){
    const actor=await actorProject(c,p,claimed.q.user_id);await supportAudit(c,actor,claimed.q.audit_run_id);const r=await supportRunRow(c,p.id,id),q=await supportQuoteRow(c,p.id,r.quote_id),verified=await verifySupportSource(c,actor,q);
    if(actor.role!=='owner'||'refusal'in verified||verified.q.quote_expired||r.status!=='queued'||r.charge_status!=='reserved'||r.lease_owner!==owner||r.lease_expired||!ledgerMatches(r,q)||q.input_hash!==claimed.q.input_hash)throw changed();
    secret=suggestionCredentials(await suggestionConnection(c,p.workspaceId,q.connection_id,q.connection_revision));if(keyFingerprint(secret)!==q.key_fingerprint)throw changed();
-   const dispatched=(await c.query("UPDATE ai_content_support_run r SET status='running',dispatched_at=clock_timestamp(),lease_expires_at=clock_timestamp()+interval '120 seconds' FROM ai_content_support_quote q WHERE r.id=$1 AND r.quote_id=q.id AND r.lease_owner=$2 AND r.lease_expires_at>clock_timestamp() AND q.expires_at>clock_timestamp() AND q.raw_expired_at IS NULL AND q.input_purged_at IS NULL RETURNING r.dispatched_at",[id,owner])).rows[0];if(!dispatched)throw changed();dispatchedAt=dispatched.dispatched_at;
+   const dispatched=(await c.query<{dispatched_at:Date}>("UPDATE ai_content_support_run r SET status='running',dispatched_at=clock_timestamp(),lease_expires_at=clock_timestamp()+interval '120 seconds' FROM ai_content_support_quote q WHERE r.id=$1 AND r.quote_id=q.id AND r.lease_owner=$2 AND r.lease_expires_at>clock_timestamp() AND q.expires_at>clock_timestamp() AND q.raw_expired_at IS NULL AND q.input_purged_at IS NULL RETURNING r.dispatched_at",[id,owner])).rows[0];if(!dispatched)throw changed();dispatchedAt=dispatched.dispatched_at;
   },'5s');
  }catch{
   // A failed dispatch transaction may have rolled back an observed expiry; re-latch
@@ -71,7 +72,7 @@ export async function executeContentSupport(id:string,send:typeof fetch=fetch){
   await withRun(id,async(c,p,r,q)=>{await verifySupportSource(c,await actorProject(c,p,q.user_id),q);if(r.lease_owner===owner)await cancelSupportReservation(c,r);});return;
  }
  const outcome=await requestContentSupportExecution(secret,claimed.payload.messages,claimed.q.route,id,claimed.q.request_actor,dispatchedAt!,async generation=>{
-  await withRun(id,async(c,p,r)=>{if(r.lease_owner!==owner||r.status!=='running'||!['dispatched','uncertain'].includes(r.charge_status)||r.generation_id&&r.generation_id!==generation)throw changed();await c.query('UPDATE ai_content_support_run SET generation_id=$2 WHERE id=$1',[id,generation]);});
+  await withRun(id,async(c,_p,r)=>{if(r.lease_owner!==owner||r.status!=='running'||!['dispatched','uncertain'].includes(r.charge_status)||r.generation_id&&r.generation_id!==generation)throw changed();await c.query('UPDATE ai_content_support_run SET generation_id=$2 WHERE id=$1',[id,generation]);});
  },send);await finish(id,owner,outcome);
 }
 export async function reconcileContentSupport(projectId:string,userId:string,id:string,raw:unknown,send:typeof fetch=fetch){
@@ -81,7 +82,7 @@ export async function reconcileContentSupport(projectId:string,userId:string,id:
   const conn=await suggestionConnection(c,p.workspaceId,q.connection_id),credentials=suggestionCredentials(conn);if(keyFingerprint(credentials)!==q.key_fingerprint)throw new FoundationError(409,'Recovery requires the original provider key.');return {replayed:false as const,r,q,revision:conn.revision,credentials};
  },id);if(first.replayed)return {...await getContentSupportRun(projectId,userId,id),replayed:true};
  // Metadata read only: reconcileOpenRouter never sends a completion or reconstructs text.
- const outcome=await reconcileOpenRouter(first.credentials,first.r.generation_id,first.q.route,first.r.dispatched_at,id,first.q.request_actor,send);
+ const outcome=await reconcileOpenRouter(first.credentials,first.r.generation_id!,first.q.route,first.r.dispatched_at!,id,first.q.request_actor,send);
  await withSupportProject(projectId,userId,true,async(c,p)=>{
   const receipt=await contentReceipt(c,p.id,input.requestId,'ai.content.reconcile',body);if(receipt.replayed)return;
   const conn=await suggestionConnection(c,p.workspaceId,first.q.connection_id,first.revision);if(keyFingerprint(suggestionCredentials(conn))!==first.q.key_fingerprint)throw changed();
@@ -92,8 +93,8 @@ export async function reconcileContentSupport(projectId:string,userId:string,id:
 }
 /** Queue/lease repair is local only. It never calls a provider or retries dispatch. */
 export async function reconcileContentSupportJobs(){
- const rows=(await getDatabase().pool.query(`SELECT r.id FROM ai_content_support_run r JOIN ai_content_support_quote q ON q.id=r.quote_id LEFT JOIN pgboss.job j ON j.id=r.id AND j.name=$1 WHERE r.status IN('queued','running')AND(r.lease_expires_at<=clock_timestamp() OR j.id IS NULL OR j.state IN('failed','cancelled','completed')OR q.expires_at<=clock_timestamp()OR EXISTS(SELECT 1 FROM provider_request p WHERE p.id=r.id AND p.status='cancelled'))ORDER BY r.created_at,r.id LIMIT 50`,[contentSupportQueue])).rows;
- for(const {id}of rows)await withRun(id,async(c,p,r,q)=>{
+ const rows=(await getDatabase().pool.query<{id:string}>(`SELECT r.id FROM ai_content_support_run r JOIN ai_content_support_quote q ON q.id=r.quote_id LEFT JOIN pgboss.job j ON j.id=r.id AND j.name=$1 WHERE r.status IN('queued','running')AND(r.lease_expires_at<=clock_timestamp() OR j.id IS NULL OR j.state IN('failed','cancelled','completed')OR q.expires_at<=clock_timestamp()OR EXISTS(SELECT 1 FROM provider_request p WHERE p.id=r.id AND p.status='cancelled'))ORDER BY r.created_at,r.id LIMIT 50`,[contentSupportQueue])).rows;
+ for(const {id}of rows)await withRun(id,async(c,p,r,_q)=>{
   if(r.status==='queued'){
    const stale=(await c.query(`SELECT 1 FROM ai_content_support_run r JOIN ai_content_support_quote q ON q.id=r.quote_id LEFT JOIN pgboss.job j ON j.id=r.id AND j.name=$2 WHERE r.id=$1 AND(r.lease_expires_at<=clock_timestamp()OR j.id IS NULL OR j.state IN('failed','cancelled','completed')OR q.expires_at<=clock_timestamp())`,[id,contentSupportQueue])).rowCount;
    if(stale||r.charge_status==='cancelled')await cancelSupportReservation(c,r);
