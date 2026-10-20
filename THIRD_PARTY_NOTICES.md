@@ -1220,6 +1220,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Current ten98 shared packages
+
+The current manifest pins `@ten98/ui` 0.3.16 (`vendor/ten98-ui-0.3.16.tgz`, SHA-256 `09ac02877981c163fbdd61cd5063ea24e61b2a4c2fb92e1808ea88e4ca3fd2ea`) and `@ten98/runtime` 0.1.1 (`vendor/ten98-runtime-0.1.1.tgz`, SHA-256 `630f71e26e087859420cd2723d8cc8344449bf59e0f7e5afd3bb4e461a24d372`). Both are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
+
+Earlier version sections retain their original attribution and review evidence. Their package bytes are preserved unchanged in the [historical archive release](https://github.com/Ten98-IO-Company/ten98-code-system/releases/tag/archive-2026-10-20); they are no longer installation inputs in this working tree.
+
 ## ten98 shared UI package 0.3.0
 
 `@ten98/ui` is consumed from the immutable local archive `vendor/ten98-ui-0.3.0.tgz`, SHA-256 `f73229fc6b2c7e14348a1dc77709d60e7110756d8ea5b4da30be5047ba05033f`. Source repository: https://github.com/Ten98-IO-Company/ten98-design-system . The archive contains its MIT license and shared Campaign/Discover attribution. It adds no runtime dependency; React and React DOM remain existing peer dependencies. Discover owns data, authorization, request identity, metric interpretation and native interactions. Library catalogue checks do not establish application or production acceptance.
@@ -1276,4 +1282,4 @@ The immutable archive is `vendor/ten98-ui-0.3.9.tgz`, SHA-256 `a69d149767871ca2b
 
 ### Shared UI candidate 0.3.10
 
-The current dependency is the immutable development candidate `vendor/ten98-ui-0.3.10.tgz`, SHA-256 `a356965b7c0e19b718cb8c9334d1aca3f67cb4c2ed97885295e8485c0841f280`, from Ten98 design-system commit `9a94e7f78dc9c2029204f6cd8ccf32c4affdcb13`. Prior archives remain unchanged. This MIT patch adds an optional standard `aria-label` to ReportPanel so its accessible region name can differ from the visible title. Only the reporting JavaScript module and its declaration change; styles, runtime dependencies, exports and peer requirements are unchanged. Packaged review material is Markdown; screenshots are excluded. The preceding Ten98 copyright and MIT license cover this candidate.
+The earlier dependency was the immutable development candidate `vendor/ten98-ui-0.3.10.tgz`, SHA-256 `a356965b7c0e19b718cb8c9334d1aca3f67cb4c2ed97885295e8485c0841f280`, from Ten98 design-system commit `9a94e7f78dc9c2029204f6cd8ccf32c4affdcb13`. Prior archives remain unchanged. This MIT patch adds an optional standard `aria-label` to ReportPanel so its accessible region name can differ from the visible title. Only the reporting JavaScript module and its declaration change; styles, runtime dependencies, exports and peer requirements are unchanged. Packaged review material is Markdown; screenshots are excluded. The preceding Ten98 copyright and MIT license cover this candidate.

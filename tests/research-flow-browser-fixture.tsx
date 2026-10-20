@@ -7,7 +7,7 @@ import {parseNavigation,readAISearchIntent,aiSearchIntentQuery,type NavigationSe
 import '../src/styles.css';
 
 // Synthetic UI evidence only: no SQL DTO, native authorization or provider acceptance.
-const scope={workspace:'10000000-0000-4000-8000-000000000001',project:'20000000-0000-4000-8000-000000000001',user:'30000000-0000-4000-8000-000000000001'};
+const scope={workspace:'10000000-0000-4000-8000-000000000001',project:'20000000-0000-4000-8000-000000000001',user:'30000000-0000-4000-8000-000000000001',prompt:'50000000-0000-4000-8000-000000000001',version:'60000000-0000-4000-8000-000000000001',capture:'70000000-0000-4000-8000-000000000001',otherPrompt:'50000000-0000-4000-8000-000000000002',otherVersion:'60000000-0000-4000-8000-000000000002'};
 const overview={role:'owner',profileId:aiSearchProfileId,price:aiSearchPriceEvidence(),catalog:null,connections:[{id:'40000000-0000-4000-8000-000000000001',name:'Synthetic connection',revision:1,checkStatus:'ok'}],runs:[],nextCursor:null};
 (window as unknown as {__researchFixture:unknown}).__researchFixture={scope,overview};
 const target=():NavigationSearch=>({workspace:scope.workspace,project:scope.project,view:'ai-search'});

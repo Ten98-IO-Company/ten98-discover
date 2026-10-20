@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { readResponseText } from '@ten98/runtime';
 import { Socket, isIP } from 'node:net';
 import type { SendMailOptions, SMTPTransportOptions } from 'nodemailer';
 import { z } from 'zod';
@@ -58,12 +59,7 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 
 async function cloudflareReply(response: Response, signal: AbortSignal): Promise<unknown> {
   if (!response.ok || response.redirected || !/^application\/json(?:;|$)/i.test(response.headers.get('content-type') ?? '')) { void response.body?.cancel().catch(() => undefined); throw new EmailDeliveryError(); }
-  const reader = response.body?.getReader(); if (!reader) throw new EmailDeliveryError();
-  const chunks: Uint8Array[] = []; let bytes = 0;
-  try {
-    for (;;) { const { done, value } = await untilAborted(reader.read(), signal); if (done) break; bytes += value.byteLength; if (bytes > 16_384) throw new EmailDeliveryError(); chunks.push(value); }
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, bytes)));
-  } finally { void reader.cancel().catch(() => undefined); reader.releaseLock(); }
+  return JSON.parse(await readResponseText(response, { maxBytes: 16_384, signal }));
 }
 
 /** One attempt, one recipient, bounded resources. Never logs messages, links or provider errors. */

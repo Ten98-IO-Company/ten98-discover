@@ -3,6 +3,8 @@ import { lookup } from 'node:dns/promises';
 import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { isIP } from 'node:net';
+import { Readable } from 'node:stream';
+import { oidcEndpoint, readResponseText } from '@ten98/runtime';
 import { addressKey, publicNetworkAddress } from './public-network.ts';
 import { authorizationCodeRequest, createAuthorizationURL, verifyProviderIdToken } from 'better-auth/oauth2';
 import { z } from 'zod';
@@ -58,7 +60,8 @@ function endpoint(raw: string, settings: OidcSettings): URL {
   const testHttp = process.env.TEN98_INTEGRATION_TEST === '1' && url.protocol === 'http:'
     && ['127.0.0.1', '[::1]'].includes(url.hostname)
     && settings.allowedAddresses.some((address) => addressKey(address) === addressKey(url.hostname.replace(/^\[|\]$/g, '')));
-  if ((url.protocol !== 'https:' && !testHttp) || url.username || url.password || url.hash) unavailable('Identity provider endpoints require HTTPS without credentials or fragments.');
+  try { oidcEndpoint(url, { allowHttp: testHttp, issuer: raw === settings.issuer }); }
+  catch { unavailable('Identity provider endpoints require HTTPS without credentials or fragments, and issuers cannot contain a query.'); }
   const allowed = [new URL(settings.issuer).origin, ...settings.allowedOrigins];
   if (!allowed.includes(url.origin)) unavailable('This endpoint origin is outside the operator-approved identity provider origins.');
   return url;
@@ -72,8 +75,7 @@ export function validateOidcSettings(value: unknown): OidcSettings {
     try { url = new URL(origin); } catch { return unavailable('Approved endpoint origins are invalid.'); }
     if (url.origin !== origin || url.username || url.password) unavailable('Approved endpoints must be exact origins.');
   }
-  const issuer = endpoint(settings.issuer, settings);
-  if (issuer.search) unavailable('The issuer must not contain a query string.');
+  endpoint(settings.issuer, settings);
   return settings;
 }
 
@@ -102,17 +104,8 @@ export async function requestOidcJson(raw: string, settings: OidcSettings, post?
       },
     }, (response) => {
       if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) { response.destroy(); fail(); return; }
-      const chunks: Buffer[] = [];
-      let size = 0;
-      response.on('data', (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > 1_048_576) { response.destroy(); fail(); return; }
-        chunks.push(chunk);
-      });
-      response.on('error', fail);
-      response.on('end', () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { fail(); }
-      });
+      const body = new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>);
+      readResponseText(body, { maxBytes: 1_048_576, preserveBOM: true }).then(text => resolve(JSON.parse(text))).catch(fail);
     });
     const deadline = setTimeout(() => { request.destroy(); fail(); }, 10_000);
     request.on('close', () => clearTimeout(deadline));

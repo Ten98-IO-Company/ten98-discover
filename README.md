@@ -1,5 +1,7 @@
 # ten98 Discover
 
+Common architecture and server mechanisms are maintained in [ten98-code-system](https://github.com/Ten98-IO-Company/ten98-code-system). `pnpm check:architecture` validates the installed shared contract; the normal test and build commands include it.
+
 SEO, AEO and GEO intelligence, combined with web analytics in an MIT-licensed, self-hosted application. The app is free and fully featured by design; external data/model providers may charge.
 
 **Status: development foundation; not a V1 release.** Full source parity, additional platform integrations and operational acceptance remain in progress. See the [current implementation and release gaps](https://wiki.ten98.io/s/ten98-docs/p/release-status-vBt9k2HJBg) and [81-requirement register](https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5). No release image is published.

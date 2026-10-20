@@ -1,18 +1,18 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { mayGrantWorkspaceRole as mayGrant, workspaceRoles, type WorkspaceRole as Role } from '@ten98/runtime';
 import type { PoolClient } from 'pg';
 import { hashPassword } from 'better-auth/crypto';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
 
-type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 type Workspace = { id: string; name: string };
 type Invitation = { id: string; email: string; role: Exclude<Role, 'owner'>; expiresAt: Date };
 const idInput = z.uuid();
 const nameInput = z.object({ name: z.string().trim().min(1).max(120) }).strict();
 const emailInput = z.string().trim().toLowerCase().max(254).email();
 const tokenInput = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-const roleInput = z.enum(['owner', 'admin', 'editor', 'viewer']);
+const roleInput = z.enum(workspaceRoles);
 const invitationInput = z.object({ email: emailInput, role: roleInput.exclude(['owner']) }).strict();
 
 function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
@@ -51,10 +51,6 @@ async function managerRole(client: PoolClient, workspaceId: string, userId: stri
   const role = result.rows[0]?.role;
   if (role !== 'owner' && role !== 'admin') throw new FoundationError(404, 'Workspace not found or unavailable.');
   return role;
-}
-
-function mayGrant(actor: Role | undefined, role: Role): boolean {
-  return actor === 'owner' || (actor === 'admin' && (role === 'editor' || role === 'viewer'));
 }
 
 function requireGrant(actor: Role, role: Role) {

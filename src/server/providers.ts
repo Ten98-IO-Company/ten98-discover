@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { toUSVString } from 'node:util';
+import { openRouterFetch, readResponseText } from '@ten98/runtime';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError } from './auth.ts';
@@ -108,24 +109,16 @@ export async function saveBudget(workspaceId: string, userId: string, input: unk
   });
 }
 
-async function boundedJson(response: Response) {
-  if (!response.body) throw new Error('Missing provider response.');
-  const reader = response.body.getReader(); const parts: Uint8Array[] = []; let size = 0;
-  try {
-    for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 1_048_576) throw new Error('Response too large.'); parts.push(value); }
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(parts)));
-  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
-}
-
 // These fixed read-only endpoints cannot become an arbitrary authenticated proxy.
 export async function providerAccountCheck(provider: Connection['provider'], credentials: unknown, send: typeof fetch = fetch) {
   const parsed = credentialsInput[provider].parse(credentials);
   const url = provider === 'openrouter' ? 'https://openrouter.ai/api/v1/key' : 'https://api.dataforseo.com/v3/appendix/user_data';
   const authorization = 'apiKey' in parsed ? `Bearer ${parsed.apiKey}` : `Basic ${Buffer.from(`${parsed.login}:${parsed.password}`).toString('base64')}`;
   try {
-    const response = await send(url, { headers: { authorization, accept: 'application/json' }, redirect: 'error', credentials: 'omit', signal: AbortSignal.timeout(10_000) });
+    const response = provider === 'openrouter' ? await openRouterFetch('/key', { apiKey: 'apiKey' in parsed ? parsed.apiKey : undefined }, send)
+      : await send(url, { headers: { authorization, accept: 'application/json' }, redirect: 'error', credentials: 'omit', signal: AbortSignal.timeout(10_000) });
     if (!response.ok) { await response.body?.cancel(); return { checkStatus: 'error', diagnostic: response.status === 401 || response.status === 403 ? 'Provider rejected the credentials or account permissions.' : response.status === 429 ? 'Provider rate limit reached. Wait before checking again.' : 'Provider account check failed. Try again later.' }; }
-    const body = await boundedJson(response);
+    const body = JSON.parse(await readResponseText(response, { maxBytes: 1_048_576 }));
     const valid = provider === 'openrouter'
       ? body?.data && typeof body.data === 'object' && !Array.isArray(body.data) && typeof body.data.is_free_tier === 'boolean'
       : body?.status_code === 20000 && body?.tasks?.length === 1 && body.tasks[0]?.status_code === 20000 && Array.isArray(body.tasks[0]?.result) && body.tasks[0].result.length > 0;

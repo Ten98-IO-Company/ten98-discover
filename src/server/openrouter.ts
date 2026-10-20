@@ -1,4 +1,5 @@
 import {toUSVString} from 'node:util';
+import {openRouterFetch,readResponseText} from '@ten98/runtime';
 import {createHmac,createHash} from 'node:crypto';
 import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
@@ -10,7 +11,6 @@ import {legacyOpenRouterModels,openRouterModelId,openRouterProviderName,openRout
 import {requireCatalogModels} from './openrouter-models.ts';
 import {validateExecutionPayload} from './openrouter-input.ts';
 
-const openRouterBase='https://openrouter.ai/api/v1';
 const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==='object'&&!Array.isArray(v);
 function invalid():never{throw new Error('Unsupported OpenRouter evidence.');}
 const positiveInteger=(v:unknown):v is number=>typeof v==='number'&&Number.isSafeInteger(v)&&v>0&&v<=2_000_000;
@@ -19,13 +19,10 @@ function apiKey(credentials:unknown){if(!object(credentials)||typeof credentials
 export function keyFingerprint(credentials:unknown){return createHash('sha256').update('ten98.openrouter.key.v1:'+apiKey(credentials)).digest('hex');}
 export function executionActor(userId:string){return createHmac('sha256',getConfig().authSecret).update('ten98.openrouter.actor.v1:'+userId).digest('hex');}
 async function responseJson(response:Response){
-  if(!response.body)invalid();const reader=response.body.getReader(),parts:Uint8Array[]=[];let size=0;
-  try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>2_097_152)invalid();parts.push(value);}return parseOpenRouterJson(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));}
-  finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+  return parseOpenRouterJson(await readResponseText(response,{maxBytes:2_097_152}));
 }
-function headers(credentials:unknown){return {authorization:`Bearer ${apiKey(credentials)}`,accept:'application/json'};}
 async function read(path:string,credentials:unknown,send:typeof fetch){
-  const response=await send(openRouterBase+path,{headers:headers(credentials),redirect:'error',credentials:'omit',signal:AbortSignal.timeout(10_000)});
+  const response=await openRouterFetch(path,{apiKey:apiKey(credentials)},send);
   if(!response.ok){await response.body?.cancel();invalid();}return responseJson(response);
 }
 function endpointRoute(model:string,e:Record<string,any>,maxCompletionTokens:number,profile?:OpenRouterRequestProfile):RouteSnapshot{
@@ -161,7 +158,7 @@ async function requestExecution(credentials:unknown,messages:RenderedInput,route
   let reference:string|null=null;
   try{
     const body=executionRequestBody(messages,route,maxTokens,runId,actor,structured);
-    const response=await send(openRouterBase+'/chat/completions',{method:'POST',headers:{...headers(credentials),'content-type':'application/json','x-openrouter-metadata':'enabled'},body:JSON.stringify(body),redirect:'error',credentials:'omit',signal:AbortSignal.timeout(60_000)});
+    const response=await openRouterFetch('/chat/completions',{apiKey:apiKey(credentials),body,metadata:true},send);
     const header=response.headers.get('x-generation-id');if(header!==null&&!generationId(header)){await response.body?.cancel();return unknownExecution();}
     if(header!==null){reference=header;try{await capture(header);}catch{await response.body?.cancel();throw new Error('Generation receipt was not persisted.');}}
     return parseExecutionOutcome(await responseJson(response),response.status,reference,route,dispatchedAt);

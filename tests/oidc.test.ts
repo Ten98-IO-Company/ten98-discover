@@ -29,6 +29,8 @@ test('OIDC pins approved endpoints and verifies signed issuer, audience, nonce a
       response.end(JSON.stringify({ id_token: jwt() }));
     } else if (request.url === '/redirect') { response.writeHead(302, { location: `${origin}/target` }); response.end('{}'); }
     else if (request.url === '/large') response.end(JSON.stringify({ payload: 'x'.repeat(1_048_576) }));
+    else if (request.url === '/bom-json') response.end(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{}')]));
+    else if (request.url === '/invalid-utf8') response.end(Buffer.from([0x7b,0x22,0x78,0x22,0x3a,0x22,0xff,0x22,0x7d]));
     else { redirectTargetCalls++; response.end('{}'); }
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -69,6 +71,9 @@ test('OIDC pins approved endpoints and verifies signed issuer, audience, nonce a
     await assert.rejects(requestOidcJson(`${origin}/redirect`, settings));
     assert.equal(redirectTargetCalls, 0, 'Redirect targets must never be followed.');
     await assert.rejects(requestOidcJson(`${origin}/large`, settings));
+    await assert.rejects(requestOidcJson(`${origin}/invalid-utf8`, settings), { status: 502 });
+    await assert.rejects(requestOidcJson(`${origin}/bom-json`, settings), { status: 502 }, 'OIDC JSON with a leading BOM must retain the previous rejection contract.');
+    for (const issuer of ['https://identity.example/?', 'https://identity.example/#', 'https://user:secret@identity.example/']) assert.throws(() => validateOidcSettings({ ...raw, issuer }));
     await assert.rejects(requestOidcJson('https://not-approved.example.test/keys', settings));
     delete process.env.TEN98_INTEGRATION_TEST;
     assert.throws(() => validateOidcSettings(raw), 'HTTP must remain unavailable outside synthetic integration mode.');

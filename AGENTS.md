@@ -1,5 +1,7 @@
 # ten98-monitor contributor rules
 
+Shared architecture and dependency declarations are maintained in [ten98-code-system](https://github.com/Ten98-IO-Company/ten98-code-system), installed as `node_modules/@ten98/runtime/README.md` and `architecture.json`. Reuse its server primitives and the existing @ten98/ui presentation package. `pnpm check:architecture` runs in the normal test and build gates. Existing authorization, identity and paid-work contracts below remain required.
+
 Read [README](README.md), the [accepted brief](https://wiki.ten98.io/s/ten98-docs/p/brief-d35ZixmM5Q), [foundation contracts](docs/foundation.md) and the relevant [requirement rows](https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5) before editing. This is a development foundation, not a V1 release. Do not present planned capabilities as implemented or deployed software.
 
 ## Ownership

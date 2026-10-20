@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {openRouterFetch,readResponseText} from '@ten98/runtime';
 import {z} from 'zod';
 import {openRouterModelId,openRouterMetadataBytes,type OpenRouterCatalog,type OpenRouterCatalogModel} from '../lib/openrouter-models.ts';
 import {decimal,decimalText} from './openrouter-input.ts';
@@ -49,13 +50,12 @@ export function cachedOpenRouterModels(now=Date.now()):OpenRouterCatalog{
 }
 export async function refreshOpenRouterCatalog(send:typeof fetch=fetch):Promise<OpenRouterCatalog>{
  if(!inFlight)inFlight=Promise.resolve().then(async()=>{try{
-  const signal=AbortSignal.timeout(openRouterCatalogLimits.timeoutMs),models:OpenRouterCatalogModel[]=[],ids=new Set<string>();let total:number|undefined,received=0,bytes=0;
+  const signal=AbortSignal.timeout(openRouterCatalogLimits.timeoutMs),models:OpenRouterCatalogModel[]=[],ids=new Set<string>();let total:number|undefined,received=0;
   for(let page=0;page<openRouterCatalogLimits.pages;page++){
-   signal.throwIfAborted();const response=await send(`https://openrouter.ai/api/v1/models?output_modalities=text&offset=${page*openRouterCatalogLimits.pageSize}&limit=${openRouterCatalogLimits.pageSize}`,{headers:{accept:'application/json'},redirect:'error',credentials:'omit',signal});
+   signal.throwIfAborted();const response=await openRouterFetch(`/models?output_modalities=text&offset=${page*openRouterCatalogLimits.pageSize}&limit=${openRouterCatalogLimits.pageSize}`,{signal},send);
    if(!response.ok||response.redirected||!/^application\/(?:[a-z0-9.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body){await response.body?.cancel();throw invalid();}
-   const reader=response.body.getReader(),parts:Uint8Array[]=[];let size=0;const abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});
-   let body:unknown;try{for(;;){signal.throwIfAborted();const item=await reader.read();signal.throwIfAborted();if(item.done)break;size+=item.value.byteLength;bytes+=item.value.byteLength;if(size>openRouterCatalogLimits.pageBytes||bytes>openRouterCatalogLimits.totalBytes)throw invalid();parts.push(item.value);}body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));}
-   finally{signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
+   const text=await readResponseText(response,{maxBytes:Math.min(openRouterCatalogLimits.pageBytes,Math.floor(openRouterCatalogLimits.totalBytes/openRouterCatalogLimits.pages)),signal});
+   const body:unknown=JSON.parse(text);
    if(!object(body)||!Array.isArray(body.data)||body.data.length>openRouterCatalogLimits.pageSize||!Number.isSafeInteger(body.total_count)||body.total_count<0||body.total_count>2000||!object(body.links)||!('next'in body.links))throw invalid();
    if(total!==undefined&&total!==body.total_count)throw invalid();total=body.total_count;
    for(const raw of body.data){
