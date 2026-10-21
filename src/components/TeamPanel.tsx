@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { mayManageWorkspaceMember, workspaceRoles, type WorkspaceRole as Role } from '@ten98/runtime';
+import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime';
+import { Banner } from '@ten98/ui';
+import { assignableRoles, invitableRoles } from '../lib/team-roles';
 import { api, ApiError, errMsg } from '../lib/api';
 
 type Member = { userId: string; name: string; email: string; role: Role };
@@ -13,8 +15,6 @@ type TeamData = {
   invitations: Invitation[];
 };
 
-const INVITE_ROLES: readonly Role[] = ['admin', 'editor', 'viewer'];
-const LIMITED_ROLES: readonly Role[] = ['editor', 'viewer'];
 
 function is401(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401;
@@ -104,8 +104,8 @@ function TeamPanelContent(props: TeamPanelProps) {
 
   const myRole = data?.role ?? null;
   const canManage = myRole === 'owner' || myRole === 'admin';
-  const roleOptions = myRole === 'owner' ? workspaceRoles : LIMITED_ROLES;
-  const inviteRoles = myRole === 'owner' ? INVITE_ROLES : LIMITED_ROLES;
+  const roleOptions = assignableRoles(myRole);
+  const inviteRoles = invitableRoles(myRole);
   const transferTarget = data?.members.find(member => member.userId === transferTo && member.userId !== userId);
 
   function canManageMember(m: Member): boolean {
@@ -113,9 +113,7 @@ function TeamPanelContent(props: TeamPanelProps) {
   }
 
   function canManageInvite(inv: Invitation): boolean {
-    if (!data) return false;
-    if (data.role === 'owner') return true;
-    return data.role === 'admin' && (inv.role === 'editor' || inv.role === 'viewer');
+    return mayGrantWorkspaceRole(data?.role, inv.role);
   }
 
   async function handleAccessLoss(error: unknown, signal: AbortSignal): Promise<boolean> {
@@ -395,12 +393,10 @@ function TeamPanelContent(props: TeamPanelProps) {
       {myRole === 'owner' && (
         <section className='card' aria-labelledby='two-factor-heading'>
           <h2 id='two-factor-heading'>Two-factor requirement</h2>
-          <p id='two-factor-status' role='status'>
-            {data.workspace.twoFactorRequired
-              ? 'Members must turn on two-factor authentication before opening this workspace’s data.'
-              : 'Members can open this workspace without two-factor authentication.'}
-          </p>
-          <button type='button' className='btn' style={{ minBlockSize: 'var(--control-touch)' }} aria-disabled={busy} aria-describedby='two-factor-status' onClick={toggleTwoFactor}>
+          {data.workspace.twoFactorRequired
+            ? <Banner tone='warning' icon='shield' live>Members must turn on two-factor authentication before opening this workspace’s data.</Banner>
+            : <p id='two-factor-status' role='status'>Members can open this workspace without two-factor authentication.</p>}
+          <button type='button' className='btn' style={{ minBlockSize: 'var(--control-touch)' }} aria-disabled={busy} aria-describedby={data.workspace.twoFactorRequired ? undefined : 'two-factor-status'} onClick={toggleTwoFactor}>
             {data.workspace.twoFactorRequired ? 'Stop requiring two-factor authentication' : 'Require two-factor authentication'}
           </button>
         </section>

@@ -4,6 +4,7 @@ import {api,ApiError,errMsg} from '../lib/api';
 import type {RankRole,RankTracker,RankConnection} from './RankTrackingView';
 import {RankCheckView,type RankQuoteDisplay} from './RankCheckView';
 import {RankCheckResults,type RankResultDisplay,type RankHistoryDisplay} from './RankCheckResults';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Status='quoted'|'queued'|'running'|'waiting'|'completed'|'partial'|'failed'|'cancelled'|'skipped';
 type Cost='not_started'|'pending'|'uncertain'|'final';
@@ -24,7 +25,7 @@ const integer=(v:unknown,min=0,max=2147483647)=>Number.isSafeInteger(v)&&Number(
 const date=(v:unknown)=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT/.test(v)&&Number.isFinite(Date.parse(v));
 const nullableDate=(v:unknown)=>v===null||date(v);
 const money=(v:unknown):v is string=>typeof v==='string'&&v.length<=24&&/^(?:0|[1-9][0-9]*)\.[0-9]{6}$/.test(v);
-const role=(v:unknown):v is RankRole=>['owner','admin','editor','viewer'].includes(v as string);
+const role=(v:unknown):v is RankRole=>workspaceRoles.includes(v as WorkspaceRole);
 const writer=(v:RankRole|null)=>v!==null&&v!=='viewer';
 const distinct=(rows:Array<{id:string}>)=>new Set(rows.map(r=>r.id.toLowerCase())).size===rows.length;
 function summary(v:unknown):v is Summary{return object(v)&&uuid(v.id)&&['quoted','queued','running','waiting','completed','partial','failed','cancelled','skipped'].includes(v.status)&&['manual','scheduled'].includes(v.trigger)&&nullableDate(v.scheduledFor)&&(v.trigger==='scheduled'?(v.scheduledFor!==null):v.scheduledFor===null)&&['queued','live'].includes(v.method)&&typeof v.isSubset==='boolean'&&integer(v.taskCount,0,2000)&&date(v.createdAt)&&nullableDate(v.startedAt)&&nullableDate(v.completedAt)&&typeof v.quoteExpired==='boolean'&&nullableDate(v.rawExpiredAt)&&nullableDate(v.dataExpiredAt)&&['not_started','pending','uncertain','final'].includes(v.costStatus)&&money(v.estimateUsd)&&money(v.knownChargeUsd)&&(v.diagnostic===null||text(v.diagnostic));}

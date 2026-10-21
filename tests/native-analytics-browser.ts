@@ -10,13 +10,13 @@ import {assertSchema, closeDatabase, getDatabase} from '../src/server/db.ts';
 import {createWorkspace} from '../src/server/teams.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
 import {getDestinations, saveDestinationsDraft, publishDestinations} from '../src/server/destinations.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Optional real-browser acceptance; no browser dependency belongs in production.
 assert.equal(process.env.TEN98_INTEGRATION_TEST, '1', 'Use an isolated local browser fixture.');
 const config = getConfig(), local = ['localhost', '127.0.0.1', '[::1]'];
 assert.ok(local.includes(new URL(config.appUrl).hostname) && local.includes(new URL(config.databaseUrl).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Supply an installed Playwright module URL.');
-const {chromium} = await import(process.env.PLAYWRIGHT_MODULE!);
 const siteKey = randomUUID(), projectId = randomUUID(); let fixtureSiteKey = siteKey;
 const fixture = createServer((request, response) => {
   if (request.url === '/favicon.ico') { response.writeHead(204); response.end(); return; }
@@ -42,7 +42,7 @@ try {
     await publishDestinations(projectId, userId, 'live', {expectedVersion: draft.draftVersion});
   }
   await publish('123');
-  browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true});
+  browser = await launchChromium();
   const context = await browser.newContext();
   const outbound: string[] = [], events: any[] = [];
   const blockExternal = async (route: any) => {

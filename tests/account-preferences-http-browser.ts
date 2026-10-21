@@ -4,6 +4,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {accountPreferencesDtoSchema,type AccountPreferencesDto} from '../src/lib/account-preferences.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // A separately approved outer must own the fresh DB and actual compiled server.
 // No positive response interception, replay, session minting or provider calls.
@@ -16,7 +17,6 @@ const databasePort=process.env.TEN98_ACCOUNT_PREFERENCES_HTTP_DB_PORT??'55501';a
 assert.equal(config.appUrl,'http://127.0.0.1:3111');assert.equal(database.hostname,'127.0.0.1');assert.equal(database.port,databasePort);
 assert.match(database.pathname,/^\/ten98_account_preferences_http_[a-f0-9]{12}$/);assert.equal(database.search,'');assert.equal(database.hash,'');
 for(const name of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[name],undefined);
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE!);
 const {pool}=getDatabase(),password=randomBytes(24).toString('base64url'),workspace=randomUUID(),project=randomUUID();
 const owner={id:randomUUID(),name:'Preferences HTTP owner',email:randomUUID()+'@preferences-http.integration.test'};
 const personal={id:randomUUID(),name:'Personal account',email:randomUUID()+'@preferences-http.integration.test'};
@@ -38,7 +38,7 @@ async function signIn(actor:typeof owner,label:string){
   const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',()=>pageErrors.push(label));
   page.on('request',(request:any)=>{if(new URL(request.url()).pathname===preferencePath&&request.method()==='POST')posts[label]++;});
   page.on('response',(response:any)=>{const target=new URL(response.url());if(target.pathname.startsWith('/api/'))http.push({actor:label,method:response.request().method(),path:target.pathname,status:response.status()});});
-  await page.goto(url);await page.getByLabel('Email',{exact:true}).fill(actor.email);await page.getByLabel('Password',{exact:true}).fill(password);
+  await page.goto(url);await page.getByLabel('Email address', { exact: true }).fill(actor.email);await page.getByLabel('Password',{exact:true}).fill(password);
   const signedIn=page.waitForResponse((response:any)=>new URL(response.url()).pathname==='/api/auth/sign-in/email'&&response.request().method()==='POST');await page.getByRole('button',{name:'Sign in',exact:true}).click();assert.equal((await signedIn).status(),200);await ready(page);
   const dto=await read(context);assert.equal(dto.user.id,actor.id);return {context,page,dto};
 }
@@ -46,7 +46,7 @@ const pass=(message:string)=>{groups.push(message);console.log('PASS '+message);
 try{
   await assertSchema();assert.equal((await pool.query('SELECT count(*)::int AS n FROM "user"')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM workspace')).rows[0].n,0);
   const credential=await hashPassword(password),tx=await pool.connect();try{await tx.query('BEGIN');assert.equal((await tx.query("UPDATE installation SET claimed=true WHERE id='instance' AND claimed=false")).rowCount,1);for(const actor of [owner,personal]){await tx.query('INSERT INTO "user"(id,name,email)VALUES($1,$2,$3)',[actor.id,actor.name,actor.email]);await tx.query('INSERT INTO account(id,"accountId","providerId","userId",password)VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),actor.id,credential]);}await tx.query("INSERT INTO workspace(id,name)VALUES($1,'Preferences HTTP fixture')",[workspace]);await tx.query("INSERT INTO membership(workspace_id,user_id,role)VALUES($1,$2,'owner')",[workspace,owner.id]);await tx.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at)VALUES($1,$2,'Private owner project','https://preferences-http.integration.test',$3,'infinity')",[project,workspace,randomUUID()]);await tx.query('COMMIT');}catch(error){await tx.query('ROLLBACK');throw error;}finally{tx.release();}
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   stage='owner default and explicit save';const first=await signIn(owner,'owner-first');assert.deepEqual(first.dto.preferences,{revision:0,timeZone:'UTC',locale:'en-US',theme:'light',updatedAt:null});await fields(first.page,first.dto);assert.equal((await pool.query('SELECT count(*)::int AS n FROM user_preference')).rows[0].n,0);
   await first.page.getByLabel('Display name',{exact:true}).fill('Saved compiled owner');await first.page.getByLabel('Time zone',{exact:true}).fill('Asia/Dubai');await first.page.getByLabel('Date and number format',{exact:true}).selectOption('ar-SA');await first.page.getByRole('radio',{name:'Dark',exact:true}).check();const saved=accountPreferencesDtoSchema.parse(await(await save(first.page)).json());await first.page.getByText('Preferences saved.',{exact:true}).waitFor();assert.equal(saved.user.id,owner.id);assert.equal(saved.user.name,'Saved compiled owner');assert.equal(saved.preferences.revision,1);assert.equal(saved.preferences.timeZone,'Asia/Dubai');assert.equal(saved.preferences.locale,'ar-SA');assert.equal(saved.preferences.theme,'dark');assert.deepEqual(await read(first.context),saved);await first.page.reload();await ready(first.page);await fields(first.page,saved);
   const second=await signIn(owner,'owner-second');assert.deepEqual(second.dto,saved);await fields(second.page,saved);assert.equal(posts['owner-first'],1);assert.equal(posts['owner-second'],0);pass('compiled cookies: owner defaults, explicit save, reload and second-session persistence');

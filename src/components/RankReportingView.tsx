@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 type RankReportingDevice='desktop'|'mobile';
 type RankMatrixFilters={device:RankReportingDevice;search:string;pinned:'all'|'true'|'false';runLimit:number};
@@ -7,7 +8,7 @@ type RankMatrixColumnDisplay={id:string;startedAt:string;utc:string;status:strin
 type RankMatrixCellDisplay={runId:string;state:string;position:string;change:string;coverage:string;observedAt:string;retrievedAt:string;availability:string};
 type RankMatrixRowDisplay={id:string;keyword:string;caseRule:string;pinned:boolean;cells:readonly RankMatrixCellDisplay[]};
 export type RankReportingViewProps={
- prefix:string;role:'owner'|'admin'|'editor'|'viewer'|null;mode:'distribution'|'matrix';
+ prefix:string;role:WorkspaceRole|null;mode:'distribution'|'matrix';
  loaded:boolean;reading:boolean;exporting:boolean;error:string;notice:string;
  source:string;target:string;asOf:string;dates:string;enabledDevices:readonly RankReportingDevice[];
  distributionDevice:'both'|'desktop'|'mobile';distributionDirty:boolean;distributionApplied:string;

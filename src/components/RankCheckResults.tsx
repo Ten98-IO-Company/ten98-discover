@@ -1,11 +1,12 @@
 import type * as React from 'react';
+import type {WorkspaceRole} from '@ten98/runtime';
 export type RankHistoryDisplay={id:string;createdAt:string;method:string;selection:string;status:string;cost:string;availability:string};
 export type RankResultDisplay={status:string;target:string;method:string;selection:string;estimateUsd:string;knownChargeUsd:string;
  costStatus:'not_started'|'pending'|'uncertain'|'final';createdAt:string;startedAt:string;completedAt:string;
  diagnostic:string|null;expired:boolean;rawExpired:boolean;canCancel:boolean;
  tasks:readonly {id:string;keyword:string;device:string;outcome:string;position:string;coverage:string;observedAt:string;rankingUrl:string|null}[];
  dispatches:readonly {id:string;label:string;status:string;estimateUsd:string;actualUsd:string|null;canRecover:boolean;diagnostic:string|null}[]};
-export type RankCheckResultsProps={prefix:string;backLabel:string;role:'owner'|'admin'|'editor'|'viewer'|null;phase:'history'|'run';
+export type RankCheckResultsProps={prefix:string;backLabel:string;role:WorkspaceRole|null;phase:'history'|'run';
  locked:boolean;reading:boolean;pending:boolean;error:string;notice:string;loaded:boolean;
  history:readonly RankHistoryDisplay[];nextCursor:string|null;run:RankResultDisplay|null;
  canPrepare:boolean;connections:readonly {id:string;name:string}[];recoveryConnectionId:string;

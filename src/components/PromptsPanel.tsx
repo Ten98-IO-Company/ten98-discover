@@ -6,8 +6,9 @@ import {PromptDiscoveryPanel} from './PromptDiscoveryPanel';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
 import {AiSuggestionsPanel} from './AiSuggestionsPanel';
 import type {ExecutionEntry} from './PromptExecutionsPanel';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
-type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+type Role = WorkspaceRole;
 
 type Classification = {
   isBranded: boolean;
@@ -259,7 +260,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
       if (cursor) p.set('cursor', cursor); // cursor only ever follows an unchanged filter set
       const r = await api<ListResponse>(`${base}?${p.toString()}`, {signal: ac.signal});
       if (!aliveRef.current || gen !== genRef.current) return;
-      if ((accessOnly || failClosed) && (!r || !['owner','admin','editor','viewer'].includes(r.role) || !Array.isArray(r.items) || !(r.nextCursor === null || typeof r.nextCursor === 'string') || r.items.some(p => !p || typeof p.id !== 'string' || typeof p.text !== 'string' || typeof p.topic !== 'string' || typeof p.enabled !== 'boolean' || !Array.isArray(p.userTags) || !Array.isArray(p.systemTags) || !p.classification))) throw new Error('Prompt library access could not be verified. Reload the list.');
+      if ((accessOnly || failClosed) && (!r || !workspaceRoles.includes(r.role as WorkspaceRole) || !Array.isArray(r.items) || !(r.nextCursor === null || typeof r.nextCursor === 'string') || r.items.some(p => !p || typeof p.id !== 'string' || typeof p.text !== 'string' || typeof p.topic !== 'string' || typeof p.enabled !== 'boolean' || !Array.isArray(p.userTags) || !Array.isArray(p.systemTags) || !p.classification))) throw new Error('Prompt library access could not be verified. Reload the list.');
       setRole(r.role);
       if (!accessOnly) {
         setItems(prev => (cursor ? [...prev, ...r.items] : r.items));

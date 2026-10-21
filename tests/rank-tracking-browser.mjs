@@ -4,9 +4,9 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_RANK_PANEL_BROWSER,'1');
 // Use installed Playwright, or an explicitly supplied module path; never install/download here.
@@ -23,7 +23,7 @@ server.middlewares.use((req,res,next)=>{if(req.url!=='/'&&req.url!=='/elsewhere'
 let browser;
 try{
  await server.listen();const addr=server.httpServer.address();assert.equal(addr.address,'127.0.0.1');const origin='http://127.0.0.1:'+addr.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href : 'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
  const errors=[],unexpected=[],calls=[],mutations=[],receipts=new Map();let role='owner',vault=true,trackers=[structuredClone(initial)],keywords=new Map([[tid,structuredClone(initialKeywords)]]),nextWrite=null,nextGet=null,held=null,nextCatalog=null,nextLocations=null;
  const envelope=id=>({role,tracker:structuredClone(trackers.find(t=>t.id===id)),keywords:structuredClone(keywords.get(id)??[])});

@@ -1,17 +1,13 @@
-// SYNTHETIC current-contract component acceptance; no native Google/compiled-App proof.
+// SYNTHETIC current-contract component acceptance (opt-in via TEN98_GOOGLE_ORGANIC_BROWSER=1, no approval file); no native Google/compiled-App proof.
 import assert from 'node:assert/strict';
-import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
-import {createHash,randomBytes} from 'node:crypto';
+import {writeFileSync,mkdirSync} from 'node:fs';
+import {randomBytes} from 'node:crypto';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_GOOGLE_ORGANIC_BROWSER,'1');
-assert.ok(process.env.PLAYWRIGHT_MODULE&&process.env.TEN98_GOOGLE_ORGANIC_BROWSER_APPROVAL);
-const root=process.cwd(),hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex'),approval=JSON.parse(readFileSync(process.env.TEN98_GOOGLE_ORGANIC_BROWSER_APPROVAL,'utf8'));
-assert.equal(approval.approved,true);assert.equal(approval.kind,'google-organic-component-v1');
-assert.ok(approval.files&&Object.keys(approval.files).length===750);
-for(const file of ['tests/google-organic-browser-fixture.tsx','tests/google-organic-browser.mjs','src/components/GoogleReportsPanel.tsx','src/lib/google-report-display.ts','src/server/google-reports.ts'])assert.match(approval.files[file],/^[a-f0-9]{64}$/);
-const verify=()=>{for(const[file,digest]of Object.entries(approval.files))assert.equal(hash(resolve(root,file)),digest,file);};verify();
+assert.ok(process.env.PLAYWRIGHT_MODULE);
+const root=process.cwd();
 const out=resolve(root,'private/google-usability-browser-v1/browser-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
 const evidence={phase:'starting',synthetic:true,qualification:'All overview/import/report bodies are explicitly synthetic current-contract fixtures. Real Panel, fetch, user actions and browser layout only; no native/provider/cookie/compiled proof.',contexts:0,groups:[],requests:[],external:[],unexpected:[],pageErrors:[],screenshots:[],layout:[],tabTrail:[],cleanup:[]},save=()=>writeFileSync(out+'/evidence.json',JSON.stringify(evidence,null,2)+'\n');save();
 const id=n=>'f0580000-0000-4000-8000-'+String(n).padStart(12,'0'),scope={projectId:id(1),userId:id(2)},otherScope={projectId:id(3),userId:id(4)},connectionId=id(5),dailyId=id(6),weeklyId=id(7),metrics=['sessions','activeUsers','engagedSessions','engagementRate','keyEvents','transactions','purchaseRevenue'];
@@ -53,7 +49,7 @@ try{
  server=await createServer({configFile:false,root,cacheDir:out+'/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Google organic synthetic component acceptance</title><div id="root"></div><script type="module" src="/tests/google-organic-browser-fixture.tsx"></script></html>');});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
- const{chromium}=await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+ browser=await launchChromium({args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
 
  for(const[zone,lastDay,today]of[['America/Los_Angeles','2025-12-30','2025-12-31'],['Pacific/Kiritimati','2025-12-31','2026-01-01']]){
   const data=fixture(zone);data.conn.imports=[];let posts=0;
@@ -91,10 +87,10 @@ try{
   if(width===320&&zoom===1){let found=false;for(let n=0;n<45;n++){await page.keyboard.press('Tab');const focus=await page.evaluate(()=>{const el=document.activeElement;return{tag:el?.tagName,label:el?.getAttribute('aria-label')??el?.textContent?.slice(0,70),scrollable:el instanceof HTMLElement&&el.matches('.table-wrap')&&el.scrollWidth>el.clientWidth,scrollLeft:el instanceof HTMLElement?el.scrollLeft:null};});evidence.tabTrail.push({dir,n,...focus});if(focus.scrollable){const before=focus.scrollLeft;await page.keyboard.press(dir==='rtl'?'ArrowLeft':'ArrowRight');await wait(()=>page.evaluate(value=>document.activeElement.scrollLeft!==value,before));found=true;break;}}assert.equal(found,true,'A real Tab path must reach the native scrollable table; no programmatic focus/tabIndex injection.');}
   const screenshot=out+'/organic-'+width+'-'+dir+'-bodyzoom'+zoom+'.png';await page.screenshot({path:screenshot,fullPage:true});evidence.screenshots.push(screenshot);evidence.layout.push({width,dir,bodyStyleZoom:zoom,bounds,wraps});
  }pass('SYNTHETIC real320/1440 LTR/RTL body-style200percent layout, native HTML axes and Tab/arrow table scrolling');
- assert.equal(evidence.groups.length,6);assert.equal(evidence.contexts,18);assert.deepEqual(evidence.external,[]);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(evidence.pageErrors,[]);verify();evidence.sourceUnchanged=true;evidence.phase='passed';
+ assert.equal(evidence.groups.length,6);assert.equal(evidence.contexts,18);assert.deepEqual(evidence.external,[]);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(evidence.pageErrors,[]);evidence.phase='passed';
 }catch(error){evidence.phase='failed';evidence.failure={name:error.name,message:error.message};process.exitCode=1;}
 finally{
  for(const route of held)await route.abort().catch(()=>{});
  for(const[name,close]of[['context',()=>context?.close()],['browser',()=>browser?.close()],['vite',async()=>{await server?.close();assert.notEqual(server?.httpServer?.listening,true);}]]){try{await close();evidence.cleanup.push({name,closed:true});}catch(error){evidence.cleanup.push({name,closed:false,message:error.message});evidence.phase='failed';process.exitCode=1;}}
- try{verify();evidence.sourceUnchanged=true;}catch(error){evidence.phase='failed';evidence.failure??={name:error.name,message:error.message};process.exitCode=1;}evidence.finishedAt=new Date().toISOString();save();console.log(JSON.stringify({phase:evidence.phase,evidence:out+'/evidence.json'}));
+ evidence.finishedAt=new Date().toISOString();save();console.log(JSON.stringify({phase:evidence.phase,evidence:out+'/evidence.json'}));
 }

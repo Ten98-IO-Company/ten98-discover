@@ -7,12 +7,12 @@ import assert from 'node:assert/strict';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
 import type {SessionList,SessionDetail} from '../src/server/session-explorer-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Root supplies a built app and a new migrated database. This runner never builds,
 // starts a service, migrates, substitutes an API response, or contacts a provider.
@@ -113,8 +113,7 @@ try{
   const mark=(text:string)=>{completed.push(text);console.log('PASS '+text);};
   mark('Real collector creates 56 observed keys and 501 timeline events; identify creates neither events nor traffic visitor metadata.');
 
-  const module=process.env.PLAYWRIGHT_MODULE!,{chromium}=await import(module.startsWith('file:')?module:pathToFileURL(resolve(module)).href);
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   const sessions='/api/projects/'+project+'/sessions',base='/api/projects/'+project;
   const isRead=(path:string)=>path===sessions||path.startsWith(sessions+'/');
   const makeContext=async(actor:string,email:string,password:string)=>{

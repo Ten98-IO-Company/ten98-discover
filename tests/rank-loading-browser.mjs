@@ -1,26 +1,28 @@
 // Production-bundle acceptance; run only after the supervising agent releases port 3094.
 // TEN98_RANK_LOADING_BROWSER=1 PLAYWRIGHT_MODULE=<installed module> node tests/rank-loading-browser.mjs
-// Reuses private/navigation-browser/review.json and its existing synthetic viewer session.
+// Needs a fresh local app on BASE_URL (default http://localhost:3094) plus its BOOTSTRAP_TOKEN; tests/fixtures/navigation-review.mjs
+// provisions the synthetic viewer session at run time (TEN98_SHELL_FIXTURE may name a private session JSON instead).
 // No database access, provisioning, real auth writes, rank checks, provider calls, or browser install.
 // Session races use explicitly intercepted auth/Me replies; they test client fencing, not server auth.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdir, readFile, readdir, writeFile} from 'node:fs/promises';
-import {resolve, relative, sep} from 'node:path';
+import {resolve} from 'node:path';
+import {loadNavigationSession} from './fixtures/navigation-review.mjs';
 import {pathToFileURL} from 'node:url';
 import {gzipSync} from 'node:zlib';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_RANK_LOADING_BROWSER, '1', 'Explicit production-fixture opt-in required');
 const cwd = process.cwd(), artifactDir = resolve(cwd, 'private/rank-loading-browser');
-const fixture = JSON.parse(await readFile(resolve(cwd, 'private/navigation-browser/review.json'), 'utf8'));
+const fixture = await loadNavigationSession({baseUrl: process.env.BASE_URL ?? 'http://localhost:3094', override: process.env.TEN98_SHELL_FIXTURE});
 assert.equal(fixture.synthetic, true); assert.equal(fixture.role, 'viewer'); assert.equal(fixture.externalRequests, 0);
 const initialUrl = new URL(fixture.url), origin = initialUrl.origin;
 assert.equal(origin, 'http://localhost:3094', 'Only the released, owned synthetic app is allowed');
 const workspaceId = initialUrl.searchParams.get('workspace'), projectId = initialUrl.searchParams.get('project');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 assert.match(workspaceId ?? '', uuid); assert.match(projectId ?? '', uuid);
-const storageState = resolve(cwd, fixture.state);
-assert.ok(relative(resolve(cwd, 'private'), storageState).split(sep)[0] !== '..', 'Session stays in the private fixture directory');
+const storageState = fixture.storageState;
 
 // Read the emitted manifest and module graph; never guess a chunk hash or execute application modules.
 const serverDir = resolve(cwd, '.output/server'), publicDir = resolve(cwd, '.output/public');
@@ -57,8 +59,7 @@ const measurements = {manifest: manifests[0], manifestSha256: hash(manifestText)
 await mkdir(artifactDir, {recursive: true});
 console.log('PASS emitted manifest: rank implementation is a dynamic chunk outside the initial static graph.');
 
-const {chromium} = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href : 'playwright');
-const browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true});
+const browser = await launchChromium();
 const results = [], fixtureData = {me: null, projects: null};
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const rankApi = path => /^\/api\/projects\/[^/]+\/rank-trackers(?:\/|$)/.test(path);
@@ -85,6 +86,12 @@ async function run(name, options, check) {
     if (path === rankAsset) {
       if (options.code === 'fail' && !failed) { failed = true; return route.abort('failed'); }
       if (options.code === 'hold') { codeHeld = true; await gate; }
+    }
+    if (options.session && path === '/api/account/preferences' && actor === 'B') {
+      // The app verifies the preferences identity against /api/me, so session B must be consistent across both reads.
+      const response = await route.fetch({maxRedirects: 0}); assert.equal(response.status(), 200);
+      const data = await response.json();
+      return respond(route, {...data, user: {...data.user, id: actorB, name: 'Synthetic session B', email: 'b@rank-loading.invalid'}});
     }
     if (options.session && path === '/api/me') {
       assert.ok(fixtureData.me);
@@ -136,19 +143,21 @@ async function run(name, options, check) {
   }
   async function link(name) {
     await menu();
-    const target = page.locator('#app-navigation').getByRole('link', {name, exact: true, includeHidden: true});
+    const target = page.locator('aside.t98-shell-sidebar').getByRole('link', {name, exact: true, includeHidden: true});
     await target.waitFor({state: 'attached'});
     for (const details of await target.locator('xpath=ancestor::details').all()) {
       if (await details.getAttribute('open') === null) await details.locator(':scope > summary').click();
     }
     return target;
   }
-  async function open() { await page.goto(url()); await page.locator('#main-content').waitFor(); await (await link('Analytics')).waitFor(); }
+  // Projects are chosen in the shared Workspace/Project switcher (a native select), not as sidebar links.
+  async function selectProject(name) { await menu(); await page.locator('aside.t98-shell-sidebar').getByLabel('Project', {exact: true}).selectOption({label: name}); }
+  async function open() { await page.goto(url()); await page.locator('main').waitFor(); await page.waitForURL(/analyticsTo=/, {timeout: 3000}).catch(() => {}); /* the app may normalize the URL once, closing a drawer opened earlier */ await (await link('Analytics')).waitFor(); }
   const loaded = () => page.getByRole('heading', {name: 'Saved trackers', exact: true}).waitFor();
   const loading = () => page.getByRole('status').filter({hasText: 'Loading rank tracking'}).waitFor();
   const rankCalls = () => calls.filter(call => rankApi(call.path));
   try {
-    await check({page, context, calls, url, open, menu, link, loaded, loading, rankCalls,
+    await check({page, context, calls, url, open, menu, link, selectProject, loaded, loading, rankCalls,
       held: () => codeHeld, release: releaseCode, observedAssets, syntheticProject: () => syntheticProject});
     await Promise.all(tasks);
     assert.ok(observedAssets.has(routeAsset), 'Actual production routes module was exercised');
@@ -187,16 +196,16 @@ try {
     await t.open(); const first = fixtureData.projects.find(project => project.id === projectId);
     const second = fixtureData.projects.find(project => project.id !== projectId) ?? {id: otherProjectId, name: 'Contained alternate project'};
     assert.ok(first); await (await t.link('Rank tracking')).click(); await t.loading();
-    await (await t.link(second.name)).click(); await (await t.link('Rank tracking')).click(); await t.loading();
+    await t.selectProject(second.name); await (await t.link('Rank tracking')).click(); await t.loading();
     assert.equal(new URL(t.page.url()).searchParams.get('project'), second.id);
-    await (await t.link(first.name)).click(); await (await t.link('Rank tracking')).click(); await t.loading();
+    await t.selectProject(first.name); await (await t.link('Rank tracking')).click(); await t.loading();
     assert.equal(t.rankCalls().length, 0); t.release(); await t.loaded();
     assert.deepEqual(t.rankCalls().map(call => call.path), [`/api/projects/${projectId}/rank-trackers`]);
     assert.equal(new URL(t.page.url()).searchParams.get('project'), projectId);
   });
   await run('contained session A→B→A while code waits never mounts for an ended session', {code: 'hold', session: true}, async t => {
     async function signOut() { await t.page.getByRole('button', {name: 'Account menu', exact: true}).click(); await t.page.getByRole('button', {name: 'Sign out', exact: true}).click(); await t.page.getByLabel('Password', {exact: true}).waitFor(); }
-    async function signIn(actor) { await t.page.getByLabel('Email', {exact: true}).fill(actor + '@rank-loading.invalid'); await t.page.getByLabel('Password', {exact: true}).fill('Contained fixture only 123!'); await t.page.getByRole('button', {name: 'Sign in', exact: true}).click(); await t.page.locator('#main-content').waitFor(); }
+    async function signIn(actor) { await t.page.getByLabel('Email address', { exact: true }).fill(actor + '@rank-loading.invalid'); await t.page.getByLabel('Password', {exact: true}).fill('Contained fixture only 123!'); await t.page.getByRole('button', {name: 'Sign in', exact: true}).click(); await t.page.locator('main').waitFor(); }
     await t.open(); await (await t.link('Rank tracking')).click(); await t.loading();
     await signOut(); assert.equal(t.rankCalls().length, 0);
     await signIn('b'); await (await t.link('Rank tracking')).click(); await t.loading();
@@ -228,11 +237,11 @@ try {
   });
   await run('360px keyboard navigation preserves the shell, focus and readable pending/loaded content', {code: 'hold', width: 360}, async t => {
     await t.open(); const target = await t.link('Rank tracking'); await target.focus(); await target.press('Enter'); await t.loading();
-    await t.page.waitForFunction(() => document.activeElement?.id === 'main-content');
+    await t.page.waitForFunction(() => document.activeElement?.tagName === 'MAIN');
     assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await t.page.screenshot({path: resolve(artifactDir, 'rank-loading-360.png'), fullPage: true});
     await t.menu(); assert.equal(await (await t.link('Recent events')).isVisible(), true);
-    const toggle = t.page.getByRole('button', {name: 'Close menu', exact: true}); if (await toggle.isVisible()) await toggle.click();
+    const close = t.page.getByRole('button', {name: 'Close navigation', exact: true}); if (await close.isVisible()) await close.click();
     t.release(); await t.loaded();
     assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await t.page.getByRole('button', {name: 'Refresh', exact: true}).focus();

@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash,randomBytes} from 'node:crypto';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {defaultStringifySearch} from '@tanstack/react-router';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_EXPLORER_SCOPE_BROWSER,'1');
 const out='private/explorer-scope/browser-'+randomBytes(5).toString('hex');await mkdir(out,{recursive:true});
 const sources=['src/components/ExplorerPanel.tsx','src/components/ExplorerFilters.tsx','src/components/AnnotationsPanel.tsx','src/components/AnalyticsPanel.tsx','src/lib/navigation.ts','src/routes/index.tsx','tests/explorer-scope-browser-fixture.tsx','tests/explorer-scope-browser.mjs'],hash=async p=>createHash('sha256').update(await readFile(p)).digest('hex'),hashes=async()=>Object.fromEntries(await Promise.all(sources.map(async p=>[p,await hash(p)]))),before=await hashes();
@@ -30,7 +30,7 @@ let browser,page,port;
 try{
  await server.listen();port=server.httpServer.address().port;const origin='http://127.0.0.1:'+port;
  await server.environments.client.warmupRequest('/tests/explorer-scope-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:'msedge',headless:true});const context=await browser.newContext({serviceWorkers:'block',acceptDownloads:true});page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));
+ browser=await launchChromium();const context=await browser.newContext({serviceWorkers:'block',acceptDownloads:true});page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));
  await context.addInitScript(()=>{window.explorerFetches=[];const original=window.fetch;window.fetch=(input,init)=>{const item={url:typeof input==='string'?input:input.url,wire:location.href,aborted:init?.signal?.aborted??false,method:init?.method??'GET',settled:'pending',status:null};window.explorerFetches.push(item);init?.signal?.addEventListener('abort',()=>item.aborted=true);return original(input,init).then(response=>{item.settled='response';item.status=response.status;return response;},error=>{item.settled='rejected';throw error;});};});
  const reply=(route,value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)}).catch(()=>{});
  await context.route('**/*',async route=>{

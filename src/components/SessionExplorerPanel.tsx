@@ -7,6 +7,7 @@ import {canonicalNavigation,sessionNavigation,type NavigationSearch,type Session
 import {readSessionResponse,readLinkedActivityResponse,sessionParams} from '../lib/session-explorer';
 import type {SessionList,SessionDetail,SessionReadMeta,LinkedActivity} from '../server/session-explorer-input';
 import {initialDraft,patchLocationFilters,ExactFilterControls,AdvancedControls,AdvancedSummary,SessionStatus,focusAdvanced,draftFilterQuery,sameDefinition,readAdvanced,savedPredicates,validSaved,validCohort,record,clean,num,KINDS,TIMEZONES,type Draft,type SavedFilter,type CohortRef} from './ExplorerFilters';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={projectId:string;userId:string;search:NavigationSearch;onNavigate:(value:SessionNavigation)=>void;onUnauthorized:()=>void};
 type Collection='segments'|'cohorts';
@@ -65,14 +66,14 @@ function SessionExplorerInner({projectId,search,onNavigate,onUnauthorized}:Props
   async function readCollection(kind:Collection,cursor?:string){
     if(!routeReady)return;const route=routeScope;referenceRequest.current?.abort();const controller=new AbortController();referenceRequest.current=controller;const token=++referenceGeneration.current,access=epoch.current;setReferenceBusy(true);setReferenceError('');
     try{const data=await api<unknown>(`${base}/${kind}${cursor?`?cursor=${encodeURIComponent(cursor)}`:''}`,{signal:controller.signal});if(!mounted.current||controller.signal.aborted||token!==referenceGeneration.current||access!==epoch.current||route!==currentRoute.current)return;
-      if(!record(data)||!['owner','admin','editor','viewer'].includes(String(data.role))||!Array.isArray(data.items)||data.items.length>50||!data.items.every(item=>(kind==='segments'?validSaved:validCohort)(item,projectId))||data.nextCursor!==null&&!clean(data.nextCursor,4096))throw new Error('The saved definitions could not be confirmed.');
+      if(!record(data)||!workspaceRoles.includes(String(data.role) as WorkspaceRole)||!Array.isArray(data.items)||data.items.length>50||!data.items.every(item=>(kind==='segments'?validSaved:validCohort)(item,projectId))||data.nextCursor!==null&&!clean(data.nextCursor,4096))throw new Error('The saved definitions could not be confirmed.');
       const items=data.items as SavedFilter[];setCollections(old=>({...old,[kind]:{...old[kind],items:cursor?[...old[kind].items,...items.filter(item=>!old[kind].items.some(v=>v.id===item.id))]:items,cursor:data.nextCursor as string|null}}));
     }catch(e){if(!mounted.current||controller.signal.aborted||access!==epoch.current||route!==currentRoute.current)return;failAccess(e);setReferenceError(errMsg(e));}finally{if(mounted.current&&token===referenceGeneration.current)setReferenceBusy(false);}
   }
   async function loadReference(kind:Collection,id:string,expected?:string){
     if(!routeReady||!id)return;const route=routeScope;referenceRequest.current?.abort();const controller=new AbortController();referenceRequest.current=controller;const token=++referenceGeneration.current,access=epoch.current;setReferenceBusy(true);setReferenceError('');
     try{const data=await api<unknown>(`${base}/${kind}/${encodeURIComponent(id)}`,{signal:controller.signal});if(!mounted.current||controller.signal.aborted||token!==referenceGeneration.current||access!==epoch.current||route!==currentRoute.current)return;
-      if(!record(data)||!['owner','admin','editor','viewer'].includes(String(data.role))||!(kind==='segments'?validSaved:validCohort)(data.item,projectId))throw new Error('The saved definition could not be confirmed.');
+      if(!record(data)||!workspaceRoles.includes(String(data.role) as WorkspaceRole)||!(kind==='segments'?validSaved:validCohort)(data.item,projectId))throw new Error('The saved definition could not be confirmed.');
       const item=data.item as SavedFilter;if(expected&&item.revision!==Number(expected))throw new Error('This definition changed. Choose Load current version to review it before applying.');
       if(kind==='segments'){setDraft(old=>({...old,...savedPredicates(item.definition.query)!}));setSegment({id:item.id,revision:item.revision});}else setCohort({id:item.id,revision:item.revision,item});
       setCollections(old=>({...old,[kind]:{...old[kind],selected:item.id,items:[item,...old[kind].items.filter(value=>value.id!==item.id)]}}));setFormError('');setNotice('Definition loaded into the draft. Apply filters to update sessions.');

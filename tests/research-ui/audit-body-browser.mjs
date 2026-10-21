@@ -11,7 +11,7 @@ import {stopJobs} from '../../src/server/jobs.ts';
 
 fixtureGuard();
 const label=process.argv[2]??'body';assert.match(label,/^[a-z][a-z-]{0,19}$/);assert.ok(process.argv.length<=3);
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE),{pool}=getDatabase();
+const {pool}=getDatabase();
 let session,stage='fixture setup';
 const panel=page=>page.locator('section[aria-label="Site audits"]');
 const literal='<script>window.syntheticBodyUnsafe=true</script> <img src=x onerror=window.syntheticBodyUnsafe=true>';
@@ -20,7 +20,7 @@ const escaped=literal.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll(
 const html='<!doctype html><html><head><title>Captured body fixture</title><meta name="description" content="'+('Synthetic description '.repeat(8))+'"></head><body><h1>Captured synthetic page</h1><p>'+escaped+'</p><p style="display:none">CSS-only hidden text</p><footer>Footer boilerplate</footer><p>'+Array(170).fill('word').join(' ')+'</p><p hidden>EXCLUDED_HIDDEN_TEXT</p><script>EXCLUDED_SCRIPT_TEXT</script></body></html>';
 try{
   const group=await createAuditCase(label),before=await providerCounts();
-  session=await browserSession(chromium,group.owner);const {page,context}=session,p=panel(page),base='/api/projects/'+group.main.id+'/audits';
+  session=await browserSession(group.owner);const {page,context}=session,p=panel(page),base='/api/projects/'+group.main.id+'/audits';
   await page.goto(href(group,'audits'),{waitUntil:'networkidle'});await p.getByRole('heading',{name:'Audit history',exact:true}).waitFor();
   stage='explicit default-off opt-in and immutable queued receipt';
   const checkbox=p.getByRole('checkbox',{name:'Retain page text for content analysis',exact:true});

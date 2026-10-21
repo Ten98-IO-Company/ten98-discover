@@ -5,8 +5,8 @@ import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
 import {writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {readCssSource} from './css-source.mjs';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_DESIGN_TOKENS_BROWSER,'1','Explicit token-probe opt-in required');
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Supply an installed Playwright entry point');
 const evidence=resolve('private/design-token-evidence');
@@ -38,8 +38,8 @@ const server=createServer((request,response)=>{const path=new URL(request.url,'h
 let browser,page;
 try{
  await new Promise((done,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',done);});
- const origin='http://127.0.0.1:'+server.address().port,{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);
- browser=await chromium.launch({headless:true,...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{}});
+ const origin='http://127.0.0.1:'+server.address().port;
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:800,height:700},serviceWorkers:'block',colorScheme:'light',reducedMotion:'reduce'});
  await context.route('**/*',route=>{const u=new URL(route.request().url());if(u.origin===origin&&route.request().method()==='GET'&&(paths.has(u.pathname)||u.pathname==='/favicon.ico'))return route.continue();external.push(route.request().method()+' '+u.href);return route.abort();});
  page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});await mkdir(evidence,{recursive:true});

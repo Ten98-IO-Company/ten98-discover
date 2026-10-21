@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_RANK_SAVED_BROWSER,'1');
 const out='private/swarm/cycle13/rank-saved',pins=['src/components/RankTrackingPanel.tsx','src/components/RankTrackingView.tsx','tests/rank-saved-keywords-browser.mjs','tests/rank-tracking-browser-fixture.tsx','package.json'];
 const hashes=async()=>Object.fromEntries(await Promise.all(pins.map(async p=>[p,createHash('sha256').update(await readFile(p)).digest('hex')])));
@@ -24,7 +24,7 @@ const fulfill=(route,value,status=200)=>route.fulfill({status,contentType:'appli
 try{
  await mkdir(out,{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin=`http://127.0.0.1:${address.port}`;
  await server.environments.client.warmupRequest('/tests/rank-tracking-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({headless:true,...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{}});
+ browser=await launchChromium();
  assert.ok(++contexts<=24);context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname;

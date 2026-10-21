@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 import {readFileSync} from 'node:fs';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_CONTEXT_EXIT_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);
 const W='10000000-0000-4000-8000-000000000001',P='20000000-0000-4000-8000-000000000001',U='30000000-0000-4000-8000-000000000001',stamp='2026-10-19T00:00:00Z';
@@ -18,7 +18,7 @@ const server=await createServer({plugins,configFile:false,envDir:false,root:proc
 server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synthetic context exits</title><div id="root"></div><script type="module" src="/tests/context-exit-browser-fixture.tsx"></script></html>');});
 const watchdog=setTimeout(()=>process.exit(124),120000);watchdog.unref();
 const deadline=setTimeout(()=>{console.error('Context exit check exceeded 110 seconds');void Promise.allSettled([context?.close(),browser?.close(),server.close()]).finally(()=>process.exit(1));},110000);deadline.unref();
-const button=name=>page.getByRole('button',{name,exact:true}),brand=()=>page.getByLabel('Brand name',{exact:true}),sidebar=name=>page.locator('.sidebar').getByRole('link',{name,exact:true});
+const button=name=>page.getByRole('button',{name,exact:true}),brand=()=>page.getByLabel('Brand name',{exact:true}),sidebar=name=>page.locator('.t98-shell-sidebar').getByRole('link',{name,exact:true});
 const pass=name=>{groups.push(name);console.log('PASS '+name);};
 const frame=()=>page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));
 const at=async view=>{await page.waitForFunction(view=>new URL(location.href).searchParams.get('view')===view,view);await frame();};
@@ -68,10 +68,10 @@ async function saved(){await page.getByText('Changes saved. No provider work was
 try{
  await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.environments.client.transformRequest('/tests/context-exit-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();const optimizer=server.environments.client.depsOptimizer;await optimizer.scanProcessing;await Promise.all(Object.values(optimizer.metadata.discovered).map(item=>item.processing));
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+ browser=await launchChromium();
  await fresh();
  const appVersion=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).version;
- assert.equal(await page.locator('.sidebar').getByRole('button',{name:'Sign out',exact:true}).count(),0);
+ assert.equal(await page.locator('.t98-shell-sidebar').getByRole('button',{name:'Sign out',exact:true}).count(),0);
  assert.equal(await page.locator('.t98-sidebar-footer').getByText('Version '+appVersion,{exact:true}).count(),1);
  const requestCount=apiRequests;
  for(const width of [320,1440])for(const theme of ['light','dark']){

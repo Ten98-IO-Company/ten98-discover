@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomBytes} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_SESSION_REPLAY_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),out=resolve(root,'private/session-replay-ui/browser-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
 const files=['src/components/SessionReplayPanel.tsx','src/lib/session-replay.ts','src/lib/api.ts','src/styles.css','src/design-tokens.css','tests/session-replay-browser-fixture.tsx','tests/session-replay-browser.mjs'];
@@ -50,7 +50,7 @@ try{
  server=await createServer({configFile:false,envDir:false,root,cacheDir:out+'/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('content-type','text/html');res.setHeader('Content-Security-Policy',"worker-src 'none'");res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Replay synthetic component acceptance</title><div id="root"></div><script type="module" src="/tests/session-replay-browser-fixture.tsx"></script></html>');});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;await server.environments.client.warmupRequest('/tests/session-replay-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+ browser=await launchChromium({args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
 
  await fresh();await ready();const table=page.getByRole('region',{name:'Recorded sessions',exact:true});assert.equal(await table.locator('tbody tr').count(),20);assert.equal(evidence.assets,0);assert.equal(await page.locator('.research-panel b').count(),0,'Stored markup is rendered as text');await btn('Next 20 recordings').click();await ready();assert.equal(await table.locator('tbody tr').count(),1);assert.equal(evidence.requests.at(-1).query,'cursor=cGFnZTI');await btn('Previous page').click();await ready();assert.equal(await table.locator('tbody tr').count(),20);await btn('Open recording '+uuid(1)).click();await ready();assert.equal(await page.getByRole('heading',{name:'/landing/<b>stored</b>',exact:true}).count(),1);await btn('Back to recordings').click();await ready();assert.equal(await table.locator('tbody tr').count(),20);assert.equal(evidence.assets,0,'Opening a recording never starts playback or collection');pass('SYNTHETIC live list20 pagination, free detail/back navigation and escaped paths never start a recorder/player');
 

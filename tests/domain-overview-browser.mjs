@@ -4,9 +4,9 @@
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {randomUUID,createHash} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_DOMAIN_OVERVIEW_BROWSER,'1');
 const output=resolve('private/domain-overview-ui/browser/run-'+randomUUID().replaceAll('-','').slice(0,12));
@@ -58,7 +58,7 @@ const done=async(name,items)=>{checks.push({name,contexts:items});console.log('P
 try{
  await mkdir(output,{recursive:true});await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');origin='http://127.0.0.1:'+server.httpServer.address().port;
  await server.warmupRequest('/tests/domain-overview-browser-fixture.tsx');await server.waitForRequestsIdle();
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+ browser=await launchChromium();
 
  const draft=page=>page.getByRole('region',{name:'New domain research',exact:true}),disclosure=page=>draft(page).locator(':scope > details'),toggleDraft=page=>disclosure(page).locator(':scope > summary').click(),focusReport=page=>page.waitForFunction(()=>document.activeElement?.getAttribute('id')?.endsWith('report'));
  {

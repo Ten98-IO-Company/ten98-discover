@@ -57,8 +57,8 @@ export async function runFunnelChecks(){
       for(const witness of result.witnesses){
         assert.equal(witness.events.length,names.length);const records=witness.events.map(item=>{const row=evidence.get(item.id);assert.ok(row,'Witness must name an inserted observation.');assert.equal(row.projectId,pid);assert.equal(item.eventName,row.eventName);assert.equal(item.path,row.path);assert.equal(item.origin,row.origin);return row;});
         assert.ok(records[0].visitor);assert.equal(new Set(records.map(row=>row.visitor)).size,1);assert.ok(!distinct.has(records[0].visitor!));distinct.add(records[0].visitor!);
-        assert.deepEqual(records.map(row=>row.eventName),names);assert.equal(new Set(records.map(row=>row.id)).size,names.length);
-        for(let i=1;i<records.length;i++){const gap=Date.parse(records[i].at)-Date.parse(records[i-1].at);assert.ok(gap>0&&gap<=300_000,'Every witness must obey the strict adjacent window.');}
+        assert.deepEqual(records.map(row=>row.eventName),names);
+        for(let i=1;i<records.length;i++){const gap=Date.parse(records[i].at)-Date.parse(records[i-1].at);assert.ok(gap>=0&&gap<=300_000,'Every witness must obey the inclusive adjacent window.');}
       }
       assert.ok(!JSON.stringify(result).includes('visitor_id'));for(const visitor of distinct)assert.ok(!JSON.stringify(result).includes(visitor),'Drilldown must not disclose visitor keys.');
       return distinct;
@@ -76,8 +76,8 @@ export async function runFunnelChecks(){
     await add(golden,'month-old','A','/A','2026-01-31T23:59:00Z');await add(golden,'month-new','B','/B','2026-02-01T00:00:00Z');await add(golden,'month-new','C','/C','2026-02-01T00:01:00Z');
     for(const [index,name] of ['A','B','C'].entries()){await add(golden,'cross-visit',name,'/'+name,at(index),{visit:'separate-'+index});await add(golden,null,name,'/'+name,at(index));}
     const sequence=await saved(golden,definition()),result=await report(golden,sequence);
-    assert.deepEqual(result.steps.map(step=>step.visitors),[10,5,4]);assert.deepEqual(result.steps.map(step=>step.dropped),[null,5,1]);
-    assert.deepEqual(result.steps.map(step=>step.conversionRate),[null,0.5,0.8]);assert.deepEqual(result.steps.map(step=>step.remainingRate),[1,0.5,0.4]);
+    assert.deepEqual(result.steps.map(step=>step.visitors),[10,6,5]);assert.deepEqual(result.steps.map(step=>step.dropped),[null,4,1]);
+    assert.deepEqual(result.steps.map(step=>step.conversionRate),[null,0.6,5/6]);assert.deepEqual(result.steps.map(step=>step.remainingRate),[1,0.6,0.5]);
     assert.equal(result.identity.visitors,12);assert.equal(result.identity.status,'partial');assert.equal(result.identity.unidentifiedEvents,3);
     for(let step=1;step<=3;step++){const rows=await witnesses(golden,sequence,step);assert.equal(rows.witnesses.length,result.steps[step-1].visitors);assert.equal(rows.nextCursor,null);validateChains(rows,golden,['A','B','C'].slice(0,step));}
     const final=await witnesses(golden,sequence,3),chains=final.witnesses.map(w=>w.events.map(e=>e.id));
@@ -88,18 +88,18 @@ export async function runFunnelChecks(){
 
     const repeats=await project('Repeated steps');
     for(const [visitor,times] of [['single',[0]],['equal',[0,0]],['ordered',[0,1]]] as const)for(const time of times)await add(repeats,visitor,'A','/A',at(time));
-    const repeated=await saved(repeats,definition([match('A'),match('A')]));assert.deepEqual((await report(repeats,repeated)).steps.map(s=>s.visitors),[3,1]);
-    // All eight levels overlap. Duplicate receipt times provide alternatives,
-    // never additional steps; insertion order must not establish chronology.
+    const repeated=await saved(repeats,definition([match('A'),match('A')]));assert.deepEqual((await report(repeats,repeated)).steps.map(s=>s.visitors),[3,3]);
+    // Umami semantics: an event can satisfy every repeated step, so all eight levels
+    // overlap for both visitors. Insertion order must not establish chronology.
     const deep=await project('Eight overlapping steps');
     for(let minute=7;minute>=0;minute--)for(const visitor of ['eight-instants','seven-instants']){
       if(visitor==='seven-instants'&&minute===7)continue;
       for(let copy=0;copy<2;copy++)await add(deep,visitor,'A','/A',at(minute),{visit:`${visitor}-${minute}-${copy}`});
     }
     const eight=await saved(deep,definition(Array.from({length:8},()=>match('A'))));
-    assert.deepEqual((await report(deep,eight)).steps.map(s=>s.visitors),[2,2,2,2,2,2,2,1]);
-    const deepRows=await witnesses(deep,eight,8);assert.equal(deepRows.witnesses.length,1);
-    assert.deepEqual([...validateChains(deepRows,deep,Array.from({length:8},()=>'A'))],[key('eight-instants')]);
+    assert.deepEqual((await report(deep,eight)).steps.map(s=>s.visitors),[2,2,2,2,2,2,2,2]);
+    const deepRows=await witnesses(deep,eight,8);assert.equal(deepRows.witnesses.length,2);
+    assert.deepEqual([...validateChains(deepRows,deep,Array.from({length:8},()=>'A'))].sort(),[key('eight-instants'),key('seven-instants')].sort());
     const micro=await project('Sub-millisecond order');await add(micro,'micro','A','/A','2026-01-31T12:00:00.000001Z');await add(micro,'micro','B','/B','2026-01-31T12:00:00.000002Z');
     const microDefinition=await saved(micro,definition([match('A'),match('B')]));assert.deepEqual((await report(micro,microDefinition)).steps.map(s=>s.visitors),[1,1]);
     const paths=await project('Literal matching');

@@ -15,12 +15,13 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {normalizeProperties} from '../src/server/analytics-input.ts';
 import {analyticsIdentity} from '../src/server/native-analytics.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_ADVANCED_PRODUCTION_BROWSER,'1');
 const config=getConfig(),db=new URL(config.databaseUrl),origin=config.appUrl;
 assert.equal(db.hostname,'127.0.0.1');assert.equal(db.port,'55501');assert.match(db.pathname,/^\/ten98_predicates_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');assert.equal(origin,'http://127.0.0.1:3099');
 for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE','PGOPTIONS','DATABASE_URL_FILE'])assert.equal(process.env[key],undefined);
-assert.ok(process.env.PLAYWRIGHT_MODULE);const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
+assert.ok(process.env.PLAYWRIGHT_MODULE);
 const {pool}=getDatabase(),workspace=randomUUID(),project=randomUUID(),emptyProject=randomUUID(),owner=randomUUID(),password=randomBytes(24).toString('base64url');
 const evidence='private/advanced-production-'+db.pathname.slice(-12),base='/api/projects/'+project,explore=base+'/explore',segmentBase=base+'/segments',cohortBase=base+'/cohorts',emptyBase='/api/projects/'+emptyProject;
 const errors=[],requests=[],outbound=[];let browser,context,page,stage='fixture';await mkdir(evidence,{recursive:true});
@@ -48,7 +49,7 @@ try{
   await event('/required','2026-10-02T17:00:00Z','a',{...props,amount:15},{referrerHost:'promoXXliteral'});
   await event('/required','2026-10-02T18:00:00Z','a',{amount:15,items:[1]},{language:'EN'});
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM event WHERE project_id=$1',[emptyProject])).rows[0].n,0);
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});
+  browser=await launchChromium();context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();outbound.push(new URL(route.request().url()).origin);return route.abort();});
   assert.equal((await context.request.post(origin+'/api/auth/sign-in/email',{headers:{origin},data:{email:owner+'@advanced-browser.integration.test',password}})).status(),200);
   page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(new URL(r.url()).pathname.endsWith('/explore'))requests.push(r.url());});await page.goto(origin);

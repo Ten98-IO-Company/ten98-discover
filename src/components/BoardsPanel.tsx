@@ -19,9 +19,10 @@ import type {RealtimeSnapshot} from '../lib/realtime';
 import {realtimeLimits} from '../lib/realtime';
 import {trackedAssetDimensions,type TrackedAssetReport} from '../lib/tracked-assets';
 import {listDto as assetListDto,validateItem as validateAssetItem,readTrackedReport,readTrackedScope,TrackedReportView} from './TrackedAssetsPanel';
+import {workspaceRoles} from '@ten98/runtime';
 
 type Props={workspaceId:string;userId:string;projects:readonly{id:string;name:string}[];query?:string;readOwner?:string;readEnabled?:boolean;onNavigate:(query:string)=>void;onUnauthorized:()=>void};
-const role=z.enum(['owner','admin','editor','viewer']),stamp=z.string().datetime(),count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),nullable=count.nullable(),coverage=z.enum(['complete','partial','unavailable']);
+const role=z.enum(workspaceRoles),stamp=z.string().datetime(),count=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),nullable=count.nullable(),coverage=z.enum(['complete','partial','unavailable']);
 const itemSchema=z.object({id:z.uuid(),workspaceId:z.uuid(),revision:boardRevision,definition:boardDefinition,createdAt:stamp,updatedAt:stamp}).strict();
 const detailSchema=z.object({workspaceId:z.uuid(),role,item:itemSchema}).strict();
 const summarySchema=itemSchema.omit({workspaceId:true,definition:true}).extend({name:z.string().min(1).max(120),description:z.string().max(1000)});

@@ -1,4 +1,9 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {AuthLayout} from '@ten98/ui';
+import {AppBrand} from '@ten98/ui/app';
 import type {PoolClient} from 'pg';
 import {parse as parseHtml, serialize, type DefaultTreeAdapterTypes as Html} from 'parse5';
 import {z} from 'zod';
@@ -7,6 +12,7 @@ import {getConfig} from './config.ts';
 import {getDatabase} from './db.ts';
 import {readJson} from './validation.ts';
 import {cleanText,text,revision as revisionInput} from './context-input.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 const htmlNamespace = 'http://www.w3.org/1999/xhtml';
 const svgNamespace = 'http://www.w3.org/2000/svg';
@@ -28,7 +34,7 @@ const nameInput=text(120,1);
 const reportInput=z.object({title:nameInput,html:z.string().min(1).max(1048576)}).strict();
 const templateInput=z.object({name:nameInput,brief:z.string().trim().min(1).max(20000).refine(cleanText)}).strict();
 const cursorInput=z.object({at:z.iso.datetime(),id:idInput}).strict();
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type PageRow={id:string;createdAt:Date};
 
 function rasterData(value:string) {
@@ -71,13 +77,28 @@ export function sanitizeReportHtml(source:string):string {
   return result;
 }
 
-export function reportDocument(source:string,status=200) {
-  return new Response(sanitizeReportHtml(source),{status,headers:{
+const reportDocumentHeaders = {
     'content-type':'text/html; charset=utf-8','cache-control':'no-store, max-age=0','x-content-type-options':'nosniff',
     'referrer-policy':'no-referrer','x-robots-tag':'noindex, nofollow, noarchive','cross-origin-resource-policy':'same-origin',
     'content-security-policy':"sandbox; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
     'permissions-policy':'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
-  }});
+};
+
+export function reportDocument(source:string,status=200) {
+  return new Response(sanitizeReportHtml(source),{status,headers:reportDocumentHeaders});
+}
+
+// Only this fixed application document bypasses the authored-report sanitizer.
+const missingReportHtml = '<!DOCTYPE html><html lang="en" data-theme="system"><head><meta charset="utf-8">'
+  + '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Report unavailable</title>'
+  + `<style>${readFileSync(new URL(import.meta.resolve('@ten98/ui/styles.css')),'utf8')}</style></head><body style="margin:0">`
+  + renderToStaticMarkup(createElement('main',{'aria-label':'Report unavailable'},createElement(AuthLayout,{
+    brand:createElement(AppBrand,{product:'Discover'}),title:'Report unavailable',
+    description:'This link is unavailable or expired.',children:null,
+  }))) + '</body></html>';
+
+function missingReportDocument() {
+  return new Response(missingReportHtml,{status:404,headers:reportDocumentHeaders});
 }
 
 async function transaction<T>(work:(client:PoolClient)=>Promise<T>):Promise<T> {
@@ -201,7 +222,7 @@ export async function revokeReportShare(projectId:string,userId:string,reportId:
 
 export async function handleReportShare(request:Request):Promise<Response> {
   const missing=()=>{
-    const response=reportDocument('<!DOCTYPE html><html><head><title>Report unavailable</title></head><body><h1>Report unavailable</h1><p>This link is unavailable or expired.</p></body></html>',404);
+    const response=missingReportDocument();
     return request.method==='HEAD'?new Response(null,{status:404,headers:response.headers}):response;
   };
   const path=new URL(request.url).pathname;

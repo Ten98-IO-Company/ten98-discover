@@ -14,12 +14,13 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {analyticsIdentity} from '../src/server/native-analytics.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_COHORTS_PRODUCTION_BROWSER,'1');
 const config=getConfig(),db=new URL(config.databaseUrl),origin=config.appUrl;
 assert.equal(db.hostname,'127.0.0.1');assert.equal(db.port,'55501');assert.match(db.pathname,/^\/ten98_cohorts_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');assert.equal(origin,'http://127.0.0.1:3099');
 for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE','PGOPTIONS','DATABASE_URL_FILE'])assert.equal(process.env[key],undefined);
-assert.ok(process.env.PLAYWRIGHT_MODULE);const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
+assert.ok(process.env.PLAYWRIGHT_MODULE);
 const {pool}=getDatabase(),workspace=randomUUID(),project=randomUUID(),owner=randomUUID(),timed=randomUUID(),password=randomBytes(24).toString('base64url');
 const evidence='private/cohorts-production-'+db.pathname.slice(-12),base='/api/projects/'+project,cohortBase=base+'/cohorts',noteBase=base+'/annotations',segmentBase=base+'/segments',explore=base+'/explore',literal='/offer,100%_🐎';
 const errors=[],requests=[],outbound=[];let browser,context,page,stage='fixture';await mkdir(evidence,{recursive:true});
@@ -40,7 +41,7 @@ try{
   await event('/report','2026-03-08T12:00:00Z');await event('/report','2026-03-08T13:00:00Z');await event('/report','2026-03-08T14:00:00Z','b');await event('/report','2026-03-08T15:00:00Z',null);
   await event('/later','2026-03-09T12:00:00Z');
   await pool.query("INSERT INTO analytics_annotation(id,project_id,user_id,date,all_day,note) VALUES($1,$2,$3,'2026-03-08T11:30:00.123Z',false,'Timed cohort marker')",[timed,project,owner]);
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});
+  browser=await launchChromium();context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();outbound.push(new URL(route.request().url()).origin);return route.abort();});
   assert.equal((await context.request.post(origin+'/api/auth/sign-in/email',{headers:{origin},data:{email:owner+'@cohorts-browser.integration.test',password}})).status(),200);
   page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(new URL(r.url()).pathname===explore)requests.push(r.url());});await page.goto(origin);

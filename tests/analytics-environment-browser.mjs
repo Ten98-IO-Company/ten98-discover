@@ -11,10 +11,10 @@ async function closeExplore(target){
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {createServer} from 'vite';
 import {environmentVersion} from '../src/lib/analytics-environment.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_ENVIRONMENT_BROWSER,'1');
 const workspace='10000000-0000-4000-8000-000000000001',project='20000000-0000-4000-8000-000000000001',other='20000000-0000-4000-8000-000000000002',at='2024-02-29T12:00:00.000Z';
 const base={workspace,project,view:'project'},dates={analyticsFrom:'2024-02-28',analyticsTo:'2024-02-29'},sources=['src/components/AnalyticsPanel.tsx','src/components/analytics.css','src/components/ExplorerPanel.tsx','src/components/ExplorerFilters.tsx','src/routes/index.tsx','src/lib/navigation.ts','tests/navigation.test.ts','tests/analytics-environment-browser-fixture.tsx','tests/analytics-environment-browser.mjs'];
@@ -36,7 +36,7 @@ server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return n
 let browser;
 try{
  await mkdir('private/environment-ui-evidence',{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));
  const reply=(route,body,code=200)=>route.fulfill({status:code,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url()),path=url.pathname;if(url.origin!==origin){outbound.push(url.href);return route.abort();}if(!path.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();if(request.method()!=='GET'){writes.push(path);return route.abort();}reads.push(path+url.search);
   if(path.endsWith('/analytics')){if(status!==200)return reply(route,{error:'Synthetic analytics access failure'},status);const body=analytics(url.searchParams,path.includes(other));if(hold){hold=false;held={route,body};return;}return reply(route,body);}

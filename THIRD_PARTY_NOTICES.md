@@ -143,7 +143,16 @@ Use original ten98 Discover branding. Upstream names identify references, not en
 
 The [REA skill](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/SKILL.md) informed source-versus-runtime evidence handling. Its code/tools were not bundled. Other local skills used as working instructions are recorded in the brief; their files are not redistributed here.
 
-Future imported-code ledger: add entries when code is actually adopted. An empty import ledger is intentional at planning stage.
+## Upstream import ledger
+
+Owner decision 2026-10-21: Discover ports the pinned upstream implementations, adapting only the stack glue (ORM to Drizzle/PostgreSQL, Next.js routes to TanStack Start). Upstream markup, CSS, logos and fonts are not copied; UI renders with `@ten98/ui`. Each ported file carries a provenance header.
+
+| Date | Upstream | Commit | Upstream path | Discover path | Kind | Changes | Tests |
+|---|---|---|---|---|---|---|---|
+| 2026-10-21 | Elmo 0.4.4 (MIT, Blue Whale Software, LLC) | `3c673d0253d01ae030fa41519f62ad7e54f2281b` | `apps/web/src/lib/visibility-stats.ts` | `src/server/visibility-stats.ts` | verbatim + header | none to the algorithms; adapter `carriedInsights` in `src/server/prompt-insights.ts` | upstream `__tests__/visibility-stats.test.ts` ported to `tests/visibility-stats.test.ts` |
+| 2026-10-21 | Umami 3.4.0 (MIT, Umami Software, Inc.) | `ec0ff50388c264ed8ce46f00967e92f7e71476ae` | `src/queries/sql/funnels/getFunnel.ts` (relational branch) | `src/server/funnels.ts` (`calculate`) | behaviour + SQL semantics | rewritten against Discover's `event` table and scope CTE; Umami's pairwise level join replaced by a linear window-function carry with identical counts (performance); Discover match modes, typed predicates and every-step shared filters kept | upstream test asserts Prisma SQL strings and was not portable; `tests/funnels-integration.ts` expectations re-derived |
+| 2026-10-21 | Umami 3.4.0 (MIT, Umami Software, Inc.) | `ec0ff50388c264ed8ce46f00967e92f7e71476ae` | tracker `data-tag` / track `tag` option; `website_event.tag` grouping | `public/tracker.js`, `src/server/analytics-dimensions.ts` | behaviour + shape | stored in event `dimensions.tag` (no column); owner setting enforced server-side; identifier-rejecting validator and 100-tag project cap added per decision ten98-code-system#24 | `tests/analytics-tag.test.ts`, `tests/tracker.test.ts`; integration block in `tests/native-analytics-integration.ts` |
+| 2026-10-21 | Elmo 0.4.4 (MIT, Blue Whale Software, LLC) | `3c673d0253d01ae030fa41519f62ad7e54f2281b` | `apps/web/src/lib/chart-utils.ts` (`carryForward`, `applyPerPromptKeyedLVCF`) | `src/server/citation-carried.ts` | verbatim + header | default cadence fixed at 24h instead of `getDefaultDelayHours()`; adapter `carriedCitations` maps Discover citation axes | upstream has no tests; `tests/citation-carried.test.ts` added |
 
 ## Foundation dependency inventory
 
@@ -151,7 +160,7 @@ Optional deployment component: the official `caddy:2.11.7-alpine` image, pinned 
 
 Audit date: 2026-10-12. Scope: `0.0.0-foundation`, `pnpm@11.19.0`, Node 24, lockfile SHA-256 `6c6777f9d139f3f592bd4a2e1430ebf406b7e9642bc14be8b8ff755f2777b30e`.
 
-The foundation is original application code using library dependencies and the documented architectural patterns above. It does not copy Elmo, Umami or OpenSEO application files, branding or datasets. The upstream application import ledger remains empty. Library dependencies below are separate from that ledger and retain their own licenses; MIT is the license of ten98-monitor's original code.
+The foundation is original application code using library dependencies and the documented architectural patterns above. It does not copy Elmo, Umami or OpenSEO branding or datasets; application code ported since 2026-10-21 is listed in the upstream import ledger above. The upstream application import ledger remains empty. Library dependencies below are separate from that ledger and retain their own licenses; MIT is the license of ten98-monitor's original code.
 
 ### Exact direct dependencies
 

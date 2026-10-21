@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomBytes} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_ANALYTICS_RESET_BROWSER,'1');
 const project='20000000-0000-4000-8000-000000000001',cutoff='2026-10-16T10:00:00.000900Z',sources=['src/lib/analytics-reset.ts','src/components/AnalyticsResetPanel.tsx','src/components/AnalyticsSettingsPanel.tsx','tests/analytics-reset-browser-fixture.tsx','tests/analytics-reset-browser.mjs','src/styles.css'];
 const hashes=async()=>Object.fromEntries(await Promise.all(sources.map(async file=>[file,createHash('sha256').update(await readFile(file)).digest('hex')]))),before=await hashes(),directory=resolve('private/analytics-reset-ui/browser-'+randomBytes(6).toString('hex'));
@@ -21,7 +21,7 @@ server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return n
 const wait=async fn=>{const end=Date.now()+8000;while(!await fn()){assert.ok(Date.now()<end,'Bounded reset fixture state not reached.');await new Promise(resolve=>setTimeout(resolve,10));}};
 try{
  await mkdir(directory,{recursive:true});await server.listen();assert.equal(server.httpServer.address().address,'127.0.0.1');const origin='http://127.0.0.1:'+server.httpServer.address().port;await server.environments.client.warmupRequest('/tests/analytics-reset-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(value=>value.processing));
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+ browser=await launchChromium();
  async function fresh(options={}){
   const context=await browser.newContext({viewport:{width:options.width??1440,height:1000}});evidence.contexts++;if(options.decoded)await context.addInitScript(decodedGate);const page=await context.newPage();page.setDefaultTimeout(8000);if(options.controlledClock)await page.clock.install();page.on('pageerror',error=>evidence.errors.push(error.message));context.on('serviceworker',()=>evidence.unexpected.push('serviceworker'));
   let revision=1,getStatus=200,postStatus=200,postMode='normal',ack=null,held=null,mutation=null;const local={reads:[],posts:[]};

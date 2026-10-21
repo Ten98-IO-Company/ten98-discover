@@ -4,11 +4,12 @@ import { api, ApiError, errMsg } from '../lib/api';
 import { googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 const BTN = { minHeight: 44 };
 
 type Provider = 'gsc' | 'ga4';
-type Role = 'owner' | 'admin' | 'editor' | 'viewer';
+type Role = WorkspaceRole;
 type ReportKind = 'gsc_daily' | 'gsc_queries' | 'gsc_pages' | 'ga4_traffic' | 'ga4_events' | 'ga4_pages' | 'ga4_acquisition' | 'ga4_key_events' | 'ga4_organic_landing' | 'ga4_organic_daily' | 'ga4_organic_weekly' | Ga4CommerceReport;
 
 interface ImportDto {

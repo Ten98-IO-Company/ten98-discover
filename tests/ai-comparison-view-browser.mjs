@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_AI_COMPARISON_VIEW_BROWSER,'1');
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/ai-comparison-view-vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI comparison presentation acceptance</title><div id="root"></div><script type="module" src="/tests/ai-comparison-view-browser-fixture.tsx"></script></html>');});
@@ -12,7 +12,7 @@ let browser,page;
 const evidence=resolve('private/ai-comparison-view-evidence');
 try{
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(7000);
  const errors=[],outbound=[];page.on('pageerror',e=>errors.push(e.message));await context.route('**/*',route=>{const req=route.request(),url=new URL(req.url());if(url.origin!==origin||url.pathname.startsWith('/api/')||req.method()!=='GET'||['fetch','xhr'].includes(req.resourceType())){outbound.push(req.method()+' '+url.pathname);return route.abort();}return route.continue();});
  const button=name=>page.getByRole('button',{name,exact:true}),field=name=>page.getByLabel(name,{exact:true}),main=page.locator('main');

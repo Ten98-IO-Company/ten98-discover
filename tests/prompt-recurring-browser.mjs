@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_PROMPT_RECURRING_BROWSER,'1');
 const first='20000000-0000-4000-8000-000000000001',other='20000000-0000-4000-8000-000000000002',user='30000000-0000-4000-8000-000000000001',quoteId='40000000-0000-4000-8000-000000000001',out=resolve('private/prompt-recurring-browser-evidence');
 const definition={promptId:'50000000-0000-4000-8000-000000000001',versionId:'60000000-0000-4000-8000-000000000001',models:['openai/gpt-4o-mini','openai/gpt-4o'],systemText:'Exact recurring system',maxCompletionTokens:64};
@@ -14,7 +14,7 @@ let libraryRecovery=null;
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/prompt-recurring-vite-cache',appType:'custom',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
 server.middlewares.use((request,response,next)=>{if(request.url?.split('?')[0]!=='/')return next();response.setHeader('content-type','text/html');response.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/tests/prompt-recurring-browser-fixture.tsx"></script></html>');});
 try{
- await mkdir(out,{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port,{chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
+ await mkdir(out,{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
  const body=(ack,status='active',cursor=null)=>{if(ack)return {projectId:project,role:serverRole,item:structuredClone(rows.find(row=>row.id===ack.trackerId)),ack};const selected=rows.filter(row=>status==='all'||(status==='archived')===(row.archivedAt!==null)),offset=cursor===null?0:Number(cursor);return {projectId:project,role:serverRole,status,items:structuredClone(selected.slice(offset,offset+20)),nextCursor:selected.length>offset+20?String(offset+20):null};},fulfill=(route,value,status=200)=>route.fulfill({status,contentType:'application/json',headers:{'cache-control':'no-store'},body:JSON.stringify(value)});
  const release=async(record,value)=>{try{await fulfill(record.route,value);}catch{assert.ok(record.request.failure(),'Only an observed native abort may reject a held fixture response.');}abortedHolds.push({nativeAbort:!!record.request.failure(),qualification:'No forced delivery to an aborted app reader.'});};
  await context.route('**/*',async route=>{

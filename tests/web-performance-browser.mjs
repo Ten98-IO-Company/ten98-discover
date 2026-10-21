@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomBytes} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_WEB_PERFORMANCE_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),out=resolve(root,'private/web-performance-ui/browser-'+randomBytes(6).toString('hex'));
 mkdirSync(out,{recursive:true});
@@ -54,7 +54,7 @@ try{
   server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Web performance synthetic component acceptance</title><div id="root"></div><script type="module" src="/tests/web-performance-browser-fixture.tsx"></script></html>');});
   await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
   await server.environments.client.warmupRequest('/tests/web-performance-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));
-  const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+  browser=await launchChromium({args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
 
   await fresh();await ready();for(const metric of metrics)await card(metric).waitFor();assert.match(await card('lcp').innerText(),/2,500 ms[\s\S]*Good/);assert.match(await card('inp').innerText(),/Poor/);assert.match(await card('cls').innerText(),/0.25[\s\S]*Needs improvement/);assert.match(await card('fcp').innerText(),/Unavailable[\s\S]*0 measured samples/);assert.match(await card('ttfb').innerText(),/0 ms[\s\S]*Good/);
   const count=evidence.requests.length;await page.getByLabel('From (UTC)',{exact:true}).fill('2026-10-02');await filters();await page.getByLabel('Page path',{exact:true}).fill('/draft');await page.getByRole('combobox',{name:'Browser',exact:true}).selectOption('chrome');assert.equal(evidence.requests.length,count,'Controlled draft changes do not read');

@@ -13,12 +13,13 @@ import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_ANNOTATIONS_PRODUCTION_BROWSER,'1');
 const config=getConfig(),db=new URL(config.databaseUrl),origin=config.appUrl;
 assert.ok(['127.0.0.1','localhost','[::1]'].includes(db.hostname));assert.equal(db.port,'55501');assert.match(db.pathname,/^\/ten98_annotations_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');assert.equal(origin,'http://127.0.0.1:3099');
 for(const key of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE','PGOPTIONS','DATABASE_URL_FILE'])assert.equal(process.env[key],undefined);
-assert.ok(process.env.PLAYWRIGHT_MODULE);const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
+assert.ok(process.env.PLAYWRIGHT_MODULE);
 const {pool}=getDatabase(),workspace=randomUUID(),project=randomUUID(),capacity=randomUUID(),owner=randomUUID(),second=randomUUID(),timed=randomUUID();
 const password=randomBytes(24).toString('base64url'),evidence='private/annotations-production-browser-evidence',errors=[],contexts=[];
 const endpoint='/api/projects/'+project+'/annotations',explore='/api/projects/'+project+'/explore';
@@ -36,7 +37,7 @@ try{
   for(const path of ['/one','/two'])await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at) VALUES(gen_random_uuid(),$1,'signup',$2,'2026-03-08T12:00:00Z')",[project,path]);
   await pool.query("INSERT INTO analytics_annotation(id,project_id,user_id,date,all_day,note) VALUES($1,$2,$3,'2026-03-09T03:30:00.123Z',false,'Timed marker')",[timed,project,owner]);
   await pool.query("INSERT INTO analytics_annotation(id,project_id,user_id,date,all_day,note) SELECT gen_random_uuid(),$1,$2,'2026-03-08T12:00:00Z',true,CASE WHEN n<=4 THEN 'Capacity %_ note '||n ELSE 'Capacity note '||n END FROM generate_series(1,1005)n",[capacity,second]);
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   async function session(uid){
     const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'});contexts.push(context);
     await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();outbound++;return route.abort();});

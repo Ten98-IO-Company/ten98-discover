@@ -6,6 +6,7 @@ import type {InsightFilters,InsightCoverage} from '../server/prompt-insights';
 import type {ComparisonFilters,ComparisonFraction,ComparisonNavigation,ComparisonPeriod,PromptInsightsComparison} from '../server/prompt-insights-comparison';
 import {AIComparisonView,type AIComparisonViewProps,type ComparisonCohort} from './AIComparisonView';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={userId:string;workspaceId:string;projectId:string;filters:InsightFilters;filtersLabel:string;onUnauthorized:()=>void;onBack:()=>void;initialExpiredAnswerIds?:readonly string[];onAnswerExpired?:(ids:string[])=>void};
 type Role=PromptInsightsComparison['role'];
@@ -20,7 +21,7 @@ const multiline=(v:unknown,max:number):v is string=>typeof v==='string'&&v.lengt
 const uuid=(v:unknown):v is string=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const hex=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
 const integer=(v:unknown,max=1000)=>Number.isSafeInteger(v)&&Number(v)>=0&&Number(v)<=max;
-const role=(v:unknown):v is Role=>['owner','admin','editor','viewer'].includes(v as string);
+const role=(v:unknown):v is Role=>workspaceRoles.includes(v as WorkspaceRole);
 const stamp=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$/.test(v)&&Number.isFinite(Date.parse(v));
 const day=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d\d-\d\d$/.test(v)&&!v.startsWith('0000')&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
 const cursor=(v:unknown)=>v===null||text(v,2048,1);

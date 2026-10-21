@@ -1,6 +1,8 @@
-import {Icon} from './CampaignUI';
+import { InvitationAcceptFlow } from '@ten98/ui';
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { ReactNode } from 'react';
+import { authStory } from './AuthLayout';
+import { Brand } from './CampaignUI';
 import { api, ApiError, errMsg } from '../lib/api';
 
 type InspectInfo = { workspaceName: string; email: string; role: string; expiresAt: string };
@@ -10,8 +12,9 @@ function is401(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401;
 }
 
-function formatDate(iso: string): string {
-  const d = new Date(iso);
+function formatDate(value: string | Date): string {
+  const iso = String(value);
+  const d = new Date(value);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 }
 
@@ -22,6 +25,8 @@ type InvitePanelProps = {
   onSignIn: () => void;
   onCancel: () => void;
   onUnauthorized: () => void;
+  /** Sign-on providers shown while nobody is signed in (the flow places them in its own layout). */
+  providers?: ReactNode;
 };
 
 export function InvitePanel(props: InvitePanelProps) {
@@ -34,8 +39,6 @@ function InvitePanelContent(props: InvitePanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
-  const [name, setName] = useState('');
-  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [needsSignIn, setNeedsSignIn] = useState(false);
 
@@ -55,7 +58,6 @@ function InvitePanelContent(props: InvitePanelProps) {
     const ac = new AbortController();
     setInfo(null);
     setError(null);
-    setPassword('');
     setNeedsSignIn(false);
     setLoading(true);
     api<InspectInfo>('/api/invitations/inspect', { method: 'POST', body: { token }, signal: ac.signal })
@@ -79,10 +81,10 @@ function InvitePanelContent(props: InvitePanelProps) {
   const matched = !!info && !!signedInEmail && signedInEmail.toLowerCase() === info.email.toLowerCase();
   const mismatch = !!info && !!signedInEmail && !matched;
 
-  function submitAccept(e: FormEvent) {
-    e.preventDefault();
+  function submitAccept(values: { name?: string; password?: string }) {
+    const password = values.password ?? '';
     if (busy || acRef.current || !info || mismatch || needsSignIn) return;
-    const trimmedName = name.trim();
+    const trimmedName = (values.name ?? '').trim();
     if (!signedInEmail) {
       if (trimmedName.length < 1 || trimmedName.length > 120) {
         setError('Enter your name (1–120 characters).');
@@ -120,138 +122,46 @@ function InvitePanelContent(props: InvitePanelProps) {
       });
   }
 
+  const frame = {
+    brand: <Brand />,
+    aside: authStory,
+    busy,
+    cancel: { label: 'Cancel', onClick: () => onCancel() },
+    passwordPolicy: { minLength: 12, maxLength: 128, hint: '12–128 characters.' },
+    formatDate,
+  };
+
   if (loading) {
-    return (
-      <p role='status' className='dim'>
-        Checking your invitation…
-      </p>
-    );
+    return <InvitationAcceptFlow {...frame} state='loading' title='Checking your invitation' messages={{ loading: 'Checking your invitation…' }} />;
   }
 
   if (!info) {
     return (
-      <div className='account-access invitation-access'>
-        <p className='eyebrow'>WORKSPACE INVITATION</p>
-        <div className='alert form-error' role='alert'>
-          <p>
-            <strong>This invitation link does not work.</strong> {error}
-          </p>
-          <p className='hint field-help'>
-            The link may have expired or already been used. Ask the person who invited you for a new one.
-          </p>
-        </div>
-        <div className='row button-wrap'>
-          <button type='button' className='btn button' onClick={() => setReload(k => k + 1)}>
-            Try again
-          </button>
-          <button type='button' className='btn button ghost' onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </div>
+      <InvitationAcceptFlow
+        {...frame}
+        state='unavailable'
+        eyebrow='WORKSPACE INVITATION'
+        title='This invitation link does not work'
+        description='The link may have expired or already been used. Ask the person who invited you for a new one.'
+        error={error ?? undefined}
+        onRetry={() => setReload(k => k + 1)}
+      />
     );
   }
 
   return (
-    <div className="account-access invitation-access">
-      <p className="eyebrow">WORKSPACE INVITATION</p>
-      <span className="account-access-icon" aria-hidden="true"><Icon name="users" size={20}/></span>
-      <h1>You’re invited to join {info.workspaceName}</h1>
-      <p className="helper-note">
-        This invitation is for <strong>{info.email}</strong> as <strong>{info.role}</strong> and expires on{' '}
-        {formatDate(info.expiresAt)}.
-      </p>
-
-      {error && (
-        <div className='alert' role='alert'>
-          {error}
-        </div>
-      )}
-
-      {mismatch || needsSignIn ? (
-        <div>
-          <div className='banner'>
-            <p>
-              {needsSignIn ? (
-                <>Sign in as <strong>{info.email}</strong> to accept this invitation.</>
-              ) : (
-                <>You’re signed in as <strong>{signedInEmail}</strong>, but this invitation is for{' '}
-                  <strong>{info.email}</strong>. Switch to the invited account to accept it.</>
-              )}
-            </p>
-          </div>
-          <div className='row button-wrap'>
-            <button type='button' className='btn button primary full' onClick={onSignIn}>
-              {needsSignIn ? 'Sign in instead' : 'Switch account'}
-            </button>
-            <button type='button' className='btn button' onClick={onCancel}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <form onSubmit={submitAccept} aria-busy={busy}>
-          {signedInEmail ? (
-            <p className='dim'>Signed in as {signedInEmail}.</p>
-          ) : (
-            <>
-              <p>
-                Create an account for <strong>{info.email}</strong> to accept this invitation.
-              </p>
-              <div className='field'>
-                <label htmlFor='invite-name'>Your name</label>
-                <input
-                  id='invite-name'
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  autoComplete='name'
-                  maxLength={120}
-                  required
-                  disabled={busy}
-                />
-                <p className='hint field-help'>1–120 characters.</p>
-              </div>
-              <div className='field'>
-                <label htmlFor='invite-password'>Password</label>
-                <input
-                  id='invite-password'
-                  type='password'
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete='new-password'
-                  minLength={12}
-                  maxLength={128}
-                  required
-                  disabled={busy}
-                />
-                <p className='hint field-help'>12–128 characters.</p>
-              </div>
-            </>
-          )}
-          <div className='row button-wrap'>
-            <button type='submit' className='btn button primary full' disabled={busy}>
-              {busy
-                ? signedInEmail
-                  ? 'Joining…'
-                  : 'Creating account…'
-                : signedInEmail
-                  ? 'Join workspace'
-                  : 'Create account and join'}
-            </button>
-            <button type='button' className='btn button' onClick={onCancel} disabled={busy}>
-              Cancel
-            </button>
-          </div>
-          {!signedInEmail && (
-            <p className='footnote'>
-              Already have an account?{' '}
-              <button type='button' className='btn button ghost' onClick={onSignIn} disabled={busy}>
-                Sign in instead
-              </button>
-            </p>
-          )}
-        </form>
-      )}
-    </div>
+    <InvitationAcceptFlow
+      {...frame}
+      state={mismatch ? 'mismatch' : needsSignIn ? 'signin-required' : 'details'}
+      eyebrow='WORKSPACE INVITATION'
+      title={`You’re invited to join ${info.workspaceName}`}
+      invitation={info}
+      signedInEmail={signedInEmail ?? undefined}
+      error={error ?? undefined}
+      providers={signedInEmail ? undefined : props.providers}
+      onSignIn={onSignIn}
+      onSwitchAccount={onSignIn}
+      onSubmit={submitAccept}
+    />
   );
 }

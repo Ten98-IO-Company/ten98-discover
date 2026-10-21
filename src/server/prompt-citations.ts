@@ -6,6 +6,7 @@ import {canonicalHash} from './context-input.ts';
 import {csvCell} from './explorer-input.ts';
 import {withContentProject,type ContentProject} from './project-context.ts';
 import {insightFilters,selectPromptInsights,type InsightCoverage,type InsightEligibility,type InsightExecution} from './prompt-insights.ts';
+import {carriedCitations,type CarriedCitations} from './citation-carried.ts';
 import {createCitationClassifier,groupCitationUrl,publisherCategories,pageTypes,sourceTypes,ownershipKinds,
  classifierVersion,ownershipVersion,googleDomainsVersion,
  type PublisherCategory,type PageType,type SourceType,type OwnershipKind,type UrlGrouping,type CitationClassification} from './citation-classification.ts';
@@ -37,6 +38,8 @@ export type CitationReport={role:ContentProject['role'];filters:CitationFilters;
  page:{kind:'urls';rows:CitationUrlRow[]}|{kind:'domains';rows:CitationDomainRow[]}|{kind:'categories';rows:CitationCategoryRow[]}|
   {kind:'changes';rows:CitationChangeRow[]}|{kind:'evidence';rows:CitationEvidence[]};totalRows:number;nextCursor:string|null};
 
+/** Additive Elmo-method carried source trends; `daily`, `axes` and exports stay observed-only. */
+export type CitationResponse=CitationReport&{carried:CarriedCitations};
 const label='Retained citation observations classified using current project context',eligibilityVersion='retained-nonempty-stop-v1';
 const changesKinds=['newly_observed','fewer_citations','not_observed_now','annotation_title_changed'] as const;
 const filterKeys=['from','to','timeZone','model','promptId','tag','urlGrouping','query','publisherCategory','pageType','sourceType','ownership','entityId'];
@@ -140,14 +143,14 @@ async function select(client:PoolClient,p:ContentProject,filters:CitationFilters
   warnings:r.warnings,entities:r.subjects.map(s=>({id:s.id,label:s.name})),current,previous:before,periodOpen,axes:{current:axes(currentRows),previous:axes(previousRows)},daily,
   evidenceStates:observations.map(o=>({id:o.id,period:(o.date<filters.from?'previous':'current') as Period,eligibility:o.eligibility})),
   changes:{status,countBasis:'annotation_occurrences',counts:Object.fromEntries(changesKinds.map(k=>[k,changes.filter(c=>c.kind===k).length])) as Record<CitationChangeKind,number>}};
- return {scope,evidence,urls,domains,changes,report};
+ return {scope,evidence,observations,urls,domains,changes,report};
 }
 const cursorSchema=z.object({scope:hex,revision:hex,offset:z.number().int().min(1).max(400000)}).strict();
 function offset(raw:string|null,scope:string,revision:string){if(raw===null)return 0;let value:unknown;
  try{if(!raw||raw.length>512||!/^[A-Za-z0-9_-]+$/.test(raw))throw bad();value=JSON.parse(Buffer.from(raw,'base64url').toString('utf8'));}catch{throw bad();}
  const parsed=cursorSchema.safeParse(value);if(!parsed.success||parsed.data.scope!==scope)throw bad();if(parsed.data.revision!==revision)throw changed();return parsed.data.offset;}
 const part=(rows:CitationEvidence[]):Part=>({count:count(rows),axes:axes(rows)});
-export async function getPromptCitations(projectId:string,userId:string,params=new URLSearchParams(),signal?:AbortSignal):Promise<CitationReport>{
+export async function getPromptCitations(projectId:string,userId:string,params=new URLSearchParams(),signal?:AbortSignal):Promise<CitationResponse>{
  const input=parse(params),check=deadline(signal);check();return withContentProject(projectId,userId,false,async(client,p)=>{
   const selected=await select(client,p,input.filters,check),{navigation}=input,scope=canonicalHash({scope:selected.scope,navigation}),at=offset(input.cursor,scope,selected.report.selectionRevision),next=at+50;
   let page:CitationReport['page'],totalRows:number;
@@ -159,7 +162,9 @@ export async function getPromptCitations(projectId:string,userId:string,params=n
    if(navigation.view==='urls')page={kind:'urls',rows:rows.slice(at,next).map(g=>({id:g.id,url:g.label,current:part(g.current),previous:part(g.previous),currentRepresentative:representative(g.current),previousRepresentative:representative(g.previous)}))};
    else page={kind:'domains',rows:rows.slice(at,next).map(g=>({id:g.id,hostname:g.hostname,trackable:g.hostname!==null,current:part(g.current),previous:part(g.previous),currentUniqueUrls:new Set(g.current.map(e=>e.urlId)).size,previousUniqueUrls:new Set(g.previous.map(e=>e.urlId)).size}))};
   }
-  const report:CitationReport={...selected.report,navigation,page,totalRows,nextCursor:next<totalRows?Buffer.from(JSON.stringify({scope,revision:selected.report.selectionRevision,offset:next})).toString('base64url'):null};
+  const carried=carriedCitations(selected.evidence.map(e=>({promptId:e.promptId,date:e.date,keys:{ownership:ownership(e),publisher:e.classification.publisherCategory,pageType:e.classification.pageType,sourceType:e.classification.sourceType}})),
+   selected.observations.filter(o=>o.eligibility==='eligible'),selected.report.daily.map(d=>d.date),{ownership:ownershipKinds,publisher:publisherCategories,pageType:pageTypes,sourceType:sourceTypes});
+  const report:CitationResponse={...selected.report,carried,navigation,page,totalRows,nextCursor:next<totalRows?Buffer.from(JSON.stringify({scope,revision:selected.report.selectionRevision,offset:next})).toString('base64url'):null};
   check();if(Buffer.byteLength(JSON.stringify(report))>2*1024*1024)throw cap();return report;
  }).catch(error);
 }

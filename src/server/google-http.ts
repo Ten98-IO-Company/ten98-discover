@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { readResponseText } from '@ten98/runtime';
 import { FoundationError } from './auth.ts';
 import { getConfig } from './config.ts';
 
@@ -27,19 +28,11 @@ export async function googleRequest(url: string, token?: string, body?: unknown,
   try { response = await (fixtureTransport.getStore() ?? fetch)(url, { method: body === undefined ? 'GET' : 'POST', headers, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000), ...(body === undefined ? {} : { body: body instanceof URLSearchParams ? body.toString() : JSON.stringify(body) }) }); }
   catch { throw new GoogleRequestError(502); }
   if (!response.ok) { await response.body?.cancel().catch(() => undefined); throw new GoogleRequestError(response.status === 400 && parsed.hostname === 'oauth2.googleapis.com' && parsed.pathname === '/token' ? 401 : response.status); }
-  const reader = response.body?.getReader();
-  if (!reader) throw new GoogleRequestError(502);
-  const chunks: Uint8Array[] = []; let size = 0;
+  if (!response.body) throw new GoogleRequestError(502);
   try {
-    for (;;) {
-      const { done, value } = await reader.read(); if (done) break;
-      size += value.byteLength;
-      if (size > 2_097_152) { await reader.cancel(); throw new Error(); }
-      chunks.push(value);
-    }
-    return size === 0 ? {} : JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)));
+    const text = await readResponseText(response, { maxBytes: 2_097_152 });
+    return text === '' ? {} : JSON.parse(text);
   } catch { throw new GoogleRequestError(502); }
-  finally { reader.releaseLock(); }
 }
 
 /** In-process test injection only; no endpoint or environment can change provider URLs. */

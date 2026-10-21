@@ -5,6 +5,7 @@ import type {RankHistoryTarget,RankRunSummary} from '../server/rank-history';
 import type {RankDistribution,RankDistributionCounts} from '../server/rank-distribution';
 import type {RankMatrix,RankMatrixCell} from '../server/rank-matrix';
 import {RankReportingView,type RankReportingViewProps} from './RankReportingView';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={workspaceId:string;projectId:string;userId:string;tracker:RankTracker;active?:boolean;onUnauthorized:()=>void;onBack:()=>void;onOpenRun:(id:string)=>void;onOpenKeyword:(id:string)=>void;onCheckHistory:()=>void};
 type Device='desktop'|'mobile';
@@ -24,7 +25,7 @@ const nullableDate=(v:unknown)=>v===null||date(v);
 // Preserve server microseconds when comparing snapshots; Date truncates them.
 const stamp=(v:string)=>v.replace(/(?:\.(\d{1,6}))?Z$/,(_,part:string|undefined)=>'.'+(part??'').padEnd(6,'0')+'Z');
 const cursor=(v:unknown)=>v===null||text(v,512,1);
-const role=(v:unknown):v is RankRole=>['owner','admin','editor','viewer'].includes(v as string);
+const role=(v:unknown):v is RankRole=>workspaceRoles.includes(v as WorkspaceRole);
 const unique=(v:string[])=>new Set(v.map(x=>x.toLowerCase())).size===v.length;
 const target=(v:unknown):v is RankHistoryTarget=>object(v)&&text(v.domain,253,1)&&integer(v.locationCode,1)&&text(v.languageCode,16,1)&&integer(v.depth,10,100)&&v.depth%10===0&&integer(v.maxCrawlPages,1,10);
 const deviceList=(v:unknown):v is Device[]=>Array.isArray(v)&&v.length<=2&&v.every(d=>d==='desktop'||d==='mobile')&&unique(v);

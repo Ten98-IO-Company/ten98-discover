@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_AI_SUGGESTIONS_BROWSER,'1');
 const id=n=>'00000000-0000-4000-8000-'+String(n).padStart(12,'0'),wid=id(1),pid=id(2),cid=id(4),qid=id(5),rid=id(6),at='2026-10-14T10:00:00.000Z',B='/api/projects/'+pid+'/ai-suggestions',P='/api/projects/'+pid+'/prompts';
 const profiles=[{id:'benchmark-mini-v1',model:'openai/gpt-4o-mini',label:'GPT-4o mini — evaluation only',admission:'benchmark'},{id:'benchmark-standard-v1',model:'openai/gpt-4o',label:'GPT-4o — evaluation only',admission:'benchmark'}];
@@ -23,7 +23,7 @@ const until=async check=>{const end=Date.now()+10000;while(!await check()){if(Da
 let browser,page;
 try{
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});const browserContext=await browser.newContext({viewport:{width:1100,height:900},serviceWorkers:'block'});
+ browser=await launchChromium();const browserContext=await browser.newContext({viewport:{width:1100,height:900},serviceWorkers:'block'});
  function detail(){if(!run)return null;return {...structuredClone(run),canCancel:role==='owner'&&run.canCancel,canReconcile:role==='owner'&&run.canReconcile,acceptance:run.proposal&&!run.resultExpired&&!run.inputExpired?{proposalRevision:run.proposalRevision,contextRevision:ctx.revision,topicLibraryHash:libraryHash}:null};}
  function metadata(){const r=detail();if(r)for(const key of ['snapshot','proposal','acceptance','generationId'])delete r[key];return {role,profiles:metadataProfiles??profiles,defaults:{economy:null,balanced:null},canQuote:role==='owner',runs:r?[r]:[],nextCursor:null};}
  await browserContext.route('**/*',async route=>{

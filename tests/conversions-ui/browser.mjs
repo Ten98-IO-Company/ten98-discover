@@ -5,10 +5,10 @@ import {resolve} from 'node:path';
 import {fixtureGuard,evidenceDir,appUrl} from './guard.mjs';
 import {readFixture} from './fixture.mjs';
 import {getDatabase,closeDatabase} from '../../src/server/db.ts';
+import {launchChromium} from '../helpers/playwright.mjs';
 
 fixtureGuard();const fixture=await readFixture(),pool=getDatabase().pool;
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
-const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+const browser=await launchChromium();
 const context=await browser.newContext({viewport:{width:1440,height:1000},locale:'en-US',timezoneId:'UTC',serviceWorkers:'block'});
 const page=await context.newPage(),errors=[],outbound=[],cleanups=[];let stage='login';
 page.setDefaultTimeout(15_000);page.on('pageerror',error=>errors.push(error.message));

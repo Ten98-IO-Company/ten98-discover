@@ -1,6 +1,7 @@
 import {z} from 'zod';
 import {analyticsDay} from './navigation.ts';
 import {isEnvironmentFilter} from './analytics-environment.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
 export const performanceMetrics=['lcp','inp','cls','fcp','ttfb'] as const;
 export type PerformanceMetric=typeof performanceMetrics[number];
@@ -67,7 +68,7 @@ export const performanceStats=z.object({count:z.number().int().nonnegative(),p50
 });
 export type PerformanceStats=z.infer<typeof performanceStats>;
 export const performanceReport=z.object({
-  version:z.literal(1),projectId:z.uuid(),role:z.enum(['owner','admin','editor','viewer']),enabled:z.boolean(),
+  version:z.literal(1),projectId:z.uuid(),role:z.enum(workspaceRoles),enabled:z.boolean(),
   query:z.object({from:z.string(),to:z.string(),metric:z.enum(performanceMetrics),percentile:z.union([z.literal(50),z.literal(75),z.literal(95)]),breakdown:z.enum(performanceBreakdowns),filters:filterSchema,path:z.string().optional()}).strict(),
   asOf:z.string().datetime(),retainedFrom:z.string().datetime().nullable(),
   summary:z.record(z.enum(performanceMetrics),performanceStats),

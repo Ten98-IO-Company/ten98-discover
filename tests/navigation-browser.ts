@@ -8,13 +8,13 @@ import { assertSchema, closeDatabase, getDatabase } from '../src/server/db.ts'
 import { createWorkspace } from '../src/server/teams.ts'
 import { createPrompts } from '../src/server/prompts.ts'
 import { updateProjectContext } from '../src/server/project-context.ts'
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Optional real production-client/API check, using only an isolated local database.
 assert.equal(process.env.TEN98_INTEGRATION_TEST, '1')
 assert.ok(process.env.PLAYWRIGHT_MODULE)
 const config = getConfig()
 for (const url of [config.appUrl, config.databaseUrl]) assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname))
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE!)
 let browser: any, page: any
 const releases: (() => void)[] = []
 try {
@@ -38,7 +38,7 @@ try {
   }
   const a1 = await project(a.id, 'Alpha one'), a2 = await project(a.id, 'Alpha two'), b1 = await project(b.id, 'Beta one', 'https://navigation-insights.example.com'), foreignProject = await project(foreign.id, 'Unavailable project')
   await pool.query("UPDATE installation SET claimed=true WHERE id='instance'")
-  browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true })
+  browser = await launchChromium()
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
   let external = 0, errors = 0
   const requests: string[] = [], aiWrites: string[] = []
@@ -520,7 +520,7 @@ try {
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await oldSession.began
   await navigationLink('Account security') // Open account actions without leaving the pending project request.
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
-  await page.getByLabel('Email', { exact: true }).fill(other.email); await page.getByLabel('Password', { exact: true }).fill(password)
+  await page.getByLabel('Email address', { exact: true }).fill(other.email); await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await heading('Web analytics')
   oldSession.release(); await oldSession.remove(); await delay(150); await heading('Web analytics')
   assert.equal(await page.getByRole('link', { name: 'Alpha one', exact: true }).count(), 0)
@@ -546,7 +546,7 @@ try {
   await page.goto(href(a.id, a1, 'events') + '#oidc-factor=1'); await heading('Verify your sign-in')
   assert.equal(new URL(page.url()).hash, '')
   await page.getByRole('button', { name: 'Back to sign in', exact: true }).click()
-  await page.getByLabel('Email', { exact: true }).fill(owner.email); await page.getByLabel('Password', { exact: true }).fill(password)
+  await page.getByLabel('Email address', { exact: true }).fill(owner.email); await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await heading('Recent events'); await selected(a.id, a1, 'events')
   const proof = randomUUID()
   await page.goto(href(a.id, a1, 'events') + '#oidc-proof=' + proof); await selected(a.id, a1, 'identity')

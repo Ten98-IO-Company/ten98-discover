@@ -13,12 +13,12 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {normalizeProperties} from '../src/server/analytics-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
 const config=getConfig(),local=['localhost','127.0.0.1','[::1]'];
 assert.ok(local.includes(new URL(config.appUrl).hostname)&&local.includes(new URL(config.databaseUrl).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Supply an installed Playwright module URL.');
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE!);
 const {pool}=getDatabase(),userId=randomUUID(),workspaceId=randomUUID(),projectId=randomUUID(),otherId=randomUUID();
 const email=`${randomUUID()}@explorer-browser.integration.test`,password=randomBytes(24).toString('base64url');
 let browser:any,release:(()=>void)|undefined;
@@ -31,7 +31,7 @@ try{
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspaceId,userId]);
   for(const [id,name] of [[projectId,'Explorer sample'],[otherId,'Other sample']])await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,$3,'https://'||$1||'.integration.test',$4,'infinity')",[id,workspaceId,name,randomUUID()]);
   for(const value of [42,'42',null,'=SUM(1,2)'])await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at,properties) VALUES(gen_random_uuid(),$1,'signup','/sample','2026-03-08T12:00:00Z',$2)",[projectId,JSON.stringify(normalizeProperties({' spaced ':value}))]);
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   const ctx=await browser.newContext({viewport:{width:1360,height:950},acceptDownloads:true});
   await ctx.route('**/*',async(route:any)=>new URL(route.request().url()).origin===config.appUrl?route.continue():route.abort());
   assert.equal((await ctx.request.post(`${config.appUrl}/api/auth/sign-in/email`,{headers:{origin:config.appUrl},data:{email,password}})).status(),200);

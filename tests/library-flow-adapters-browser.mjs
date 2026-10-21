@@ -3,8 +3,6 @@
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
-import {pathToFileURL} from 'node:url';
-import {resolve} from 'node:path';
 import {createServer} from 'vite';
 import {journeysQuery} from '../src/server/journeys.ts';
 import {journeysMethod} from '../src/lib/journeys.ts';
@@ -12,6 +10,7 @@ import {aiQueryFilters,aiQueryRange,aiQueryReportSchema} from '../src/lib/ai-sea
 import {aiSearchProfileId} from '../src/lib/ai-search.ts';
 import {aggregateAiSearchQueries} from '../src/server/ai-search-analysis.ts';
 import {normalizeDfsChatgptSearchEvidence} from '../src/server/ai-search-evidence.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`,project=id(1),workspace=id(9),out='private/swarm/library-flow-adapters';
 await mkdir(out,{recursive:true});
 const files=['src/components/JourneysPanel.tsx','src/components/AIQueryAnalysisPanel.tsx','tests/library-flow-adapters-browser.mjs','tests/library-flow-adapters-browser-fixture.tsx'];
@@ -32,7 +31,7 @@ const start=new URLSearchParams({from:'2026-10-10',to:'2026-10-10',timeZone:'UTC
 try{
  server=await createServer({configFile:false,envDir:false,root:process.cwd(),cacheDir:out+'/vite-cache',appType:'custom',optimizeDeps:{entries:['tests/library-flow-adapters-browser-fixture.tsx']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});
  server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Synthetic library adapters</title><div id="root"></div><script type="module" src="/tests/library-flow-adapters-browser-fixture.tsx"></script></html>');});await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;await server.environments.client.warmupRequest('/tests/library-flow-adapters-browser-fixture.tsx');await server.environments.client.depsOptimizer?.scanProcessing;await server.environments.client.waitForRequestsIdle();
- const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE??'C:/Users/musta/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs')).href);browser=await chromium.launch({channel:'msedge',headless:true});assert.ok(++contexts<=24);context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',error=>errors.push(error.message));
+ browser=await launchChromium();assert.ok(++contexts<=24);context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',error=>errors.push(error.message));
  await context.route('**/*',async route=>{try{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();assert.ok(++reads<=100);assert.equal(request.method(),'GET');assert.ok([`/api/projects/${project}/journeys`,`/api/projects/${project}/ai-search/analysis`].includes(url.pathname));if(mode==='error')return reply(route,{error:'Synthetic refresh unavailable'},503);if(mode==='deny')return reply(route,{error:'Synthetic access denied'},403);return reply(route,url.pathname.endsWith('/journeys')?journeyReport(url.searchParams):aiReport(url.searchParams));}catch(error){errors.push(error.message);return reply(route,{error:'Fixture contract failure'},500);}});
  const go=async(view,query=start)=>{await page.goto(origin+'/?'+new URLSearchParams({workspace,project,view,...view==='journeys'?{journeyQuery:query}:{}}));await page.getByRole('region',{name:view==='journeys'?'Journey result':'Confirmed query report',exact:true}).waitFor();};
  const scope=()=>page.getByRole('region',{name:'Applied journey scope',exact:true}),evidence=()=>page.getByRole('region',{name:'Confirmed query evidence',exact:true}),journey=()=>page.getByRole('region',{name:'Journey result',exact:true});

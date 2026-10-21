@@ -3,10 +3,10 @@
 import assert from 'node:assert/strict';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash, randomBytes} from 'node:crypto';
 import {createServer as createNetServer} from 'node:net';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_DOMAINS_SETUP_BROWSER, '1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);
@@ -30,8 +30,7 @@ try {
   const address = server.httpServer.address(); assert.equal(address.address, '127.0.0.1');
   port = address.port;
   const origin = 'http://127.0.0.1:' + address.port;
-  const {chromium} = await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);
-  browser = await chromium.launch({channel: process.env.PLAYWRIGHT_CHANNEL ?? 'msedge', headless: true});
+  browser = await launchChromium();
   const context = await browser.newContext({viewport: {width: 1440, height: 1000}, serviceWorkers: 'block'});
   await context.addInitScript(() => { Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {writeText: async () => { throw new Error('Synthetic clipboard denial'); }}}); });
   await context.route('**/*', async route => {

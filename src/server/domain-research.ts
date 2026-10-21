@@ -15,9 +15,10 @@ import {parseDomainResearchRequest,domainResearchPriceMode,isBacklinkRequest,typ
 import {requestBacklinkResearch,reconcileBacklinkCharge,type BacklinkOutcome} from './dataforseo-backlinks.ts';
 import {csvCell} from './explorer-input.ts';
 import {requestDomainResearch,reconcileDomainCharge,type DomainOutcome} from './dataforseo-domains.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
 export const domainResearchQueue='domain-research';
-const readers=['owner','admin','editor','viewer'],writers=['owner','admin','editor'];
+const readers=[...workspaceRoles],writers=['owner','admin','editor'];
 const runSelect=`WITH read_clock AS MATERIALIZED(SELECT clock_timestamp() AS at)
  SELECT r.*,q.request,q.connection_id,q.connection_revision,q.account_fingerprint,q.expires_at,q.estimate_micros,p.actual_micros,p.status AS charge_status,p.provider_reference,
  CASE WHEN r.completed_at>=read_clock.at-make_interval(days=>w.derived_history_days) AND r.result_purged_at IS NULL THEN r.result END AS result,

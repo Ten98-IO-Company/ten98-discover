@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {randomBytes,createHash} from 'node:crypto';
 import {resolve,sep} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import {revenueCurrencyCatalogVersion} from '../src/lib/revenue.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_REVENUE_EMPTY_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const project='20000000-0000-4000-8000-000000000001',workspace='10000000-0000-4000-8000-000000000001',at='2026-10-04T12:00:00.000000Z',out='private/revenue-empty-ui/run-'+randomBytes(5).toString('hex');
 mkdirSync(out,{recursive:true});
@@ -37,7 +37,7 @@ try{
  server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Revenue empty-state acceptance</title><div id="root"></div><script type="module" src="/tests/revenue-browser-fixture.tsx"></script></html>');});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
  await server.environments.client.warmupRequest('/tests/revenue-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});assert.ok(++contexts<=limits.maxContexts);context=await browser.newContext({serviceWorkers:'block'});await context.addInitScript(()=>{
+ browser=await launchChromium();assert.ok(++contexts<=limits.maxContexts);context=await browser.newContext({serviceWorkers:'block'});await context.addInitScript(()=>{
   const probe=window.__revenueReturnCommits={armed:false,rows:[]};
   const sample=()=>{if(probe.armed){const table=document.querySelector('section[aria-label="Revenue keys"] table[aria-label="Revenue keys"]');if(table)probe.rows.push(table.querySelectorAll('tbody tr').length);}};
   // Sample synchronously during DOM insertion/label changes, before passive effects can purge a transient table.

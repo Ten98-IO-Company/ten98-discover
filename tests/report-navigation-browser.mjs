@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {createHash,randomBytes} from 'node:crypto';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_REPORT_NAVIGATION_BROWSER,'1');
 const out='private/report-navigation/run-'+randomBytes(5).toString('hex');await mkdir(out,{recursive:true});
 const sources=['src/components/SessionExplorerPanel.tsx','src/components/JourneysPanel.tsx','tests/report-navigation-browser-fixture.tsx','tests/report-navigation-browser.mjs'],hash=async p=>createHash('sha256').update(await readFile(p)).digest('hex'),hashes=async()=>Object.fromEntries(await Promise.all(sources.map(async p=>[p,await hash(p)]))),before=await hashes();
@@ -16,7 +16,7 @@ let browser,page,port;const frames=()=>page.evaluate(()=>new Promise(resolve=>re
 try{
  await server.listen();port=server.httpServer.address().port;const origin='http://127.0.0.1:'+port;
  await server.environments.client.warmupRequest('/tests/report-navigation-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(info=>info.processing));
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:'msedge',headless:true});const context=await browser.newContext({serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',e=>errors.push(e.message));
+ browser=await launchChromium();const context=await browser.newContext({serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',e=>errors.push(e.message));
  await context.addInitScript(()=>{window.reportFetches=[];const original=window.fetch;window.fetch=(input,init)=>{const item={url:typeof input==='string'?input:input.url,wire:location.href,aborted:init?.signal?.aborted??false};window.reportFetches.push(item);init?.signal?.addEventListener('abort',()=>item.aborted=true);return original(input,init);};});
  const reply=(route,value,code=500)=>route.fulfill({status:code,contentType:'application/json',body:JSON.stringify(value)}).catch(()=>{});
  await context.route('**/*',async route=>{const req=route.request(),url=new URL(req.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();if(req.method()!=='GET'){mutations.push(url.pathname);return route.abort();}if(/\/sessions(?:\/[a-f0-9]{64})?$|\/journeys$/.test(url.pathname)){reads.push({path:url.pathname,query:url.search});if(holdNext){holdNext=false;held=route;return;}return reply(route,body??{error:'CURRENT_REPORT_ERROR'},status);}return reply(route,{role:'viewer',items:[],nextCursor:null},200);});

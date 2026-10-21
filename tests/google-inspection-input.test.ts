@@ -38,8 +38,12 @@ test('shared Google transport refuses malformed UTF-8 and preserves valid astral
       assert.equal(calls,2);
     });
     // A redirect or an oversized body is an unavailable provider answer, never followed or truncated.
-    for(const response of [()=>new Response(null,{status:302,headers:{location:'https://evil.test'}}),()=>new Response(' '.repeat(2097153))])
+    // A missing body is likewise unavailable, not an empty answer.
+    for(const response of [()=>new Response(null,{status:302,headers:{location:'https://evil.test'}}),()=>new Response(' '.repeat(2097153)),()=>new Response(null,{status:200})])
       await withGoogleTransportForTests(async()=>response(),async()=>{await assert.rejects(googleRequest('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect','synthetic',{}),{status:502});});
+    // An empty body is an empty object and a leading UTF-8 BOM is not part of the JSON.
+    for(const [body,expected] of [[new Uint8Array(),{}],[new Uint8Array([0xef,0xbb,0xbf,...new TextEncoder().encode('{"x":1}')]),{x:1}]] as const)
+      await withGoogleTransportForTests(async()=>new Response(body),async()=>{assert.deepEqual(await googleRequest('https://searchconsole.googleapis.com/v1/urlInspection/index:inspect','synthetic',{}),expected);});
   }finally{for(const key of Object.keys(process.env))if(!(key in saved))delete process.env[key];Object.assign(process.env,saved);}
 });
 

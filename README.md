@@ -40,6 +40,8 @@ pnpm check:plan
 pnpm build
 ```
 
+`pnpm typecheck` checks application TypeScript, the maintained tracker and destination scripts, and temporary views of the replay and performance adapters derived from their served bundles. The adapter check verifies pinned vendor bytes and wrapper boundaries, maps diagnostics back to the served files, and removes its temporary inputs. Builds and source CI run this check through the normal typecheck command.
+
 The documentation check validates local links/fences, the no-tool Kimi profile and a pinned Docmost requirement reference with 81 frozen IDs. It does not authenticate to Docmost or certify current remote content or feature completion. See the foundation runbook for integration-test isolation and evidence limits.
 
 Licensed under [MIT](LICENSE).

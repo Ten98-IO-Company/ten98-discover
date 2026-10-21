@@ -2,11 +2,10 @@
 import assert from 'node:assert/strict';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {createHash,randomBytes} from 'node:crypto';
-import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
 import {defaultStringifySearch} from '@tanstack/react-router';
 import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_AI_SEARCH_BROWSER,'1');
 for(const key of ['TEN98_AI_QUERY_DTOS','TEN98_AI_CAPTURE_DTOS','TEN98_AI_BOUNDARY_DTOS','TEN98_AI_UI_SUPPLEMENT','PLAYWRIGHT_MODULE'])assert.ok(process.env[key],key+' is required; never fabricate missing SQL DTOs.');
 const sources=Object.fromEntries(await Promise.all(['TEN98_AI_QUERY_DTOS','TEN98_AI_CAPTURE_DTOS','TEN98_AI_BOUNDARY_DTOS','TEN98_AI_UI_SUPPLEMENT'].map(async key=>{const bytes=await readFile(process.env[key]);return[key,{path:process.env[key],sha256:createHash('sha256').update(bytes).digest('hex'),value:JSON.parse(bytes)}];}))),B=sources.TEN98_AI_QUERY_DTOS.value,A=sources.TEN98_AI_CAPTURE_DTOS.value,H=sources.TEN98_AI_BOUNDARY_DTOS.value.dtos,S=sources.TEN98_AI_UI_SUPPLEMENT.value,flow=H.httpFlow;
@@ -34,7 +33,7 @@ async function waitReport(){await page.getByRole('region',{name:'Confirmed query
 try{
  server=await createServer({configFile:false,root:process.cwd(),cacheDir:out+'/vite-cache',appType:'custom',optimizeDeps:{entries:['tests/ai-search-browser-fixture.tsx']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI search synthetic fixture</title><div id="root"></div><script type="module" src="/tests/ai-search-browser-fixture.tsx"></script></html>');});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
  let timer;try{await Promise.race([(async()=>{await server.environments.client.warmupRequest('/tests/ai-search-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map(v=>v.processing));})(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Fixture warmup exceeded 30 seconds')),30000);})]);}finally{clearTimeout(timer);}
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});context=await browser.newContext({viewport:{width:1440,height:1100},serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',e=>errors.push(e.message));
+ browser=await launchChromium();context=await browser.newContext({viewport:{width:1440,height:1100},serviceWorkers:'block'});page=await context.newPage();page.setDefaultTimeout(6000);page.on('pageerror',e=>errors.push(e.message));
  await context.route('**/*',async route=>{try{
   const req=route.request(),url=new URL(req.url());if(url.origin!==origin){external.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();
   const project=url.pathname.split('/')[3];assert.equal(project,scope.project,'Unexpected project request');const path=url.pathname.slice(('/api/projects/'+project).length);

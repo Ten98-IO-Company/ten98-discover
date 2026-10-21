@@ -1,8 +1,9 @@
+import type {WorkspaceRole} from '@ten98/runtime';
 export type ComparisonCohort = 'current-neutral' | 'all';
 export type ComparisonOutcome = 'all' | 'usable' | 'unavailable' | 'mentioned' | 'not_mentioned' | 'cited';
 export type AIComparisonViewProps = {
   prefix: string;
-  role: 'owner' | 'admin' | 'editor' | 'viewer' | null;
+  role: WorkspaceRole | null;
   reading: boolean; exporting: boolean; dirty: boolean; canApply: boolean;
   error: string | null; notice: string | null;
   filtersLabel: string; cohort: ComparisonCohort;

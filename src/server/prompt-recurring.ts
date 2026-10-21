@@ -10,8 +10,9 @@ import {withPromptProject,promptConnection,quotePromptExecution,startPromptExecu
 import {createPromptTrackerInput,approvePromptTrackerInput,changePromptTrackerInput,promptCalendar,promptTrackerStatus,type PromptCalendar} from '../lib/prompt-recurring.ts';
 import type {z} from 'zod';
 import type {promptTrackerAck} from '../lib/prompt-recurring.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
-const readers=['owner','admin','editor','viewer'],dueText=`to_char(next_due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+const readers=[...workspaceRoles],dueText=`to_char(next_due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 type Due={id:string;workspace_id:string;project_id:string;approval_id:string;due_at:string};
 const deny=():never=>{throw new FoundationError(409,'The recurring approval changed or is disabled. Review a fresh quote and explicitly approve again.');};
 const iso=(value:Date|null)=>value?.toISOString()??null;

@@ -1,4 +1,6 @@
-import { EvidenceDetail } from '@ten98/ui';
+import { useState } from 'react';
+import { Alert, Card, DataTable, EvidenceDetail, Sparkline, Stack, Tabs } from '@ten98/ui';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export type CitationPeriod = 'current' | 'previous';
 export type CitationGrouping = 'retained-fragment-v1' | 'elmo-url-v1';
@@ -36,6 +38,10 @@ export type CitationAggregateRow = {
   currentFacets: string[]; previousFacets: string[];
   canCurrentEvidence: boolean; canPreviousEvidence: boolean; canTrack: boolean;
 };
+export type CitationCarriedScreen = {
+  dates: string[]; observedDays: number;
+  groups: { id: string; label: string; rows: { id: string; label: string; values: number[]; latest: string; average: string }[] }[];
+};
 export type CitationReportScreen = {
   kind: 'report'; header: CitationHeader; view: CitationReportView;
   draft: CitationFilterDraft; dirty: boolean; canApply: boolean;
@@ -50,6 +56,8 @@ export type CitationReportScreen = {
   rows: CitationAggregateRow[];
   pageTypes: { id: CitationPageType; label: string; current: CitationCountsText;
     previous: CitationCountsText; canExplore: boolean }[];
+  /** Elmo-method carried source trends; null when the response lacked a valid carried block. */
+  carried?: CitationCarriedScreen | null;
   daily: { id: string; periodLabel: string; dateLabel: string; eligibleAnswers: string;
     citingAnswers: string; annotations: string; coverage: string; facets: string[] }[];
   changes: { id: string; kindLabel: string; targetLabel: string; label: string;
@@ -80,7 +88,7 @@ export type CitationTaskScreen = {
   help: string; canSave: boolean; canCancel: boolean; saveLabel: string;
 };
 export type CitationAnalysisViewProps = {
-  prefix: string; role: 'owner' | 'admin' | 'editor' | 'viewer' | null;
+  prefix: string; role: WorkspaceRole | null;
   reading: boolean; exporting: boolean; writeState: 'idle' | 'saving' | 'unknown';
   error: string | null; notice: string | null;
   backLabel: string; reloadLabel: string; canLeave: boolean; canReload: boolean;
@@ -273,6 +281,35 @@ function PageTypeTable({ screen, props, steady }: { screen: CitationReportScreen
   );
 }
 
+/** Elmo-method carried values: presentation only, composed from shared UI components. */
+function CarriedPanel({ carried }: { carried: CitationCarriedScreen | null }) {
+  if (carried === null) return <Alert title="Carried trends unavailable" tone="warning">This report did not include carried source trends. Reload citations.</Alert>;
+  const last = carried.dates.at(-1);
+  return <>
+    <Alert title="Carried values (Elmo method)" tone="info">Each prompt's last eligible citation counts are carried across days it did not run, and its earliest answer seeds earlier days. {carried.observedDays} of {carried.dates.length} days have an actual eligible answer. Carried values are estimates, not observations; Observed days shows only what ran.</Alert>
+    {carried.groups.map((group) => (
+      <Card key={group.id} title={group.label} description={`Carried citation annotations per day, ${carried.dates[0]} to ${last}.`}>
+        <DataTable<CitationCarriedScreen['groups'][number]['rows'][number]> caption={`Carried ${group.label.toLowerCase()}`} rowKey={(row) => row.id} pageSize={10}
+          columns={[{ key: 'label', header: 'Source' }, { key: 'values', header: 'Trend', render: (row) => <Sparkline values={row.values} label={`Carried ${row.label} from ${carried.dates[0]} to ${last}`} /> }, { key: 'latest', header: 'Last day' }, { key: 'average', header: 'Daily average' }]}
+          rows={group.rows} />
+      </Card>
+    ))}
+  </>;
+}
+
+/** Only the selected basis mounts, and the switch is locked while a read or export is busy. */
+function DailyBasis({ screen, steady }: { screen: CitationReportScreen; steady: boolean }) {
+  const [basis, setBasis] = useState<'observed' | 'carried'>('observed');
+  return (
+    <Stack as="fieldset" {...{ disabled: !steady }}>
+      <Tabs label="Daily citation basis" value={basis} onValueChange={(value) => { if (steady && (value === 'observed' || value === 'carried')) setBasis(value); }} items={[
+        { value: 'observed', label: 'Observed days', content: basis !== 'observed' ? null : <DailyTable screen={screen} /> },
+        { value: 'carried', label: 'Carried values (Elmo)', content: basis !== 'carried' ? null : <CarriedPanel carried={screen.carried ?? null} /> },
+      ]} />
+    </Stack>
+  );
+}
+
 function DailyTable({ screen }: { screen: CitationReportScreen }) {
   if (screen.daily.length === 0) return <p>{screen.emptyMessage}</p>;
   return (
@@ -456,7 +493,7 @@ function ReportSection({ screen, props, ready, writer }: { screen: CitationRepor
       <p className="hint">Grouping changes which retained URLs are counted together. Evidence preserves the retained URL and title. Neither mode fetches a page.</p>
       {screen.dirty && <p className="hint">Unapplied source filters. The report still uses the applied selection.</p>}
       {screen.view === 'daily' ? (
-        <DailyTable screen={screen} />
+        <DailyBasis screen={screen} steady={steady} />
       ) : screen.view === 'page-types' ? (
         <PageTypeTable screen={screen} props={props} steady={steady} />
       ) : screen.view === 'changes' ? (

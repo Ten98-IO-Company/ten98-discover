@@ -15,7 +15,7 @@ import {changeRole,removeMember} from '../../src/server/teams.ts';
 fixtureGuard();assert.equal(process.env.TEN98_SAVED_KEYWORDS_BROWSER,'1');
 assert.ok(process.argv.length<=3,'Optional argument: one fresh lowercase/hyphen fixture suffix.');
 const suffix=process.argv[2]??'first';assert.match(suffix,/^[a-z][a-z-]{0,11}$/);
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE),{pool}=getDatabase();
+const {pool}=getDatabase();
 const fixture=await readFixture();let session,stage='initial';const cleanup=[];
 const savedPanel=page=>page.locator('section[aria-label="Saved keywords"]');
 const researchPanel=page=>page.locator('section[aria-label="Keyword research"]');
@@ -27,7 +27,7 @@ const matchingResponse=(path,method='POST')=>response=>new URL(response.url()).p
 
 async function phase(label){
   if(session){assert.deepEqual(session.errors,[]);assert.deepEqual(session.outbound,[]);await session.browser.close();}
-  const group=await createKeywordCase('saved-'+label+'-'+suffix);session=await browserSession(chromium,group.owner);
+  const group=await createKeywordCase('saved-'+label+'-'+suffix);session=await browserSession(group.owner);
   await session.page.goto(href(group,'keywords'),{waitUntil:'networkidle'});
   await researchPanel(session.page).getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
   return {group,page:session.page,base:pathFor(group)};

@@ -5,6 +5,7 @@ import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createHash,randomBytes} from 'node:crypto';
+import {launchChromium} from './helpers/playwright.mjs';
 export async function runSessionReplayVendorBrowser() {
 
 assert.equal(process.env.TEN98_REPLAY_VENDOR_SMOKE,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
@@ -14,7 +15,7 @@ const {readReplayChunk,reassembleReplay,replayLimits}=await import(pathToFileURL
 mkdirSync(out,{recursive:true});const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
 const assets=['public/tracker.js','public/destinations.js','public/replay.js','public/vendor/rrweb-LICENSE.txt','src/lib/session-replay.ts','tests/session-replay-vendor-browser.mjs'];
 const pins=()=>Object.fromEntries(assets.map(file=>[file,hash(resolve(root,file))])),before=pins();
-assert.equal(before['public/replay.js'],'d0c0d8ff92dec27aadcc37ce889923265564e915dff4cb9d19ba2c05553cf324');
+assert.equal(before['public/replay.js'],'1ad6d78231621e7b8a728740b975bdd151d9c722167d7ec56d60c53da091fbff');
 const site='55000000-0000-4000-8000-000000000001',secondSite='55000000-0000-4000-8000-000000000002',epoch='55000000-0000-4000-8000-000000000003';
 const recording='55000000-0000-4000-8000-000000000004',nonce='ten98-replay-real-vendor-smoke',path='/replay-vendor/record',playerPath='/replay-vendor/player';
 const token='c3ludGhldGljLXJlcGxheS1jYXBhYmlsaXR5.'+'a'.repeat(64);
@@ -113,7 +114,7 @@ try{
  server=await createServer({configFile:false,root,cacheDir:out+'/vite-cache',appType:'custom',optimizeDeps:{noDiscovery:true,include:[]},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res,next)=>{const url=new URL(req.url??'/','http://127.0.0.1');if(![path,playerPath].includes(url.pathname))return next();const mode=evidence.contexts.at(-1)?.mode??'basic';res.setHeader('content-type','text/html; charset=utf-8');res.setHeader('cache-control','no-store');res.setHeader('content-security-policy',`default-src 'none'; script-src 'nonce-${nonce}'; style-src ${url.pathname===playerPath?"'unsafe-inline'":"'nonce-"+nonce+"'"}; connect-src 'self'; worker-src 'none'; img-src 'self' data: blob:; frame-src 'self' data: about:; base-uri 'none'; object-src 'none'; form-action 'none'`);res.end(url.pathname===path?recordHtml(mode):playerHtml());});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+ browser=await launchChromium({args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
  for(const [mode,button,index]of [['basic',null,0],['analytics-only','Analytics only',1],['refused','Refuse tracking',2],['not-sampled','Agree to replay',3]]){
   const {page,record}=await fresh(mode);if(button)await page.getByRole('button',{name:button,exact:true}).click();await new Promise(resolve=>setTimeout(resolve,2200));assert.equal(record.begins,mode==='not-sampled'?1:0);assert.equal(record.chunks.length,0);assert.equal(await page.evaluate(()=>typeof window.__ten98FoundationHub.startReplayRecorder),'undefined');assert.equal(record.requests.filter(r=>r.path==='/replay.js').length,0);if(mode==='basic'||mode==='analytics-only')assert.ok(record.basicBodies>0);else if(mode==='refused')assert.equal(record.basicBodies,0);const storage=await page.evaluate(()=>Object.entries(sessionStorage).filter(([key])=>key.startsWith('ten98:replay:')).map(([,value])=>JSON.parse(value)));if(mode==='not-sampled'){assert.equal(storage.length,1);assert.equal(storage[0].terminal,true);assert.equal(storage[0].reply.accepted,false);}else assert.deepEqual(storage,[]);await closeContext(page,record);pass(markers[index]);
  }

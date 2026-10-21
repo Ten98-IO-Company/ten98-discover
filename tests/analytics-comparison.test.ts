@@ -6,7 +6,7 @@ import {analyticsDimensions} from '../src/lib/analytics-dimensions.ts';
 
 test('dimension comparisons accept only collected fields and reuse closed Explorer selection keys',()=>{
  for(const dimension of analyticsDimensions)assert.equal(analyticsQuery(new URLSearchParams({compare:'prev',dimension})).dimension,dimension);
- for(const dimension of ['distinctId','tag','property','__proto__'])assert.throws(()=>analyticsQuery(new URLSearchParams({compare:'prev',dimension})),{status:400});
+ for(const dimension of ['distinctId','property','__proto__'])assert.throws(()=>analyticsQuery(new URLSearchParams({compare:'prev',dimension})),{status:400});
  assert.throws(()=>analyticsQuery(new URLSearchParams({dimension:'path'})),{status:400});
  const host='a'.repeat(2039)+'.example';assert.equal(host.length,2047);
  const selected=analyticsQuery(new URLSearchParams({selection:new URLSearchParams({referrer:host,campaignSource:'',path:'/x'}).toString()}));assert.equal(selected.selection!.fields.length,3);assert.ok(selected.selectionQuery);

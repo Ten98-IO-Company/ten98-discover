@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_HEATMAP_COLLECTOR_BROWSER,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),entry='tests/heatmap-collector-browser.mjs',inputs=[entry,'public/tracker.js','public/destinations.js'],hash=file=>createHash('sha256').update(readFileSync(file)).digest('hex'),pins=()=>Object.fromEntries(inputs.map(file=>[file,hash(resolve(root,file))])),before=pins();
 const out=resolve(root,'private/replay-heatmaps/collector-browser-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
@@ -73,7 +73,7 @@ try{
  server=await createServer({configFile:false,root,cacheDir:out+'/vite-cache',appType:'custom',publicDir:false,server:{fs:{strict:true,allow:[]},host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res)=>{const url=new URL(req.url,'http://127.0.0.1');if(url.pathname==='/favicon.ico'){res.statusCode=204;res.end();return;}if(['/tracker.js','/destinations.js'].includes(url.pathname)){res.setHeader('content-type','text/javascript; charset=utf-8');res.setHeader('cache-control','no-store');res.end(readFileSync(resolve(root,'public'+url.pathname)));return;}if(url.pathname!=='/'||!['ltr','rtl'].includes(url.searchParams.get('direction'))||!['none','body2','html2'].includes(url.searchParams.get('zoom'))){res.statusCode=404;res.end();return;}res.setHeader('content-type','text/html; charset=utf-8');res.end(html({direction:url.searchParams.get('direction'),zoom:url.searchParams.get('zoom')}));});
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');origin='http://127.0.0.1:'+address.port;
- const{chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+ browser=await launchChromium({args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
  for(const config of matrix){
   const{page,record}=await fresh(config);await grant(page);await click(page,'baseline');const baseline=await page.evaluate(()=>window.heatmapCollectorFixture.facts());assert.equal(baseline.geometry.direction,config.direction);assert.equal(Number(baseline.rootZoom),config.zoom==='html2'?2:1);assert.equal(Number(baseline.bodyZoom),config.zoom==='body2'?2:1);assert.equal(baseline.writingMode,'horizontal-tb');
   await stage(page,'vertical');const oldY=await page.evaluate(()=>scrollY);await wheel(page,0,650);await page.waitForFunction(old=>scrollY!==old,oldY);await settle(page);await click(page,'after-vertical');

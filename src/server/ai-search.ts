@@ -17,9 +17,10 @@ import {matchAnswer,type MentionSubject} from './answer-mentions.ts';
 import {aggregateAiSearchQueries,AiQueryCapacityError,AiQueryDataError,type AiQueryInput} from './ai-search-analysis.ts';
 import {aiQueryFilters,aiQueryRange,aiQueryReportSchema,type AiQueryReport} from '../lib/ai-search-analysis.ts';
 import {aiSearchActionInput,aiSearchEndpoints,aiSearchPayload,aiSearchPriceEvidence,aiSearchProfileId,aiSearchQuoteInput,aiSearchReconcileInput,aiSearchRefreshInput,aiSearchRequestSchema,aiSearchSnapshotSchema,aiSearchStartInput,type AiSearchQuoteDto,type AiSearchRunDto,type AiSearchSnapshot} from '../lib/ai-search.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export const aiSearchQueue='ai-search';
-type Project={id:string;workspace_id:string;role:'owner'|'admin'|'editor'|'viewer'};
+type Project={id:string;workspace_id:string;role:WorkspaceRole};
 const unavailable=()=>new FoundationError(404,'Search capture not found or unavailable.');
 const changed=()=>new FoundationError(409,'Search capture authority, input or quote changed. Refresh and prepare a new quote.');
 const deadline=(e:unknown)=>{if(['57014','55P03'].includes((e as {code?:string})?.code??''))throw Object.assign(new FoundationError(503,'Search capture is busy. Retry the same request ID.'),{code:'AI_SEARCH_DEADLINE'});throw e;};

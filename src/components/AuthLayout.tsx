@@ -1,14 +1,15 @@
-import type { ReactNode } from 'react'
-import { AuthLayout as SharedAuthLayout } from '@ten98/ui'
-import { Brand, Icon } from './CampaignUI'
+import type { ComponentProps } from 'react'
+import { AuthLayout as SharedAuthLayout, AuthStory } from '@ten98/ui'
+import { Brand } from './CampaignUI'
 
-export function AuthLayout({ children }: { children: ReactNode }) {
- return <main aria-label='Account access'><SharedAuthLayout brand={<Brand />} aside={<>
-   <div aria-label='ten98 Discover'><span className='eyebrow'>SEO, AEO and GEO</span>
-    <p className='auth-story-title'>Website analytics<br /> and search<br /> <em>research.</em></p>
-    <p>Track visits, research keywords and review AI answers.</p>
-    <div className='auth-channels' aria-hidden='true'><span><Icon name='search'/>SEO</span><span><Icon name='agent'/>AEO</span><span><Icon name='globe'/>GEO</span></div>
-   </div>
-   <small>Workspace access required.</small>
-  </>}>{children}</SharedAuthLayout></main>
+type AuthLayoutProps = Pick<ComponentProps<typeof SharedAuthLayout>, 'children' | 'title' | 'description' | 'footer'>
+
+/** Discover's side panel for every shared authentication flow. */
+export const authStory = <AuthStory label='ten98 Discover' eyebrow='SEO, AEO and GEO' title='Website analytics and search' emphasis='research.'
+  lead='Track visits, research keywords and review AI answers.' footnote='Workspace access required.'
+  channels={[{ icon: 'search', label: 'SEO' }, { icon: 'agent', label: 'AEO' }, { icon: 'globe', label: 'GEO' }]} />
+
+/** Screens not yet on a shared flow; the shared layout supplies the single main landmark. */
+export function AuthLayout({ children, ...props }: AuthLayoutProps) {
+  return <SharedAuthLayout {...props} label='Account access' brand={<Brand />} aside={authStory}>{children}</SharedAuthLayout>
 }

@@ -11,10 +11,10 @@ async function closeExplore(target){
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {randomUUID,createHash} from 'node:crypto';
 import {createServer} from 'vite';
 import {parseAnnotationDefinition} from '../src/server/annotation-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_ANNOTATIONS_BROWSER,'1');
 const projectId='20000000-0000-4000-8000-000000000001',otherProject='20000000-0000-4000-8000-000000000002',firstId='40000000-0000-4000-8000-000000000001',at='2026-03-08T05:00:00.000Z';
 const makeItem=(note='Release 100%_ready',date=at,allDay=true)=>({id:firstId,projectId,revision:1,definition:{date,allDay,note:note.trim()},createdAt:at,updatedAt:at});
@@ -30,7 +30,7 @@ server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return n
 let browser;
 try{
  await mkdir('private/annotations-ui-evidence',{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
  const reply=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url()),path=url.pathname;

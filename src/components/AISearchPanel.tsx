@@ -8,8 +8,9 @@ import {AIQueryAnalysisPanel,readAISearch} from './AIQueryAnalysisPanel';
 import {AIContentCoveragePanel} from './AIContentCoveragePanel';
 import {AIContentSupportPanel} from './AIContentSupportPanel';
 import './ai-search.css';
+import {workspaceRoles} from '@ten98/runtime';
 
-const roleSchema=z.enum(['owner','admin','editor','viewer']),iso=z.iso.datetime(),uuid=z.uuid(),hash=z.string().regex(/^[a-f0-9]{64}$/),money=z.string().regex(/^(?:0|[1-9][0-9]{0,12})\.[0-9]{6}$/),price=aiSearchSnapshotSchema.shape.price;
+const roleSchema=z.enum(workspaceRoles),iso=z.iso.datetime(),uuid=z.uuid(),hash=z.string().regex(/^[a-f0-9]{64}$/),money=z.string().regex(/^(?:0|[1-9][0-9]{0,12})\.[0-9]{6}$/),price=aiSearchSnapshotSchema.shape.price;
 const clean=(v:string)=>Array.from(v).every(c=>{const n=c.codePointAt(0)!;return n<0xd800||n>0xdfff;})&&!v.includes('\0');
 const text=(n:number)=>z.string().max(n).refine(clean);
 const queryValue=text(4000).refine(v=>Array.from(v).length<=2000&&!/[\u0000-\u001f\u007f-\u009f]/.test(v));

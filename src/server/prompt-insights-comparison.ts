@@ -7,6 +7,7 @@ import {canonicalHash} from './context-input.ts';
 import {csvCell} from './explorer-input.ts';
 import {withContentProject,type ContentProject} from './project-context.ts';
 import {insightFilters,selectPromptInsights} from './prompt-insights.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export type ComparisonFilters=InsightFilters&{cohort:'current-neutral'|'all'};
 /** Fractions of one, not percentages. Only delta may have a negative numerator. */
@@ -22,7 +23,7 @@ export type ComparisonExecution=InsightExecution&{period:'current'|'previous';ce
 export type ComparisonEvidenceState=Pick<ComparisonExecution,'id'|'period'|'eligibility'|'identity'>;
 export type ComparisonNavigation={view:'cells'|'executions';period:'current'|'previous'|null;cellId:string|null;
  outcome:'all'|'usable'|'unavailable'|'mentioned'|'not_mentioned'|'cited';entityId:string|null};
-export type PromptInsightsComparison={role:'owner'|'admin'|'editor'|'viewer';filters:ComparisonFilters;asOf:string;
+export type PromptInsightsComparison={role:WorkspaceRole;filters:ComparisonFilters;asOf:string;
  contextRevision:number;profileHash:string;matcherVersion:MentionMethod;selectionRevision:string;
  formulaVersion:'current-context-equal-cell-v1';eligibilityVersion:'retained-nonempty-stop-v1';classifierVersion:'elmo-substring-current-overrides-v1';
  label:string;warnings:string[];subjects:MentionSubject[];periodOpen:boolean;status:ComparisonStatus;

@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {openRouterModelId} from './openrouter-models.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
 const text=(max:number)=>z.string().min(1).max(max).refine(v=>v.trim()===v&&!/[\u0000\uD800-\uDFFF]/u.test(v));
 export const promptCalendar=z.object({interval:z.enum(['daily','weekly','monthly']),timezone:text(100).refine(v=>/^[A-Za-z][A-Za-z0-9_+./-]*$/.test(v)),hour:z.number().int().min(0).max(23),minute:z.number().int().min(0).max(59),weekday:z.number().int().min(0).max(6).nullable()}).strict().refine(v=>v.interval==='weekly'?v.weekday!==null:v.weekday===null);
@@ -11,7 +12,7 @@ export const promptOccurrenceSchema=z.object({id:z.uuid(),scheduledFor:stamp,tri
 export const promptTrackerSchema=z.object({id:z.uuid(),createdRequestId:z.uuid(),name:text(120),revision:z.number().int().positive(),enabled:z.boolean(),archivedAt:stamp.nullable(),calendar:promptCalendar,nextDueAt:stamp.nullable(),definition:z.object({promptId:z.uuid(),versionId:z.uuid(),models:z.array(z.string().refine(openRouterModelId)).min(1).max(4).refine(v=>new Set(v).size===v.length),systemText:z.string().max(4000).refine(v=>!/[\u0000\u000b\u000c\uD800-\uDFFF]/u.test(v)),maxCompletionTokens:z.number().int().min(16).max(4096)}).strict(),approval:z.object({id:z.uuid(),userId:z.string().min(1).max(100),approvedAt:stamp,connectionId:z.uuid(),connectionRevision:z.number().int().positive()}).strict().nullable(),lastStatus:z.string().max(500).nullable(),occurrences:z.array(promptOccurrenceSchema).max(10)}).strict().refine(v=>(v.enabled?v.approval!==null&&v.nextDueAt!==null:v.nextDueAt===null)&&(v.archivedAt===null||!v.enabled&&v.approval===null&&v.nextDueAt===null));
 export const promptTrackerAck=z.object({requestId:z.uuid(),trackerId:z.uuid(),action:z.enum(['create','approve','pause','run','archive','restore']),quoteId:z.uuid().nullable(),occurrenceId:z.uuid().nullable()}).strict();
 export const promptTrackerStatus=z.enum(['active','archived','all']);
-const context={projectId:z.uuid(),role:z.enum(['owner','admin','editor','viewer'])};
+const context={projectId:z.uuid(),role:z.enum(workspaceRoles)};
 export const promptTrackersResponse=z.object({...context,status:promptTrackerStatus,items:z.array(promptTrackerSchema).max(20),nextCursor:z.string().max(512).nullable()}).strict();
 export const promptTrackerResponse=z.object({...context,item:promptTrackerSchema}).strict();
 export const promptTrackerMutationResponse=promptTrackerResponse.extend({ack:promptTrackerAck}).strict().refine(v=>v.item.id===v.ack.trackerId);

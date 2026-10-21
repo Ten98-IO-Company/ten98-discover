@@ -2,8 +2,9 @@ import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {ApiError,errMsg} from '../lib/api';
 import {promptCalendar,promptTrackersResponse,promptTrackerResponse,promptTrackerMutationResponse,type PromptTracker} from '../lib/prompt-recurring';
 import {modelApi,ModelResponseError} from './OpenRouterModelPicker';
+import type {WorkspaceRole} from '@ten98/runtime';
 
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type Quote={id:string;expiresAt:string;estimateUsd:string;input:{promptId:string;versionId:string;models:string[];systemText:string;maxCompletionTokens:number;reuseCached?:boolean}};
 type Attempt={path:string;body:Record<string,unknown>};
 function nextDue(value:string|null,zone:string){if(!value)return 'Not scheduled';try{return new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short',timeZone:zone}).format(new Date(value))+' · '+zone;}catch{return value+' · UTC instant; local zone preview unavailable';}}

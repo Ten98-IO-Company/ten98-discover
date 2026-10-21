@@ -4,11 +4,10 @@
 // Then creates a public website link on the surviving website and opens it in a fresh context (sections, fragment scrub, capability-only reads, 44 px, revoke, reload).
 import assert from 'node:assert/strict';assert.equal(process.env.TEN98_PROJECT_DELETE_COMPILED,'1');assert.match(process.env.BASE_URL??'',/^http:\/\/127\.0\.0\.1:\d+$/,'Point BASE_URL at a local throwaway server; never a saved installation.');
 import {writeFile} from 'node:fs/promises';
-import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
+import {launchChromium} from './helpers/playwright.mjs';
 const base=process.env.BASE_URL,out=process.env.OUT_DIR,token=process.env.BOOTSTRAP_TOKEN;
-const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href);
-const browser=await chromium.launch({channel:'msedge',headless:true});const evidence={steps:[],errors:[],api:[],csp:null};
+const browser=await launchChromium();const evidence={steps:[],errors:[],api:[],csp:null};
 const context=await browser.newContext({viewport:{width:1440,height:1000}});
 // Every frame reports Content-Security-Policy violations as console errors, so a blocked script, style, image or frame fails the harness.
 await context.addInitScript(()=>document.addEventListener('securitypolicyviolation',e=>console.error('csp '+e.effectiveDirective+' '+e.blockedURI)));
@@ -20,7 +19,7 @@ try{
  evidence.csp=landing.headers()['content-security-policy']??null;const headerNonce=evidence.csp?.match(/'nonce-([^']+)'/)?.[1];assert.ok(headerNonce,'The compiled document must carry a nonce policy.');
  assert.equal(await page.evaluate(()=>document.querySelector('script[type="module"]').nonce),headerNonce,'The module entry script must carry the header nonce.');step('document policy nonce matches the module entry script');
  await page.getByRole('heading',{name:'Secure this installation'}).waitFor();
- await page.fill('#su-token',token);await page.fill('#su-name','Compiled owner');await page.fill('#su-email','owner@compiled-delete.test');await page.fill('#su-pw','synthetic-password-12345');await page.fill('#su-ws','Compiled workspace');
+ await page.getByLabel('Setup token',{exact:true}).fill(token);await page.getByLabel('Your name',{exact:true}).fill('Compiled owner');await page.getByLabel('Email address',{exact:true}).fill('owner@compiled-delete.test');await page.getByLabel('Password',{exact:true}).fill('synthetic-password-12345');await page.getByLabel('Workspace name',{exact:true}).fill('Compiled workspace');
  await page.getByRole('button',{name:'Create owner account'}).click();
  await page.getByRole('navigation',{name:'Projects'}).waitFor();step('owner claimed and signed in');
  // Mirrors the ReplayPreview player document in src/components/SessionReplayPanel.tsx: a data: frame inherits the page policy, mints its own
@@ -31,7 +30,7 @@ try{
  const replayFrame=page.frames().find(f=>f.url().startsWith('data:'));assert.ok(replayFrame,'The replay probe frame must exist.');
  await replayFrame.waitForFunction(()=>document.head.querySelector('style')!==null,null,{timeout:10000});
  await page.evaluate(()=>document.querySelector('iframe[title="csp replay probe"]').remove());step('replay data: frame executed /replay.js under the inherited document policy');
- const workspaceId=await page.locator('#ws').inputValue();assert.match(workspaceId,/^[0-9a-f-]{36}$/);
+ const workspaceId=await page.getByRole('combobox',{name:'Workspace',exact:true}).inputValue();assert.match(workspaceId,/^[0-9a-f-]{36}$/);
  async function create(name,origin){await page.goto(base+'/?workspace='+workspaceId+'&view=new-project',{waitUntil:'domcontentloaded'});await page.fill('#pn',name);await page.fill('#po',origin);await page.getByRole('button',{name:'Create project'}).click();await page.getByRole('navigation',{name:'Projects'}).getByRole('link',{name,exact:true}).waitFor();}
  await create('Doomed website','https://doomed.compiled-delete.test');await create('Surviving website','https://surviving.compiled-delete.test');step('two projects created');
  const doomedHref=await page.getByRole('navigation',{name:'Projects'}).getByRole('link',{name:'Doomed website',exact:true}).getAttribute('href');const doomedId=new URLSearchParams(doomedHref.split('?')[1]).get('project');assert.match(doomedId,/^[0-9a-f-]{36}$/);

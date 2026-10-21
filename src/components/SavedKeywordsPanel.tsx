@@ -3,8 +3,9 @@ import {api,ApiError,errMsg} from '../lib/api';
 import {SavedKeywordFilterFields,emptySavedKeywordFilters,type SavedKeywordFilterDraft} from './SavedKeywordFilterFields';
 import {SavedKeywordRefreshPanel} from './SavedKeywordRefreshPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 type Tag={id:string;name:string;color:string|null;count?:number};
 type Metrics={keyword:string;searchVolume:number|null;cpcUsd:string|null;competition:number|null;competitionLevel:string|null;keywordDifficulty:number|null;intent:string|null;metricsUpdatedAt:string|null;intentUpdatedAt:string|null;monthlySearches:{year:number;month:number;searchVolume:number|null}[]};
 type Row={id:string;keyword:string;locationCode:number;languageCode:string;createdAt:string;updatedAt:string;tags:Tag[];metrics:{status:'available'|'unavailable'|'expired';row:Metrics|null;sourceRunId:string|null;sourceRowIndex:number|null;source:string|null;fetchedAt:string|null;observedAt:string|null};refresh:{eligible:boolean;reason:string|null;lastAttemptStatus:string|null;lastAttemptAt:string|null}};
@@ -13,7 +14,7 @@ type Setup={role:Role;vaultConfigured:boolean;spendingPaused:boolean;connections
 type Intent={path:string;body:Record<string,unknown>;message:string;closeForm?:boolean};
 export type ResearchSaveSeed={key:string;runId:string;rowIndexes:number[];keywords:string[];locationCode:number;languageCode:string};
 export type KeywordSelection={type:'ids';keywordIds:string[]}|{type:'filtered';filters:Record<string,unknown>};
-const roleValue=(v:unknown):v is Role=>typeof v==='string'&&['owner','admin','editor','viewer'].includes(v);
+const roleValue=(v:unknown):v is Role=>typeof v==='string'&&workspaceRoles.includes(v as WorkspaceRole);
 const rec=(v:unknown):v is Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const uuid=(v:unknown)=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const time=(v:string|null)=>v?new Date(v).toLocaleString():'Not observed';

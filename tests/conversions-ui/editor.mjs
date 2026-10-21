@@ -3,9 +3,10 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fixtureGuard,evidenceDir,appUrl} from './guard.mjs';
 import {readFixture} from './fixture.mjs';
+import {launchChromium} from '../helpers/playwright.mjs';
 
-fixtureGuard();const fixture=await readFixture(),{chromium}=await import(process.env.PLAYWRIGHT_MODULE);
-const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+fixtureGuard();const fixture=await readFixture();
+const browser=await launchChromium();
 const context=await browser.newContext({viewport:{width:1440,height:1000},locale:'en-US',timezoneId:'UTC',serviceWorkers:'block'});
 const page=await context.newPage(),errors=[],blocked=[];let stage='login';page.setDefaultTimeout(15_000);
 page.on('pageerror',error=>errors.push(error.message));

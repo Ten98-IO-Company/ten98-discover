@@ -10,6 +10,7 @@ import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_REPLAY_HEATMAPS_CLASSIC,'1');assert.ok(process.env.PLAYWRIGHT_MODULE);
 const root=process.cwd(),out=resolve(root,'private/replay-heatmaps/classic-browser-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
 const {readReplayChunk,reassembleReplay,replayLimits,replayBegin,replayUpload}=await import(pathToFileURL(resolve(root,'src/lib/session-replay.ts')).href);
@@ -28,7 +29,7 @@ const started=Date.now(),budgetMs=180000;
 const wait=async(predicate,label)=>{const until=Date.now()+8000;while(!await predicate()){assert.ok(Date.now()<until&&Date.now()-started<budgetMs,label);await new Promise(r=>setTimeout(r,15));}};
 const settle=page=>page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
 let server,context,origin;const browsers={};
-const browserFor=async scene=>browsers[scene.classic]??=await (await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href)).chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true,...scene.classic?{ignoreDefaultArgs:['--hide-scrollbars']}:{},args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
+const browserFor=async scene=>browsers[scene.classic]??=await (await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href)).launchChromium({...scene.classic?{ignoreDefaultArgs:['--hide-scrollbars']}:{},args:['--disable-background-networking','--disable-component-update','--disable-domain-reliability']});
 function recordHtml(direction,gutter){
  const css="html,body{margin:0;padding:0;scroll-behavior:auto;overscroll-behavior:none}"+(gutter?"html{scrollbar-gutter:stable}":"")+"#plane{position:relative;width:2400px;height:3000px;background:#e6eef1}#target{position:absolute;right:48px;bottom:48px;width:64px;height:64px;background:#057a65}#bulk{position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden;white-space:pre}#controls{position:fixed;top:8px;left:8px;z-index:20;display:flex;flex-direction:column;gap:4px}button{min-height:44px;max-width:104px}#private-zone{position:absolute;left:20px;top:100px;width:40px;height:40px}input{position:absolute;left:100px;top:100px;width:150px}";
  const script=[

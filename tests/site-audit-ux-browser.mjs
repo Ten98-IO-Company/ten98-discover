@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_SITE_AUDIT_UX_BROWSER,'1');
 const projectId='20000000-0000-4000-8000-000000000001',runId='50000000-0000-4000-8000-000000000001',pageId='60000000-0000-4000-8000-000000000001',issueId='70000000-0000-4000-8000-000000000001';
 const B='/api/projects/'+projectId+'/audits',at='2026-10-14T10:00:00.000Z';
@@ -36,7 +36,7 @@ server.middlewares.use((req,res,next)=>{if(req.url.split('?')[0]!=='/')return ne
 let browser;
 try{
  await server.listen();await server.warmupRequest('/tests/site-audit-ux-browser-fixture.tsx');const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;console.log(JSON.stringify({ownedPid:process.pid,execPath:process.execPath,startedAt:new Date().toISOString(),origin}));
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:927,height:1270},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
  await context.addInitScript(()=>{const make=URL.createObjectURL,revoke=URL.revokeObjectURL,nativeFetch=window.fetch;window.auditExportBlobs=0;window.auditExportRevoked=0;window.auditExportAborts=0;URL.createObjectURL=function(...args){window.auditExportBlobs++;return make.apply(this,args);};URL.revokeObjectURL=function(...args){window.auditExportRevoked++;return revoke.apply(this,args);};window.fetch=async function(input,options){if(!window.auditExportStream||!String(input).endsWith('/pages/export'))return nativeFetch.call(this,input,options);const fixture=window.auditExportStream;window.auditExportStream=null;window.auditExportOptions={method:options.method,credentials:options.credentials,redirect:options.redirect,body:JSON.parse(options.body)};const data=new TextEncoder().encode(fixture.body);return new Response(new ReadableStream({start(controller){controller.enqueue(data.subarray(0,1));window.releaseAuditExport=()=>{try{controller.enqueue(data.subarray(1));controller.close();}catch{}};options.signal.addEventListener('abort',()=>{window.auditExportAborts++;controller.error(new DOMException('Synthetic aborted download','AbortError'));},{once:true});},cancel(){window.auditExportCancelled=true;} }),{status:200,headers:fixture.headers});};});page.on('download',download=>downloads.push(download));
  const reply=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});

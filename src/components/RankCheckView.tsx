@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export type RankQuoteDisplay={
  connectionName:string;methodLabel:string;targetLabel:string;selectionLabel:string;
@@ -7,7 +8,7 @@ export type RankQuoteDisplay={
  tasks:readonly {id:string;keyword:string;device:string;maximumUsd:string}[];
 };
 export type RankCheckViewProps={
- prefix:string;backLabel:string;role:'owner'|'admin'|'editor'|'viewer'|null;
+ prefix:string;backLabel:string;role:WorkspaceRole|null;
  schedulePurpose:boolean;canConfigureSchedule:boolean;onConfigureSchedule:()=>void;
  phase:'setup'|'review';locked:boolean;reading:boolean;pending:boolean;conflict:boolean;
  error:string;notice:string;selectionLabel:string;canQuote:boolean;

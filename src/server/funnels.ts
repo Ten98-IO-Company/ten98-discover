@@ -8,9 +8,10 @@ import {explorerFilters,explorerQuery} from './explorer-input.ts';
 import {analyticsScopeSql,analyticsScopeValues,boardShareAnalyticsScopeSql,boardShareProjectTargetSql,boardShareSqlBudget,type BoardShareReadContext} from './analytics-scope.ts';
 import {retentionCoverage} from './retention.ts';
 import {parseAnalysisDefinition,type AnalysisDefinition,type Match,type PropertyPredicate} from './funnel-input.ts';
+import type {WorkspaceRole} from '@ten98/runtime';
 
 export type AnalysisKind='funnel'|'goal';
-type Role='owner'|'admin'|'editor'|'viewer';
+type Role=WorkspaceRole;
 export type AnalysisItem={id:string;projectId:string;revision:number;definition:AnalysisDefinition;createdAt:string;updatedAt:string};
 export type AnalysisResult={
   role:Role;item:AnalysisItem;range:{from:string;to:string;timeZone:string;start:string;end:string};query:ReturnType<typeof explorerQuery>;
@@ -85,7 +86,7 @@ export async function deleteAnalysis(projectId:unknown,userId:unknown,kind:Analy
   });
 }
 
-const analysisMethod={version:'ten98-ordered-visitors-v1',unit:'estimated_visitors',filterScope:'all_steps',ordering:'strict_server_receipt_time',window:'adjacent_steps_inclusive_upper',equalTimestamps:'cannot_advance',funnelPath:'activity_at_path',goalPath:'pageviews_only',eventSteps:'custom_events_only',propertyComparison:'typed_case_sensitive_literal'} as const;
+const analysisMethod={version:'umami-3.4.0-funnel',unit:'estimated_visitors',filterScope:'all_steps',ordering:'server_receipt_time',window:'adjacent_steps_inclusive',equalTimestamps:'can_advance',funnelPath:'activity_at_path',goalPath:'pageviews_only',eventSteps:'custom_events_only',propertyComparison:'typed_case_sensitive_literal'} as const;
 function queryInput(params:URLSearchParams,witness:boolean){
   if(params.toString().length>22000)bad('The analysis query is too large.');
   const allowed=new Set(['revision','from','to','timeZone','propertyKey','propertyType','propertyValue',...explorerFilters,...(witness?['step','cursor']:[])]);
@@ -114,6 +115,9 @@ export type AnalysisEvidence={id:string;eventName:string;path:string;origin:stri
 type Evidence=AnalysisEvidence;
 type QueryRow={retained_from:string|null;start:Date;finish:Date;generated_at:Date;events:string;identified:string;visitors:string;counts:number[];witnesses:{id:string;at:string;events:Evidence[]}[];anchor_found:boolean};
 type ScopeQuery=ReturnType<typeof explorerQuery>;
+// Adapted from Umami 3.4.0 (ec0ff50388c264ed8ce46f00967e92f7e71476ae) src/queries/sql/funnels/getFunnel.ts
+// Umami 3.4.0 semantics, linear carry evaluation instead of Umami's pairwise level join (performance).
+// Copyright (c) Umami Software, Inc. MIT License; see THIRD_PARTY_NOTICES.md.
 async function calculate(client:PoolClient,projectId:string,userId:string,definition:AnalysisDefinition,query:ScopeQuery,step:number,cursorId:string|null,witness:boolean,share?:BoardShareReadContext){
   const values=analyticsScopeValues(projectId,share?JSON.stringify(share):userId,query),bind=(value:unknown)=>{values.push(value);return `$${values.length}`;};
   const steps=definition.kind==='funnel'?definition.steps:[definition.condition],levels:string[]=[];
@@ -125,22 +129,25 @@ async function calculate(client:PoolClient,projectId:string,userId:string,defini
       if(configured.pageViewsOnly)condition+=" AND s.event_name='page_view'";
       for(const property of configured.properties)condition+=` AND ${propertyPredicate(property,bind)}`;
     }
-    // Keep every reachable ending, not a greedy first attempt. A monotone ordinal
-    // identifies the latest earlier reachable predecessor without pair expansion.
-    // Candidates sort before prior endpoints at equal times, so ties never advance.
-    levels.push(i===0?`r1 AS MATERIALIZED (SELECT s.id,s.visitor_id,s.received_at,ARRAY[s.id] AS chain,
-        row_number() OVER(PARTITION BY s.visitor_id ORDER BY s.received_at,s.id) AS ordinal
-      FROM scope s WHERE s.visitor_id IS NOT NULL AND ${condition})`:
+    // Umami level semantics: a match advances when some previous-level row sits in
+    // [match.at - window, match.at], inclusive, and one event may satisfy repeated steps.
+    // Only the latest previous row at or before a match can be that row, so a linear window
+    // carry replaces Umami's pairwise level join. Previous rows sort before matches at equal
+    // times (kind 0 before 1); rows are distinct per (visitor, time) with ordinal increasing in time.
+    levels.push(i===0?`r1 AS MATERIALIZED (SELECT d.*,row_number() OVER(PARTITION BY d.visitor_id ORDER BY d.received_at) AS ordinal FROM (
+        SELECT DISTINCT ON(s.visitor_id,s.received_at) s.id,s.visitor_id,s.received_at,ARRAY[s.id] AS chain
+        FROM scope s WHERE s.visitor_id IS NOT NULL AND ${condition} ORDER BY s.visitor_id,s.received_at,s.id) d)`:
       `ordered${i+1} AS (
         SELECT id,visitor_id,received_at,kind,chain,max(ordinal) OVER(PARTITION BY visitor_id ORDER BY received_at,kind,id ROWS UNBOUNDED PRECEDING) AS predecessor
-        FROM (SELECT s.id,s.visitor_id,s.received_at,0 AS kind,NULL::bigint AS ordinal,NULL::uuid[] AS chain FROM scope s WHERE s.visitor_id IS NOT NULL AND ${condition}
-          UNION ALL SELECT p.id,p.visitor_id,p.received_at,1 AS kind,p.ordinal,p.chain FROM r${i} p) stream
+        FROM (SELECT s.id,s.visitor_id,s.received_at,1 AS kind,NULL::bigint AS ordinal,NULL::uuid[] AS chain FROM scope s WHERE s.visitor_id IS NOT NULL AND ${condition}
+          UNION ALL SELECT p.id,p.visitor_id,p.received_at,0 AS kind,p.ordinal,p.chain FROM r${i} p) stream
       ),carried${i+1} AS (
         SELECT id,visitor_id,received_at,kind,predecessor,first_value(chain) OVER prior AS chain,first_value(received_at) OVER prior AS prior_time
         FROM ordered${i+1} WINDOW prior AS(PARTITION BY visitor_id,predecessor ORDER BY received_at,kind,id ROWS UNBOUNDED PRECEDING)
-      ),r${i+1} AS MATERIALIZED (SELECT s.id,s.visitor_id,s.received_at,s.chain||s.id AS chain,
-        row_number() OVER(PARTITION BY s.visitor_id ORDER BY s.received_at,s.id) AS ordinal
-        FROM carried${i+1} s WHERE s.kind=0 AND s.predecessor IS NOT NULL AND s.prior_time<s.received_at AND s.prior_time>=s.received_at-${window}::integer*interval '1 minute')`);
+      ),r${i+1} AS MATERIALIZED (SELECT d.*,row_number() OVER(PARTITION BY d.visitor_id ORDER BY d.received_at) AS ordinal FROM (
+        SELECT DISTINCT ON(s.visitor_id,s.received_at) s.id,s.visitor_id,s.received_at,s.chain||s.id AS chain
+        FROM carried${i+1} s WHERE s.kind=1 AND s.predecessor IS NOT NULL AND s.prior_time>=s.received_at-${window}::integer*interval '1 minute'
+        ORDER BY s.visitor_id,s.received_at,s.id) d)`);
   }
   const countSql=steps.map((_,i)=>`(SELECT count(DISTINCT visitor_id) FROM r${i+1})`).join(','),anchor=witness?bind(cursorId):null;
   // Chain IDs came from scope in this repeatable-read snapshot. Fetch at most

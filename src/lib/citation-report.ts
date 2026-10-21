@@ -1,5 +1,7 @@
 import type {CitationReport,CitationFilters,CitationNavigation,CitationCount,CitationAxes,CitationPeriod,CitationEvidence} from '../server/prompt-citations';
+import type {CarriedCitations} from '../server/citation-carried';
 import {openRouterModelId} from './openrouter-models.ts';
+import {workspaceRoles} from '@ten98/runtime';
 
 // Browser-side enum values only: never import the server's domain lists/classifier.
 export const citationPublishers=['editorial','reviews','ecommerce','social','developer','pr','reference','institutional','other'] as const;
@@ -63,7 +65,7 @@ export function validCitationReport(value:unknown,f:CitationFilters,n:CitationNa
 }
 const localDayIn=(timeZone:string)=>{const formatter=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'});return (timestamp:string)=>{const parts=formatter.formatToParts(new Date(timestamp)),p=(type:string)=>parts.find(p=>p.type===type)!.value;return `${p('year')}-${p('month')}-${p('day')}`;};};
 function report(v:unknown,f:CitationFilters,n:CitationNavigation,pageIndex:number):v is CitationReport {
-  if(!validCitationFilters(f)||!integer(pageIndex,8000)||!object(v)||!member(v.role,['owner','admin','editor','viewer'])||!equal(v.filters,f,filterKeys)||!equal(v.navigation,n,navigationKeys)||!stamp(v.asOf)||!integer(v.contextRevision,2147483647)||v.contextRevision<1||!hex(v.profileHash)||!hex(v.selectionRevision)||v.eligibilityVersion!=='retained-nonempty-stop-v1'||v.classifierVersion!=='elmo-3c673d0-native-axes-v1'||v.ownershipVersion!=='citation-host-suffix-v1'||!text(v.googleDomainsVersion,160)||!/^google-supported-2026-10-13-sha256-[a-f0-9]{64}$/.test(v.googleDomainsVersion)||v.label!=='Retained citation observations classified using current project context'||!Array.isArray(v.warnings)||v.warnings.length>10||!v.warnings.every((w:unknown)=>text(w)))return false;
+  if(!validCitationFilters(f)||!integer(pageIndex,8000)||!object(v)||!member(v.role,workspaceRoles)||!equal(v.filters,f,filterKeys)||!equal(v.navigation,n,navigationKeys)||!stamp(v.asOf)||!integer(v.contextRevision,2147483647)||v.contextRevision<1||!hex(v.profileHash)||!hex(v.selectionRevision)||v.eligibilityVersion!=='retained-nonempty-stop-v1'||v.classifierVersion!=='elmo-3c673d0-native-axes-v1'||v.ownershipVersion!=='citation-host-suffix-v1'||!text(v.googleDomainsVersion,160)||!/^google-supported-2026-10-13-sha256-[a-f0-9]{64}$/.test(v.googleDomainsVersion)||v.label!=='Retained citation observations classified using current project context'||!Array.isArray(v.warnings)||v.warnings.length>10||!v.warnings.every((w:unknown)=>text(w)))return false;
   const length=1+(Date.parse(f.to)-Date.parse(f.from))/86400000,previousFrom=new Date(Date.parse(f.from)-length*86400000).toISOString().slice(0,10),previousTo=new Date(Date.parse(f.from)-86400000).toISOString().slice(0,10);
   if(!day(previousFrom)||!period(v.current,f.from,f.to)||!period(v.previous,previousFrom,previousTo)||v.current.coverage.attempted+v.previous.coverage.attempted>1000||!object(v.axes)||!axes(v.axes.current,v.current.citedExecutions,v.current.annotations)||!axes(v.axes.previous,v.previous.citedExecutions,v.previous.annotations))return false;
   if(!Array.isArray(v.entities)||v.entities.length<1||v.entities.length>101||new Set(v.entities.map((e:any)=>e?.id)).size!==v.entities.length||!v.entities.every((e:unknown,i:number)=>object(e)&&(i===0?e.id==='brand':uuid(e.id))&&prose(e.label,512)&&e.label.length>0)||f.entityId!==null&&!v.entities.some((e:any)=>e.id===f.entityId))return false;
@@ -116,4 +118,14 @@ export function validCitationEvidence(r:unknown,f:CitationFilters,scope:Citation
     return scope.applySourceFilters===false||(!f.query||[r.retainedUrl,r.retainedTitle??'',r.hostname??''].some(s=>s.toLowerCase().includes(f.query!.toLowerCase())))&&(!f.publisherCategory||f.publisherCategory===c.publisherCategory)&&(!f.pageType||f.pageType===c.pageType)&&(!f.sourceType||f.sourceType===c.sourceType)&&(!f.ownership||f.ownership===owner)&&(!f.entityId||(f.entityId==='brand'?o.brand:o.competitorIds.includes(f.entityId)));
 
   }catch{return false;}
+}
+
+const carriedAxisKeys={ownership:citationOwners,publisher:citationPublishers,pageType:citationPageTypes,sourceType:citationSources} as const;
+/** Additive block: a malformed or absent `carried` only disables the carried view; observed validation is unchanged. */
+export function validCarriedCitations(value:unknown,dates:string[]):CarriedCitations|null{
+  const v=(object(value)?value:{}).carried;
+  if(!object(v)||v.method!=='elmo-lvcf-v1'||!Array.isArray(v.dates)||v.dates.length!==dates.length||!v.dates.every((d:unknown,i:number)=>d===dates[i])||!Array.isArray(v.observed)||v.observed.length!==dates.length||!v.observed.every((o:unknown)=>typeof o==='boolean')||!object(v.axes))return null;
+  for(const [axis,keys] of Object.entries(carriedAxisKeys)){const rows=v.axes[axis];
+    if(!Array.isArray(rows)||rows.length!==keys.length||!rows.every((r:unknown,i:number)=>object(r)&&r.key===keys[i]&&Array.isArray(r.values)&&r.values.length===dates.length&&r.values.every((n:unknown)=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e6)))return null;}
+  return v as CarriedCitations;
 }

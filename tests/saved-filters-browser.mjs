@@ -11,10 +11,10 @@ async function closeExplore(target){
 import assert from 'node:assert/strict';
 import {mkdir,readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
 import {parseSegmentDefinition} from '../src/server/segment-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_SAVED_FILTERS_BROWSER,'1');
 const projectId='20000000-0000-4000-8000-000000000001',otherProject='20000000-0000-4000-8000-000000000002',firstId='40000000-0000-4000-8000-000000000001',at='2026-10-14T10:00:00Z';
 const B='/api/projects/'+projectId,definition=(name,query)=>parseSegmentDefinition({schemaVersion:1,name,query});
@@ -28,7 +28,7 @@ server.middlewares.use((req,res,next)=>{if(!['/','/away'].includes(req.url?.spli
 let browser;
 try{
  await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
  const reply=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url());if(url.origin!==origin){foreign.push(url.href);return route.abort();}if(!url.pathname.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();

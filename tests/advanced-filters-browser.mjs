@@ -11,13 +11,13 @@ async function closeExplore(target){
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
 import {createServer} from 'vite';
 import {explorerQuery} from '../src/server/explorer-input.ts';
 import {parseSegmentDefinition} from '../src/server/segment-input.ts';
 import {parseCohortDefinition} from '../src/server/cohort-input.ts';
 import {advancedPredicateMethod} from '../src/server/advanced-predicates.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_ADVANCED_BROWSER,'1');
 const projectId='20000000-0000-4000-8000-000000000001',savedId='40000000-0000-4000-8000-000000000001',cohortId='50000000-0000-4000-8000-000000000001',at='2026-03-08T05:00:00.000Z';
 const legacy=parseSegmentDefinition({schemaVersion:1,name:'Legacy exact',query:'kind=all&path=&language=EN&propertyKey=when&propertyType=date&propertyValue=%222026-03-08T12%3A00%3A00.1234567%2B02%3A00%22'});
@@ -32,7 +32,7 @@ function report(params){const query=explorerQuery(params);if(hasBadPattern(query
 const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'private/advanced-vite-cache',appType:'custom',server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Advanced filter fixture</title><div id="root"></div><script type="module" src="/tests/advanced-filters-browser-fixture.tsx"></script></html>');});let browser;
 try{
  await mkdir('private/advanced-ui-evidence',{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));const reply=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));const reply=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url()),path=url.pathname;if(url.origin!==origin){foreign.push(url.href);return route.abort();}if(!path.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();
   if(path.endsWith('/explore')){queries.push(url.search.slice(1));if(typeof reportMode==='number')return reply(route,{error:'This query took too long. Choose a shorter date range or more filters.'},reportMode);try{const {body,status}=report(url.searchParams);return reply(route,body,status);}catch(error){return reply(route,{error:error.message},400);}}
   if(path.includes('/annotations'))return annotationStatus?reply(route,{error:'Project unavailable'},annotationStatus):reply(route,path.endsWith('/timeline')?{role,range:Object.fromEntries(url.searchParams),days:[],totalCount:0}:{role,items:[],nextCursor:null});

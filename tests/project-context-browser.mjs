@@ -4,6 +4,7 @@ import {randomBytes,randomUUID} from 'node:crypto';
 import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Opt-in real Edge acceptance against the production build serving this checkout and the same isolated local DB.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
@@ -11,7 +12,6 @@ const config=getConfig();
 assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(config.appUrl).hostname));
 assert.ok(['localhost','127.0.0.1','[::1]'].includes(new URL(config.databaseUrl).hostname));
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Set PLAYWRIGHT_MODULE to an installed Playwright module URL.');
-const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
 await assertSchema();const {pool}=getDatabase();
 assert.equal((await pool.query("SELECT claimed FROM installation WHERE id='instance'")).rows[0]?.claimed,true,'Complete owner setup in the isolated browser test installation first.');
 const f={appUrl:config.appUrl,userId:randomUUID(),viewerId:randomUUID(),workspaceId:randomUUID(),projectId:randomUUID(),otherProjectId:randomUUID(),email:`${randomUUID()}@example.com`,password:randomBytes(24).toString('base64url'),viewerEmail:`${randomUUID()}@example.com`,viewerPassword:randomBytes(24).toString('base64url')};
@@ -21,7 +21,7 @@ await pool.query('INSERT INTO workspace(id,name) VALUES($1,$2)',[f.workspaceId,'
 await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'viewer')",[f.workspaceId,f.userId,f.viewerId]);
 await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5),($6,$2,$7,$8,$9)',[f.projectId,f.workspaceId,'Synthetic context project','https://acme.example.com',randomUUID(),f.otherProjectId,'Other context project','https://other.example.com',randomUUID()]);
 await mkdir('private/evidence',{recursive:true});
-const browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const c=await browser.newContext({viewport:{width:1365,height:950}}),page=await c.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());await c.route('**/*',r=>new URL(r.request().url()).origin===f.appUrl?r.continue():r.abort());
+const browser=await launchChromium();const c=await browser.newContext({viewport:{width:1365,height:950}}),page=await c.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());await c.route('**/*',r=>new URL(r.request().url()).origin===f.appUrl?r.continue():r.abort());
 
 async function go(view){const nav=page.getByRole('navigation',{name:'Project sections',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();const target=nav.getByRole('link',{name:view==='Context'?'Project context':view,exact:true,includeHidden:true});await target.waitFor({state:'attached'});for(const disclosure of await target.locator('xpath=ancestor::details').all())if(await disclosure.getAttribute('open')===null)await disclosure.locator(':scope > summary').click();await target.click();}
 async function chooseProject(name){const nav=page.getByRole('navigation',{name:'Projects',exact:true,includeHidden:true});await nav.waitFor({state:'attached'});if(!(await nav.isVisible()))await page.getByRole('button',{name:'Menu',exact:true}).click();await nav.getByRole('link',{name,exact:true}).click();}

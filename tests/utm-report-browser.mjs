@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_UTM_BROWSER,'1');
 const fields=[['campaignSource','Source'],['campaignMedium','Medium'],['campaignName','Campaign'],['campaignContent','Content'],['campaignTerm','Term']],filters=[['path','Path'],['origin','Origin'],['referrer','Referrer'],['language','Language'],['campaignSource','Campaign source'],['campaignMedium','Campaign medium'],['campaignName','Campaign name'],['campaignContent','Campaign content'],['campaignTerm','Campaign term']],first='20000000-0000-4000-8000-000000000001',other='20000000-0000-4000-8000-000000000002';
 const sourceFiles=['src/components/UtmPanel.tsx','src/lib/utm-report.ts','src/components/ExplorerPanel.tsx','src/components/ExplorerFilters.tsx','src/components/analytics.css','src/styles.css','tests/utm-report-browser-fixture.tsx','tests/utm-report-browser.mjs'],out=resolve('private/utm-ui-evidence');
@@ -28,7 +28,7 @@ const server=await createServer({configFile:false,root:process.cwd(),cacheDir:'p
 server.middlewares.use((request,response,next)=>{if(request.url?.split('?')[0]!=='/')return next();response.setHeader('Content-Type','text/html');response.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>UTM synthetic transport fixture</title><div id="root"></div><script type="module" src="/tests/utm-report-browser-fixture.tsx"></script></html>');});
 try{
   await mkdir(out,{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
-  const{chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));page.on('requestfailed',request=>{const record=requests.get(request);if(record){record.transportAborted=true;record.failure=request.failure()?.errorText;if(record.counted){record.counted=false;active--;}}});
   await context.route('**/*',async route=>{
     const request=route.request(),url=new URL(request.url());if(url.origin!==origin){external.push(url.origin);return route.abort();}if(!url.pathname.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();if(request.method()!=='GET'){writes.push(url.pathname);return route.abort();}

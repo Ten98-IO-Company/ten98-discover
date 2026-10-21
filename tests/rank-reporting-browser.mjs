@@ -4,8 +4,8 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {createServer} from 'vite';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_RANK_REPORTING_BROWSER,'1');
 const pid='20000000-0000-4000-8000-000000000001',other='20000000-0000-4000-8000-000000000002',tid='50000000-0000-4000-8000-000000000001';
 const key=n=>'60000000-0000-4000-8000-'+String(n).padStart(12,'0'),task=n=>'70000000-0000-4000-8000-'+String(n).padStart(12,'0'),run=n=>'80000000-0000-4000-8000-'+String(n).padStart(12,'0');
@@ -38,7 +38,7 @@ server.middlewares.use((req,res,next)=>{if(!['/','/parent','/elsewhere'].include
 let browser,syntheticApiRequests=0;
 try{
  await server.listen();await server.warmupRequest('/tests/rank-reporting-browser-fixture.tsx');await server.waitForRequestsIdle();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({...process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{},headless:true});
+ browser=await launchChromium();
  const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));page.on('download',()=>downloads++);
  await context.addInitScript(()=>{const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);window.blobAudit={created:[],revoked:[]};URL.createObjectURL=v=>{const u=create(v);window.blobAudit.created.push(u);return u;};URL.revokeObjectURL=u=>{window.blobAudit.revoked.push(u);revoke(u);};});
  const send=(route,data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)}).catch(()=>{});

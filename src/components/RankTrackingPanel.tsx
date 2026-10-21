@@ -8,6 +8,7 @@ import {RankCheckPanel,type RankCheckEntry} from './RankCheckPanel';
 import {RankHistoryPanel} from './RankHistoryPanel';
 import {RankSchedulePanel} from './RankSchedulePanel';
 import {RankReportingPanel} from './RankReportingPanel';
+import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={workspaceId:string;projectId:string;userId:string;origin:string;onUnauthorized:()=>void;onOpenProviders:()=>void};
 type Filter='active'|'archived'|'all';
@@ -36,7 +37,7 @@ function coverageNotice(v:RankLocationCoverage){
 }
 const date=(v:unknown)=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT/.test(v)&&Number.isFinite(Date.parse(v));
 const nullableDate=(v:unknown)=>v===null||date(v);
-const validRole=(v:unknown):v is RankRole=>['owner','admin','editor','viewer'].includes(v as string);
+const validRole=(v:unknown):v is RankRole=>workspaceRoles.includes(v as WorkspaceRole);
 const writer=(role:RankRole|null)=>role!==null&&role!=='viewer';
 const settings=(v:Record<string,any>)=>safeText(v.name,120)&&['desktop','mobile','both'].includes(v.devices)&&int(v.depth,10,100)&&v.depth%10===0&&int(v.maxCrawlPages,1,10);
 function validTracker(v:unknown):v is RankTracker{return object(v)&&uuid(v.id)&&settings(v)&&str(v.domain,253)&&int(v.countryCode,1,2147483647)&&str(v.countryIso,2,2)&&int(v.locationCode,1,2147483647)&&str(v.locationName,512)&&str(v.locationType,80)&&str(v.languageCode,16)&&str(v.languageName,128)&&['revision','keywordsRevision','authoredRevision'].every(k=>int(v[k],1,2147483646))&&int(v.keywordCount,0,1000)&&nullableDate(v.archivedAt)&&date(v.createdAt)&&date(v.updatedAt)&&object(v.schedule)&&['manual','daily','weekly','monthly'].includes(v.schedule.interval)&&typeof v.schedule.enabled==='boolean'&&nullableDate(v.schedule.nextDueAt);}

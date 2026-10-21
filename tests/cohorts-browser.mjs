@@ -11,11 +11,11 @@ async function closeExplore(target){
 import assert from 'node:assert/strict';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {randomUUID,createHash} from 'node:crypto';
 import {createServer} from 'vite';
 import {parseCohortDefinition} from '../src/server/cohort-input.ts';
 import {explorerQuery} from '../src/server/explorer-input.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_COHORTS_BROWSER,'1');
 const projectId='20000000-0000-4000-8000-000000000001',otherProject='20000000-0000-4000-8000-000000000002',firstId='40000000-0000-4000-8000-000000000001',at='2026-03-08T05:00:00.000Z';
 const definition=(name='Pricing visitors',query='from=2026-03-01&to=2026-03-08&timeZone=America%2FNew_York&kind=all&path=')=>parseCohortDefinition({schemaVersion:1,name,query});
@@ -33,7 +33,7 @@ server.middlewares.use((req,res,next)=>{if(req.url?.split('?')[0]!=='/')return n
 let browser;
 try{
  await mkdir('private/cohorts-ui-evidence',{recursive:true});await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');const origin='http://127.0.0.1:'+address.port;
- const {chromium}=await import(process.env.PLAYWRIGHT_MODULE?pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href:'playwright');browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
+ browser=await launchChromium();const context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,serviceWorkers:'block'}),page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.message));
  const reply=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)}).catch(()=>{});
  await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url()),path=url.pathname;
@@ -92,7 +92,7 @@ try{
  console.log('PASS immutable unknown-request recovery including408/429/503/malformed/network replies, initial receipt validation, navigation warning, and access-loss purge with exact gated recovery.');
 
  for(const via of ['annotations','report','retry403','retry404']){reset();await fresh();await load();await run();const savedRegion=page.getByRole('region',{name:'Saved filters',exact:true});await open('Save or manage filters',savedRegion);await savedRegion.getByLabel('Saved filter name',{exact:true}).fill('Unconfirmed saved filter');savedWriteMode='lost';await (await editExplore(page)).getByRole('button',{name:'Save filters',exact:true}).click();await savedRegion.getByRole('alert').filter({hasText:'outcome is unknown'}).waitFor();const immutableSaved=savedWrites.at(-1);
-  if(via==='annotations'){annotationStatus=403;await (await closeExplore(page)).getByRole('button',{name:'Reload annotations',exact:true}).click();}else if(via==='report'){reportStatus=404;await (await closeExplore(page)).getByRole('button',{name:'Refresh',exact:true}).click();}else{savedWriteMode=via==='retry403'?403:404;await savedRegion.getByRole('button',{name:'Retry same request',exact:true}).click();}
+  if(via==='annotations'){annotationStatus=403;await (await closeExplore(page)).getByRole('button',{name:'Reload annotations',exact:true}).click();}else if(via==='report'){reportStatus=404;await (await closeExplore(page)).getByRole('button',{name:'Refresh',exact:true}).click();}else{savedWriteMode=via==='retry403'?403:404;await savedRegion.getByRole('button',{name:'Retry same request',exact:true}).click();await page.getByRole('dialog',{name:'Explore filters',exact:true}).waitFor({state:'hidden'});}
   await (await editExplore(page)).getByRole('button',{name:'Reload cohort access',exact:true}).waitFor();assert.equal(await (await closeExplore(page)).getByRole('button',{name:'Reload saved-filter access',exact:true}).count(),1,'Cross-controller access loss must preserve an unconfirmed saved-filter request: '+via);await editExplore(page);assert.equal(await savedRegion.getByRole('button',{name:'Retry same request',exact:true}).isDisabled(),true);assert.equal(await (await closeExplore(page)).getByRole('button',{name:'Download CSV',exact:true}).count(),0);annotationStatus=null;reportStatus=null;savedWriteMode=null;before=queries.length;await (await closeExplore(page)).getByRole('button',{name:'Reload saved-filter access',exact:true}).click();await settled();assert.equal(queries.length,before);await editExplore(page);await savedRegion.getByRole('button',{name:'Retry same request',exact:true}).click();await settled();assert.deepEqual(savedWrites.at(-1),immutableSaved);assert.equal(savedRows.size,1);assert.equal(queries.length,before);await (await closeExplore(page)).getByRole('button',{name:'Refresh',exact:true}).click();await settled();assert.equal(new URLSearchParams(queries.at(-1)).get('cohortId'),firstId);assert.equal(new URLSearchParams(queries.at(-1)).get('cohortRevision'),'1');
  }
  console.log('PASS saved-filter unknown write survives annotation/report access loss and403/404 confirmation denial; fresh access read and exact original retry create once without fetching or broadening the cohort report.');

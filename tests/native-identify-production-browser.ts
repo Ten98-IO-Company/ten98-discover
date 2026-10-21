@@ -4,13 +4,13 @@ import type {AddressInfo} from 'node:net';
 import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
 import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
 import {createWorkspace} from '../src/server/teams.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
 import {getDestinations,saveDestinationsDraft,publishDestinations} from '../src/server/destinations.ts';
+import {launchChromium} from './helpers/playwright.mjs';
 
 // Root builds/starts the production app and supplies a fresh owned database.
 // This runner never migrates, launches the app, retries against another DB, or contacts vendors.
@@ -42,8 +42,6 @@ try{
   for(const table of ['"user"','workspace','project','event','analytics_visitor','analytics_session_property','analytics_identify_receipt'])
     assert.equal(Number((await pool.query(`SELECT count(*) AS n FROM ${table}`)).rows[0].n),0,`Fresh fixture required: ${table} is not empty.`);
   assert.equal((await fetch(`${app.origin}/api/health/ready`,{redirect:'error',signal:AbortSignal.timeout(10000)})).status,200);
-  const module=process.env.PLAYWRIGHT_MODULE!;
-  const {chromium}=await import(module.startsWith('file:')?module:pathToFileURL(resolve(module)).href);
   const siteKey=randomUUID(),projectId=randomUUID(),userId=randomUUID(),email=`${randomUUID()}@identify-browser.integration.test`,password=randomBytes(24).toString('base64url');
   fixture=createServer((request,response)=>{
     if(request.url==='/favicon.ico'){response.writeHead(204);response.end();return;}
@@ -62,7 +60,7 @@ try{
   const draft=await saveDestinationsDraft(projectId,userId,'live',{expectedVersion:current.draftVersion,configuration:{destinations:[{provider:'meta',assetId:'123',enabled:true,owner:'managed',ownershipConfirmed:true,mappings:[{event:'page_view'}]}]}});
   await publishDestinations(projectId,userId,'live',{expectedVersion:draft.draftVersion});
   await mkdir(artifacts,{recursive:true});
-  browser=await chromium.launch({channel:process.env.PLAYWRIGHT_CHANNEL??'msedge',headless:true});
+  browser=await launchChromium();
   const context=await browser.newContext({viewport:{width:1440,height:900},serviceWorkers:'block'});
   await context.route('**/*',async(route:any)=>{
     const origin=new URL(route.request().url()).origin;
