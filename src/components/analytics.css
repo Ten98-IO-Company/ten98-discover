@@ -263,11 +263,6 @@
 .analytics-comparison-stat dt { color: var(--muted); font-size: var(--text-sm); }
 .analytics-comparison-stat dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .analytics-change { font-size: var(--text-xs); overflow-wrap: anywhere; }
-.analytics-comparison-axis { direction: ltr; }
-.analytics-comparison-bar-current, .analytics-comparison-swatch-current { fill: var(--color-chart-1); background: var(--color-chart-1); }
-.analytics-comparison-bar-previous { fill: var(--color-surface); stroke: var(--color-chart-2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.analytics-comparison-swatch-previous { border: 2px solid var(--color-chart-2); background: var(--color-surface); }
-.analytics-comparison-missing { fill: currentColor; opacity: .12; }
 .analytics-comparison-activity .table-wrap table { min-inline-size: 46rem; }
 .analytics-comparison-ranking th { font-weight: 400; }
 .analytics-comparison-ranking .table-wrap { max-width: 100%; }
