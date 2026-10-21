@@ -44,8 +44,21 @@ automatically become brand identities. OpenRouter API output with web search off
 is not a consumer ChatGPT/search observation. Unrecorded market/language remains
 unrecorded; a resolved model name does not establish its exact underlying version.
 
-Daily trends initially use actual observations only, with null on missing days.
-No carry-forward or backward seeding. Source-compatible historical comparisons
+The report has two bases. **Observed days** (default; `daily`, `metrics`) uses
+actual observations only, with null on missing days: no carry-forward or backward
+seeding. **Carried values (Elmo)** is the additive `carried` field, selectable in
+the view for the trend and leaderboard. It ports Elmo 0.4.4's per-prompt
+last-value-carried-forward share of voice: each prompt's last eligible daily
+mention counts are carried across days it did not run, and the earliest
+observation seeds earlier days. `carried` holds `series` (brand share per day,
+exact 0..1 or null), `leaderboard` (latest per-prompt counts carried to the last
+day, summed; its brand share equals the final series point) and `volatility`
+(Jaccard set and Bray-Curtis weighted churn between consecutive days plus a 0-100
+stability score). Carried values are estimates, never observations. Unlike Elmo's
+cited domains, volatility here is measured over tracked entities cited per
+observed day. Exports remain observed-only. The algorithms are adapted from Elmo
+(MIT, Blue Whale Software, LLC) in `src/server/visibility-stats.ts`; see
+THIRD_PARTY_NOTICES.md. Source-compatible historical comparisons
 remain required and must expose their population/method: Elmo's carried values
 and OpenSEO's matched-cell/coverage comparison are not the same formula.
 The existing quote input hash includes pricing and selected model lists; it is

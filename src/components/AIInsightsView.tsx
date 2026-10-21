@@ -1,5 +1,6 @@
 import {useState} from 'react';
-import type {InsightCoverage, InsightMetric} from '../server/prompt-insights';
+import {Alert, Card, DataTable, MetricCard, Sparkline, Tabs} from '@ten98/ui';
+import type {CarriedInsights, InsightCoverage, InsightMetric} from '../server/prompt-insights';
 import {percentText, trendSvg, trendY} from './ai-trend-svg';
 import type {WorkspaceRole} from '@ten98/runtime';
 export type AIInsightsDraft = {
@@ -25,6 +26,7 @@ export type AIInsightsViewProps = {
     warnings: string[];
     coverageCounts: Pick<InsightCoverage, 'attempted' | 'eligible'>;
     brandCitationDomainCount: number; pooledModels: boolean;
+    carried?: CarriedInsights;
     coverage: {label: string; value: string}[];
     metrics: {id: string; name: string; visibility: string;
       shareOfVoice: string; citations: string; canDrill: boolean; counts: InsightMetric}[];
@@ -85,8 +87,32 @@ function DailyTrend({report, metric, prefix, disabled}: {report: NonNullable<AII
   </div>;
 }
 
+/** Elmo-method carried values: presentation only, composed from shared UI components. */
+function CarriedPanel({carried}: {carried: CarriedInsights}) {
+  const shares = carried.series.flatMap(point => point.share === null ? [] : [100 * point.share]);
+  const {volatility, leaderboard} = carried;
+  const help = "Carried values fill days without an eligible answer from each prompt's last answer, and seed earlier days from its first. They are estimates, not observations; Observed days shows only what ran.";
+  return <>
+    <Alert title="Carried values (Elmo method)" tone="info">{help}</Alert>
+    <Card title="Carried share trend" description="Brand share of tracked mentions per day, carried per prompt. Days with no data are left out of the line.">
+      {shares.length > 1 ? <Sparkline values={shares} label={`Carried brand share from ${carried.dates[0]} to ${carried.dates.at(-1)}`}/> : null}
+      <DataTable<CarriedInsights['series'][number]> caption="Carried daily brand share" rowKey={row => row.date} pageSize={10}
+        columns={[{key: 'date', header: 'Date'}, {key: 'share', header: 'Carried share', sortValue: row => row.share ?? -1, render: row => row.share === null ? 'Unavailable' : percentText(100 * row.share)}]}
+        rows={carried.series}/>
+    </Card>
+    <Card title="Carried leaderboard" description="Each prompt's most recent mentions carried to the last day, summed across prompts. The brand share matches the final trend point.">
+      <DataTable<CarriedInsights['leaderboard']['entries'][number]> caption="Carried brand and competitors" rowKey={row => row.id} pageSize={10}
+        columns={[{key: 'name', header: 'Entity', render: row => row.isBrand ? `${row.name} (You)` : row.name}, {key: 'mentions', header: 'Carried mentions'}, {key: 'prompts', header: 'Prompts'}, {key: 'share', header: 'Share', sortValue: row => row.share, render: row => percentText(100 * row.share)}]}
+        rows={leaderboard.entries}/>
+    </Card>
+    <MetricCard label="Source stability" value={volatility.stability === null ? 'Unavailable' : `${volatility.stability} / 100`}
+      change={volatility.dayTransitions ? `Weighted volatility ${volatility.weightedVolatility}, set volatility ${volatility.setVolatility}, ${volatility.dayTransitions} day transitions. Measured over tracked entities cited per observed day.` : 'Needs citations on at least two observed days.'}/>
+  </>;
+}
+
 export function AIInsightsView(props: AIInsightsViewProps) {
   const [trendMetric, setTrendMetric] = useState<TrendMetric>('visibility');
+  const [basis, setBasis] = useState<'observed' | 'carried'>('observed');
   const {
     prefix, role, reading, exporting, error, notice, filterError, dirty,
     draft, promptSearch, promptOptions, canPreviousPrompts, canNextPrompts,
@@ -234,6 +260,8 @@ export function AIInsightsView(props: AIInsightsViewProps) {
         <div className="row between"><h3 id={prefix + 'overview'}><bdi>{brand.name}</bdi> <span className="pill">You</span></h3><button type="button" className="btn" style={controlStyle} disabled={reportOff || !brand.canDrill} onClick={() => { if (!reportOff && brand.canDrill) onDrilldown('mentioned', 'brand'); }}>View brand mentions</button></div>
         <div className="ai-overview-cards">{(['visibility','shareOfVoice','citations'] as const).map(metric => <section className="card" key={metric} aria-label={metric === 'visibility' ? 'Brand mention rate' : metric === 'shareOfVoice' ? 'Brand share of tracked mentions' : 'Answers citing brand domains'}><h4>{metric === 'visibility' ? 'Brand mention rate' : metric === 'shareOfVoice' ? metricLabels[metric] : 'Answers citing brand domains'}</h4><p className="ai-overview-value">{percentText(percentage(brand.counts,metric))}</p><p className="hint"><bdi dir="ltr">{brand[metric]}</bdi></p><p className="hint">{metric === 'shareOfVoice' ? 'Share of entity-answer matches across the full current tracked set.' : metric === 'citations' ? `Eligible answers with provider citation hits · ${report.brandCitationDomainCount} configured brand citation domains.` : 'Eligible answers mentioning your current brand name or aliases.'}</p></section>)}</div>
         <p className="hint">{report.coverageCounts.eligible} eligible of {report.coverageCounts.attempted} attempted answers. Mentions and provider citation hits are separate; website-content coverage is not measured here.{report.metrics.length === 1 ? ' Only your brand is configured, so share is not a competitor comparison.' : ''}</p>
+        <Tabs label="Trend and leaderboard basis" value={basis} onValueChange={value => { if (!reportOff && (value === 'observed' || value === 'carried')) setBasis(value); }} items={[
+          {value: 'observed', label: 'Observed days', content: <>
         <section className="card stack" aria-labelledby={prefix + 'trend'}>
           <div className="row between"><h3 id={prefix + 'trend'}>Daily trend</h3><button type="button" className="btn ghost" style={controlStyle} disabled={reportOff} onClick={() => { if (!reportOff) focusRegion(prefix + 'daily-data'); }}>View exact daily values</button></div>
           <div className="ai-trend-controls"><div className="field"><label htmlFor={prefix + 'daily-entity'}>Daily entity</label><select id={prefix + 'daily-entity'} value={report.dailyEntityId} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff) onDailyEntity(e.target.value); }}>{report.dailyEntities.map(entity => <option key={entity.id} value={entity.id}>{entity.label}</option>)}</select></div><div className="field"><label htmlFor={prefix + 'trend-metric'}>Trend metric</label><select id={prefix + 'trend-metric'} value={trendMetric} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff && Object.hasOwn(metricLabels,e.target.value)) setTrendMetric(e.target.value as TrendMetric); }}>{Object.entries(metricLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></div></div>
@@ -245,6 +273,9 @@ export function AIInsightsView(props: AIInsightsViewProps) {
           {report.coverageCounts.eligible > 0 && !brand.counts.shareOfVoiceDenominator && <p className="dim">No tracked entity was mentioned in the eligible answers.</p>}
           <ul className="ai-leaderboard">{leaders.map(entity => <li key={entity.id}><div className="ai-leaderboard-heading"><strong><bdi>{entity.name}</bdi> {entity.id === 'brand' && <span className="pill">You</span>}</strong><button type="button" className="btn ghost" style={controlStyle} aria-label={'View mentioned answers for ' + entity.name} disabled={reportOff || !entity.canDrill} onClick={() => { if (!reportOff && entity.canDrill) onDrilldown('mentioned',entity.id); }}>View answers</button></div><p>Mentions: <bdi dir="ltr">{entity.visibility}</bdi></p><div className="ai-leaderboard-share">{percentage(entity.counts,'shareOfVoice') === null ? <span className="hint" aria-hidden="true">—</span> : <meter min="0" max="100" value={percentage(entity.counts,'shareOfVoice')!} aria-hidden="true"/>}<span>Share: <bdi dir="ltr">{entity.shareOfVoice}</bdi></span></div></li>)}</ul>
         </section>
+          </>},
+          {value: 'carried', label: 'Carried values (Elmo)', content: report.carried ? <CarriedPanel carried={report.carried}/> : <Alert title="Carried values unavailable" tone="warning">This report did not include carried-value statistics. Reload insights.</Alert>},
+        ]}/>
       </section>}
 
       {known && report !== null && (
