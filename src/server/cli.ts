@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getConfig } from './config.ts';
-import { assertSchema, closeDatabase, getDatabase, migrationSources, pendingMigrations } from './db.ts';
+import { assertSchema, closeDatabase, getDatabase, migrationLedger } from './db.ts';
 import { startWorker, stopJobs } from './jobs.ts';
 import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts';
 import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
@@ -36,26 +36,16 @@ async function setup() {
 }
 
 async function migrate() {
-  await migrationSources();
   const client = await getDatabase().pool.connect();
-  const applied: string[] = [];
+  let applied: readonly string[];
   try {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [109857, 1]);
-    await client.query('CREATE TABLE IF NOT EXISTS schema_version (version text PRIMARY KEY, checksum text NOT NULL)');
-    const current = await client.query<{ version: string; checksum: string }>('SELECT version, checksum FROM schema_version ORDER BY version');
-    for (const migration of await pendingMigrations(current.rows)) {
-      await client.query(migration.sql);
-      await client.query('INSERT INTO schema_version(version, checksum) VALUES ($1, $2)', [migration.version, migration.checksum]);
-      applied.push(migration.version);
-    }
-    // Identity guards inspect every financial-reference table. Create all pending
-    // tables first, but keep key capture and the entire upgrade in one transaction.
-    if(applied.includes('0022')||applied.includes('0023'))await initializeProviderAccountIdentity(client,applied.includes('0022'));
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
+    // Identity guards inspect every financial-reference table, so key capture runs after all pending tables exist
+    // and inside the same migration transaction.
+    applied = await migrationLedger.migrate(client, {
+      afterApply: async (_client, versions) => {
+        if (versions.includes('0022') || versions.includes('0023')) await initializeProviderAccountIdentity(client, versions.includes('0022'));
+      },
+    });
   } finally {
     client.release();
   }
