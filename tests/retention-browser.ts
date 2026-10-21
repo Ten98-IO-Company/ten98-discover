@@ -50,14 +50,11 @@ try {
     await navigation();await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name,exact:true}).click();
   }
   async function settings(name:string) {
-    await navigation();
-    const account=name==='Account security';
-    const target=page.getByRole('navigation',{name:account?'Account':'Workspace settings',exact:true}).getByRole('link',{name,exact:true});
-    if(!await target.isVisible()){
-      if(account)await page.locator('details.account-menu > summary').click();
-      else await page.getByText('Workspace settings',{exact:true}).click();
-    }
-    await target.click();
+    // The shell opens Settings from the sidebar; each area is a tab in "Settings sections".
+    const tab=({'Account security':'Security','Data retention':'Retention'} as Record<string,string>)[name]??name;
+    const tabs=page.getByRole('navigation',{name:'Settings sections',exact:true});
+    if(!await tabs.isVisible()){await navigation();await page.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true}).click();}
+    await tabs.getByRole('link',{name:tab,exact:true}).click();
   }
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
   await navigation();await page.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true}).selectOption({label:'Retention browser project'});
