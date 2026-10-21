@@ -1,7 +1,7 @@
 import {useState} from 'react';
-import {Alert, Card, DataTable, MetricCard, Sparkline, Stack, Tabs} from '@ten98/ui';
+import {Alert, BarList, Card, DataTable, MetricCard, Sparkline, Stack, Tabs, TimeSeriesChart} from '@ten98/ui';
 import type {CarriedInsights, InsightCoverage, InsightMetric} from '../server/prompt-insights';
-import {percentText, trendSvg, trendY} from './ai-trend-svg';
+import {percentText, trendSvg} from './ai-trend-svg';
 import type {WorkspaceRole} from '@ten98/runtime';
 export type AIInsightsDraft = {
   from: string; to: string; timeZone: string; model: string;
@@ -61,12 +61,12 @@ function percentage(counts: InsightMetric, metric: TrendMetric): number | null {
   const denominator = metric === 'visibility' ? counts.eligibleAnswers : metric === 'shareOfVoice' ? counts.shareOfVoiceDenominator : counts.citationDenominator;
   return denominator === null || denominator <= 0 ? null : 100 * (metric === 'citations' ? counts.citations : counts.mentions) / denominator;
 }
+/** Keeps an "n / d" ratio left-to-right inside RTL text, as `<bdi dir="ltr">` would; BarList value text is a plain string. */
+const ltr = (text: string) => String.fromCodePoint(0x2066) + text + String.fromCodePoint(0x2069);
 function focusRegion(id: string) { const region = document.getElementById(id); region?.focus(); region?.scrollIntoView({block: 'nearest'}); }
 
-function DailyTrend({report, metric, prefix, disabled}: {report: NonNullable<AIInsightsViewProps['report']>; metric: TrendMetric; prefix: string; disabled: boolean}) {
+function DailyTrend({report, metric, disabled}: {report: NonNullable<AIInsightsViewProps['report']>; metric: TrendMetric; disabled: boolean}) {
   const points = report.dailyRows.map((row, index) => ({row, value: percentage(row.counts, metric), x: report.dailyRows.length === 1 ? 300 : 4 + index * 592 / (report.dailyRows.length - 1)}));
-  const segments: typeof points[] = []; let segment: typeof points = [];
-  for (const point of points) { if (point.value === null) segment = []; else { if (!segment.length) segments.push(segment); segment.push(point); } }
   const name = report.dailyEntities.find(entity => entity.id === report.dailyEntityId)?.label ?? 'Selected entity';
   const help = 'By requested day in the applied timezone. Dotted columns mark unavailable days; gaps are not filled or carried forward.';
   function download() {
@@ -77,13 +77,7 @@ function DailyTrend({report, metric, prefix, disabled}: {report: NonNullable<AII
     anchor.href = url; anchor.download = `ai-insights-trend-${first}-${last}.svg`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return <div className="ai-daily-trend">
-    {segments.length ? <><div className="ai-trend-plot" dir="ltr"><div className="ai-trend-y" aria-hidden="true"><span>100%</span><span>50%</span><span>0%</span></div><svg viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-label={`${metricLabels[metric]} for ${name} by requested day. Exact counts are in Daily observations.`} aria-describedby={`${prefix}scope ${prefix}trend-help`}>
-      {[10,90,170].map(y => <line className="ai-trend-grid" key={y} x1="0" x2="600" y1={y} y2={y}/>)}
-      {points.filter(point => point.value === null).map(point => <line className="ai-trend-missing" data-date={point.row.date} key={point.row.date} x1={point.x} x2={point.x} y1="10" y2="170"><title>{point.row.date}: Unavailable</title></line>)}
-      {segments.filter(points => points.length > 1).map((points, index) => <polyline className="ai-trend-line" key={index} points={points.map(point => `${point.x},${trendY(point.value!)}`).join(' ')}/>)}
-      {points.filter(point => point.value !== null).map(point => <circle className="ai-trend-point" data-date={point.row.date} data-rate={point.value} key={point.row.date} cx={point.x} cy={trendY(point.value!)} r="3"><title>{point.row.date}: {percentText(point.value)} · {point.row.coverageCounts.eligible} eligible of {point.row.coverageCounts.attempted} attempted</title></circle>)}
-    </svg></div><div className="ai-trend-axis" dir="ltr"><bdi>{report.dailyRows[0]?.date}</bdi>{report.dailyRows.length > 1 && <bdi>{report.dailyRows.at(-1)?.date}</bdi>}</div><button type="button" className="btn ghost" style={controlStyle} disabled={disabled} onClick={download}>Download SVG</button></> : <p className="dim">{!report.coverageCounts.attempted ? 'No executions in the applied range.' : !report.coverageCounts.eligible ? 'No eligible retained answers. See Answer coverage below.' : 'Eligible answers are available, but no tracked entity was mentioned on these days.'}</p>}
-    <p className="hint" id={prefix + 'trend-help'}>{help} The numerical table below includes every day.</p>
+    {points.some(point => point.value !== null) ? <><TimeSeriesChart label={`${metricLabels[metric]} for ${name}`} context={`${report.dailyRows[0].date} to ${report.dailyRows.at(-1)!.date}`} summary={`By requested day in the applied timezone. Hatched columns mark unavailable days; gaps are not filled or carried forward. Exact counts are in Daily observations, which includes every day.`} kind="line" series={[{id: metric, label: metricLabels[metric], points: points.map((point, index) => ({x: index, xLabel: point.row.date, y: point.value, state: point.value === null ? 'unavailable' : 'observed', note: `${point.row.coverageCounts.eligible} eligible of ${point.row.coverageCounts.attempted} attempted`, title: `${point.row.date}: ${percentText(point.value)} · ${point.row.coverageCounts.eligible} eligible of ${point.row.coverageCounts.attempted} attempted`}))}]} yDomain={[0, 100]} formatY={percentText} xHeader="Requested day" fit={points.length >= 30 && points.length <= 90 ? 'compress' : undefined}/><button type="button" className="btn ghost" style={controlStyle} disabled={disabled} onClick={download}>Download SVG</button></> : <p className="dim">{!report.coverageCounts.attempted ? 'No executions in the applied range.' : !report.coverageCounts.eligible ? 'No eligible retained answers. See Answer coverage below.' : 'Eligible answers are available, but no tracked entity was mentioned on these days.'}</p>}
   </div>;
 }
 
@@ -266,13 +260,19 @@ export function AIInsightsView(props: AIInsightsViewProps) {
         <section className="card stack" aria-labelledby={prefix + 'trend'}>
           <div className="row between"><h3 id={prefix + 'trend'}>Daily trend</h3><button type="button" className="btn ghost" style={controlStyle} disabled={reportOff} onClick={() => { if (!reportOff) focusRegion(prefix + 'daily-data'); }}>View exact daily values</button></div>
           <div className="ai-trend-controls"><div className="field"><label htmlFor={prefix + 'daily-entity'}>Daily entity</label><select id={prefix + 'daily-entity'} value={report.dailyEntityId} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff) onDailyEntity(e.target.value); }}>{report.dailyEntities.map(entity => <option key={entity.id} value={entity.id}>{entity.label}</option>)}</select></div><div className="field"><label htmlFor={prefix + 'trend-metric'}>Trend metric</label><select id={prefix + 'trend-metric'} value={trendMetric} disabled={reportOff} style={controlStyle} onChange={e => { if (!reportOff && Object.hasOwn(metricLabels,e.target.value)) setTrendMetric(e.target.value as TrendMetric); }}>{Object.entries(metricLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></div></div>
-          <DailyTrend report={report} metric={trendMetric} prefix={prefix} disabled={reportOff}/>
+          <DailyTrend report={report} metric={trendMetric} disabled={reportOff}/>
         </section>
         <section className="card stack" aria-labelledby={prefix + 'leaderboard'}>
           <div className="row between"><h3 id={prefix + 'leaderboard'}>Brand and competitors</h3><button type="button" className="btn ghost" style={controlStyle} disabled={reportOff} onClick={() => { if (!reportOff) focusRegion(prefix + 'metrics-data'); }}>View all entity metrics</button></div>
           <p className="hint">{report.metrics.length > 5 ? `Top 5 of ${report.metrics.length}` : `All ${report.metrics.length}`} current tracked entities, ordered by mentions. Shares use all tracked entity-answer matches, not only this list. This is not market share.</p>
           {report.coverageCounts.eligible > 0 && !brand.counts.shareOfVoiceDenominator && <p className="dim">No tracked entity was mentioned in the eligible answers.</p>}
-          <ul className="ai-leaderboard">{leaders.map(entity => <li key={entity.id}><div className="ai-leaderboard-heading"><strong><bdi>{entity.name}</bdi> {entity.id === 'brand' && <span className="pill">You</span>}</strong><button type="button" className="btn ghost" style={controlStyle} aria-label={'View mentioned answers for ' + entity.name} disabled={reportOff || !entity.canDrill} onClick={() => { if (!reportOff && entity.canDrill) onDrilldown('mentioned',entity.id); }}>View answers</button></div><p>Mentions: <bdi dir="ltr">{entity.visibility}</bdi></p><div className="ai-leaderboard-share">{percentage(entity.counts,'shareOfVoice') === null ? <span className="hint" aria-hidden="true">—</span> : <meter min="0" max="100" value={percentage(entity.counts,'shareOfVoice')!} aria-hidden="true"/>}<span>Share: <bdi dir="ltr">{entity.shareOfVoice}</bdi></span></div></li>)}</ul>
+          {leaders.some(entity => entity.canDrill) && <p className="hint">Select an entity name to view its mentioned answers.</p>}
+          <BarList label="Brand and competitors by mentions" busy={reportOff} items={leaders.map(entity => {
+            const rate = percentage(entity.counts, 'visibility'), share = percentage(entity.counts, 'shareOfVoice');
+            return {id: entity.id, label: entity.id === 'brand' ? `${entity.name} (you)` : entity.name, value: rate, valueText: `Mentions ${ltr(entity.visibility)}`, share: rate === null ? null : rate / 100,
+              secondary: {label: 'Share of tracked mentions', valueText: ltr(entity.shareOfVoice), value: share, share: share === null ? null : share / 100},
+              onSelect: entity.canDrill ? () => { if (!reportOff) onDrilldown('mentioned', entity.id); } : undefined};
+          })}/>
         </section>
           </>},
           {value: 'carried', label: 'Carried values (Elmo)', content: basis !== 'carried' ? null : report.carried ? <CarriedPanel carried={report.carried}/> : <Alert title="Carried values unavailable" tone="warning">This report did not include carried-value statistics. Reload insights.</Alert>},
