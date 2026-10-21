@@ -15,7 +15,6 @@ const sections=z.array(z.enum(websiteShareSections)).min(1).max(3).refine(values
 export const websiteShareCreate=z.object({requestId:uuid,label:z.string().trim().min(1).max(120).refine(clean),sections,expiresAt:z.iso.datetime({precision:3}),token:shareToken}).strict();
 export const websiteShareRevoke=z.object({requestId:uuid}).strict();
 export const websiteShareRead=z.object({from:z.iso.date(),to:z.iso.date()}).strict();
-export type WebsiteShareCreate=z.infer<typeof websiteShareCreate>;
 
 const stamp=z.iso.datetime();
 export const websiteShareItemSchema=z.object({id:z.uuid(),label:text(120,1),sections:z.array(z.enum(websiteShareSections)).min(1).max(3),createdAt:stamp,expiresAt:stamp,revokedAt:stamp.nullable(),state:z.enum(['active','expired','revoked']),

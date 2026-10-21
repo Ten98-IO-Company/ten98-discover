@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Card, DataTable, EvidenceDetail, Sparkline, Stack, Tabs } from '@ten98/ui';
+import { Alert, Card, DataTable, EvidenceDetail, Pager, Sparkline, Stack, Tabs } from '@ten98/ui';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 export type CitationPeriod = 'current' | 'previous';
@@ -133,13 +133,8 @@ function ExternalTextLink({ href, label }: { href: string | null; label: string 
 }
 
 function PagerControls({ pager, disabled, onPrevious, onNext }: { pager: CitationPager; disabled: boolean; onPrevious: () => void; onNext: () => void }) {
-  return (
-    <div className="row between" style={{ flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
-      <button type="button" className="btn ghost" style={buttonStyle} disabled={disabled || !pager.canPrevious} onClick={() => { if (!disabled && pager.canPrevious) onPrevious(); }}>Previous page</button>
-      <span>{pager.label}</span>
-      <button type="button" className="btn ghost" style={buttonStyle} disabled={disabled || !pager.canNext} onClick={() => { if (!disabled && pager.canNext) onNext(); }}>Next page</button>
-    </div>
-  );
+  return <Pager label="Citation pages" status={pager.label} previousLabel="Previous page" nextLabel="Next page"
+    onPrevious={disabled || !pager.canPrevious ? undefined : onPrevious} onNext={disabled || !pager.canNext ? undefined : onNext} />;
 }
 
 function HeaderSummary({ header }: { header: CitationHeader }) {

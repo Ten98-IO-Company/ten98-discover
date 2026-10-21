@@ -30,7 +30,7 @@ Replay and heatmap Begin INSERTs use one materialized SQL clock each for exact c
 
 The original native-identify fixed-time test seam now matches its new shared SQL clock prefix and provides matching exact ISO6 accepted_at; all original 24-hour and month-boundary assertions are retained.
 
-## Authored checks (not execution evidence)
+## Checks
 
 - Pure3: strict RESET/revision/request fields; current state versus immutable exact ACK; epoch-bound context with unchanged legacy/monthly hashes.
 - Native8: real schema60, five own actors/current role and HTTP boundaries; atomic actor-bound receipt/protected state; stale grants/capabilities and fresh performance dimensions;1000+1 bounded cleanup; genuine waiting Analytics/Events; held ordinary Explorer then committed reset refusal; same-millisecond boundary and genuine post-cutoff replay/heatmap Begin; real rollback on synthetic receipt-persistence fault. External transport forbidden; one settled synthetic13-microUSD provider row stays unchanged.
