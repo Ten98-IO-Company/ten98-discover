@@ -21,8 +21,8 @@ importers:
         specifier: file:vendor/ten98-runtime-0.1.14.tgz
         version: file:vendor/ten98-runtime-0.1.14.tgz
       '@ten98/ui':
-        specifier: file:vendor/ten98-ui-0.6.0.tgz
-        version: file:vendor/ten98-ui-0.6.0.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: file:vendor/ten98-ui-0.9.0.tgz
+        version: file:vendor/ten98-ui-0.9.0.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       better-auth:
         specifier: 1.7.7
         version: 1.7.7(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.61(crossws@0.4.15(srvx@1.0.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.13)(vite@8.3.4(@types/node@24.10.1)(jiti@2.7.0)))(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(kysely@0.29.6)(pg@8.23.0))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -538,9 +538,9 @@ packages:
     version: 0.1.14
     engines: {node: '>=24.0.0 <25'}
 
-  '@ten98/ui@file:vendor/ten98-ui-0.6.0.tgz':
-    resolution: {integrity: sha512-KPLekyElzIaj4GQq6rMhHtC03EJhzAWbQXwWgQ1L0n+1sR8czkKNYyk7Ihh75VWafteoqUsroj9c0PqQ+gNdTQ==, tarball: file:vendor/ten98-ui-0.6.0.tgz}
-    version: 0.6.0
+  '@ten98/ui@file:vendor/ten98-ui-0.9.0.tgz':
+    resolution: {integrity: sha512-Xpj/F8DEbAFmJIzkRtBzFItq+uXvu50EhmmnGxPTxE4yc9UY+YJjyQsS6B3COs16nSaVb+nU6oa6txBSBH0A9Q==, tarball: file:vendor/ten98-ui-0.9.0.tgz}
+    version: 0.9.0
     engines: {node: '>=24.0.0 <25'}
     peerDependencies:
       react: ^18.3.0 || ^19.0.0
@@ -1965,7 +1965,7 @@ snapshots:
 
   '@ten98/runtime@file:vendor/ten98-runtime-0.1.14.tgz': {}
 
-  '@ten98/ui@file:vendor/ten98-ui-0.6.0.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@ten98/ui@file:vendor/ten98-ui-0.9.0.tgz(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
