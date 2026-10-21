@@ -181,5 +181,47 @@ export async function runNativeAnalyticsChecks(options:{baseUrl:string;appUrl:st
   const excludedPublic=JSON.stringify(await getPublicDestinations(excludedKey,'live',excludedOrigin));
   for(const text of ['ANALYTICS_EXCLUDED','203.0.113.','2001:db8'])assert.equal(excludedPublic.includes(text),false,'The exclusion list is never published.');
   console.log('PASS installation IP exclusion in direct and proxy mode: trust-mode address only, nothing stored for excluded requests, nothing published');
+  // Tags (ten98-code-system#24): owner opt-in, behind the same consent gate, anti-identifier validation, 100 distinct per project in the
+  // retained window. Written for the database run; the unit tests in tests/analytics-tag.test.ts cover the same rules with a fake client.
+  {
+    const tagProject=randomUUID(),tagKey=randomUUID(),tagOrigin='https://tags.integration.test';
+    await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)',[tagProject,options.workspaceId,'Tag acceptance',tagOrigin,tagKey]);
+    const setTags=(on:boolean)=>pool.query("UPDATE project SET analytics_settings=$2::jsonb WHERE id=$1",[tagProject,JSON.stringify({enabled:true,consentMode:'builtin',collectionMode:'consent-first',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:false,excludedPaths:[],captureTags:on})]);
+    await setTags(true);
+    const tagEpoch=(await getPublicDestinations(tagKey,'live',tagOrigin)).consentEpoch;
+    const collectTag=async(tag:unknown,withConsent=true)=>{
+      const body={siteKey:tagKey,eventId:randomUUID(),name:'page_view',url:tagOrigin+'/pricing',dimensions:{tag},...withConsent?{consent:{analytics:true as const,epoch:tagEpoch}}:{}};
+      const response=await fetch(new URL('/api/collect',options.baseUrl),{method:'POST',headers:{origin:tagOrigin,'content-type':'application/json','user-agent':'Ten98 acceptance browser'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+      const data=await response.json() as {accepted?:boolean;reason?:string};
+      const stored=(await pool.query("SELECT dimensions->>'tag' AS tag FROM event WHERE project_id=$1 AND id=$2",[tagProject,body.eventId])).rows[0];
+      return {data,stored};
+    };
+    const tagged=async()=>Number((await pool.query("SELECT count(DISTINCT dimensions->>'tag')::int AS n FROM event WHERE project_id=$1 AND dimensions ? 'tag'",[tagProject])).rows[0].n);
+    // Consent off: the whole event is refused, so nothing is stored and no tag exists.
+    const refused=await collectTag('promo',false);
+    assert.deepEqual(refused.data,{accepted:false,reason:'consent_required'});
+    assert.equal(refused.stored,undefined);
+    assert.equal(await tagged(),0);
+    // Consent on, setting on: stored in dimensions. Identifier-like values keep the event and drop only the tag.
+    assert.equal((await collectTag('promo')).stored.tag,'promo');
+    for(const bad of ['a@b.example','123e4567-e89b-12d3-a456-426614174000','order 12345678','https://x.example/?email=a','x'.repeat(51)]){
+      const result=await collectTag(bad);assert.equal(result.data.accepted,true);assert.equal(result.stored.tag,null,String(bad));
+    }
+    // Setting off: accepted without a tag, and an already-stored tag stays in place.
+    await setTags(false);
+    assert.equal((await collectTag('promo')).stored.tag,null);
+    await setTags(true);
+    // Cap: 100 distinct tags (promo is one), then a new value is stored as no tag while an existing one keeps working.
+    for(let index=0;index<99;index++)assert.equal((await collectTag(`cap-${index}`)).stored.tag,`cap-${index}`);
+    assert.equal(await tagged(),100);
+    assert.equal((await collectTag('cap-over')).stored.tag,null);
+    assert.equal((await collectTag('cap-5')).stored.tag,'cap-5');
+    assert.equal(await tagged(),100);
+    // Retention window: once the tagged events leave it, their slots free. The retention job deletes expired events; the fence below
+    // is the same boundary the cap query uses.
+    await pool.query('UPDATE project SET analytics_retained_from=clock_timestamp() WHERE id=$1',[tagProject]);
+    assert.equal((await collectTag('cap-over')).stored.tag,'cap-over');
+    console.log('PASS tags: consent gate, owner setting, validation drops only the tag, 100-tag cap and retention-window slot release');
+  }
   console.log('PASS native consent, privacy, settings epochs, publication-lock race, duplicate handling and measured visit statistics');
 }

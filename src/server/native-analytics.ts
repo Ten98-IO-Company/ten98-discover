@@ -15,13 +15,14 @@ import {collectGeography,geographyReadiness} from './analytics-geography.ts';
 import type {GeographyObservation} from '../lib/analytics-geography.ts';
 import {normalizeRevenueProperties} from '../lib/revenue.ts';
 import {paidAdsClickIds} from '../lib/attribution.ts';
+import {admitTag} from './analytics-tags.ts';
 import {replaySettings} from '../lib/session-replay.ts';
 import {heatmapSettings} from '../lib/replay-heatmaps.ts';
 
 const settingsInput = z.object({
   enabled: z.boolean(), consentMode: z.enum(['builtin', 'external']),
   collectionMode: z.enum(['consent-first', 'cookieless']).optional(),
-  captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),captureGeography:z.boolean().optional(),capturePerformance:z.boolean().optional(),
+  captureReferrer: z.boolean(), captureCampaigns: z.boolean(), captureScreen: z.boolean(),captureGeography:z.boolean().optional(),captureTags:z.boolean().optional(),capturePerformance:z.boolean().optional(),
   excludeBots: z.boolean(),linkIdentities:z.boolean().optional(),replay:replaySettings.optional(),heatmap:heatmapSettings.optional(),
   excludedPaths: z.array(z.string().min(1).max(256).regex(/^\/[^?#\u0000-\u001f\u007f]*$/).refine(value => { try { decodeURIComponent(value); return toUSVString(value) === value; } catch { return false; } })).max(50),
 }).strict();
@@ -75,7 +76,7 @@ export async function analyticsSettings(projectId: string, userId: string) {
   const result = await getDatabase().pool.query(`SELECT p.analytics_settings AS settings,p.analytics_revision AS revision,m.role
     FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1`, [projectId, userId]);
   if (!result.rowCount) throw new FoundationError(404, 'Project not found or unavailable.');
-  const normalized=publicAnalyticsSettings(result.rows[0].settings),settings={...normalized,captureGeography:normalized.captureGeography??false};return { ...result.rows[0],settings, networkMode: process.env.ANALYTICS_NETWORK_MODE || 'off',geography:geographyReadiness(settings.captureGeography===true) };
+  const normalized=publicAnalyticsSettings(result.rows[0].settings),settings={...normalized,captureGeography:normalized.captureGeography??false,captureTags:normalized.captureTags??false};return { ...result.rows[0],settings, networkMode: process.env.ANALYTICS_NETWORK_MODE || 'off',geography:geographyReadiness(settings.captureGeography===true) };
 }
 export async function saveAnalyticsSettings(projectId: string, userId: string, raw: unknown) {
   const input = z.object({ revision: z.number().int().positive(), settings: settingsInput }).strict().parse(raw);
@@ -87,7 +88,7 @@ export async function saveAnalyticsSettings(projectId: string, userId: string, r
     if (!['owner','admin'].includes(role.rows[0]?.role)) throw new FoundationError(404, 'Project not found or unavailable.');
     const current=await client.query('SELECT analytics_settings FROM project WHERE id=$1 FOR UPDATE',[projectId]);
     if(!current.rowCount)throw new FoundationError(404,'Project not found or unavailable.');
-    const saved=publicAnalyticsSettings(current.rows[0].analytics_settings),settings={...input.settings,collectionMode:input.settings.collectionMode??saved.collectionMode,captureGeography:input.settings.captureGeography??saved.captureGeography??false,...input.settings.capturePerformance===undefined&&saved.capturePerformance!==undefined?{capturePerformance:saved.capturePerformance}:{},...input.settings.replay===undefined&&saved.replay!==undefined?{replay:saved.replay}:{},...input.settings.heatmap===undefined&&saved.heatmap!==undefined?{heatmap:saved.heatmap}:{}};
+    const saved=publicAnalyticsSettings(current.rows[0].analytics_settings),settings={...input.settings,collectionMode:input.settings.collectionMode??saved.collectionMode,captureGeography:input.settings.captureGeography??saved.captureGeography??false,captureTags:input.settings.captureTags??saved.captureTags??false,...input.settings.capturePerformance===undefined&&saved.capturePerformance!==undefined?{capturePerformance:saved.capturePerformance}:{},...input.settings.replay===undefined&&saved.replay!==undefined?{replay:saved.replay}:{},...input.settings.heatmap===undefined&&saved.heatmap!==undefined?{heatmap:saved.heatmap}:{}};
     const result = await client.query(`UPDATE project SET analytics_settings=$3,analytics_revision=analytics_revision+1,analytics_epoch=$4,
       identity_links_started_at=CASE WHEN $5::boolean THEN COALESCE(identity_links_started_at,clock_timestamp()) ELSE identity_links_started_at END
       WHERE id=$1 AND analytics_revision=$2 RETURNING analytics_settings AS settings,analytics_revision AS revision`, [projectId, input.revision, JSON.stringify(settings), randomUUID(),settings.linkIdentities===true]);
@@ -127,6 +128,8 @@ async function writeObservation(client: PoolClient, project: Project, input: Obs
   if (!settings.captureReferrer) delete dimensions.referrerHost;
   if (!settings.captureCampaigns) delete dimensions.campaign;
   if (!settings.captureScreen) { delete dimensions.screenWidth; delete dimensions.screenHeight; }
+  // Owner opt-in (default off). Consent was already decided before this point: an event without collection basis is never stored.
+  if (!settings.captureTags || (dimensions.tag !== undefined && !await admitTag(client, project.id, dimensions.tag))) delete dimensions.tag;
   // Raw ad click IDs (owner decision D1) go to their own columns, never the dimensions JSON, and only for a browser event that
   // carries the analytics grant: cookieless basic and API observations never store them (docs/attribution.md).
   const {clickIds:submittedClickIds,...stored}=dimensions,clickIds=settings.captureCampaigns&&source==='browser'&&basis==='consent'?submittedClickIds??{}:{};

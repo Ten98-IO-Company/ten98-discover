@@ -484,12 +484,23 @@
     return location.origin + location.pathname; // page URLs never carry query strings or fragments
   }
 
-  /** @param {Ten98Tracker.Site} site @param {string} name @param {unknown} [properties] */
-  function send(site, name, properties) {
+  // Adapted from Umami 3.4.0 (ec0ff50388c264ed8ce46f00967e92f7e71476ae) src/tracker/index.ts
+  // Copyright (c) 2022 Umami Software, Inc. MIT License; see THIRD_PARTY_NOTICES.md.
+  // A tag is a short label from data-tag (every event of the script) or the track() tag option (that event). The collector
+  // owns the authoritative validation and the owner setting; this only drops values that cannot be a label.
+  /** @param {unknown} value @returns {string|undefined} */
+  function tagLabel(value) {
+    if (typeof value !== 'string') return undefined;
+    var label = value.trim();
+    return label && label.length <= 50 ? label : undefined;
+  }
+
+  /** @param {Ten98Tracker.Site} site @param {string} name @param {unknown} [properties] @param {string} [tag] */
+  function send(site, name, properties, tag) {
     try {
       var event = { name: name, eventId: uuid(), url: currentUrl() };
       var h = hub();
-      if (h && typeof h.destinationEvent === 'function') h.destinationEvent(site, { name: name, eventId: event.eventId, url: event.url, properties: properties });
+      if (h && typeof h.destinationEvent === 'function') h.destinationEvent(site, { name: name, eventId: event.eventId, url: event.url, properties: properties, tag: tag });
     } catch (ignore) {
       // Missing crypto/fetch or any other instrumentation failure stays invisible to the host.
     }
@@ -556,6 +567,8 @@
       var referrer = !performanceEvent && settings.captureReferrer && (inApp ? location.origin : document.referrer && new URL(document.referrer).origin);
       // Only a web origin is sent: the collector refuses any other scheme, such as android-app:// (whose origin is a tuple in Chrome on Android).
       if (referrer && /^https?:\/\//.test(referrer)) dimensions.referrer = referrer;
+      var tag = !performanceEvent ? tagLabel(event.tag !== undefined ? event.tag : state.tag) : undefined;
+      if (tag !== undefined) dimensions.tag = tag;
       if (settings.captureScreen && window.screen) dimensions.screen = {width: screen.width, height: screen.height};
       if (!performanceEvent && settings.captureCampaigns) {
         var query = new URL(location.href).searchParams;
@@ -741,11 +754,11 @@
     try { console.warn(message); } catch (ignore) {}
   }
 
-  /** @param {string} name @param {unknown} [properties] */
-  function fanout(name, properties) {
+  /** @param {string} name @param {unknown} [properties] @param {string} [tag] */
+  function fanout(name, properties, tag) {
     var h = hub();
     if (!h) return;
-    for (var i = 0; i < h.sites.length; i++) send(h.sites[i], name, properties);
+    for (var i = 0; i < h.sites.length; i++) send(h.sites[i], name, properties, tag);
   }
 
   // Sends a page_view only when origin+pathname actually changed (query/hash-only moves are ignored).
@@ -796,11 +809,11 @@
     } catch (ignore) {} // A frozen host method must not disable initial/custom events.
   }
 
-  /** @param {unknown} name @param {unknown} [properties] */
-  function track(name, properties) {
+  /** @param {unknown} name @param {unknown} [properties] @param {unknown} [options] */
+  function track(name, properties, options) {
     try {
       if (typeof name !== 'string' || name === PAGE_VIEW || name !== name.trim() || !NAME_RE.test(name)) return;
-      fanout(name, properties);
+      fanout(name, properties, options && typeof options === 'object' ? tagLabel(/** @type {{tag?: unknown}} */ (options).tag) : undefined);
     } catch (ignore) {}
   }
 
@@ -874,7 +887,7 @@
     var key = endpoint + ':' + siteKey + ':' + environment;
     if (registry.has(key)) return; // repeated init must not double send/patch/listen
     var h = hub() || install();
-    var site = { endpoint: endpoint, siteKey: siteKey, environment: environment };
+    var site = { endpoint: endpoint, siteKey: siteKey, environment: environment, tag: tagLabel(script.getAttribute('data-tag')) };
     h.sites.push(site);
     registry.add(key);
     loadDestinations(h, site);

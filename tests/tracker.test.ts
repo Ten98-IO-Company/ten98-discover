@@ -24,7 +24,7 @@ type PerformancePayload = {type:'performance';siteKey:string;navigationId:string
 function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; environment?: string; saved?: boolean;
   pageAge?: number; privacy?: boolean; dnt?: string; failStorage?: boolean; settings?: Record<string, unknown>;
   destinations?: unknown[]; deferCoordinator?: boolean; secondCollector?: boolean; collectionMode?: 'cookieless' | 'consent-first'; preference?: unknown; failRead?: boolean;
-  trackerSource?: string; coordinatorSource?: string; pageUrl?: string; windowOrigin?: string;scriptNonce?:string;
+  trackerSource?: string; coordinatorSource?: string; scriptTag?: string; pageUrl?: string; windowOrigin?: string;scriptNonce?:string;
   performanceObserver?:boolean;performanceAdapter?:'ready'|'delayed' } = {}) {
   const listeners = new Map<string, Array<(ev: any) => void>>(), documentListeners = new Map<string, Array<(ev: any) => void>>(), warnings: string[] = [], scripts: any[] = [];
   const fetchCalls: Array<{ url: string; options: any }> = [], payloads: Payload[] = [];
@@ -103,7 +103,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   if (opts.failRead) sandbox.localStorage.getItem = () => {throw new Error('Storage read blocked');};
   const setScript = (key: string | null, src: string | null, environment = opts.environment) => {
     document.currentScript = src === null ? null : { src,nonce:opts.scriptNonce,
-      getAttribute: (attr: string) => attr === 'data-site-key' ? key : attr === 'data-environment' ? environment : null };
+      getAttribute: (attr: string) => attr === 'data-site-key' ? key : attr === 'data-environment' ? environment : attr === 'data-tag' ? opts.scriptTag ?? null : null };
   };
   setScript('siteKey' in opts ? opts.siteKey ?? null : SITE, 'scriptSrc' in opts ? opts.scriptSrc ?? null : SCRIPT_SRC);
   const installPerformanceAdapter=()=>{assert.ok(sandbox.__ten98FoundationHub);sandbox.__ten98FoundationHub.startPerformance=Object.assign((callback:(metric:unknown)=>void)=>performanceCallbacks.push(callback),{protocolVersion:1});};
@@ -1075,4 +1075,13 @@ test('replay VM packs complete array tree budgets and fragments a byte-small eve
  const e=makeReplayEnv();e.run();await e.drain();await e.grant(REPLAY_CHOICE);await e.loadReplay();e.emit(first);e.emit(second);await e.runTimers(2000);await e.drain();assert.equal(e.chunks().length,2,'The shared part packer flushes before combined nodes exceed the backend bound');const accepted=e.chunks().flatMap(call=>readReplayChunk(String(call.body.data)).parts);assert.deepEqual(accepted,[first,second]);
  let branch:Record<string,unknown>={leaf:'*'};for(let i=0;i<61;i++)branch={child:branch};const deep={type:3,timestamp:5,data:{source:0,deep:branch}};assert.ok(Buffer.byteLength(JSON.stringify([deep]))<262144);assert.throws(()=>readReplayChunk(Buffer.from(JSON.stringify([deep])).toString('base64url')),/structural limits/,'An event at depth64 cannot enter an array at depth65');
  const f=makeReplayEnv();f.run();await f.drain();await f.grant(REPLAY_CHOICE);await f.loadReplay();f.emit(deep);await f.runTimers(2000);await f.drain();assert.equal(f.chunks().length,1);const fragments=readReplayChunk(String(f.chunks()[0].body.data)).parts;assert.ok(fragments.length>0&&fragments.every(part=>part.type==='fragment'),'The existing fragment path handles structural as well as byte overflow');assert.deepEqual(reassembleReplay(fragments).events,[deep],'The full depth64 original is preserved after bounded fragment decoding');
+});
+
+test('tags: data-tag labels every event and the track() tag option overrides it; the owner setting is enforced only by the collector', async () => {
+  const on = makeEnv({ scriptTag: ' site-label ' }); await on.start();
+  assert.equal(on.payloads[0].dimensions.tag, 'site-label');
+  on.sandbox.ten98.track('signup'); await on.drain(); assert.equal(on.payloads.at(-1)!.dimensions.tag, 'site-label');
+  on.sandbox.ten98.track('signup', undefined, { tag: 'one-off' }); await on.drain(); assert.equal(on.payloads.at(-1)!.dimensions.tag, 'one-off');
+  for (const bad of ['', '   ', 'x'.repeat(51), 7, null, {}]) { on.sandbox.ten98.track('signup', undefined, { tag: bad }); await on.drain(); assert.equal(on.payloads.at(-1)!.dimensions.tag, 'site-label'); }
+  const none = makeEnv(); await none.start(); assert.equal('tag' in none.payloads[0].dimensions, false);
 });

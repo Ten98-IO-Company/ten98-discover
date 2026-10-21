@@ -202,7 +202,7 @@ function ComparisonChart({data}:{data:Analytics&{comparison:AnalyticsComparison}
   </section>;
 }
 
-const dimensionLabels:Record<AnalyticsDimension,string>={path:'Path',referrer:'Referrer',browser:'Browser',os:'OS',device:'Device',country:'Country',region:'Region',city:'City',language:'Language',event:'Event',campaignSource:'Campaign source',campaignMedium:'Campaign medium',campaignName:'Campaign name',campaignContent:'Campaign content',campaignTerm:'Campaign term',hostname:'Hostname',screen:'Recorded screen',channel:'Recorded channel'};
+const dimensionLabels:Record<AnalyticsDimension,string>={path:'Path',referrer:'Referrer',browser:'Browser',os:'OS',device:'Device',country:'Country',region:'Region',city:'City',language:'Language',event:'Event',campaignSource:'Campaign source',campaignMedium:'Campaign medium',campaignName:'Campaign name',campaignContent:'Campaign content',campaignTerm:'Campaign term',hostname:'Hostname',screen:'Recorded screen',channel:'Recorded channel',tag:'Tag'};
 const selectionLabel=(field:string)=>field==='eventName'?'Event name':field==='origin'?'Origin':dimensionLabels[field as AnalyticsDimension];
 function selectionFrom(query:string|undefined):{draft:ReturnType<typeof emptyAdvanced>;query?:string}|null{
   if(query===undefined)return {draft:emptyAdvanced()};

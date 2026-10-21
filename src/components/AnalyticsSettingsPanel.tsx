@@ -9,6 +9,7 @@ import type {GeographyReadiness} from '../lib/analytics-geography';
 import {defaultReplaySettings,replaySettings,type ReplaySettings} from '../lib/session-replay';
 import {defaultHeatmapSettings,heatmapSettings} from '../lib/replay-heatmaps';
 import type {WorkspaceRole} from '@ten98/runtime';
+import {Checkbox} from '@ten98/ui';
 
 type Role = WorkspaceRole;
 type NetworkMode = 'off' | 'direct' | 'proxy';
@@ -21,6 +22,7 @@ interface Settings {
   captureCampaigns: boolean;
   captureScreen: boolean;
   captureGeography?: boolean;
+  captureTags?: boolean;
   capturePerformance?: boolean;
   replay?: ReplaySettings;
   heatmap?: ReturnType<typeof heatmapSettings.parse>;
@@ -423,6 +425,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
           Page loading and interaction performance
         </label>
         <p className="hint">Measures loading speed, responsiveness and layout stability while collection is allowed. Browser timings can describe the start of the current page load, before permission was granted. Privacy choices and excluded paths apply. Screen and input contents are not recorded.</p>
+        <Checkbox checked={draft.captureTags===true} onChange={e=>set('captureTags',e.target.checked)} label="Capture tags"/>
         <label className="row">
           <input type="checkbox" style={{width:'auto',flexShrink:0}} checked={draft.captureGeography===true} onChange={e=>set('captureGeography',e.target.checked)}/>
           Approximate country, region and city
@@ -430,7 +433,7 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
         <p className="hint">Derives approximate location locally from an accepted connection address. Raw addresses and coordinates are not stored. Existing history is not backfilled, and accepted pageviews remain available when location lookup is unavailable.</p>
         <p className="hint" role="status">Current location setup: {data.geography?.status==='ready'?'Ready for future accepted events.':data.geography?.status==='disabled'?'Disabled for this project.':data.geography?.status==='network-off'?'An operator must configure a verified network path.':data.geography?.status==='database-unavailable'?'An operator must install the optional local DB-IP City Lite database and restart the web service.':'Setup status was not returned. Reload settings to check.'}{data.geography?.database.status==='ready'?` Database build: ${new Date(data.geography.database.databaseBuild*1000).toISOString().slice(0,10)}.`:''} This describes the current setup, not historical lookup coverage.</p>
         <p className="hint">
-          Language is included with accepted events. Third-party vendor SDKs have their own data collection behavior,
+          Language is included with accepted events. Capture tags stores a short label from the script's data-tag attribute or a tracking call's tag option for accepted events only; tags are labels, not identifiers, so values with an @, a UUID, a long number or hex string, or characters other than letters, digits, space and _ . : / - are dropped, a project keeps at most 100 distinct tags, and history is not backfilled. Third-party vendor SDKs have their own data collection behavior,
           which these settings do not change.
         </p>
       </fieldset>
