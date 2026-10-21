@@ -221,8 +221,8 @@
   },
   "src/components/RealtimePanel.tsx": {
     "stylesheet": 1,
-    "element": 147,
-    "styling": 69
+    "element": 109,
+    "styling": 56
   },
   "src/components/ReportsPanel.tsx": {
     "element": 101,
