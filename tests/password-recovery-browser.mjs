@@ -68,7 +68,7 @@ async function fresh(fragment = '', responder = async () => false, options = {})
   await page.goto(origin + fragment, { waitUntil: 'domcontentloaded' });
   if (evidence.contexts === 1) startupPhase('goto-complete');
 }
-async function requestMode() { await heading('Sign in').waitFor(); await page.getByLabel('Email', { exact: true }).fill(email); await button('Forgot password?').click(); await heading('Reset your password').waitFor(); }
+async function requestMode() { await heading('Sign in').waitFor(); await page.getByLabel('Email address', { exact: true }).fill(email); await button('Forgot password?').click(); await heading('Reset your password').waitFor(); }
 async function resetMode(token = tokenA) { await fresh('#password-reset=' + token); await heading('Choose a new password').waitFor(); }
 async function fillReset(value = password, confirmation = value) { await page.getByLabel('New password', { exact: true }).fill(value); await page.getByLabel('Confirm new password', { exact: true }).fill(confirmation); }
 async function privateCapabilityAbsent() {
@@ -95,14 +95,14 @@ try {
 
   for (const account of ['synthetic@example.com', 'unknown@example.com']) {
     await fresh('', async (route, call) => { if (call.path !== '/api/auth/request-password-reset') return false; assert.equal(call.method, 'POST'); assert.deepEqual(call.body, { email: account }); await reply(route, { ok: true }); return true; });
-    await requestMode(); assert.equal(await page.getByLabel('Account email', { exact: true }).inputValue(), email); await page.getByLabel('Account email', { exact: true }).fill(account); await button('Send reset link').click();
+    await requestMode(); assert.equal(await page.getByLabel('Email address', { exact: true }).inputValue(), email); await page.getByLabel('Email address', { exact: true }).fill(account); await button('Send reset link').click();
     await page.getByRole('status').filter({ hasText: 'If a local password account matches this email' }).waitFor(); await page.getByText('Delivery is not confirmed here.', { exact: false }).waitFor(); assert.equal(count('/api/auth/request-password-reset'), 1); assert.equal(await button('Send reset link').count(), 0);
   } pass('SYNTHETIC actual forgot flow preserves entered email and opaque account-independent delivery-unconfirmed acknowledgement');
 
   for (const configured of [false, 'malformed']) {
     await fresh('', async () => false, { configured }); await requestMode();
     if (configured === false) await page.getByRole('status').filter({ hasText: 'Email recovery is not configured' }).waitFor(); else await page.getByRole('alert').filter({ hasText: 'availability could not be checked' }).waitFor();
-    assert.equal(await page.getByLabel('Account email', { exact: true }).count(), 0); assert.equal(count('/api/auth/request-password-reset'), 0); await button('Back to sign in').click(); await heading('Sign in').waitFor();
+    assert.equal(await page.getByLabel('Email address', { exact: true }).count(), 0); assert.equal(count('/api/auth/request-password-reset'), 0); await button('Back to sign in').click(); await heading('Sign in').waitFor();
   } pass('SYNTHETIC disabled or malformed configuration cannot submit and retains a real return-to-sign-in control');
 
   await resetMode(); await privateCapabilityAbsent(); assert.equal(evidence.requests.filter(call => call.context === evidence.contexts).length, 0, 'Initial reset capture protects boot identity and scrubs before any API read.');
@@ -133,7 +133,7 @@ try {
     if (call.path === '/api/auth/sign-in/email') { manual++; assert.deepEqual(call.body, { email, password }); await reply(route, { twoFactorRedirect: true }); return true; } return false;
   };
   await fillReset(); await button('Change password').click(); await heading('Sign in').waitFor(); await page.getByRole('status').filter({ hasText: 'Password changed. Sign in with your new password.' }).waitFor(); assert.equal(manual, 0); assert.equal(count('/api/auth/reset-password'), 1); assert.equal(await page.getByLabel('New password', { exact: true }).count(), 0); await privateCapabilityAbsent();
-  await page.getByLabel('Email', { exact: true }).fill(email); await page.getByLabel('Password', { exact: true }).fill(password); await button('Sign in').click(); await heading('Verify your sign-in').waitFor(); assert.equal(manual, 1); await page.getByLabel('Authenticator code', { exact: true }).waitFor();
+  await page.getByLabel('Email address', { exact: true }).fill(email); await page.getByLabel('Password', { exact: true }).fill(password); await button('Sign in').click(); await heading('Verify your sign-in').waitFor(); assert.equal(manual, 1); await page.getByLabel('Authenticator code', { exact: true }).waitFor();
   pass('SYNTHETIC initial fragment stays memory-only, confirmation is local, reset returns manual sign-in and preserves the two-factor step');
 
   for (const reason of ['expired', 'used']) {
@@ -167,11 +167,11 @@ try {
   pass('SYNTHETIC replacement link owns its token and late reset/status completions cannot change the new recovery or sign-in identity');
 
   for (const width of [320, 1440]) for (const dir of ['ltr', 'rtl']) for (const zoom of [1, 2]) {
-    await fresh('', async () => false, { width, dir, zoom }); await requestMode(); await page.getByLabel('Account email', { exact: true }).waitFor(); await page.getByLabel('Account email', { exact: true }).fill(email); await page.keyboard.press('Tab');
+    await fresh('', async () => false, { width, dir, zoom }); await requestMode(); await page.getByLabel('Email address', { exact: true }).waitFor(); await page.getByLabel('Email address', { exact: true }).fill(email); await page.keyboard.press('Tab');
     assert.equal(await page.locator('html').getAttribute('dir'), dir); assert.equal(await page.locator('body').evaluate(element => getComputedStyle(element).zoom), String(zoom));
     assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Send reset link', 'Native Tab follows the actual email input; no programmatic focus or tabindex injection.');
     const bounds = await page.locator('main').evaluate(element => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth, left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right })); assert.ok(bounds.scroll <= bounds.client + 1); assert.ok(bounds.left >= -1 && bounds.right <= width + 1);
-    assert.ok(await page.locator('.auth').evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'High-zoom headings and controls stay inside the auth card.');
+    assert.ok(await page.locator('.auth-form-inner').evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'High-zoom headings and controls stay inside the auth card.');
     for (const control of await page.locator('main input, main button').all()) { const box = await control.boundingBox(); assert.ok(box && box.x >= -1 && box.x + box.width <= width + 1); assert.ok(box.height >= 44, 'Native form controls retain44CSSpx targets at bodyStyleZoom>=1.'); }
     const screenshot = out + '/recovery-' + width + '-' + dir + '-bodyzoom' + zoom + '.png'; await page.screenshot({ path: screenshot, fullPage: true }); evidence.screenshots.push(screenshot); evidence.layout.push({ width, dir, bodyStyleZoom: zoom, bounds });
   } pass('SYNTHETIC actual recovery App inputs keep native keyboard order and320/1440LTR/RTL body-style200percent containment');

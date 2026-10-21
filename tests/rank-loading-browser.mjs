@@ -196,7 +196,7 @@ try {
   });
   await run('contained session A→B→A while code waits never mounts for an ended session', {code: 'hold', session: true}, async t => {
     async function signOut() { await t.page.getByRole('button', {name: 'Account menu', exact: true}).click(); await t.page.getByRole('button', {name: 'Sign out', exact: true}).click(); await t.page.getByLabel('Password', {exact: true}).waitFor(); }
-    async function signIn(actor) { await t.page.getByLabel('Email', {exact: true}).fill(actor + '@rank-loading.invalid'); await t.page.getByLabel('Password', {exact: true}).fill('Contained fixture only 123!'); await t.page.getByRole('button', {name: 'Sign in', exact: true}).click(); await t.page.locator('#main-content').waitFor(); }
+    async function signIn(actor) { await t.page.getByLabel('Email address', { exact: true }).fill(actor + '@rank-loading.invalid'); await t.page.getByLabel('Password', {exact: true}).fill('Contained fixture only 123!'); await t.page.getByRole('button', {name: 'Sign in', exact: true}).click(); await t.page.locator('#main-content').waitFor(); }
     await t.open(); await (await t.link('Rank tracking')).click(); await t.loading();
     await signOut(); assert.equal(t.rankCalls().length, 0);
     await signIn('b'); await (await t.link('Rank tracking')).click(); await t.loading();

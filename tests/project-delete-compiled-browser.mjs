@@ -19,7 +19,7 @@ try{
  evidence.csp=landing.headers()['content-security-policy']??null;const headerNonce=evidence.csp?.match(/'nonce-([^']+)'/)?.[1];assert.ok(headerNonce,'The compiled document must carry a nonce policy.');
  assert.equal(await page.evaluate(()=>document.querySelector('script[type="module"]').nonce),headerNonce,'The module entry script must carry the header nonce.');step('document policy nonce matches the module entry script');
  await page.getByRole('heading',{name:'Secure this installation'}).waitFor();
- await page.fill('#su-token',token);await page.fill('#su-name','Compiled owner');await page.fill('#su-email','owner@compiled-delete.test');await page.fill('#su-pw','synthetic-password-12345');await page.fill('#su-ws','Compiled workspace');
+ await page.getByLabel('Setup token',{exact:true}).fill(token);await page.getByLabel('Your name',{exact:true}).fill('Compiled owner');await page.getByLabel('Email address',{exact:true}).fill('owner@compiled-delete.test');await page.getByLabel('Password',{exact:true}).fill('synthetic-password-12345');await page.getByLabel('Workspace name',{exact:true}).fill('Compiled workspace');
  await page.getByRole('button',{name:'Create owner account'}).click();
  await page.getByRole('navigation',{name:'Projects'}).waitFor();step('owner claimed and signed in');
  // Mirrors the ReplayPreview player document in src/components/SessionReplayPanel.tsx: a data: frame inherits the page policy, mints its own

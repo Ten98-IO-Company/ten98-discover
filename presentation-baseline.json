@@ -70,10 +70,6 @@
     "element": 97,
     "styling": 29
   },
-  "src/components/AuthLayout.tsx": {
-    "element": 13,
-    "styling": 3
-  },
   "src/components/BoardsPanel.tsx": {
     "element": 357,
     "styling": 157
@@ -147,10 +143,6 @@
     "element": 126,
     "styling": 49
   },
-  "src/components/InvitePanel.tsx": {
-    "element": 38,
-    "styling": 26
-  },
   "src/components/JourneysPanel.tsx": {
     "stylesheet": 1,
     "element": 114,
@@ -168,17 +160,9 @@
     "element": 57,
     "styling": 26
   },
-  "src/components/OidcSignIn.tsx": {
-    "element": 12,
-    "styling": 10
-  },
   "src/components/OpenRouterModelPicker.tsx": {
     "element": 34,
     "styling": 16
-  },
-  "src/components/PasswordRecoveryPanel.tsx": {
-    "element": 18,
-    "styling": 11
   },
   "src/components/ProjectDeletePanel.tsx": {
     "element": 16,
@@ -310,7 +294,7 @@
     "element": 3
   },
   "src/routes/index.tsx": {
-    "element": 170,
-    "styling": 126
+    "element": 149,
+    "styling": 105
   }
 }

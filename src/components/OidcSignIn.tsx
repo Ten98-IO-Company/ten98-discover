@@ -1,4 +1,4 @@
-import {Icon} from './CampaignUI';
+import { OidcProviderButtons } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react';
 import { api, errMsg } from '../lib/api';
 
@@ -19,7 +19,9 @@ export function httpUrl(s: string): string | null {
 export function OidcSignIn({invitationToken}: {invitationToken?: string}) {
   const [providers, setProviders] = useState<Provider[] | null>(null);
   const [err, setErr] = useState('');
+  const [loadFailed, setLoadFailed] = useState(false);
   const [pending, setPending] = useState(false);
+  const [pendingId, setPendingId] = useState('');
   const [tick, setTick] = useState(0);
   const lock = useRef(false);
   const mounted = useRef(true);
@@ -35,17 +37,17 @@ export function OidcSignIn({invitationToken}: {invitationToken?: string}) {
   useEffect(() => {
     const ac = new AbortController();
     let dead = false;
-    setErr('');
+    setErr(''); setLoadFailed(false);
     api<{providers: Provider[]}>('/api/auth/oidc/providers', {signal: ac.signal})
       .then(r => { if (!dead) setProviders(r.providers); })
-      .catch(e => { if (!dead && !ac.signal.aborted) setErr(errMsg(e)); });
+      .catch(e => { if (!dead && !ac.signal.aborted) { setErr(errMsg(e)); setLoadFailed(true); } });
     return () => { dead = true; ac.abort(); };
   }, [tick]);
 
   const start = async (providerId: string) => {
     if (lock.current) return;
     lock.current = true;
-    setPending(true);
+    setPending(true); setPendingId(providerId);
     setErr('');
     const controller = new AbortController(); mutationAbort.current = controller;
     const serial = ++generation.current, token = invitationToken;
@@ -64,26 +66,12 @@ export function OidcSignIn({invitationToken}: {invitationToken?: string}) {
     }
   };
 
-  if (providers === null && !err) return <p role="status" className="dim">Loading sign-in options…</p>;
-  if (providers === null) {
-    return (
-      <div className="account-access auth-provider-error">
-        <p role="alert" className="alert">Could not load sign-in options: {err}</p>
-        <button type="button" className="btn button ghost" onClick={() => setTick(t => t + 1)}>Try again</button>
-      </div>
-    );
-  }
-  if (providers.length === 0) return null;
-
+  const loading = providers === null && !err;
+  // A failed start shows its message in place of the buttons; retry returns to them without refetching.
+  const failure = err === '' ? undefined : loadFailed && providers === null ? `Could not load sign-in options: ${err}` : err;
   return (
-    <div className="account-access auth-provider-list"><div className="or-divider">or continue with</div>
-      {providers.map(p => (
-        <button key={p.id} type="button" className="btn button full auth-provider-button" disabled={pending} onClick={() => void start(p.id)}>
-          <span aria-hidden="true"><Icon name="lock" size={17}/></span><span>Continue with {p.name}</span><span className="auth-provider-arrow" aria-hidden="true"><Icon name="arrow" size={16}/></span>
-        </button>
-      ))}
-      {pending && <p role="status" className="dim">Contacting the provider…</p>}
-      {err && <p role="alert" className="alert">{err}</p>}
-    </div>
+    <OidcProviderButtons providers={providers} loading={loading} error={failure}
+      onStart={id => void start(id)} onRetry={() => { if (providers === null) setTick(t => t + 1); else setErr('') }}
+      pending={pending ? pendingId : null} />
   );
 }

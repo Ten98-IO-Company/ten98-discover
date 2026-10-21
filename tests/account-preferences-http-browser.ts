@@ -38,7 +38,7 @@ async function signIn(actor:typeof owner,label:string){
   const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',()=>pageErrors.push(label));
   page.on('request',(request:any)=>{if(new URL(request.url()).pathname===preferencePath&&request.method()==='POST')posts[label]++;});
   page.on('response',(response:any)=>{const target=new URL(response.url());if(target.pathname.startsWith('/api/'))http.push({actor:label,method:response.request().method(),path:target.pathname,status:response.status()});});
-  await page.goto(url);await page.getByLabel('Email',{exact:true}).fill(actor.email);await page.getByLabel('Password',{exact:true}).fill(password);
+  await page.goto(url);await page.getByLabel('Email address', { exact: true }).fill(actor.email);await page.getByLabel('Password',{exact:true}).fill(password);
   const signedIn=page.waitForResponse((response:any)=>new URL(response.url()).pathname==='/api/auth/sign-in/email'&&response.request().method()==='POST');await page.getByRole('button',{name:'Sign in',exact:true}).click();assert.equal((await signedIn).status(),200);await ready(page);
   const dto=await read(context);assert.equal(dto.user.id,actor.id);return {context,page,dto};
 }

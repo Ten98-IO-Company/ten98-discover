@@ -520,7 +520,7 @@ try {
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await oldSession.began
   await navigationLink('Account security') // Open account actions without leaving the pending project request.
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
-  await page.getByLabel('Email', { exact: true }).fill(other.email); await page.getByLabel('Password', { exact: true }).fill(password)
+  await page.getByLabel('Email address', { exact: true }).fill(other.email); await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await heading('Web analytics')
   oldSession.release(); await oldSession.remove(); await delay(150); await heading('Web analytics')
   assert.equal(await page.getByRole('link', { name: 'Alpha one', exact: true }).count(), 0)
@@ -546,7 +546,7 @@ try {
   await page.goto(href(a.id, a1, 'events') + '#oidc-factor=1'); await heading('Verify your sign-in')
   assert.equal(new URL(page.url()).hash, '')
   await page.getByRole('button', { name: 'Back to sign in', exact: true }).click()
-  await page.getByLabel('Email', { exact: true }).fill(owner.email); await page.getByLabel('Password', { exact: true }).fill(password)
+  await page.getByLabel('Email address', { exact: true }).fill(owner.email); await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await heading('Recent events'); await selected(a.id, a1, 'events')
   const proof = randomUUID()
   await page.goto(href(a.id, a1, 'events') + '#oidc-proof=' + proof); await selected(a.id, a1, 'identity')
