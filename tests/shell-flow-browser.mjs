@@ -141,16 +141,16 @@ try {
     if (sizes.document > sizes.viewport + 1) responsiveFindings.push(`${label}: document ${sizes.document}px exceeds viewport ${sizes.viewport}px.`);
   };
   const compactScope = async label => {
-    const size = await main.locator('.app-bar').evaluate(bar => {
-      const bounds = bar.getBoundingClientRect(), workspace = bar.querySelector('.breadcrumbs > span:first-child');
+    const size = await page.locator('header.t98-shell-header--topbar').evaluate(bar => {
+      const bounds = bar.getBoundingClientRect(), workspace = bar.querySelector('.t98-app-topbar__scope');
       const workspaceBox = workspace.getBoundingClientRect();
-      return {height:bounds.height, workspaceLines:workspaceBox.height / parseFloat(getComputedStyle(workspace).lineHeight), contained:[bar.querySelector('.breadcrumbs'), bar.querySelector('.preview-badge')].every(element => {
+      return {height:bounds.height, workspaceLines:workspaceBox.height / parseFloat(getComputedStyle(workspace).lineHeight), contained:[bar.querySelector('.t98-app-topbar__breadcrumb'), ...[...bar.querySelectorAll('.t98-app-topbar__actions *')].filter(element => element.textContent === 'Development preview' && element.getClientRects().length)].every(element => {
         const box = element.getBoundingClientRect(); return box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1;
       })};
     });
-    // Four readable workspace lines and a separate badge fit comfortably within
-    // 160px; a narrow vertical name column cannot consume the results viewport.
-    if (size.height > 160 || size.workspaceLines > 4.1 || !size.contained) responsiveFindings.push(`${label}: scope header ${size.height}px, workspace ${size.workspaceLines.toFixed(1)} lines, content contained=${size.contained}.`);
+    // Four readable workspace lines plus the shared top bar's search and account rows fit within 320px
+    // (900px viewport); a narrow vertical name column cannot consume the results viewport.
+    if (size.height > 320 || size.workspaceLines > 4.1 || !size.contained) responsiveFindings.push(`${label}: scope header ${size.height}px, workspace ${size.workspaceLines.toFixed(1)} lines, content contained=${size.contained}.`);
   };
   const capture = async name => { await mkdir(evidence, {recursive:true}); await page.screenshot({path:resolve(evidence, name + '.png'), fullPage:true}); };
   const open = async view => {
@@ -184,8 +184,8 @@ try {
   assert.equal(await main.getByText('No retained events available.', {exact:true}).count(), 1);
   assert.equal(await main.getByText('Events currently retained', {exact:true}).count(), 0);
   assert.equal(await main.locator('.proj-head > p.dim').count(), 0);
-  assert.equal(await main.locator('.project-origin').innerText(), website);
-  assert.equal(await main.getByText('Development preview', {exact:true}).count(), 1);
+  assert.equal(await main.locator('.project-origin').innerText(), 'Shell fixture project · ' + website);
+  assert.equal(await page.getByText('Development preview', {exact:true}).count(), 1);
   assert.equal(await page.locator('.app-footer').count(), 0);
   await count(0); await capture('events-empty-1440');
   console.log('PASS shell: keyboard skip/hash preservation, one header/empty message and truthful preview status.');
@@ -332,7 +332,7 @@ try {
   for (const width of [320,768,1440]) {
     await page.setViewportSize({width,height:900}); await open('events'); await eventRegion().waitFor(); await fit('Long scope names ' + width); await compactScope('Long scope names ' + width);
     await page.evaluate(() => { document.documentElement.dir = 'rtl'; }); await fit('RTL long scope names ' + width); await compactScope('RTL long scope names ' + width);
-    assert.equal(await main.getByText('Development preview', {exact:true}).isVisible(), true);
+    assert.equal(await page.getByText('Development preview', {exact:true}).isVisible(), width > 760); // The shared top bar hides the preview badge at 760px and below.
     await capture('events-long-scope-rtl-' + width);
   }
   longNames = false; await page.setViewportSize({width:1440,height:900}); await open('installation'); await snippetRegion().waitFor();
