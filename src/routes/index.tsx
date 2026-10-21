@@ -494,7 +494,7 @@ function App() {
     const response = await api<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/email', { method: 'POST', body: { email, password } })
     if (sessionGeneration.current !== session) return
     if (response.twoFactorRedirect) { setSignInEmail(email); setPhase('factor'); return }
-    setPhase('loading'); setInviteSigningIn(false)
+    setSignInEmail(''); setPhase('loading'); setInviteSigningIn(false)
     await boot()
   }
 
@@ -504,7 +504,7 @@ function App() {
     if (sessionGeneration.current !== session) return
     oidcFactor.current = false
     // A completed factor is single-use. Retry loading the session, never the consumed code.
-    setPhase('loading'); setInviteSigningIn(false)
+    setSignInEmail(''); setPhase('loading'); setInviteSigningIn(false)
     await boot()
   }
 
