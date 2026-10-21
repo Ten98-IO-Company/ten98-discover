@@ -700,7 +700,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             {data.pages.length === 0 ? (
               <p className="dim">{data.coverage.status === 'complete' ? 'No page views in this range.' : 'No page views are available in the retained portion.'}</p>
             ) : (
-              <div className="table-wrap">
+              <div className="table-wrap table-cards">
                 <table>
                   <thead>
                     <tr>
@@ -713,8 +713,8 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                   <tbody>
                     {data.pages.slice(0, 20).map((p) => (
                       <tr key={p.path}>
-                        <td className="mono analytics-path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('path',{type:'string',value:p.path})} aria-label={`Filter Path: ${p.path}`}><bdi dir="ltr">{p.path}</bdi></button></td>
-                        <td className="analytics-num">{fmtNum(p.pageViews)}</td>
+                        <td className="mono analytics-path" data-label="Path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('path',{type:'string',value:p.path})} aria-label={`Filter Path: ${p.path}`}><bdi dir="ltr">{p.path}</bdi></button></td>
+                        <td className="analytics-num" data-label="Page views">{fmtNum(p.pageViews)}</td>
                       </tr>
                     ))}
                   </tbody>
