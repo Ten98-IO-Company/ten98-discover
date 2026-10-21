@@ -1,4 +1,5 @@
-import {AppliedFilters,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment} from '@ten98/ui';
+import {AppliedFilters,BarList,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment} from '@ten98/ui';
+import {chartSeriesLimit} from '../lib/chart-series';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {analyticsFieldLimit,analyticsSelectionFields} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
@@ -239,11 +240,13 @@ function validPropertyReport(result:ExploreResult,params:URLSearchParams){
   return p.events.every((e,index)=>stamp(e.receivedAt)&&e.receivedAt<p.snapshot&&Date.parse(e.receivedAt)>=Date.parse(result.range.start)&&Date.parse(e.receivedAt)<Date.parse(result.range.end)&&(index===0||p.events[index-1].receivedAt>e.receivedAt||p.events[index-1].receivedAt===e.receivedAt&&p.events[index-1].id>e.id)&&uuid(e.id)&&clean(e.eventName,320)&&clean(e.path,2048)&&typeof e.receivedAt==='string'&&Number.isFinite(Date.parse(e.receivedAt))&&record(e.properties)&&Object.entries(e.properties).every(([key,value])=>key.length<=320&&record(value)&&atom(value.type,value.value)));
 }
 export function PropertyShares({items,total,label,noun}:{items:{key:string;label:string;count:number}[];total:number|null;label:string;noun?:string}){
-  const returned=items.reduce((sum,item)=>sum+item.count,0),first=items.slice(0,8),rest=returned-first.reduce((sum,item)=>sum+item.count,0);
-  // A value keeps the same palette slot across views; the two aggregate segments share the fifth slot and are named in the legend.
-  const tone=(key:string):ChartTone=>{let hash=0;for(const char of key)hash=(Math.imul(hash,31)+char.codePointAt(0)!)>>>0;return (hash%4+1) as ChartTone;};
-  const segments:ShareSegment[]=[...first.map(item=>({id:`value:${item.key}`,label:item.label,count:item.count,tone:tone(item.key)})),...(rest>0?[{id:'returned',label:'Other returned values',count:rest,tone:5 as const}]:[]),...(total!==null&&total>returned?[{id:'omitted',label:'Values omitted from the exact table',count:total-returned,tone:5 as const}]:[])];
-  return <ShareChart label={label} context={total===null?undefined:`Share of ${num(total)} observed ${noun??(label==='Array occurrence shares'?'occurrences':'samples')}`} summary="Shares use the exact observed total as the denominator." segments={segments} total={total} formatCount={num} emptyMessage={`No observed ${noun??'samples'} for this distribution.`}/>;
+  const samples=noun??(label==='Array occurrence shares'?'occurrences':'samples');
+  // Without a denominator there are no shares; counts stay visible instead of a bare Unavailable.
+  if(total===null)return <BarList label={`${label}: counts (total unavailable, so shares are not shown)`} items={items.slice(0,8).map(item=>({id:item.key,label:item.label,value:item.count,valueText:num(item.count),share:item.count/Math.max(1,...items.map(row=>row.count))}))} emptyMessage={`No observed ${samples} for this distribution.`}/>;
+  // The shared chart has five distinct tones: three values, then the remaining returned values, then omitted values.
+  const returned=items.reduce((sum,item)=>sum+item.count,0),first=items.slice(0,3),rest=returned-first.reduce((sum,item)=>sum+item.count,0);
+  const segments:ShareSegment[]=[...first.map((item,index)=>({id:`value:${item.key}`,label:item.label,count:item.count,tone:(index+1) as ChartTone})),...(rest>0?[{id:'returned',label:'Other returned values',count:rest,tone:4 as const}]:[]),...(total>returned?[{id:'omitted',label:'Values omitted from the exact table',count:total-returned,tone:5 as const}]:[])];
+  return <ShareChart label={label} context={`Share of ${num(total)} observed ${samples}`} summary="Shares use the exact observed total as the denominator." segments={segments} total={total} formatCount={num} emptyMessage={`No observed ${samples} for this distribution.`}/>;
 }
 // 30–90 daily points fit the figure; shorter and longer ranges keep the readable per-point width and scroll.
 const dailyFit=(points:number)=>points>=30&&points<=90?'compress' as const:undefined;
@@ -254,7 +257,7 @@ const signedShare=(value:number)=>`${Math.round(value*1000)/10}%`;
 function PropertyDetails({report,days,timeZone,totalEvents,onNext,onFirst,tab,setTab}:{report:PropertyReport;days:ExploreResult['daily'];timeZone:string;totalEvents:number|null;onNext:()=>void;onFirst:()=>void;tab:string;setTab:(value:string)=>void}){
   const series=tab==='arrays'?report.arrays.series:report.values;
   const allKeys=[...new Set(report.events.flatMap(e=>Object.keys(e.properties)))].sort(),pivotKeys=allKeys.slice(0,100);
-  const shown=series.slice(0,8),max=Math.max(1,...days.map((_,i)=>shown.reduce((n,row)=>n+(row.counts[i]??0),0)));
+  const shown=series.slice(0,chartSeriesLimit),max=Math.max(1,...days.map((_,i)=>shown.reduce((n,row)=>n+(row.counts[i]??0),0)));
   const coordinates=propertyDecimalScale(report.numbers.flatMap(n=>[n.sum,n.average])),dates=report.dateSummary,dateMax=Math.max(1,...dates.histogram.map(bucket=>bucket.count));
   const weekdayMax=dates.weekdays?Math.max(...dates.weekdays):0,topWeekday=weekdayMax>0?dates.weekdays!.indexOf(weekdayMax):null;
   return <section className="card stack" aria-label="Property analysis"><h3>Property analysis: <bdi>{report.key}</bdi></h3>
