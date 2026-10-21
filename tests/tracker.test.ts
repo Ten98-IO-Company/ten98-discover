@@ -25,7 +25,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   pageAge?: number; privacy?: boolean; dnt?: string; failStorage?: boolean; settings?: Record<string, unknown>;
   destinations?: unknown[]; deferCoordinator?: boolean; secondCollector?: boolean; collectionMode?: 'cookieless' | 'consent-first'; preference?: unknown; failRead?: boolean;
   trackerSource?: string; coordinatorSource?: string; scriptTag?: string; pageUrl?: string; windowOrigin?: string;scriptNonce?:string;
-  performanceObserver?:boolean;performanceAdapter?:'ready'|'delayed' } = {}) {
+  performanceObserver?:boolean;performanceAdapter?:'ready'|'delayed';scriptAttributes?:Record<string,string>;endpoint?:string } = {}) {
   const listeners = new Map<string, Array<(ev: any) => void>>(), documentListeners = new Map<string, Array<(ev: any) => void>>(), warnings: string[] = [], scripts: any[] = [];
   const fetchCalls: Array<{ url: string; options: any }> = [], payloads: Payload[] = [];
   const identifyPayloads: IdentifyPayload[] = [];
@@ -84,7 +84,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
           configuration: { destinations: opts.destinations ?? [] }, ...(opts.destinations?.length ? { revisionId: SECOND_SITE } : {}), ...flags.config }) });
       }
       if (opts.secondCollector && String(url) === 'https://analytics-other.example.com/api/collect') assert.equal(new URL(String(url)).origin, 'https://analytics-other.example.com');
-      else assert.equal(String(url), ENDPOINT, 'The VM must never make a third-party network call.');
+      else assert.equal(String(url), opts.endpoint ?? ENDPOINT, 'The VM must never make a third-party network call.');
       if (flags.fetchThrows) throw new Error('fetch exploded');
       const payload = JSON.parse(options.body);
       if (payload.type === 'identify') identifyPayloads.push(payload); else if(payload.type==='performance')performancePayloads.push(payload);else payloads.push(payload);
@@ -103,7 +103,7 @@ function makeEnv(opts: { siteKey?: string | null; scriptSrc?: string | null; env
   if (opts.failRead) sandbox.localStorage.getItem = () => {throw new Error('Storage read blocked');};
   const setScript = (key: string | null, src: string | null, environment = opts.environment) => {
     document.currentScript = src === null ? null : { src,nonce:opts.scriptNonce,
-      getAttribute: (attr: string) => attr === 'data-site-key' ? key : attr === 'data-environment' ? environment : attr === 'data-tag' ? opts.scriptTag ?? null : null };
+      getAttribute: (attr: string) => opts.scriptAttributes && Object.hasOwn(opts.scriptAttributes, attr) ? opts.scriptAttributes[attr] : attr === 'data-site-key' ? key : attr === 'data-environment' ? environment : attr === 'data-tag' ? opts.scriptTag ?? null : null };
   };
   setScript('siteKey' in opts ? opts.siteKey ?? null : SITE, 'scriptSrc' in opts ? opts.scriptSrc ?? null : SCRIPT_SRC);
   const installPerformanceAdapter=()=>{assert.ok(sandbox.__ten98FoundationHub);sandbox.__ten98FoundationHub.startPerformance=Object.assign((callback:(metric:unknown)=>void)=>performanceCallbacks.push(callback),{protocolVersion:1});};
@@ -241,6 +241,32 @@ test('native requests use a revocable credential-free transport and only the con
   assert.deepEqual(Object.keys(p).sort(), ['consent', 'dimensions', 'eventId', 'name', 'siteKey', 'url']);
   assert.deepEqual(p.consent, { analytics: true, epoch: EPOCH }); assert.deepEqual(p.dimensions, { language: 'en-GB' });
   assert.equal(p.siteKey, SITE); assert.match(p.eventId, UUID_RE);
+});
+
+test('data-host-url and data-collect-path route every collector request through a first-party base; defaults and privacy gates are unchanged', async () => {
+  const proxied = 'https://www.site.example/t/e';
+  const e = makeEnv({scriptAttributes: {'data-host-url': 'https://www.site.example', 'data-collect-path': '/t/e'}, endpoint: proxied}); await e.start();
+  assert.deepEqual(e.scripts.map(s => s.src), ['https://www.site.example/destinations.js?v=3']);
+  assert.ok(e.fetchCalls.some(c => c.url === 'https://www.site.example/api/tracking-config'), 'Only the collect route is renamed.');
+  assert.deepEqual([...new Set(e.fetchCalls.filter(c => !c.url.endsWith('/api/tracking-config')).map(c => c.url))], [proxied]);
+  assert.equal(e.payloads[0].name, 'page_view');
+  const pathOnly = makeEnv({scriptAttributes: {'data-collect-path': '/t/e'}, endpoint: 'https://analytics.example.com/t/e'}); await pathOnly.start();
+  assert.equal(pathOnly.payloads.length, 1, 'The alias path alone keeps the script origin.');
+  const plain = makeEnv(); await plain.start();
+  assert.deepEqual([...new Set(plain.fetchCalls.map(c => c.url))].sort(), ['https://analytics.example.com/api/collect', 'https://analytics.example.com/api/tracking-config']);
+  const invalid: Record<string, string>[] = [{'data-host-url': 'http://www.site.example'}, {'data-host-url': 'https://www.site.example/proxy'}, {'data-host-url': 'https://user:pw@www.site.example'}, {'data-host-url': 'not a url'},
+    {'data-collect-path': 'api/collect'}, {'data-collect-path': '/a.js'}, {'data-collect-path': '/x?y'}, {'data-collect-path': '//evil.example/collect'}];
+  for (const scriptAttributes of invalid) {
+    const bad = makeEnv({scriptAttributes}); bad.run(); await bad.drain();
+    assert.equal(bad.fetchCalls.length + bad.scripts.length, 0, JSON.stringify(scriptAttributes));
+  }
+  const same = makeEnv({scriptSrc: 'http://localhost:3000/tracker.js', scriptAttributes: {'data-host-url': 'http://localhost:3000'}, endpoint: 'http://localhost:3000/api/collect'}); same.run(); await same.drain();
+  assert.deepEqual(same.scripts.map(s => s.src), ['http://localhost:3000/destinations.js?v=3'], 'The script origin itself may stay plain HTTP for local development.');
+  const privacy = makeEnv({privacy: true, scriptAttributes: {'data-host-url': 'https://www.site.example', 'data-collect-path': '/t/e'}, endpoint: proxied}); await privacy.start();
+  assert.equal(privacy.payloads.length, 0, 'A browser privacy signal still stops collection through the proxy.');
+  // EasyPrivacy's `/api/collect|` rule matches URLs that end in /api/collect; the alias does not.
+  const easyPrivacy = /\/api\/collect$/;
+  assert.ok(easyPrivacy.test(ENDPOINT)); assert.equal(easyPrivacy.test(proxied), false);
 });
 
 test('test environments and disabled native tracking make no collector requests after grant', async () => {

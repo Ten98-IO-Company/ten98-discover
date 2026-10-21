@@ -76,7 +76,7 @@ function RouteEntry(){
   return <AuthErrorBoundary fallback={{ brand: <Brand /> }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
 }
 
-type Status = { configured: boolean; appUrl: string }
+type Status = { configured: boolean; appUrl: string; trackerScript?: string; collectPath?: string | null }
 type Workspace = { id: string; name: string; role: string }
 type Me = { user: { id: string; name: string; email: string }; instanceOperator: boolean; workspaces: Workspace[] }
 type Project = { id: string; name: string; origin: string; publicKey: string; eventCount: number; lastEventAt: string | null; retainedFrom: string | null }
@@ -598,7 +598,8 @@ function App() {
   const project = projects?.find((p) => p.id === projectId) ?? null
   const lastReceived = events !== null ? events.events[0]?.receivedAt ?? null : eventsError ? null : project?.lastEventAt ?? null
   const appUrl = (status?.appUrl ?? '').replace(/\/+$/, '')
-  const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
+  const collectPath = status?.collectPath ? ` data-collect-path="${status.collectPath}"` : ''
+  const snippet = project !== null ? `<script defer src="${appUrl}${status?.trackerScript ?? '/tracker.js'}" data-site-key="${project.publicKey}"${collectPath} referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
   const toolQuery = toolSearch.trim().toLowerCase()
