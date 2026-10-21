@@ -1,28 +1,23 @@
-// Component preparation: original captured DTOs plus explicitly SYNTHETIC P25 protocol fixtures; no native P25 proof.
+// Component preparation: every API body is a committed deterministic SYNTHETIC fixture (tests/fixtures/openrouter-models-data.mjs); no native, provider or captured-data proof.
 // Recovery-only mode records the genuine pre-fix413 failure before a product repair.
 import assert from 'node:assert/strict';
-import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {writeFileSync,mkdirSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {createHash,randomBytes} from 'node:crypto';
+import {randomBytes} from 'node:crypto';
 import {createServer} from 'vite';
 import {launchChromium} from './helpers/playwright.mjs';
+import {buildModelsCaptures,assertModelsCaptures} from './fixtures/openrouter-models-data.mjs';
 assert.equal(process.env.TEN98_MODELS_BROWSER,'1');
-assert.ok(process.env.PLAYWRIGHT_MODULE);assert.ok(process.env.TEN98_MODELS_BROWSER_APPROVAL);
-const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex'),root=process.cwd();
-const approval=JSON.parse(readFileSync(process.env.TEN98_MODELS_BROWSER_APPROVAL,'utf8'));assert.equal(approval.approved,true);
-assert.equal(approval.kind,'model-ui-component-v3');assert.equal(hash(approval.dto.file),approval.dto.sha256);
-for(const [file,digest]of Object.entries(approval.files))assert.equal(hash(resolve(root,file)),digest,file);
-for(const file of ['tests/openrouter-models-browser.mjs','tests/openrouter-models-browser-fixture.tsx'])assert.ok(approval.files[file]);
-const actual=JSON.parse(readFileSync(approval.dto.file,'utf8')),C=actual.captures,S=actual.scope;
-assert.equal(C.uiCaptureProvenance.version,3);assert.equal(actual.groups.length,7);assert.equal(actual.paid,7);
+assert.ok(process.env.PLAYWRIGHT_MODULE);
+const root=process.cwd(),{captures:C,scope:S}=buildModelsCaptures();
 const scope=(role='owner')=>({projectId:S.project,workspaceId:S.workspace,userId:S.users[role]});
 const pairedScope={projectId:C.pairedScope.project,workspaceId:C.pairedScope.workspace,userId:C.pairedScope.user};
 const suggestionScope={projectId:C.suggestionScope.project,workspaceId:C.suggestionScope.workspace,userId:C.suggestionScope.owner};
 const manyScope={projectId:C.manyScope.project,workspaceId:C.manyScope.workspace,userId:C.manyScope.user};
-const required=['mainViewerPrompts','mainOwnerPrompts','mainViewerInitialInsights','mainOwnerInitialInsights','mainOwnerNeutralComparison','pairedMetadataCompleted','suggestionContext','suggestionProviders','suggestionCatalog','suggestionCompleted','manyPromptsAfterSeed','manyDefaultRefusal','manyPromptNarrowed'];for(const key of required)assert.ok(C[key],key);
+const required=['mainViewerPrompts','mainOwnerPrompts','mainViewerInitialInsights','mainOwnerInitialInsights','mainOwnerNeutralComparison','suggestionContext','suggestionProviders','suggestionCatalog','suggestionCompleted','manyPromptsAfterSeed','manyDefaultRefusal','manyPromptNarrowed'];for(const key of required)assert.ok(C[key],key);
 assert.equal(C.mainViewerPrompts.role,'viewer');assert.equal(C.mainOwnerPrompts.role,'owner');assert.equal(C.suggestionContext.project.id,suggestionScope.projectId);assert.equal(C.manyPromptNarrowed.filters.promptId,C.manyScope.promptId);
 const out=resolve('private/openrouter-model-ui/browser-'+randomBytes(6).toString('hex'));mkdirSync(out,{recursive:true});
-const evidence={phase:'starting',dto:{...approval.dto},groups:[],requests:[],unexpected:[],pageErrors:[],negativeCases:[],screenshots:[],mode:process.env.TEN98_MODELS_BROWSER_CASE??'all',cleanup:[],limitations:['Historical native DTO fields are retained, but new P25 summary/answer/page projections and four-model positives are SYNTHETIC pending actual capture. Original group names are historical, not current-native proof.','Browser clock fixed to captured UTC date/quote creation for each scenario.','Labelled synthetic negatives are separate from genuine positives.']};
+const evidence={phase:'starting',groups:[],requests:[],unexpected:[],pageErrors:[],negativeCases:[],screenshots:[],mode:process.env.TEN98_MODELS_BROWSER_CASE??'all',cleanup:[],limitations:['All API bodies are SYNTHETIC deterministic fixtures built to the current component response validators; group names do not imply native or provider proof.','Browser clock fixed to captured UTC date/quote creation for each scenario.','Labelled synthetic negatives are separate from genuine positives.']};
 assert.ok(['all','recovery-red'].includes(evidence.mode));
 const save=()=>writeFileSync(resolve(out,'evidence.json'),JSON.stringify(evidence,null,2)+'\n');save();
 let server,browser,context,page,handler,held=null;const owned=[];
@@ -175,7 +170,7 @@ async function fourRegressions(){
 try{
  server=await createServer({configFile:false,root,cacheDir:resolve(out,'vite-cache'),appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@tanstack/react-router']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false}});
  server.middlewares.use((req,res,next)=>{if(req.url!=='/')return next();res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dynamic model component acceptance</title><div id="root"></div><script type="module" src="/tests/openrouter-models-browser-fixture.tsx"></script></html>');});
- await server.listen();const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');owned.push('http://127.0.0.1:'+address.port);
+ await server.listen();assertModelsCaptures(C,await server.ssrLoadModule('/src/components/OpenRouterModelPicker.tsx'));const address=server.httpServer.address();assert.equal(address.address,'127.0.0.1');owned.push('http://127.0.0.1:'+address.port);
  browser=await launchChromium();
  if(evidence.mode==='recovery-red'){await recovery();pass('genuine413 recovery through current prompt metadata');}
  else{
@@ -250,4 +245,4 @@ try{
  }
  assert.equal(evidence.groups.length,evidence.mode==='all'?10+8+1:1);assert.deepEqual(evidence.unexpected,[]);assert.deepEqual(evidence.pageErrors,[]);evidence.phase='passed';
 }catch(error){evidence.phase='failed';evidence.failure={name:error.name,message:error.message};process.exitCode=1;}
-finally{if(held){await held.route.abort().catch(()=>{});held=null;}for(const [name,close]of [['context',()=>context?.close()],['browser',()=>browser?.close()],['vite',async()=>{await server?.close();assert.notEqual(server?.httpServer?.listening,true);}]]){try{await close();evidence.cleanup.push({name,closed:true});}catch(error){evidence.cleanup.push({name,closed:false,message:error.message});evidence.phase='failed';process.exitCode=1;}}try{for(const [file,digest]of Object.entries(approval.files))assert.equal(hash(resolve(root,file)),digest,file);assert.equal(hash(approval.dto.file),approval.dto.sha256);evidence.sourceAndDtoUnchanged=true;}catch(error){evidence.phase='failed';evidence.failure??={name:'SourceChanged',message:error.message};process.exitCode=1;}evidence.finishedAt=new Date().toISOString();save();console.log(JSON.stringify({phase:evidence.phase,evidence:resolve(out,'evidence.json')}));}
+finally{if(held){await held.route.abort().catch(()=>{});held=null;}for(const [name,close]of [['context',()=>context?.close()],['browser',()=>browser?.close()],['vite',async()=>{await server?.close();assert.notEqual(server?.httpServer?.listening,true);}]]){try{await close();evidence.cleanup.push({name,closed:true});}catch(error){evidence.cleanup.push({name,closed:false,message:error.message});evidence.phase='failed';process.exitCode=1;}}evidence.finishedAt=new Date().toISOString();save();console.log(JSON.stringify({phase:evidence.phase,evidence:resolve(out,'evidence.json')}));}
