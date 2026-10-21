@@ -157,6 +157,16 @@ function App() {
   const preferencesEntry=useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolSearch, setToolSearch] = useState('')
+  // The shared AppShell skip link is a native fragment link. Focus <main> directly so activation (including modified clicks)
+  // never opens a tab, adds a history entry or leaves a fragment that the callback parser would reject.
+  useEffect(() => {
+    const skip = (event: MouseEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest('a.t98-skip-link')) return
+      event.preventDefault(); document.querySelector<HTMLElement>('main')?.focus()
+    }
+    document.addEventListener('click', skip)
+    return () => document.removeEventListener('click', skip)
+  }, [])
   useEffect(() => { const media=window.matchMedia('(max-width:960px)'); const clear=()=>{if(media.matches)setToolSearch('')};media.addEventListener('change',clear);return()=>media.removeEventListener('change',clear) }, [])
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
