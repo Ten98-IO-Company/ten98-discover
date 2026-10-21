@@ -59,9 +59,10 @@ try {
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
   await navigation();await page.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true}).selectOption({label:'Retention browser project'});
   await page.getByText('This date range is partial after retention.',{exact:false}).waitFor();
-  await page.getByText('Daily data table',{exact:true}).click();
-  assert.ok(await page.getByText('Unavailable',{exact:true}).count()>0);
-  await page.getByText('(partial)',{exact:true}).waitFor();
+  const daily=page.getByRole('figure',{name:/^Daily page views and custom events \(UTC\)/});
+  await daily.getByText('View data table',{exact:true}).click();
+  assert.ok(await daily.getByRole('cell',{name:/^Unavailable/}).count()>0);
+  await daily.getByRole('cell',{name:/\(partial\)/}).first().waitFor();
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile analytics must not overflow.');
   const artifacts=process.env.BROWSER_ARTIFACT_DIR;
   if(artifacts){await mkdir(artifacts,{recursive:true});await page.screenshot({path:join(artifacts,'retention-coverage-mobile.png'),fullPage:true});}
