@@ -3,13 +3,6 @@
 .geography-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.3fr); gap: var(--space-5); }
 .geography-layout > * { min-width: 0; }
 .geography-card .analytics-environment-row bdi { overflow-wrap: anywhere; }
-.geography-map h3 { font-size: var(--text-sm); }
-.geography-map svg { display: block; width: 100%; height: auto; aspect-ratio: 960 / 630; direction: ltr; border: 1px solid var(--line); border-radius: var(--radius-sm); }
-.geography-map path { stroke: var(--color-border-control); stroke-width: .6; vector-effect: non-scaling-stroke; }
-.geography-map path:focus, .geography-map path:hover { stroke: var(--color-text); stroke-width: 1.5; outline: none; }
-.geography-map-controls { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-block: var(--space-3); }
-.geography-map-controls .btn { min-width: var(--control-touch); min-height: var(--control-touch); }
-.geography-map-status { min-height: var(--control-touch); padding: var(--space-2); background: var(--color-surface-subtle); border-radius: var(--radius-sm); }
 .geography-card p, .geography-dialog p, .geography-dialog bdi { overflow-wrap: anywhere; }
 .geography-observation { overflow-wrap: anywhere; }
 .geography-value { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-3); min-width: 0; flex: 1 1 100%; }
