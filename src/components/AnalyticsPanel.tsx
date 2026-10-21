@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AppliedFilters, EvidenceSummary, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
+import { AppliedFilters, BarList, EvidenceSummary, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
 import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, canonicalNavigation, navigationKey, parseNavigation, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
@@ -314,7 +314,7 @@ function EnvironmentCard({data,busy,field,onFieldChange,onFilter,periodLabel}:{d
       <p className="hint">{measured?'Top 10 categories by estimated visitors. A visitor estimate can appear in more than one category.':'Visitor estimates are unavailable. Categories show recorded pageviews.'}</p>
       <div id={`${uid}-list`} className="analytics-environment-list" role="tabpanel" aria-labelledby={`${uid}-list-${field}`}>
         <div className="analytics-environment-list-heading"><strong>{environmentLabels[field]}</strong><strong>{metricLabel}</strong></div>
-        {rows.length?rows.slice(0,10).map(row=><div className="analytics-environment-item" key={row.value??'not-recorded'}><button type="button" className="analytics-environment-row" disabled={busy} onClick={()=>filter(row)} aria-label={`Filter ${environmentLabels[field]}: ${environmentValue(field,row.value)}`}><span>{environmentValue(field,row.value)}</span><strong>{fmtNum(measured?row.visitors:row.pageViews)}</strong></button><meter aria-hidden="true" min={0} max={max} value={measured?row.visitors??0:row.pageViews}/></div>):<p className="dim">No recorded pageviews match this range and these filters.</p>}
+        <BarList label={`Filter by ${environmentLabels[field]} · ${metricLabel}`} busy={busy} emptyMessage="No recorded pageviews match this range and these filters." items={rows.slice(0,10).map(row=>{const value=measured?row.visitors:row.pageViews;return {id:row.value??'not-recorded',label:environmentValue(field,row.value),value,valueText:fmtNum(value),share:value===null?null:value/max,onSelect:()=>filter(row)};})}/>
       </div>
       <p className="hint">Environment recorded for {fmtNum(environment.coverage.recordedPageViews)} of {fmtNum(environment.coverage.pageViews)} retained pageviews. {fmtNum(environment.coverage.notRecordedPageViews)} not recorded.</p>
       <button type="button" className="btn ghost analytics-environment-more" disabled={busy||!rows.length} onClick={()=>{setSearch('');setNotice('');setOpen(true);}}>More <span className="sr-only">{environmentLabels[field]} details</span></button>
