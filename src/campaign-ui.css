@@ -18,6 +18,8 @@ svg { flex-shrink:0; }
 .sidebar-nav { overscroll-behavior:contain; padding-block-end:16px; }
 .nav-item { color:var(--color-text-muted); }
 .nav-item > span { min-inline-size:0; overflow-wrap:anywhere; }
+/* The shared footer and account-menu actions are 38px tall; keep them 44px touch targets. */
+.t98-sidebar-footer__actions > .nav-item, .t98-account-menu .t98-account-menu__actions :is(a,button) { min-block-size:44px; }
 .nav-item.selected { color:var(--color-accent); background:var(--color-accent-subtle); }
 .account { margin-block-start:10px; }
 .account-identity { min-inline-size:0; flex:1; color:var(--color-text); }
