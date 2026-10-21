@@ -15,6 +15,7 @@ import {getProjectDeletion,deleteProject} from './project-delete.ts';
 import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
+import { clientRateKey } from './client-rate-limit.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {exportAnalytics,analyticsExportLimits} from './analytics-export.ts';
@@ -287,7 +288,7 @@ export async function handleApi(request: Request): Promise<Response> {
     const accountResponse = await handleAccountSecurity(request, limit);
     if (accountResponse) return accountResponse;
     if (request.method === 'POST' && ['/api/invitations/inspect', '/api/invitations/accept'].includes(path)) {
-      await limit('invitations:public', 60);
+      await limit(clientRateKey(request, 'invitations:public'), 60);
       const input = await readJson(request);
       const token = (input as { token?: unknown } | null)?.token;
       if (typeof token === 'string') await limit(`invitation:${createHash('sha256').update(token).digest('hex')}`, 10);

@@ -19,6 +19,7 @@ import { runRetentionChecks } from './retention-integration.ts';
 import { runRetentionCoverageChecks } from './retention-coverage-integration.ts';
 import { runExplorerChecks } from './explorer-integration.ts';
 import { runDomainCollectionChecks } from './domain-collection-integration.ts';
+import { runClientRateLimitChecks } from './client-rate-limit-integration.ts';
 import { runCollectorAdmissionChecks } from './collector-admission-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
@@ -411,6 +412,8 @@ try {
   await runProviderChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'OIDC identity lifecycle';
   await runOidcChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
+  stage = 'per-client identity rate limits';
+  await runClientRateLimitChecks();
   stage = 'browser destination revisions and isolation';
   await runDestinationChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   console.log('PASS destination drafts, previews, immutable publishing, rollback and origin/tenant/environment isolation');

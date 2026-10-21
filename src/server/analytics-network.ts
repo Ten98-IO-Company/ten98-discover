@@ -1,4 +1,5 @@
-import { BlockList, isIP, Socket, SocketAddress } from 'node:net';
+import { isIP, Socket } from 'node:net';
+import { normalizeClientAddress, parseTrustedProxies, resolveClientAddress, type TrustedProxies } from '@ten98/runtime';
 
 function configError(): never {
   throw Object.assign(new Error('Invalid analytics network configuration.'), { code: 'ANALYTICS_NETWORK_CONFIG' });
@@ -10,52 +11,17 @@ function ownValue(value: unknown, key: string): unknown {
   return descriptor && 'value' in descriptor ? descriptor.value : undefined;
 }
 
-function normalizeIp(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length > 64 || /[%\s\[\]"']/.test(value)) return null;
-  const version = isIP(value);
-  if (!version) return null;
+// Address parsing and the X-Forwarded-For walk are the shared runtime's; this module keeps the analytics mode and exclusion policy.
+function addressList(raw: unknown): TrustedProxies {
   try {
-    const address = new SocketAddress({ address: value, family: version === 4 ? 'ipv4' : 'ipv6', port: 0 }).address;
-    return address.startsWith('::ffff:') && isIP(address.slice(7)) === 4 ? address.slice(7) : address;
+    return parseTrustedProxies(raw);
   } catch {
-    return null;
+    configError();
   }
-}
-
-function addressList(raw: unknown): BlockList {
-  if (typeof raw !== 'string' || raw.length > 4096) configError();
-  const entries = raw.trim() ? raw.split(',').map(value => value.trim()) : [];
-  if (entries.length > 32) configError();
-  const list = new BlockList();
-  for (const entry of entries) {
-    const parts = entry.split('/');
-    if (parts.length > 2) configError();
-    const address = normalizeIp(parts[0]);
-    if (address === null) configError();
-    const family = isIP(address) === 4 ? 'ipv4' : 'ipv6';
-    try {
-      if (parts.length === 1) list.addAddress(address, family);
-      else {
-        if (!/^(0|[1-9]\d{0,2})$/.test(parts[1])) configError();
-        let prefix = Number(parts[1]);
-        const originalFamily = isIP(parts[0]);
-        if (prefix > (originalFamily === 4 ? 32 : 128)) configError();
-        // A mapped IPv6 subnet describes IPv4 only within its 96-bit mapped prefix.
-        if (originalFamily === 6 && family === 'ipv4') {
-          if (prefix < 96) configError();
-          prefix -= 96;
-        }
-        list.addSubnet(address, prefix, family);
-      }
-    } catch {
-      configError();
-    }
-  }
-  return list;
 }
 
 // The values change only at restart (or in tests that set process.env), so one parsed copy is kept per value set.
-let parsed: { key: string; config: { mode: unknown; trusted: BlockList; excluded: BlockList } } | null = null;
+let parsed: { key: string; config: { mode: unknown; trusted: TrustedProxies; excluded: TrustedProxies } } | null = null;
 function readConfig(env: NodeJS.ProcessEnv) {
   if (!env || typeof env !== 'object') configError();
   for (const key of ['ANALYTICS_NETWORK_MODE', 'ANALYTICS_TRUSTED_PROXIES', 'ANALYTICS_EXCLUDED_IPS']) {
@@ -87,7 +53,7 @@ export function extractAnalyticsPeer(request: Request): string | undefined {
   const socket = ownValue(incoming, 'socket');
   if (!(socket instanceof Socket)) return undefined;
   try {
-    return normalizeIp(socket.remoteAddress) ?? undefined;
+    return normalizeClientAddress(socket.remoteAddress) ?? undefined;
   } catch {
     return undefined;
   }
@@ -97,22 +63,12 @@ export function extractAnalyticsPeer(request: Request): string | undefined {
 export function resolveAnalyticsNetwork(request: Request, peerAddress?: string, env: NodeJS.ProcessEnv = process.env): string | null {
   const { mode, trusted } = readConfig(env);
   if (mode === 'off') return null;
-  const peer = normalizeIp(peerAddress);
+  const peer = normalizeClientAddress(peerAddress);
   if (peer === null) return null;
   if (mode === 'direct') return peer;
-  const isTrusted = (address: string) => trusted.check(address, isIP(address) === 4 ? 'ipv4' : 'ipv6');
-  if (!isTrusted(peer)) return null;
-  const forwarded = request.headers.get('x-forwarded-for');
-  if (!forwarded || Buffer.byteLength(forwarded, 'utf8') > 4096) return null;
-  const parts = forwarded.split(',');
-  if (parts.length > 20) return null;
-  const chain = parts.map(value => normalizeIp(value.replace(/^[ \t]+|[ \t]+$/g, '')));
-  if (chain.some(value => value === null)) return null;
-  for (let index = chain.length - 1; index >= 0; index--) {
-    const address = chain[index]!;
-    if (!isTrusted(address)) return address;
-  }
-  return null;
+  // Unlike a rate-limit key, proxy mode leaves an untrusted peer unknown rather than treating it as the client.
+  if (!trusted.check(peer, isIP(peer) === 4 ? 'ipv4' : 'ipv6')) return null;
+  return resolveClientAddress(peer, request.headers.get('x-forwarded-for'), trusted);
 }
 
 /** Umami IGNORE_IP equivalent over the trust-mode address only: headers never trigger it, and an unknown address is never excluded,
