@@ -1,4 +1,5 @@
 import type {CitationReport,CitationFilters,CitationNavigation,CitationCount,CitationAxes,CitationPeriod,CitationEvidence} from '../server/prompt-citations';
+import type {CarriedCitations} from '../server/citation-carried';
 import {openRouterModelId} from './openrouter-models.ts';
 import {workspaceRoles} from '@ten98/runtime';
 
@@ -117,4 +118,14 @@ export function validCitationEvidence(r:unknown,f:CitationFilters,scope:Citation
     return scope.applySourceFilters===false||(!f.query||[r.retainedUrl,r.retainedTitle??'',r.hostname??''].some(s=>s.toLowerCase().includes(f.query!.toLowerCase())))&&(!f.publisherCategory||f.publisherCategory===c.publisherCategory)&&(!f.pageType||f.pageType===c.pageType)&&(!f.sourceType||f.sourceType===c.sourceType)&&(!f.ownership||f.ownership===owner)&&(!f.entityId||(f.entityId==='brand'?o.brand:o.competitorIds.includes(f.entityId)));
 
   }catch{return false;}
+}
+
+const carriedAxisKeys={ownership:citationOwners,publisher:citationPublishers,pageType:citationPageTypes,sourceType:citationSources} as const;
+/** Additive block: a malformed or absent `carried` only disables the carried view; observed validation is unchanged. */
+export function validCarriedCitations(value:unknown,dates:string[]):CarriedCitations|null{
+  const v=(object(value)?value:{}).carried;
+  if(!object(v)||v.method!=='elmo-lvcf-v1'||!Array.isArray(v.dates)||v.dates.length!==dates.length||!v.dates.every((d:unknown,i:number)=>d===dates[i])||!Array.isArray(v.observed)||v.observed.length!==dates.length||!v.observed.every((o:unknown)=>typeof o==='boolean')||!object(v.axes))return null;
+  for(const [axis,keys] of Object.entries(carriedAxisKeys)){const rows=v.axes[axis];
+    if(!Array.isArray(rows)||rows.length!==keys.length||!rows.every((r:unknown,i:number)=>object(r)&&r.key===keys[i]&&Array.isArray(r.values)&&r.values.length===dates.length&&r.values.every((n:unknown)=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e6)))return null;}
+  return v as CarriedCitations;
 }
