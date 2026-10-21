@@ -11,7 +11,7 @@ const AT = '2026-10-15T12:00:00.000Z';
 const EXPIRES = '2026-10-15T12:10:00.000Z';
 const PROVIDER = 'Synthetic Compute', TAG = 'synthetic-compute', PROFILE = 'openrouter-api-text-no-search-v2';
 const PRICES = { prompt: '0.0000001', completion: '0.0000004', request: '0' };
-const MODEL = 'fixture/text-primary', OTHER_MODEL = 'fixture/text-secondary', OUTSIDE_MODEL = 'fixture/outside-observed';
+const MODEL = 'fixture/text-primary', OTHER_MODEL = 'fixture/text-secondary', OUTSIDE_MODEL = MODEL;
 const MATCHER = 'unicode-boundary-v1', ZONE = 'UTC';
 const KINDS = ['eligible', 'queued', 'running', 'no_answer', 'empty', 'truncated', 'content_filtered', 'expired', 'invalid'];
 
@@ -171,7 +171,7 @@ export function buildModelsCaptures() {
     suggestionContext: suggestion.context, suggestionProviders: suggestion.providers, suggestionCatalog: suggestion.catalog, suggestionQuote: suggestion.quote, suggestionStarted: suggestion.started, suggestionCompleted: suggestion.completed,
     manyScope: { project: many.projectId, workspace: many.workspaceId, user: many.userId, promptId: many.promptId },
     manyPromptsAfterSeed: promptPage('owner', [[many.promptId, 'Synthetic prompt with many observed models']]),
-    manyDefaultRefusal: { error: 'Synthetic report is too large. Narrow the filters.' },
+    manyDefaultRefusal: { error: 'Narrow the date range. This report exceeds its analysis capacity.' },
     manyPromptNarrowed: insights({ role: 'owner', ...range, promptId: many.promptId, rows: insightRows({ count: 1, model: MODEL, promptId: many.promptId, from: '2026-10-12', base: 3100 }), modelOptions: mainOptions }),
     optionsIncomplete: insights({ role: 'owner', from: incompleteFilters.from, to: incompleteFilters.to, model: OUTSIDE_MODEL, rows: incompleteRows, modelOptions: { values: observed, complete: false } }),
     optionsRecovered: insights({ role: 'owner', from: incompleteFilters.from, to: incompleteFilters.to, model: OUTSIDE_MODEL, promptId: many.promptId, rows: incompleteRows, modelOptions: { values: [OUTSIDE_MODEL], complete: true } }),
