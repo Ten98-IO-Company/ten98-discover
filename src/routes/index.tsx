@@ -1,5 +1,5 @@
 import { Brand, Icon } from '../components/CampaignUI'
-import { Alert, AppStateScreen, AuthErrorBoundary, Button, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import { Alert, AppStateScreen, AuthErrorBoundary, Button, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
 import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -141,6 +141,7 @@ function App() {
   const [projectId, setProjectId] = useState('')
   const [events, setEvents] = useState<EventsData | null>(null)
   const [eventsBusy, setEventsBusy] = useState(false)
+  const [firstEventSeen, setFirstEventSeen] = useState(false)
   const [eventsError, setEventsError] = useState('')
   const [jobs, setJobs] = useState<Job[] | null>(null)
   const [jobsBusy, setJobsBusy] = useState(false)
@@ -341,7 +342,7 @@ function App() {
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
-    setEvents(null); setEventsError(''); setEventsBusy(false)
+    setEvents(null); setEventsError(''); setEventsBusy(false); setFirstEventSeen(false)
     setJobs(null); setJobError(''); setJobsBusy(false); setCheckBusy(false)
     setCopied('idle')
     if (id) void loadEvents(id)
@@ -350,6 +351,22 @@ function App() {
   useEffect(() => {
     if (phase === 'app' && view === 'installation' && projectId) { void loadJobs(projectId); void loadEvents(projectId) }
   }, [phase, view, projectId])
+
+  // While Install shows an empty history, poll for the first event every 3 s for up to 10 minutes (PostHog onboarding pattern),
+  // skipping reads while the tab is hidden. Polling stops once an event arrives, on navigation or on unmount.
+  const awaitingFirstEvent = phase === 'app' && view === 'installation' && projectId !== '' && events?.total === 0
+  useEffect(() => {
+    if (!awaitingFirstEvent) return
+    const pid = projectId, deadline = Date.now() + 600_000
+    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined
+    const tick = async () => {
+      if (stopped || Date.now() > deadline) return
+      if (document.visibilityState === 'visible') await loadEvents(pid, true)
+      if (!stopped) timer = setTimeout(() => void tick(), 3000)
+    }
+    timer = setTimeout(() => void tick(), 3000)
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [awaitingFirstEvent, projectId])
 
   function changeWorkspace(id: string) {
     go({ ...(id ? { workspace: id } : {}), view: 'project' })
@@ -439,15 +456,17 @@ function App() {
     }
   }
 
-  async function loadEvents(pid: string) {
-    const gen = projGen.current, read = ++eventsRead.current
+  // A background read (first-event polling) leaves the busy state and any previous result alone and ignores transient failures.
+  // It never supersedes a user-started read; a later user read supersedes it.
+  async function loadEvents(pid: string, background = false) {
+    const gen = projGen.current, read = background ? eventsRead.current : ++eventsRead.current
     const current = () => activeProject.current === pid && projGen.current === gen && eventsRead.current === read
-    setEventsBusy(true); setEventsError('')
+    if (!background) { setEventsBusy(true); setEventsError('') }
     try {
       const d = await api<EventsData>(`/api/projects/${pid}/events`)
-      if (current()) setEvents(d)
-    } catch (e) { if (current() && !guardAuth(e)) { if (e instanceof ApiError && [403,404].includes(e.status)) setEvents(null); setEventsError(errMsg(e)) } }
-    finally { if (current()) setEventsBusy(false) }
+      if (current()) { if (background && d.total > 0) setFirstEventSeen(true); setEvents(d); if (background) setEventsError('') }
+    } catch (e) { if (current() && !guardAuth(e) && !background) { if (e instanceof ApiError && [403,404].includes(e.status)) setEvents(null); setEventsError(errMsg(e)) } }
+    finally { if (current() && !background) setEventsBusy(false) }
   }
 
   async function loadJobs(pid: string) {
@@ -814,8 +833,9 @@ function App() {
                   installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
                 {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
+                {firstEventSeen && (events?.total ?? 0) > 0 && <StatusLine tone='success'>First event received. Your tracker is sending events to this project.</StatusLine>}
                 {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt}>{fmt(events.events[0].receivedAt)}</time>.</p>}
-                {events !== null && events.total === 0 && <p>No events in retained history. Confirm the tag is published, visit your website, then check again. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
+                {events !== null && events.total === 0 && <p>No events in retained history yet. This page checks automatically for 10 minutes. Confirm the tag is published and visit your website. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
                 {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
                 <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
                 <Link to='/' search={target('events')}>Inspect recent events</Link>
