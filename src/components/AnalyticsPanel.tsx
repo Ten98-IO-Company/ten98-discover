@@ -418,7 +418,8 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
     const id = ++reqRef.current;
     const ctrl = new AbortController();
     if(!routeReady||invalid||unavailableRange)return ()=>ctrl.abort();
-    setView(v=>({...v,data:null,error:null,loading:true}));
+    // Clear data from another route owner; a same-owner reload (location detail) keeps cards and their open dialogs mounted.
+    setView(v=>({...v,data:acceptedOwner.current===readOwner?v.data:null,error:null,loading:true}));
     const detail=view.detail,params=new URLSearchParams({from,to,...filters,...geographyFilters,...mode?{compare:mode}:{},...dimension?{dimension}:{},...selection?.query?{selection:selection.query}:{},...detail?{geoDetail:detail.field,geoPeriod:detail.period,geoSearch:detail.search}:{}});
     if((dimension||selection?.query)&&params.toString().length>20000){setView(v=>({...v,data:null,loading:false,error:'These report filters are too large. Shorten values or remove conditions.'}));return ()=>ctrl.abort();}
     api<Analytics>(
