@@ -370,10 +370,10 @@ try {
     assert.equal(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true,includeHidden:true}).count(), 0);
     assert.equal(await side.locator('.account-summary-text').count(), 1);
     assert.equal(await side.getByRole('button', {name:'Sign out',exact:true,includeHidden:true}).count(), 1);
-    assert.equal(await side.getByLabel('Workspace',{exact:true}).count(), 1);
+    assert.equal(await side.getByRole('combobox',{name:'Workspace',exact:true}).count(), 1);
     assert.equal(await side.evaluate(element => {
-      const workspace = element.querySelector('.workspace-controls'), projects = element.querySelector('nav[aria-label="Projects"]'), sections = element.querySelector('nav[aria-label="Project sections"]'), account = element.querySelector('.account-menu');
-      return workspace.contains(element.querySelector('#ws')) && workspace.contains(element.querySelector('.workspace-settings')) && !!(workspace.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(sections.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const workspace = element.querySelector('.t98-switcher'), sections = element.querySelector('nav[aria-label="Project sections"]'), account = element.querySelector('.account-menu');
+      return workspace.contains(workspace.querySelector('select')) && !!(workspace.compareDocumentPosition(sections) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(sections.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING);
     }), true, 'Workspace controls precede projects; account follows project navigation.');
   }
   assert.equal(await side.evaluate(element => {
@@ -412,7 +412,7 @@ try {
   assert.equal(await workspaceTools.locator('summary').isVisible(), true); assert.equal(await accountSummary.isVisible(), true);
   noWorkspaces = true;
   await page.goto(origin + '/?view=workspace'); await side.getByText('No workspaces yet.', {exact:true}).waitFor();
-  assert.equal(await side.getByLabel('Workspace',{exact:true}).count(), 0);
+  assert.equal(await side.getByRole('combobox',{name:'Workspace',exact:true}).count(), 0);
   assert.notEqual(await workspaceTools.getAttribute('open'), null);
   assert.deepEqual(await workspaceTools.getByRole('link').allTextContents(), ['Create workspace']);
   await accountSummary.click();
@@ -434,10 +434,10 @@ try {
     }
     assert.equal((await side.locator('.account-email').innerText()).length, 160);
     assert.equal(await side.locator('.account-summary-text').evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, 'Long identity fits its wrapping text region.');
-    assert.equal(await side.locator('.proj-list').evaluate(element => getComputedStyle(element).overflowY), 'visible');
+    assert.equal(await side.locator('.t98-switcher').evaluate(element => getComputedStyle(element).overflowY), 'visible');
     if ([320,927].includes(width)) {
       await page.evaluate(() => { document.documentElement.dir = 'rtl'; }); await fit('RTL account/sidebar ' + width);
-      for (const summary of await side.locator('.section-nav > .side-label').all()) {
+      for (const summary of await side.locator('.t98-sidebar-nav__heading').all()) {
         assert.equal(await summary.evaluate(element => {
           const text = [...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE);
           const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, text.textContent.split(' ')[0].length);
@@ -454,7 +454,7 @@ try {
   await footerSignOut.focus();
   assert.equal(await side.evaluate(element => element.scrollTop > 0 && element.scrollHeight > element.clientHeight), true);
   assert.equal(await footerSignOut.evaluate(element => { const box = element.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1; }), true, 'Final account action remains reachable in an overflowing short rail.');
-  assert.equal(await side.locator('.proj-list').evaluate(element => getComputedStyle(element).maxHeight), 'none');
+  assert.equal(await side.locator('.t98-switcher').evaluate(element => getComputedStyle(element).maxHeight), 'none');
   await fit('Short overflowing rail'); await capture('navigation-account-short-overflow');
   projectListCount = 2; operator = false; role = 'viewer';
   await page.setViewportSize({width:1440,height:900}); await open('events'); await accountSummary.click();
