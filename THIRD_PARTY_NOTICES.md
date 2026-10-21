@@ -150,6 +150,7 @@ Owner decision 2026-10-21: Discover ports the pinned upstream implementations, a
 | Date | Upstream | Commit | Upstream path | Discover path | Kind | Changes | Tests |
 |---|---|---|---|---|---|---|---|
 | 2026-10-21 | Elmo 0.4.4 (MIT, Blue Whale Software, LLC) | `3c673d0253d01ae030fa41519f62ad7e54f2281b` | `apps/web/src/lib/visibility-stats.ts` | `src/server/visibility-stats.ts` | verbatim + header | none to the algorithms; adapter `carriedInsights` in `src/server/prompt-insights.ts` | upstream `__tests__/visibility-stats.test.ts` ported to `tests/visibility-stats.test.ts` |
+| 2026-10-21 | Umami 3.4.0 (MIT, Umami Software, Inc.) | `ec0ff50388c264ed8ce46f00967e92f7e71476ae` | `src/queries/sql/funnels/getFunnel.ts` (relational branch) | `src/server/funnels.ts` (`calculate`) | behaviour + SQL semantics | rewritten against Discover's `event` table and scope CTE; Umami's pairwise level join replaced by a linear window-function carry with identical counts (performance); Discover match modes, typed predicates and every-step shared filters kept | upstream test asserts Prisma SQL strings and was not portable; `tests/funnels-integration.ts` expectations re-derived |
 
 ## Foundation dependency inventory
 
