@@ -647,9 +647,9 @@ function App() {
       <aside {...sidebar.sidebarProps} ref={sidebarRef} id='app-navigation' className={`side sidebar${menuOpen?' visible':''}`} aria-label='Application navigation'>
         <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><Brand /></Link>
         <div className='side-body sidebar-nav'>
+        <NavRoutesContext.Provider value={navRoutes}>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
           onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Create project',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.'}} />
-        <NavRoutesContext.Provider value={navRoutes}>
         {workspace&&<SidebarNav label='Workspace measurement' linkComponent={ShellLink} filter={toolSearch} groups={workspaceNavGroups} />}
         {project&&workspace&&<SidebarNav label='Project sections' linkComponent={ShellLink} filter={toolSearch} groups={projectNavGroups} />}
         </NavRoutesContext.Provider>
