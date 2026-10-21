@@ -1,5 +1,5 @@
 import { Brand, Icon } from '../components/CampaignUI'
-import { Alert, AppStateScreen, AuthErrorBoundary, Button, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, TrackerStatus, WorkspaceProjectSwitcher, useSidebarNavigation, AccountMenu, SidebarFooter } from '@ten98/ui'
+import { Alert, AppStateScreen, AuthErrorBoundary, Button, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
 import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -157,11 +157,17 @@ function App() {
   const preferencesEntry=useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolSearch, setToolSearch] = useState('')
-  const menuButton = useRef<HTMLButtonElement>(null)
-  const sidebarRef = useRef<HTMLElement>(null)
-  const sidebar = useSidebarNavigation({ open: menuOpen, onOpenChange: setMenuOpen, sidebarRef, triggerRef: menuButton })
+  // The shared AppShell skip link is a native fragment link. Focus <main> directly so activation (including modified clicks)
+  // never opens a tab, adds a history entry or leaves a fragment that the callback parser would reject.
+  useEffect(() => {
+    const skip = (event: MouseEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest('a.t98-skip-link')) return
+      event.preventDefault(); document.querySelector<HTMLElement>('main')?.focus()
+    }
+    document.addEventListener('click', skip)
+    return () => document.removeEventListener('click', skip)
+  }, [])
   useEffect(() => { const media=window.matchMedia('(max-width:960px)'); const clear=()=>{if(media.matches)setToolSearch('')};media.addEventListener('change',clear);return()=>media.removeEventListener('change',clear) }, [])
-  const mainRef = useRef<HTMLElement>(null)
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
   const oidcProof = useRef<string | undefined>(undefined)
@@ -209,7 +215,7 @@ function App() {
       const next = parseNavigation(event.toLocation.search)
       const previous = intent.current.search
       // The audit panel restores its drilldown trigger after the requested view commits.
-      if (!(next.view==='audits' && previous.view==='audits' && next.workspace===previous.workspace && next.project===previous.project)) requestAnimationFrame(() => mainRef.current?.focus({ preventScroll: true }))
+      if (!(next.view==='audits' && previous.view==='audits' && next.workspace===previous.workspace && next.project===previous.project)) requestAnimationFrame(() => document.querySelector<HTMLElement>('main')?.focus({ preventScroll: true }))
       if (navigationKey(next) !== navigationKey(intent.current.search)) setAppError('')
       rememberIntent(next)
     })
@@ -640,10 +646,8 @@ function App() {
     preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;setAccountPreferences({data:null,loading:false,error:message})
   }}
   return (
-    <AccountPresentationContext.Provider value={presentation}><div className='shell'>
-      <a className='skip-link' href='#main-content' onClick={(event) => { event.preventDefault(); mainRef.current?.focus() }}>Skip to main content</a>
-      {sidebar.modal && <button type='button' className='sidebar-shade' aria-label='Close navigation' onClick={()=>{setMenuOpen(false)}}/>}
-      <aside {...sidebar.sidebarProps} ref={sidebarRef} id='app-navigation' className={`side sidebar${menuOpen?' visible':''}`} aria-label='Application navigation'>
+    <AccountPresentationContext.Provider value={presentation}><AppShell sidebarLabel='Application navigation' skipLinkLabel='Skip to main content' mainLabel='Main content' navigation={{open:menuOpen,onOpenChange:setMenuOpen}}
+      sidebar={<>
         <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><Brand /></Link>
         <div className='side-body sidebar-nav'>
         <NavRoutesContext.Provider value={navRoutes}>
@@ -656,9 +660,8 @@ function App() {
         <SidebarFooter version={appVersion}>
           <Link className={`nav-item${['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)?' selected':''}`} to='/' search={target('preferences')}><Icon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
-      </aside>
-      <main {...sidebar.contentProps} className='main workspace-main' id='main-content' ref={mainRef} tabIndex={-1} aria-label='Main content'>
-        <header className='app-bar topbar'><div className='breadcrumb'><button type='button' ref={menuButton} className='icon-button mobile-menu mobile-nav-toggle' aria-label={menuOpen?'Close menu':'Menu'} aria-expanded={menuOpen} aria-controls='app-navigation' onClick={()=>setMenuOpen(!menuOpen)}><Icon name='menu'/></button><Icon name={accountView?'users':'folder'} size={16}/><span>{accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace'}</span><span className='crumb-slash' aria-hidden='true'>/</span><strong>{pageTitles[view]}</strong></div><div className='topbar-tools'><SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} /><span className='preview-badge'>Development preview</span><AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu></div></header>
+      </>}
+      topbar={<AppTopbar menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
         <div className='page-content content'>
         {['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)&&<nav className='tabs settings-navigation' aria-label='Settings sections'>
           <Link className={view==='preferences'?'active':''} to='/' search={target('preferences')}>Your account</Link>
@@ -849,8 +852,7 @@ function App() {
         </>}
 
         </div>
-      </main>
-    </div></AccountPresentationContext.Provider>
+    </AppShell></AccountPresentationContext.Provider>
   )
 }
 
