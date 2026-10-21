@@ -336,7 +336,7 @@
       if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) return;
       if (sites.some(function (s) { return s.siteKey === site.siteKey && s.environment === environment && s.origin === endpoint.origin; }) || sites.length >= 20) return;
       /** @type {Ten98Tracker.State} */
-      var state = {siteKey: site.siteKey, environment: environment, origin: endpoint.origin, storageKey: 'ten98:consent:v1:' + endpoint.origin + ':' + site.siteKey + ':' + environment,
+      var state = {siteKey: site.siteKey, environment: environment, origin: endpoint.origin, collectPath: endpoint.pathname, storageKey: 'ten98:consent:v1:' + endpoint.origin + ':' + site.siteKey + ':' + environment,
         consent: denied(), basicOptOut: false, preferenceReadable: false, consentExpires: 0, config: null, expires: 0, routes: [], loaded: false, reload: false, reloaded: false, nativeContext: null, nativeIdentifier: undefined, nativeGeneration: 0, nativeRequests: new Set(), tag: site.tag};
       sites.push(state); void refresh(state); setInterval(function () { void refresh(state); }, 30000);
     } catch (_) {}
