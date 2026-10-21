@@ -7,6 +7,7 @@ import {csvCell,explorerQuery} from './explorer-input.ts';
 import {executionInput,validateExecutionPayload,type RouteSnapshot} from './openrouter-input.ts';
 import {openRouterModelId,openRouterProviderName,openRouterRouteIdentity,openRouterSavedProvider} from '../lib/openrouter-models.ts';
 import {contentProfile,withContentProject,type ContentProject} from './project-context.ts';
+import {computeShareOfVoice,computeVolatility,shareOfVoiceLeaderboardLVCF,shareOfVoiceTimeSeriesLVCF,stabilityScore,type DailyDomainCount,type PerPromptDailyMentions} from './visibility-stats.ts';
 import {matchAnswer,AnswerMentionError,type MentionSubject,type MentionMethod,type AnswerMention} from './answer-mentions.ts';
 
 export type InsightFilters={from:string;to:string;timeZone:string;model:string|null;promptId:string|null;tag:string|null;matcher:MentionMethod};
@@ -16,6 +17,11 @@ export type InsightMetric={id:string;mentions:number;eligibleAnswers:number|null
 export type InsightExecution={id:string;comparisonId:string;promptId:string;versionId:string;requestedAt:string;date:string;model:string;resolvedModel:string|null;status:string;eligibility:InsightEligibility;matches:AnswerMention[]|null};
 type Drilldown={entityId:string|null;outcome:'all'|'mentioned'|'not_mentioned'|'cited'|'eligible'|'unavailable'};
 export type PromptInsightsReport={role:ContentProject['role'];filters:InsightFilters;modelOptions:{values:string[];complete:boolean};drilldown:Drilldown;asOf:string;contextRevision:number;profileHash:string;matcherVersion:MentionMethod;selectionRevision:string;label:string;warnings:string[];subjects:MentionSubject[];coverage:InsightCoverage;evidenceStates:Pick<InsightExecution,'id'|'eligibility'>[];metrics:InsightMetric[];daily:{date:string;coverage:InsightCoverage;metrics:InsightMetric[]}[];executions:InsightExecution[];totalRows:number;nextCursor:string|null};
+/** Elmo-method carried values, additive to the observed-only report: per-prompt last values are carried across unobserved days (and seeded backward from each prompt's earliest observation). Shares are exact 0..1 ratios. */
+export type CarriedInsights={dates:string[];series:{date:string;share:number|null}[];
+ leaderboard:{brandShare:number|null;total:number;entries:{id:string;name:string;isBrand:boolean;mentions:number;prompts:number;share:number}[]};
+ volatility:{setVolatility:number|null;weightedVolatility:number|null;dayTransitions:number;stability:number|null}};
+export type PromptInsightsResponse=PromptInsightsReport&{carried:CarriedInsights};
 const label='Recomputed from retained answers using current project context';
 const hex=z.string().regex(/^[a-f0-9]{64}$(?![\s\S])/),uuid=z.uuid().transform(v=>v.toLowerCase());
 const keys=['from','to','timeZone','model','promptId','tag','matcher','entityId','outcome','cursor'];
@@ -63,6 +69,26 @@ function metrics(subjects:MentionSubject[],rows:InsightExecution[]):InsightMetri
  for(const row of eligible)for(let i=0;i<counts.length;i++){counts[i].mentions+=Number(row.matches![i].mentioned);counts[i].citations+=Number(row.matches![i].cited);}
  const denominator=counts.reduce((n,c)=>n+c.mentions,0);
  return counts.map(c=>({...c,eligibleAnswers:eligible.length||null,shareOfVoiceDenominator:denominator||null,citationDenominator:eligible.length||null}));
+}
+/** Carried-value statistics from eligible observations only (ported Elmo algorithms; see visibility-stats.ts). Volatility is measured over the tracked entities cited per day because per-domain citation counts are not retained in the report. */
+export function carriedInsights(subjects:MentionSubject[],observations:InsightExecution[],dates:string[]):CarriedInsights{
+ const perPrompt=new Map<string,PerPromptDailyMentions>(),brandDaily=new Map<string,{promptId:string;date:string;brand:number}>(),
+  competitorDaily=new Map<string,{promptId:string;date:string;competitor:string;mentions:number}>(),cited=new Map<string,DailyDomainCount>();
+ for(const row of observations){if(row.eligibility!=='eligible'||!row.matches)continue;
+  const key=`${row.promptId}|${row.date}`,day=perPrompt.get(key)??{promptId:row.promptId,date:row.date,brandMentions:0,competitorMentions:0};perPrompt.set(key,day);
+  const brand=brandDaily.get(key)??{promptId:row.promptId,date:row.date,brand:0};brandDaily.set(key,brand);
+  row.matches.forEach(match=>{const id=match.id,mentioned=Number(match.mentioned);
+   if(id==='brand'){day.brandMentions+=mentioned;brand.brand+=mentioned;}
+   else{day.competitorMentions+=mentioned;const ck=`${key}|${id}`,c=competitorDaily.get(ck)??{promptId:row.promptId,date:row.date,competitor:id,mentions:0};c.mentions+=mentioned;competitorDaily.set(ck,c);}
+   if(match.cited){const dk=`${row.date}|${id}`,d=cited.get(dk)??{date:row.date,domain:id,count:0};d.count++;cited.set(dk,d);}});
+ }
+ const standings=shareOfVoiceLeaderboardLVCF([...brandDaily.values()],[...competitorDaily.values()],dates),
+  names=new Map(subjects.map(s=>[s.id,s.name])),prompts=new Map(standings.competitors.map(c=>[c.name,c.prompts])),
+  {entries,brandShare,total}=computeShareOfVoice({name:'brand',mentions:standings.brandMentions},standings.competitors.map(c=>({name:c.name,mentions:c.mentions}))),
+  volatility=computeVolatility([...cited.values()]);
+ return {dates,series:shareOfVoiceTimeSeriesLVCF([...perPrompt.values()],dates),
+  leaderboard:{brandShare,total,entries:entries.map(e=>({id:e.name,name:names.get(e.name)??'Entity',isBrand:e.isBrand,mentions:e.mentions,prompts:e.isBrand?standings.brandPrompts:prompts.get(e.name)??0,share:e.share}))},
+  volatility:{...volatility,stability:stabilityScore(volatility.weightedVolatility)}};
 }
 function count(rows:InsightExecution[]):InsightCoverage{const c=coverage();for(const row of rows){c.attempted++;c[row.eligibility]++;}return c;}
 function error(error:unknown):never{if((error as {code?:string})?.code==='57014')throw new FoundationError(503,'This insight report took too long. Narrow the date range.');throw error;}
@@ -153,14 +179,14 @@ function pageOffset(raw:string|null,scope:string,revision:string){
  if(parsed.data.revision!==revision)throw new FoundationError(409,'The insight selection changed. Reload the report.');return parsed.data.offset;
 }
 function deadline(signal?:AbortSignal){const started=Date.now();return()=>{if(signal?.aborted)throw new FoundationError(499,'Insight request cancelled.');if(Date.now()-started>30000)throw new FoundationError(503,'This insight report took too long. Narrow the date range.');};}
-export async function getPromptInsights(projectId:string,userId:string,params=new URLSearchParams()):Promise<PromptInsightsReport>{
+export async function getPromptInsights(projectId:string,userId:string,params=new URLSearchParams()):Promise<PromptInsightsResponse>{
  const input=parseQuery(params),check=deadline();
  return withContentProject(projectId,userId,false,async(client,p)=>{const selected=await selectPromptInsights(client,p,input.filters,check),{drilldown}=input;
   if(drilldown.entityId!==null&&!selected.report.subjects.some(s=>s.id===drilldown.entityId))throw bad();
   const rows=selected.observations.filter(r=>{if(drilldown.outcome==='all')return true;if(drilldown.outcome==='eligible')return r.eligibility==='eligible';if(drilldown.outcome==='unavailable')return r.eligibility!=='eligible';
    if(!r.matches)return false;const m=r.matches.find(v=>v.id===drilldown.entityId)!;return drilldown.outcome==='mentioned'?m.mentioned:drilldown.outcome==='not_mentioned'?!m.mentioned:m.cited;});
   const scope=canonicalHash({scope:selected.scope,drilldown}),offset=pageOffset(input.cursor,scope,selected.report.selectionRevision),next=offset+50;
-  return {...selected.report,drilldown,executions:rows.slice(offset,next),totalRows:rows.length,nextCursor:next<rows.length?Buffer.from(JSON.stringify({scope,revision:selected.report.selectionRevision,offset:next})).toString('base64url'):null};
+  return {...selected.report,carried:carriedInsights(selected.report.subjects,selected.observations,selected.report.daily.map(d=>d.date)),drilldown,executions:rows.slice(offset,next),totalRows:rows.length,nextCursor:next<rows.length?Buffer.from(JSON.stringify({scope,revision:selected.report.selectionRevision,offset:next})).toString('base64url'):null};
  }).catch(error);
 }
 export async function exportPromptInsights(projectId:string,userId:string,raw:unknown,signal?:AbortSignal){
