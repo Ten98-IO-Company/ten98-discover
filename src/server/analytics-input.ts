@@ -1,6 +1,7 @@
 import { InputError } from './validation.ts';
 import { toUSVString, types } from 'node:util';
 import { paidAdsClickIds } from '../lib/attribution.ts';
+import { analyticsTag } from '../lib/analytics-tag.ts';
 
 export type PropertyPrimitive = string | number | boolean | null;
 export type NormalizedProperty =
@@ -25,6 +26,7 @@ export type NormalizedDimensions = {
   };
   clickIds?: Partial<Record<typeof paidAdsClickIds[number][0], string>>;
   distinctId?: string;
+  tag?: string;
 };
 
 const utf8 = new TextEncoder();
@@ -265,6 +267,12 @@ export function normalizeDimensions(raw: unknown): NormalizedDimensions {
       case 'distinctId':
         out.distinctId = distinctId(v);
         break;
+      case 'tag': {
+        // A value that is not a clean label drops the tag, never the event (docs/tracking.md).
+        const tag = analyticsTag(v);
+        if (tag !== null) out.tag = tag;
+        break;
+      }
       default:
         bad(); // unknown fields rejected at every level
     }

@@ -9,7 +9,7 @@ declare namespace Ten98Tracker {
  type EventProperties = {value?:string;currency?:string;transactionId?:string;itemId?:string};
  type Event = {name:string;eventId:string;url:string;properties:EventProperties};
  type SiteOptions = {siteKey:string;environment:string;collectorOrigin?:string;acknowledgeReload?:boolean};
- type Site = {siteKey:string;environment?:string;endpoint:string};
+ type Site = {siteKey:string;environment?:string;endpoint:string;tag?:string};
  type PreferenceFields = {epoch:string;choice:Consent;updatedAt:number;expiresAt:number};
  type LegacyPreference = PreferenceFields & {version?:never;basicOptOut?:never};
  type CurrentPreference = PreferenceFields & {version:2;basicOptOut:boolean};
@@ -17,7 +17,7 @@ declare namespace Ten98Tracker {
  type ChoiceResult = {ok:boolean;reason?:string;reloadRequired?:boolean};
  type VendorAdapter = {invoke:(event:Event,target:string)=>void;stop:()=>void;pageviewsOwned:boolean};
  type Route = {destination:Destination;queue:{event:Event;target:string;epoch:string;consent:string;at:number}[];seen:Set<string>;state:string;reason:string;adapter?:VendorAdapter;loading?:boolean;failed?:boolean};
- type State = {siteKey:string;environment:string;origin:string;storageKey:string;consent:Consent;basicOptOut:boolean;preferenceReadable:boolean;consentExpires:number;config:PublicConfig|null;expires:number;routes:Route[];loaded:boolean;reload:boolean;reloaded:boolean;nativeContext:string|null;nativeIdentifier:string|undefined;nativeGeneration:number;nativeRequests:Set<AbortController>;fetching?:boolean;expiryTimer?:ReturnType<typeof setTimeout>;dialog?:HTMLDialogElement|null;closeDialog?:(()=>void)|null;preferenceButton?:HTMLButtonElement|null;preferenceStyle?:HTMLLinkElement;nativePageObservation?:PageObservation;replayRestartRequired?:boolean;heatmapRestartRequired?:boolean} & NativeState;
+ type State = {tag?:string;siteKey:string;environment:string;origin:string;storageKey:string;consent:Consent;basicOptOut:boolean;preferenceReadable:boolean;consentExpires:number;config:PublicConfig|null;expires:number;routes:Route[];loaded:boolean;reload:boolean;reloaded:boolean;nativeContext:string|null;nativeIdentifier:string|undefined;nativeGeneration:number;nativeRequests:Set<AbortController>;fetching?:boolean;expiryTimer?:ReturnType<typeof setTimeout>;dialog?:HTMLDialogElement|null;closeDialog?:(()=>void)|null;preferenceButton?:HTMLButtonElement|null;preferenceStyle?:HTMLLinkElement;nativePageObservation?:PageObservation;replayRestartRequired?:boolean;heatmapRestartRequired?:boolean} & NativeState;
  type Hook<F> = F & {protocolVersion?:number};
  type Api = {consent:(value:unknown,options:SiteOptions)=>ChoiceResult;setAnalyticsOptOut:(value:unknown,options:SiteOptions)=>ChoiceResult;destinationStatus:(options:SiteOptions)=>unknown;consentPreferences:(options:SiteOptions)=>boolean};
  type Hub = {api:Api;sites:Site[];destinationInit?:(site:Site)=>void;destinationEvent?:(site:Site,event:unknown)=>void;destinationIdentify?:(identifier:unknown,properties:unknown,options:SiteOptions)=>Promise<unknown>;destinationResetIdentity?:(options:SiteOptions)=>ChoiceResult;nativeStop:Hook<(state:State)=>void>;nativeEvent:Hook<(state:State,event:unknown)=>void>;nativeIdentify:Hook<(state:State,identifier:unknown,properties:unknown)=>Promise<unknown>>;nativeAllowed?:Hook<(state:State)=>boolean>;nativeConsentAllowed?:Hook<(state:State)=>boolean>;replayAllowed?:Hook<(state:State)=>boolean>;replayStop?:Hook<(state:State,erase:boolean)=>void>;replayStart?:Hook<(state:State)=>void>;heatmapStart?:Hook<(state:State,fresh?:boolean)=>void>;preferencesContainer?:HTMLElement} & CaptureHub;
@@ -33,7 +33,7 @@ interface Window {__ten98FoundationHub?:Ten98Tracker.BootstrapHub;__ten98Foundat
 interface Navigator {globalPrivacyControl?:boolean;msDoNotTrack?:string}
 
 declare namespace Ten98Tracker {
- type BootstrapApi = {track:(name:unknown,properties?:unknown)=>void;identify:(first:unknown,second?:unknown,third?:unknown)=>Promise<unknown>;resetIdentity:(options:SiteOptions)=>ChoiceResult};
+ type BootstrapApi = {track:(name:unknown,properties?:unknown,options?:unknown)=>void;identify:(first:unknown,second?:unknown,third?:unknown)=>Promise<unknown>;resetIdentity:(options:SiteOptions)=>ChoiceResult};
  type BootstrapHub = Omit<Hub,'api'> & {api:BootstrapApi & Partial<Api>};
  type PageObservation = {url:string;basic:boolean;sent:boolean;generation:number;dropped?:boolean};
  type NativeState = {selfReferral?:{generation:number;from:PageObservation|null};performanceCapture?:PerformanceCapture;heatmapCapture?:HeatmapCapture|null;heatmapHidden?:boolean;replayCapture?:ReplayCapture|null;replayResumeRequest?:string|null;replayDocumentBlocked?:boolean;replayOwnerSkipped?:boolean};
@@ -57,8 +57,8 @@ declare namespace Ten98Tracker {
  type ReplayChunk = {bytes:Uint8Array<ArrayBuffer>;final:boolean;references?:PartReference[]};
  type ReplayCapture = {state:State;generation:number;epoch:string;key:string;active:boolean;queue:ReplayChunk[];parts:string[];partReferences:PartReference[];partBytes:number;partNodes:number;queuedBytes:number;started:boolean;sending:boolean;finishing:boolean;record?:unknown;controller?:AbortController|null;stop?:(()=>void)|null;flushTimer?:ReturnType<typeof setInterval>;endTimer?:ReturnType<typeof setTimeout>;backgroundMeta?:BackgroundMeta|null};
  type RecorderEvent = {type:4;timestamp:number;data:{href:string;width:number;height:number}}|{type:0|1|2|3;timestamp:number;data:Record<string,unknown>};
- type NativeInput = {type?:'performance';name?:string;eventId?:string;url:string;properties?:unknown;navigationId?:string;metric?:string;value?:number;revision?:number};
- type Dimensions = {distinctId?:string;language?:string;referrer?:string;screen?:{width:number;height:number};campaign?:Record<string,string>;clickIds?:Record<string,string>};
+ type NativeInput = {type?:'performance';name?:string;eventId?:string;url:string;properties?:unknown;tag?:string;navigationId?:string;metric?:string;value?:number;revision?:number};
+ type Dimensions = {distinctId?:string;language?:string;referrer?:string;screen?:{width:number;height:number};campaign?:Record<string,string>;clickIds?:Record<string,string>;tag?:string};
  type NativePayload = NativeInput & {siteKey:string;dimensions:Dimensions;context?:string;consent?:{analytics:true;epoch:string};collection?:{mode:'cookieless';epoch:string}};
  type IdentifyScalar = string|number|boolean|null;
  type IdentifyProperties = {[key:string]:IdentifyScalar|IdentifyScalar[]|IdentifyProperties};

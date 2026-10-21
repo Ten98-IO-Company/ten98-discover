@@ -32,6 +32,17 @@ The workflow follows pinned Umami 3.4.0's declared-event pattern with an explici
 
 Unlike Umami's awaited link handler, native tracking never prevents a click, delays navigation, submits a form or assigns a location. The existing bounded native event request uses Fetch `keepalive`; navigation delivery remains best effort, including first-request CORS preflight and the browser's shared 64 KiB in-flight keepalive-body limit. Individual bodies remain at most 16 KiB with the existing 20-request concurrency cap, five-second abort, privacy cancellation and bounded response reader. A lost receipt does not trigger a retry or beacon fallback. Identification and configuration requests do not use keepalive. See the [Fetch standard's keepalive quota](https://fetch.spec.whatwg.org/#http-network-or-cache-fetch) and [Request.keepalive](https://developer.mozilla.org/en-US/docs/Web/API/Request/keepalive).
 
+## Tags
+
+A tag is a short label that lets reports compare groups of events (for example `spring-sale`). Tags are labels, not identifiers: never put a person, account, order, session or device identifier in one.
+
+- The site author opts in per script or per event (below); the tracker sends a valid tag whenever one is provided. The owner setting **Capture tags** (`captureTags` in the private analytics settings, default off, never published in the public tracking configuration) decides whether the collector stores it. With it off the collector drops the tag; existing history is not backfilled.
+- Script: `<script data-tag="spring-sale" ...>` labels every event of that script; `ten98.track(name, properties, {tag: "checkout-b"})` labels that event and overrides the script tag. Adapted from Umami 3.4.0 (`data-tag` and the `tag` field).
+- A tag is accepted only for an event the collector already accepts: the analytics permission and every other collection gate apply first. An event refused for consent stores nothing, tag included.
+- Validation on the collector, after trimming: 1 to 50 characters; only A-Z a-z 0-9, space and `_ . : / -`; no `@`; no UUID, no 16 or more hex characters, no 8 or more consecutive digits and no 10 or more digits once separators are removed; anything with a query string or fragment (`? # = &`) fails the character set. A rejected tag is dropped and the event is kept; nothing about the rejected value is stored or logged. A date such as `2026-10-21` is valid.
+- Cap: a project keeps at most 100 distinct tags among its retained events. Further new values are stored as no tag. A tag frees its slot when its last event leaves the retention window.
+- Storage: the `tag` key of the event `dimensions`. The Compare dimension `tag` groups it (docs/analytics-comparison.md).
+
 ## Provider capability matrix
 
 All paths below are **planned**, not runtime-verified. Discovery records a separate status for tag configuration, SDK loading/invocation, reporting, account eligibility and test facilities. Every adapter records its supported contract/version and rechecks documentation before implementation/release. Some vendor scripts use unversioned URLs; disclose that limitation rather than claiming they are pinned.

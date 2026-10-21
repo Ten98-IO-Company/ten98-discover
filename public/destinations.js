@@ -71,7 +71,7 @@
   /** @param {unknown} raw @returns {Ten98Tracker.Event|null} */
   function eventInput(raw) {
     var input = /** @type {Ten98Tracker.Event} */ (raw);
-    if (!keys(input, ['name', 'eventId', 'url', 'properties'], ['name', 'eventId', 'url']) || !names.includes(input.name) || !exact(uuidPattern, input.eventId) || typeof input.url !== 'string' || input.url.length > 2048) return null;
+    if (!keys(input, ['name', 'eventId', 'url', 'properties', 'tag'], ['name', 'eventId', 'url']) || !names.includes(input.name) || !exact(uuidPattern, input.eventId) || typeof input.url !== 'string' || input.url.length > 2048) return null;
     var u;
     try { u = new URL(input.url); } catch (_) { return null; }
     if (u.origin !== location.origin || u.username || u.password) return null;
@@ -337,7 +337,7 @@
       if (sites.some(function (s) { return s.siteKey === site.siteKey && s.environment === environment && s.origin === endpoint.origin; }) || sites.length >= 20) return;
       /** @type {Ten98Tracker.State} */
       var state = {siteKey: site.siteKey, environment: environment, origin: endpoint.origin, storageKey: 'ten98:consent:v1:' + endpoint.origin + ':' + site.siteKey + ':' + environment,
-        consent: denied(), basicOptOut: false, preferenceReadable: false, consentExpires: 0, config: null, expires: 0, routes: [], loaded: false, reload: false, reloaded: false, nativeContext: null, nativeIdentifier: undefined, nativeGeneration: 0, nativeRequests: new Set()};
+        consent: denied(), basicOptOut: false, preferenceReadable: false, consentExpires: 0, config: null, expires: 0, routes: [], loaded: false, reload: false, reloaded: false, nativeContext: null, nativeIdentifier: undefined, nativeGeneration: 0, nativeRequests: new Set(), tag: site.tag};
       sites.push(state); void refresh(state); setInterval(function () { void refresh(state); }, 30000);
     } catch (_) {}
   };
