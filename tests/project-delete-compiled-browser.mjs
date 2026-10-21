@@ -30,7 +30,7 @@ try{
  const replayFrame=page.frames().find(f=>f.url().startsWith('data:'));assert.ok(replayFrame,'The replay probe frame must exist.');
  await replayFrame.waitForFunction(()=>document.head.querySelector('style')!==null,null,{timeout:10000});
  await page.evaluate(()=>document.querySelector('iframe[title="csp replay probe"]').remove());step('replay data: frame executed /replay.js under the inherited document policy');
- const workspaceId=await page.locator('#ws').inputValue();assert.match(workspaceId,/^[0-9a-f-]{36}$/);
+ const workspaceId=await page.getByRole('combobox',{name:'Workspace',exact:true}).inputValue();assert.match(workspaceId,/^[0-9a-f-]{36}$/);
  async function create(name,origin){await page.goto(base+'/?workspace='+workspaceId+'&view=new-project',{waitUntil:'domcontentloaded'});await page.fill('#pn',name);await page.fill('#po',origin);await page.getByRole('button',{name:'Create project'}).click();await page.getByRole('navigation',{name:'Projects'}).getByRole('link',{name,exact:true}).waitFor();}
  await create('Doomed website','https://doomed.compiled-delete.test');await create('Surviving website','https://surviving.compiled-delete.test');step('two projects created');
  const doomedHref=await page.getByRole('navigation',{name:'Projects'}).getByRole('link',{name:'Doomed website',exact:true}).getAttribute('href');const doomedId=new URLSearchParams(doomedHref.split('?')[1]).get('project');assert.match(doomedId,/^[0-9a-f-]{36}$/);
