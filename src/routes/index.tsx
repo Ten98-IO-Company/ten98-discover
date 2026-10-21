@@ -157,16 +157,6 @@ function App() {
   const preferencesEntry=useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolSearch, setToolSearch] = useState('')
-  // The shared AppShell skip link is a native fragment link. Focus <main> directly so activation (including modified clicks)
-  // never opens a tab, adds a history entry or leaves a fragment that the callback parser would reject.
-  useEffect(() => {
-    const skip = (event: MouseEvent) => {
-      if (!(event.target instanceof Element) || !event.target.closest('a.t98-skip-link')) return
-      event.preventDefault(); document.querySelector<HTMLElement>('main')?.focus()
-    }
-    document.addEventListener('click', skip)
-    return () => document.removeEventListener('click', skip)
-  }, [])
   useEffect(() => { const media=window.matchMedia('(max-width:960px)'); const clear=()=>{if(media.matches)setToolSearch('')};media.addEventListener('change',clear);return()=>media.removeEventListener('change',clear) }, [])
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
@@ -661,7 +651,7 @@ function App() {
           <Link className={`nav-item${['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)?' selected':''}`} to='/' search={target('preferences')}><Icon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
-      topbar={<AppTopbar menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
+      topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
         <div className='page-content content'>
         {['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)&&<nav className='tabs settings-navigation' aria-label='Settings sections'>
           <Link className={view==='preferences'?'active':''} to='/' search={target('preferences')}>Your account</Link>
