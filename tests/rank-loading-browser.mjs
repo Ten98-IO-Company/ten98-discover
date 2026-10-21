@@ -87,6 +87,12 @@ async function run(name, options, check) {
       if (options.code === 'fail' && !failed) { failed = true; return route.abort('failed'); }
       if (options.code === 'hold') { codeHeld = true; await gate; }
     }
+    if (options.session && path === '/api/account/preferences' && actor === 'B') {
+      // The app verifies the preferences identity against /api/me, so session B must be consistent across both reads.
+      const response = await route.fetch({maxRedirects: 0}); assert.equal(response.status(), 200);
+      const data = await response.json();
+      return respond(route, {...data, user: {...data.user, id: actorB, name: 'Synthetic session B', email: 'b@rank-loading.invalid'}});
+    }
     if (options.session && path === '/api/me') {
       assert.ok(fixtureData.me);
       if (actor === null) return respond(route, {error: 'Synthetic session ended'}, 401);
@@ -137,7 +143,7 @@ async function run(name, options, check) {
   }
   async function link(name) {
     await menu();
-    const target = page.locator('#app-navigation').getByRole('link', {name, exact: true, includeHidden: true});
+    const target = page.locator('aside.t98-shell-sidebar').getByRole('link', {name, exact: true, includeHidden: true});
     await target.waitFor({state: 'attached'});
     for (const details of await target.locator('xpath=ancestor::details').all()) {
       if (await details.getAttribute('open') === null) await details.locator(':scope > summary').click();
@@ -145,8 +151,8 @@ async function run(name, options, check) {
     return target;
   }
   // Projects are chosen in the shared Workspace/Project switcher (a native select), not as sidebar links.
-  async function selectProject(name) { await menu(); await page.locator('#app-navigation').getByLabel('Project', {exact: true}).selectOption({label: name}); }
-  async function open() { await page.goto(url()); await page.locator('main').waitFor(); await (await link('Analytics')).waitFor(); }
+  async function selectProject(name) { await menu(); await page.locator('aside.t98-shell-sidebar').getByLabel('Project', {exact: true}).selectOption({label: name}); }
+  async function open() { await page.goto(url()); await page.locator('main').waitFor(); await page.waitForURL(/analyticsTo=/, {timeout: 3000}).catch(() => {}); /* the app may normalize the URL once, closing a drawer opened earlier */ await (await link('Analytics')).waitFor(); }
   const loaded = () => page.getByRole('heading', {name: 'Saved trackers', exact: true}).waitFor();
   const loading = () => page.getByRole('status').filter({hasText: 'Loading rank tracking'}).waitFor();
   const rankCalls = () => calls.filter(call => rankApi(call.path));
@@ -231,11 +237,11 @@ try {
   });
   await run('360px keyboard navigation preserves the shell, focus and readable pending/loaded content', {code: 'hold', width: 360}, async t => {
     await t.open(); const target = await t.link('Rank tracking'); await target.focus(); await target.press('Enter'); await t.loading();
-    await t.page.waitForFunction(() => document.activeElement?.id === 'main-content');
+    await t.page.waitForFunction(() => document.activeElement?.tagName === 'MAIN');
     assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await t.page.screenshot({path: resolve(artifactDir, 'rank-loading-360.png'), fullPage: true});
     await t.menu(); assert.equal(await (await t.link('Recent events')).isVisible(), true);
-    const toggle = t.page.getByRole('button', {name: 'Close menu', exact: true}); if (await toggle.isVisible()) await toggle.click();
+    const close = t.page.getByRole('button', {name: 'Close navigation', exact: true}); if (await close.isVisible()) await close.click();
     t.release(); await t.loaded();
     assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await t.page.getByRole('button', {name: 'Refresh', exact: true}).focus();
