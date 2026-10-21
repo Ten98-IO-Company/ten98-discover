@@ -18,9 +18,12 @@ export function secret(name: string, env: NodeJS.ProcessEnv = process.env): stri
 // TRUSTED_PROXIES changes only at restart (or in tests that set process.env), so one parsed copy is kept per value.
 let parsedProxies: { raw: unknown; list: TrustedProxies } | null = null;
 
-/** Reverse proxies whose X-Forwarded-For is honoured for per-client rate limits. Empty: the transport peer is the client. */
+/**
+ * Reverse proxies whose X-Forwarded-For is honoured for per-client rate limits. When unset, the analytics proxy list
+ * applies, so one list describes the installation's proxy. Empty: the transport peer is the client.
+ */
 export function trustedProxies(env: NodeJS.ProcessEnv = process.env): TrustedProxies {
-  const raw = env.TRUSTED_PROXIES;
+  const raw = env.TRUSTED_PROXIES?.trim() ? env.TRUSTED_PROXIES : env.ANALYTICS_TRUSTED_PROXIES;
   if (!parsedProxies || parsedProxies.raw !== raw) parsedProxies = { raw, list: parseTrustedProxies(raw) };
   return parsedProxies.list;
 }
