@@ -60,7 +60,7 @@ try {
       });
       const page = await context.newPage(); page.setDefaultTimeout(15000); page.on('pageerror', () => pageErrors++);
       await page.goto(config.appUrl);
-      await page.getByLabel('Email', { exact: true }).fill(fixture.email);
+      await page.getByLabel('Email address', { exact: true }).fill(fixture.email);
       await page.getByLabel('Password', { exact: true }).fill(fixture.password);
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       await page.getByLabel('Workspace', { exact: true }).selectOption(fixture.workspaceId);
@@ -268,7 +268,7 @@ try {
         const gaContext=await browser.newContext({viewport:{width:1280,height:900}});let gaExternal=0,gaErrors=0;
         try{
           await gaContext.route('**/*',(route:any)=>{if(new URL(route.request().url()).origin!==config.appUrl){gaExternal++;return route.abort();}return route.continue();});
-          const gaPage=await gaContext.newPage();gaPage.setDefaultTimeout(15000);gaPage.on('pageerror',()=>gaErrors++);await gaPage.goto(config.appUrl);await gaPage.getByLabel('Email',{exact:true}).fill(ga4.email);await gaPage.getByLabel('Password',{exact:true}).fill(ga4.password);await gaPage.getByRole('button',{name:'Sign in',exact:true}).click();await gaPage.getByRole('heading',{name:'Web analytics',exact:true}).waitFor();
+          const gaPage=await gaContext.newPage();gaPage.setDefaultTimeout(15000);gaPage.on('pageerror',()=>gaErrors++);await gaPage.goto(config.appUrl);await gaPage.getByLabel('Email address', { exact: true }).fill(ga4.email);await gaPage.getByLabel('Password',{exact:true}).fill(ga4.password);await gaPage.getByRole('button',{name:'Sign in',exact:true}).click();await gaPage.getByRole('heading',{name:'Web analytics',exact:true}).waitFor();
           assert.equal(await gaPage.getByLabel('Workspace',{exact:true}).inputValue(),ga4.workspaceId);const menu=gaPage.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await gaPage.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Google reports',exact:true}).click();
           const source=gaPage.locator('section.google-connection').filter({has:gaPage.getByRole('heading',{name:'GA4 report inventory',exact:true})});await gaPage.getByLabel('Google source',{exact:true}).selectOption(ga4.connectionId);await source.getByText('Import a snapshot',{exact:true}).click();await source.getByLabel('Report',{exact:true}).waitFor();
           for(const [report,label,column]of [['ga4_pages','Pages and screens','Page path and screen class'],['ga4_acquisition','Traffic acquisition','Session campaign'],['ga4_key_events','Key events','Is key event']]){
@@ -285,7 +285,7 @@ try {
         const organicContext=await browser.newContext({viewport:{width:1280,height:900}});let organicExternal=0,organicErrors=0;
         try{
           await organicContext.route('**/*',(route:any)=>{if(new URL(route.request().url()).origin!==config.appUrl){organicExternal++;return route.abort();}return route.continue();});
-          const op=await organicContext.newPage();op.setDefaultTimeout(15000);op.on('pageerror',()=>organicErrors++);await op.goto(config.appUrl);await op.getByLabel('Email',{exact:true}).fill(organic.email);await op.getByLabel('Password',{exact:true}).fill(organic.password);await op.getByRole('button',{name:'Sign in',exact:true}).click();await op.getByRole('heading',{name:'Web analytics',exact:true}).waitFor();
+          const op=await organicContext.newPage();op.setDefaultTimeout(15000);op.on('pageerror',()=>organicErrors++);await op.goto(config.appUrl);await op.getByLabel('Email address', { exact: true }).fill(organic.email);await op.getByLabel('Password',{exact:true}).fill(organic.password);await op.getByRole('button',{name:'Sign in',exact:true}).click();await op.getByRole('heading',{name:'Web analytics',exact:true}).waitFor();
           const menu=op.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await op.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Google reports',exact:true}).click();await op.getByLabel('Google source',{exact:true}).selectOption(organic.connectionId);
           const source=op.locator('section.google-connection').filter({has:op.getByRole('heading',{name:'GA4 report inventory',exact:true})});await source.getByText('Import a snapshot',{exact:true}).click();
           for(const [report,label]of [['ga4_organic_landing','Organic landing pages'],['ga4_organic_daily','Organic overview by day'],['ga4_organic_weekly','Organic overview by week']]){

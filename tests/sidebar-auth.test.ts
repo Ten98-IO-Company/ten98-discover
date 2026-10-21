@@ -4,13 +4,13 @@ import { readFile } from 'node:fs/promises'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { transformWithOxc } from 'vite'
-import { AuthLayout as SharedAuthLayout } from '@ten98/ui'
-import { AppBrand, AppIcon } from '@ten98/ui/app'
+import { AuthLayout as SharedAuthLayout, AuthStory } from '@ten98/ui'
+import { AppBrand } from '@ten98/ui/app'
 
 async function loadAuthLayout() {
  const source=await readFile(new URL('../src/components/AuthLayout.tsx',import.meta.url),'utf8')
- const {code}=await transformWithOxc(source.replace(/^import[^\n]*\n/gm,'').replace('export function','function'),'AuthLayout.tsx',{jsx:{runtime:'classic'}})
- return new Function('React','SharedAuthLayout','Brand','Icon',code+';return AuthLayout;')(React,SharedAuthLayout,()=>React.createElement(AppBrand,{product:'Discover'}),AppIcon)
+ const {code}=await transformWithOxc(source.replace(/^import[^\n]*\n/gm,'').replace(/export (const|function)/g,'$1'),'AuthLayout.tsx',{jsx:{runtime:'classic'}})
+ return new Function('React','SharedAuthLayout','AuthStory','Brand',code+';return AuthLayout;')(React,SharedAuthLayout,AuthStory,()=>React.createElement(AppBrand,{product:'Discover'}))
 }
 
 test('Discover shares auth presentation while preserving app-owned headings and native forms', async () => {

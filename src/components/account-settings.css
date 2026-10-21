@@ -54,18 +54,8 @@
 .identity-details dd { margin: 0; min-inline-size: 0; }
 .identity-recovery { margin-block-end: 22px; }
 .account-access { min-inline-size: 0; overflow-wrap: anywhere; }
-.account-access .account-access-icon { display: inline-flex; align-items: center; justify-content: center; inline-size: 42px; block-size: 42px; border-radius: 11px; background: var(--blue-tint); color: var(--blue); margin-block-end: 18px; }
-.account-access .helper-note { color: var(--muted); font-size: 12px; line-height: 1.7; margin-block: 15px; }
-.account-access .field-help { font-size: 12px; line-height: 1.7; margin-block: 7px 17px; }
-.account-access .field { margin-block-end: 20px; }
 .account-access .button { min-block-size: 44px; max-inline-size: 100%; white-space: normal; }
-.account-access .button-wrap { display: flex; flex-wrap: wrap; gap: 8px; }
 .account-access .full { inline-size: 100%; }
-.auth-provider-list { display: grid; gap: 10px; }
-.auth-provider-list .auth-provider-button { display: flex; align-items: center; justify-content: center; inline-size: 100%; gap: 10px; padding: 10px 14px; margin: 0; }
-.auth-provider-button > span:first-child, .auth-provider-arrow { display: inline-flex; align-items: center; flex-shrink: 0; }
-.auth-provider-button > span:nth-child(2) { flex: 1; }
-.account-access .eyebrow { margin-block-end: 16px; }
 @media (max-width:1100px) {
   .account-settings-grid, .account-security, .identity-provider-grid { grid-template-columns: minmax(0,1fr); }
   .account-settings .settings-panel { padding: 20px; }

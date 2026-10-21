@@ -1,8 +1,7 @@
 import { Brand, Icon } from '../components/CampaignUI'
-import { Alert, AppStateScreen, Button, ResourceCard, SearchField, SidebarNav, TrackerStatus, WorkspaceProjectSwitcher, useSidebarNavigation, AccountMenu, SidebarFooter } from '@ten98/ui'
-import type { IconName, NavLinkComponent, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
-import { AuthLayout } from '../components/AuthLayout'
-import { AppField } from '@ten98/ui/app'
+import { Alert, AppStateScreen, AuthErrorBoundary, Button, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, TrackerStatus, WorkspaceProjectSwitcher, useSidebarNavigation, AccountMenu, SidebarFooter } from '@ten98/ui'
+import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
+import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import type { HistoryState } from '@tanstack/react-router'
@@ -74,7 +73,7 @@ function RouteEntry(){
   const location=useLocation(),raw=new URLSearchParams(location.searchStr)
   // Router normalizes duplicate/JSON view values; public-share intent must never boot private APIs.
   const shared=raw.getAll('view').some(value=>value.includes('tracked-share'))
-  return shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>
+  return <AuthErrorBoundary fallback={{ brand: <Brand /> }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
 }
 
 type Status = { configured: boolean; appUrl: string }
@@ -494,8 +493,8 @@ function App() {
     setAuthNotice(null)
     const response = await api<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/email', { method: 'POST', body: { email, password } })
     if (sessionGeneration.current !== session) return
-    if (response.twoFactorRedirect) { setPhase('factor'); return }
-    setPhase('loading'); setInviteSigningIn(false)
+    if (response.twoFactorRedirect) { setSignInEmail(email); setPhase('factor'); return }
+    setSignInEmail(''); setPhase('loading'); setInviteSigningIn(false)
     await boot()
   }
 
@@ -505,7 +504,7 @@ function App() {
     if (sessionGeneration.current !== session) return
     oidcFactor.current = false
     // A completed factor is single-use. Retry loading the session, never the consumed code.
-    setPhase('loading'); setInviteSigningIn(false)
+    setSignInEmail(''); setPhase('loading'); setInviteSigningIn(false)
     await boot()
   }
 
@@ -581,9 +580,9 @@ function App() {
 
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
   if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={resetSession} />
-  if (inviteToken && !inviteSigningIn) return <AuthLayout><section className='card auth'><InvitePanel token={inviteToken} signedInEmail={me?.user.email ?? null}
+  if (inviteToken && !inviteSigningIn) return <InvitePanel token={inviteToken} signedInEmail={me?.user.email ?? null}
+    providers={me ? undefined : <OidcSignIn key={inviteToken} invitationToken={inviteToken} />}
     onAccepted={invitationAccepted} onSignIn={() => void invitationSignIn()} onCancel={() => setInviteToken('')} onUnauthorized={unauthorized} />
-    {!me && <div className='auth-providers'><OidcSignIn key={inviteToken} invitationToken={inviteToken} /></div>}</section></AuthLayout>
   if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
     onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
@@ -859,98 +858,74 @@ function AIInsightsSection(props:{workspaceId:string;projectId:string;userId:str
   return <AIInsightsPanel {...props} backLabel='Back to saved prompts' />
 }
 
-function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => Promise<void>; onSignInInstead: (email: string) => void }) {
-  const [token, setToken] = useState('')
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [workspaceName, setWorkspaceName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [ownerExists, setOwnerExists] = useState(false)
+// A status-0 ApiError means the request may or may not have completed; every other failure is a definite error.
+type AuthOutcome = { error: string; unconfirmed: string }
+const noOutcome: AuthOutcome = { error: '', unconfirmed: '' }
+function failureOutcome(e: unknown): AuthOutcome {
+  const message = errMsg(e)
+  return e instanceof ApiError && e.status === 0 ? { error: '', unconfirmed: message } : { error: message, unconfirmed: '' }
+}
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
-    setBusy(true); setError(''); setOwnerExists(false)
+function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => Promise<void>; onSignInInstead: (email: string) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [outcome, setOutcome] = useState(noOutcome)
+  const [ownerExists, setOwnerExists] = useState(false)
+  // Remounting after success clears the setup token and password; the other entries are kept.
+  const [form, setForm] = useState({ generation: 0, name: '', email: '', workspaceName: '' })
+
+  async function submit(v: FirstUserSetupValues) {
+    const values = { token: v.token.trim(), name: v.name.trim(), email: v.email.trim(), password: v.password, workspaceName: (v.workspaceName ?? '').trim() }
+    setBusy(true); setOutcome(noOutcome); setOwnerExists(false)
+    setForm(f => ({ ...f, name: values.name, email: values.email, workspaceName: values.workspaceName }))
     try {
-      await onSetup({ token: token.trim(), name: name.trim(), email: email.trim(), password, workspaceName: workspaceName.trim() })
-      setToken(''); setPassword('')
+      await onSetup(values)
+      setForm(f => ({ ...f, generation: f.generation + 1 }))
     } catch (err) {
-      const m = errMsg(err)
       if (err instanceof ApiError && err.status === 409) setOwnerExists(true)
-      setError(m)
+      setOutcome(failureOutcome(err))
     } finally { setBusy(false) }
   }
 
-  return (
-    <AuthLayout title='Create owner account' description='Create the owner account and its default workspace. The setup token comes from your server configuration.'>
-      <form className='card auth' onSubmit={(e) => void submit(e)}>
-        <AppField label='Setup token' aria-label='Setup token' id='su-token' type='password' autoComplete='off' required value={token} onChange={(e) => setToken(e.target.value)} />
-        <AppField label='Your name' aria-label='Your name' id='su-name' autoComplete='name' required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
-        <AppField label='Email' aria-label='Email' id='su-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />
-        <AppField label='Password' aria-label='Password' id='su-pw' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={password} onChange={(e) => setPassword(e.target.value)} aria-describedby='su-pw-help' />
-        <p id='su-pw-help' className='hint field-help'>At least 12 characters.</p>
-        <AppField label='Workspace name' aria-label='Workspace name' id='su-ws' autoComplete='organization' required maxLength={120} value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} />
-        {error !== '' && <div role='alert' className='alert'>{error}</div>}
-        {ownerExists && <p className='row'><button type='button' className='btn' onClick={() => onSignInInstead(email.trim())}>Sign in instead</button></p>}
-        <button className='btn primary full' disabled={busy}>{busy ? 'Creating…' : 'Create owner account'}</button>
-      </form>
-    </AuthLayout>
-  )
+  return <FirstUserSetupFlow key={form.generation} brand={<Brand />} aside={authStory} label='Account access' title='Create owner account'
+    description='Create the owner account and its default workspace. The setup token comes from your server configuration.'
+    workspaceName passwordPolicy={{ minLength: 12, maxLength: 128, hint: 'At least 12 characters.' }}
+    defaultValues={{ name: form.name, email: form.email, workspaceName: form.workspaceName }}
+    busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
+    signInInstead={ownerExists ? { onClick: email => onSignInInstead(email.trim()) } : undefined} onSubmit={submit} />
 }
 
 function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { initialEmail: string; onSignIn: (email: string, password: string) => Promise<void>; onForgot: (email: string) => void; onCancel?: () => void; notice?: {message: string; kind: 'info' | 'error'} | null }) {
-  const [email, setEmail] = useState(initialEmail)
-  const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [outcome, setOutcome] = useState(noOutcome)
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
-    setBusy(true); setError('')
-    try {
-      await onSignIn(email.trim(), password)
-      setPassword('')
-    } catch (err) { setError(errMsg(err)) }
+  async function submit(v: SignInValues) {
+    setBusy(true); setOutcome(noOutcome)
+    try { await onSignIn(v.email.trim(), v.password) }
+    catch (err) { setOutcome(failureOutcome(err)) }
     finally { setBusy(false) }
   }
 
-  return (
-    <AuthLayout title='Sign in' footer={<button type='button' className='btn' disabled={busy} onClick={() => onForgot(email.trim())}>Forgot password?</button>}>
-      <form className='card auth' onSubmit={(e) => void submit(e)}>
-        {notice && <p className={notice.kind === 'error' ? 'alert' : 'notice'} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.message}</p>}
-        <AppField label='Email' aria-label='Email' id='si-email' type='email' autoComplete='email' required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} />
-        <AppField label='Password' aria-label='Password' id='si-pw' type='password' autoComplete='current-password' required value={password} onChange={(e) => setPassword(e.target.value)} />
-        {error !== '' && <div role='alert' className='alert'>{error}</div>}
-        <button className='btn primary full' disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}<Icon name='arrow' size={16}/></button>
-        {onCancel && <button type='button' className='btn' onClick={onCancel}>Back to invitation</button>}
-        <div className='auth-providers'><OidcSignIn /></div>
-      </form>
-    </AuthLayout>
-  )
+  return <SignInFlow brand={<Brand />} aside={authStory} label='Account access' title='Sign in' defaultValues={{ email: initialEmail }}
+    busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
+    notice={notice ? { tone: notice.kind === 'error' ? 'danger' : 'info', text: notice.message } : undefined}
+    forgotPassword={{ onClick: email => onForgot(email.trim()) }} cancel={onCancel ? { label: 'Back to invitation', onClick: onCancel } : undefined}
+    providers={<OidcSignIn />} onSubmit={submit} />
 }
 
 function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery: boolean) => Promise<void>; onCancel: () => void }) {
-  const [recovery, setRecovery] = useState(false)
-  const [code, setCode] = useState('')
-  const [error, setError] = useState('')
+  const [mode, setMode] = useState<TwoFactorMode>('authenticator')
+  const [outcome, setOutcome] = useState(noOutcome)
   const [busy, setBusy] = useState(false)
-  const locked = useRef(false)
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    if (locked.current) return
-    locked.current = true; setBusy(true); setError('')
-    try { await onSubmit(code.trim(), recovery); setCode('') }
-    catch (e) { setError(errMsg(e)) }
-    finally { locked.current = false; setBusy(false) }
+  async function submit(v: TwoFactorValues) {
+    setBusy(true); setOutcome(noOutcome)
+    try { await onSubmit(v.code.trim(), v.mode === 'recovery') }
+    catch (e) { setOutcome(failureOutcome(e)) }
+    finally { setBusy(false) }
   }
-  return <AuthLayout title='Verify your sign-in' description={recovery ? 'Enter one unused recovery code. Each code can only be used once.' : 'Enter the six-digit code from your authenticator app.'}><form className='card auth' onSubmit={event => void submit(event)}>
-    <AppField label={recovery ? 'Recovery code' : 'Authenticator code'} aria-label={recovery ? 'Recovery code' : 'Authenticator code'} id='factor-code' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} value={code} onChange={event => setCode(event.target.value)} maxLength={recovery ? 21 : 6} required disabled={busy} />
-    {error && <div className='alert' role='alert'>{error}</div>}
-    <div className='row'><button className='btn primary' disabled={busy}>{busy ? 'Verifying…' : 'Verify'}</button>
-      <button type='button' className='btn' disabled={busy} onClick={() => { setRecovery(!recovery); setCode(''); setError('') }}>{recovery ? 'Use authenticator' : 'Use a recovery code'}</button>
-      <button type='button' className='btn ghost' disabled={busy} onClick={onCancel}>Back to sign in</button></div>
-  </form></AuthLayout>
+  return <TwoFactorChallengeFlow brand={<Brand />} aside={authStory} label='Account access' title='Verify your sign-in' mode={mode}
+    onModeChange={next => { setMode(next); setOutcome(noOutcome) }} busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
+    messages={{ authenticatorLabel: 'Authenticator code', authenticatorDescription: 'Enter the six-digit code from your authenticator app.', recoveryDescription: 'Enter one unused recovery code. Each code can only be used once.', useAuthenticator: 'Use authenticator' }}
+    cancel={{ label: 'Back to sign in', onClick: onCancel }} onSubmit={submit} />
 }
 
 function CreateProjectForm({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {
