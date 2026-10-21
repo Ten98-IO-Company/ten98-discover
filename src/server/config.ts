@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parseTrustedProxies, type TrustedProxies } from '@ten98/runtime';
 import { validateAnalyticsNetworkConfig } from './analytics-network.ts';
 
 export function environmentValue(name: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -13,8 +14,19 @@ export function secret(name: string, env: NodeJS.ProcessEnv = process.env): stri
   return value;
 }
 
+// TRUSTED_PROXIES changes only at restart (or in tests that set process.env), so one parsed copy is kept per value.
+let parsedProxies: { raw: unknown; list: TrustedProxies } | null = null;
+
+/** Reverse proxies whose X-Forwarded-For is honoured for per-client rate limits. Empty: the transport peer is the client. */
+export function trustedProxies(env: NodeJS.ProcessEnv = process.env): TrustedProxies {
+  const raw = env.TRUSTED_PROXIES;
+  if (!parsedProxies || parsedProxies.raw !== raw) parsedProxies = { raw, list: parseTrustedProxies(raw) };
+  return parsedProxies.list;
+}
+
 export function getConfig(env: NodeJS.ProcessEnv = process.env) {
   validateAnalyticsNetworkConfig(env);
+  trustedProxies(env);
   const rawUrl = env.APP_URL ?? 'http://localhost:3000';
   const url = new URL(rawUrl);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('APP_URL must be an HTTP(S) origin');
