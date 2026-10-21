@@ -1,17 +1,16 @@
-// Opt-in production-shell check. Reuse a private synthetic navigation session;
-// fixture event/job writes never reach the server. No direct DB/provider access.
+// Opt-in production-shell check. Needs a fresh local app (BASE_URL, default http://localhost:3094, plus that
+// server's BOOTSTRAP_TOKEN); tests/fixtures/navigation-review.mjs provisions a synthetic viewer session at run
+// time. TEN98_SHELL_FIXTURE may name a private session JSON instead. Fixture event/job writes never reach the
+// server. No direct DB/provider access.
 import assert from 'node:assert/strict';
-import {readFile, mkdir} from 'node:fs/promises';
-import {isAbsolute, relative, resolve, sep} from 'node:path';
+import {mkdir} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {loadNavigationSession} from './fixtures/navigation-review.mjs';
 import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_SHELL_FLOW_BROWSER, '1', 'Explicit isolated-shell opt-in required.');
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Supply the existing Playwright module.');
-const privateRoot = resolve('private');
-const fixturePath = resolve(process.env.TEN98_SHELL_FIXTURE ?? 'private/navigation-browser/review.json');
-const insidePrivate = path => !isAbsolute(relative(privateRoot, path)) && !relative(privateRoot, path).split(sep).includes('..');
-assert.ok(insidePrivate(fixturePath), 'Use a private synthetic navigation artifact.');
-const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
+const fixture = await loadNavigationSession({baseUrl: process.env.BASE_URL ?? process.env.APP_URL ?? 'http://localhost:3094', override: process.env.TEN98_SHELL_FIXTURE});
 assert.equal(fixture.synthetic, true);
 const entry = new URL(fixture.url), origin = entry.origin;
 assert.equal(entry.protocol, 'http:');
@@ -22,9 +21,6 @@ if (process.env.APP_URL) assert.equal(new URL(process.env.APP_URL).origin, origi
 const workspace = entry.searchParams.get('workspace'), project = entry.searchParams.get('project');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 assert.match(workspace ?? '', uuid); assert.match(project ?? '', uuid);
-assert.equal(typeof fixture.state, 'string');
-const statePath = resolve(fixture.state);
-assert.ok(insidePrivate(statePath), 'Authentication state must remain in private artifacts.');
 const evidence = resolve('private/shell-flow-browser');
 const website = 'https://' + 'source-'.repeat(8) + 'fixture.example.test';
 const publicKey = 'synthetic-shell-public-key';
@@ -55,7 +51,7 @@ const json = (route, reply) => route.fulfill({status:reply.status ?? 200, conten
 
 try {
   browser = await launchChromium();
-  const context = await browser.newContext({storageState:statePath, viewport:{width:1440,height:900}, locale:'en-US', timezoneId:'UTC', serviceWorkers:'block'});
+  const context = await browser.newContext({storageState:fixture.storageState, viewport:{width:1440,height:900}, locale:'en-US', timezoneId:'UTC', serviceWorkers:'block'});
   await context.addInitScript(() => {
     window.__shellClipboardWrites = [];
     window.__shellClipboardFailure = false;
@@ -72,6 +68,8 @@ try {
       unexpected.push('non-GET asset blocked'); return route.abort();
     }
     apiRequests.push(method + ' ' + path);
+    // The shell reads the signed-in account's own presentation preferences on load; only that read is passed through.
+    if (method === 'GET' && path === '/api/account/preferences') return route.continue();
     // These reads retain the real synthetic account/project IDs. Identity, list
     // length, membership and authority overlays are presentation cases, not RBAC proof.
     if (method === 'GET' && ['/api/status', '/api/me', `/api/workspaces/${workspace}/projects`].includes(path)) {

@@ -1,27 +1,28 @@
 // Production-bundle acceptance; run only after the supervising agent releases port 3094.
 // TEN98_RANK_LOADING_BROWSER=1 PLAYWRIGHT_MODULE=<installed module> node tests/rank-loading-browser.mjs
-// Reuses private/navigation-browser/review.json and its existing synthetic viewer session.
+// Needs a fresh local app on BASE_URL (default http://localhost:3094) plus its BOOTSTRAP_TOKEN; tests/fixtures/navigation-review.mjs
+// provisions the synthetic viewer session at run time (TEN98_SHELL_FIXTURE may name a private session JSON instead).
 // No database access, provisioning, real auth writes, rank checks, provider calls, or browser install.
 // Session races use explicitly intercepted auth/Me replies; they test client fencing, not server auth.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdir, readFile, readdir, writeFile} from 'node:fs/promises';
-import {resolve, relative, sep} from 'node:path';
+import {resolve} from 'node:path';
+import {loadNavigationSession} from './fixtures/navigation-review.mjs';
 import {pathToFileURL} from 'node:url';
 import {gzipSync} from 'node:zlib';
 import {launchChromium} from './helpers/playwright.mjs';
 
 assert.equal(process.env.TEN98_RANK_LOADING_BROWSER, '1', 'Explicit production-fixture opt-in required');
 const cwd = process.cwd(), artifactDir = resolve(cwd, 'private/rank-loading-browser');
-const fixture = JSON.parse(await readFile(resolve(cwd, 'private/navigation-browser/review.json'), 'utf8'));
+const fixture = await loadNavigationSession({baseUrl: process.env.BASE_URL ?? 'http://localhost:3094', override: process.env.TEN98_SHELL_FIXTURE});
 assert.equal(fixture.synthetic, true); assert.equal(fixture.role, 'viewer'); assert.equal(fixture.externalRequests, 0);
 const initialUrl = new URL(fixture.url), origin = initialUrl.origin;
 assert.equal(origin, 'http://localhost:3094', 'Only the released, owned synthetic app is allowed');
 const workspaceId = initialUrl.searchParams.get('workspace'), projectId = initialUrl.searchParams.get('project');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 assert.match(workspaceId ?? '', uuid); assert.match(projectId ?? '', uuid);
-const storageState = resolve(cwd, fixture.state);
-assert.ok(relative(resolve(cwd, 'private'), storageState).split(sep)[0] !== '..', 'Session stays in the private fixture directory');
+const storageState = fixture.storageState;
 
 // Read the emitted manifest and module graph; never guess a chunk hash or execute application modules.
 const serverDir = resolve(cwd, '.output/server'), publicDir = resolve(cwd, '.output/public');
@@ -143,12 +144,14 @@ async function run(name, options, check) {
     }
     return target;
   }
+  // Projects are chosen in the shared Workspace/Project switcher (a native select), not as sidebar links.
+  async function selectProject(name) { await menu(); await page.locator('#app-navigation').getByLabel('Project', {exact: true}).selectOption({label: name}); }
   async function open() { await page.goto(url()); await page.locator('main').waitFor(); await (await link('Analytics')).waitFor(); }
   const loaded = () => page.getByRole('heading', {name: 'Saved trackers', exact: true}).waitFor();
   const loading = () => page.getByRole('status').filter({hasText: 'Loading rank tracking'}).waitFor();
   const rankCalls = () => calls.filter(call => rankApi(call.path));
   try {
-    await check({page, context, calls, url, open, menu, link, loaded, loading, rankCalls,
+    await check({page, context, calls, url, open, menu, link, selectProject, loaded, loading, rankCalls,
       held: () => codeHeld, release: releaseCode, observedAssets, syntheticProject: () => syntheticProject});
     await Promise.all(tasks);
     assert.ok(observedAssets.has(routeAsset), 'Actual production routes module was exercised');
@@ -187,9 +190,9 @@ try {
     await t.open(); const first = fixtureData.projects.find(project => project.id === projectId);
     const second = fixtureData.projects.find(project => project.id !== projectId) ?? {id: otherProjectId, name: 'Contained alternate project'};
     assert.ok(first); await (await t.link('Rank tracking')).click(); await t.loading();
-    await (await t.link(second.name)).click(); await (await t.link('Rank tracking')).click(); await t.loading();
+    await t.selectProject(second.name); await (await t.link('Rank tracking')).click(); await t.loading();
     assert.equal(new URL(t.page.url()).searchParams.get('project'), second.id);
-    await (await t.link(first.name)).click(); await (await t.link('Rank tracking')).click(); await t.loading();
+    await t.selectProject(first.name); await (await t.link('Rank tracking')).click(); await t.loading();
     assert.equal(t.rankCalls().length, 0); t.release(); await t.loaded();
     assert.deepEqual(t.rankCalls().map(call => call.path), [`/api/projects/${projectId}/rank-trackers`]);
     assert.equal(new URL(t.page.url()).searchParams.get('project'), projectId);
