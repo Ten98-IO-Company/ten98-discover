@@ -150,7 +150,9 @@ try {
     const size = await page.locator('header.t98-shell-header--topbar').evaluate(bar => {
       const bounds = bar.getBoundingClientRect(), workspace = bar.querySelector('.t98-app-topbar__scope');
       const workspaceBox = workspace.getBoundingClientRect();
-      return {height:bounds.height, workspaceLines:workspaceBox.height / parseFloat(getComputedStyle(workspace).lineHeight), contained:[bar.querySelector('.t98-app-topbar__breadcrumb'), ...[...bar.querySelectorAll('.t98-app-topbar__actions *')].filter(element => element.textContent === 'Development preview' && element.getClientRects().length)].every(element => {
+      // line-height: normal computes to a keyword, so fall back to the font size times a typical ratio.
+      const lineHeight = element => { const style = getComputedStyle(element), value = parseFloat(style.lineHeight); return Number.isFinite(value) ? value : parseFloat(style.fontSize) * 1.4; };
+      return {height:bounds.height, workspaceLines:workspaceBox.height / lineHeight(workspace), contained:[bar.querySelector('.t98-app-topbar__breadcrumb'), ...[...bar.querySelectorAll('.t98-app-topbar__actions *')].filter(element => element.textContent === 'Development preview' && element.getClientRects().length)].every(element => {
         const box = element.getBoundingClientRect(); return box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1;
       })};
     });
