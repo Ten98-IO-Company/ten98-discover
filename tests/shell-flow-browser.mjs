@@ -69,7 +69,13 @@ try {
     }
     apiRequests.push(method + ' ' + path);
     // The shell reads the signed-in account's own presentation preferences on load; only that read is passed through.
-    if (method === 'GET' && path === '/api/account/preferences') return route.continue();
+    // The loaded preference name replaces the /api/me name in the shell, so the presentation overlay applies to both.
+    if (method === 'GET' && path === '/api/account/preferences') {
+      const response = await route.fetch({maxRedirects:0});
+      const body = await response.json();
+      if (response.status() === 200 && body?.user) body.user.name = longIdentity ? 'Account name ' + 'readable long name '.repeat(12) : 'Shell Fixture User';
+      return json(route, {status:response.status(), body});
+    }
     // These reads retain the real synthetic account/project IDs. Identity, list
     // length, membership and authority overlays are presentation cases, not RBAC proof.
     if (method === 'GET' && ['/api/status', '/api/me', `/api/workspaces/${workspace}/projects`].includes(path)) {
@@ -352,89 +358,130 @@ try {
   await page.emulateMedia({forcedColors:'none', reducedMotion:'no-preference'});
   await page.setViewportSize({width:927,height:1270});
   projectListCount = 2;
-  const side = page.getByRole('complementary', {name:'Application navigation', exact:true});
-  const workspaceTools = side.locator('details.workspace-settings');
-  const accountMenu = side.locator('details.account-menu');
-  const accountSummary = accountMenu.locator(':scope > summary');
-  const showMenu = async () => {
-    const toggle = page.getByRole('button', {name:'Menu', exact:true});
-    if (await toggle.isVisible()) await toggle.click();
+  // The shared shell presents the rail as a complementary landmark, or as a modal dialog while the narrow drawer is open.
+  const side = page.locator('aside[aria-label="Application navigation"]');
+  const workspaceSelect = side.getByRole('combobox', {name:'Workspace', exact:true});
+  const projectSelect = side.getByRole('combobox', {name:'Project', exact:true});
+  const createProject = side.getByRole('link', {name:'Create project in Shell fixture workspace', exact:true});
+  const settingsLink = side.getByRole('link', {name:'Settings', exact:true});
+  const projectSections = side.getByRole('navigation', {name:'Project sections', exact:true});
+  const accountTrigger = page.getByRole('button', {name:'Account menu', exact:true});
+  const accountPanel = async () => page.locator('[id="' + await accountTrigger.getAttribute('aria-controls') + '"]');
+  const accountOpen = async () => (await accountTrigger.getAttribute('aria-expanded')) === 'true';
+  const openAccount = async () => {
+    if (!await accountOpen()) await accountTrigger.click();
+    await (await accountPanel()).getByRole('button', {name:/^Sign/}).waitFor();
   };
+  const isActive = element => element.evaluate(node => node === document.activeElement);
+  const settingsTabs = () => main.getByRole('navigation', {name:'Settings sections', exact:true}).getByRole('link').allTextContents();
+  const openSettings = async () => { await settingsLink.click(); await main.getByRole('navigation', {name:'Settings sections', exact:true}).waitFor(); };
+  const menuToggle = page.getByRole('button', {name:'Menu', exact:true});
+  const showMenu = async () => { if (await menuToggle.isVisible() && await menuToggle.getAttribute('aria-expanded') !== 'true') await menuToggle.click(); };
+  const hideMenu = async () => { if (await menuToggle.isVisible() && await menuToggle.getAttribute('aria-expanded') === 'true') { await page.keyboard.press('Escape'); assert.equal(await menuToggle.getAttribute('aria-expanded'), 'false', 'Escape closes the navigation drawer.'); } };
+  const inViewport = element => element.evaluate(node => { const box = node.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1 && box.left >= -1 && box.right <= innerWidth + 1; });
+  const precedes = async (first, second) => page.evaluate(([a, b]) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING), [await first.elementHandle(), await second.elementHandle()]);
+  const tabsFor = (current, operatorTabs = false) => ['Your account', 'Security', 'Identity & SSO',
+    ...(current === 'owner' || current === 'admin' ? ['Workspace & access', 'API access'] : []), ...(current === 'owner' ? ['Integrations'] : []),
+    'Retention', 'New workspace', ...(operatorTabs ? ['Google setup'] : [])];
   for (role of ['owner','admin','editor','viewer']) {
     await open('events');
-    assert.deepEqual(await workspaceTools.getByRole('link', {includeHidden:true}).allTextContents(), role === 'owner' ? ['Manage team','ten98 API access','AI and search providers','Data retention','Create workspace'] : role === 'admin' ? ['Manage team','ten98 API access','Data retention','Create workspace'] : ['Data retention','Create workspace']);
-    assert.equal(await side.getByRole('link', {name:'+ New project',exact:true,includeHidden:true}).count(), role === 'viewer' ? 0 : 1);
-    assert.deepEqual(await accountMenu.getByRole('navigation', {name:'Account',exact:true,includeHidden:true}).getByRole('link', {includeHidden:true}).allTextContents(), ['Account security','Identity sign-in']);
-    assert.equal(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true,includeHidden:true}).count(), 0);
-    assert.equal(await side.locator('.account-summary-text').count(), 1);
-    assert.equal(await side.getByRole('button', {name:'Sign out',exact:true,includeHidden:true}).count(), 1);
-    assert.equal(await side.getByRole('combobox',{name:'Workspace',exact:true}).count(), 1);
-    assert.equal(await side.evaluate(element => {
-      const workspace = element.querySelector('.t98-switcher'), sections = element.querySelector('nav[aria-label="Project sections"]'), account = element.querySelector('.account-menu');
-      return workspace.contains(workspace.querySelector('select')) && !!(workspace.compareDocumentPosition(sections) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(sections.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING);
-    }), true, 'Workspace controls precede projects; account follows project navigation.');
+    // Was the workspace-settings details links: workspace authority now appears as Settings section tabs.
+    await openSettings();
+    assert.deepEqual(await settingsTabs(), tabsFor(role), 'Settings sections follow the ' + role + ' workspace role.');
+    await open('events');
+    // Was the "+ New project" link: the switcher's create action is hidden from viewers.
+    assert.equal(await workspaceSelect.count(), 1); assert.equal(await projectSelect.count(), 1);
+    assert.equal(await side.getByText(role + ' workspace', {exact:true}).isVisible(), true, 'Workspace role is presented beside the switcher.');
+    assert.equal(await createProject.count(), role === 'viewer' ? 0 : 1);
+    assert.equal(await side.getByRole('link', {name:/^Create project/, includeHidden:true}).count(), role === 'viewer' ? 0 : 1, 'Viewers have no create action.');
+    // Was details.account-menu, .account-summary-text and the sidebar sign-out: the account now lives in the top bar.
+    assert.equal(await accountTrigger.count(), 1);
+    assert.equal(await side.getByRole('button', {name:/Account menu|Sign out/, includeHidden:true}).count(), 0, 'Account controls no longer live in the sidebar.');
+    assert.equal(await accountOpen(), false); assert.equal(await (await accountPanel()).isHidden(), true, 'Closed account menu is hidden.');
+    await openAccount();
+    const panel = await accountPanel();
+    assert.equal(await panel.getByText('Shell Fixture User', {exact:true}).isVisible(), true, 'Account name is shown in the menu.');
+    assert.equal(await panel.getByText('shell-user@fixture.example.test', {exact:true}).isVisible(), true, 'Account email is shown in the menu.');
+    assert.deepEqual(await panel.getByRole('link').allTextContents(), ['Profile and appearance','Account security','Identity sign-in']);
+    assert.equal(await panel.getByRole('button', {name:'Sign out', exact:true}).count(), 1);
+    assert.equal(await panel.getByRole('link', {name:'Google setup', exact:true}).count(), 0);
+    await page.keyboard.press('Escape');
+    assert.equal(await accountOpen(), false); assert.equal(await isActive(accountTrigger), true, 'Escape returns focus to the account trigger.');
+    // Was: workspace controls precede projects, account follows project navigation.
+    assert.equal(await precedes(workspaceSelect, projectSelect), true);
+    assert.equal(await precedes(projectSelect, projectSections), true, 'Workspace and project controls precede project navigation.');
+    // Native Tab order through the switcher.
+    await workspaceSelect.focus(); await page.keyboard.press('Tab');
+    assert.equal(await isActive(projectSelect), true, 'Tab moves from Workspace to Project.');
+    await page.keyboard.press('Tab');
+    if (role === 'viewer') assert.equal(await page.evaluate(() => !!document.activeElement.closest('nav[aria-label="Workspace measurement"]')), true, 'Viewers tab straight to navigation.');
+    else assert.equal(await isActive(createProject), true, 'Create project follows Project in tab order.');
   }
   assert.equal(await side.evaluate(element => {
     const bounds = element.getBoundingClientRect();
     return getComputedStyle(element).overflowY === 'auto' && bounds.top >= 0 && bounds.bottom <= innerHeight + 1 && document.documentElement.scrollHeight <= innerHeight + 1;
   }), true, 'Flat navigation scrolls inside one bounded rail without adding page overflow.');
-  for (const target of [side.getByRole('link', {name:'Collection and privacy',exact:true}), accountSummary]) {
+  for (const target of [side.getByRole('link', {name:'Collection and privacy',exact:true}), settingsLink, accountTrigger]) {
     await target.focus();
-    assert.equal(await target.evaluate(element => {const bounds=element.getBoundingClientRect(); return element===document.activeElement && bounds.top>=0 && bounds.bottom<=innerHeight+1;}), true, 'Late project sections and Account remain reachable by keyboard in the flat rail.');
+    assert.equal(await isActive(target) && await inViewport(target), true, 'Late project sections, Settings and the account menu remain reachable by keyboard.');
   }
   await side.evaluate(element => element.scrollTo(0, 0));
   await capture('navigation-account-927x1270');
+  // Was the native details Enter/Tab/Shift+Tab/Space checks: the account menu is a button-operated disclosure.
   const toggleUrl = page.url(), requestsBeforeToggles = apiRequests.length;
-  for (const disclosure of [workspaceTools, accountMenu]) {
-    const summary = disclosure.locator(':scope > summary');
-    assert.equal(await disclosure.getAttribute('open'), null);
-    assert.equal(await summary.evaluate(element => getComputedStyle(element).display), 'list-item');
-    await summary.focus(); await page.keyboard.press('Enter');
-    assert.notEqual(await disclosure.getAttribute('open'), null);
-    await page.keyboard.press('Tab');
-    assert.equal(await disclosure.getByRole('link').first().evaluate(element => element === document.activeElement), true);
-    await page.keyboard.press('Shift+Tab');
-    assert.equal(await summary.evaluate(element => element === document.activeElement), true);
-    await page.keyboard.press('Space'); assert.equal(await disclosure.getAttribute('open'), null);
-    assert.equal(await disclosure.getByRole('link', {includeHidden:true}).first().isVisible(), false);
-    await page.keyboard.press('Tab');
-    assert.equal(await disclosure.evaluate(element => element.contains(document.activeElement)), false, 'Closed disclosure descendants are outside the tab order.');
-  }
-  assert.equal(page.url(), toggleUrl); assert.equal(apiRequests.length, requestsBeforeToggles, 'Native disclosure toggles do not issue requests.');
-  operator = true; await open('events'); await accountSummary.click();
-  assert.deepEqual(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true}).getByRole('link').allTextContents(), ['Google app setup']);
-  assert.equal(await accountMenu.getByText('Applies across workspaces.', {exact:true}).isVisible(), true);
-  assert.equal(await side.getByRole('link', {name:'AI and search providers',exact:true,includeHidden:true}).count(), 0, 'Operator authority does not upgrade a workspace viewer.');
-  projectListCount = 0; operator = false;
-  await page.goto(href('events')); await side.getByRole('navigation', {name:'Projects',exact:true}).getByText('None yet.', {exact:true}).waitFor();
-  assert.equal(await workspaceTools.locator('summary').isVisible(), true); assert.equal(await accountSummary.isVisible(), true);
+  assert.equal(await accountOpen(), false);
+  await accountTrigger.focus(); await page.keyboard.press('Enter');
+  assert.equal(await accountOpen(), true); assert.equal(await (await accountPanel()).isVisible(), true);
+  await page.keyboard.press('Tab');
+  assert.equal(await isActive((await accountPanel()).getByRole('link').first()), true, 'Tab enters the open account menu.');
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await isActive(accountTrigger), true);
+  await page.keyboard.press('Space'); assert.equal(await accountOpen(), false);
+  assert.equal(await (await accountPanel()).getByRole('link', {includeHidden:true}).first().isVisible(), false);
+  await page.keyboard.press('Tab');
+  assert.equal(await (await accountPanel()).evaluate(element => element.contains(document.activeElement)), false, 'Closed account menu descendants are outside the tab order.');
+  await accountTrigger.focus(); await page.keyboard.press('Enter'); await page.keyboard.press('Tab'); await page.keyboard.press('Escape');
+  assert.equal(await accountOpen(), false); assert.equal(await isActive(accountTrigger), true, 'Escape from inside the menu returns focus to the trigger.');
+  assert.equal(page.url(), toggleUrl); assert.equal(apiRequests.length, requestsBeforeToggles, 'Account menu toggles do not issue requests.');
+  // Was the Instance settings navigation inside the account details: Google setup is now a Settings tab for operators only.
+  operator = true; await open('events'); await openAccount();
+  assert.equal(await (await accountPanel()).getByRole('link', {name:'Google setup', exact:true}).count(), 0, 'Instance settings are not account-menu items.');
+  await page.keyboard.press('Escape');
+  await openSettings();
+  assert.deepEqual(await settingsTabs(), tabsFor('viewer', true), 'Operator authority adds Google setup but does not upgrade a workspace viewer.');
+  // Was "None yet." in the Projects navigation: the Project selector reports an empty list.
+  projectListCount = 0; operator = false; role = 'owner';
+  await page.goto(href('events')); await projectSelect.waitFor();
+  assert.equal(await projectSelect.isDisabled(), true); assert.equal(await projectSelect.locator('option:checked').innerText(), 'No projects yet');
+  assert.equal(await createProject.isVisible(), true, 'Owners can create the first project.');
+  assert.equal(await settingsLink.isVisible(), true); assert.equal(await accountTrigger.isVisible(), true);
+  // Was the open workspace-settings details offering only Create workspace.
   noWorkspaces = true;
   await page.goto(origin + '/?view=workspace'); await side.getByText('No workspaces yet.', {exact:true}).waitFor();
-  assert.equal(await side.getByRole('combobox',{name:'Workspace',exact:true}).count(), 0);
-  assert.notEqual(await workspaceTools.getAttribute('open'), null);
-  assert.deepEqual(await workspaceTools.getByRole('link').allTextContents(), ['Create workspace']);
-  await accountSummary.click();
-  assert.equal(await accountMenu.getByRole('link', {name:'Account security',exact:true}).isVisible(), true);
-  assert.equal(await accountMenu.getByRole('button', {name:'Sign out',exact:true}).isEnabled(), true);
-  noWorkspaces = false; projectListCount = 2;
-  console.log('PASS shell: unified account identity, adjacent workspace controls, owner/admin/editor/viewer/operator and empty scope, native keyboard and request-free disclosures.');
+  assert.equal(await workspaceSelect.count(), 0); assert.equal(await projectSelect.count(), 0);
+  await heading('Create workspace').waitFor();
+  assert.deepEqual(await settingsTabs(), ['Your account', 'Security', 'Identity & SSO', 'New workspace']);
+  await openAccount();
+  assert.equal(await (await accountPanel()).getByRole('link', {name:'Account security', exact:true}).isVisible(), true);
+  assert.equal(await (await accountPanel()).getByRole('button', {name:'Sign out', exact:true}).isEnabled(), true);
+  await page.keyboard.press('Escape');
+  noWorkspaces = false; projectListCount = 2; role = 'viewer';
+  console.log('PASS shell: account identity in the top bar menu, workspace/project switcher, Settings role sections, owner/admin/editor/viewer/operator and empty scope, native keyboard and request-free menu.');
 
   stage = 'sidebar all-width touch targets, scroll access, long identity and RTL';
   longNames = true; longIdentity = true;
+  const longEmail = 'a'.repeat(139) + '@fixture.example.test';
   for (const width of [320,360,768,927,1440]) {
     await page.setViewportSize({width,height:width === 927 ? 1270 : 900}); await open('events'); await showMenu();
-    for (const disclosure of await side.locator('details').all()) if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click();
-    await fit('Expanded account/sidebar ' + width);
-    for (const target of await side.locator('button, select, summary, a').all()) {
+    await fit('Expanded sidebar ' + width);
+    for (const target of await side.locator('button, select, a').all()) {
       if (!await target.isVisible()) continue;
       const box = await target.boundingBox();
-      assert.ok(box && box.height >= 44 && box.width >= 44, 'Every visible sidebar action is at least 44 × 44px at ' + width + 'px.');
+      assert.ok(box && box.height >= 44 && box.width >= 44, 'Every visible sidebar action is at least 44 × 44px at ' + width + 'px: ' + (await target.evaluate(node => node.outerHTML.slice(0, 120))) + ' is ' + box?.width + 'x' + box?.height);
     }
-    assert.equal((await side.locator('.account-email').innerText()).length, 160);
-    assert.equal(await side.locator('.account-summary-text').evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, 'Long identity fits its wrapping text region.');
     assert.equal(await side.locator('.t98-switcher').evaluate(element => getComputedStyle(element).overflowY), 'visible');
     if ([320,927].includes(width)) {
-      await page.evaluate(() => { document.documentElement.dir = 'rtl'; }); await fit('RTL account/sidebar ' + width);
+      await page.evaluate(() => { document.documentElement.dir = 'rtl'; }); await fit('RTL sidebar ' + width);
       for (const summary of await side.locator('.t98-sidebar-nav__heading').all()) {
         assert.equal(await summary.evaluate(element => {
           const text = [...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE);
@@ -443,45 +490,63 @@ try {
         }), 1, 'Short navigation words must not fragment into narrow columns.');
       }
     }
-    await accountSummary.focus(); await capture('navigation-account-expanded-' + width);
+    await hideMenu(); await openAccount();
+    const identityPanel = await accountPanel();
+    for (const target of [accountTrigger, ...await identityPanel.getByRole('link').all(), ...await identityPanel.getByRole('button').all()]) {
+      const box = await target.boundingBox();
+      assert.ok(box && box.height >= 44 && box.width >= 44, 'Every visible account action is at least 44 × 44px at ' + width + 'px: ' + (await target.evaluate(node => node.outerHTML.slice(0, 100))) + ' is ' + box?.width + 'x' + box?.height);
+    }
+    const email = identityPanel.getByText(longEmail, {exact:true}), name = identityPanel.getByText(/^Account name readable long name/);
+    assert.equal((await email.innerText()).length, 160);
+    for (const text of [email, name]) assert.equal(await text.evaluate(node => {
+      const box = node.getBoundingClientRect(), panelBox = node.closest('[id]').getBoundingClientRect();
+      return box.left >= panelBox.left - 1 && box.right <= panelBox.right + 1 && node.scrollWidth <= node.clientWidth + 1;
+    }), true, 'Long identity fits its wrapping text region.');
+    await fit('Account menu long identity ' + width);
+    await capture('navigation-account-expanded-' + width);
+    await page.keyboard.press('Escape');
   }
   longNames = false; longIdentity = false; operator = true; role = 'owner'; projectListCount = 20;
-  await page.setViewportSize({width:768,height:600}); await open('events');
-  for (const disclosure of await side.locator('details').all()) if (await disclosure.getAttribute('open') === null) await disclosure.locator(':scope > summary').click();
-  const footerSignOut = accountMenu.getByRole('button', {name:'Sign out',exact:true});
-  await footerSignOut.focus();
+  await page.setViewportSize({width:768,height:420}); await open('events'); await showMenu();
+  await settingsLink.focus();
   assert.equal(await side.evaluate(element => element.scrollTop > 0 && element.scrollHeight > element.clientHeight), true);
-  assert.equal(await footerSignOut.evaluate(element => { const box = element.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1; }), true, 'Final account action remains reachable in an overflowing short rail.');
+  assert.equal(await inViewport(settingsLink), true, 'Final sidebar action remains reachable in an overflowing short rail.');
   assert.equal(await side.locator('.t98-switcher').evaluate(element => getComputedStyle(element).maxHeight), 'none');
   await fit('Short overflowing rail'); await capture('navigation-account-short-overflow');
+  await hideMenu(); await openAccount();
+  assert.equal(await inViewport((await accountPanel()).getByRole('button', {name:'Sign out', exact:true})), true, 'Sign out remains reachable in a short viewport.');
+  await page.keyboard.press('Escape');
   projectListCount = 2; operator = false; role = 'viewer';
-  await page.setViewportSize({width:1440,height:900}); await open('events'); await accountSummary.click();
+  await page.setViewportSize({width:1440,height:900}); await open('events'); await openAccount();
+  const footerSignOut = (await accountPanel()).getByRole('button', {name:'Sign out', exact:true});
   await page.evaluate(() => { document.documentElement.style.zoom = '2'; }); await fit('Account 200% CSS layout zoom');
   assert.equal(await footerSignOut.isVisible(), true); await capture('navigation-account-layout-zoom-200');
   await page.evaluate(() => { document.documentElement.style.zoom = ''; });
-  await page.emulateMedia({forcedColors:'active', reducedMotion:'reduce'}); await accountSummary.focus();
+  await page.emulateMedia({forcedColors:'active', reducedMotion:'reduce'}); await accountTrigger.focus();
   await page.keyboard.press('Tab'); await page.keyboard.press('Shift+Tab');
-  assert.notEqual(await accountSummary.evaluate(element => getComputedStyle(element).outlineStyle), 'none');
-  assert.equal(await accountSummary.evaluate(element => getComputedStyle(element).display), 'list-item');
-  assert.notEqual(await accountMenu.evaluate(element => getComputedStyle(element).borderInlineStartStyle), 'none');
+  assert.notEqual(await accountTrigger.evaluate(element => getComputedStyle(element).outlineStyle), 'none');
+  assert.notEqual(await (await accountPanel()).evaluate(element => getComputedStyle(element).borderTopStyle), 'none', 'Forced colors keep the account menu boundary.');
   await capture('navigation-account-forced-colors');
-  console.log('PASS shell: sidebar 320/360/768/927/1440 targets, reported viewport fit, long identity/RTL, single rail scroll access, layout zoom and forced colors.');
+  console.log('PASS shell: sidebar 320/360/768/927/1440 targets, top bar account targets, reported viewport fit, long identity/RTL, single rail scroll access, layout zoom and forced colors.');
 
   stage = 'contained sign-out pending, failure recovery and success';
   await page.emulateMedia({forcedColors:'none', reducedMotion:'no-preference'});
   holdSignOut = true;
   const signOutHeld = new Promise(resolve => { signOutHeldResolve = resolve; });
   await footerSignOut.click(); await signOutHeld;
-  const busySignOut = accountMenu.getByRole('button', {name:'Signing out…',exact:true});
+  assert.equal(await accountOpen(), false, 'Choosing Sign out closes the menu.');
+  await openAccount();
+  const busySignOut = (await accountPanel()).getByRole('button', {name:'Signing out…',exact:true});
   assert.equal(await busySignOut.isDisabled(), true); assert.equal(calls.signOut, 1);
-  await page.keyboard.press('Enter'); assert.equal(calls.signOut, 1, 'Native disabled sign-out cannot submit a second request.');
+  await busySignOut.click({force:true}); assert.equal(calls.signOut, 1, 'Native disabled sign-out cannot submit a second request.');
   await release(heldSignOut); heldSignOut = undefined; holdSignOut = false;
   await main.getByRole('alert').filter({hasText:'Synthetic sign-out unavailable.'}).waitFor();
-  await page.waitForFunction(() => !document.querySelector('.account-signout button')?.disabled);
-  assert.equal(await footerSignOut.isEnabled(), true); assert.equal(await side.locator('.account-email').innerText(), 'shell-user@fixture.example.test');
+  await footerSignOut.waitFor();
+  assert.equal(await footerSignOut.isEnabled(), true); assert.equal(await (await accountPanel()).getByText('shell-user@fixture.example.test', {exact:true}).isVisible(), true);
   signOutReply = {body:{}};
   await footerSignOut.click(); await page.getByRole('button', {name:'Sign in',exact:true}).waitFor();
   assert.equal(calls.signOut, 2); assert.equal(await side.count(), 0, 'Successful sign-out clears the authenticated shell.');
+  assert.equal(await accountTrigger.count(), 0, 'Successful sign-out removes the account menu.');
   assert.deepEqual(unexpected, []); assert.deepEqual(errors, []);
   assert.deepEqual(responsiveFindings, [], 'Responsive findings: ' + responsiveFindings.join(' '));
   console.log('PASS shell: synthetic sign-out remains single/disabled while pending, preserves account and alert on failure, and clears shell on success without a server mutation.');
