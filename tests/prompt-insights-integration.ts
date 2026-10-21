@@ -65,6 +65,7 @@ export async function runPromptInsightsChecks(){
   manifest(r);const priorOnly=await seed(f,[{result:result('Prior-only expired answer'),purged:true,at:new Date(Date.now()-86400000).toISOString()}]);
   const afterPrior=await get(f,{},viewer);manifest(afterPrior);assert.deepEqual(afterPrior.evidenceStates,r.evidenceStates);assert.ok(!afterPrior.evidenceStates.some(e=>e.id===priorOnly[0].id),'An expired prior-period receipt cannot poison a current selection.');
   assert.deepEqual(r.metrics,[{id:'brand',mentions:2,citations:1,eligibleAnswers:4,shareOfVoiceDenominator:4,citationDenominator:4},{id:f.competitor,mentions:2,citations:0,eligibleAnswers:4,shareOfVoiceDenominator:4,citationDenominator:4}]);
+  assert.deepEqual(r.carried.dates,r.daily.map(d=>d.date));assert.equal(r.carried.leaderboard.brandShare,r.carried.series.at(-1)!.share,'Carried leaderboard and trend agree; observed fields above are unchanged.');
   assert.equal(r.executions.find(e=>e.status==='uncertain')?.eligibility,'eligible');assert.equal(r.daily[0].coverage.eligible,4);assert.match(r.label,/current project context/);
   for(const [outcome,total]of [['mentioned',2],['not_mentioned',2],['cited',1]] as const){const drill=await get(f,{entityId:'brand',outcome});assert.equal(drill.totalRows,total);manifest(drill);assert.deepEqual(drill.evidenceStates,r.evidenceStates,'Drilldown cannot discard hidden selected expiry states.');}
   assert.equal((await get(f,{outcome:'eligible'})).totalRows,4);assert.equal((await get(f,{outcome:'unavailable'})).totalRows,8);

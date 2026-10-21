@@ -8,7 +8,7 @@ The pinned [Umami collector](https://github.com/umami-software/umami/blob/ec0ff5
 
 Funnels contain 2–8 ordered steps. **Activity at path** accepts any matching activity; **Page views only** explicitly narrows a path step. Custom-event steps accept event-name and typed property conditions. Match operations are literal exact, prefix, suffix and contains; `%`, `_` and `*` are not SQL wildcards. The 1–1440 minute window applies between adjacent steps. Every reachable endpoint remains eligible, so a failed early attempt does not hide a later valid chain.
 
-Receipt times must strictly increase. Unlike upstream's inclusive PostgreSQL timestamps, one event cannot complete repeated steps and equal-time observations do not prove an order. Shared filters apply to every step, resolving an upstream PostgreSQL/ClickHouse inconsistency explicitly. Negative property conditions require a present value of the selected type; missing is a separate predicate. These semantics use a named ten98 method version rather than promising identical upstream SQL results.
+The evaluator follows [Umami 3.4.0's relational funnel](https://github.com/umami-software/umami/blob/ec0ff50388c264ed8ce46f00967e92f7e71476ae/src/queries/sql/funnels/getFunnel.ts) (commit ec0ff50, MIT; see THIRD_PARTY_NOTICES.md; linear carry evaluation instead of its pairwise join, for performance): each step must match at or after the previous step's receipt time and within the window inclusive of both ends, so equal-time observations can advance and one event can satisfy repeated steps. Discover keeps its own match modes, typed property predicates, and shared filters on every step (Umami's PostgreSQL query applies them to the first step only). The method is named `umami-3.4.0-funnel`.
 
 [Goals](https://github.com/umami-software/umami/blob/ec0ff50388c264ed8ce46f00967e92f7e71476ae/src/queries/sql/goals/getGoal.ts#L35) have one **Viewed page** or **Custom event** condition. The denominator is all identified visitors with any event in the shared scope; the target condition narrows only the numerator. Repeated matches count once per estimated visitor. A known population with no matching visitor is zero; no known population is unavailable.
 
@@ -29,7 +29,7 @@ No provider connection or background job is needed.
 
 ## Evaluator implementation
 
-The final implementation carries the most recent reachable predecessor through ordered SQL windows, preserving all reachable endpoints without pair expansion or relying on estimated join cardinality. Count-only requests omit witness work; witness event IDs use indexed project-bound lookups in the same repeatable-read snapshot.
+The implementation keeps Umami's level semantics but evaluates each level with a linear ordered window carry of the latest earlier distinct visitor/receipt-time row (previous rows sort before matches at equal times) instead of Umami's pairwise level join, which would be quadratic on dense visitors; counts are identical. Count-only requests omit witness work; witness event IDs use indexed project-bound lookups in the same repeatable-read snapshot.
 
 ### Optional local performance regression
 
