@@ -1,5 +1,5 @@
 import { Brand, Icon } from '../components/CampaignUI'
-import { Alert, AppStateScreen, AuthErrorBoundary, Button, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import { Alert, AppStateScreen, AuthErrorBoundary, Button, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
 import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -76,7 +76,7 @@ function RouteEntry(){
   return <AuthErrorBoundary fallback={{ brand: <Brand /> }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
 }
 
-type Status = { configured: boolean; appUrl: string }
+type Status = { configured: boolean; appUrl: string; trackerScript?: string; collectPath?: string | null }
 type Workspace = { id: string; name: string; role: string }
 type Me = { user: { id: string; name: string; email: string }; instanceOperator: boolean; workspaces: Workspace[] }
 type Project = { id: string; name: string; origin: string; publicKey: string; eventCount: number; lastEventAt: string | null; retainedFrom: string | null }
@@ -141,6 +141,7 @@ function App() {
   const [projectId, setProjectId] = useState('')
   const [events, setEvents] = useState<EventsData | null>(null)
   const [eventsBusy, setEventsBusy] = useState(false)
+  const [firstEventSeen, setFirstEventSeen] = useState(false)
   const [eventsError, setEventsError] = useState('')
   const [jobs, setJobs] = useState<Job[] | null>(null)
   const [jobsBusy, setJobsBusy] = useState(false)
@@ -157,16 +158,6 @@ function App() {
   const preferencesEntry=useRef(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolSearch, setToolSearch] = useState('')
-  // The shared AppShell skip link is a native fragment link. Focus <main> directly so activation (including modified clicks)
-  // never opens a tab, adds a history entry or leaves a fragment that the callback parser would reject.
-  useEffect(() => {
-    const skip = (event: MouseEvent) => {
-      if (!(event.target instanceof Element) || !event.target.closest('a.t98-skip-link')) return
-      event.preventDefault(); document.querySelector<HTMLElement>('main')?.focus()
-    }
-    document.addEventListener('click', skip)
-    return () => document.removeEventListener('click', skip)
-  }, [])
   useEffect(() => { const media=window.matchMedia('(max-width:960px)'); const clear=()=>{if(media.matches)setToolSearch('')};media.addEventListener('change',clear);return()=>media.removeEventListener('change',clear) }, [])
   const [oidcProofId, setOidcProofId] = useState<string>()
   const [authNotice, setAuthNotice] = useState<{message: string; kind: 'info' | 'error'} | null>(null)
@@ -341,7 +332,7 @@ function App() {
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
-    setEvents(null); setEventsError(''); setEventsBusy(false)
+    setEvents(null); setEventsError(''); setEventsBusy(false); setFirstEventSeen(false)
     setJobs(null); setJobError(''); setJobsBusy(false); setCheckBusy(false)
     setCopied('idle')
     if (id) void loadEvents(id)
@@ -350,6 +341,22 @@ function App() {
   useEffect(() => {
     if (phase === 'app' && view === 'installation' && projectId) { void loadJobs(projectId); void loadEvents(projectId) }
   }, [phase, view, projectId])
+
+  // While Install shows an empty history, poll for the first event every 3 s for up to 10 minutes (PostHog onboarding pattern),
+  // skipping reads while the tab is hidden. Polling stops once an event arrives, on navigation or on unmount.
+  const awaitingFirstEvent = phase === 'app' && view === 'installation' && projectId !== '' && events?.total === 0
+  useEffect(() => {
+    if (!awaitingFirstEvent) return
+    const pid = projectId, deadline = Date.now() + 600_000
+    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined
+    const tick = async () => {
+      if (stopped || Date.now() > deadline) return
+      if (document.visibilityState === 'visible') await loadEvents(pid, true)
+      if (!stopped) timer = setTimeout(() => void tick(), 3000)
+    }
+    timer = setTimeout(() => void tick(), 3000)
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [awaitingFirstEvent, projectId])
 
   function changeWorkspace(id: string) {
     go({ ...(id ? { workspace: id } : {}), view: 'project' })
@@ -439,15 +446,17 @@ function App() {
     }
   }
 
-  async function loadEvents(pid: string) {
-    const gen = projGen.current, read = ++eventsRead.current
+  // A background read (first-event polling) leaves the busy state and any previous result alone and ignores transient failures.
+  // It never supersedes a user-started read; a later user read supersedes it.
+  async function loadEvents(pid: string, background = false) {
+    const gen = projGen.current, read = background ? eventsRead.current : ++eventsRead.current
     const current = () => activeProject.current === pid && projGen.current === gen && eventsRead.current === read
-    setEventsBusy(true); setEventsError('')
+    if (!background) { setEventsBusy(true); setEventsError('') }
     try {
       const d = await api<EventsData>(`/api/projects/${pid}/events`)
-      if (current()) setEvents(d)
-    } catch (e) { if (current() && !guardAuth(e)) { if (e instanceof ApiError && [403,404].includes(e.status)) setEvents(null); setEventsError(errMsg(e)) } }
-    finally { if (current()) setEventsBusy(false) }
+      if (current()) { if (background && d.total > 0) setFirstEventSeen(true); setEvents(d); if (background) setEventsError('') }
+    } catch (e) { if (current() && !guardAuth(e) && !background) { if (e instanceof ApiError && [403,404].includes(e.status)) setEvents(null); setEventsError(errMsg(e)) } }
+    finally { if (current() && !background) setEventsBusy(false) }
   }
 
   async function loadJobs(pid: string) {
@@ -598,7 +607,8 @@ function App() {
   const project = projects?.find((p) => p.id === projectId) ?? null
   const lastReceived = events !== null ? events.events[0]?.receivedAt ?? null : eventsError ? null : project?.lastEventAt ?? null
   const appUrl = (status?.appUrl ?? '').replace(/\/+$/, '')
-  const snippet = project !== null ? `<script defer src="${appUrl}/tracker.js" data-site-key="${project.publicKey}" referrerpolicy="no-referrer"></script>` : ''
+  const collectPath = status?.collectPath ? ` data-collect-path="${status.collectPath}"` : ''
+  const snippet = project !== null ? `<script defer src="${appUrl}${status?.trackerScript ?? '/tracker.js'}" data-site-key="${project.publicKey}"${collectPath} referrerpolicy="no-referrer"></script>` : ''
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(appUrl)
   const projectView = isProjectView(view)
   const toolQuery = toolSearch.trim().toLowerCase()
@@ -661,7 +671,7 @@ function App() {
           <Link className={`nav-item${['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)?' selected':''}`} to='/' search={target('preferences')}><Icon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
-      topbar={<AppTopbar menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
+      topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
         <div className='page-content content'>
         {['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)&&<nav className='tabs settings-navigation' aria-label='Settings sections'>
           <Link className={view==='preferences'?'active':''} to='/' search={target('preferences')}>Your account</Link>
@@ -814,8 +824,9 @@ function App() {
                   installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
                 {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
+                {firstEventSeen && (events?.total ?? 0) > 0 && <StatusLine tone='success'>First event received. Your tracker is sending events to this project.</StatusLine>}
                 {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt}>{fmt(events.events[0].receivedAt)}</time>.</p>}
-                {events !== null && events.total === 0 && <p>No events in retained history. Confirm the tag is published, visit your website, then check again. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
+                {events !== null && events.total === 0 && <p>No events in retained history yet. This page checks automatically for 10 minutes. Confirm the tag is published and visit your website. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
                 {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
                 <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
                 <Link to='/' search={target('events')}>Inspect recent events</Link>

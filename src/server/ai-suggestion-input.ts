@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {FoundationError} from './auth.ts';
-import {canonicalHash,cleanText,revision,sectionKeys,tags,text} from './context-input.ts';
+import {cleanText,revision,sectionKeys,tags,text} from './context-input.ts';
 import type {OpenRouterModel,RenderedInput} from './openrouter-input.ts';
 import {openRouterModelId} from '../lib/openrouter-models.ts';
 
@@ -58,4 +58,3 @@ export function suggestionMessages(snapshot:SuggestionSnapshot):RenderedInput{
 }
 export function suggestionProfile(id:SuggestionInput['profileId']){return suggestionProfiles.find(p=>p.id===id)!;}
 export function suggestionModel(input:SuggestionInput){return input.profileId==='catalog-text-schema-v1'?input.model:suggestionProfile(input.profileId).model;}
-export function suggestionBodyHash(userId:string,input:unknown){return canonicalHash({userId,input});}

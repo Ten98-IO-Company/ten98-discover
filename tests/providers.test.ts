@@ -83,6 +83,11 @@ test('provider account checks use fixed read-only URLs, reject redirects, bound 
   assert.equal(calls[0].init?.credentials, 'omit');
   assert.equal((await providerAccountCheck('dataforseo', { login: 'test@example.test', password: secret }, send({ status_code: 20000, tasks: [{ status_code: 20000, result: [{}] }] }))).checkStatus, 'ok');
   assert.equal(calls[1].url, 'https://api.dataforseo.com/v3/appendix/user_data');
+  // Each provider sends only its own credential: OpenRouter's bearer comes from openRouterFetch; DataForSEO's request is unchanged Basic auth.
+  assert.equal(new Headers(calls[0].init?.headers).get('authorization'), `Bearer ${secret}`);
+  const { signal, ...dataForSeoInit } = calls[1].init ?? {};
+  assert.ok(signal instanceof AbortSignal);
+  assert.deepEqual(dataForSeoInit, { headers: { authorization: `Basic ${Buffer.from(`test@example.test:${secret}`).toString('base64')}`, accept: 'application/json' }, redirect: 'error', credentials: 'omit' });
   for (const status of [401,403,429,500]) {
     const result = await providerAccountCheck('openrouter', { apiKey: secret }, send({ error: secret }, status));
     assert.equal(result.checkStatus, 'error'); assert.ok(!JSON.stringify(result).includes(secret));

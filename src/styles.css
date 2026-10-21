@@ -234,14 +234,6 @@
 .domains-panel .domain-table td{ vertical-align: top; }
 .domains-panel .domain-table .row{ align-items: flex-start; }
 .domains-panel [tabindex='-1']:focus-visible{ outline: 2px solid var(--color-focus); outline-offset: 4px; }
-@media (max-width: 640px){
-.domains-panel .domain-table{ overflow: visible; }
-.domains-panel .domain-table :is(table, tbody, tr, td){ display: block; inline-size: 100%; }
-.domains-panel .domain-table thead{ position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
-.domains-panel .domain-table tr{ margin-block: 12px; border: 1px solid var(--line); border-radius: 7px; padding: 12px; }
-.domains-panel .domain-table td{ border: 0; padding: 6px 0; }
-.domains-panel .domain-table td::before{ content: attr(data-label); display: block; color: var(--muted); font-size: var(--text-xs); margin-block-end: 4px; }
-}
 .prompt-table table{ min-width: 900px; }
 .prompt-table th:first-child, .prompt-table td:first-child{ min-width: 240px; width: 34%; }
 .prompt-table th:last-child, .prompt-table td:last-child{ min-width: 210px; }

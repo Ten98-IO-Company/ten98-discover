@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseTrustedProxies, type TrustedProxies } from '@ten98/runtime';
 import { validateAnalyticsNetworkConfig } from './analytics-network.ts';
+import { collectorAliases } from './collector-alias.ts';
 
 export function environmentValue(name: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (env[name] && env[`${name}_FILE`]) throw new Error(`Set only ${name} or ${name}_FILE`);
@@ -27,6 +28,7 @@ export function trustedProxies(env: NodeJS.ProcessEnv = process.env): TrustedPro
 export function getConfig(env: NodeJS.ProcessEnv = process.env) {
   validateAnalyticsNetworkConfig(env);
   trustedProxies(env);
+  const aliases = collectorAliases(env);
   const rawUrl = env.APP_URL ?? 'http://localhost:3000';
   const url = new URL(rawUrl);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('APP_URL must be an HTTP(S) origin');
@@ -34,5 +36,5 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env) {
   const databaseUrl = env.DATABASE_URL_FILE ? readFileSync(env.DATABASE_URL_FILE, 'utf8').trim() : env.DATABASE_URL;
   if (env.DATABASE_URL_FILE && env.DATABASE_URL) throw new Error('Set only DATABASE_URL or DATABASE_URL_FILE');
   if (!databaseUrl || !['postgres:', 'postgresql:'].includes(new URL(databaseUrl).protocol)) throw new Error('A PostgreSQL DATABASE_URL is required');
-  return { appUrl: url.origin, databaseUrl, authSecret: secret('AUTH_SECRET', env), bootstrapToken: secret('BOOTSTRAP_TOKEN', env), artifactDir: resolve(env.ARTIFACT_DIR ?? './data/artifacts') };
+  return { appUrl: url.origin, databaseUrl, authSecret: secret('AUTH_SECRET', env), bootstrapToken: secret('BOOTSTRAP_TOKEN', env), artifactDir: resolve(env.ARTIFACT_DIR ?? './data/artifacts'), collectPathAlias: aliases.collectPath, trackerScriptAlias: aliases.scriptPath };
 }

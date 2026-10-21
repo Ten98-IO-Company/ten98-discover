@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { z } from 'zod';
 import type {PoolClient} from 'pg';
 import { getConfig } from './config.ts';
+import { collectorRoutePath } from './collector-alias.ts';
 import { assertSchema, getDatabase } from './db.ts';
 import { claimInstallation, FoundationError, getAuth } from './auth.ts';
 import { enqueueProbe, reconcileProbes } from './jobs.ts';
@@ -140,7 +141,7 @@ export async function handleApi(request: Request): Promise<Response> {
   let cors: Record<string, string> = {};
   try {
     const url = new URL(request.url);
-    const path = url.pathname.replace(/\/$/, '');
+    const path = collectorRoutePath(url.pathname.replace(/\/$/, ''));
     if (path === '/api/health/live' && request.method === 'GET') return json({ status: 'alive' });
     if(path==='/api/openapi.json') {
       if(request.method!=='GET')return json({error:'Method not allowed.'},405,{allow:'GET'});
@@ -236,13 +237,14 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     if (path === '/api/status' && request.method === 'GET') {
       const { rows } = await getDatabase().pool.query("SELECT claimed FROM installation WHERE id='instance'");
-      return json({ configured: rows[0]?.claimed === true, appUrl: config.appUrl });
+      return json({ configured: rows[0]?.claimed === true, appUrl: config.appUrl, trackerScript: config.trackerScriptAlias ?? '/tracker.js', collectPath: config.collectPathAlias });
     }
     if (path === '/api/collect' || path === '/api/tracking-config' || path === '/api/replay/begin' || path === '/api/replay/chunks'||path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches'||path==='/api/heatmaps/backgrounds') {
       const origin = request.headers.get('origin');
       if (!origin) throw new FoundationError(403, 'A configured website origin is required.');
-      await limit('collector:global', 6000);
+      // Count the shared collection budget only for configured origins, so unconfigured traffic cannot exhaust it for every website.
       if (!await collectionOriginAllowed(getDatabase().pool, origin)) throw new FoundationError(403, 'Website origin is not configured.');
+      await limit('collector:global', 6000);
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405, cors);
