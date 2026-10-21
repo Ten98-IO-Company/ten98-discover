@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime';
+import { Banner } from '@ten98/ui';
 import { assignableRoles, invitableRoles } from '../lib/team-roles';
 import { api, ApiError, errMsg } from '../lib/api';
 
@@ -392,12 +393,10 @@ function TeamPanelContent(props: TeamPanelProps) {
       {myRole === 'owner' && (
         <section className='card' aria-labelledby='two-factor-heading'>
           <h2 id='two-factor-heading'>Two-factor requirement</h2>
-          <p id='two-factor-status' role='status'>
-            {data.workspace.twoFactorRequired
-              ? 'Members must turn on two-factor authentication before opening this workspace’s data.'
-              : 'Members can open this workspace without two-factor authentication.'}
-          </p>
-          <button type='button' className='btn' style={{ minBlockSize: 'var(--control-touch)' }} aria-disabled={busy} aria-describedby='two-factor-status' onClick={toggleTwoFactor}>
+          {data.workspace.twoFactorRequired
+            ? <Banner tone='warning' icon='shield' live>Members must turn on two-factor authentication before opening this workspace’s data.</Banner>
+            : <p id='two-factor-status' role='status'>Members can open this workspace without two-factor authentication.</p>}
+          <button type='button' className='btn' style={{ minBlockSize: 'var(--control-touch)' }} aria-disabled={busy} aria-describedby={data.workspace.twoFactorRequired ? undefined : 'two-factor-status'} onClick={toggleTwoFactor}>
             {data.workspace.twoFactorRequired ? 'Stop requiring two-factor authentication' : 'Require two-factor authentication'}
           </button>
         </section>

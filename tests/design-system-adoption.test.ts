@@ -36,5 +36,4 @@ test('Discover consumes package tokens, styles and visual elements without copie
  assert.match(sharedTokens,/--color-accent:\s*var\(--t98-accent\)/);
  assert.match(sharedStyles,/\.brand-mark\s*\{/);
  assert.match(styles,/\[hidden\]\s*\{\s*display:none!important/,'Discover native hidden state remains effective');
- assert.match(styles,/inset-inline-start:0/,'Discover retains its RTL sidebar adaptation');
 });
