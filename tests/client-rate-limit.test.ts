@@ -48,6 +48,8 @@ test('forwarding headers are honoured only from configured trusted proxies', asy
     assert.equal(requestClientAddress(chained, { TRUSTED_PROXIES: '127.0.0.0/8' }), '198.51.100.7', 'the right-most untrusted hop is the client');
     assert.equal(requestClientAddress(fromPeer('/'), { TRUSTED_PROXIES: '127.0.0.1' }), null, 'a trusted peer without a chain is unknown');
     assert.equal(requestClientAddress(fromPeer('/', { headers: { 'x-forwarded-for': 'malformed' } }), { TRUSTED_PROXIES: '127.0.0.1' }), null);
+    assert.equal(requestClientAddress(spoofed, { ANALYTICS_TRUSTED_PROXIES: '127.0.0.1' }), '198.51.100.7', 'the analytics proxy list applies when TRUSTED_PROXIES is unset');
+    assert.equal(requestClientAddress(spoofed, { TRUSTED_PROXIES: '10.0.0.0/8', ANALYTICS_TRUSTED_PROXIES: '127.0.0.1' }), '127.0.0.1', 'an explicit TRUSTED_PROXIES wins');
   });
 });
 
