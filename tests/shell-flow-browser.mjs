@@ -370,7 +370,7 @@ try {
     assert.equal(await accountMenu.getByRole('navigation', {name:'Instance settings',exact:true,includeHidden:true}).count(), 0);
     assert.equal(await side.locator('.account-summary-text').count(), 1);
     assert.equal(await side.getByRole('button', {name:'Sign out',exact:true,includeHidden:true}).count(), 1);
-    assert.equal(await side.locator('#ws').count(), 1);
+    assert.equal(await side.getByLabel('Workspace',{exact:true}).count(), 1);
     assert.equal(await side.evaluate(element => {
       const workspace = element.querySelector('.workspace-controls'), projects = element.querySelector('nav[aria-label="Projects"]'), sections = element.querySelector('nav[aria-label="Project sections"]'), account = element.querySelector('.account-menu');
       return workspace.contains(element.querySelector('#ws')) && workspace.contains(element.querySelector('.workspace-settings')) && !!(workspace.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(sections.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -412,7 +412,7 @@ try {
   assert.equal(await workspaceTools.locator('summary').isVisible(), true); assert.equal(await accountSummary.isVisible(), true);
   noWorkspaces = true;
   await page.goto(origin + '/?view=workspace'); await side.getByText('No workspaces yet.', {exact:true}).waitFor();
-  assert.equal(await side.locator('#ws').count(), 0);
+  assert.equal(await side.getByLabel('Workspace',{exact:true}).count(), 0);
   assert.notEqual(await workspaceTools.getAttribute('open'), null);
   assert.deepEqual(await workspaceTools.getByRole('link').allTextContents(), ['Create workspace']);
   await accountSummary.click();
