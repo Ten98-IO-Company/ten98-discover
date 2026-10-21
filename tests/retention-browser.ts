@@ -60,7 +60,7 @@ try {
     await target.click();
   }
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
-  await navigation();await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:'Retention browser project',exact:true}).click();
+  await navigation();await page.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true}).selectOption({label:'Retention browser project'});
   await page.getByText('This date range is partial after retention.',{exact:false}).waitFor();
   await page.getByText('Daily data table',{exact:true}).click();
   assert.ok(await page.getByText('Unavailable',{exact:true}).count()>0);

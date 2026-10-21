@@ -37,7 +37,7 @@ try{
   assert.equal((await ctx.request.post(`${config.appUrl}/api/auth/sign-in/email`,{headers:{origin:config.appUrl},data:{email,password}})).status(),200);
   const page=await ctx.newPage();page.setDefaultTimeout(15000);
   await page.goto(config.appUrl);
-  async function nav(label:string,target=page){await closeExplore(target);const menu=target.getByRole('button',{name:'Menu',exact:true});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await (await closeExplore(target)).getByRole('link',{name:label,exact:true}).click();}
+  async function nav(label:string,target=page){await closeExplore(target);const menu=target.getByRole('button',{name:'Menu',exact:true});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();const project=target.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true});if(await project.evaluate((select:HTMLSelectElement,name:string)=>[...select.options].some(option=>option.text===name),label)){await project.selectOption({label});return;}await (await closeExplore(target)).getByRole('link',{name:label,exact:true}).click();}
   await nav('Explorer sample');await nav('Explore');
   const filterDialog=page.getByRole('dialog',{name:'Explore filters',exact:true}),filterTrigger=page.getByRole('button',{name:'Edit filters',exact:true});
   await page.getByRole('button',{name:'Download CSV',exact:true}).waitFor();assert.equal(await filterDialog.isVisible(),false,'Default Explore shows results rather than the editor.');
