@@ -75,7 +75,7 @@ async function privateCapabilityAbsent() {
   assert.equal(exposed.hash, ''); assert.ok(!exposed.search.includes('password-reset') && !exposed.search.includes(tokenA) && !exposed.search.includes(tokenB)); assert.equal(exposed.dom, false); assert.equal(exposed.storage, false);
 }
 try {
-  server = await createServer({ configFile: false, root, cacheDir: out + '/vite-cache', appType: 'custom', resolve: { dedupe: ['react', 'react-dom'] }, optimizeDeps: { include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-dev-runtime', '@tanstack/react-router', 'zod'] }, server: { host: '127.0.0.1', port: 0, strictPort: true, hmr: false } });
+  server = await createServer({ configFile: false, root, cacheDir: out + '/vite-cache', appType: 'custom', resolve: { dedupe: ['react', 'react-dom'] }, optimizeDeps: { include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-dev-runtime', '@tanstack/react-router', 'zod', '@ten98/runtime', '@ten98/ui', '@ten98/ui/app'] }, server: { host: '127.0.0.1', port: 0, strictPort: true, hmr: false } });
   server.middlewares.use((req, res, next) => { if (req.url?.split('?')[0] !== '/') return next(); res.setHeader('content-type', 'text/html'); res.end('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Recovery synthetic App acceptance</title><div id="root"></div><script type="module" src="/tests/password-recovery-browser-fixture.tsx"></script></html>'); });
   await server.listen(); const address = server.httpServer.address(); assert.equal(address.address, '127.0.0.1'); origin = 'http://127.0.0.1:' + address.port;
   startupPhase('transform-start'); assert.ok(await server.environments.client.transformRequest('/tests/password-recovery-browser-fixture.tsx')); startupPhase('transform-complete');
@@ -107,10 +107,17 @@ try {
   // Synchronous stale controls exercise the same parent callbacks used by the
   // asynchronous ACK, before the old keyed component can run passive cleanup.
   // Keep the separate held-response case below; this is not network-delivery proof.
+  // The shared recovery flow offers 'Request a new link' only after an invalid-link
+  // refusal, where the form is replaced by an alert; that alert is the stale anchor.
   for (const [token, control] of [[tokenB, 'Back to sign in'], [tokenA, 'Request a new link']]) {
-    const previousInput = await page.getByLabel('New password', { exact: true }).elementHandle(); assert.ok(previousInput);
-    const observed = await page.evaluate(({ token, control }) => {
-      const oldControl = [...document.querySelectorAll('button')].find(button => button.textContent === control), oldInput = document.getElementById('recovery-password');
+    let anchor = 'input[id$="-password"]', baseline = 0;
+    if (control === 'Request a new link') {
+      await fresh('#password-reset=' + tokenB, async (route, call) => { if (call.path !== '/api/auth/reset-password') return false; await reply(route, { error: 'Synthetic invalid reset link.' }, 400); return true; }); await heading('Choose a new password').waitFor();
+      await fillReset(); await button('Change password').click(); await page.getByRole('alert').filter({ hasText: 'This link is invalid, expired or already used.' }).waitFor(); anchor = '[role="alert"]'; baseline = evidence.requests.filter(call => call.context === evidence.contexts).length;
+    }
+    const previousInput = await page.locator(anchor).first().elementHandle(); assert.ok(previousInput);
+    const observed = await page.evaluate(({ token, control, anchor }) => {
+      const oldControl = [...document.querySelectorAll('button')].find(button => button.textContent === control), oldInput = document.querySelector(anchor);
       if (!oldControl || oldControl.disabled || !oldInput) throw Error('Expected enabled old recovery controls.');
       const oldURL = location.href, next = new URL(oldURL); next.hash = 'password-reset=' + token;
       history.replaceState(history.state, '', next.href);
@@ -118,12 +125,13 @@ try {
       const connectedBeforeClick = oldControl.isConnected && oldInput.isConnected;
       let clicked = 0; oldControl.addEventListener('click', () => clicked++, { once: true }); oldControl.click();
       return { connectedBeforeClick, clicked };
-    }, { token, control });
+    }, { token, control, anchor });
     assert.deepEqual(observed, { connectedBeforeClick: true, clicked: 1 }, 'Old controls must still be connected when the replacement intent synchronously takes ownership.');
     await wait(() => previousInput.evaluate(element => !element.isConnected)); await heading('Choose a new password').waitFor(); await privateCapabilityAbsent();
-    assert.equal(await page.getByLabel('New password', { exact: true }).inputValue(), ''); assert.equal(evidence.requests.filter(call => call.context === evidence.contexts).length, 0);
+    assert.equal(await page.getByLabel('New password', { exact: true }).inputValue(), ''); assert.equal(evidence.requests.filter(call => call.context === evidence.contexts).length, baseline);
     evidence.races.push({ kind: 'synchronous replacement before old ' + control, qualification: 'Actual hash listener followed by native old-control click in one browser task before old DOM detaches; no forced or claimed ACK delivery.' });
   }
+  await resetMode(); // The invalid-link case above spent its own context's reset POST.
   assert.equal(await page.getByLabel('New password', { exact: true }).getAttribute('maxlength'), '128'); assert.equal(await page.getByLabel('New password', { exact: true }).getAttribute('autocomplete'), 'new-password');
   await fillReset(password, password + ' differs'); await button('Change password').click(); await page.getByRole('alert').filter({ hasText: 'enter the same password twice' }).waitFor(); assert.equal(count('/api/auth/reset-password'), 0);
   let manual = 0; override = async (route, call) => {
@@ -173,8 +181,8 @@ try {
     for (const control of await page.locator('main input, main button').all()) { const box = await control.boundingBox(); assert.ok(box && box.x >= -1 && box.x + box.width <= width + 1); assert.ok(box.height >= 44, 'Native form controls retain44CSSpx targets at bodyStyleZoom>=1.'); }
     const screenshot = out + '/recovery-' + width + '-' + dir + '-bodyzoom' + zoom + '.png'; await page.screenshot({ path: screenshot, fullPage: true }); evidence.screenshots.push(screenshot); evidence.layout.push({ width, dir, bodyStyleZoom: zoom, bounds });
   } pass('SYNTHETIC actual recovery App inputs keep native keyboard order and320/1440LTR/RTL body-style200percent containment');
-  assert.equal(evidence.groups.length, 8); assert.equal(evidence.contexts, 23); assert.equal(evidence.screenshots.length, 8);
-  assert.deepEqual(evidence.requests.filter(call => call.method === 'POST').reduce((counts, call) => ({ ...counts, [call.path]: (counts[call.path] ?? 0) + 1 }), {}), { '/api/auth/request-password-reset': 3, '/api/auth/reset-password': 7, '/api/auth/sign-in/email': 1 });
+  assert.equal(evidence.groups.length, 8); assert.equal(evidence.contexts, 25); assert.equal(evidence.screenshots.length, 8);
+  assert.deepEqual(evidence.requests.filter(call => call.method === 'POST').reduce((counts, call) => ({ ...counts, [call.path]: (counts[call.path] ?? 0) + 1 }), {}), { '/api/auth/request-password-reset': 3, '/api/auth/reset-password': 8, '/api/auth/sign-in/email': 1 });
   assert.deepEqual(evidence.external, []); assert.deepEqual(evidence.unexpected, []); assert.deepEqual(evidence.pageErrors, []); evidence.phase = 'passed';
 } catch (error) {
   evidence.phase = 'failed'; evidence.failure = { name: error.name, message: error.message }; process.exitCode = 1; startupPhase('failure');
