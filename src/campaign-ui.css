@@ -24,7 +24,7 @@ svg { flex-shrink:0; }
 .topbar { min-inline-size:0; background:var(--color-surface); }
 .breadcrumb { min-inline-size:0; color:var(--color-text-muted); }
 .breadcrumb strong { color:var(--color-text); }
-.topbar-tools { flex-shrink:0; }
+.topbar-tools { min-inline-size:0; }
 .preview-badge { padding:4px 8px; border-radius:5px; background:var(--color-warning-subtle); color:var(--color-warning); font-size:11px; white-space:nowrap; }
 .content { padding-block-end:32px; min-inline-size:0; }
 .page-heading { display:block; margin-block-end:25px; }
