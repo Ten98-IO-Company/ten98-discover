@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
-import {defaultReplaySettings,replaySettings,replayBegin,replayUpload,readReplayChunk,reassembleReplay,replayLimits,type ReplayPart} from '../src/lib/session-replay.ts';
+import {defaultReplaySettings,replaySettings,replayBegin,replayUpload,readReplayChunk,reassembleReplay,replayLimits,replayPlaybackOption,replayRates,type ReplayPart} from '../src/lib/session-replay.ts';
 const wire=(value:unknown)=>Buffer.from(JSON.stringify(value)).toString('base64url');
 const base={siteKey:randomUUID(),requestId:randomUUID(),url:'https://example.test/path',consent:{analytics:true as const,replay:true as const,epoch:randomUUID()}};
 const meta={type:4,timestamp:1,data:{href:base.url,width:320,height:600}},snapshot={type:2,timestamp:2,data:{node:{type:0,childNodes:[]},initialOffset:{left:0,top:0}}};
@@ -22,6 +22,10 @@ test('large Unicode snapshots reassemble in original order; missing and conflict
  const size=100003,total=Math.ceil(bytes.length/size);for(let index=0;index<total;index++)pieces.push({type:'fragment',id,index,total,data:bytes.subarray(index*size,(index+1)*size).toString('base64url')});
  const accepted=pieces.map(p=>readReplayChunk(wire([p])).parts[0]);assert.deepEqual(reassembleReplay([meta,...accepted]).events,[meta,large]);assert.equal(reassembleReplay([meta,...accepted]).complete,true);const incomplete=reassembleReplay([meta,...accepted.slice(0,-1)]);assert.equal(incomplete.complete,false);assert.deepEqual(incomplete.missingFragments,[id]);
  assert.deepEqual(reassembleReplay([meta,...accepted,accepted[0]]).events,[meta,large]);const first=accepted[0];assert.equal(first.type,'fragment');if(first.type==='fragment')assert.throws(()=>reassembleReplay([first,{...first,data:wire('different')}]),/Conflicting/);
+});
+test('player playback options are closed: speeds 1/2/4/8 and a boolean inactivity skip only',()=>{
+ assert.deepEqual([...replayRates],[1,2,4,8]);for(const value of replayRates)assert.deepEqual(replayPlaybackOption.parse({type:'speed',value}),{type:'speed',value});for(const value of [true,false])assert.deepEqual(replayPlaybackOption.parse({type:'skip-inactive',value}),{type:'skip-inactive',value});
+ for(const candidate of [{type:'speed',value:0.5},{type:'speed',value:1.5},{type:'speed',value:16},{type:'speed',value:'8'},{type:'speed',value:NaN},{type:'speed'},{type:'speed',value:8,offset:0},{type:'skip-inactive',value:1},{type:'skip-inactive',value:'true'},{type:'skip-inactive',value:true,speed:8},{type:'skipInactive',value:true},{type:'play',offset:0},null,[],'speed'])assert.equal(replayPlaybackOption.safeParse(candidate).success,false,JSON.stringify(candidate));
 });
 test('fragment totals, event bytes, snapshot presence and unknown completeness remain bounded',()=>{
  const id=randomUUID();assert.throws(()=>readReplayChunk(wire([{type:'fragment',id,index:0,total:65,data:wire({})}])));assert.throws(()=>reassembleReplay([{type:'fragment',id,index:0,total:2,data:wire({})},{type:'fragment',id,index:1,total:3,data:wire({})}]));
