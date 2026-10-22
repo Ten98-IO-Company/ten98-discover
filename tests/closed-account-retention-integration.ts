@@ -65,7 +65,7 @@ export async function runClosedAccountRetentionChecks() {
   await closureAudit(authored, authored, old);
   const annotation = randomUUID();
   await pool.query("INSERT INTO analytics_annotation(id,project_id,user_id,date,note) VALUES($1,$2,$3,now(),'Retention fixture note')", [annotation, project, authored]);
-  // An operator closure names an open operator as actor: the row also belongs to an open account and stays.
+  // An operator closure by an open operator: the closed target alone decides, so the old row goes, then its tombstone.
   await closureAudit(operated, active, old);
   for (const id of [closed, gone, authored, operated]) await close(id);
 
@@ -94,14 +94,16 @@ export async function runClosedAccountRetentionChecks() {
   assert.equal(await exists('instance_operator_audit', agedOperatorAudit), false);
   assert.equal(await closureAuditExists(gone), false);
   assert.equal(await closureAuditExists(authored), false);
+  assert.equal(await closureAuditExists(operated), false, 'An aged closure audit of a closed target remains because its actor is open.');
   assert.equal(await exists('"user"', gone), false, 'An unreferenced tombstone remains.');
+  assert.equal(await exists('"user"', operated), false, 'An unreferenced tombstone remains.');
 
   for (const [table, id] of [['provider_request', uncertainEntry.id], ['keyword_quote', uncertainEntry.quote], ['keyword_research_run', uncertainEntry.id],
     ['provider_request', recentReceipt], ['instance_operator_audit', recentOperatorAudit],
     ['provider_request', activeEntry.id], ['keyword_quote', activeEntry.quote], ['keyword_research_run', activeEntry.id], ['instance_operator_audit', activeAudit],
     ['analytics_annotation', annotation]] as const) assert.ok(await exists(table, id), `A retained ${table} row was deleted.`);
-  assert.ok(await closureAuditExists(closed) && await closureAuditExists(operated), 'A recent or open-actor closure audit was deleted.');
-  for (const id of [closed, authored, operated, active]) assert.ok(await exists('"user"', id), 'A referenced or open account row was deleted.');
+  assert.ok(await closureAuditExists(closed), 'A recent closure audit was deleted.');
+  for (const id of [closed, authored, active]) assert.ok(await exists('"user"', id), 'A referenced or open account row was deleted.');
 
   // Idempotent: a default run finds nothing more among these fixtures.
   await runClosedAccountRetention();

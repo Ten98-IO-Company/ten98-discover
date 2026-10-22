@@ -45,7 +45,8 @@ export function retentionTargets(): RetentionTarget[] {
   const aged = (retention?: ClosedAccountRetention) => retention && retention.class !== 'workspace';
   return [
     ...accountClosureInventory.filter(entry => aged(entry.retention)).map(({ table, retention }) => ({
-      table, accountColumns: retention!.accountColumns, eligibleWhen: retention!.eligibleWhen, retainsReferencingRows: retention!.retainsReferencingRows,
+      // An audit row's closed subject alone decides; a financial row needs every account column closed.
+      table, accountColumns: retention!.subjectColumn ? [retention!.subjectColumn] : retention!.accountColumns, eligibleWhen: retention!.eligibleWhen, retainsReferencingRows: retention!.retainsReferencingRows,
     })),
     ...closedAccountLedgerDependents.map(({ table, parent }) => ({ table, parent, accountColumns: [] })),
   ];

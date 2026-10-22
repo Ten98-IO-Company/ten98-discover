@@ -50,6 +50,17 @@ test('the agreed retention classes', () => {
   assert.equal(receipts.eligibleWhen, "t.status IN ('settled','cancelled')");
   assert.equal(receipts.retainsReferencingRows, true);
   assert.equal(closedAccountRetentionInterval, '7 years');
+  // Audit rows age out by their closed subject even when the actor is open; financial rows need every account closed.
+  for (const entry of accountClosureInventory.filter(item => item.retention)) {
+    const { retention } = entry;
+    assert.equal(retention!.subjectColumn, retention!.class === 'audit' ? 'user_id' : undefined, entry.table);
+    if (retention!.subjectColumn) assert.ok(retention!.accountColumns.includes(retention!.subjectColumn), entry.table);
+  }
+  const columns = (table: string) => retentionTargets().find(target => target.table === table)!.accountColumns;
+  assert.deepEqual(columns('account_closure_audit'), ['user_id']);
+  assert.deepEqual(columns('prompt_occurrence'), ['user_id', 'requested_by']);
+  // The actor still keeps its own tombstone until the row ages out.
+  assert.ok(accountReferences([]).some(ref => ref.table === 'account_closure_audit' && ref.column === 'actor_user_id'));
 });
 
 test('ledger dependents hang off a financial row and the aged-out graph has only reviewed outside references', () => {

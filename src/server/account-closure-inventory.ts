@@ -50,6 +50,11 @@ export type ClosedAccountRetention = {
   readonly eligibleWhen?: string;
   /** Rows of other aged-out tables that reference a still-retained row of this table are retained too. */
   readonly retainsReferencingRows?: boolean;
+  /**
+   * Audit only: the subject column whose closed account alone decides ageing out, even when the actor is still open.
+   * Financial rows age out only when every account column names a closed account.
+   */
+  readonly subjectColumn?: string;
 };
 /** The financial and audit classes age out after this interval from each row's `created_at`. */
 export const closedAccountRetentionInterval = '7 years';
@@ -59,7 +64,8 @@ const auditReason = 'Security audit event naming account ids only. Kept 7 years 
 const workspaceReason = 'Workspace-owned content, configuration or non-paid work record; kept with the workspace, not aged out. The tombstone stays while it names the account.';
 const financial = (accountColumns: readonly string[] = ['user_id'], extra: Partial<ClosedAccountRetention> = {}): ClosedAccountRetention =>
   ({ class: 'financial', accountColumns, survivesWorkspaceDeletion: true, reason: financialReason, ...extra });
-const audit = (accountColumns: readonly string[]): ClosedAccountRetention => ({ class: 'audit', accountColumns, survivesWorkspaceDeletion: false, reason: auditReason });
+const audit = (accountColumns: readonly string[]): ClosedAccountRetention =>
+  ({ class: 'audit', accountColumns, subjectColumn: 'user_id', survivesWorkspaceDeletion: false, reason: auditReason });
 const workspaceOwned = (accountColumns: readonly string[], reason = workspaceReason): ClosedAccountRetention =>
   ({ class: 'workspace', accountColumns, survivesWorkspaceDeletion: false, reason });
 const mutationReceipt = workspaceOwned(['actor_id'], 'Idempotency receipt for a workspace mutation, not a paid-work receipt, and it has no created_at; kept with the workspace. The tombstone stays while it names the account.');
