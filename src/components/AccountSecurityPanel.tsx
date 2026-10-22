@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { useAccountPresentation } from '../lib/account-presentation'
 import { accountLocaleMapping, accountPreferencesDefaults } from '../lib/account-preferences'
+import { useConfirmDialog } from './useConfirmDialog'
 
 type SessionInfo = {
   id: string
@@ -26,6 +27,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   const presentation=useAccountPresentation(),preferences=presentation?.data?.user.id===expectedUserId?presentation.data.preferences:accountPreferencesDefaults
   const fmt=(iso:string)=>{const date=new Date(iso);if(Number.isNaN(date.getTime()))return iso;try{return new Intl.DateTimeFormat(accountLocaleMapping(preferences.locale).formatLocale,{timeZone:preferences.timeZone,dateStyle:'medium',timeStyle:'short'}).format(date)}catch{return `${iso} (saved time zone unavailable in this browser)`}}
   const [data, setData] = useState<SecurityData | null>(null)
+  const [confirm, confirmDialog] = useConfirmDialog()
   const [loading, setLoading] = useState(true)
   const [loadErr, setLoadErr] = useState('')
   const [busy, setBusy] = useState<Op | null>(null)
@@ -216,7 +218,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   }
 
   const submitDisable = async (): Promise<void> => {
-    if (!window.confirm('Turning off two-factor authentication removes this layer of sign-in protection. Workspaces that require it will block your access, and API keys you created there will stop working, until you turn it on again. Continue?')) return
+    if (!await confirm({ title: 'Turn off two-factor authentication?', description: 'Turning off two-factor authentication removes this layer of sign-in protection. Workspaces that require it will block your access, and API keys you created there will stop working, until you turn it on again.', confirmLabel: 'Turn off 2FA' })) return
     if (disablePw === '') { opErr('disable', 'Enter your current password to turn off 2FA.'); return }
     await mutate<unknown>('disable', '/api/account/two-factor/disable', { password: disablePw }, () => {
       setData(previous => previous ? { ...previous, user: { ...previous.user, twoFactorEnabled: false } } : previous)
@@ -228,14 +230,14 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
 
   const submitRecovery = async (): Promise<void> => {
     if (recoveryPw === '') { opErr('recovery', 'Enter your current password to generate recovery codes.'); return }
-    if (!window.confirm('Replace your recovery codes? The previous codes will stop working and your other sessions will be signed out.')) return
+    if (!await confirm({ title: 'Replace your recovery codes?', description: 'The previous codes will stop working and your other sessions will be signed out.', confirmLabel: 'Replace recovery codes' })) return
     await mutate<{ backupCodes: string[] }>('recovery', '/api/account/two-factor/recovery-codes', { password: recoveryPw }, value => {
       setCodes(value.backupCodes)
     })
   }
 
   const revokeSession = async (s: SessionInfo): Promise<void> => {
-    if (s.current && !window.confirm('This signs you out of this browser session. Continue?')) return
+    if (s.current && !await confirm({ title: 'Sign out of this browser session?', description: 'This signs you out of this browser session.', confirmLabel: 'Sign out this session' })) return
     await mutate<unknown>('revoke', '/api/account/sessions/revoke', { sessionId: s.id }, () => {
       if (s.current) {
         clearSensitive()
@@ -454,6 +456,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
           </table>
         </div>
       </section>
+      {confirmDialog}
     </div>
   )
 }

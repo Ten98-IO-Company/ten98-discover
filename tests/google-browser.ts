@@ -220,8 +220,8 @@ try {
       await page.evaluate(() => { document.documentElement.dir = 'ltr'; document.documentElement.style.zoom = ''; });
       await page.setViewportSize({ width: 360, height: 800 });
       await connection.getByText('Connection details', { exact: true }).click();
-      page.once('dialog', (dialog: any) => dialog.accept());
       await connection.getByRole('button', { name: 'Disconnect', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Disconnect "Browser Search Console"?', exact: true }).getByRole('button', { name: 'Disconnect', exact: true }).click();
       await page.getByText('Disconnected. Google access was not revoked.', { exact: true }).waitFor();
       let targetStarted: () => void = () => {};
       const started = new Promise<void>(resolve => { targetStarted = resolve; });

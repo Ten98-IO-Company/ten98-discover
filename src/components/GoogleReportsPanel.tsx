@@ -4,6 +4,7 @@ import { api, ApiError, errMsg } from '../lib/api';
 import { googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
+import { useConfirmDialog } from './useConfirmDialog';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 const BTN = { minHeight: 44 };
@@ -381,6 +382,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
   onReconnect: (conn: Connection) => void;
 }) {
   const base = `/api/projects/${projectId}/google/connections/${conn.id}`;
+  const [confirm, confirmDialog] = useConfirmDialog();
   const unsuccessful = conn.imports.filter(imp => imp.status === 'failed' || imp.status === 'denied').length;
   const [localBusy, setBusy] = useState(false);
   const busy = localBusy || ops.busy;
@@ -480,10 +482,10 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
     });
   };
 
-  const disconnect = (revoke: boolean) => {
-    const ok = window.confirm(revoke
-      ? `Disconnect "${conn.name}" and revoke access at Google? Google may revoke the wider app grant, which can affect other connections.`
-      : `Disconnect "${conn.name}"? Imported reports stay available, and you can reconnect later.`);
+  const disconnect = async (revoke: boolean) => {
+    const ok = await confirm(revoke
+      ? { title: `Disconnect "${conn.name}" and revoke access at Google?`, description: 'Google may revoke the wider app grant, which can affect other connections.', confirmLabel: 'Disconnect and revoke' }
+      : { title: `Disconnect "${conn.name}"?`, description: 'Imported reports stay available, and you can reconnect later.', confirmLabel: 'Disconnect' });
     if (!ok) return;
     void run(async (serial, c) => {
       try {
@@ -775,13 +777,14 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
 
       {owner && conn.status !== 'disconnected' && (
         <div className="row">
-          <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => disconnect(false)}>Disconnect</button>
-          <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => disconnect(true)}>Disconnect and revoke at Google</button>
+          <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void disconnect(false)}>Disconnect</button>
+          <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => void disconnect(true)}>Disconnect and revoke at Google</button>
         </div>
       )}
 
         </div>
       </details>
+      {confirmDialog}
     </section>
   );
 }

@@ -2,6 +2,7 @@ import {Icon} from './CampaignUI';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
 import { httpUrl } from './OidcSignIn';
+import { useConfirmDialog } from './useConfirmDialog';
 
 interface PublicProvider { id: string; name: string }
 interface Identity { id: string; issuer: string; subject: string; createdAt: string; providerId: string; providerName: string; enabled: boolean }
@@ -330,6 +331,7 @@ function OperatorSection({data, busy, mutate, reload}: {
   data: OpData; busy: boolean; mutate: Mutate; reload: () => void;
 }) {
   const fid = useId();
+  const [confirm, confirmDialog] = useConfirmDialog();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [issuer, setIssuer] = useState('');
@@ -414,8 +416,8 @@ function OperatorSection({data, busy, mutate, reload}: {
     }
   });
 
-  const disable = (p: OpProvider) => {
-    if (!window.confirm(`Disable ${p.settings.name}? Its sessions are revoked. Accounts using only this provider lose access until it is re-enabled. Configured local recovery passwords remain usable.`)) return;
+  const disable = async (p: OpProvider) => {
+    if (!await confirm({title: `Disable ${p.settings.name}?`, description: 'Its sessions are revoked. Accounts using only this provider lose access until it is re-enabled. Configured local recovery passwords remain usable.', confirmLabel: 'Disable provider'})) return;
     void mutate(async task => {
       setErr('');
       try {
@@ -451,7 +453,7 @@ function OperatorSection({data, busy, mutate, reload}: {
             <div className="panel integration-settings-card identity-provider-card" key={p.id}>
               <div className="provider-settings-heading"><span className="provider-initial">{Array.from(p.settings.name.trim())[0]?.toUpperCase() || 'I'}</span><div><h3>{p.settings.name}</h3><p>{p.settings.issuer}</p></div>{p.enabled ? <span className="pill badge good configured">Enabled</span> : <span className="pill badge bad not-connected">Disabled</span>}</div>
               <p className="provider-source">Draft revision {p.revision} · Live revision {p.activeRevision ?? 'none'}{p.testedRevision != null && ` · Tested revision ${p.testedRevision}`}{p.testedAt && ` (${new Date(p.testedAt).toLocaleString()})`}</p>
-              <div className="button-wrap"><button type="button" className="btn button ghost" disabled={busy} onClick={() => edit(p)}>Edit draft</button>{p.enabled && <button type="button" className="btn button ghost" disabled={busy} onClick={() => disable(p)}>Disable</button>}</div>
+              <div className="button-wrap"><button type="button" className="btn button ghost" disabled={busy} onClick={() => edit(p)}>Edit draft</button>{p.enabled && <button type="button" className="btn button ghost" disabled={busy} onClick={() => void disable(p)}>Disable</button>}</div>
               <details>
                 <summary>Test sign-in</summary>
                 <p className="hint field-help">Confirm with your password to start a test sign-in at the provider.</p>
@@ -513,6 +515,7 @@ function OperatorSection({data, busy, mutate, reload}: {
         </div>
         </fieldset>
       </form>
+      {confirmDialog}
     </section>
   );
 }

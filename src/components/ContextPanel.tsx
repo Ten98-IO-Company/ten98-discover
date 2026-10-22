@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api, ApiError, errMsg} from '../lib/api';
+import {useConfirmDialog} from './useConfirmDialog';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 type Section = {key:string;title:string|null;content:string;updatedAt:string;updatedBy:string};
@@ -36,6 +37,7 @@ export function ContextPanel(props:{projectId:string;userId:string;onUnauthorize
 function ContextPanelInner({projectId,onUnauthorized}:{projectId:string;userId:string;onUnauthorized:()=>void}) {
   const base=`/api/projects/${encodeURIComponent(projectId)}/context`;
   const [data,setData]=useState<Context|null>(null),[editor,setEditor]=useState<Editor|null>(null);
+  const [confirm,confirmDialog]=useConfirmDialog();
   const [busy,setBusy]=useState<string|null>(null),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const [conflict,setConflict]=useState(false),[retry,setRetry]=useState<Attempt|null>(null);
   const alive=useRef(true),locked=useRef(false),generation=useRef(0),controller=useRef<AbortController|null>(null);
@@ -59,13 +61,13 @@ function ContextPanelInner({projectId,onUnauthorized}:{projectId:string;userId:s
     if(!(e instanceof ApiError)||![401,403,404].includes(e.status)) return false;
     purge();if(e.status===401) unauthorized.current();else setError(errMsg(e));return true;
   }
-  function discard() {
-    if(retry&&!window.confirm('This save may already have succeeded. Discard the local attempt and reload the saved data?')) return false;
-    if(editor&&!retry&&!window.confirm('Discard the unsaved form and reload saved data?')) return false;
+  async function discard() {
+    if(retry&&!await confirm({title:'Discard the local attempt and reload the saved data?',description:'This save may already have succeeded.',confirmLabel:'Discard and reload'})) return false;
+    if(editor&&!retry&&!await confirm({title:'Discard the unsaved form and reload saved data?',description:'Your edits in this form have not been saved.',confirmLabel:'Reload saved data',danger:false})) return false;
     return true;
   }
   async function load(ask=false) {
-    if(locked.current||(ask&&!discard())) return;
+    if(locked.current||(ask&&!await discard())) return;
     const request=begin('Loading context');if(!request)return;
     if(ask){setEditor(null);setRetry(null);setConflict(false);}
     try {const value=await api<Context>(base,{signal:request.ac.signal});if(current(request))setData(value);}
@@ -95,17 +97,17 @@ function ContextPanelInner({projectId,onUnauthorized}:{projectId:string;userId:s
   }
   useEffect(()=>{alive.current=true;void load();return()=>{alive.current=false;generation.current++;controller.current?.abort();locked.current=false;};},[]);
   useEffect(()=>{if(editor){formRef.current?.scrollIntoView({block:'nearest'});formRef.current?.querySelector<HTMLElement>('input:not([readonly]),textarea,select')?.focus();}},[editor?.kind]);
-  function open(value:Editor) {
+  async function open(value:Editor) {
     if(locked.current||retry||conflict)return;
-    if(editor&&!window.confirm('Discard the unsaved form and edit another item?'))return;
+    if(editor&&(!await confirm({title:'Discard the unsaved form and edit another item?',description:'Your edits in this form have not been saved.',confirmLabel:'Discard and edit',danger:false})||locked.current))return;
     setEditor(value);setError('');setNotice('');formRef.current?.scrollIntoView({block:'nearest'});
   }
-  function remove(op:Op,label:string) {
+  async function remove(op:Op,label:string) {
     if(!data||locked.current||retry||conflict||editor)return;
-    if(!window.confirm(`Delete ${label}? This removes the saved content and cannot be undone.`))return;
+    if(!await confirm({title:`Delete ${label}?`,description:'This removes the saved content and cannot be undone.',confirmLabel:'Delete'})||locked.current)return;
     void save({revision:data.revision,requestId:crypto.randomUUID(),updates:[op]});
   }
-  function submit(event:FormEvent) {
+  async function submit(event:FormEvent) {
     event.preventDefault();if(!data||!editor||locked.current||retry||conflict)return;
     let updates:Op[]=[];
     if(editor.kind==='business') {
@@ -121,7 +123,7 @@ function ContextPanelInner({projectId,onUnauthorized}:{projectId:string;userId:s
     }else if(editor.kind==='key-page')updates=[{kind:'key-page',url:editor.url,role:editor.role,topic:editor.topic,notes:editor.notes}];
     else updates=[{kind:'research',summary:editor.summary}];
     if(!updates.length){setNotice('No changes to save.');return;}
-    if(updates.some(op=>op.kind==='section'&&!op.content.trim()&&[...data.sections,...data.customSections].some(row=>row.key===op.key))&&!window.confirm('Saving blank content deletes the cleared sections. Continue?'))return;
+    if(updates.some(op=>op.kind==='section'&&!op.content.trim()&&[...data.sections,...data.customSections].some(row=>row.key===op.key))&&(!await confirm({title:'Save blank content?',description:'Saving blank content deletes the cleared sections.',confirmLabel:'Save and delete sections'})||locked.current))return;
     void save({revision:data.revision,requestId:crypto.randomUUID(),updates});
   }
   const canEdit=data&&['owner','admin','editor'].includes(data.role),blocked=!!busy||!!retry||conflict;
@@ -162,7 +164,7 @@ function ContextPanelInner({projectId,onUnauthorized}:{projectId:string;userId:s
           {editor.kind==='research'&&<label className="field">Research summary<textarea aria-label="Research summary" required maxLength={1000} style={textareaStyle} value={editor.summary} onChange={e=>setEditor({...editor,summary:e.target.value})}/><span className="hint">Up to 1,000 characters. The server records the UTC date and author.</span></label>}
           <button className="btn primary" type="submit">Save changes</button>
         </fieldset>
-        <button className="btn ghost" type="button" disabled={!!busy} onClick={()=>{if(retry||conflict){void load(true);return;}if(window.confirm('Discard this unsaved form?')){setEditor(null);setError('');}}}>Cancel</button>
+        <button className="btn ghost" type="button" disabled={!!busy} onClick={()=>{if(retry||conflict){void load(true);return;}void (async()=>{if(await confirm({title:'Discard this unsaved form?',description:'Your edits in this form have not been saved.',confirmLabel:'Discard form'})){setEditor(null);setError('');}})();}}>Cancel</button>
       </form>}
       <details open style={{marginTop:18}}><summary><strong>Business context</strong></summary>
         <div className="row between" style={{marginTop:12}}><div><h3>{data.profile.name}</h3>{data.profile.aliases.length>0&&<p className="dim">Aliases: {data.profile.aliases.join(', ')}</p>}</div>{canEdit&&<button type="button" className="btn" disabled={blocked} onClick={()=>open(businessEditor())}>Edit business context</button>}</div>
@@ -183,5 +185,6 @@ function ContextPanelInner({projectId,onUnauthorized}:{projectId:string;userId:s
       </details>
       <details style={{marginTop:18}}><summary><strong>Report template summaries</strong></summary><p className="hint">Read-only previews from Reports.</p>{data.reportTemplates.length===0?<p className="dim">No report templates saved.</p>:data.reportTemplates.map(row=><div key={row.id} style={{marginTop:12}}><h3>{row.name}</h3><p style={prose}>{row.preview}</p>{row.truncated&&<p className="hint">Preview shortened to 200 characters.</p>}</div>)}{data.reportTemplatesTruncated&&<p className="hint">Showing the latest 20 templates. Open Reports to browse all templates.</p>}</details>
     </>}
+    {confirmDialog}
   </section>;
 }

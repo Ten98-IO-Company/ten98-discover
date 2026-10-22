@@ -20,11 +20,12 @@ const step=n=>panel.getByRole('group',{name:'Step '+n,exact:true});
 async function enter(locator){await locator.focus();await locator.press('Enter');}
 async function focused(locator){await locator.waitFor();await page.waitForFunction(el=>el===document.activeElement,await locator.elementHandle());}
 async function cancel(accept){
-  const handled=page.waitForEvent('dialog',{timeout:5000}).then(async dialog=>{
-    try{assert.equal(dialog.type(),'confirm');assert.match(dialog.message(),/Discard your unsaved definition/);}catch(error){await dialog.dismiss();throw error;}
-    await(accept?dialog.accept():dialog.dismiss());
-  });
-  await Promise.all([enter(panel.getByRole('button',{name:'Cancel editing',exact:true})),handled]);
+  // Leaving a dirty editor asks through the shared ConfirmDialog, driven by keyboard like the rest of this suite.
+  await enter(panel.getByRole('button',{name:'Cancel editing',exact:true}));
+  const confirmation=page.getByRole('dialog',{name:'Discard your unsaved definition changes?',exact:true});
+  assert.match(await confirmation.innerText(),/Your edits to this definition have not been saved/);
+  await enter(confirmation.getByRole('button',{name:accept?'Discard changes':'Cancel',exact:true}));
+  await confirmation.waitFor({state:'hidden'});
 }
 async function saved(){const response=await context.request.get(appUrl+'/api/projects/'+fixture.chains.id+'/funnels',{maxRedirects:0,timeout:15_000});assert.equal(response.status(),200);return response.json();}
 try{
