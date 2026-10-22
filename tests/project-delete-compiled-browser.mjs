@@ -37,7 +37,7 @@ try{
  const doomedId=await projectOption('Doomed website').getAttribute('value');assert.match(doomedId,/^[0-9a-f-]{36}$/);
  await page.goto(base+'/?workspace='+workspaceId+'&project='+doomedId+'&view=collection',{waitUntil:'domcontentloaded'});
  await page.getByRole('heading',{name:'Collection and privacy',level:2}).waitFor();
- await page.getByRole('button',{name:'Delete website',exact:true}).click();await page.getByText('Doomed website',{exact:true}).first().waitFor();
+ await page.getByRole('button',{name:'Delete website',exact:true}).click();await page.locator('main').getByText('Doomed website',{exact:true}).first().waitFor();
  await page.getByRole('textbox',{name:'Type DELETE to confirm',exact:true}).fill('DELETE');await page.getByRole('button',{name:'Permanently delete website'}).click();step('deletion confirmed in the compiled settings view');
  await page.waitForURL(url=>{const p=new URL(url).searchParams;return p.get('workspace')===workspaceId&&p.get('view')==='project'&&p.get('project')===null;});step('router navigated to the workspace project view without a project parameter');
  await projectOption('Surviving website').waitFor({state:'attached'});

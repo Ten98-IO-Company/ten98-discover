@@ -63,13 +63,13 @@ try {
       await page.getByLabel('Email address', { exact: true }).fill(fixture.email);
       await page.getByLabel('Password', { exact: true }).fill(fixture.password);
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-      await page.getByLabel('Workspace', { exact: true }).selectOption(fixture.workspaceId);
+      await page.locator('aside.t98-shell-sidebar').getByRole('combobox', { name: 'Workspace', exact: true }).selectOption(fixture.workspaceId);
       await page.getByRole('heading', { name: 'Web analytics', exact: true }).waitFor();
       async function navigation() { const toggle = page.getByRole('button', { name: /^(Menu|Close menu)$/ }); if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click(); }
       async function section(name: string) { await navigation(); await page.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click(); }
       async function settings(name: string) {
         await navigation();
-        await page.locator('#app-navigation').getByRole('link', { name: 'Settings', exact: true }).click();
+        await page.locator('aside.t98-shell-sidebar').getByRole('link', { name: 'Settings', exact: true }).click();
         await page.getByRole('navigation', { name: 'Settings sections', exact: true }).getByRole('link', { name, exact: true }).click();
       }
       await settings('Google setup');
@@ -85,7 +85,7 @@ try {
       await page.getByRole('status').filter({ hasText: 'Google authorization returned.' }).waitFor();
       assert.equal(await page.getByRole('alert').filter({ hasText: 'Google authorization returned.' }).count(), 0, 'A successful return must not be announced as an error.');
       assert.equal(new URL(page.url()).hash, '', 'OAuth state/code/target fragment must be cleared from browser history.');
-      assert.equal(await page.getByLabel('Workspace', { exact: true }).inputValue(), fixture.workspaceId, 'Callback must select its authorized workspace, not the first membership.');
+      assert.equal(await page.locator('aside.t98-shell-sidebar').getByRole('combobox', { name: 'Workspace', exact: true }).inputValue(), fixture.workspaceId, 'Callback must select its authorized workspace, not the first membership.');
       assert.equal(await page.getByLabel('Project', { exact: true }).inputValue(), fixture.projectId, 'Callback must select its authorized project.');
       const connection = page.locator('section').filter({ has: page.getByText('Browser Search Console', { exact: true }) }).last();
       await connection.getByRole('button', { name: 'Load available properties', exact: true }).click();
