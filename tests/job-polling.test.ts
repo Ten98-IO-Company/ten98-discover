@@ -9,11 +9,13 @@ test('idle job polling uses NOTIFY with a slow backstop and keeps the previous f
  assert.deepEqual(jobPolling,{pollingIntervalSeconds:2,notifyPollingIntervalSeconds:30});
  assert.equal(bossOptions('postgres://unused',true).useListenNotify,true,'The worker holds the LISTEN connection.');
  assert.equal(bossOptions('postgres://unused',false).useListenNotify,false,'Producers only emit NOTIFY.');
- const queues=jobQueues();assert.equal(queues.length,12);assert.equal(new Set(queues.map(q=>q.name)).size,12);
+ assert.equal(bossOptions('postgres://unused',true).schedule,true,'The worker runs the cron timekeeper for daily retention.');
+ assert.equal(bossOptions('postgres://unused',false).schedule,false,'Web processes never schedule.');
+ const queues=jobQueues();assert.equal(queues.length,13);assert.equal(new Set(queues.map(q=>q.name)).size,13);
  // Rank polls are deferred with startAfter, which an insert NOTIFY cannot announce.
  assert.deepEqual(queues.filter(q=>!q.notify).map(q=>q.name),[rankPollQueue]);
  const perMinute=queues.reduce((sum,q)=>sum+60/(q.notify?jobPolling.notifyPollingIntervalSeconds:jobPolling.pollingIntervalSeconds),0);
- assert.equal(perMinute,52,'Idle fetches per minute with LISTEN established (previously 450).');
+ assert.equal(perMinute,54,'Idle fetches per minute with LISTEN established (previously 450).');
 });
 test('workers wake themselves after a non-empty batch and keep failures visible',async()=>{
  const calls:{name:string;options:Record<string,unknown>}[]=[],woken:string[]=[];let handler:((jobs:unknown[])=>Promise<void>)|undefined;
