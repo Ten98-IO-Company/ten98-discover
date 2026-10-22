@@ -43,6 +43,7 @@ import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitati
 import { handleAccountSecurity } from './account-security.ts';
 import { AccountClosureBlocked } from './account-closure.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
+import { handleSesFeedback, sesFeedbackPath } from './ses-feedback.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
 import { assertOidcCredentialsReadable, handleOidc, oidcSignOutUrl } from './oidc.ts';
@@ -186,6 +187,8 @@ export async function handleApi(request: Request): Promise<Response> {
       websiteShareReads++;
       try{return json(await readWebsiteShare(publicWebsite[1],token,await readJson(request,websiteShareLimits.readBodyBytes)),200,{'referrer-policy':'no-referrer','x-robots-tag':'noindex, nofollow'});}finally{websiteShareReads--;}
     }
+    // Public SES feedback (SNS) is separate from dashboard authentication; the runtime verifies the signature before any write.
+    if(path===sesFeedbackPath){await limit('ses-feedback:global',600);return await handleSesFeedback(request);}
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
