@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {contentSupportIdentity,boundedSupport} from '../src/server/ai-content-support.ts';
+import {contentSupportIdentity,boundedSupport,getContentSupport} from '../src/server/ai-content-support.ts';
+import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {contentSupportDisposition} from '../src/server/ai-content-support-worker.ts';
 import {nativeOpenApi} from '../src/server/openapi.ts';
 import {createHash,randomUUID} from 'node:crypto';
@@ -40,4 +41,30 @@ test('stored raw and derived anchors must equal the earliest native query/audit 
   assert.equal(fresh.max_spend_micros,fresh.estimate_micros);assert.equal(current.schemaHash,prepared.schemaHash);assert.notEqual(fresh.input_hash,q.input_hash);assert.equal(readSupportPayload(fresh).snapshot.pages[0].body,body);
   for(const drift of [{max_spend_micros:'30000'},{source_input:input}]){const changed={...fresh,...drift};changed.input_hash=contentSupportIdentity(changed);assert.throws(()=>readSupportPayload(changed),{status:409});}
  }finally{for(const key of keys)if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key];}
+});
+test('the content assessment list reads a 20-row page in a constant number of statements without row locks',async()=>{
+ const keys=['APP_URL','DATABASE_URL','AUTH_SECRET','BOOTSTRAP_TOKEN'],prior=Object.fromEntries(keys.map(k=>[k,process.env[k]]));Object.assign(process.env,{APP_URL:'http://127.0.0.1:3111',DATABASE_URL:'postgres://unused@127.0.0.1:55501/offline',AUTH_SECRET:'a'.repeat(64),BOOTSTRAP_TOKEN:'b'.repeat(64)});
+ const project=randomUUID(),workspace=randomUUID(),user=randomUUID(),hash='a'.repeat(64),stamp=(s:number)=>`2026-10-15T00:00:${String(s).padStart(2,'0')}.000001Z`;
+ const route={model:'author/model',tag:'provider/leaf',providerName:'Provider',profile:openRouterTextProfile,contextLength:16384,promptCapacity:8192,completionCapacity:4096,promptPrice:'0.000000001',completionPrice:'0.000000001',requestPrice:'0',estimateMicros:'11'};
+ const fixture=(count:number)=>Array.from({length:count},(_,i)=>({id:randomUUID(),quote_id:randomUUID(),request_id:randomUUID(),status:'cancelled',charge_status:'cancelled',estimate_micros:'11',actual_micros:null,generation_id:null,diagnostic:null,proposal:null,result_purged_at:null,created_at:new Date(Date.UTC(2026,9,15,0,0,59-i)),run_created:stamp(59-i),run_dispatched:null,run_completed:stamp(59-i)}));
+ const pool=getDatabase().pool,connect=pool.connect;let statements:string[]=[],rows:ReturnType<typeof fixture>=[],latched:unknown;
+ const client={release(){},query:async(sql:string,values:unknown[]=[])=>{statements.push(sql);
+  if(sql.startsWith('SELECT workspace_id FROM project'))return{rows:[{workspace_id:workspace}]};
+  if(sql.includes('FROM project WHERE id=$1 AND workspace_id=$2'))return{rows:[{id:project,workspaceId:workspace,origin:'https://example.test'}]};
+  if(sql.includes('SELECT role FROM membership'))return{rows:[{role:'owner'}]};
+  if(sql.includes('FROM ai_content_support_run r JOIN provider_request'))return{rows};
+  if(sql.startsWith('UPDATE ai_content_support_quote q')){latched=values[3];return{rows:[]};}
+  if(sql.includes('FROM ai_content_support_quote q WHERE'))return{rows:rows.filter(r=>(values[1] as string[]).includes(r.quote_id)).map(r=>({id:r.quote_id,request_id:r.request_id,input_hash:hash,payload_hash:hash,schema_hash:hash,query_receipt_hash:hash,corpus_receipt_hash:hash,route,raw_expired_at:new Date(),input_purged_at:null,snapshot:null,source_input:null}))};
+  return{rows:[]};}};
+ pool.connect=(async()=>client) as unknown as typeof pool.connect;
+ try{
+  const read=async(count:number)=>{rows=fixture(count);statements=[];latched=undefined;const list=await getContentSupport(project,user);return {list,statements:[...statements],latched};};
+  const one=await read(1),page=await read(21);
+  assert.equal(page.list.runs.length,20);assert.deepEqual(page.list.runs.map(r=>r.id),rows.slice(0,20).map(r=>r.id),'Page order follows the native (created_at,id) order.');
+  assert.ok(page.list.nextCursor);assert.equal(one.list.nextCursor,null);assert.deepEqual(page.latched,rows.slice(0,20).map(r=>r.quote_id),'Only the visible page is latched.');
+  assert.ok(page.list.runs.every(r=>r.inputExpired&&r.resultExpired&&r.selection===null),'A latched expiry stays unavailable, never an empty selection.');
+  assert.equal(page.statements.length,one.statements.length,'Statement count is independent of page size.');assert.ok(page.statements.length<=11,`${page.statements.length} statements for a 20-row page`);
+  const body=page.statements.slice(page.statements.findIndex(s=>s.includes('SELECT role FROM membership'))+1);assert.equal(body.some(s=>s.includes('FOR UPDATE')),false,'A list read takes no row locks beyond workspace admission.');
+  rows=fixture(0);statements=[];const empty=await getContentSupport(project,user);assert.deepEqual(empty.runs,[]);assert.equal(statements.some(s=>s.startsWith('UPDATE ai_content_support_quote')),false);
+ }finally{pool.connect=connect;await closeDatabase();for(const key of keys)if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key];}
 });
