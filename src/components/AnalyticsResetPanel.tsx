@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {analyticsResetInput,analyticsResetState,analyticsResetResult,type AnalyticsResetInput,type AnalyticsResetState,type AnalyticsResetResult} from '../lib/analytics-reset';
 
-export class ResetError extends Error {constructor(readonly status:number){super('Reset request unavailable.');}}
+export class ResetError extends Error {readonly status:number;constructor(status:number){super('Reset request unavailable.');this.status=status;}}
 export async function request(url:string,signal:AbortSignal,body?:unknown):Promise<unknown>{
  const response=await fetch(url,{method:body?'POST':'GET',credentials:'same-origin',headers:body?{'content-type':'application/json'}:{},signal,...body?{body:JSON.stringify(body)}:{}});
  if(!response.ok){await response.body?.cancel();throw new ResetError(response.status);}
