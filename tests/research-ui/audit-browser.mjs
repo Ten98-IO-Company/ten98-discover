@@ -90,8 +90,8 @@ try{
   held.release();await held.dispose();await page.waitForTimeout(100);
   assert.equal(await p.getByRole('region',{name:'Recorded page links',exact:true}).count(),0);assert.equal(await p.getByRole('navigation',{name:'Audit results',exact:true}).count(),0);
   await p.getByText('Pages analyzed',{exact:true}).waitFor();
-  page.once('dialog',d=>d.dismiss());await p.getByRole('button',{name:'Delete audit',exact:true}).click();assert.equal((await pool.query('SELECT deleted_at FROM site_audit_run WHERE id=$1',[run.id])).rows[0].deleted_at,null);
-  page.once('dialog',d=>d.accept());await p.getByRole('button',{name:'Delete audit',exact:true}).click();await p.getByText('Audit deleted. Collected details are queued for cleanup.',{exact:true}).waitFor();
+  await p.getByRole('button',{name:'Delete audit',exact:true}).click();await page.getByRole('dialog',{name:'Delete this audit and its collected details?',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();await page.getByRole('dialog',{name:'Delete this audit and its collected details?',exact:true}).waitFor({state:'hidden'});assert.equal((await pool.query('SELECT deleted_at FROM site_audit_run WHERE id=$1',[run.id])).rows[0].deleted_at,null);
+  await p.getByRole('button',{name:'Delete audit',exact:true}).click();await page.getByRole('dialog',{name:'Delete this audit and its collected details?',exact:true}).getByRole('button',{name:'Delete audit',exact:true}).click();await p.getByText('Audit deleted. Collected details are queued for cleanup.',{exact:true}).waitFor();
   assert.ok((await pool.query('SELECT deleted_at FROM site_audit_run WHERE id=$1',[run.id])).rows[0].deleted_at);cleanBrowser();
   console.log('PASS lower-ticket newly observed expiry wins, older available details cannot resurrect, page/back focus works and deletion needs confirmation.');
 
@@ -103,7 +103,7 @@ try{
       await panel(pg).getByRole('button',{name:'Retry start request',exact:true}).waitFor();assert.equal(fault.bodies.length,1);assert.equal(await panel(pg).getByLabel('Start path',{exact:true}).isDisabled(),true);
       await panel(pg).getByRole('button',{name:'Retry start request',exact:true}).click();await panel(pg).getByRole('button',{name:'Cancel audit',exact:true}).waitFor();
       assert.equal(fault.bodies.length,2);assert.deepEqual(fault.bodies[0],fault.bodies[1]);const saved=(await pool.query('SELECT id FROM site_audit_run WHERE project_id=$1 AND request_id=$2',[g.main.id,fault.bodies[0].requestId])).rows;assert.equal(saved.length,1);await fault.dispose();
-      pg.once('dialog',d=>d.accept());await panel(pg).getByRole('button',{name:'Cancel audit',exact:true}).click();await panel(pg).getByText('Audit cancellation confirmed.',{exact:true}).waitFor();
+      await panel(pg).getByRole('button',{name:'Cancel audit',exact:true}).click();await pg.getByRole('dialog',{name:'Cancel this audit?',exact:true}).getByRole('button',{name:'Cancel audit',exact:true}).click();await panel(pg).getByText('Audit cancellation confirmed.',{exact:true}).waitFor();
       assert.deepEqual((await runAudit(saved[0].id)).requests,[]);await back(pg);cleanBrowser();
     }
     console.log('PASS audit committed loss/malformed2xx and double click preserve one immutable request; queued cancellation dispatches no crawl.');
@@ -112,7 +112,7 @@ try{
   stage='held poll cancellation, stale project response and live role';{
     const g=await createKeywordCase(phaseLabel('audit-cancel')),pg=await begin(g),base='/api/projects/'+g.main.id+'/audits',ap=panel(pg),run=await start(pg,base);
     const held=await holdNextGet(pg,'**'+base+'/'+run.id);cleanups.push(held.dispose);await bounded(held.entered,12_000);
-    assert.equal(await ap.getByRole('button',{name:'Cancel audit',exact:true}).isEnabled(),true);pg.once('dialog',d=>d.accept());await ap.getByRole('button',{name:'Cancel audit',exact:true}).click();
+    assert.equal(await ap.getByRole('button',{name:'Cancel audit',exact:true}).isEnabled(),true);await ap.getByRole('button',{name:'Cancel audit',exact:true}).click();await pg.getByRole('dialog',{name:'Cancel this audit?',exact:true}).getByRole('button',{name:'Cancel audit',exact:true}).click();
     await ap.getByText('Audit cancellation confirmed.',{exact:true}).waitFor();held.release();await held.dispose();assert.deepEqual((await runAudit(run.id)).requests,[]);
     const stale=await holdNextGet(pg,'**'+base+'/'+run.id,{status:401});cleanups.push(stale.dispose);await ap.getByRole('button',{name:'Refresh status',exact:true}).click();await bounded(stale.entered);
     await projectSection(pg,g.other,'Site audits');await panel(pg).getByText(/No audits yet/).waitFor();await projectSection(pg,g.main,'Site audits');await panel(pg).getByRole('region',{name:'Audit history',exact:true}).waitFor();stale.release();await stale.dispose();await pg.waitForTimeout(150);
@@ -126,7 +126,7 @@ try{
 
   stage='current denied read purges evidence before access recovery';{
     const g=await createKeywordCase(phaseLabel('audit-access')),pg=await begin(g),base='/api/projects/'+g.main.id+'/audits',ap=panel(pg),run=await start(pg,base);
-    pg.once('dialog',d=>d.accept());await ap.getByRole('button',{name:'Cancel audit',exact:true}).click();await ap.getByText('Audit cancellation confirmed.',{exact:true}).waitFor();await runAudit(run.id);
+    await ap.getByRole('button',{name:'Cancel audit',exact:true}).click();await pg.getByRole('dialog',{name:'Cancel this audit?',exact:true}).getByRole('button',{name:'Cancel audit',exact:true}).click();await ap.getByText('Audit cancellation confirmed.',{exact:true}).waitFor();await runAudit(run.id);
     const path='**'+base+'**',deny=route=>route.request().method()==='GET'?route.fulfill({status:403,json:{error:'Synthetic audit access lost.'}}):route.continue();await pg.route(path,deny);
     await ap.getByRole('button',{name:'Refresh status',exact:true}).click();await ap.getByRole('button',{name:'Reload access',exact:true}).waitFor();assert.equal(await ap.getByRole('button',{name:'Delete audit',exact:true}).count(),0);assert.equal(await ap.getByRole('navigation',{name:'Audit results',exact:true}).count(),0);
     await pg.unroute(path,deny);await ap.getByRole('button',{name:'Reload access',exact:true}).click();await ap.getByRole('region',{name:'Audit history',exact:true}).waitFor();cleanBrowser();

@@ -7,6 +7,7 @@ import type {CitationFilters,CitationCount} from '../server/prompt-citations';
 import type {SpecializedFilters,SpecializedNavigation,SpecializedReport} from '../server/prompt-citation-specializations';
 import {CitationSpecializationsView,type CitationSpecializationsViewProps,type SpecializedDraft,type SpecializedView,type SpecializedScreen,type SpecializedPeriodId} from './CitationSpecializationsView';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
+import {useConfirmDialog} from './useConfirmDialog';
 
 type Props={userId:string;workspaceId:string;projectId:string;filters:Pick<CitationFilters,'from'|'to'|'timeZone'|'model'|'promptId'|'tag'>;filtersLabel:string;onUnauthorized:()=>void;onBack:()=>void;initialExpiredAnswerIds?:readonly string[];onAnswerExpired?:(ids:string[])=>void};
 type Selection={filters:SpecializedFilters;navigation:SpecializedNavigation;family:SpecializedView;label:string};
@@ -47,6 +48,7 @@ function Controller(props:Props){
  const [receipt,setReceipt]=useState<{comparisonId:string;promptId:string;selection:Selection;history:Selection[]}|null>(null);
  const state=useRef(s),alive=useRef(true),operation=useRef<Operation|null>(null),expired=useRef(new Set(props.initialExpiredAnswerIds??[])),blob=useRef<string|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const dirty=()=>!equal(state.current.draft,draftFor(state.current.selection.filters));
+ const [confirm,confirmDialog]=useConfirmDialog();
  useBlocker({shouldBlockFn:()=>dirty()&&!window.confirm('Discard unapplied source filters?'),enableBeforeUnload:dirty});
  function patch(value:Partial<State>){if(alive.current){state.current={...state.current,...value};setState(state.current);}}
  function revoke(){if(timer.current!==null)clearTimeout(timer.current);timer.current=null;if(blob.current)URL.revokeObjectURL(blob.current);blob.current=null;}
@@ -58,7 +60,7 @@ function Controller(props:Props){
  function learn(ids:string[]){if(!alive.current)return;const fresh=ids.filter(id=>!expired.current.has(id));for(const id of ids)expired.current.add(id);if(fresh.length)props.onAnswerExpired?.(fresh);}
  function failure(error:unknown,op:Operation){if(!current(op))return;purge();const status=error instanceof ApiError?error.status:0;patch({error:status===409?'The evidence or context changed. Reload the report before continuing.':op.signal.aborted?'The request timed out. Reload the report to try again.':errMsg(error)});if(status===401)props.onUnauthorized();}
  const ready=()=>!!state.current.role&&!!state.current.data&&!state.current.reading&&!state.current.exporting&&!dirty();
- const discard=()=>!dirty()||window.confirm('Discard unapplied source filters?');
+ const discard=async()=>!dirty()||await confirm({title:'Discard unapplied source filters?',description:'Your source filter edits have not been applied.',confirmLabel:'Discard filters'});
  function httpError(status:number){const e=new ApiError(status===413?'This report exceeds its capacity. Return to insights and narrow the dates, or apply narrower source filters.':status===401?'Sign in to read this report.':[403,404].includes(status)?'This report is no longer available with your current access.':`The report request failed (${status}). Reload to try again.`);e.status=status;return e;}
  async function body(response:Response,op:Operation,limit:number){
   if(!response.body)throw new Error('The response was empty.');const reader=response.body.getReader(),bytes=new Uint8Array(limit);let written=0;
@@ -81,7 +83,7 @@ function Controller(props:Props){
   }catch(error){failure(error,op);}finally{finish(op);}
  }
  function descend(selection:Selection){if(ready())void load(selection,[null],[...state.current.history,state.current.selection]);}
- function back(){if(!discard())return;const at=state.current;if(at.history.length){void load(at.history.at(-1)!,[null],at.history.slice(0,-1));return;}invalidate();purge();props.onBack();}
+ async function back(){if(!await discard())return;const at=state.current;if(at.history.length){void load(at.history.at(-1)!,[null],at.history.slice(0,-1));return;}invalidate();purge();props.onBack();}
  function openGroup(id:string,period:SpecializedPeriodId,target:'pages'|'prompts'|'evidence'){
   if(!ready()||!periods.includes(period)||!['pages','prompts','evidence'].includes(target))return;const at=state.current,page=at.data!.page;if(!['reddit','shopping','search'].includes(page.kind))return;
   const row=(page as Extract<SpecializedReport['page'],{kind:'reddit'|'shopping'|'search'}>).rows.find(r=>r.id===id);if(!row||!row[period].annotations||target==='pages'&&page.kind!=='reddit')return;
@@ -121,7 +123,7 @@ function Controller(props:Props){
    draft:s.draft,dirty:filterDirty,filterError:appliedDraft?null:'Choose supported source filters and a search of at most 200 characters.',canApply:!busy&&!!s.role&&!!appliedDraft&&(!appliedDraft.entityId||d.entities.some(e=>e.id===appliedDraft.entityId)),entities:[{id:'',label:'All entities'},...d.entities],ownershipOptions:options(citationOwners,'All ownership'),publisherOptions:options(citationPublishers,'All publisher categories'),pageTypeOptions:options(citationPageTypes,'All page types'),sourceTypeOptions:options(citationSources,'All source types'),canNavigate:canAct,period:d.navigation.period,canChangePeriod:canAct&&d.navigation.view==='gaps',
    unresolved:([{id:'reddit',label:'Ungrouped Reddit annotations',current:d.current.reddit.ungrouped,previous:d.previous.reddit.ungrouped},{id:'shopping',label:'Shopping annotations without a label',current:d.current.google.unlabelledShopping,previous:d.previous.google.unlabelledShopping},{id:'search',label:'Search annotations without a query',current:d.current.google.unlabelledSearch,previous:d.previous.google.unlabelledSearch},{id:'wrapper',label:'Google wrapper annotations',current:d.current.google.wrappers,previous:d.previous.google.wrappers}] as const).map(r=>({id:r.id,label:r.label,currentLabel:countLabel(r.current),previousLabel:countLabel(r.previous),canCurrent:canAct&&r.current.annotations>0,canPrevious:canAct&&r.previous.annotations>0})),
    emptyMessage:d.page.kind==='gaps'&&d.current.gaps.status==='brand_identity_unavailable'?'Citation gaps are unavailable without a public brand citation identity. Add a brand citation domain in Project context.':!d.current.coverage.eligible&&!d.previous.coverage.eligible?'No eligible retained answers are available in these periods.':d.page.kind==='gaps'?'No gap candidates match this selection. This does not prove brand presence in unavailable answers.':'No matching retained annotations in this selection.',pager:{label:`${d.totalRows} rows · Page ${s.pages.length}`,canPrevious:canAct&&s.pages.length>1,canNext:canAct&&!!d.nextCursor},screen}:null,
-  onBack:back,onReload:()=>{if(!state.current.exporting&&discard())void load(state.current.selection,[null],state.current.history);},onExport:()=>void download(),onCancel:()=>{if(state.current.reading||state.current.exporting){const wasExport=state.current.exporting;invalidate();patch({reading:false,exporting:false,notice:wasExport?'Export cancelled.':'Read cancelled. Reload the report to continue.'});}},
+  onBack:back,onReload:()=>void (async()=>{if(!state.current.exporting&&await discard()&&!state.current.exporting)void load(state.current.selection,[null],state.current.history);})(),onExport:()=>void download(),onCancel:()=>{if(state.current.reading||state.current.exporting){const wasExport=state.current.exporting;invalidate();patch({reading:false,exporting:false,notice:wasExport?'Export cancelled.':'Read cancelled. Reload the report to continue.'});}},
   onDraftChange:next=>{const at=state.current;if(at.role&&at.data&&!at.reading&&!at.exporting)patch({draft:{...next}});},onApply:()=>{const at=state.current;if(!at.role||!at.data||at.reading||at.exporting)return;const filters=applyDraft(at.selection.filters,at.draft);if(filters&&(!filters.entityId||at.data.entities.some(e=>e.id===filters.entityId)))void load({...at.selection,filters,navigation:navigation(at.selection.family),label:''},[null],[]);},
   onViewChange:family=>{if(ready()&&families.includes(family))void load({...state.current.selection,family,navigation:navigation(family),label:''},[null],[]);},onPeriodChange:period=>{if(ready()&&periods.includes(period)&&state.current.selection.navigation.view==='gaps')void load({...state.current.selection,navigation:{...state.current.selection.navigation,period}});},
   onOpenGroup:openGroup,onOpenPrompt:openPrompt,onCommunityEvidence:()=>{if(ready()&&state.current.data?.page.kind==='reddit_pages'&&state.current.data.page.rows.length)descend({...state.current.selection,navigation:{...state.current.selection.navigation,view:'evidence',evidenceMode:'matching'}});},onUnresolved:unresolved,
@@ -129,5 +131,5 @@ function Controller(props:Props){
   onOpenComparison:id=>{if(!ready())return;const at=state.current,page=at.data!.page,row=page.kind==='evidence'?page.rows.find(r=>r.id===id):null;if(!row)return;const next={comparisonId:row.comparisonId,promptId:row.promptId,selection:at.selection,history:at.history};invalidate();purge();setReceipt(next);}
  };
  if(receipt)return <PromptExecutionsPanel userId={props.userId} workspaceId={props.workspaceId} projectId={props.projectId} entry={{kind:'receipt',comparisonId:receipt.comparisonId,promptId:receipt.promptId}} backLabel="Back to specialized citations" onUnauthorized={props.onUnauthorized} onEvidenceExpired={({answerIds})=>learn(answerIds)} onBack={()=>{setReceipt(null);void load(receipt.selection,[null],receipt.history);}}/>;
- return <div ref={root} style={{minWidth:0}}><CitationSpecializationsView {...view}/></div>;
+ return <div ref={root} style={{minWidth:0}}><CitationSpecializationsView {...view}/>{confirmDialog}</div>;
 }

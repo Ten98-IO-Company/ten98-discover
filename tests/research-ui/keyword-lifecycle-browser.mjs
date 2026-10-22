@@ -65,7 +65,7 @@ try{
     const run=await start(page,panel,B,{double:true});await page.unroute('**'+B+'/runs',countStarts);assert.equal(startCalls,1);
     const held=await holdNextGet(page,'**'+B+'/runs/'+run.id);cleanups.push(held.dispose);await bounded(held.entered,10_000);
     assert.equal(await panel.getByRole('button',{name:'Cancel run',exact:true}).isEnabled(),true,'Cancel must remain usable during an interruptible poll.');
-    page.once('dialog',dialog=>dialog.accept());await panel.getByRole('button',{name:'Cancel run',exact:true}).click();
+    await panel.getByRole('button',{name:'Cancel run',exact:true}).click();await page.getByRole('dialog',{name:'Cancel this queued run?',exact:true}).getByRole('button',{name:'Cancel run',exact:true}).click();
     const selected=panel.locator('[aria-label="Selected run"]');await selected.getByText(/^Cancelled ·/).waitFor();
     held.release();await held.dispose();await page.waitForTimeout(250);assert.ok(await selected.getByText(/^Cancelled ·/).isVisible());
     assert.equal(await selected.getByRole('button',{name:'Cancel run',exact:true}).count(),0);
