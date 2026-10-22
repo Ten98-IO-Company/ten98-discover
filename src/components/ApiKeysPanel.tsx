@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
+import { useConfirmDialog } from './useConfirmDialog'
 
 interface ApiKey {
   id: string
@@ -44,6 +45,7 @@ export function ApiKeysPanel({ workspaceId, onUnauthorized }: { workspaceId: str
 
 function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {
   const [keys, setKeys] = useState<ApiKey[] | null>(null)
+  const [confirm, confirmDialog] = useConfirmDialog()
   const [listError, setListError] = useState('')
   const [created, setCreated] = useState<CreatedKey | null>(null)
   const [name, setName] = useState('')
@@ -183,7 +185,8 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
 
   async function revokeKey(k: ApiKey) {
     if (mutLock.current || loading || !keys) return
-    if (!window.confirm(`Revoke "${k.name}"? Anything using this key loses access immediately. This cannot be undone.`)) return
+    if (!await confirm({ title: `Revoke "${k.name}"?`, description: 'Anything using this key loses access immediately. This cannot be undone.', confirmLabel: 'Revoke key', confirmationText: k.name })) return
+    if (mutLock.current) return
     mutLock.current = true
     ++reqSeq.current
     getAbort.current?.abort()
@@ -417,6 +420,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
         )}
         <p className="footnote dim">Revoked keys stay listed here as history. Existing keys can never be re-read — only created, revoked, or replaced.</p>
       </div>
+      {confirmDialog}
     </>
   )
 }
