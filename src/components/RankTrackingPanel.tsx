@@ -1,4 +1,5 @@
 import type {RankLocationCoverage} from '../server/dataforseo-rank';
+import { useConfirmDialog } from '@ten98/ui'
 import {useEffect,useId,useRef,useState} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
@@ -9,7 +10,6 @@ import {RankHistoryPanel} from './RankHistoryPanel';
 import {RankSchedulePanel} from './RankSchedulePanel';
 import {RankReportingPanel} from './RankReportingPanel';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Props={workspaceId:string;projectId:string;userId:string;origin:string;onUnauthorized:()=>void;onOpenProviders:()=>void};
 type Filter='active'|'archived'|'all';
@@ -65,7 +65,7 @@ function RankController(props:Props){
   function patch(value:Partial<State>){if(!alive.current)return;state.current={...state.current,...value};setState(state.current);}
   function locked(){return operation.current?.write===true||intent.current!==null;}
   function invalidate(){operation.current?.controller.abort();operation.current=null;}
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   function canLeave(){return !locked()&&(!state.current.dirty||window.confirm('Discard unsaved tracker changes?'));}
   useBlocker({withResolver:false,shouldBlockFn:()=>!canLeave(),enableBeforeUnload:()=>state.current.dirty||locked()});
   useEffect(()=>{alive.current=true;void loadList('active');return()=>{alive.current=false;invalidate();};},[]);

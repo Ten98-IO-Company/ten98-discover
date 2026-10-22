@@ -1,4 +1,4 @@
-import {AppliedFilters,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment} from '@ten98/ui';
+import {AppliedFilters,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment, useConfirmDialog} from '@ten98/ui';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {analyticsFieldLimit,analyticsSelectionFields} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
@@ -9,7 +9,6 @@ import {analyticsExplorerQuery} from './AnalyticsPanel';
 import {defaultParseSearch} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import {useAnnotations} from './AnnotationsPanel';
-import {useConfirmDialog} from './useConfirmDialog';
 import type {AdvancedPredicates} from '../server/advanced-predicate-input';
 import type {advancedPredicateMethod} from '../server/advanced-predicates';
 import {geographyFields,parseGeographyKey,type GeoField} from '../lib/analytics-geography';
@@ -298,7 +297,7 @@ export function ExplorerPanel(props:Props){
 }
 function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppliedRange}:Props){
   const uid=useId(),filterDialog=useRef<HTMLDialogElement>(null),filterButton=useRef<HTMLButtonElement>(null);
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const location=useLocation(),controlled=!!search&&!!onNavigate,nav:ExplorerNavigation=controlled?explorerNavigation(search!):{},navText=JSON.stringify(nav),entry=location.state.__TSR_key;
   const restored=nav.exploreInvalid?null:readExplorerScope(nav.exploreQuery),invalidLink=controlled&&!restored;
   const routeReady=!controlled||location.pathname==='/'&&!location.hash&&search!.view==='explore'&&search!.project===projectId&&navigationKey(parseNavigation(location.search))===navigationKey(search!)&&canonicalNavigation(location.searchStr,search!);

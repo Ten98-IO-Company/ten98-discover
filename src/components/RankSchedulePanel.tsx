@@ -1,9 +1,9 @@
 import {useEffect,useId,useRef,useState} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import {RankScheduleView,type ScheduleForm,type ScheduleInfo,type SchedulePreview,type ScheduleQuote} from './RankScheduleView';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Props={workspaceId:string;projectId:string;userId:string;trackerId:string;trackerName:string;quoteId?:string;knownQuoteExpiresAt?:string;backLabel?:string;onUnauthorized:()=>void;onBack:()=>void;onPrepareQuote:()=>void};
 type Role=WorkspaceRole;
@@ -67,7 +67,7 @@ function ScheduleController(props:Props){
   function invalidate(){operation.current?.controller.abort();operation.current=null;}
   const locked=()=>operation.current?.write===true||intent.current!==null;
   const current=(op:Operation)=>alive.current&&operation.current===op;
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   function leave(){return !locked()&&(!state.current.dirty||window.confirm('Discard the unsaved schedule setup?'));}
   useBlocker({withResolver:false,shouldBlockFn:()=>!leave(),enableBeforeUnload:()=>locked()||state.current.dirty});
   useEffect(()=>{alive.current=true;void load();return()=>{alive.current=false;invalidate();};},[]);

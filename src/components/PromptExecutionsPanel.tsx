@@ -1,12 +1,11 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {RunCostSummary} from '@ten98/ui';
+import {RunCostSummary, useConfirmDialog} from '@ten98/ui';
 import {Link} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,type OpenRouterCatalog} from '../lib/openrouter-models';
 import {OpenRouterModelPicker,modelApi as api,ModelResponseError,readModelCatalog,modelUnavailableReason,validModelReservation,modelUsdMicros,type ModelQuoteRoute} from './OpenRouterModelPicker';
 import {PromptRecurringPanel} from './PromptRecurringPanel';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Role=WorkspaceRole;
 type Model=string;
@@ -103,7 +102,7 @@ export function PromptExecutionsPanel(props:Props){
 }
 function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired,initialExpiredAnswerIds=[],initialExpiredInputComparisonIds=[]}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/prompt-executions',uid=useId();
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   const [metadata,setMetadata]=useState<Metadata|null>(null),[role,setRole]=useState<Role|null>(null);
   const [comparison,setComparison]=useState<Comparison|null>(null),[quote,setQuote]=useState<Quote|null>(null);

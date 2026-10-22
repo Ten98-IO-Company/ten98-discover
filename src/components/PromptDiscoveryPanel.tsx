@@ -1,10 +1,10 @@
 import {useEffect, useId, useRef, useState, type FormEvent} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api, ApiError, errMsg} from '../lib/api';
 import {buildPromptQuestions, promptDiscoveryIntents, type PromptDiscoveryIntent} from '../lib/prompt-discovery';
 import {workspaceRoles} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Props = {projectId: string; onUse: (questions: string[], topic: string) => void; onBack: () => void; onAccessLoss: (status: number, message: string) => void};
 const text = (maximum: number) => z.string().max(maximum).refine(value => !value.includes('\0') && new TextDecoder().decode(new TextEncoder().encode(value)) === value);
@@ -25,7 +25,7 @@ export function PromptDiscoveryPanel(props: Props) {
 }
 function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
   const id = useId(), heading = useRef<HTMLHeadingElement>(null), errorFocus = useRef<HTMLParagraphElement>(null);
-  const [confirm, confirmDialog] = useConfirmDialog();
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const [topic, setTopic] = useState(''), [audience, setAudience] = useState(''), [intent, setIntent] = useState<PromptDiscoveryIntent>('learn');
   const [context, setContext] = useState<Context | null>(null), [loading, setLoading] = useState(true), [readError, setReadError] = useState(''), [lost, setLost] = useState(false);
   const [includeBrand, setIncludeBrand] = useState(false), [competitorId, setCompetitorId] = useState('');

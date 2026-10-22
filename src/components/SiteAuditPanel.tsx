@@ -1,10 +1,9 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
-import {ReportPanel} from '@ten98/ui';
+import {ReportPanel, useConfirmDialog} from '@ten98/ui';
 import {auditCoverages,auditIssueCodes,auditNavigation,type AuditNavigation,type NavigationSearch} from '../lib/navigation';
 import {normalizeAuditPageFields,type AuditPageFields} from '../lib/site-audit-pages';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Role=WorkspaceRole;
 type Status='queued'|'running'|'cancelling'|'completed'|'partial'|'failed'|'cancelled';
@@ -172,7 +171,7 @@ function TextItems({items}:{items:string[]}){return items.length?<ul>{items.map(
 export function SiteAuditPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
 function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/audits',uid=useId();
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [setup,setSetup]=useState<Setup|null>(null),[role,setRole]=useState<Role|null>(null);
   const [history,setHistory]=useState<List<Run>>(empty),[run,setRun]=useState<Run|null>(null),[page,setPage]=useState<Page|null>(null);
   const [issues,setIssues]=useState<List<Issue>>(empty),[pages,setPages]=useState<List<Page>>(empty),[links,setLinks]=useState<List<Edge>>(empty);

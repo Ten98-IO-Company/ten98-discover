@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { useConfirmDialog } from '@ten98/ui'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
-import { useConfirmDialog } from './useConfirmDialog'
 
 interface ApiKey {
   id: string
@@ -45,7 +45,7 @@ export function ApiKeysPanel({ workspaceId, onUnauthorized }: { workspaceId: str
 
 function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {
   const [keys, setKeys] = useState<ApiKey[] | null>(null)
-  const [confirm, confirmDialog] = useConfirmDialog()
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true })
   const [listError, setListError] = useState('')
   const [created, setCreated] = useState<CreatedKey | null>(null)
   const [name, setName] = useState('')

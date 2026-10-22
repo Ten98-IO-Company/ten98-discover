@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime';
-import { Banner } from '@ten98/ui';
+import { Banner, useConfirmDialog } from '@ten98/ui';
 import { assignableRoles, invitableRoles } from '../lib/team-roles';
 import { api, ApiError, errMsg } from '../lib/api';
-import { useConfirmDialog } from './useConfirmDialog';
 
 type Member = { userId: string; name: string; email: string; role: Role };
 type Invitation = { id: string; email: string; role: Role; expiresAt: string };
@@ -40,7 +39,7 @@ export function TeamPanel(props: TeamPanelProps) {
 function TeamPanelContent(props: TeamPanelProps) {
   const { workspaceId, userId, onChanged } = props;
   const [data, setData] = useState<TeamData | null>(null);
-  const [confirm, confirmDialog] = useConfirmDialog();
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mutating, setBusy] = useState(false);

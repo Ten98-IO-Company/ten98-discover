@@ -1,11 +1,11 @@
 import {useEffect,useId,useRef,useState} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {RankRole,RankTracker,RankConnection} from './RankTrackingView';
 import {RankCheckView,type RankQuoteDisplay} from './RankCheckView';
 import {RankCheckResults,type RankResultDisplay,type RankHistoryDisplay} from './RankCheckResults';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Status='quoted'|'queued'|'running'|'waiting'|'completed'|'partial'|'failed'|'cancelled'|'skipped';
 type Cost='not_started'|'pending'|'uncertain'|'final';
@@ -62,7 +62,7 @@ function CheckController(props:Props){
   function patch(value:Partial<State>){if(alive.current){state.current={...state.current,...value};setState(state.current);}}
   function invalidate(){op.current?.controller.abort();op.current=null;}
   function locked(){return op.current?.write===true||intent.current!==null;}
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   function leave(){return !locked()&&(!state.current.dirty||window.confirm('Discard the unsaved rank check setup?'));}
   useBlocker({withResolver:false,shouldBlockFn:()=>!leave(),enableBeforeUnload:()=>locked()||state.current.dirty});
   useEffect(()=>{alive.current=true;if(props.entry.mode==='run'&&uuid(props.entry.runId))void readRun(props.entry.runId,true);else void loadHistory(undefined,true);return()=>{alive.current=false;invalidate();};},[]);

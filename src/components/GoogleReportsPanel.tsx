@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { AppliedFilters, EvidenceSummary, TimeSeriesChart, type ChartPoint } from '@ten98/ui';
+import { AppliedFilters, EvidenceSummary, TimeSeriesChart, type ChartPoint, useConfirmDialog } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
 import { GoogleInspectionPanel } from './GoogleInspectionPanel';
-import { useConfirmDialog } from './useConfirmDialog';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 const BTN = { minHeight: 44 };
@@ -382,7 +381,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
   onReconnect: (conn: Connection) => void;
 }) {
   const base = `/api/projects/${projectId}/google/connections/${conn.id}`;
-  const [confirm, confirmDialog] = useConfirmDialog();
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const unsuccessful = conn.imports.filter(imp => imp.status === 'failed' || imp.status === 'denied').length;
   const [localBusy, setBusy] = useState(false);
   const busy = localBusy || ops.busy;
