@@ -15,6 +15,9 @@ const consequences = [
   'Workspaces keep their data, reports, share links and usage records. Share links you created keep working.',
 ]
 
+/** Owner-approved privacy notice (docs/account-closure.md); both closure paths show it verbatim. */
+export const closurePrivacyNotice = 'When you close your account we delete your name, email, sign-in methods, sessions and API keys. We keep an anonymous record of actions you took in a workspace, such as paid requests and audit entries, for as long as that workspace exists.'
+
 /** Both closure paths (password and identity provider) require these before submitting. */
 export const closureAcknowledgements = [
   { id: 'permanent', label: 'I understand that closing is permanent and cannot be undone.' },
@@ -75,7 +78,7 @@ export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTe
     {data && blocked && <Alert tone='warning' title='Closing is not available yet'>
       <Stack gap={2}>
         {data.blockers.workspaces.length > 0 && <>
-          <Text>You are the only owner of these workspaces. Transfer ownership to another member, or delete the workspace, before closing your account.</Text>
+          <Text>You are the only owner of these workspaces. Transfer ownership to another member before closing your account.</Text>
           <List>{data.blockers.workspaces.map(workspace => <ListItem key={workspace.id}>
             <Button variant='ghost' onClick={() => onOpenTeam(workspace.id)}>{`Open team settings for ${isolate(workspace.name)}`}</Button>
           </ListItem>)}</List>
@@ -95,6 +98,7 @@ export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTe
       onConfirm={close} onCancel={() => { setReviewing(false); setPassword(''); setFactor(''); setError('') }}>
       <Stack gap={3}>
         <List>{consequences.map(item => <ListItem key={item}>{item}</ListItem>)}</List>
+        <Text>{closurePrivacyNotice}</Text>
         <Field label='Current password' htmlFor='account-closure-password'>
           <Input id='account-closure-password' type='password' autoComplete='current-password' maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} />
         </Field>

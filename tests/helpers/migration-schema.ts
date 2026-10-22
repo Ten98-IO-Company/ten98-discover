@@ -5,9 +5,12 @@ import { join } from 'node:path';
  * Final table/column shape replayed from the ordered SQL migrations, without a database.
  * Handles the DDL forms the migrations use: CREATE TABLE, ALTER TABLE ADD/DROP COLUMN,
  * ADD [CONSTRAINT] FOREIGN KEY, RENAME [COLUMN] and DROP TABLE. Function bodies are skipped.
+ * Foreign keys are recorded with their ON DELETE action; the migrations never drop a foreign key constraint by name.
  */
+/** A foreign key, shared by each of its referencing columns. `onDelete` is uppercase, `NO ACTION` when omitted. */
+export type MigrationForeignKey = { columns: string[]; table: string; onDelete: string };
 /** `type` is the declared type's leading words, lowercase (for example `text`, `jsonb`, `timestamptz`). */
-export type MigrationColumn = { name: string; type: string; referencesUser: boolean };
+export type MigrationColumn = { name: string; type: string; referencesUser: boolean; foreignKeys: MigrationForeignKey[] };
 export type MigrationSchema = Map<string, Map<string, MigrationColumn>>;
 
 function stripSql(source: string): string {
@@ -43,6 +46,19 @@ const table = String.raw`(?:"?public"?\.)?${name}`;
 const columnType = (definition: string) => definition.replace(new RegExp(String.raw`^${name}\s+`), '').match(/^[A-Za-z_][A-Za-z0-9_ ]*?(?=\(|\[|\s|$)/)?.[0].toLowerCase() ?? '';
 const tableConstraint = /^(CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN|EXCLUDE|LIKE)\b/i;
 
+/** The REFERENCES clause of one column definition, table constraint or ALTER action, if any. */
+function foreignKey(item: string, inlineColumn?: string): MigrationForeignKey | null {
+  const columns = item.match(/FOREIGN\s+KEY\s*\(([^)]*)\)/i)?.[1].split(',').map(identifier) ?? (inlineColumn ? [inlineColumn] : null);
+  const target = item.match(new RegExp(String.raw`\bREFERENCES\s+${table}`, 'i'));
+  if (!columns || !target) return null;
+  const onDelete = item.match(/\bON\s+DELETE\s+(CASCADE|RESTRICT|NO\s+ACTION|SET\s+NULL|SET\s+DEFAULT)\b/i)?.[1].replace(/\s+/, ' ').toUpperCase() ?? 'NO ACTION';
+  return { columns, table: identifier(target[1]), onDelete };
+}
+
+function addForeignKey(columns: Map<string, MigrationColumn>, key: MigrationForeignKey | null): void {
+  if (key) for (const column of key.columns) columns.get(column)!.foreignKeys.push(key);
+}
+
 function foreignKeyColumns(item: string): string[] {
   const match = item.match(new RegExp(String.raw`FOREIGN\s+KEY\s*\(([^)]*)\)\s*REFERENCES\s+${userTable}`, 'i'));
   return match ? match[1].split(',').map(identifier) : [];
@@ -59,9 +75,13 @@ export function parseMigrations(sources: readonly string[]): MigrationSchema {
         for (const item of items) {
           if (tableConstraint.test(item)) continue;
           const column = identifier(item.match(new RegExp(`^${name}`))![1]);
-          columns.set(column, { name: column, type: columnType(item), referencesUser: referencesUser.test(item) });
+          columns.set(column, { name: column, type: columnType(item), referencesUser: referencesUser.test(item), foreignKeys: [] });
+          addForeignKey(columns, foreignKey(item, column));
         }
-        for (const item of items) for (const column of foreignKeyColumns(item)) columns.get(column)!.referencesUser = true;
+        for (const item of items) {
+          for (const column of foreignKeyColumns(item)) columns.get(column)!.referencesUser = true;
+          if (tableConstraint.test(item)) addForeignKey(columns, foreignKey(item));
+        }
         tables.set(identifier(create[1]), columns);
         continue;
       }
@@ -78,17 +98,26 @@ export function parseMigrations(sources: readonly string[]): MigrationSchema {
         const added = action.match(new RegExp(`^ADD\\s+(?:COLUMN\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?${name}`, 'i'));
         if (added && !tableConstraint.test(action.replace(/^ADD\s+/i, ''))) {
           const column = identifier(added[1]);
-          columns.set(column, { name: column, type: columnType(action.replace(/^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?/i, '')), referencesUser: referencesUser.test(action) });
+          columns.set(column, { name: column, type: columnType(action.replace(/^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?/i, '')), referencesUser: referencesUser.test(action), foreignKeys: [] });
+          addForeignKey(columns, foreignKey(action, column));
           continue;
         }
         for (const column of foreignKeyColumns(action)) columns.get(column)!.referencesUser = true;
+        if (/^ADD\s/i.test(action)) addForeignKey(columns, foreignKey(action));
         const dropped = action.match(new RegExp(`^DROP\\s+COLUMN\\s+(?:IF\\s+EXISTS\\s+)?${name}`, 'i'));
-        if (dropped) { columns.delete(identifier(dropped[1])); continue; }
+        if (dropped) {
+          // Dropping a column drops every constraint that uses it.
+          const column = identifier(dropped[1]);
+          columns.delete(column);
+          for (const remaining of columns.values()) remaining.foreignKeys = remaining.foreignKeys.filter(key => !key.columns.includes(column));
+          continue;
+        }
         const renamed = action.match(new RegExp(`^RENAME\\s+(?:COLUMN\\s+)?${name}\\s+TO\\s+${name}$`, 'i'));
         if (renamed) {
           const previous = columns.get(identifier(renamed[1]))!;
           columns.delete(previous.name);
           columns.set(identifier(renamed[2]), { ...previous, name: identifier(renamed[2]) });
+          for (const key of new Set([...columns.values()].flatMap(column => column.foreignKeys))) key.columns = key.columns.map(column => column === previous.name ? identifier(renamed[2]) : column);
         }
       }
     }

@@ -6,7 +6,7 @@ Closing ends the person's use of the installation. Workspaces keep their data, r
 
 ## Who can close an account
 
-- **Self closure.** Account security → **Close account**. The confirm step lists the consequences (including that every API key the person issued is revoked), requires both acknowledgements and asks for step-up proof: the current password plus an authenticator or recovery code when two-factor authentication is on. Accounts without a local password close from **Identity sign-in**: verify with the linked provider (a fresh `prompt=login`, `max_age=0` sign-in whose `auth_time` is checked), choose **Close account permanently** as the security change, tick the same two acknowledgements and enter a second-factor code when enabled. On success the browser is signed out and the sign-in page shows a neutral confirmation.
+- **Self closure.** Account security → **Close account**. The confirm step lists the consequences (including that every API key the person issued is revoked), shows the [privacy notice](#privacy-notice), requires both acknowledgements and asks for step-up proof: the current password plus an authenticator or recovery code when two-factor authentication is on. Accounts without a local password close from **Identity sign-in**: verify with the linked provider (a fresh `prompt=login`, `max_age=0` sign-in whose `auth_time` is checked), choose **Close account permanently** as the security change, read the same privacy notice, tick the same two acknowledgements and enter a second-factor code when enabled. On success the browser is signed out and the sign-in page shows a neutral confirmation.
 - **Operator closure.** An instance operator closes another account with their own step-up proof and a recorded reason (1–500 characters). The reason is stored in the audit row: describe the basis (for example "account holder request, ticket 123") and never include personal data such as names, addresses or the account's email. Operators close their own account through self closure. Do not run it against a real user without that person's request or another documented basis.
   - API: `POST /api/identity/accounts/:userId/close` with strict `{reason, proof: {password, code? | backupCode?}}` JSON, browser session and application origin. Operators without a local password add a recovery password first.
   - CLI: `docker compose run --rm -T web node src/server/cli.ts account close <account-email> --operator <operator-email> --reason "<text>"`, with the operator's step-up secret as one JSON object on standard input, for example from a protected file: `{"password":"…","code":"123456"}` or `{"password":"…","backupCode":"…"}`. The secret never goes in arguments or environment variables. The command signs the operator in through Better Auth inside the closure transaction, deletes that temporary session and prints no personal data.
@@ -17,7 +17,7 @@ Routes: `GET /api/account/closure` returns the blockers, whether a local passwor
 
 Checked under lock, so a concurrent change cannot slip past them. A refusal rolls the whole transaction back: nothing changes, and a submitted recovery code is not consumed.
 
-- **Last owner.** The account is the only owner of a workspace. Transfer ownership of each listed workspace to another member, or delete the workspace, first. The confirm screen links to each workspace's team settings. The 409 answer lists the id and name of each such workspace, so an operator closing another account also sees the names of the workspaces that account solely owns. (This foundation has no workspace deletion yet, so transfer is the available path.)
+- **Last owner.** The account is the only owner of a workspace. Transfer ownership of each listed workspace to another member first (workspace deletion is not yet available; see #292). The confirm screen links to each workspace's team settings. The 409 answer lists the id and name of each such workspace, so an operator closing another account also sees the names of the workspaces that account solely owns. (This foundation has no workspace deletion yet, so transfer is the available path.)
 - **Last operator.** The account holds the only instance operator role. Grant the role to another account first (`operator grant`).
 
 ## One transaction
@@ -51,14 +51,25 @@ pg-boss payloads hold workspace record ids only. There is no email outbox: invit
 - Sign-in, session lookup, OIDC sign-in and linking, API keys and MCP all refuse the account: its credentials, sessions, links and keys are gone, `authenticateApiKey` also requires an open account, and the 0070 triggers refuse any new session, credential, factor, link, key, membership, preference, invitation or operator role for it.
 - Share links stay workspace-owned. Their public reads never resolve through the creator's membership, so links the person created keep working; owner and admin listings show the creator as `Closed account` with no address and a former-member marker.
 - The tombstone is final: a trigger (`keep_closed_account`) refuses every update to a closed `user` row, including its `updatedAt`. A future migration that backfills or rewrites `user` columns must skip closed rows (`WHERE closed_at IS NULL`) or set any new column's value for them in a deliberate, reviewed step that disables and re-enables the trigger within the migration.
-- The audit events and the tombstone row are kept. Retention of the tombstone and the closure audit: **TODO(L3): retention period to be supplied by the owner.**
+- The audit events and the tombstone row are kept.
+
+## Retention
+
+Owner decision (ten98-code-system#39): **as long as the workspace exists**. The anonymous rows a closed account leaves behind (its id on kept ledger, receipt, content and audit rows) are kept as long as the workspace they belong to, and go when that workspace is deleted.
+
+- **Workspace-scoped rows.** Kept tables with a `workspace_id` or `project_id` column, or a parent that has one, reach `workspace` through `ON DELETE CASCADE` foreign keys, so deleting a workspace removes them. Discover has no workspace deletion yet, so today these rows persist with their workspace. Known exception: `ai_suggestion_run`, `google_import`, `prompt_comparison`, `prompt_occurrence`, `prompt_tracker`, `rank_config` and `rank_run` reach `project` only through `NO ACTION` foreign keys. Website deletion (`src/server/project-delete.ts`) already deletes them explicitly before the project row; workspace deletion must do the same ([#292](https://github.com/Ten98-IO-Company/ten98-discover/issues/292)).
+- **The tombstone and instance-level audits.** The tombstone `user` row, `account_closure_audit` and `instance_operator_audit` are not workspace-scoped. The tombstone remains while any kept row references it, together with the audit rows naming it. Purging tombstones that nothing kept references any more is a follow-up ([#291](https://github.com/Ten98-IO-Company/ten98-discover/issues/291)).
+- `tests/account-closure-retention.test.ts` (in `pnpm test`) replays the migrations and fails when a kept, workspace-scoped table loses its cascade to `workspace`, or when a listed exception is no longer deleted by website deletion.
 
 ## Privacy notice
 
-**TODO(L3): privacy-notice wording for account closure to be supplied by the owner.**
+Owner-approved wording (ten98-code-system#39), shown verbatim in the self-closure confirm step and the identity-provider **Close account permanently** action (`closurePrivacyNotice` in `src/components/AccountClosurePanel.tsx`):
+
+> When you close your account we delete your name, email, sign-in methods, sessions and API keys. We keep an anonymous record of actions you took in a workspace, such as paid requests and audit entries, for as long as that workspace exists.
 
 ## Verification
 
 - `tests/account-closure-inventory.test.ts` (in `pnpm test`): inventory coverage, rule implementation and parser behaviour.
+- `tests/account-closure-retention.test.ts` (in `pnpm test`): kept workspace-scoped tables cascade from `workspace`, with the listed exceptions.
 - `tests/account-closure-integration.ts` (registered in `tests/integration.ts`, isolated synthetic PostgreSQL only): seeds an account with sessions, two-factor, an API key, a verification row, invitations, a queued job, session IP and user agent, a co-owned workspace and a share link, then checks the refusals roll back fully, operator closure needs authority, step-up and a reason, concurrent membership, session, API key and preference inserts wait for an uncommitted closure and are refused after it commits, the scrub and tombstone, intact financial rows, refused sign-in, sessions, API key and MCP, and the share link.
 - `tests/migrations-integration.ts` covers the 0069-to-0070 upgrade: no backfill, every account stays open, the triggers and the tombstone check.
