@@ -6,10 +6,9 @@ import { recordEmailSuppression, type EmailSuppressionReason } from './email-sup
  * lookup and trusts nothing until @ten98/runtime has verified the SNS signature, signing-certificate origin, topic and age.
  * Only hard bounces and complaints are recorded; transient and undetermined bounces never block a transactional send.
  *
- * Admission has two budgets so forged traffic cannot starve real deliveries: unverified work (uncached certificate fetches
- * and refused messages) spends a small bucket, and a full bucket only stops new certificate fetches; verified deliveries
- * spend their own budget after verification. A message signed with an already-cached certificate is never refused by the
- * unverified bucket.
+ * Admission has three independent budgets so junk cannot starve real deliveries: `certificate` is spent only when a
+ * certificate fetch actually goes out (cache miss, not recently failed), `refused` only throttles the refusal log line and
+ * response, and `verified` is spent by deliveries after verification. Refusals never spend the certificate budget.
  */
 export const sesFeedbackPath = '/api/email/ses-feedback';
 // SES notifications are a few KiB; the runtime refuses anything over 1 MiB in any case.
@@ -22,9 +21,9 @@ const topicArn = /^arn:aws(?:-us-gov)?:sns:[a-z]{2}(?:-gov)?-[a-z]+-\d:\d{12}:[A
 
 type Store = { record(address: string, reason: EmailSuppressionReason): Promise<void> };
 /** Each call spends one unit of that budget and resolves false once it is exhausted. */
-export type SesFeedbackAdmission = { unverified(): Promise<boolean>; verified(): Promise<boolean> };
+export type SesFeedbackAdmission = { certificate(): Promise<boolean>; refused(): Promise<boolean>; verified(): Promise<boolean> };
 export type SesFeedbackAdapters = { fetch?: (url: string, init: RequestInit) => Promise<Response>; store?: Store; admission?: SesFeedbackAdmission };
-const unlimited: SesFeedbackAdmission = { unverified: async () => true, verified: async () => true };
+const unlimited: SesFeedbackAdmission = { certificate: async () => true, refused: async () => true, verified: async () => true };
 
 /** Enabled only with EMAIL_TRANSPORT=ses and at least one subscribed topic ARN; otherwise the route does not exist. */
 export function sesFeedbackTopics(env: NodeJS.ProcessEnv = process.env): string[] | null {
@@ -79,7 +78,7 @@ export async function handleSesFeedback(request: Request, env: NodeJS.ProcessEnv
         const cached = certificates.get(url);
         if (cached) return cached;
         if ((failedCertificates.get(url) ?? 0) > Date.now()) throw new Error('Recently failed.');
-        if (!await admission.unverified()) throw new Error('Unverified budget exhausted.');
+        if (!await admission.certificate()) throw new Error('Certificate budget exhausted.');
         try {
           const pem = await fetchBounded(send, url);
           if (certificates.size >= 16) certificates.clear();
@@ -95,10 +94,11 @@ export async function handleSesFeedback(request: Request, env: NodeJS.ProcessEnv
     });
   } catch { return reply(503, { error: 'SES feedback is not configured correctly.' }); }
   if (!verified.ok) {
+    // Over the refusal budget, junk gets a bare 429 and no log line, so it cannot fill the log.
+    if (!await admission.refused()) return reply(429, { error: 'Too many requests.' });
     console.warn(`SES feedback refused: ${verified.reason}.`);
-    // An unavailable certificate may be a genuine delivery during an outage or a full unverified budget: SNS retries a 5xx.
+    // An unavailable certificate may be a genuine delivery during an outage or a full certificate budget: SNS retries a 5xx.
     if (verified.reason === 'certificate-unavailable') return reply(503, { error: 'Notification not verified yet. SNS will retry.' });
-    await admission.unverified();
     return reply(403, { error: 'Notification refused.' });
   }
   if (verified.duplicate) return reply(200, { ok: true });

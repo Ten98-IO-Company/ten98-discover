@@ -172,32 +172,52 @@ test('a verified subscription confirmation is confirmed only on the constant SNS
 /** A per-minute budget like api.ts limit(): each call spends one unit and answers false once exhausted. */
 const budget = (maximum: number) => { let used = 0; return { spend: async () => ++used <= maximum, get used() { return used; } }; };
 
-test('forged traffic exhausting the unverified budget cannot starve a validly signed delivery or drive certificate fetches', async t => {
+test('forged certificate URLs spend only the certificate budget and never the verified delivery budget', async t => {
   const warn = console.warn; console.warn = () => undefined; t.after(() => { console.warn = warn; });
   const { adapters, recorded, requests } = harness();
-  const unverified = budget(3), verified = budget(600);
-  const admitted = { ...adapters, admission: { unverified: unverified.spend, verified: verified.spend } };
+  const certificate = budget(3), refused = budget(1000), verified = budget(600);
+  const admitted = { ...adapters, admission: { certificate: certificate.spend, refused: refused.spend, verified: verified.spend } };
   const deliver = (address: string) => handleSesFeedback(post(notification(bounce('Permanent', 'General', [{ emailAddress: address }]))), feedbackEnv, admitted);
-  assert.equal((await deliver('first@example.com')).status, 200, 'SNS has delivered before, so its certificate is cached.');
+  assert.equal((await deliver('first@example.com')).status, 200);
   const valid = JSON.parse(notification(bounce('Permanent', 'General', [{ emailAddress: 'gone@example.com' }])));
   for (let index = 0; index < 50; index++) {
     // Half forge the signature on the cached certificate; half name fresh certificate URLs on the SNS origin.
     const forged = index % 2 ? { ...valid, Message: valid.Message.replace('gone@', `victim${index}@`) } : { ...valid, SigningCertURL: `https://sns.us-east-1.amazonaws.com/SimpleNotificationService-forged${index}.pem` };
     assert.ok([403, 503].includes((await handleSesFeedback(post(JSON.stringify(forged)), feedbackEnv, admitted)).status));
   }
-  assert.ok(unverified.used >= 50, 'Every forged request spent the unverified budget.');
-  assert.ok(requests.filter(url => url.includes('forged')).length <= 3, 'An exhausted unverified budget stops new certificate fetches.');
+  assert.ok(requests.filter(url => url.includes('forged')).length <= 3, 'An exhausted certificate budget stops new certificate fetches.');
+  assert.ok(certificate.used <= 26, 'Only outgoing fetches (cache misses) spend the certificate budget; signature forgeries do not.');
   assert.equal(verified.used, 1, 'Forged traffic never spends the verified budget.');
-  const response = await deliver('after-flood@example.com');
-  assert.equal(response.status, 200);
+  assert.equal((await deliver('after-flood@example.com')).status, 200, 'A cached certificate still verifies.');
   assert.deepEqual(recorded, [['first@example.com', 'permanent-bounce'], ['after-flood@example.com', 'permanent-bounce']]);
-  assert.equal(verified.used, 2);
+});
+
+test('with the certificate not cached, a refusal flood beyond its limit still lets a valid message fetch once and be recorded', async t => {
+  const logged: string[] = [], warn = console.warn; console.warn = (line: string) => { logged.push(line); }; t.after(() => { console.warn = warn; });
+  const freshUrl = 'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-after-restart.pem', fetched: string[] = [], recorded: [string, string][] = [];
+  const certificate = budget(1), refused = budget(5), verified = budget(600);
+  const adapters = {
+    fetch: async (url: string) => { fetched.push(url); return new Response(snsTestCertificate); },
+    store: { async record(address: string, reason: string) { recorded.push([address, reason]); } },
+    admission: { certificate: certificate.spend, refused: refused.spend, verified: verified.spend },
+  };
+  const signedFresh = (address: string) => JSON.stringify({ ...JSON.parse(notification(bounce('Permanent', 'General', [{ emailAddress: address }]))), SigningCertURL: freshUrl });
+  const junk = JSON.stringify({ ...JSON.parse(signedFresh('junk@example.com')), TopicArn: 'arn:aws:sns:us-east-1:123456789012:other' });
+  const statuses = new Set<number>();
+  for (let index = 0; index < 100; index++) statuses.add((await handleSesFeedback(post(junk), feedbackEnv, adapters)).status);
+  assert.deepEqual([...statuses].sort(), [403, 429], 'Refusals beyond their limit get a bare 429.');
+  assert.equal(logged.length, 5, 'Only admitted refusals are logged.');
+  assert.equal(certificate.used, 0, 'Refusals never spend the certificate budget.');
+  assert.deepEqual(fetched, []);
+  assert.equal((await handleSesFeedback(post(signedFresh('real@example.com')), feedbackEnv, adapters)).status, 200);
+  assert.deepEqual(fetched, [freshUrl], 'Exactly one certificate fetch.');
+  assert.deepEqual(recorded, [['real@example.com', 'permanent-bounce']]);
 });
 
 test('verified deliveries over their own budget are deferred to an SNS retry, and a redelivered MessageId is processed once', async () => {
   const { adapters, recorded } = harness();
   const body = notification(bounce('Permanent', 'General', [{ emailAddress: 'once@example.com' }]));
-  assert.equal((await handleSesFeedback(post(body), feedbackEnv, { ...adapters, admission: { unverified: async () => true, verified: async () => false } })).status, 503);
+  assert.equal((await handleSesFeedback(post(body), feedbackEnv, { ...adapters, admission: { certificate: async () => true, refused: async () => true, verified: async () => false } })).status, 503);
   assert.deepEqual(recorded, [], 'A deferred delivery is not recorded or remembered.');
   assert.equal((await handleSesFeedback(post(body), feedbackEnv, adapters)).status, 200);
   assert.deepEqual(await (await handleSesFeedback(post(body), feedbackEnv, adapters)).json(), { ok: true });
