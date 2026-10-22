@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { resolveClientAddress } from '@ten98/runtime';
 import { extractAnalyticsPeer } from './analytics-network.ts';
 import { secret, trustedProxies } from './config.ts';
@@ -15,4 +15,10 @@ export function clientLimitKey(scope: string, address: string | null, key: strin
 
 export function clientRateKey(request: Request, scope: string, env: NodeJS.ProcessEnv = process.env): string {
   return clientLimitKey(scope, requestClientAddress(request, env), secret('AUTH_SECRET', env));
+}
+
+/** Per-address limit scopes. Their keys are unkeyed digests anyone holding the address can derive, so account closure deletes them. */
+export const emailLimitScopes = ['signin', 'password-recovery:email', 'invitation-email'] as const;
+export function emailLimitKey(scope: typeof emailLimitScopes[number], email: string): string {
+  return `${scope}:${createHash('sha256').update(email).digest('hex')}`;
 }

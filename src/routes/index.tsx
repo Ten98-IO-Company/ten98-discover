@@ -33,6 +33,7 @@ import ReportsPanel from '../components/ReportsPanel'
 import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
 import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
+import { AccountClosurePanel } from '../components/AccountClosurePanel'
 import { PasswordRecoveryPanel, type PasswordRecovery } from '../components/PasswordRecoveryPanel'
 import { AccountPreferencesPanel } from '../components/AccountPreferencesPanel'
 import { AccountPresentationContext, requestAccountPreferences } from '../lib/account-presentation'
@@ -585,6 +586,13 @@ function App() {
 
   const renderedSession = sessionGeneration.current, renderedIntent = intent.current.generation
   const unauthorized = () => { if (sessionGeneration.current === renderedSession) resetSession() }
+  // The server already ended every session of the closed account; only local state and the neutral notice remain.
+  const accountClosed = () => {
+    if (sessionGeneration.current !== renderedSession) return
+    flushSync(() => resetSession())
+    setAuthNotice({ kind: 'info', message: 'The account is closed. You have been signed out.' })
+    go({ view: 'project' }, true)
+  }
 
   if (phase === 'recovery') return recovery ? <PasswordRecoveryPanel key={recovery.generation} value={recovery.value} initialEmail={signInEmail}
     onRequest={() => { if (sessionGeneration.current === renderedSession) beginRecovery({ kind: 'request' }) }} onSignIn={changed => { if (sessionGeneration.current !== renderedSession) return; resetSession(); if (changed) setAuthNotice({ kind: 'info', message: 'Password changed. Sign in with your new password. Two-factor authentication is still required if enabled.' }) }} /> : <main className='center'><p role='status'>Loading…</p></main>
@@ -701,9 +709,9 @@ function App() {
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
         {view === 'preferences' && me && <AccountPreferencesPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
+        {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} /><AccountClosurePanel key={`closure:${me.user.id}`} userId={me.user.id} onClosed={accountClosed} onUnauthorized={unauthorized} onOpenTeam={id => go({ workspace: id, view: 'team' })} onOpenIdentity={() => go(target('identity'))} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
         {view === 'identity' && me && <>
-          <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
+          <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={unauthorized} onClosed={accountClosed} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
           <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
         </>}
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}

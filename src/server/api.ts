@@ -15,7 +15,7 @@ import {getProjectDeletion,deleteProject} from './project-delete.ts';
 import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
-import { clientRateKey } from './client-rate-limit.ts';
+import { clientRateKey, emailLimitKey } from './client-rate-limit.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {exportAnalytics,analyticsExportLimits} from './analytics-export.ts';
@@ -41,6 +41,7 @@ import {getProjectContext,getContextResearch,updateProjectContext} from './proje
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
 import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
+import { AccountClosureBlocked } from './account-closure.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
@@ -1035,7 +1036,7 @@ export async function handleApi(request: Request): Promise<Response> {
           // workspace and inviter names are member-chosen, so they never reach the installation's sender (phishing surface).
           // The installation-wide budget mirrors password recovery: plus-tag variants and self-made workspaces evade the address and actor keys.
           // It is checked after the address key, so re-inviting one address past its budget never spends the installation's.
-          const email = !getEmailStatus().configured ? 'disabled' : await limit(`invitation-email:${createHash('sha256').update(to).digest('hex')}`, 3)
+          const email = !getEmailStatus().configured ? 'disabled' : await limit(emailLimitKey('invitation-email', to), 3)
             .then(() => limit('invitation-email:global', 20))
             .then(() => sendTransactionalEmail({ to, subject: 'Your ten98 Discover workspace invitation', text: `You were invited to join a workspace on the ten98 Discover installation at ${config.appUrl} with the ${role} role.\n\nOpen this link within 7 days to accept:\n${inviteUrl}\n\nOnly the newest invitation link sent to this address for a workspace works. If you did not expect this invitation, ignore this email.` }))
             .then(() => 'accepted' as const, () => 'failed' as const);
@@ -1184,6 +1185,7 @@ export async function handleApi(request: Request): Promise<Response> {
     return json({ error: 'Route unavailable.' }, 404);
   } catch (error) {
     if(error instanceof FoundationError&&['AI_SEARCH_BUSY','AI_SEARCH_DEADLINE','CONTENT_COVERAGE_BUSY'].includes((error as FoundationError&{code?:string}).code??''))return json({error:error.message},error.status,{...cors,'retry-after':'5'});
+    if (error instanceof AccountClosureBlocked) return json({ error: error.message, blockers: error.blockers }, error.status);
     if (error instanceof FoundationError || error instanceof InputError) return json({ error: error.message }, error.status, cors);
     if (error instanceof z.ZodError) return json({ error: 'Check the submitted fields and try again.' }, 400, cors);
     const code = (error as { code?: string })?.code;

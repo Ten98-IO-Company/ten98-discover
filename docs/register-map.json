@@ -24,7 +24,8 @@
     "0001_foundation",
     "0002_teams",
     "0007_oidc",
-    "0069_project_shares"
+    "0069_project_shares",
+    "0070_account_closure"
    ]
   },
   "P03": {
@@ -36,12 +37,16 @@
   },
   "P04": {
    "routes": [
-    "POST /api/workspaces/{workspaceId}/two-factor"
+    "POST /api/workspaces/{workspaceId}/two-factor",
+    "GET /api/account/closure",
+    "POST /api/account/closure",
+    "POST /api/identity/accounts/{userId}/close"
    ],
    "migrations": [
     "0004_account_security",
     "0009_oidc_account_security",
-    "0068_workspace_two_factor"
+    "0068_workspace_two_factor",
+    "0070_account_closure"
    ]
   },
   "P05": {

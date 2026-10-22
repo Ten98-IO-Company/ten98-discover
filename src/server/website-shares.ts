@@ -15,9 +15,10 @@ export const canonicalShareToken=(token:unknown):token is string=>typeof token==
 type Role='owner'|'admin';
 type Row={id:string;label:string;sections:WebsiteShareSection[];created_at:Date;expires_at:Date;revoked_at:Date|null;state:WebsiteShareItem['state'];creator_name:string|null;creator_email:string|null;creator_member:boolean|null};
 // Creator identity is shown to current owners/admins only (D6); a removed creator keeps the row but loses management.
+// A closed creator shows as the "Closed account" tombstone name with no address (docs/account-closure.md).
 const itemSql=`SELECT s.id,s.label,s.sections,s.created_at,s.expires_at,s.revoked_at,
  CASE WHEN s.revoked_at IS NOT NULL THEN 'revoked' WHEN s.expires_at<=clock_timestamp() THEN 'expired' ELSE 'active' END AS state,
- u.name AS creator_name,u.email AS creator_email,CASE WHEN u.id IS NULL THEN NULL ELSE m.user_id IS NOT NULL END AS creator_member
+ u.name AS creator_name,CASE WHEN u.closed_at IS NULL THEN u.email END AS creator_email,CASE WHEN u.id IS NULL THEN NULL ELSE m.user_id IS NOT NULL END AS creator_member
  FROM project_share s JOIN project p ON p.id=s.project_id LEFT JOIN "user" u ON u.id=s.created_by LEFT JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=s.created_by`;
 function item(row:Row):WebsiteShareItem{
  return{id:row.id,label:row.label,sections:row.sections,createdAt:row.created_at.toISOString(),expiresAt:row.expires_at.toISOString(),revokedAt:row.revoked_at?.toISOString()??null,state:row.state,

@@ -10,7 +10,7 @@ type Pending={operation:'create'|'revoke';shareId:string|null;body:string};
 type Draft={label:string;sections:Record<WebsiteShareSection,boolean>;expiresAt:string};
 const sectionLabels:Record<WebsiteShareSection,string>={overview:'Overview',events:'Events',locations:'Regions and cities'};
 const touch={minHeight:44,maxWidth:'100%',whiteSpace:'normal' as const,overflowWrap:'anywhere' as const};
-const creatorText=(creator:WebsiteShareItem['creator'])=>creator===null?'Created by a deleted account':(creator.member?'Created by ':'Former member: ')+creator.name+' ('+creator.email+')';
+const creatorText=(creator:WebsiteShareItem['creator'])=>creator===null?'Created by a deleted account':(creator.member?'Created by ':'Former member: ')+creator.name+(creator.email?' ('+creator.email+')':'');
 class InvalidReply extends Error{}
 type Props={projectId:string;isCurrent?:()=>boolean;onUnauthorized:()=>void};
 /** Owner/admin management of public website links (P45). The token exists only in this tab and is shown once. */
