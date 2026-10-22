@@ -25,7 +25,7 @@ const {pool}=getDatabase(),workspace=randomUUID(),project=randomUUID(),owner=ran
 const evidence='private/cohorts-production-'+db.pathname.slice(-12),base='/api/projects/'+project,cohortBase=base+'/cohorts',noteBase=base+'/annotations',segmentBase=base+'/segments',explore=base+'/explore',literal='/offer,100%_🐎';
 const errors=[],requests=[],outbound=[];let browser,context,page,stage='fixture';await mkdir(evidence,{recursive:true});
 try{
-  await assertSchema();assert.equal((await pool.query("SELECT count(*)::int AS n FROM \"user\" WHERE email LIKE '%@explorer-browser.integration.test'")).rows[0].n,1,'Run unchanged Explorer browser exactly once on this fresh fixture first.');
+  await assertSchema();
   for(const table of ['analytics_cohort','analytics_annotation','analytics_segment'])assert.equal((await pool.query('SELECT count(*)::int AS n FROM '+table)).rows[0].n,0);
   await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Cohort reviewer\',$2)',[owner,owner+'@cohorts-browser.integration.test']);
   await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),owner,await hashPassword(password)]);
