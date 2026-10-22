@@ -17,7 +17,7 @@ Routes: `GET /api/account/closure` returns the blockers, whether a local passwor
 
 Checked under lock, so a concurrent change cannot slip past them. A refusal rolls the whole transaction back: nothing changes, and a submitted recovery code is not consumed.
 
-- **Last owner.** The account is the only owner of a workspace. Transfer ownership of each listed workspace to another member, or delete the workspace, first. The confirm screen links to each workspace's team settings. The 409 answer lists the id and name of each such workspace, so an operator closing another account also sees the names of the workspaces that account solely owns. (This foundation has no workspace deletion yet, so transfer is the available path.)
+- **Last owner.** The account is the only owner of a workspace. Transfer ownership of each listed workspace to another member first (workspace deletion is not yet available; see #292). The confirm screen links to each workspace's team settings. The 409 answer lists the id and name of each such workspace, so an operator closing another account also sees the names of the workspaces that account solely owns. (This foundation has no workspace deletion yet, so transfer is the available path.)
 - **Last operator.** The account holds the only instance operator role. Grant the role to another account first (`operator grant`).
 
 ## One transaction

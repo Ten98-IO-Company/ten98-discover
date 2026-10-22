@@ -26,7 +26,7 @@ export class AccountClosureBlocked extends FoundationError {
   constructor(blockers: ClosureBlockers) {
     super(409, blockers.lastOperator && !blockers.workspaces.length
       ? 'This is the last instance operator. Grant the role to another account before closing this one.'
-      : 'This account is the last owner of a workspace. Transfer ownership of each listed workspace, or delete it, before closing the account.'
+      : 'This account is the last owner of a workspace. Transfer ownership of each listed workspace to another member before closing the account.'
         + (blockers.lastOperator ? ' It is also the last instance operator: grant the role to another account first.' : ''));
     this.blockers = blockers;
   }

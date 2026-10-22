@@ -78,7 +78,7 @@ export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTe
     {data && blocked && <Alert tone='warning' title='Closing is not available yet'>
       <Stack gap={2}>
         {data.blockers.workspaces.length > 0 && <>
-          <Text>You are the only owner of these workspaces. Transfer ownership to another member, or delete the workspace, before closing your account.</Text>
+          <Text>You are the only owner of these workspaces. Transfer ownership to another member before closing your account.</Text>
           <List>{data.blockers.workspaces.map(workspace => <ListItem key={workspace.id}>
             <Button variant='ghost' onClick={() => onOpenTeam(workspace.id)}>{`Open team settings for ${isolate(workspace.name)}`}</Button>
           </ListItem>)}</List>
