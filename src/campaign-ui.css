@@ -148,3 +148,6 @@ th { font-size:12px; }
 :is(section[aria-label="Session replay"] [aria-label="Recording list"],.ai-search [aria-label="AI search sections"]) .btn[aria-pressed="true"] { color:var(--color-accent); background:var(--color-accent-subtle); border-color:var(--color-accent); }
 
 .ai-search > section[aria-label="Capture a ChatGPT answer with web search"] { inline-size:100%; max-inline-size:var(--form-max); }
+
+/* ponytail: @ten98/ui 0.17.0 still wraps only chart summaries and notes; captions and legends cannot break long words (time zones, series names); at 320px and 200% zoom they overflow the card. */
+.t98-chart { overflow-wrap: anywhere; }

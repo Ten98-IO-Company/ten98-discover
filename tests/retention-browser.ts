@@ -50,21 +50,19 @@ try {
     await navigation();await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name,exact:true}).click();
   }
   async function settings(name:string) {
-    await navigation();
-    const account=name==='Account security';
-    const target=page.getByRole('navigation',{name:account?'Account':'Workspace settings',exact:true}).getByRole('link',{name,exact:true});
-    if(!await target.isVisible()){
-      if(account)await page.locator('details.account-menu > summary').click();
-      else await page.getByText('Workspace settings',{exact:true}).click();
-    }
-    await target.click();
+    // The shell opens Settings from the sidebar; each area is a tab in "Settings sections".
+    const tab=({'Account security':'Security','Data retention':'Retention'} as Record<string,string>)[name]??name;
+    const tabs=page.getByRole('navigation',{name:'Settings sections',exact:true});
+    if(!await tabs.isVisible()){await navigation();await page.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true}).click();}
+    await tabs.getByRole('link',{name:tab,exact:true}).click();
   }
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
-  await navigation();await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:'Retention browser project',exact:true}).click();
+  await navigation();await page.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true}).selectOption({label:'Retention browser project'});
   await page.getByText('This date range is partial after retention.',{exact:false}).waitFor();
-  await page.getByText('Daily data table',{exact:true}).click();
-  assert.ok(await page.getByText('Unavailable',{exact:true}).count()>0);
-  await page.getByText('(partial)',{exact:true}).waitFor();
+  const daily=page.getByRole('figure',{name:/^Daily page views and custom events \(UTC\)/});
+  await daily.getByText('View data table',{exact:true}).click();
+  assert.ok(await daily.getByRole('cell',{name:/^Unavailable/}).count()>0);
+  await daily.getByRole('cell',{name:/\(partial\)/}).first().waitFor();
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile analytics must not overflow.');
   const artifacts=process.env.BROWSER_ARTIFACT_DIR;
   if(artifacts){await mkdir(artifacts,{recursive:true});await page.screenshot({path:join(artifacts,'retention-coverage-mobile.png'),fullPage:true});}

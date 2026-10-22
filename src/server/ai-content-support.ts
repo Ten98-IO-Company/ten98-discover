@@ -44,14 +44,15 @@ export async function withSupportProject<T>(projectId:string,userId:string|null,
   const result=await work(c,p);await c.query('COMMIT');return result;
  }catch(error){await c.query('ROLLBACK').catch(()=>{});if(['57014','55P03'].includes((error as {code?:string})?.code??''))throw new FoundationError(503,'Content assessments are busy. Retry the same request ID.');throw error;}finally{c.release();}
 }
-export async function supportAudit(c:PoolClient,p:SupportProject,id:string):Promise<AuditLock|null>{
- const run=(await c.query<AuditRunRow>('SELECT * FROM site_audit_run WHERE id=$1 AND project_id=$2 FOR UPDATE',[id,p.id])).rows[0];if(!run)return null;
+/** lock=false is the read-only list path: the same audit row and checks without a row lock. */
+export async function supportAudit(c:PoolClient,p:SupportProject,id:string,lock=true):Promise<AuditLock|null>{
+ const run=(await c.query<AuditRunRow>(`SELECT * FROM site_audit_run WHERE id=$1 AND project_id=$2${lock?' FOR UPDATE':''}`,[id,p.id])).rows[0];if(!run)return null;
  Object.assign(run,(await markSiteAuditReadExpiry(c,p.id,[id]))[0]);return {client:c,project:{id:p.id,workspaceId:p.workspaceId,origin:p.origin},role:p.role,run};
 }
 /** Same-client native source leaves. No reconstructed receipt or nested gate. */
-async function source(c:PoolClient,p:SupportProject,input:ContentSupportQuoteInput,materialize:boolean){
+async function source(c:PoolClient,p:SupportProject,input:ContentSupportQuoteInput,materialize:boolean,lock=true){
  try{
-  const locked=await supportAudit(c,p,input.source.selection.auditRunId);if(!locked||locked.run!.deleted_at)return reject(410,'Selected audit is unavailable.');
+  const locked=await supportAudit(c,p,input.source.selection.auditRunId,lock);if(!locked||locked.run!.deleted_at)return reject(410,'Selected audit is unavailable.');
   if(!(await auditAuthorityCurrent(c,locked.run!)).allowed)return reject(409,'Audit authority changed.');
   const fields=parseSiteAuditPagesExport(input.source.selection.pages);
   const leaf=input.source.kind==='capture'?await readContentCoverageSourceInLock(locked,p.id,input.source.selection,fields,false):await readProjectContentCoverageSourceInLock(locked,p.id,input.source.selection,fields,false);
@@ -90,7 +91,8 @@ export function contentSupportIdentity(q:SupportQuoteIdentityInput){
 }
 const quoteSelect=`SELECT q.*,${clock('q.created_at')} AS quote_created,${clock('q.expires_at')} AS quote_expires,${clock('q.raw_anchor_at')} AS raw_anchor,${clock('q.derived_anchor_at')} AS derived_anchor,q.expires_at<=clock_timestamp() AS quote_expired FROM ai_content_support_quote q`;
 export async function supportQuoteRow(c:PoolClient,pid:string,id:string){const q=(await c.query<SupportQuoteRow>(quoteSelect+' WHERE q.project_id=$1 AND q.id=$2 FOR UPDATE',[pid,id])).rows[0];if(!q)throw missing();return q;}
-export async function supportRunRow(c:PoolClient,pid:string,id:string){const r=(await c.query<SupportRunRow>(`SELECT r.*,${clock('r.created_at')} AS run_created,${clock('r.dispatched_at')} AS run_dispatched,${clock('r.completed_at')} AS run_completed,r.lease_expires_at<=clock_timestamp() AS lease_expired,p.status AS charge_status,p.actual_micros,p.estimate_micros,p.input_hash AS ledger_input_hash,p.connection_id AS ledger_connection_id,p.user_id AS ledger_user_id,p.connection_revision AS ledger_connection_revision,p.operation AS ledger_operation FROM ai_content_support_run r JOIN provider_request p ON p.id=r.id AND p.workspace_id=r.workspace_id WHERE r.project_id=$1 AND r.id=$2 FOR UPDATE OF r`,[pid,id])).rows[0];if(!r)throw missing();return r;}
+const runSelect=`SELECT r.*,${clock('r.created_at')} AS run_created,${clock('r.dispatched_at')} AS run_dispatched,${clock('r.completed_at')} AS run_completed,r.lease_expires_at<=clock_timestamp() AS lease_expired,p.status AS charge_status,p.actual_micros,p.estimate_micros,p.input_hash AS ledger_input_hash,p.connection_id AS ledger_connection_id,p.user_id AS ledger_user_id,p.connection_revision AS ledger_connection_revision,p.operation AS ledger_operation FROM ai_content_support_run r JOIN provider_request p ON p.id=r.id AND p.workspace_id=r.workspace_id`;
+export async function supportRunRow(c:PoolClient,pid:string,id:string){const r=(await c.query<SupportRunRow>(runSelect+' WHERE r.project_id=$1 AND r.id=$2 FOR UPDATE OF r',[pid,id])).rows[0];if(!r)throw missing();return r;}
 /** Stored payload identity is distinct from its actor/key/source-bound ledger hash. */
 export function readSupportPayload(q:SupportPayloadInput){
  const input=parse(contentSupportStoredInputSchema,q.source_input),stored=parse(z.object({evidence:z.unknown(),selection:contentSupportSelectionSchema}).strict(),q.snapshot),e=stored.evidence as ContentSupportSnapshot;
@@ -99,9 +101,11 @@ export function readSupportPayload(q:SupportPayloadInput){
  const dependencies=parse(contentSupportDependenciesSchema,q.dependencies),anchor=dependencies.map(d=>d.kind==='query'?d.quoteCreatedAt:d.auditCompletedAt).sort()[0];if(q.raw_anchor!==anchor||q.derived_anchor!==anchor)throw changed();const selected=parse(contentSupportSelectionSchema,stored.selection);
  if(canonicalHash(selected.queries)!==canonicalHash(prepared.snapshot.queries)||canonicalHash(input.selectedQueryIds)!==canonicalHash(selected.queries.map(v=>v.id))||canonicalHash(input.selectedPageIds)!==canonicalHash(selected.pages.map(v=>v.id))||selected.pages.some(p=>{const b=prepared.snapshot.pages.find(v=>v.id===p.id);return !b||b.bodySha256!==p.bodySha256||b.body.length!==p.bodyLength;}))throw changed();return {...prepared,input,selection:selected};
 }
-export async function markSupportUnavailable(c:PoolClient,id:string,reason='source_changed'){
- await c.query('UPDATE ai_content_support_quote SET raw_expired_at=COALESCE(raw_expired_at,clock_timestamp()),unavailable_reason=COALESCE(unavailable_reason,$2) WHERE id=$1',[id,reason]);
- await c.query('UPDATE ai_content_support_run SET raw_result=NULL,proposal=NULL,result_purged_at=COALESCE(result_purged_at,clock_timestamp()) WHERE quote_id=$1',[id]);
+export async function markSupportUnavailable(c:PoolClient,id:string,reason='source_changed'){await markSupportUnavailableMany(c,[{id,reason}]);}
+async function markSupportUnavailableMany(c:PoolClient,marks:{id:string;reason:string}[]){
+ if(!marks.length)return;const ids=marks.map(m=>m.id);
+ await c.query('UPDATE ai_content_support_quote q SET raw_expired_at=COALESCE(q.raw_expired_at,clock_timestamp()),unavailable_reason=COALESCE(q.unavailable_reason,m.reason) FROM unnest($1::uuid[],$2::text[]) AS m(id,reason) WHERE q.id=m.id',[ids,marks.map(m=>m.reason)]);
+ await c.query('UPDATE ai_content_support_run SET raw_result=NULL,proposal=NULL,result_purged_at=COALESCE(result_purged_at,clock_timestamp()) WHERE quote_id=ANY($1::uuid[])',[ids]);
 }
 /** Call inside W mutation admission. Native SQL time and original source anchors survive copies. */
 export async function latchContentSupportExpiry(c:PoolClient,projectIds:string[],policy?:{rawDays:number;derivedDays:number},quoteIds?:string[]){
@@ -110,23 +114,54 @@ export async function latchContentSupportExpiry(c:PoolClient,projectIds:string[]
  OR EXISTS(SELECT 1 FROM jsonb_array_elements(q.dependencies)d WHERE d->>'kind'='query' AND NOT EXISTS(SELECT 1 FROM ai_search_quote s JOIN ai_search_run r ON r.quote_id=s.id WHERE s.id=(d->>'quoteId')::uuid AND r.id=(d->>'captureId')::uuid AND s.project_id=q.project_id AND s.raw_expired_at IS NULL AND s.input_purged_at IS NULL AND r.result_purged_at IS NULL))
  OR NOT EXISTS(SELECT 1 FROM site_audit_run a WHERE a.id=q.audit_run_id AND a.project_id=q.project_id AND a.deleted_at IS NULL AND a.raw_expired_at IS NULL AND a.data_expired_at IS NULL))`,[projectIds,policy?.rawDays??null,policy?.derivedDays??null,quoteIds??null]);
 }
+type SupportPayload=ReturnType<typeof readSupportPayload>;
+const sourceKey=(payload:SupportPayload)=>canonicalHash({source:payload.input.source,query:payload.input.expectedQueryReceiptHash,corpus:payload.input.expectedCorpusReceiptHash});
+/** The single source-verification decision shared by detail, start, replay and the list. */
+function sourceOutcome(q:SupportQuoteRow,current:Awaited<ReturnType<typeof source>>):{refusal:Refusal;reason:string}|null{
+ if('refusal'in current)return {refusal:current,reason:current.refusal.status===410?'source_expired':'source_changed'};
+ if(canonicalHash(current.leaf.policy)!==canonicalHash({revision:q.retention_revision,rawProviderEvidenceDays:q.raw_days_at_quote,derivedHistoryDays:q.derived_days_at_quote}))return {refusal:reject(),reason:'source_changed'};
+ return null;
+}
 export async function verifySupportSource(c:PoolClient,p:SupportProject,q:SupportQuoteRow){
  await latchContentSupportExpiry(c,[p.id],undefined,[q.id]);q=await supportQuoteRow(c,p.id,q.id);if(q.raw_expired_at||q.input_purged_at)return reject(410,'The copied content assessment evidence expired.');
- let payload:ReturnType<typeof readSupportPayload>;try{payload=readSupportPayload(q);}catch{await markSupportUnavailable(c,q.id);return reject();}
- const current=await source(c,p,payload.input,false);if('refusal'in current){await markSupportUnavailable(c,q.id,current.refusal.status===410?'source_expired':'source_changed');return current;}
- if(canonicalHash(current.leaf.policy)!==canonicalHash({revision:q.retention_revision,rawProviderEvidenceDays:q.raw_days_at_quote,derivedHistoryDays:q.derived_days_at_quote})){await markSupportUnavailable(c,q.id);return reject();}
+ let payload:SupportPayload;try{payload=readSupportPayload(q);}catch{await markSupportUnavailable(c,q.id);return reject();}
+ const outcome=sourceOutcome(q,await source(c,p,payload.input,false));if(outcome){await markSupportUnavailable(c,q.id,outcome.reason);return outcome.refusal;}
  // Audit/source locks may have waited after the first quote read. Use a fresh
  // native clock and re-latch before exposing text or authorizing a reservation.
  await latchContentSupportExpiry(c,[p.id],undefined,[q.id]);q=await supportQuoteRow(c,p.id,q.id);if(q.raw_expired_at||q.input_purged_at)return reject(410,'The copied content assessment evidence expired.');return {q,payload};
 }
 function quoteDto(p:SupportProject,q:SupportQuoteRow){const expired=!!q.raw_expired_at||!!q.input_purged_at;return boundedSupport(contentSupportQuoteDtoSchema.parse({version:'ai-content-support-quote-v1',role:p.role,projectId:p.id,quote:{...contentSupportContract,id:q.id,requestId:q.request_id,createdAt:q.quote_created,expiresAt:q.quote_expires,inputHash:q.input_hash,payloadHash:q.payload_hash,schemaHash:q.schema_hash,queryReceiptHash:q.query_receipt_hash,corpusReceiptHash:q.corpus_receipt_hash,route:q.route,estimateUsd:usd(q.estimate_micros),inputExpired:expired,input:expired?null:(({maxSpendUsd:_stored,...request})=>request)(q.source_input!),selection:expired?null:q.snapshot!.selection}}));}
 export function supportRunDto(p:SupportProject,q:SupportQuoteRow,r:SupportRunRow){const expired=!!q.raw_expired_at||!!q.input_purged_at,resultExpired=expired||!!r.result_purged_at,proposal=resultExpired?null:r.proposal;return boundedSupport(contentSupportRunDtoSchema.parse({version:'ai-content-support-run-v1',role:p.role,projectId:p.id,run:{...contentSupportContract,id:r.id,quoteId:q.id,requestId:r.request_id,inputHash:q.input_hash,payloadHash:q.payload_hash,queryReceiptHash:q.query_receipt_hash,corpusReceiptHash:q.corpus_receipt_hash,resultHash:proposal?canonicalHash(proposal):null,route:q.route,status:r.status,chargeStatus:r.charge_status,estimateUsd:usd(r.estimate_micros),actualUsd:r.actual_micros===null?null:usd(r.actual_micros),createdAt:r.run_created,dispatchedAt:r.run_dispatched,completedAt:r.run_completed,generationId:r.generation_id,diagnostic:r.diagnostic,inputExpired:expired,resultExpired,selection:expired?null:q.snapshot!.selection,proposal,canCancel:p.role==='owner'&&r.status==='queued'&&r.charge_status==='reserved',canReconcile:p.role==='owner'&&r.charge_status==='uncertain'&&r.generation_id!==null}}));}
+const readQuotes=async(c:PoolClient,p:SupportProject,ids:string[])=>new Map((await c.query<SupportQuoteRow>(quoteSelect+' WHERE q.project_id=$1 AND q.id=ANY($2::uuid[])',[p.id,ids])).rows.map(q=>[q.id,q]));
+/**
+ * The list applies verifySupportSource's checks to the whole page without row locks: one expiry
+ * latch and quote read for the page, the stored-payload check per live quote (CPU only), one
+ * source verification per distinct live source, then one batched mark and a fresh re-latch.
+ * ponytail: the source leaves (audit authority, AI-search receipts, audit page selection) are
+ * single-source readers, so statements grow with distinct live sources, not rows; expired quotes
+ * cost nothing. Upgrade path: multi-source variants of those readers.
+ */
+async function listSupportQuotes(c:PoolClient,p:SupportProject,ids:string[]){
+ if(!ids.length)return new Map<string,SupportQuoteRow>();
+ await latchContentSupportExpiry(c,[p.id],undefined,ids);const quotes=await readQuotes(c,p,ids);
+ const live=[...quotes.values()].filter(q=>!q.raw_expired_at&&!q.input_purged_at);if(!live.length)return quotes;
+ const marks:{id:string;reason:string}[]=[],verified=new Map<string,Awaited<ReturnType<typeof source>>>();
+ for(const q of live){
+  let payload:SupportPayload;try{payload=readSupportPayload(q);}catch{marks.push({id:q.id,reason:'source_changed'});continue;}
+  const key=sourceKey(payload);if(!verified.has(key))verified.set(key,await source(c,p,payload.input,false,false));
+  const outcome=sourceOutcome(q,verified.get(key)!);if(outcome)marks.push({id:q.id,reason:outcome.reason});
+ }
+ await markSupportUnavailableMany(c,marks);
+ // Source reads may have latched other evidence; use a fresh native clock before exposing text.
+ const liveIds=live.map(q=>q.id);await latchContentSupportExpiry(c,[p.id],undefined,liveIds);for(const [id,q] of await readQuotes(c,p,liveIds))quotes.set(id,q);return quotes;
+}
 async function detail(c:PoolClient,p:SupportProject,id:string){let r=await supportRunRow(c,p.id,id),q=await supportQuoteRow(c,p.id,r.quote_id);await verifySupportSource(c,p,q);q=await supportQuoteRow(c,p.id,q.id);r=await supportRunRow(c,p.id,id);return supportRunDto(p,q,r);}
 export async function getContentSupportRun(projectId:string,userId:string,id:string){parse(z.uuid(),id);return withSupportProject(projectId,userId,false,(c,p)=>detail(c,p,id));}
 export async function getContentSupport(projectId:string,userId:string,params=new URLSearchParams()){
  if([...params.keys()].some(k=>k!=='cursor')||params.getAll('cursor').length>1)throw new FoundationError(400,'Use one content assessment cursor.');
- return withSupportProject(projectId,userId,false,async(c,p)=>{const scope={projectId,list:'ai-content-support'},cursor=readContentCursor(params.get('cursor'),scope),rows=(await c.query<{id:string;created_at:Date}>('SELECT id,created_at FROM ai_content_support_run WHERE project_id=$1 AND($2::timestamptz IS NULL OR(created_at,id)<($2::timestamptz,$3::uuid))ORDER BY created_at DESC,id DESC LIMIT 21',[p.id,cursor?.at??null,cursor?.id??null])).rows;
-  const runs=[];for(const row of rows.slice(0,20))runs.push((await detail(c,p,row.id)).run);
+ return withSupportProject(projectId,userId,false,async(c,p)=>{const scope={projectId,list:'ai-content-support'},cursor=readContentCursor(params.get('cursor'),scope),rows=(await c.query<SupportRunRow>(runSelect+' WHERE r.project_id=$1 AND($2::timestamptz IS NULL OR(r.created_at,r.id)<($2::timestamptz,$3::uuid))ORDER BY r.created_at DESC,r.id DESC LIMIT 21',[p.id,cursor?.at??null,cursor?.id??null])).rows;
+  const page=rows.slice(0,20),quotes=await listSupportQuotes(c,p,page.map(r=>r.quote_id));
+  const runs=page.map(r=>{const q=quotes.get(r.quote_id);if(!q)throw missing();return supportRunDto(p,q,r).run;});
   const connections=(await c.query<{id:string;name:string;revision:number;checkStatus:string}>("SELECT id,name,revision,check_status AS \"checkStatus\" FROM provider_connection WHERE workspace_id=$1 AND provider='openrouter' AND revoked_at IS NULL ORDER BY created_at,id",[p.workspaceId])).rows;
   return boundedSupport({version:'ai-content-support-list-v1',role:p.role,projectId,canQuote:p.role==='owner',admission:'owner-evaluation',semanticConclusions:'unverified',connections,runs,nextCursor:rows.length>20?contentCursor({id:rows[19].id,createdAt:rows[19].created_at},scope):null});
  });

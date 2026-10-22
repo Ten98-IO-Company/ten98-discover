@@ -3,7 +3,7 @@ import {setTimeout as sleep} from 'node:timers/promises';
 import type {PoolClient} from 'pg';
 import type {PgBoss} from 'pg-boss';
 import {getDatabase} from './db.ts';
-import {getBoss} from './jobs.ts';
+import {getBoss,workJobs} from './jobs.ts';
 import {auditAuthorityCurrent,siteAuditQueue,withAuditLock,type AuditRunRow,type AuditCoverage,type AuditSummary} from './site-audits.ts';
 import {fetchCrawlDocument,type CrawlDocumentKind,type CrawlDocumentObservation} from './crawl-network.ts';
 import {evaluateCrawlRobotsIsolated} from './crawl-robots-isolated.ts';
@@ -374,7 +374,7 @@ export async function reconcileSiteAudits(){
 }
 export async function startSiteAuditWorker(boss:PgBoss){
  stopping=false;await reconcileSiteAudits();
- await boss.work<{runId:string}>(siteAuditQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeSiteAudit({runId:job.data?.runId,jobId:job.id});});
+ await workJobs<{runId:string}>(boss,siteAuditQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeSiteAudit({runId:job.data?.runId,jobId:job.id});});
 }
 export async function stopSiteAudits(){
  stopping=true;for(const work of active.values())abort(work,'worker_shutdown');
