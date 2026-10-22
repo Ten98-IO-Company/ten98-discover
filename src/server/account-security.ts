@@ -5,10 +5,11 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError, getAuth } from './auth.ts';
 import { getConfig } from './config.ts';
-import { clientRateKey } from './client-rate-limit.ts';
+import { clientRateKey, emailLimitKey } from './client-rate-limit.ts';
 import { getDatabase } from './db.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
 import { readJson } from './validation.ts';
+import { closeAccount, closureBlockers, closureReasonInput } from './account-closure.ts';
 import { accountPreferencesDefaults, accountPreferencesDtoSchema, accountPreferencesInputSchema, accountPreferencesMaxRevision, type AccountPreferencesDto } from '../lib/account-preferences.ts';
 
 type Auth = ReturnType<typeof getAuth>;
@@ -146,7 +147,7 @@ export async function requireLocalIdentityProof(client: PoolClient, request: Req
 }
 
 export const oidcSecurityActionInput = z.object({
-  action: z.enum(['set-password', 'enable-two-factor', 'disable-two-factor', 'replace-recovery']),
+  action: z.enum(['set-password', 'enable-two-factor', 'disable-two-factor', 'replace-recovery', 'close-account']),
   newPassword: z.string().min(12).max(128).optional(), code: codeInput.shape.code.optional(), backupCode: backupInput.shape.code.optional(),
 }).strict();
 
@@ -160,6 +161,10 @@ export async function applyOidcAccountSecurity(client: PoolClient, request: Requ
   if ((await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [current.user.id])).rowCount) throw new FoundationError(409, 'Use your local account password for security changes.');
   if ((details.action === 'set-password') !== (details.newPassword !== undefined)) throw new FoundationError(400, 'Supply a new password only when adding local sign-in.');
   if (current.user.twoFactorEnabled) await requireFactorProof(client, request, current.user.id, details);
+  if (details.action === 'close-account') {
+    await closeAccount(client, current.user.id, { kind: 'self', userId: current.user.id }, { userId: current.user.id, method: 'oidc' });
+    return json({ closed: true }, 200, await invoke(auth, request, '/sign-out', {}));
+  }
   const providerId = (await client.query('SELECT "oidcProviderId" FROM session WHERE id=$1', [current.session.id])).rows[0]?.oidcProviderId as string | null;
   if (details.action === 'set-password') {
     const password = await hashPassword(details.newPassword!);
@@ -204,7 +209,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
     const input = await readJson(request);
     if (asking) {
       const details = parsed(recoveryEmailInput, input);
-      await limit(`password-recovery:email:${createHash('sha256').update(details.email).digest('hex')}`, 3);
+      await limit(emailLimitKey('password-recovery:email', details.email), 3);
       if (!getEmailStatus().configured) throw new FoundationError(503, 'Email recovery is not configured. Contact the installation operator or use your linked identity provider.');
       const captured: { message?: { to: string; token: string } } = {};
       try {
@@ -251,6 +256,8 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
     });
   }
   if (path === '/api/account/preferences') return handleAccountPreferences(request, limit);
+  const closure = await handleAccountClosure(request, path, limit);
+  if (closure) return closure;
   const signIn = path === '/api/auth/sign-in/email';
   const challenge = path === '/api/auth/two-factor/verify-totp' || path === '/api/auth/two-factor/verify-backup-code';
   const status = path === '/api/account/security';
@@ -263,7 +270,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
   if (signIn) {
     const details = parsed(signInInput, input);
     await limit(clientRateKey(request, 'signin'), 60);
-    await limit(`signin:${createHash('sha256').update(details.email).digest('hex')}`, 5);
+    await limit(emailLimitKey('signin', details.email), 5);
     return transaction(async (client, auth) => {
       await client.query('SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE', [details.email]);
       const response = await invoke(auth, request, '/sign-in/email', details);
@@ -382,6 +389,87 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
     await revokeOtherSessions(client, userId, current.session.id);
     return json({ backupCodes: data.backupCodes }, 200, response);
   });
+}
+
+const operatorClosureInput = z.object({ reason: closureReasonInput, proof: localIdentityProofInput }).strict();
+
+/**
+ * Account closure routes (docs/account-closure.md). Self closure: GET reads the blockers, POST takes the local step-up
+ * proof (password plus a factor code when enabled); OIDC-only accounts close through /api/account/oidc/reauth/confirm.
+ * Operator closure: POST /api/identity/accounts/:userId/close with the operator's own step-up proof and a reason.
+ */
+async function handleAccountClosure(request: Request, path: string, limit: Limit): Promise<Response | null> {
+  const operatorPath = path.match(/^\/api\/identity\/accounts\/([0-9a-f-]{36})\/close$/i);
+  if (path !== '/api/account/closure' && !operatorPath) return null;
+  const reading = !operatorPath && request.method === 'GET';
+  if (!reading && request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
+  if (new URL(request.url).search) throw new FoundationError(400, 'Account closure does not accept URL parameters.');
+  if (!reading && request.headers.get('origin') !== getConfig().appUrl) throw new FoundationError(403, 'This action must originate from the application.');
+  const input = reading ? undefined : await readJson(request);
+  const identity = await getAuth().api.getSession({ headers: request.headers, query: { disableRefresh: true } });
+  if (!identity) throw new FoundationError(401, 'Sign in to continue.');
+  await limit(`account-closure:${reading ? 'read' : 'write'}:${identity.user.id}`, reading ? 120 : 10);
+  if (reading) return transaction(async client => {
+    const credential = await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [identity.user.id]);
+    return json({ blockers: await closureBlockers(client, identity.user.id), hasPassword: !!credential.rowCount, twoFactorEnabled: identity.user.twoFactorEnabled === true });
+  });
+  if (operatorPath) {
+    const details = parsed(operatorClosureInput, input), targetId = parsed(z.uuid(), operatorPath[1]).toLowerCase();
+    return transaction(async client => {
+      const current = await requireLocalIdentityProof(client, request, details.proof);
+      // closeAccount locks the operator set and refuses an actor without the role.
+      const result = await closeAccount(client, targetId, { kind: 'operator', userId: current.user.id, reason: details.reason }, { userId: current.user.id, method: 'password' });
+      return json({ closed: true, userId: targetId, closedAt: result.closedAt.toISOString() });
+    });
+  }
+  return transaction(async (client, auth) => {
+    const current = await requireLocalIdentityProof(client, request, input);
+    await closeAccount(client, current.user.id, { kind: 'self', userId: current.user.id }, { userId: current.user.id, method: 'password' });
+    // Sessions are already deleted; sign-out only clears this browser's cookies.
+    return json({ closed: true }, 200, await invoke(auth, request, '/sign-out', {}));
+  });
+}
+
+/**
+ * Host CLI step-up for an operator closure: the named operator signs in through Better Auth inside this transaction
+ * (password, then an authenticator or recovery code when enabled). The temporary session is deleted before commit.
+ */
+async function hostOperatorStepUp(client: PoolClient, operatorEmail: string, secret: z.output<typeof localIdentityProofInput>): Promise<string> {
+  const auth = getAuth(client), appUrl = getConfig().appUrl, blank = new Request(appUrl);
+  const post = (path: string, body: unknown, cookie: string | null = null) => auth.handler(new Request(`${appUrl}/api/auth${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', origin: appUrl, ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
+  const operator = (await client.query<{ id: string }>('SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE', [operatorEmail])).rows[0];
+  const signIn = await post('/sign-in/email', { email: operatorEmail, password: secret.password });
+  if (!operator || !signIn.ok) throw new FoundationError(400, 'The operator email or password was not accepted.');
+  let response = signIn;
+  if ((await signIn.clone().json()).twoFactorRedirect === true) {
+    if ((!secret.code && !secret.backupCode) || (secret.code && secret.backupCode)) throw new FoundationError(400, 'Supply the operator authenticator code or one recovery code.');
+    if (secret.code && await isRepeatedCode(client, operator.id, secret.code)) throw new FoundationError(409, 'Wait for the next authenticator code, then try again.');
+    response = await post(secret.code ? '/two-factor/verify-totp' : '/two-factor/verify-backup-code', { code: secret.code ?? secret.backupCode }, responseHeaders(blank, signIn).get('cookie'));
+    if (!response.ok) throw new FoundationError(400, 'The operator verification code was not accepted.');
+    if (secret.code) await rememberCode(client, operator.id, secret.code);
+  }
+  const session = await auth.api.getSession({ headers: responseHeaders(blank, response), query: { disableRefresh: true } });
+  if (!session || session.user.id !== operator.id) throw new FoundationError(503, 'Operator verification could not be completed.');
+  await client.query('DELETE FROM session WHERE id=$1', [session.session.id]);
+  return operator.id;
+}
+
+/** Host CLI: an instance operator closes another account with step-up and a recorded reason. Prints no personal data. */
+export async function closeAccountFromHost(targetEmail: unknown, operatorEmail: unknown, reason: unknown, secret: unknown): Promise<string> {
+  const emails = parsed(z.object({ target: signInInput.shape.email, operator: signInInput.shape.email }).strict(), { target: targetEmail, operator: operatorEmail });
+  const details = parsed(localIdentityProofInput, secret), why = parsed(closureReasonInput, reason);
+  const client = await getDatabase().pool.connect();
+  try {
+    await client.query('BEGIN');
+    const operatorId = await hostOperatorStepUp(client, emails.operator, details);
+    const target = (await client.query<{ id: string }>('SELECT id FROM "user" WHERE lower(email)=$1', [emails.target])).rows[0];
+    if (!target) throw new FoundationError(404, 'No open account has that email.');
+    await closeAccount(client, target.id, { kind: 'operator', userId: operatorId, reason: why }, { userId: operatorId, method: 'host' });
+    await client.query('COMMIT');
+    return target.id;
+  } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
+  finally { client.release(); }
 }
 
 async function preferencesDto(client:PoolClient,userId:string):Promise<AccountPreferencesDto> {

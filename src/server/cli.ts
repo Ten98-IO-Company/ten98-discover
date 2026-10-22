@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getConfig } from './config.ts';
+import { FoundationError } from './auth.ts';
 import { assertSchema, closeDatabase, getDatabase, migrationLedger } from './db.ts';
 import { startWorker, stopJobs } from './jobs.ts';
 import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts';
@@ -9,6 +10,7 @@ import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts'
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
 import {initializeProviderAccountIdentity,assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
 import { setInstanceOperator } from './instance-operators.ts';
+import { closeAccountFromHost } from './account-security.ts';
 import { quarantineRestoredSpending } from './restore-quarantine.ts';
 
 class CliError extends Error {}
@@ -87,6 +89,14 @@ async function diagnose(checkWorker: boolean) {
   }
 }
 
+/** The operator's step-up secret is JSON on standard input, never an argument or environment variable. */
+async function readOperatorSecret(): Promise<unknown> {
+  if (process.stdin.isTTY) throw new CliError('Pipe {"password":"…","code":"123456"} (or "backupCode") for the operator on standard input.');
+  let text = '';
+  for await (const chunk of process.stdin) { text += chunk; if (text.length > 4096) throw new CliError('The operator secret input is too large.'); }
+  try { return JSON.parse(text); } catch { throw new CliError('The operator secret must be one JSON object.'); }
+}
+
 async function worker() {
   await assertSchema();
   await assertCredentialKeys();
@@ -103,8 +113,9 @@ async function worker() {
 
 try {
   const [command, option, ...extra] = process.argv.slice(2);
-  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | worker | diagnose [worker] | operator grant|revoke <existing-account-email>';
-  if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
+  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (operator secret JSON on standard input)';
+  const closing = command === 'account' && option === 'close' && extra.length === 5 && extra[1] === '--operator' && extra[3] === '--reason';
+  if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : command === 'account' ? !closing : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
     throw new CliError(usage);
   }
   switch (command) {
@@ -129,6 +140,15 @@ try {
       break;
     }
     case 'operator': await assertSchema(); await setInstanceOperator(extra[0], option === 'grant'); console.log('Instance operator role updated and audited.'); break;
+    case 'account': {
+      await assertSchema();
+      const secret = await readOperatorSecret();
+      // Closure refusals (last owner, last operator, step-up) are user-safe messages; other failures stay generic.
+      try { await closeAccountFromHost(extra[0], extra[2], extra[4], secret); }
+      catch (error) { if (error instanceof FoundationError) throw new CliError(error.message); throw error; }
+      console.log('Account closed and audited. Its sessions, credentials, API keys and memberships were removed.');
+      break;
+    }
     case 'worker': await worker(); break;
     case 'diagnose': await diagnose(option === 'worker'); break;
     default: throw new CliError(usage);

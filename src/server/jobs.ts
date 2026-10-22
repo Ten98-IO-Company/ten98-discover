@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { PgBoss, type Job, type WorkOptions } from 'pg-boss';
+import type { PoolClient } from 'pg';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
@@ -117,6 +118,19 @@ export async function enqueueProbe(projectId: string, userId: string, requestId:
   } finally {
     client.release();
   }
+}
+
+/** Account closure: deny the account's queued worker checks and cancel their jobs in the caller's transaction. */
+export async function cancelQueuedProbes(client: PoolClient, userId: string): Promise<number> {
+  const denied = await client.query<{ id: string }>(
+    `UPDATE import_probe SET status='denied', completed_at=now(), error='The account was closed before this check ran.'
+     WHERE user_id=$1 AND status='queued' RETURNING id`, [userId],
+  );
+  if (denied.rowCount) {
+    const boss = await getBoss();
+    await boss.cancel(queueName, denied.rows.map((row) => row.id), { db: { executeSql: (text, values) => client.query(text, values) } });
+  }
+  return denied.rowCount ?? 0;
 }
 
 export async function reconcileProbes(projectId?: string): Promise<void> {
