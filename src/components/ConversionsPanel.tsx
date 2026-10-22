@@ -1,9 +1,8 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {FunnelBreakdown} from '@ten98/ui';
+import {FunnelBreakdown, useConfirmDialog} from '@ten98/ui';
 import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {api,ApiError,errMsg} from '../lib/api';
 import {MatchFields,PropertyFields,type MatchDraft,type PropertyDraft} from './AnalysisCriteriaFields';
-import {useConfirmDialog} from './useConfirmDialog';
 import type {AnalysisDefinition,AnalysisStep,PropertyPredicate} from '../server/funnel-input';
 import type {AnalysisItem,AnalysisKind,AnalysisResult,AnalysisWitnessResult} from '../server/funnels';
 
@@ -57,7 +56,7 @@ export function matchLabel(m:MatchDraft,goal=false,pageViewsOnly=false){return `
 export function ConversionsPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
 function Panel({projectId,onUnauthorized}:Props){
   const uid=useId(),[kind,setKind]=useState<AnalysisKind>('funnel'),kindRef=useRef(kind);
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [role,setRole]=useState<Role|null>(null),[items,setItems]=useState<AnalysisItem[]>([]),[nextCursor,setNextCursor]=useState<string|null>(null);
   const [view,setView]=useState<'list'|'editor'|'result'|'witnesses'>('list'),[selected,setSelected]=useState<AnalysisItem|null>(null);
   const [opening,setOpening]=useState<{id:string;edit:boolean}|null>(null);

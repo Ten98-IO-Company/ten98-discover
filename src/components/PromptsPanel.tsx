@@ -1,4 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {api, ApiError, errMsg} from '../lib/api';
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
@@ -7,7 +8,6 @@ import {PromptExecutionsPanel} from './PromptExecutionsPanel';
 import {AiSuggestionsPanel} from './AiSuggestionsPanel';
 import type {ExecutionEntry} from './PromptExecutionsPanel';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Role = WorkspaceRole;
 
@@ -129,7 +129,7 @@ export function PromptsPanel(props: Props) {
 
 function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAISearch}: Props) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/prompts`;
-  const [confirm, confirmDialog] = useConfirmDialog();
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
 
   const [execution, setExecution] = useState<{generation: number; entry: ExecutionEntry} | null>(null);
   const [suggestions, setSuggestions] = useState<number | null>(null);

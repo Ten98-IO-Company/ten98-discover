@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import { api, ApiError, errMsg } from '../lib/api';
-import { useConfirmDialog } from './useConfirmDialog';
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import type { Environment, Provider, CanonicalEvent, Destination, Configuration, Consent } from '../server/destinations';
@@ -168,7 +168,7 @@ function DestinationsInner({
   onUnauthorized: () => void;
 }) {
   const [mgmt, setMgmt] = useState<ManagementDTO | null>(null);
-  const [confirm, confirmDialog] = useConfirmDialog();
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const [draft, setDraft] = useState<Configuration | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pendingWrite, setPendingWrite] = useState(false);

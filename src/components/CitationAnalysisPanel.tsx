@@ -1,4 +1,5 @@
 import {useEffect,useId,useRef,useState} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import {validCarriedCitations,validCitationFilters,validCitationReport,citationSafeHref,citationPublicHost,citationRetainedHost,citationPublishers,citationPageTypes,citationSources,citationOwners,citationChanges} from '../lib/citation-report';
@@ -6,7 +7,6 @@ import type {CitationReport,CitationFilters,CitationNavigation,CitationCount,Cit
 import type {CarriedCitations} from '../server/citation-carried';
 import {CitationAnalysisView,type CitationAnalysisViewProps,type CitationCarriedScreen,type CitationFilterDraft,type CitationTaskDraft,type CitationReportView,type CitationPublisherCategory} from './CitationAnalysisView';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
-import {useConfirmDialog} from './useConfirmDialog';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
 
 type Props={userId:string;workspaceId:string;projectId:string;filters:Pick<CitationFilters,'from'|'to'|'timeZone'|'model'|'promptId'|'tag'>;filtersLabel:string;onUnauthorized:()=>void;onBack:()=>void;initialExpiredAnswerIds?:readonly string[];onAnswerExpired?:(ids:string[])=>void};
@@ -50,7 +50,7 @@ function Controller(props:Props){
  const locked=()=>state.current.writeState!=='idle'||operation.current?.write===true;
  const taskDirty=()=>!!state.current.task&&!equal(state.current.task.draft,state.current.task.baseline);
  const filterDirty=()=>!equal(state.current.draft,draftFor(state.current.selection.filters));
- const [confirm,confirmDialog]=useConfirmDialog();
+ const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
  useBlocker({shouldBlockFn:()=>locked()||((taskDirty()||filterDirty())&&!window.confirm('Discard unsaved citation changes?')),enableBeforeUnload:()=>locked()||taskDirty()||filterDirty()});
  function patch(value:Partial<State>){if(alive.current){state.current={...state.current,...value};setState(state.current);}}
  function revoke(){if(timer.current!==null)clearTimeout(timer.current);timer.current=null;if(blob.current)URL.revokeObjectURL(blob.current);blob.current=null;}

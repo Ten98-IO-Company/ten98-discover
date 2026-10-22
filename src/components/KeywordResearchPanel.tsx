@@ -1,11 +1,10 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import {Link} from '@tanstack/react-router';
-import {RunCostSummary} from '@ten98/ui';
+import {RunCostSummary, useConfirmDialog} from '@ten98/ui';
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Role=WorkspaceRole;
 type Mode='overview'|'ideas';
@@ -126,7 +125,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   const notifiedRef=useRef(false);
   const resultHeading=useRef<HTMLHeadingElement|null>(null),focusResult=useRef(false);
   const [clock,setClock]=useState(Date.now());
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   unauthRef.current=onUnauthorized;
   useEffect(()=>{onLockChange(writing||lostStart);},[writing,lostStart,onLockChange]);
 

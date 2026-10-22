@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {api, ApiError, errMsg} from '../lib/api';
-import {useConfirmDialog} from './useConfirmDialog';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 type Section = {key:string;title:string|null;content:string;updatedAt:string;updatedBy:string};
@@ -37,7 +37,7 @@ export function ContextPanel(props:{projectId:string;userId:string;onUnauthorize
 function ContextPanelInner({projectId,onUnauthorized}:{projectId:string;userId:string;onUnauthorized:()=>void}) {
   const base=`/api/projects/${encodeURIComponent(projectId)}/context`;
   const [data,setData]=useState<Context|null>(null),[editor,setEditor]=useState<Editor|null>(null);
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [busy,setBusy]=useState<string|null>(null),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const [conflict,setConflict]=useState(false),[retry,setRetry]=useState<Attempt|null>(null);
   const alive=useRef(true),locked=useRef(false),generation=useRef(0),controller=useRef<AbortController|null>(null);

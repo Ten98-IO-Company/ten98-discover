@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useConfirmDialog } from '@ten98/ui'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
-import { useConfirmDialog } from './useConfirmDialog'
 
 type ProviderName = 'openrouter' | 'dataforseo'
 type CheckStatus = 'untested' | 'ok' | 'error'
@@ -60,7 +60,7 @@ export function ProviderPanel({ workspaceId, onUnauthorized }: ProviderPanelProp
 
 function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps) {
   const [data, setData] = useState<ProvidersResponse | null>(null)
-  const [confirm, confirmDialog] = useConfirmDialog()
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true })
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [permissionLost, setPermissionLost] = useState(false)

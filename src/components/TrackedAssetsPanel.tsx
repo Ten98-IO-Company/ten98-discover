@@ -7,9 +7,8 @@ import {analyticsDay,applyGeographyFilter,geographyNavigationNames,type Analytic
 import {isEnvironmentFilter,environmentCatalog} from '../lib/analytics-environment';
 import {geographyFiltersValid,parseGeographyKey,serializeGeographyKey,type GeographyKey,type GeoCountryKey} from '../lib/analytics-geography';
 import {CountryMap,geographyLabel} from './GeographyCard';
-import {useConfirmDialog} from './useConfirmDialog';
 import {workspaceRoles} from '@ten98/runtime';
-import {TimeSeriesChart,type ChartPoint} from '@ten98/ui';
+import {TimeSeriesChart,type ChartPoint, useConfirmDialog} from '@ten98/ui';
 
 type Kind='link'|'pixel';
 type Props={workspaceId:string;userId:string;role:string;kind:Kind;appUrl:string;query?:string;readOwner?:string;readEnabled?:boolean;onNavigate:(query:string,kind?:Kind)=>void;onUnauthorized:()=>void};
@@ -80,7 +79,7 @@ type View={owner:number;role:TrackedAssetRole;items:TrackedAssetItem[];nextCurso
 
 export function TrackedAssetsPanel(props:Props){return <TrackedAssetsInner key={props.userId+':'+props.workspaceId} {...props}/>;}
 function TrackedAssetsInner(props:Props){
- const [confirm,confirmDialog]=useConfirmDialog();
+ const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
  const {workspaceId,kind,appUrl,query='',readOwner='',readEnabled=true,onNavigate}=props,base='/api/workspaces/'+workspaceId+'/tracked-assets';
  const [fallback]=useState(defaultScope),parsed=useMemo(()=>{try{return navigation(query,fallback);}catch{return null;}},[query,fallback]),signature=JSON.stringify([kind,query,readOwner,readEnabled,props.role]);
  const ownership=useRef({signature,version:0});if(ownership.current.signature!==signature)ownership.current={signature,version:ownership.current.version+1};const owner=ownership.current.version;

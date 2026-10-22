@@ -1,8 +1,8 @@
 import {Icon} from './CampaignUI';
+import { useConfirmDialog } from '@ten98/ui'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
 import { httpUrl } from './OidcSignIn';
-import { useConfirmDialog } from './useConfirmDialog';
 
 interface PublicProvider { id: string; name: string }
 interface Identity { id: string; issuer: string; subject: string; createdAt: string; providerId: string; providerName: string; enabled: boolean }
@@ -331,7 +331,7 @@ function OperatorSection({data, busy, mutate, reload}: {
   data: OpData; busy: boolean; mutate: Mutate; reload: () => void;
 }) {
   const fid = useId();
-  const [confirm, confirmDialog] = useConfirmDialog();
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [issuer, setIssuer] = useState('');

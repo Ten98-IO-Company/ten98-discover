@@ -1,10 +1,10 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {api,ApiError,errMsg} from '../lib/api';
 import {SavedKeywordFilterFields,emptySavedKeywordFilters,type SavedKeywordFilterDraft} from './SavedKeywordFilterFields';
 import {SavedKeywordRefreshPanel} from './SavedKeywordRefreshPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Role=WorkspaceRole;
 type Tag={id:string;name:string;color:string|null;count?:number};
@@ -50,7 +50,7 @@ function Panel({projectId,active,seed,onUnauthorized,onLockChange}:Omit<Paramete
   const alive=useRef(false),epoch=useRef(0),readRef=useRef<AbortController|null>(null),writeRef=useRef<object|null>(null),intentRef=useRef<Intent|null>(null),seedRef=useRef<ResearchSaveSeed|null>(null),unauthorized=useRef(onUnauthorized),heading=useRef<HTMLHeadingElement|null>(null);
   unauthorized.current=onUnauthorized;
   const locked=writing||!!intent||refreshLocked;
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   useEffect(()=>{onLockChange(locked||dirty);},[locked,dirty,onLockChange]);
   function stopRead(){epoch.current++;readRef.current?.abort();readRef.current=null;setReading(false);}
   function resetIntent(){intentRef.current=null;setIntent(null);}

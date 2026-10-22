@@ -1,8 +1,8 @@
 import {useEffect,useId,useRef,useState,type CSSProperties} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {api,ApiError,errMsg} from '../lib/api';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Range={from:string;to:string;timeZone:string};
 type Definition={date:string;allDay:boolean;note:string};
@@ -31,7 +31,7 @@ const summary={minHeight:44,paddingBlock:10};
 // Callers are keyed by account and project; a range change keeps immutable pending intent.
 export function useAnnotations({projectId,range,readOwner,readEnabled=true,onUnauthorized,onAccessLost}:Props){
   const uid=useId(),base=`/api/projects/${encodeURIComponent(projectId)}/annotations`,rangeKey=range?JSON.stringify(range):'';
-  const [confirm,confirmDialog]=useConfirmDialog();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [role,setRole]=useState<Role|null>(null),[storedRows,setRows]=useState<Item[]>([]),[storedCursor,setCursor]=useState<string|null>(null),[storedTimeline,setTimeline]=useState<Timeline|null>(null);
   const [scope,setScope]=useState<'range'|'all'>('range'),[day,setDay]=useState(''),[search,setSearch]=useState(''),[appliedSearch,setAppliedSearch]=useState('');
   const [open,setOpen]=useState(false),[editor,setEditor]=useState<Editor|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[storedLoaded,setLoaded]=useState(false),[pending,setPending]=useState<Attempt|null>(null),[readError,setReadError]=useState<{owner:string|undefined;message:string}|null>(null);

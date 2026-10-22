@@ -1,9 +1,9 @@
 import {useEffect,useRef,useState} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api,ApiError} from '../lib/api';
 import {newShareToken} from '../lib/boards';
-import {useConfirmDialog} from './useConfirmDialog';
 import {websiteShareCreate,websiteShareRevoke,websiteShareListSchema,websiteShareWriteSchema,websiteShareLimits,type WebsiteShareItem,type WebsiteShareList,type WebsiteShareSection} from '../lib/website-shares';
 
 type Pending={operation:'create'|'revoke';shareId:string|null;body:string};
@@ -17,7 +17,7 @@ type Props={projectId:string;isCurrent?:()=>boolean;onUnauthorized:()=>void};
 export function WebsiteSharePanel({projectId,isCurrent,onUnauthorized}:Props){
  const [rows,setRows]=useState<WebsiteShareList|null>(null),[draft,setDraft]=useState<Draft|null>(null),[pending,setPending]=useState<Pending|null>(null),[secret,setSecret]=useState<{shareId:string;url:string}|null>(null);
  const [busy,setBusy]=useState(false),[writing,setWriting]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
- const [confirm,confirmDialog]=useConfirmDialog();
+ const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
  const mounted=useRef(true),readOp=useRef<AbortController|null>(null),writeLock=useRef(false),cursor=useRef<string|null>(null),back=useRef<string[]>([]),live=useRef({isCurrent,onUnauthorized});live.current={isCurrent,onUnauthorized};
  const allowed=()=>mounted.current&&(live.current.isCurrent?.()??true),base='/api/projects/'+encodeURIComponent(projectId)+'/website-shares';
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;readOp.current?.abort();};},[]);

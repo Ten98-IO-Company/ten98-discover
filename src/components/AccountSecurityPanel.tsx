@@ -1,9 +1,9 @@
 import {Icon} from './CampaignUI'
+import { useConfirmDialog } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { useAccountPresentation } from '../lib/account-presentation'
 import { accountLocaleMapping, accountPreferencesDefaults } from '../lib/account-preferences'
-import { useConfirmDialog } from './useConfirmDialog'
 
 type SessionInfo = {
   id: string
@@ -27,7 +27,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   const presentation=useAccountPresentation(),preferences=presentation?.data?.user.id===expectedUserId?presentation.data.preferences:accountPreferencesDefaults
   const fmt=(iso:string)=>{const date=new Date(iso);if(Number.isNaN(date.getTime()))return iso;try{return new Intl.DateTimeFormat(accountLocaleMapping(preferences.locale).formatLocale,{timeZone:preferences.timeZone,dateStyle:'medium',timeStyle:'short'}).format(date)}catch{return `${iso} (saved time zone unavailable in this browser)`}}
   const [data, setData] = useState<SecurityData | null>(null)
-  const [confirm, confirmDialog] = useConfirmDialog()
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true })
   const [loading, setLoading] = useState(true)
   const [loadErr, setLoadErr] = useState('')
   const [busy, setBusy] = useState<Op | null>(null)

@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {api, ApiError, errMsg} from '../lib/api';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Domain = {
   id: string;
@@ -51,7 +51,7 @@ export function DomainsPanel(props: Props) {
 
 function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/domains`;
-  const [confirm, confirmDialog] = useConfirmDialog();
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
 
   const [state, setState] = useState<State | null>(null);
   const [loading, setLoading] = useState(true);

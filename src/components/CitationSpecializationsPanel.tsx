@@ -1,4 +1,5 @@
 import {useEffect,useId,useRef,useState} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {validSpecializedCitationFilters,validSpecializedCitationNavigation,validSpecializedCitationReport} from '../lib/citation-specialized-report';
@@ -7,7 +8,6 @@ import type {CitationFilters,CitationCount} from '../server/prompt-citations';
 import type {SpecializedFilters,SpecializedNavigation,SpecializedReport} from '../server/prompt-citation-specializations';
 import {CitationSpecializationsView,type CitationSpecializationsViewProps,type SpecializedDraft,type SpecializedView,type SpecializedScreen,type SpecializedPeriodId} from './CitationSpecializationsView';
 import {PromptExecutionsPanel} from './PromptExecutionsPanel';
-import {useConfirmDialog} from './useConfirmDialog';
 
 type Props={userId:string;workspaceId:string;projectId:string;filters:Pick<CitationFilters,'from'|'to'|'timeZone'|'model'|'promptId'|'tag'>;filtersLabel:string;onUnauthorized:()=>void;onBack:()=>void;initialExpiredAnswerIds?:readonly string[];onAnswerExpired?:(ids:string[])=>void};
 type Selection={filters:SpecializedFilters;navigation:SpecializedNavigation;family:SpecializedView;label:string};
@@ -48,7 +48,7 @@ function Controller(props:Props){
  const [receipt,setReceipt]=useState<{comparisonId:string;promptId:string;selection:Selection;history:Selection[]}|null>(null);
  const state=useRef(s),alive=useRef(true),operation=useRef<Operation|null>(null),expired=useRef(new Set(props.initialExpiredAnswerIds??[])),blob=useRef<string|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const dirty=()=>!equal(state.current.draft,draftFor(state.current.selection.filters));
- const [confirm,confirmDialog]=useConfirmDialog();
+ const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
  useBlocker({shouldBlockFn:()=>dirty()&&!window.confirm('Discard unapplied source filters?'),enableBeforeUnload:dirty});
  function patch(value:Partial<State>){if(alive.current){state.current={...state.current,...value};setState(state.current);}}
  function revoke(){if(timer.current!==null)clearTimeout(timer.current);timer.current=null;if(blob.current)URL.revokeObjectURL(blob.current);blob.current=null;}
