@@ -12,7 +12,3 @@
 .geography-dialog .table-wrap { max-width: 100%; }
 .geography-attribution a { color: var(--blue); text-decoration: underline; }
 @media(max-width: 768px) { .geography-layout { grid-template-columns: minmax(0,1fr); } }
-/* ponytail: the 0.14.0 CountryMap grid track grows to its widest child; constrain it so 320px at 200% zoom stays contained. */
-.geography-map .t98-map { grid-template-columns: minmax(0, 1fr); }
-.geography-map .t98-map-legend-scale { max-inline-size: 100%; }
-.geography-map .t98-map-swatch { flex: 0 1 1.5rem; min-inline-size: 0; }
