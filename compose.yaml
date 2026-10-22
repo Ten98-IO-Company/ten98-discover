@@ -16,6 +16,12 @@ x-app: &app
   image: ${TEN98_IMAGE:-ten98-monitor:foundation}
   build: .
   init: true # proper signal handling for graceful shutdown
+  # Least privilege: the app runs as the image's unprivileged node user and writes only to /data/artifacts and /tmp.
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
   environment:
     HOST: 0.0.0.0
     PORT: 3000
@@ -66,6 +72,8 @@ services:
       # PG18 image mountpoint (not the pre-18 /var/lib/postgresql/data).
       - pgdata:/var/lib/postgresql
     # No ports section: the DB is never published to the host.
+    # The postgres entrypoint needs its default capabilities to prepare the data directory, so only this one applies.
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ten98 -d ten98"]
       interval: 5s
@@ -76,6 +84,7 @@ services:
       resources:
         limits:
           memory: 1G # dev guidance, not a capacity claim
+          pids: 512
 
   web:
     <<: *app
@@ -97,6 +106,7 @@ services:
       resources:
         limits:
           memory: 512M # dev guidance, not a capacity claim
+          pids: 256
 
   worker:
     <<: *app
@@ -116,6 +126,7 @@ services:
       resources:
         limits:
           memory: 512M # dev guidance, not a capacity claim
+          pids: 256
 
   migrate:
     <<: *app
