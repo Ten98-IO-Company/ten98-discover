@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PgBoss } from 'pg-boss';
+import { PgBoss, type Job, type WorkOptions } from 'pg-boss';
 import { getConfig } from './config.ts';
 import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
@@ -25,6 +25,19 @@ import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-au
 const reconcilers = [reconcileKeywordJobs, reconcileDomainResearchJobs, reconcileRankJobs, reconcilePromptExecutionJobs, reconcileAiSuggestionJobs, reconcileAiSearchJobs, reconcileContentSupportJobs, reconcileDomainRedirectChecks];
 
 const queueName = 'setup-probe';
+/**
+ * Idle polling contract. Queues with `notify` wake the worker through a transactional pg_notify
+ * on the job insert, so polling is only a 30 s backstop. When LISTEN is unavailable (for example
+ * a transaction-mode PgBouncer) pg-boss falls back to `pollingIntervalSeconds`, which keeps the
+ * previous 2 s (prompt children 0.5 s) latency. Rank polls are created with a future
+ * `startAfter`, which a NOTIFY on insert cannot announce, so that queue keeps plain 2 s polling.
+ */
+export const jobPolling = { pollingIntervalSeconds: 2, notifyPollingIntervalSeconds: 30 } as const;
+export const jobQueues = (): { name: string; notify: boolean }[] => [queueName, googleQueue, keywordQueue, domainResearchQueue, promptExecutionQueue, suggestionQueue, aiSearchQueue, contentSupportQueue, domainRedirectQueue, siteAuditQueue, rankQueue, rankPollQueue]
+  .map((name) => ({ name, notify: name !== rankPollQueue }));
+/** Only the worker holds the dedicated LISTEN connection; producers emit NOTIFY regardless. */
+export const bossOptions = (connectionString: string, listen: boolean) => ({ connectionString, schedule: false, connectionTimeoutMillis: 5000, useListenNotify: listen });
+let listenForJobs = false;
 let bossPromise: Promise<PgBoss> | undefined;
 let workerPromise: Promise<void> | undefined;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -37,12 +50,13 @@ let workerStarted = false;
 export function getBoss(): Promise<PgBoss> {
   if (!bossPromise) {
     registerResourceCleanup('jobs', stopJobs);
-    const boss = new PgBoss({ connectionString: getConfig().databaseUrl, schedule: false, connectionTimeoutMillis: 5000 });
+    const boss = new PgBoss(bossOptions(getConfig().databaseUrl, listenForJobs));
     boss.on('error', () => console.error('Job queue unavailable; check database availability.'));
     bossPromise = (async () => {
       try {
         await boss.start();
-        for (const name of [queueName, googleQueue, keywordQueue, domainResearchQueue, promptExecutionQueue, suggestionQueue, aiSearchQueue, contentSupportQueue, domainRedirectQueue, siteAuditQueue, rankQueue, rankPollQueue]) await boss.createQueue(name);
+        // createQueue leaves an existing queue untouched, so updateQueue applies notify to prior installs.
+        for (const { name, notify } of jobQueues()) { await boss.createQueue(name); await boss.updateQueue(name, { notify }); }
         return boss;
       } catch (error) {
         await boss.stop({ graceful: false }).catch(() => undefined);
@@ -52,6 +66,19 @@ export function getBoss(): Promise<PgBoss> {
     })();
   }
   return bossPromise;
+}
+
+/**
+ * Every worker registers through this helper. After a non-empty batch it wakes its own worker so
+ * a backlog (for example the prompt children committed in one transaction, which Postgres folds
+ * into one NOTIFY) drains back to back instead of waiting out the idle backstop.
+ */
+export async function workJobs<T extends object>(boss: PgBoss, name: string, options: Pick<WorkOptions, 'batchSize' | 'pollingIntervalSeconds'>, handler: (jobs: Job<T>[]) => Promise<void>) {
+  let workerId: string | undefined;
+  workerId = await boss.work<T>(name, { ...jobPolling, ...options }, async (jobs) => {
+    try { await handler(jobs); } finally { if (workerId && jobs.length) boss.notifyWorker(workerId); }
+  });
+  return workerId;
 }
 
 export async function enqueueProbe(projectId: string, userId: string, requestId: string) {
@@ -129,9 +156,10 @@ async function heartbeat() {
 export function startWorker(): Promise<void> {
   if (!workerPromise) workerPromise = (async () => {
     try {
+      listenForJobs = true;
       const boss = await getBoss();
       for (const reconcile of reconcilers) await reconcile();
-      await boss.work<{ probeId: string }>(queueName, { batchSize: 5 }, async (jobs) => {
+      await workJobs<{ probeId: string }>(boss, queueName, { batchSize: 5 }, async (jobs) => {
         for (const job of jobs) {
           if (typeof job.data?.probeId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(job.data.probeId)) {
             throw new Error('Invalid setup probe payload');
@@ -152,18 +180,19 @@ export function startWorker(): Promise<void> {
         }
       });
       await startGoogleImportWorker(boss);
-      await boss.work<{runId:string}>(keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
-      await boss.work<{runId:string}>(domainResearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainResearch(job.data?.runId);});
-      await boss.work<{dispatchId:string}>(rankQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeRankDispatch(job.data?.dispatchId);});
-      await boss.work<{dispatchId:string;generation:string}>(rankPollQueue,{batchSize:1},async jobs=>{for(const job of jobs)await pollRankDispatch(job.data?.dispatchId,job.data?.generation);});
+      await workJobs<{runId:string}>(boss,keywordQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeKeywordResearch(job.data?.runId);});
+      await workJobs<{runId:string}>(boss,domainResearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainResearch(job.data?.runId);});
+      await workJobs<{dispatchId:string}>(boss,rankQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeRankDispatch(job.data?.dispatchId);});
+      await workJobs<{dispatchId:string;generation:string}>(boss,rankPollQueue,{batchSize:1},async jobs=>{for(const job of jobs)await pollRankDispatch(job.data?.dispatchId,job.data?.generation);});
       // ponytail: the comparisonId branch drains jobs queued before per-child Start; remove one release after C2
-      // ponytail: one job per child since D3, so the 0.5s floor poll keeps the pre-D3 ceiling (a 2s poll per comparison of up to
-      // four children); children still run one at a time per worker. Upgrade path: localConcurrency for parallel children.
-      await boss.work<{executionId?:string;comparisonId?:string}>(promptExecutionQueue,{batchSize:1,pollingIntervalSeconds:0.5},async jobs=>{for(const job of jobs)await(job.data?.executionId?executePromptExecution(job.data.executionId):executePromptComparison(job.data?.comparisonId as string));});
-      await boss.work<{runId:string}>(suggestionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSuggestion(job.data?.runId);});
-      await boss.work<{runId:string}>(aiSearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSearch(job.data?.runId);});
-      await boss.work<{runId:string}>(contentSupportQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeContentSupport(job.data?.runId);});
-      await boss.work<{checkId:string}>(domainRedirectQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainRedirectCheck(job.data?.checkId);});
+      // ponytail: one job per child since D3. NOTIFY plus workJobs' post-batch wake start children immediately; the 0.5s poll
+      // keeps the pre-D3 ceiling when LISTEN is unavailable. Children still run one at a time per worker.
+      // Upgrade path: localConcurrency for parallel children.
+      await workJobs<{executionId?:string;comparisonId?:string}>(boss,promptExecutionQueue,{batchSize:1,pollingIntervalSeconds:0.5},async jobs=>{for(const job of jobs)await(job.data?.executionId?executePromptExecution(job.data.executionId):executePromptComparison(job.data?.comparisonId as string));});
+      await workJobs<{runId:string}>(boss,suggestionQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSuggestion(job.data?.runId);});
+      await workJobs<{runId:string}>(boss,aiSearchQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeAiSearch(job.data?.runId);});
+      await workJobs<{runId:string}>(boss,contentSupportQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeContentSupport(job.data?.runId);});
+      await workJobs<{checkId:string}>(boss,domainRedirectQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainRedirectCheck(job.data?.checkId);});
       await startSiteAuditWorker(boss);
       workerStarted = true;
       await heartbeat();

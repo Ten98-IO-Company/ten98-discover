@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { FoundationError } from './auth.ts';
 import { getDatabase } from './db.ts';
 import { withContentProject } from './project-context.ts';
-import { getBoss } from './jobs.ts';
+import { getBoss, workJobs } from './jobs.ts';
 import { activeGoogleApp, googleAccessToken, googleConnection, googleConnectionDto, googleProjectTransaction, refreshGoogleConnection } from './google.ts';
 import { GoogleRequestError, googleRequest } from './google-http.ts';
 import { googleImportInput, googleInput, googleReportRequest, googleReports, isDetailedGa4Report, ga4OrganicReports, isOrganicOverview, organicPreviousRange, validateOrganicDates, googleCompatibilityRequest, normalizeGoogleCompatibility, normalizeGoogleReport, type GoogleReport, type ReportRow } from './google-reports.ts';
@@ -187,5 +187,5 @@ export async function reconcileGoogleImports() {
     WHERE status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM pgboss.job j WHERE j.id=i.id AND j.name=$1 AND j.state NOT IN ('failed','cancelled','completed'))`, [googleQueue]);
 }
 export async function startGoogleImportWorker(boss: PgBoss) {
-  await boss.work<{ importId: string }>(googleQueue, { batchSize: 1 }, async jobs => { for (const job of jobs) await runGoogleImport(job.data.importId); });
+  await workJobs<{ importId: string }>(boss, googleQueue, { batchSize: 1 }, async jobs => { for (const job of jobs) await runGoogleImport(job.data.importId); });
 }

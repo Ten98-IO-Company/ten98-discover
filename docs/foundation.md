@@ -21,7 +21,7 @@ Optional runners use the externally supplied `PLAYWRIGHT_MODULE`; URL navigation
 
 ## Stack and migration ownership
 
-The application uses TypeScript with React, TanStack Start/Router, Vite and Nitro on Node 24. PostgreSQL stores application data and pg-boss jobs. Shared presentation comes from `@ten98/ui`; shared server mechanisms come from `@ten98/runtime`.
+The application uses TypeScript with React, TanStack Start/Router, Vite and Nitro on Node 24. PostgreSQL stores application data and pg-boss jobs. The worker holds one dedicated LISTEN connection so job inserts wake it immediately, with a 30 s idle poll as backstop; through a transaction-mode PgBouncer, LISTEN is unavailable and it falls back to the 2 s poll (0.5 s for prompt children). Shared presentation comes from `@ten98/ui`; shared server mechanisms come from `@ten98/runtime`.
 
 JavaScript in `public/` is served directly to websites: the tracker loads the consent-controlled destinations, performance and replay scripts. Standalone `.mjs` files provide Node setup/verification commands and browser/integration test runners. They are entrypoints, not duplicate compiled copies of the TypeScript app. Docker host commands use one POSIX shell procedure; application runtime code has no PowerShell dependency.
 
