@@ -1,5 +1,5 @@
 import {Icon} from './CampaignUI'
-import { useConfirmDialog } from '@ten98/ui'
+import { Field, Form, useConfirmDialog } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { useAccountPresentation } from '../lib/account-presentation'
@@ -32,6 +32,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   const [loadErr, setLoadErr] = useState('')
   const [busy, setBusy] = useState<Op | null>(null)
   const [errs, setErrs] = useState<Partial<Record<Op, string>>>({})
+  const [fieldErrs, setFieldErrs] = useState<Partial<Record<string, string>>>({})
   const [pwOk, setPwOk] = useState('')
   const [copyNote, setCopyNote] = useState<Record<string, string>>({})
 
@@ -173,7 +174,8 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
     }
   }
 
-  const opErr = (op: Op, msg: string) => setErrs(prev => ({ ...prev, [op]: msg }))
+  // Client validation names the field; the shared Form marks it invalid and moves focus to it. Server errors stay per operation.
+  const fieldErr = (op: Op, name: string, msg: string) => { setErrs(prev => ({ ...prev, [op]: undefined })); setFieldErrs({ [name]: msg }) }
 
   const copy = async (key: string, text: string): Promise<void> => {
     const version = secretVersion.current
@@ -190,17 +192,19 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   }
 
   const submitPassword = async (): Promise<void> => {
+    setFieldErrs({})
     setPwOk('')
-    if (curPw === '') { opErr('password', 'Enter your current password.'); return }
-    if (newPw.length < 12 || newPw.length > 128) { opErr('password', 'Choose a new password between 12 and 128 characters.'); return }
-    if (newPw !== newPw2) { opErr('password', 'The new passwords do not match. Re-enter them.'); return }
+    if (curPw === '') { fieldErr('password', 'currentPassword', 'Enter your current password.'); return }
+    if (newPw.length < 12 || newPw.length > 128) { fieldErr('password', 'newPassword', 'Choose a new password between 12 and 128 characters.'); return }
+    if (newPw !== newPw2) { fieldErr('password', 'confirmPassword', 'The new passwords do not match. Re-enter them.'); return }
     await mutate<unknown>('password', '/api/account/password', { currentPassword: curPw, newPassword: newPw }, () => {
       setPwOk('Password changed. Your other sessions were signed out.')
     })
   }
 
   const startEnable = async (): Promise<void> => {
-    if (enablePw === '') { opErr('enable', 'Enter your current password to start setup.'); return }
+    setFieldErrs({})
+    if (enablePw === '') { fieldErr('enable', 'enablePassword', 'Enter your current password to start setup.'); return }
     await mutate<{ totpURI: string; backupCodes: string[] }>('enable', '/api/account/two-factor/enable', { password: enablePw }, value => {
       setSetupUri(value.totpURI)
       setCodes(value.backupCodes)
@@ -209,7 +213,8 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   }
 
   const submitVerify = async (): Promise<void> => {
-    if (proof.length !== 6 || !/^\d{6}$/.test(proof)) { opErr('verify', 'Enter the 6-digit code from your authenticator app, including any leading zeros.'); return }
+    setFieldErrs({})
+    if (proof.length !== 6 || !/^\d{6}$/.test(proof)) { fieldErr('verify', 'code', 'Enter the 6-digit code from your authenticator app, including any leading zeros.'); return }
     await mutate<unknown>('verify', '/api/account/two-factor/verify', { code: proof }, () => {
       setData(previous => previous ? { ...previous, user: { ...previous.user, twoFactorEnabled: true } } : previous)
       setSetupUri(null)
@@ -218,8 +223,9 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   }
 
   const submitDisable = async (): Promise<void> => {
+    setFieldErrs({})
     if (!await confirm({ title: 'Turn off two-factor authentication?', description: 'Turning off two-factor authentication removes this layer of sign-in protection. Workspaces that require it will block your access, and API keys you created there will stop working, until you turn it on again.', confirmLabel: 'Turn off 2FA' })) return
-    if (disablePw === '') { opErr('disable', 'Enter your current password to turn off 2FA.'); return }
+    if (disablePw === '') { fieldErr('disable', 'disablePassword', 'Enter your current password to turn off 2FA.'); return }
     await mutate<unknown>('disable', '/api/account/two-factor/disable', { password: disablePw }, () => {
       setData(previous => previous ? { ...previous, user: { ...previous.user, twoFactorEnabled: false } } : previous)
       setSetupUri(null)
@@ -229,7 +235,8 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   }
 
   const submitRecovery = async (): Promise<void> => {
-    if (recoveryPw === '') { opErr('recovery', 'Enter your current password to generate recovery codes.'); return }
+    setFieldErrs({})
+    if (recoveryPw === '') { fieldErr('recovery', 'recoveryPassword', 'Enter your current password to generate recovery codes.'); return }
     if (!await confirm({ title: 'Replace your recovery codes?', description: 'The previous codes will stop working and your other sessions will be signed out.', confirmLabel: 'Replace recovery codes' })) return
     await mutate<{ backupCodes: string[] }>('recovery', '/api/account/two-factor/recovery-codes', { password: recoveryPw }, value => {
       setCodes(value.backupCodes)
@@ -288,27 +295,23 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       <section className="panel settings-panel" aria-busy={busy === 'password'} aria-label="Password">
         <div className="provider-settings-heading"><span className="provider-initial"><Icon name="lock" size={18}/></span><div><h2>Password</h2></div></div>
         {data.hasPassword ? (
-          <form onSubmit={e => { e.preventDefault(); void submitPassword() }}>
+          <Form fieldErrors={fieldErrs} onSubmit={() => submitPassword()}>
             <p className="hint field-help">Changing your password signs out all other sessions.</p>
-            <div className="field">
-              <label htmlFor="pw-current">Current password</label>
-              <input id="pw-current" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={curPw} onChange={e => setCurPw(e.target.value)} />
-            </div>
-            <div className="field">
-              <label htmlFor="pw-new">New password</label>
-              <input id="pw-new" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={blocked} value={newPw} onChange={e => setNewPw(e.target.value)} />
-              <p className="hint field-help">Use 12 to 128 characters.</p>
-            </div>
-            <div className="field">
-              <label htmlFor="pw-new2">Repeat new password</label>
-              <input id="pw-new2" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={blocked} value={newPw2} onChange={e => setNewPw2(e.target.value)} />
-            </div>
+            <Field label="Current password" htmlFor="pw-current" error={fieldErrs.currentPassword}>
+              <input id="pw-current" name="currentPassword" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={curPw} onChange={e => setCurPw(e.target.value)} />
+            </Field>
+            <Field label="New password" htmlFor="pw-new" description="Use 12 to 128 characters." error={fieldErrs.newPassword}>
+              <input id="pw-new" name="newPassword" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={blocked} value={newPw} onChange={e => setNewPw(e.target.value)} />
+            </Field>
+            <Field label="Repeat new password" htmlFor="pw-new2" error={fieldErrs.confirmPassword}>
+              <input id="pw-new2" name="confirmPassword" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={blocked} value={newPw2} onChange={e => setNewPw2(e.target.value)} />
+            </Field>
             {errs.password ? <div className="alert" role="alert">{errs.password}</div> : null}
             {pwOk !== '' ? <p className="hint field-help" role="status">{pwOk}</p> : null}
             <button type="submit" className="btn button primary" disabled={blocked}>
               {busy === 'password' ? 'Changing…' : 'Change password'}
             </button>
-          </form>
+          </Form>
         ) : (
           <div className="empty">
             <p><strong>No local password</strong></p>
@@ -340,17 +343,16 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
             )}
 
             {!twoFaOn && setupUri === null && (
-              <form onSubmit={e => { e.preventDefault(); void startEnable() }}>
+              <Form fieldErrors={fieldErrs} onSubmit={() => startEnable()}>
                 <p className="hint field-help">2FA turns on only after you verify a code. Completing setup signs out all other sessions.</p>
-                <div className="field">
-                  <label htmlFor="tfa-enable-pw">Current password</label>
-                  <input id="tfa-enable-pw" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={enablePw} onChange={e => setEnablePw(e.target.value)} />
-                </div>
+                <Field label="Current password" htmlFor="tfa-enable-pw" error={fieldErrs.enablePassword}>
+                  <input id="tfa-enable-pw" name="enablePassword" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={enablePw} onChange={e => setEnablePw(e.target.value)} />
+                </Field>
                 {errs.enable ? <div className="alert" role="alert">{errs.enable}</div> : null}
                 <button type="submit" className="btn button primary" disabled={blocked}>
                   {busy === 'enable' ? 'Starting…' : 'Start 2FA setup'}
                 </button>
-              </form>
+              </Form>
             )}
 
             {!twoFaOn && setupUri !== null && (
@@ -372,45 +374,41 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
                   <button type="button" className="btn button ghost" disabled={blocked} onClick={() => { setSetupUri(null); setCodes(null); setProof('') }}>Hide setup details</button>
                 </div>
                 {copyNote.uri ? <p className="hint field-help" role="status">{copyNote.uri}</p> : null}
-                <form onSubmit={e => { e.preventDefault(); void submitVerify() }}>
-                  <div className="field">
-                    <label htmlFor="tfa-code">6-digit code</label>
-                    <input id="tfa-code" type="text" inputMode="numeric" autoComplete="one-time-code" minLength={6} maxLength={6} pattern="[0-9]{6}" required disabled={blocked} value={proof} onChange={e => setProof(e.target.value)} />
-                    <p className="hint field-help">Enter the code exactly as shown, including leading zeros.</p>
-                  </div>
+                <Form fieldErrors={fieldErrs} onSubmit={() => submitVerify()}>
+                  <Field label="6-digit code" htmlFor="tfa-code" description="Enter the code exactly as shown, including leading zeros." error={fieldErrs.code}>
+                    <input id="tfa-code" name="code" type="text" inputMode="numeric" autoComplete="one-time-code" minLength={6} maxLength={6} pattern="[0-9]{6}" required disabled={blocked} value={proof} onChange={e => setProof(e.target.value)} />
+                  </Field>
                   {errs.verify ? <div className="alert" role="alert">{errs.verify}</div> : null}
                   <button type="submit" className="btn button primary" disabled={blocked}>
                     {busy === 'verify' ? 'Verifying…' : 'Verify and turn on 2FA'}
                   </button>
-                </form>
+                </Form>
               </>
             )}
 
             {twoFaOn && (
               <>
-                <form onSubmit={e => { e.preventDefault(); void submitRecovery() }}>
+                <Form fieldErrors={fieldErrs} onSubmit={() => submitRecovery()}>
                   <p><strong>Recovery codes</strong></p>
                   <p className="hint field-help">New codes replace your old recovery codes and sign out all other sessions. Save the new codes securely — they are shown only once.</p>
-                  <div className="field">
-                    <label htmlFor="tfa-recovery-pw">Current password</label>
-                    <input id="tfa-recovery-pw" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={recoveryPw} onChange={e => setRecoveryPw(e.target.value)} />
-                  </div>
+                  <Field label="Current password" htmlFor="tfa-recovery-pw" error={fieldErrs.recoveryPassword}>
+                    <input id="tfa-recovery-pw" name="recoveryPassword" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={recoveryPw} onChange={e => setRecoveryPw(e.target.value)} />
+                  </Field>
                   {errs.recovery ? <div className="alert" role="alert">{errs.recovery}</div> : null}
                   <button type="submit" className="btn button" disabled={blocked}>
                     {busy === 'recovery' ? 'Generating…' : 'Generate new recovery codes'}
                   </button>
-                </form>
-                <form onSubmit={e => { e.preventDefault(); void submitDisable() }}>
+                </Form>
+                <Form fieldErrors={fieldErrs} onSubmit={() => submitDisable()}>
                   <p><strong>Turn off 2FA</strong></p>
-                  <div className="field">
-                    <label htmlFor="tfa-disable-pw">Current password</label>
-                    <input id="tfa-disable-pw" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={disablePw} onChange={e => setDisablePw(e.target.value)} />
-                  </div>
+                  <Field label="Current password" htmlFor="tfa-disable-pw" error={fieldErrs.disablePassword}>
+                    <input id="tfa-disable-pw" name="disablePassword" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={disablePw} onChange={e => setDisablePw(e.target.value)} />
+                  </Field>
                   {errs.disable ? <div className="alert" role="alert">{errs.disable}</div> : null}
                   <button type="submit" className="btn button" disabled={blocked}>
                     {busy === 'disable' ? 'Turning off…' : 'Turn off 2FA'}
                   </button>
-                </form>
+                </Form>
               </>
             )}
           </>
