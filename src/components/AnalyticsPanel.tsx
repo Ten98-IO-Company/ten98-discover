@@ -418,7 +418,8 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
     const id = ++reqRef.current;
     const ctrl = new AbortController();
     if(!routeReady||invalid||unavailableRange)return ()=>ctrl.abort();
-    setView(v=>({...v,data:null,error:null,loading:true}));
+    // Clear data from another route owner; a same-owner reload (location detail) keeps cards and their open dialogs mounted.
+    setView(v=>({...v,data:acceptedOwner.current===readOwner?v.data:null,error:null,loading:true}));
     const detail=view.detail,params=new URLSearchParams({from,to,...filters,...geographyFilters,...mode?{compare:mode}:{},...dimension?{dimension}:{},...selection?.query?{selection:selection.query}:{},...detail?{geoDetail:detail.field,geoPeriod:detail.period,geoSearch:detail.search}:{}});
     if((dimension||selection?.query)&&params.toString().length>20000){setView(v=>({...v,data:null,loading:false,error:'These report filters are too large. Shorten values or remove conditions.'}));return ()=>ctrl.abort();}
     api<Analytics>(
@@ -700,7 +701,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             {data.pages.length === 0 ? (
               <p className="dim">{data.coverage.status === 'complete' ? 'No page views in this range.' : 'No page views are available in the retained portion.'}</p>
             ) : (
-              <div className="table-wrap">
+              <div className="table-wrap table-cards">
                 <table>
                   <thead>
                     <tr>
@@ -713,8 +714,8 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                   <tbody>
                     {data.pages.slice(0, 20).map((p) => (
                       <tr key={p.path}>
-                        <td className="mono analytics-path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('path',{type:'string',value:p.path})} aria-label={`Filter Path: ${p.path}`}><bdi dir="ltr">{p.path}</bdi></button></td>
-                        <td className="analytics-num">{fmtNum(p.pageViews)}</td>
+                        <td className="mono analytics-path" data-label="Path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('path',{type:'string',value:p.path})} aria-label={`Filter Path: ${p.path}`}><bdi dir="ltr">{p.path}</bdi></button></td>
+                        <td className="analytics-num" data-label="Page views">{fmtNum(p.pageViews)}</td>
                       </tr>
                     ))}
                   </tbody>

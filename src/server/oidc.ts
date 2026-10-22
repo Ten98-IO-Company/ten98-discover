@@ -6,6 +6,7 @@ import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
 import { oidcEndpoint, readResponseText } from '@ten98/runtime';
 import { addressKey, publicNetworkAddress } from './public-network.ts';
+import { clientRateKey } from './client-rate-limit.ts';
 import { authorizationCodeRequest, createAuthorizationURL, verifyProviderIdToken } from 'better-auth/oauth2';
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
@@ -335,7 +336,7 @@ async function callback(request: Request): Promise<Response> {
   let flowId: string | undefined;
   let ownsExchange = false;
   try {
-    await limit('oidc:callback', 120);
+    await limit(clientRateKey(request, 'oidc:callback'), 120);
     if (url.searchParams.getAll('state').length !== 1 || url.searchParams.getAll('code').length !== 1 || url.searchParams.has('error')) throw new FoundationError(400, 'Identity sign-in was not completed.');
     const state = input(tokenInput, url.searchParams.get('state'));
     const code = input(z.string().min(1).max(8192), url.searchParams.get('code'));
@@ -344,6 +345,8 @@ async function callback(request: Request): Promise<Response> {
     flowId = hint.id;
     const browser = parseCookies(request.headers.get('cookie') ?? '').get(bindingName(hint.id)) ?? '';
     if (!tokenInput.safeParse(browser).success || digest(browser) !== hint.browser_hash) throw new FoundationError(403, 'Identity browser binding not accepted.');
+    // The shared ceiling on provider code exchanges counts only callbacks for an existing flow bound to this browser.
+    await limit('oidc:callback', 120);
     const prepared = await transaction(async client => {
       const provider = await providerRow(client, hint.provider_id);
       const flow = validFlow((await client.query<Flow>('SELECT * FROM oidc_transaction WHERE id=$1 FOR UPDATE', [hint.id])).rows[0], provider, 'pending');
@@ -418,7 +421,7 @@ export async function handleOidc(request: Request): Promise<Response | null> {
   }
   if (path === '/api/auth/oidc/start' && request.method === 'POST') {
     const details = input(z.object({ providerId: z.uuid(), invitationToken: tokenInput.optional(), name: z.string().trim().min(1).max(120).optional(), password: z.string().min(12).max(128).optional() }).strict(), await readJson(request));
-    await limit('oidc:start', 60);
+    await limit(clientRateKey(request, 'oidc:start'), 60);
     let invitation: FlowPayload['invitation'];
     if (details.invitationToken) {
       await inspectInvitation({ token: details.invitationToken });

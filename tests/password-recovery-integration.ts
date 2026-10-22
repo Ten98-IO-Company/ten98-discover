@@ -239,7 +239,7 @@ test('password recovery transaction and public-boundary checks', { timeout: 120_
     assert.equal((await call('/api/account/sessions/revoke', { sessionId: current.id }, { actor })).status, 200); assert.ok(!await tokenPresent(token));
   });
 
-  await t.test('global and hashed identity budgets bound requests without storing raw email/token', async () => {
+  await t.test('per-client and hashed identity budgets bound requests without storing raw email/token', async () => {
     // These are only this isolated suite's existing recovery budget rows.
     await pool.query("DELETE FROM request_limit WHERE key LIKE 'password-recovery:%'");
     const user = await fixture();
@@ -257,7 +257,7 @@ test('password recovery transaction and public-boundary checks', { timeout: 120_
       ['request', 20, '/api/auth/request-password-reset', { email: `${randomUUID()}@password-recovery.integration.test` }],
       ['reset', 60, '/api/auth/reset-password', { token: 'S'.repeat(24), newPassword: 'Synthetic password 123' }],
     ] as const) {
-      await pool.query('INSERT INTO request_limit(key,minute,count) VALUES($1,floor(extract(epoch FROM now())/60),$2) ON CONFLICT(key,minute) DO UPDATE SET count=$2', [`password-recovery:${kind}:global`, maximum]);
+      await pool.query('INSERT INTO request_limit(key,minute,count) VALUES($1,floor(extract(epoch FROM now())/60),$2) ON CONFLICT(key,minute) DO UPDATE SET count=$2', [`password-recovery:${kind}:client:unknown`, maximum]);
       assert.equal((await call(path, body)).status, 429);
     }
   });

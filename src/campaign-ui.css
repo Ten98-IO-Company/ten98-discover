@@ -10,11 +10,6 @@ svg { flex-shrink:0; }
 .brand > span:last-child { display:flex; flex-direction:column; }
 .brand small { color:var(--color-text-muted); }
 .brand-link { display:block; flex-shrink:0; }
-.t98-app-topbar__scope,.t98-app-topbar__current { overflow:visible; white-space:normal; overflow-wrap:anywhere; }
-/* Full names stay readable: a long scope takes its own row instead of squeezing the breadcrumb to a few characters. */
-.t98-app-topbar__breadcrumb { flex-basis:16rem; }
-.t98-app-topbar__crumbs { flex-wrap:wrap; }
-.t98-app-topbar__crumbs > .t98-app-topbar__crumb:first-child { max-inline-size:100%; }
 .sidebar-nav { overscroll-behavior:contain; padding-block-end:16px; }
 .nav-item { color:var(--color-text-muted); }
 .nav-item > span { min-inline-size:0; overflow-wrap:anywhere; }

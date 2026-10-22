@@ -48,7 +48,7 @@ Each card response echoes workspace, board ID/revision, card ID/type, effective 
 
 Activity and dimension aggregations reuse `analyticsPopulation`, native calendar SQL and retentionCoverage. They operate on retained raw observations with a5second SQL bound; no rollups or new capture data are invented. Empty or entirely unidentified visitor estimates remain null. Event counts with complete evidence can be genuine zero. New report count values must be safe integers. Explorer card snapshots omit its original wider CSV when applying the card row limit; boards do not yet expose an export action.
 
-## Authored validation, not execution evidence
+## Validation
 
 The board contract tests check all17 closed variants, layout/Unicode/bounds, optional labels/widths, exact scope normalization, malformed nested wire, the genuine canonical20000-character preview boundary and browser-only inventory. The original native integration checkpoint has8 groups: persistence/current roles; CAS/clone/lost ACK; rollback/post-lock authority; real activity/DST/retention; native dispatch including hostname/channel/entry/exit and stale publication; lossless paging; actual API guards; and all17 unsaved previews with exact request echo, current four-role authority, retention, body/rate bounds and no board/receipt mutation. That historical checkpoint used the real complete57 migration prefix; the mixed successor below requires actual58. Migration0057 is registered after0056. The upgrade workload preserves populated56 data through genuine CLI56→57 and57 no-op. Authored checks alone do not establish runtime, compiled application or full mixed-entity parity; current acceptance records are in Docmost.
 

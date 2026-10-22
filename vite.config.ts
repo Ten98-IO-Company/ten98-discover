@@ -4,5 +4,5 @@ import react from '@vitejs/plugin-react';
 import { nitro } from 'nitro/vite';
 
 export default defineConfig({
-  plugins: [tanstackStart(), nitro({ preset: 'node-server', plugins: ['./src/server/shutdown.ts','./src/server/geography-plugin.ts'] }), react()],
+  plugins: [tanstackStart(), nitro({ preset: 'node-server', plugins: ['./src/server/shutdown.ts','./src/server/geography-plugin.ts'], handlers: [{ route: '/**', middleware: true, handler: './src/server/collector-alias-middleware.ts' }] }), react()],
 });

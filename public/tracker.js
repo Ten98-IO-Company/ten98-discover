@@ -600,7 +600,7 @@
       if (performanceEvent) performanceCapture.requests.add(controller);
       function current() { return nativeCurrent(state, epoch, generation, controller) && (!performanceEvent || performanceCapture.active && performanceCapture.navigationId === payload.navigationId && performanceCapture.url === payload.url); }
       var timer = setTimeout(function () { controller.abort(); }, 5000);
-      Promise.resolve().then(function () { if (!current()) { if (observation) observation.dropped = true; return; } if (observation) observation.sent = true; return fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
+      Promise.resolve().then(function () { if (!current()) { if (observation) observation.dropped = true; return; } if (observation) observation.sent = true; return fetch(state.origin + (state.collectPath || '/api/collect'), {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors',
         cache: 'no-store', redirect: 'error', keepalive: true, signal: controller.signal, headers: {'Content-Type': 'application/json'}, body: body}); })
         .then(async function (response) {
           if (!response) return;
@@ -712,7 +712,7 @@
       var work = Promise.resolve().then(async function () {
         if (!nativeCurrent(state, epoch, generation, activeController, true)) return outcome('not_sent', 'cancelled');
         sent = true;
-        var response = await fetch(state.origin + '/api/collect', {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors', cache: 'no-store', redirect: 'error', signal: activeController.signal, headers: {'Content-Type': 'application/json'}, body: body});
+        var response = await fetch(state.origin + (state.collectPath || '/api/collect'), {method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', mode: 'cors', cache: 'no-store', redirect: 'error', signal: activeController.signal, headers: {'Content-Type': 'application/json'}, body: body});
         var text = await readNativeResponse(response, activeController.signal);
         if (!nativeCurrent(state, epoch, generation, activeController, true)) return outcome('unknown');
         var decoded = /** @type {unknown} */ (JSON.parse(text));
@@ -879,7 +879,12 @@
     if (environment !== 'live' && environment !== 'test') return;
     var endpoint;
     try {
-      endpoint = new URL('/api/collect', script.src).href;
+      // Optional first-party reverse proxy, like Umami: data-host-url is an origin (HTTPS unless it is the script origin);
+      // every collector request uses it. data-collect-path renames only the collect route.
+      var hostUrl = script.getAttribute('data-host-url'), collectPath = script.getAttribute('data-collect-path') || '/api/collect', base = script.src;
+      if (!/^\/[a-z0-9][a-z0-9\/_-]{0,63}$/i.test(collectPath)) return;
+      if (hostUrl !== null) { var host = new URL(hostUrl); if (host.username || host.password || host.pathname !== '/' || host.search || host.hash || host.protocol !== 'https:' && host.origin !== new URL(script.src).origin) return; base = host.origin; }
+      endpoint = new URL(collectPath, base).href;
     } catch (badUrl) {
       return; // invalid collector URL: skip this site quietly
     }

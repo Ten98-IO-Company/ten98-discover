@@ -543,7 +543,7 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
           {state.domains.every(d => d.role === 'canonical') ? (
             <p className="dim">Your project website is already listed. Add another domain only if you serve pages or keep redirect aliases elsewhere.</p>
           ) : (
-            <div className="table-wrap domain-table">
+            <div className="table-wrap table-cards domain-table">
               <table>
                 <thead>
                   <tr>

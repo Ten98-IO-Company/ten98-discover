@@ -150,7 +150,9 @@ try {
     const size = await page.locator('header.t98-shell-header--topbar').evaluate(bar => {
       const bounds = bar.getBoundingClientRect(), workspace = bar.querySelector('.t98-app-topbar__scope');
       const workspaceBox = workspace.getBoundingClientRect();
-      return {height:bounds.height, workspaceLines:workspaceBox.height / parseFloat(getComputedStyle(workspace).lineHeight), contained:[bar.querySelector('.t98-app-topbar__breadcrumb'), ...[...bar.querySelectorAll('.t98-app-topbar__actions *')].filter(element => element.textContent === 'Development preview' && element.getClientRects().length)].every(element => {
+      // line-height: normal computes to a keyword, so fall back to the font size times a typical ratio.
+      const lineHeight = element => { const style = getComputedStyle(element), value = parseFloat(style.lineHeight); return Number.isFinite(value) ? value : parseFloat(style.fontSize) * 1.4; };
+      return {height:bounds.height, workspaceLines:workspaceBox.height / lineHeight(workspace), contained:[bar.querySelector('.t98-app-topbar__breadcrumb'), ...[...bar.querySelectorAll('.t98-app-topbar__actions *')].filter(element => element.textContent === 'Development preview' && element.getClientRects().length)].every(element => {
         const box = element.getBoundingClientRect(); return box.top >= bounds.top - 1 && box.bottom <= bounds.bottom + 1;
       })};
     });
@@ -230,6 +232,12 @@ try {
 
   stage = 'installation snippet, clipboard recovery and scoped native link';
   await open('installation'); await snippetRegion().waitFor();
+  // With an empty history, Install polls for the first event on its own and announces it; a manual empty check clears the announcement.
+  eventReply = {body:populated};
+  await main.getByRole('status').filter({hasText:'First event received.'}).waitFor({timeout:10_000});
+  eventReply = {body:empty}; await button('Check for events').click();
+  await main.getByText('No events in retained history yet.', {exact:false}).waitFor();
+  assert.equal(await main.getByText('First event received.', {exact:false}).count(), 0);
   const expectedSnippet = `<script defer src="${origin}/tracker.js" data-site-key="${publicKey}" referrerpolicy="no-referrer"></script>`;
   assert.equal(await snippetRegion().getAttribute('tabindex'), '0');
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);

@@ -5,6 +5,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError, getAuth } from './auth.ts';
 import { getConfig } from './config.ts';
+import { clientRateKey } from './client-rate-limit.ts';
 import { getDatabase } from './db.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
 import { readJson } from './validation.ts';
@@ -199,7 +200,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
       return json({ configured: getEmailStatus().configured });
     }
     if (request.headers.get('origin') !== getConfig().appUrl) throw new FoundationError(403, 'This action must originate from the application.');
-    await limit(`password-recovery:${asking ? 'request' : 'reset'}:global`, asking ? 20 : 60);
+    await limit(clientRateKey(request, `password-recovery:${asking ? 'request' : 'reset'}`), asking ? 20 : 60);
     const input = await readJson(request);
     if (asking) {
       const details = parsed(recoveryEmailInput, input);
@@ -261,7 +262,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
 
   if (signIn) {
     const details = parsed(signInInput, input);
-    await limit('signin:global', 60);
+    await limit(clientRateKey(request, 'signin'), 60);
     await limit(`signin:${createHash('sha256').update(details.email).digest('hex')}`, 5);
     return transaction(async (client, auth) => {
       await client.query('SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE', [details.email]);
@@ -275,7 +276,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
   if (challenge) {
     const totp = path.endsWith('/verify-totp');
     const details = parsed(totp ? codeInput : backupInput, input);
-    await limit('two-factor:global', 60);
+    await limit(clientRateKey(request, 'two-factor'), 60);
     const cookie = getSessionCookie(request, { cookieName: 'two_factor' }) ?? '';
     await limit(`two-factor:${createHash('sha256').update(cookie).digest('hex')}`, 10);
     return transaction(async (client, auth) => {

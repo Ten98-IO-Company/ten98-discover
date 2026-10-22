@@ -145,6 +145,42 @@ Spend/impressions/clicks may be combined only across distinct non-overlapping ac
 
 Preserve source currency; any converted view shows rate source/date and original amount. Fetch in each account's native timezone; daily aggregates cannot be re-bucketed exactly into another timezone without finer data. Display that limitation. Preserve view-through/click-through windows, modeled conversions, thresholding, sampling and delays. Re-fetch a bounded provider-specific lookback for late adjustments/refunds, replacing the same snapshot key rather than adding it again. Freshness, partial coverage, no data and revoked access remain distinct from zero.
 
+## First-party collector path and reverse proxy
+
+Like Umami, PostHog and Google tag gateway, the site owner may opt in to first-party serving. Discover does not rename or disguise anything by default, and no option changes consent, Do Not Track, Global Privacy Control, masking or any other privacy gate: the tracker still stops on refusal or a browser privacy signal.
+
+Per installation, two optional settings add a second name; `/api/collect` and `/tracker.js` keep working, so installed snippets are unaffected. Restart to apply.
+
+| Setting | Example | Effect |
+| --- | --- | --- |
+| `COLLECT_PATH_ALIAS` | `/t/e` | Extra collect route with the identical handler and origin, consent and rate-limit admission. |
+| `TRACKER_SCRIPT_ALIAS` | `/stats.js` | Extra name serving the same tracker bytes (GET/HEAD). |
+
+Each value is one absolute path of at most 64 characters: letters, digits, `/`, `_` and `-` (the script name ends in `.js`). Paths under `/api`, `/share`, `/assets`, `/vendor`, `/src` or `/node_modules`, and the existing public file names, are refused: an invalid value fails every request until corrected. The Install page snippet then uses the script alias and adds `data-collect-path`.
+
+Per site, the snippet accepts two optional attributes; without them requests are unchanged:
+
+- `data-collect-path="/t/e"` renames only the collect request. Use a path set in `COLLECT_PATH_ALIAS` or one your proxy rewrites to `/api/collect`.
+- `data-host-url="https://www.example.com"` sends every collector request to that origin: the collect path, `/api/tracking-config`, `/api/replay/*`, `/api/heatmaps/*`, `/destinations.js`, `/replay.js`, `/performance.js` and `/tracking-consent.css`. It must be an HTTPS origin without a path, or the script's own origin. An invalid attribute disables the snippet.
+
+The proxy forwards those paths unchanged, plus the `Origin` and `Content-Type` headers, to the Discover origin. Admission still checks the visiting website origin. Visitor estimates see the proxy's address unless `ANALYTICS_NETWORK_MODE=proxy` trusts the proxy egress in `ANALYTICS_TRUSTED_PROXIES`; a proxy with unlisted egress (such as a Cloudflare Worker) leaves visitor identity at the proxy address, so keep network mode off there. Short examples, with Discover at `https://discover.example` and `data-host-url` set to the site's own origin:
+
+```nginx
+location ~ ^/(t/e|stats\.js|destinations\.js|replay\.js|performance\.js|tracking-consent\.css|api/(tracking-config|replay/|heatmaps/)) {
+  proxy_pass https://discover.example; proxy_set_header Host discover.example; proxy_ssl_server_name on;
+}
+```
+
+```caddy
+@discover path /t/e /stats.js /destinations.js /replay.js /performance.js /tracking-consent.css /api/tracking-config /api/replay/* /api/heatmaps/*
+reverse_proxy @discover https://discover.example { header_up Host {upstream_hostport} }
+```
+
+```js
+// Cloudflare Worker routed on the same paths of the site; Next.js can use rewrites() with the same path list.
+export default { fetch(request) { const url = new URL(request.url); url.host = 'discover.example'; return fetch(new Request(url, request)); } };
+```
+
 ## Canonical domains, serving domains and redirect aliases
 
 Use one project with domain roles: **Canonical**, **Additional serving domain**, and **Redirect alias**. The owner's example is `crystal.re` as canonical with `crystal-group.ae`, `crystalgroup.ae` and `cre.sh` as redirect aliases. This is requested configuration intent; their live redirects/ownership have not been verified. Do not change DNS or redirect rules automatically.
