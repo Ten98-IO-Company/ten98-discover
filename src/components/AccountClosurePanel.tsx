@@ -15,7 +15,7 @@ const consequences = [
   'Workspaces keep their data, reports, share links and usage records. Share links you created keep working.',
 ]
 
-/** Owner-approved privacy notice (docs/account-closure.md); both closure paths show it verbatim. */
+/** Owner-approved privacy notice (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure); both closure paths show it verbatim. */
 export const closurePrivacyNotice = 'When you close your account we delete your name, email, sign-in methods, sessions and API keys. We keep an anonymous record of actions you took in a workspace, such as paid requests and audit entries, for as long as that workspace exists.'
 
 /** Both closure paths (password and identity provider) require these before submitting. */
@@ -24,7 +24,7 @@ export const closureAcknowledgements = [
   { id: 'keys', label: 'I understand that every API key I issued stops working immediately.' },
 ] as const
 
-/** Self-service account closure (docs/account-closure.md). The server re-checks every blocker and the step-up proof. */
+/** Self-service account closure (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure). The server re-checks every blocker and the step-up proof. */
 export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTeam, onOpenIdentity }: {
   userId: string; onClosed: () => void; onUnauthorized: () => void; onOpenTeam: (workspaceId: string) => void; onOpenIdentity: () => void
 }) {

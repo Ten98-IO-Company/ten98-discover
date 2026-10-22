@@ -1,5 +1,5 @@
 /**
- * Account closure inventory (docs/account-closure.md): every table and column that can hold a dashboard account's
+ * Account closure inventory (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure): every table and column that can hold a dashboard account's
  * personal data, credentials or identity, with the rule closure applies. tests/account-closure-inventory.test.ts
  * replays the migrations and fails when a table with a user reference or a personal-data-like column has no entry,
  * so a new table needs an explicit decision here before it can ship.

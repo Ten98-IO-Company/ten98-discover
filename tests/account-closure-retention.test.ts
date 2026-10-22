@@ -6,7 +6,7 @@ import { accountClosureInventory } from '../src/server/account-closure-inventory
 import { parseMigrations, readMigrationSchema, type MigrationSchema } from './helpers/migration-schema.ts';
 
 /**
- * Retention promise (docs/account-closure.md, ten98-code-system#39): rows a closed account leaves behind are kept as long
+ * Retention promise (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure, ten98-code-system#39): rows a closed account leaves behind are kept as long
  * as their workspace exists and go when it is deleted. Workspace deletion relies on ON DELETE CASCADE, so every kept table
  * that is workspace-scoped (a workspace_id or project_id column, or a parent that has one) must reach `workspace` through
  * cascading foreign keys, or be a listed exception.

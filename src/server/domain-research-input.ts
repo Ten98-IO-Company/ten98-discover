@@ -44,7 +44,7 @@ export function domainUrlMatches(value:string,target:DomainTarget){
 export function domainPayload(request:DomainRequest,id:string):Record<string,unknown>{
  const r=parseDomainRequest(request),t=domainTarget(r.target,r.scope);if(!z.uuid().safeParse(id).success)bad();
  const escape=(v:string)=>v.replace(/[\\%_]/g,c=>'\\'+c);
- // Fixed versioned profiles: see docs/domain-research.md for the provider contracts.
+ // Fixed versioned profiles: see https://github.com/Ten98-IO-Company/ten98-discover/wiki/Domain-Research for the provider contracts.
  const common={target:t.hostname,location_code:r.locationCode,language_code:r.languageCode,limit:r.limit,offset:0,tag:'ten98:domain:'+r.report+':'+id.toLowerCase()};
  if(r.report==='overview_v1')return {...common,ignore_synonyms:false};
  if(r.report==='competitors_v1')return {...common,item_types:['organic'],include_clickstream_data:false,ignore_synonyms:false,max_rank_group:100,exclude_top_domains:false,exclude_domains:[t.hostname,'www.'+t.hostname],order_by:['intersections,desc','domain,asc']};

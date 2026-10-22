@@ -397,7 +397,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
 const operatorClosureInput = z.object({ reason: closureReasonInput, proof: localIdentityProofInput }).strict();
 
 /**
- * Account closure routes (docs/account-closure.md). Self closure: GET reads the blockers, POST takes the local step-up
+ * Account closure routes (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure). Self closure: GET reads the blockers, POST takes the local step-up
  * proof (password plus a factor code when enabled); OIDC-only accounts close through /api/account/oidc/reauth/confirm.
  * Operator closure: POST /api/identity/accounts/:userId/close with the operator's own step-up proof and a reason.
  */

@@ -268,7 +268,7 @@ export function normalizeDimensions(raw: unknown): NormalizedDimensions {
         out.distinctId = distinctId(v);
         break;
       case 'tag': {
-        // A value that is not a clean label drops the tag, never the event (docs/tracking.md).
+        // A value that is not a clean label drops the tag, never the event (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Tracking).
         const tag = analyticsTag(v);
         if (tag !== null) out.tag = tag;
         break;

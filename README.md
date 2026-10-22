@@ -1,47 +1,31 @@
-# ten98 Discover
+# Ten98 Discover
+See how people find your site, through search engines and AI answers, and what they do when they arrive.
 
-Common architecture and server mechanisms are maintained in [ten98-code-system](https://github.com/Ten98-IO-Company/ten98-code-system). `pnpm check:architecture` validates the installed shared contract; the normal test and build commands include it.
+Ten98 Discover brings organic SEO, AEO and GEO research, AI prompt discovery and privacy-respecting web analytics together in one self-hosted application. It is for site owners, marketers and agencies who want their search, AI-visibility and visitor data in one place, on their own server.
 
-SEO, AEO and GEO intelligence, combined with web analytics in an MIT-licensed, self-hosted application. The app is free and fully featured by design; external data/model providers may charge.
+**Status: development foundation; not a V1 release.** Features are being built towards full first-release parity, and no release image is published yet.
 
-**Status: development foundation; not a V1 release.** Full source parity, additional platform integrations and operational acceptance remain in progress. See the [current implementation and release gaps](https://wiki.ten98.io/s/ten98-docs/p/release-status-vBt9k2HJBg) and [81-requirement register](https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5). No release image is published.
+## Why Ten98 Discover
+- **Analytics you own.** A first-party tracker with consent-aware collection, sessions, journeys, funnels, retention, revenue and session replay, stored in your own database.
+- **Search research in one place.** Keyword, rank, backlink and domain research, Google Search Console and Google Analytics imports, and site audits.
+- **Visibility in AI answers.** Run tracked prompts against AI models, compare answers over time and see which sources they cite.
+- **Spend only on what you start.** Paid data and model calls are quoted first and run only after you press Start, with receipts for every charge.
+- **Built for teams and tools.** Workspaces with roles, two-factor sign-in and single sign-on, plus a bearer API and an MCP server for your own tools.
+- **Free and fully featured.** No paywalls or seat limits; external data and model providers may charge for their own APIs.
+- Self-hosted and open source under the MIT licence.
 
-## Documentation
+## Get started
+Installation, configuration and guides are in the [wiki](https://github.com/Ten98-IO-Company/ten98-discover/wiki), starting with [Getting started](https://github.com/Ten98-IO-Company/ten98-discover/wiki/Getting-Started) and [Docker setup](https://github.com/Ten98-IO-Company/ten98-discover/wiki/Docker-Setup).
 
-[ten98-monitor in Docmost](https://wiki.ten98.io/s/ten98-docs/p/ten98-monitor-0oQB5fKF1h) contains product scope, research, design, user flows, delivery plans and historical acceptance records. Runnable setup, current code/security contracts, required notices and AI guardrails remain in this repository. The [latest UI checkpoint](https://wiki.ten98.io/s/ten98-docs/p/ui-redesign-acceptance-through-r04-p2uXBbp8rZ) records its incremental validation and remaining work.
+## Community
+- Questions and ideas: [Discussions](https://github.com/Ten98-IO-Company/ten98-discover/discussions)
+- Bugs and feature requests: [Issues](https://github.com/Ten98-IO-Company/ten98-discover/issues)
+- Roadmap: [Ten98 Project](https://github.com/orgs/Ten98-IO-Company/projects/1)
+- Contributing: [contributing guide](https://github.com/Ten98-IO-Company/.github/blob/main/CONTRIBUTING.md) · [Code of Conduct](https://github.com/Ten98-IO-Company/.github/blob/main/CODE_OF_CONDUCT.md) · [contributor rules](AGENTS.md)
 
-The product and repository are named ten98 Discover (`ten98-discover`). Existing Docker image identifiers remain `ten98-monitor`. Keep the existing Compose project name when upgrading to reuse its volumes.
+## Security
+Report vulnerabilities privately through [GitHub private vulnerability reporting](https://github.com/Ten98-IO-Company/ten98-discover/security/advisories/new); see the [security policy](https://github.com/Ten98-IO-Company/.github/blob/main/SECURITY.md). Please don't open public issues for security problems.
 
-## Run with Docker
-
-From a checkout of the version you intend to run, with Docker and Compose installed:
-
-```sh
-sh scripts/deploy.sh local http://localhost:3000 3000 ten98-monitor
-```
-
-Open the configured address and use the privately generated bootstrap token to claim the owner account. Follow [Docker setup](docs/docker-setup.md) for the shared POSIX shell procedure (including Windows through WSL2), HTTPS, backups, safe reruns and upgrades. This is a source-built development deployment. The [foundation runbook](docs/foundation.md) covers native development, migrations and current limitations.
-
-## Code and contribution
-
-For current contributor scope and accepted owner decisions, read [Codex continuation](CLAUDE.md).
-
-- [Contributor ownership and guardrails](AGENTS.md), [Kimi/GPT workflow](docs/kimi-workflow.md).
-- [Implementation and security contracts](docs), including [tracking and measurement](docs/tracking.md), [Google imports](docs/google-reports.md), [rank tracking](docs/rank-tracking.md) and [AI insights](docs/ai-insights.md).
-- Boundary contracts: [explicit identity links](docs/explicit-identity-links.md), [Sessions and Journeys navigation](docs/report-navigation.md), and [static audit admission and pacing](docs/site-audit-policy.md).
-- [Third-party provenance and complete license notices](THIRD_PARTY_NOTICES.md). This is an independent combined project, not an official product of the upstream projects.
-
-With Node 24 and pnpm 11.19.0 installed:
-
-```sh
-pnpm typecheck
-pnpm test
-pnpm check:plan
-pnpm build
-```
-
-`pnpm typecheck` checks application TypeScript, the maintained tracker and destination scripts, and temporary views of the replay and performance adapters derived from their served bundles. The adapter check verifies pinned vendor bytes and wrapper boundaries, maps diagnostics back to the served files, and removes its temporary inputs. Builds and source CI run this check through the normal typecheck command.
-
-The documentation check validates local links/fences, the no-tool Kimi profile and a pinned Docmost requirement reference with 81 frozen IDs. It does not authenticate to Docmost or certify current remote content or feature completion. See the foundation runbook for integration-test isolation and evidence limits.
-
-Licensed under [MIT](LICENSE).
+## Legal
+- Licence: [MIT](LICENSE). Third-party components and their licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). This is an independent combined project, not an official product of the upstream projects.
+- Provided "as is", without warranty, as stated in the licence.

@@ -4,7 +4,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const files = ['README.md', 'AGENTS.md', 'THIRD_PARTY_NOTICES.md', ...readdirSync(resolve(root, 'docs')).filter(n => n.endsWith('.md')).map(n => `docs/${n}`)];
+// Documentation lives in the GitHub wiki. The repository keeps README, agent guidance, notices, agent profiles, test-harness
+// READMEs and docs/ redirect stubs for paths that immutable migrations cite; every local link in them must resolve.
+const markdownIn = dir => existsSync(resolve(root, dir)) ? readdirSync(resolve(root, dir)).filter(n => n.endsWith('.md')).map(n => `${dir}/${n}`) : [];
+const harnessReadmes = readdirSync(resolve(root, 'tests'), { withFileTypes: true }).filter(d => d.isDirectory() && existsSync(resolve(root, 'tests', d.name, 'README.md'))).map(d => `tests/${d.name}/README.md`);
+const files = ['README.md', 'AGENTS.md', 'CLAUDE.md', 'THIRD_PARTY_NOTICES.md', ...markdownIn('agents'), ...harnessReadmes, ...markdownIn('docs')];
 const slug = title => title.toLowerCase().replace(/[^\p{L}\p{N}_ -]/gu, '').replace(/ /g, '-');
 assert.equal(slug('Proposed shared architecture — inference'), 'proposed-shared-architecture--inference');
 const anchors = file => {
@@ -29,6 +33,7 @@ for (const file of files) {
   }
 }
 // Frozen V1 requirement identity/provenance, not a live Docmost content or implementation-status check.
+const wiki = 'https://github.com/Ten98-IO-Company/ten98-discover/wiki';
 const baseline = {
   url: 'https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5',
   sourceCommit: 'dcd1b3de5f7e0600c6b459e6b20f08b072106097',
@@ -60,10 +65,31 @@ for (const [id, entry] of Object.entries(registerMap.requirements)) {
   }
 }
 for (const kind of Object.keys(inventory)) for (const key of inventory[kind]) assert.ok(mapped[kind].has(key), `docs/register-map.json: unmapped ${kind} entry ${key}; add it to the requirement rows it implements`);
-assert.ok(readFileSync(resolve(root, 'README.md'), 'utf8').includes(baseline.url), 'README must link the canonical requirement register');
-assert.match(readFileSync(resolve(root, 'README.md'), 'utf8'), /development foundation; not a V1 release/);
+const readme = readFileSync(resolve(root, 'README.md'), 'utf8');
+assert.ok(readme.includes(`${wiki})`), 'README must link the canonical GitHub wiki');
+assert.match(readme, /development foundation; not a V1 release/);
+assert.ok(!readme.includes('wiki.ten98.io'), 'README must not link Docmost; the GitHub wiki is canonical');
+assert.ok(readFileSync(resolve(root, 'AGENTS.md'), 'utf8').includes(baseline.url), 'AGENTS.md must link the canonical requirement register');
+// Moved docs: source, tests, scripts, configuration and migrations may cite a docs/*.md path only while it exists (a redirect
+// stub keeps a path that an immutable migration cites). Everything else cites the wiki page.
+const wikiPage = /https:\/\/github\.com\/Ten98-IO-Company\/ten98-discover\/wiki\/[A-Za-z0-9-]+/g;
+const cited = new Map();
+const scan = path => {
+  for (const entry of readdirSync(resolve(root, path), { withFileTypes: true })) {
+    const child = `${path}/${entry.name}`;
+    if (entry.isDirectory()) scan(child);
+    else if (/\.(ts|tsx|mts|mjs|js|sql|sh|ya?ml)$/.test(entry.name) && !child.startsWith('public/')) cited.set(child, readFileSync(resolve(root, child), 'utf8'));
+  }
+};
+for (const dir of ['src', 'tests', 'scripts', 'migrations']) scan(dir);
+for (const file of readdirSync(root)) if (/^(\.env\.example|Dockerfile.*|compose.*\.ya?ml)$/.test(file)) cited.set(file, readFileSync(resolve(root, file), 'utf8'));
+let wikiCitations = 0;
+for (const [file, content] of cited) {
+  for (const [path] of content.matchAll(/\bdocs\/[a-z0-9-]+\.md\b/g)) assert.ok(existsSync(resolve(root, path)), `${file}: cites deleted ${path}; cite the wiki page instead`);
+  wikiCitations += (content.match(wikiPage) ?? []).length;
+}
 const profile = readFileSync(resolve(root, 'agents/kimi-text-only.md'), 'utf8');
 assert.match(profile, /^tools: \[\]$/m);
 assert.match(profile, /^subagents: \[\]$/m);
 assert.ok(existsSync(resolve(root, 'LICENSE')));
-console.log(`Plan checks passed: ${files.length} Markdown files, 81 frozen V1 requirement IDs / pinned Docmost reference, register map over ${inventory.operations.size} operations, ${inventory.routes.size} cookie routes, ${inventory.mcpTools.size} MCP tools and ${inventory.migrations.size} migrations, local files/heading links, code fences, no-tool Kimi profile (Docmost content not checked).`);
+console.log(`Plan checks passed: ${files.length} Markdown files, 81 frozen V1 requirement IDs / pinned Docmost reference, register map over ${inventory.operations.size} operations, ${inventory.routes.size} cookie routes, ${inventory.mcpTools.size} MCP tools and ${inventory.migrations.size} migrations, ${wikiCitations} wiki citations with no deleted docs/ path cited, local files/heading links, code fences, no-tool Kimi profile (wiki and Docmost content not checked).`);

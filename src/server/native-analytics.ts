@@ -131,7 +131,7 @@ async function writeObservation(client: PoolClient, project: Project, input: Obs
   // Owner opt-in (default off). Consent was already decided before this point: an event without collection basis is never stored.
   if (!settings.captureTags || (dimensions.tag !== undefined && !await admitTag(client, project.id, dimensions.tag))) delete dimensions.tag;
   // Raw ad click IDs (owner decision D1) go to their own columns, never the dimensions JSON, and only for a browser event that
-  // carries the analytics grant: cookieless basic and API observations never store them (docs/attribution.md).
+  // carries the analytics grant: cookieless basic and API observations never store them (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Attribution).
   const {clickIds:submittedClickIds,...stored}=dimensions,clickIds=settings.captureCampaigns&&source==='browser'&&basis==='consent'?submittedClickIds??{}:{};
   const inserted = await client.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,properties,dimensions,source,metric_version,identity_link_evidence_version,collection_basis,gclid,fbclid,msclkid,ttclid,li_fat_id,twclid)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(project_id,id) DO NOTHING RETURNING id`,
