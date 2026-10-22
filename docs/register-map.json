@@ -25,7 +25,8 @@
     "0002_teams",
     "0007_oidc",
     "0069_project_shares",
-    "0070_account_closure"
+    "0070_account_closure",
+    "0071_email_suppression"
    ]
   },
   "P03": {
@@ -38,6 +39,7 @@
   "P04": {
    "routes": [
     "POST /api/workspaces/{workspaceId}/two-factor",
+    "POST /api/email/ses-feedback",
     "GET /api/account/closure",
     "POST /api/account/closure",
     "POST /api/identity/accounts/{userId}/close"
@@ -46,7 +48,8 @@
     "0004_account_security",
     "0009_oidc_account_security",
     "0068_workspace_two_factor",
-    "0070_account_closure"
+    "0070_account_closure",
+    "0071_email_suppression"
    ]
   },
   "P05": {

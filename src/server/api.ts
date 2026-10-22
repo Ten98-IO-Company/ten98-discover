@@ -43,6 +43,7 @@ import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitati
 import { handleAccountSecurity } from './account-security.ts';
 import { AccountClosureBlocked } from './account-closure.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
+import { handleSesFeedback, sesFeedbackPath } from './ses-feedback.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
 import { assertOidcCredentialsReadable, handleOidc, oidcSignOutUrl } from './oidc.ts';
@@ -186,6 +187,10 @@ export async function handleApi(request: Request): Promise<Response> {
       websiteShareReads++;
       try{return json(await readWebsiteShare(publicWebsite[1],token,await readJson(request,websiteShareLimits.readBodyBytes)),200,{'referrer-policy':'no-referrer','x-robots-tag':'noindex, nofollow'});}finally{websiteShareReads--;}
     }
+    // Public SES feedback (SNS) is separate from dashboard authentication; the runtime verifies the signature before any write.
+    // Independent budgets (see ses-feedback.ts): refusals never spend the certificate or verified delivery budgets.
+    if(path===sesFeedbackPath){const within=(key:string,maximum:number)=>()=>limit(key,maximum).then(()=>true,error=>{if(error instanceof FoundationError&&error.status===429)return false;throw error;});
+      return await handleSesFeedback(request,process.env,{admission:{certificate:within('ses-feedback:certificate',30),refused:within('ses-feedback:refused',60),verified:within('ses-feedback:verified',600)}});}
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
