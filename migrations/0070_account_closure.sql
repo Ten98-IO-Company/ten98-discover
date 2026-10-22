@@ -17,14 +17,16 @@ CREATE TABLE account_closure_audit (
   CHECK ((kind = 'self') = (actor_user_id = user_id))
 );
 
--- A closed account can never regain a credential, session, factor, link, key, membership or role. FOR SHARE waits for an
--- in-flight closure of the same account, then sees its committed closed_at.
+-- A closed account can never regain a credential, session, factor, link, key, membership or role. The lock is taken on the
+-- account row with no predicate on closed_at, so it waits for an in-flight closure of the same account and then reads the
+-- row's newest committed version. (A closed_at predicate is checked against the statement snapshot, where an in-flight
+-- closure is still invisible, so it would lock nothing.)
 CREATE FUNCTION refuse_closed_account() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE target text := to_jsonb(NEW) ->> TG_ARGV[0];
+DECLARE target text := to_jsonb(NEW) ->> TG_ARGV[0]; closed timestamptz;
 BEGIN
   IF target IS NOT NULL THEN
-    PERFORM 1 FROM "user" WHERE id = target AND closed_at IS NOT NULL FOR SHARE;
-    IF FOUND THEN RAISE EXCEPTION 'The account is closed.' USING ERRCODE = 'check_violation'; END IF;
+    SELECT closed_at INTO closed FROM "user" WHERE id = target FOR SHARE;
+    IF closed IS NOT NULL THEN RAISE EXCEPTION 'The account is closed.' USING ERRCODE = 'check_violation'; END IF;
   END IF;
   RETURN NEW;
 END $$;

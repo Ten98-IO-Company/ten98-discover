@@ -9,8 +9,11 @@ import { clientRateKey, emailLimitKey } from './client-rate-limit.ts';
 import { getDatabase } from './db.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
 import { readJson } from './validation.ts';
-import { closeAccount, closureBlockers, closureReasonInput } from './account-closure.ts';
+import { closeAccount, closureBlockers, closureReasonInput, type StepUpProof } from './account-closure.ts';
 import { accountPreferencesDefaults, accountPreferencesDtoSchema, accountPreferencesInputSchema, accountPreferencesMaxRevision, type AccountPreferencesDto } from '../lib/account-preferences.ts';
+
+/** The only place a step-up proof is minted; call it only right after the matching verification succeeded. */
+const verifiedStepUp = (userId: string, method: StepUpProof['method']) => ({ userId, method }) as StepUpProof;
 
 type Auth = ReturnType<typeof getAuth>;
 const currentPassword = z.string().min(1).max(128);
@@ -162,7 +165,7 @@ export async function applyOidcAccountSecurity(client: PoolClient, request: Requ
   if ((details.action === 'set-password') !== (details.newPassword !== undefined)) throw new FoundationError(400, 'Supply a new password only when adding local sign-in.');
   if (current.user.twoFactorEnabled) await requireFactorProof(client, request, current.user.id, details);
   if (details.action === 'close-account') {
-    await closeAccount(client, current.user.id, { kind: 'self', userId: current.user.id }, { userId: current.user.id, method: 'oidc' });
+    await closeAccount(client, current.user.id, { kind: 'self', userId: current.user.id }, verifiedStepUp(current.user.id, 'oidc'));
     return json({ closed: true }, 200, await invoke(auth, request, '/sign-out', {}));
   }
   const providerId = (await client.query('SELECT "oidcProviderId" FROM session WHERE id=$1', [current.session.id])).rows[0]?.oidcProviderId as string | null;
@@ -418,13 +421,13 @@ async function handleAccountClosure(request: Request, path: string, limit: Limit
     return transaction(async client => {
       const current = await requireLocalIdentityProof(client, request, details.proof);
       // closeAccount locks the operator set and refuses an actor without the role.
-      const result = await closeAccount(client, targetId, { kind: 'operator', userId: current.user.id, reason: details.reason }, { userId: current.user.id, method: 'password' });
+      const result = await closeAccount(client, targetId, { kind: 'operator', userId: current.user.id, reason: details.reason }, verifiedStepUp(current.user.id, 'password'));
       return json({ closed: true, userId: targetId, closedAt: result.closedAt.toISOString() });
     });
   }
   return transaction(async (client, auth) => {
     const current = await requireLocalIdentityProof(client, request, input);
-    await closeAccount(client, current.user.id, { kind: 'self', userId: current.user.id }, { userId: current.user.id, method: 'password' });
+    await closeAccount(client, current.user.id, { kind: 'self', userId: current.user.id }, verifiedStepUp(current.user.id, 'password'));
     // Sessions are already deleted; sign-out only clears this browser's cookies.
     return json({ closed: true }, 200, await invoke(auth, request, '/sign-out', {}));
   });
@@ -434,7 +437,7 @@ async function handleAccountClosure(request: Request, path: string, limit: Limit
  * Host CLI step-up for an operator closure: the named operator signs in through Better Auth inside this transaction
  * (password, then an authenticator or recovery code when enabled). The temporary session is deleted before commit.
  */
-async function hostOperatorStepUp(client: PoolClient, operatorEmail: string, secret: z.output<typeof localIdentityProofInput>): Promise<string> {
+async function hostOperatorStepUp(client: PoolClient, operatorEmail: string, secret: z.output<typeof localIdentityProofInput>): Promise<StepUpProof> {
   const auth = getAuth(client), appUrl = getConfig().appUrl, blank = new Request(appUrl);
   const post = (path: string, body: unknown, cookie: string | null = null) => auth.handler(new Request(`${appUrl}/api/auth${path}`, {
     method: 'POST', headers: { 'content-type': 'application/json', origin: appUrl, ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
@@ -452,7 +455,7 @@ async function hostOperatorStepUp(client: PoolClient, operatorEmail: string, sec
   const session = await auth.api.getSession({ headers: responseHeaders(blank, response), query: { disableRefresh: true } });
   if (!session || session.user.id !== operator.id) throw new FoundationError(503, 'Operator verification could not be completed.');
   await client.query('DELETE FROM session WHERE id=$1', [session.session.id]);
-  return operator.id;
+  return verifiedStepUp(operator.id, 'host');
 }
 
 /** Host CLI: an instance operator closes another account with step-up and a recorded reason. Prints no personal data. */
@@ -462,10 +465,10 @@ export async function closeAccountFromHost(targetEmail: unknown, operatorEmail: 
   const client = await getDatabase().pool.connect();
   try {
     await client.query('BEGIN');
-    const operatorId = await hostOperatorStepUp(client, emails.operator, details);
+    const operator = await hostOperatorStepUp(client, emails.operator, details);
     const target = (await client.query<{ id: string }>('SELECT id FROM "user" WHERE lower(email)=$1', [emails.target])).rows[0];
     if (!target) throw new FoundationError(404, 'No open account has that email.');
-    await closeAccount(client, target.id, { kind: 'operator', userId: operatorId, reason: why }, { userId: operatorId, method: 'host' });
+    await closeAccount(client, target.id, { kind: 'operator', userId: operator.userId, reason: why }, operator);
     await client.query('COMMIT');
     return target.id;
   } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }

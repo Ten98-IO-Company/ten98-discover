@@ -113,7 +113,7 @@ async function worker() {
 
 try {
   const [command, option, ...extra] = process.argv.slice(2);
-  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (operator secret JSON on standard input)';
+  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (reason: 1-500 characters, no personal data; operator secret JSON on standard input)';
   const closing = command === 'account' && option === 'close' && extra.length === 5 && extra[1] === '--operator' && extra[3] === '--reason';
   if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : command === 'account' ? !closing : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
     throw new CliError(usage);

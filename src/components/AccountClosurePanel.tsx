@@ -15,6 +15,12 @@ const consequences = [
   'Workspaces keep their data, reports, share links and usage records. Share links you created keep working.',
 ]
 
+/** Both closure paths (password and identity provider) require these before submitting. */
+export const closureAcknowledgements = [
+  { id: 'permanent', label: 'I understand that closing is permanent and cannot be undone.' },
+  { id: 'keys', label: 'I understand that every API key I issued stops working immediately.' },
+] as const
+
 /** Self-service account closure (docs/account-closure.md). The server re-checks every blocker and the step-up proof. */
 export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTeam, onOpenIdentity }: {
   userId: string; onClosed: () => void; onUnauthorized: () => void; onOpenTeam: (workspaceId: string) => void; onOpenIdentity: () => void
@@ -84,7 +90,7 @@ export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTe
     </Stack>}
     {data && !blocked && data.hasPassword && !reviewing && <Button variant='danger' onClick={() => { setError(''); setReviewing(true) }}>Review account closure</Button>}
     {data && !blocked && data.hasPassword && reviewing && <ReviewConfirm title='Close this account' tone='danger' reviewKey={userId} autoFocus busy={busy}
-      acknowledgements={[{ id: 'permanent', label: 'I understand that closing is permanent and cannot be undone.' }, { id: 'keys', label: 'I understand that every API key I issued stops working immediately.' }]}
+      acknowledgements={closureAcknowledgements}
       confirmLabel={busy ? 'Closing account…' : 'Close account'} disabledReason={missingProof} error={error || undefined}
       onConfirm={close} onCancel={() => { setReviewing(false); setPassword(''); setFactor(''); setError('') }}>
       <Stack gap={3}>

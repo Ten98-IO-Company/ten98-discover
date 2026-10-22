@@ -1,6 +1,8 @@
 import {Icon} from './CampaignUI'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Checkbox } from '@ten98/ui'
 import { api, ApiError, errMsg } from '../lib/api'
+import { closureAcknowledgements } from './AccountClosurePanel'
 
 type Security = { user: { id: string; twoFactorEnabled: boolean }; hasPassword: boolean }
 type Identity = { id: string; providerName: string; enabled: boolean }
@@ -158,6 +160,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
             {actionOptions(security.user.twoFactorEnabled).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select></div>
           {action === 'close-account' && <p role='note'>Closing is permanent. You are signed out everywhere, every API key you issued is revoked, and your linked identities, authenticator, preferences and memberships are removed. You cannot close the account while you are the only owner of a workspace or the only instance operator.</p>}
+          {action === 'close-account' && closureAcknowledgements.map(item => <Checkbox key={item.id} name={`closure-${item.id}`} required label={item.label} />)}
           {action === 'set-password' && <><div className='field'><label htmlFor='oidc-new-password'>New recovery password</label><input id='oidc-new-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} /></div>
             <div className='field'><label htmlFor='oidc-repeat-password'>Repeat recovery password</label><input id='oidc-repeat-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={repeat} onChange={event => setRepeat(event.target.value)} /></div></>}
           {security.user.twoFactorEnabled && <><div className='field'><label htmlFor='oidc-factor-type'>Existing second factor</label><select id='oidc-factor-type' value={recovery ? 'recovery' : 'totp'} onChange={event => { setRecovery(event.target.value === 'recovery'); setFactor('') }}><option value='totp'>Authenticator code</option><option value='recovery'>Recovery code</option></select></div>

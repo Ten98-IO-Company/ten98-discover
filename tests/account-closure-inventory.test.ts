@@ -4,15 +4,26 @@ import { accountClosureInventory } from '../src/server/account-closure-inventory
 import { parseMigrations, readMigrationSchema, type MigrationSchema } from './helpers/migration-schema.ts';
 
 // A column "like" account personal data or credentials. A user foreign key always counts.
-const personalColumn = /email|(^|_)ip(_|$)|ip_?address|user_?agent|name|token|user_?id|_by$|actor|inviter/i;
+const personalColumn = /email|(^|_)ip(_|$)|ip_?address|user_?agent|name|token|user_?id|_by$|actor|inviter|image|subject|issuer|password|credential|claims|^value$|secret/i;
+// A table is account-linked when it references the account; its JSON and free-text columns then need an explicit rule too.
+const accountLink = /user_?id|_by$|actor|inviter/i;
+// Text columns holding identifiers, digests or enumerations, not free text.
+const structuredText = /(^|_)id$|hash$|fingerprint|digest|^(status|role|kind|action|method|trigger|source|operation|purpose|phase|provider|environment|report|devices|scopes|sections|theme|locale|time_zone|last_status)$|_(version|code|type|interval|timezone|state)$/i;
 // Rules applied by account-closure.ts in code rather than by an inventory statement.
 const appliedInCode = new Set(['user', 'import_probe', 'pgboss.job']);
 
 function uncovered(schema: MigrationSchema, inventory = accountClosureInventory): string[] {
   const missing: string[] = [];
-  for (const [table, columns] of schema) for (const column of columns.values()) {
-    if (!column.referencesUser && !personalColumn.test(column.name)) continue;
-    if (!inventory.some(entry => entry.table === table && entry.columns.includes(column.name))) missing.push(`${table}.${column.name}`);
+  for (const [table, columns] of schema) {
+    const entry = inventory.find(item => item.table === table);
+    // A deleted row takes every column with it.
+    if (entry?.rule === 'delete') continue;
+    const linked = [...columns.values()].some(column => column.referencesUser || accountLink.test(column.name));
+    for (const column of columns.values()) {
+      const freeText = linked && (/^jsonb?$/.test(column.type) || /^(text|varchar|character varying)$/.test(column.type) && !structuredText.test(column.name));
+      if (!column.referencesUser && !personalColumn.test(column.name) && !freeText) continue;
+      if (!entry?.columns.includes(column.name)) missing.push(`${table}.${column.name}`);
+    }
   }
   return missing.sort();
 }
@@ -60,13 +71,21 @@ test('the agreed council rules: credentials go, actor and financial rows stay un
 test('a new personal-data table without a rule fails the coverage check', () => {
   const schema = parseMigrations([
     'CREATE TABLE "user" (id text PRIMARY KEY, name text NOT NULL, email text NOT NULL);',
-    `CREATE TABLE note (id uuid PRIMARY KEY, author text REFERENCES "user"(id), body text, CHECK (length(body) < 10));
+    `CREATE TABLE note (id uuid PRIMARY KEY, author text REFERENCES "user"(id), body text, status text, CHECK (length(body) < 10));
      CREATE FUNCTION f() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN CREATE TABLE ignored (email text); END $$;`,
-    'ALTER TABLE note ADD COLUMN contact_email text, ADD COLUMN reviewer text; ALTER TABLE note ADD CONSTRAINT note_reviewer FOREIGN KEY (reviewer) REFERENCES "user"(id);',
+    'ALTER TABLE note ADD COLUMN contact_email text, ADD COLUMN reviewer text, ADD COLUMN details jsonb; ALTER TABLE note ADD CONSTRAINT note_reviewer FOREIGN KEY (reviewer) REFERENCES "user"(id);',
     'CREATE TABLE gone (user_agent text); DROP TABLE gone; ALTER TABLE note DROP COLUMN body;',
+    // Schema-qualified tables and column-less or schema-qualified references to the account table.
+    'CREATE TABLE public.audit_entry (id bigint PRIMARY KEY, subject text, actor text REFERENCES public."user", payload jsonb, kind text);',
+    'CREATE TABLE badge (id uuid PRIMARY KEY, holder text REFERENCES "public"."user"(id), picture_url text, image text);',
+    'CREATE TABLE removed_entry (id uuid PRIMARY KEY, secret text); DROP TABLE public.removed_entry;',
   ]);
-  assert.deepEqual([...schema.keys()].sort(), ['note', 'user']);
-  assert.deepEqual([...schema.get('note')!.keys()], ['id', 'author', 'contact_email', 'reviewer']);
+  assert.deepEqual([...schema.keys()].sort(), ['audit_entry', 'badge', 'note', 'user']);
+  assert.deepEqual([...schema.get('note')!.keys()], ['id', 'author', 'status', 'contact_email', 'reviewer', 'details']);
+  assert.equal(schema.get('note')!.get('details')!.type, 'jsonb');
+  assert.ok(schema.get('audit_entry')!.get('actor')!.referencesUser && schema.get('badge')!.get('holder')!.referencesUser);
   assert.deepEqual(uncovered(schema, [{ table: 'user', rule: 'tombstone', columns: ['name', 'email'], reason: 'The account row itself becomes the tombstone.' }]),
-    ['note.author', 'note.contact_email', 'note.reviewer']);
+    ['audit_entry.actor', 'audit_entry.payload', 'audit_entry.subject', 'badge.holder', 'badge.image', 'badge.picture_url', 'note.author', 'note.contact_email', 'note.details', 'note.reviewer']);
+  // A delete rule covers the whole row.
+  assert.deepEqual(uncovered(new Map([['note', schema.get('note')!]]), [{ table: 'note', rule: 'delete', columns: [], reason: 'Removed with the account in this example.' }]), []);
 });

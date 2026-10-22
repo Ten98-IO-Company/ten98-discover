@@ -9,7 +9,8 @@ import { handleApi } from '../src/server/api.ts';
 import { createApiKey } from '../src/server/api-keys.ts';
 import { inviteMember } from '../src/server/teams.ts';
 import { createWebsiteShare, listWebsiteShares, readWebsiteShare } from '../src/server/website-shares.ts';
-import { AccountClosureBlocked, closeAccount } from '../src/server/account-closure.ts';
+import { AccountClosureBlocked, closeAccount, type StepUpProof } from '../src/server/account-closure.ts';
+import { setTimeout as delay } from 'node:timers/promises';
 import { getBoss, stopJobs } from '../src/server/jobs.ts';
 import { authenticatorCode } from './account-security-integration.ts';
 
@@ -134,7 +135,7 @@ export async function runAccountClosureChecks() {
   try {
     await isolated.query('BEGIN');
     await isolated.query('DELETE FROM instance_operator WHERE user_id<>$1', [a.id]);
-    await assert.rejects(closeAccount(isolated, a.id, { kind: 'self', userId: a.id }, { userId: a.id, method: 'password' }),
+    await assert.rejects(closeAccount(isolated, a.id, { kind: 'self', userId: a.id }, { userId: a.id, method: 'password' } as StepUpProof),
       (error: unknown) => error instanceof AccountClosureBlocked && error.blockers.lastOperator && error.blockers.workspaces.length === 0);
   } finally { await isolated.query('ROLLBACK').catch(() => undefined); isolated.release(); }
   assert.deepEqual(await snapshot(a.id, a.email), beforeOperator, 'A refused last-operator closure must roll back completely.');
@@ -152,6 +153,42 @@ export async function runAccountClosureChecks() {
   assert.deepEqual((await pool.query('SELECT actor_user_id,kind,reason FROM account_closure_audit WHERE user_id=$1', [c.id])).rows, [{ actor_user_id: o.id, kind: 'operator', reason: 'Account holder asked for closure' }]);
   assert.equal((await pool.query('SELECT name FROM "user" WHERE id=$1 AND closed_at IS NOT NULL', [c.id])).rows[0]?.name, 'Closed account');
   console.log('PASS operator closure requires an instance operator, step-up and a reason, and records the operator event');
+
+  // 3b. Race: a closure holds the account locked (not yet committed) while other connections try to give it a membership,
+  // a session, an API key and a preference. Each insert must wait on the account row, then be refused once the closure
+  // commits; none may slip past the trigger on the pre-closure snapshot.
+  const x = await account('race');
+  await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'editor')", [w, x.id]);
+  const holder = await pool.connect(), racers = await Promise.all([1, 2, 3, 4].map(() => pool.connect()));
+  try {
+    await holder.query('BEGIN');
+    await closeAccount(holder, x.id, { kind: 'self', userId: x.id }, { userId: x.id, method: 'password' } as StepUpProof);
+    const pids = await Promise.all(racers.map(async racer => (await racer.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0].pid));
+    const attempts: [string, unknown[]][] = [
+      ["INSERT INTO membership(workspace_id,user_id,role) VALUES($2,$1,'viewer')", [x.id, w3]],
+      [`INSERT INTO session(id,token,"userId","expiresAt") VALUES(gen_random_uuid()::text,gen_random_uuid()::text,$1,clock_timestamp()+interval '1 day')`, [x.id]],
+      ["INSERT INTO api_key(id,workspace_id,issuer_user_id,name,token_hash,scopes,expires_at) VALUES(gen_random_uuid(),$2,$1,'Race',$3,ARRAY['projects:read'],clock_timestamp()+interval '1 day')", [x.id, w, randomBytes(32).toString('hex')]],
+      ["INSERT INTO user_preference(user_id,time_zone,locale,theme,revision) VALUES($1,'UTC','en-US','dark',1)", [x.id]],
+    ];
+    const outcomes = attempts.map(([sql, params], index) => racers[index].query('BEGIN').then(() => racers[index].query(sql, params))
+      .then(() => 'inserted', (error: { code?: string }) => error.code ?? 'error'));
+    // Every racer must be blocked on a lock behind the uncommitted closure before it commits.
+    let waiting = 0;
+    for (let tries = 0; tries < 100 && waiting < pids.length; tries++) {
+      await delay(50);
+      waiting = (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid=ANY($1::int[]) AND wait_event_type='Lock'", [pids])).rows[0].n;
+    }
+    assert.equal(waiting, pids.length, 'Each insert waits on the account row held by the in-flight closure.');
+    await holder.query('COMMIT');
+    assert.deepEqual(await Promise.all(outcomes), ['23514', '23514', '23514', '23514'], 'Each insert is refused once the closure commits.');
+  } finally {
+    await holder.query('ROLLBACK').catch(() => undefined); holder.release();
+    for (const racer of racers) { await racer.query('ROLLBACK').catch(() => undefined); racer.release(); }
+  }
+  for (const sql of ['SELECT 1 FROM membership WHERE user_id=$1', 'SELECT 1 FROM session WHERE "userId"=$1', 'SELECT 1 FROM api_key WHERE issuer_user_id=$1', 'SELECT 1 FROM user_preference WHERE user_id=$1'])
+    assert.equal((await pool.query(sql, [x.id])).rowCount, 0, 'No row exists for the closed account after the race.');
+  assert.ok((await pool.query('SELECT closed_at FROM "user" WHERE id=$1', [x.id])).rows[0].closed_at instanceof Date);
+  console.log('PASS concurrent membership, session, API key and preference inserts wait for an in-flight closure and are refused after it commits');
 
   // 4. Self closure with password and a recovery code.
   const oldEmail = a.email, signinKey = `signin:${createHash('sha256').update(oldEmail).digest('hex')}`;
