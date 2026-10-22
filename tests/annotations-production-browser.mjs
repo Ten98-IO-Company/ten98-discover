@@ -27,7 +27,7 @@ let browser,page,stage='fixture',outbound=0,analyticsGets=0;
 await mkdir(evidence,{recursive:true});
 try{
   await assertSchema();assert.equal((await pool.query("SELECT claimed FROM installation WHERE id='instance'")).rows[0].claimed,true);
-  assert.equal((await pool.query("SELECT count(*)::int AS n FROM \"user\" WHERE email LIKE '%@explorer-browser.integration.test'")).rows[0].n,1,'Run the unchanged Explorer browser suite exactly once on the fresh fixture first.');
+  for(const table of ['analytics_cohort','analytics_annotation','analytics_segment'])assert.equal((await pool.query('SELECT count(*)::int AS n FROM '+table)).rows[0].n,0,'Use a fresh synthetic installation (tests/helpers/native-browser.mjs).');
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM analytics_annotation')).rows[0].n,0,'Production acceptance requires untouched annotation fixtures.');
   const hashed=await hashPassword(password);
   for(const uid of [owner,second]){await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,\'Annotation reviewer\',$2)',[uid,uid+'@annotations-browser.integration.test']);await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,\'credential\',$2,$3)',[randomUUID(),uid,hashed]);}

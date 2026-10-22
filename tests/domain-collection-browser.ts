@@ -28,7 +28,7 @@ try {
   await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [userId, 'Domain browser reviewer', email]);
   await pool.query('INSERT INTO account(id,"accountId","providerId","userId",password) VALUES($1,$2,$3,$2,$4)', [randomUUID(), userId, 'credential', await hashPassword(password)]);
   const { workspace } = await createWorkspace(userId, { name: 'Domain browser sandbox' });
-  await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [projectId, workspace.id, 'Serving browser sandbox', canonical, siteKey]);
+  await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key,analytics_settings) VALUES($1,$2,$3,$4,$5,$6)', [projectId, workspace.id, 'Serving browser sandbox', canonical, siteKey, {enabled:true,consentMode:'builtin',collectionMode:'consent-first',captureReferrer:false,captureCampaigns:false,captureScreen:false,excludeBots:true,excludedPaths:[]}]);
   await saveAnalyticsSettings(projectId, userId, { revision: 1, settings: { enabled: true, consentMode: 'builtin', captureReferrer: false,
     captureCampaigns: false, captureScreen: false, excludeBots: false, excludedPaths: [] } });
   const registered = await addDomain(projectId, userId, { hostname: 'serving.example.com', role: 'serving' });
@@ -44,7 +44,7 @@ try {
       if (url.pathname === '/favicon.ico') { await route.fulfill({ status: 204 }); return; }
       await route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Serving fixture</title><body><h1>Serving fixture</h1><script defer src="${collector}/tracker.js" data-site-key="${siteKey}"></script></body></html>` });
     } else if (url.origin === collector) {
-      assert.ok(['/tracker.js', '/destinations.js', '/api/collect', '/api/tracking-config'].includes(url.pathname));
+      assert.ok(['/tracker.js', '/destinations.js', '/tracking-consent.css', '/api/collect', '/api/tracking-config'].includes(url.pathname));
       const headers = { ...request.headers() };
       delete headers.host;
       // The browser's real Origin is preserved through this local transport shim.
@@ -99,17 +99,20 @@ try {
     await dashboard.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click();
   }
   await dashboard.getByRole('heading', { name: 'Web analytics', exact: true }).waitFor();
-  await section('Explore');
+  await section('Traffic explorer');
   const explore = dashboard.getByRole('region', { name: 'Explore', exact: true });
-  await explore.getByLabel('Group by', { exact: true }).selectOption('origin');
-  await explore.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  // Explorer filters live in the Explore filters dialog; Apply filters closes it.
+  const filters = dashboard.getByRole('dialog', { name: 'Explore filters', exact: true });
+  const editFilters = async () => { if (!await filters.isVisible()) await explore.getByRole('button', { name: 'Edit filters', exact: true }).click(); return filters; };
+  await (await editFilters()).getByLabel('Group by', { exact: true }).selectOption('origin');
+  await (await editFilters()).getByRole('button', { name: 'Apply filters', exact: true }).click();
   const table = explore.getByRole('region', { name: 'Breakdown data, scroll horizontally for all columns' });
   await table.getByRole('cell', { name: serving, exact: true }).waitFor();
   assert.equal(await table.getByRole('cell', { name: canonical, exact: true }).count(), 1);
-  await explore.getByText('More filters', { exact: true }).click();
-  await explore.getByLabel('Enable Origin', { exact: true }).check();
-  await explore.getByLabel('Origin equals', { exact: true }).fill(serving);
-  await explore.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await (await editFilters()).getByText('More filters', { exact: true }).click();
+  await (await editFilters()).getByLabel('Enable Origin', { exact: true }).check();
+  await (await editFilters()).getByLabel('Origin equals', { exact: true }).fill(serving);
+  await (await editFilters()).getByRole('button', { name: 'Apply filters', exact: true }).click();
   await table.getByRole('cell', { name: serving, exact: true }).waitFor();
   assert.equal(await table.getByRole('cell', { name: canonical, exact: true }).count(), 0);
   const downloadEvent = dashboard.waitForEvent('download');
