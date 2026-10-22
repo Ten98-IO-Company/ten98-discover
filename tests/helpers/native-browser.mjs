@@ -1,6 +1,6 @@
-// Runs native/production browser suites against one fresh synthetic installation, e.g. in the Linux Playwright container:
-//   node tests/helpers/native-browser.mjs [--unclaimed] [--database=<prefix>] [--database-port=<port>] tests/<suite> [tests/<suite> ...] [FLAG ...]
-// Several suites run in order on the same installation (some production suites need another suite first) and stop at the first failure.
+// Runs one native/production browser suite against its own fresh synthetic installation, e.g. in the Linux Playwright container:
+//   node tests/helpers/native-browser.mjs [--unclaimed] [--database=<prefix>] [--database-port=<port>] tests/<suite> [FLAG ...]
+// Suites never share an installation: prerequisite data must be seeded by the suite or this runner, not left by another suite.
 // Needs a built .output, PLAYWRIGHT_MODULE and a local PostgreSQL (NATIVE_BROWSER_POSTGRES, default postgres://ten98@127.0.0.1:5432).
 // Each run creates, migrates and finally drops its own database; it never touches a saved installation. Every FLAG is set to 1.
 // The installation is claimed through /api/setup unless --unclaimed is given (suites that claim it themselves). Suites that
@@ -13,14 +13,14 @@ import {basename} from 'node:path';
 import pg from 'pg';
 
 const args=process.argv.slice(2),options=new Map();while(args[0]?.startsWith('--')){const [key,value='']=args.shift().slice(2).split('=');options.set(key,value);}
-const suites=args.filter(arg=>arg.startsWith('tests/')),flags=args.filter(arg=>!arg.startsWith('tests/')),unclaimed=options.has('unclaimed'),prefix=options.get('database')||'ten98_native',proxyPort=options.has('database-port')?Number(options.get('database-port')):null;
+const [suite,...flags]=args,unclaimed=options.has('unclaimed'),prefix=options.get('database')||'ten98_native',proxyPort=options.has('database-port')?Number(options.get('database-port')):null;
 if([...options.keys()].some(key=>!['unclaimed','database','database-port'].includes(key))||!/^ten98_[a-z_]+$/.test(prefix)||proxyPort!==null&&!(proxyPort>1024&&proxyPort<65536))throw new Error('Unknown or invalid option.');
-if(!suites.length||suites.some(suite=>!/^tests\/[\w./-]+\.(mjs|ts)$/.test(suite))||flags.some(flag=>!/^TEN98_[A-Z0-9_]+$/.test(flag)))throw new Error('Usage: node tests/helpers/native-browser.mjs [--unclaimed] [--database=<prefix>] [--database-port=<port>] tests/<suite>.mjs|.ts [...] [TEN98_FLAG ...]');
+if(!suite||!/^tests\/[\w./-]+\.(mjs|ts)$/.test(suite)||flags.some(flag=>!/^TEN98_[A-Z0-9_]+$/.test(flag)))throw new Error('Usage: node tests/helpers/native-browser.mjs [--unclaimed] [--database=<prefix>] [--database-port=<port>] tests/<suite>.mjs|.ts [TEN98_FLAG ...]');
 const postgres=new URL(process.env.NATIVE_BROWSER_POSTGRES??'postgres://ten98@127.0.0.1:5432');
 if(!['localhost','127.0.0.1','[::1]'].includes(postgres.hostname))throw new Error('NATIVE_BROWSER_POSTGRES must be a local throwaway server.');
 const port=Number(process.env.NATIVE_BROWSER_PORT??3197),origin=`http://127.0.0.1:${port}`,hex=bytes=>randomBytes(bytes).toString('hex');
 const database=`${prefix}_${hex(6)}`,databaseUrl=new URL(postgres);databaseUrl.pathname='/'+database;if(proxyPort!==null){databaseUrl.hostname='127.0.0.1';databaseUrl.port=String(proxyPort);}
-const out=`private/native-browser/${basename(suites.at(-1)).replace(/\.(mjs|ts)$/,'')}-${hex(4)}`;
+const out=`private/native-browser/${basename(suite).replace(/\.(mjs|ts)$/,'')}-${hex(4)}`;
 const env={...process.env,NODE_ENV:'production',AUTH_SECRET:hex(32),BOOTSTRAP_TOKEN:hex(32),CREDENTIAL_KEYS:JSON.stringify({v1:randomBytes(32).toString('base64')}),CREDENTIAL_ACTIVE_KEY:'v1',
   APP_URL:origin,BASE_URL:origin,HOST:'127.0.0.1',PORT:String(port),DATABASE_URL:databaseUrl.href,ANALYTICS_NETWORK_MODE:'direct',TEN98_INTEGRATION_TEST:'1',OUT_DIR:out,BROWSER_ARTIFACT_DIR:out,
   ...Object.fromEntries(flags.map(flag=>[flag,'1']))};
@@ -47,7 +47,7 @@ try{
     const response=await fetch(origin+'/api/setup',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({token:env.BOOTSTRAP_TOKEN,name:'Native browser owner',email:`owner-${hex(4)}@native-browser.test`,password:hex(16),workspaceName:'Native browser workspace'})});
     if(!response.ok)throw new Error(`Owner setup failed with ${response.status}.`);
   }
-  for(const suite of suites){code=await run(process.execPath,[suite]);console.log(`${suite} exit=${code}`);if(code)break;}
+  code=await run(process.execPath,[suite]);
 }catch(error){console.error(String(error instanceof Error?error.message:error));}
 finally{
   for(const child of children)child.kill();
@@ -55,4 +55,5 @@ finally{
   await admin(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`).catch(error=>console.error('Database cleanup failed:',error.message));
   proxy?.close();
 }
+console.log(`${suite} exit=${code}`);
 process.exitCode=code;
