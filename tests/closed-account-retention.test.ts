@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import { accountClosureInventory, closedAccountLedgerDependents, closedAccountRetentionInterval } from '../src/server/account-closure-inventory.ts';
 import {
-  accountReferences, closedOnlySql, deleteSql, expandSql, ident, pruneSql, retentionTargets, selectRootsSql, tombstoneSql,
+  accountClosureRetentionJobOptions, accountClosureRetentionLimits, accountReferences, closedOnlySql, deleteSql, expandSql, ident, pruneSql, retentionTargets, selectRootsSql, tombstoneSql,
   type RetentionForeignKey, type RetentionTarget,
 } from '../src/server/account-closure-retention.ts';
 import { readMigrationSchema, type MigrationSchema } from './helpers/migration-schema.ts';
@@ -80,6 +82,44 @@ test('ledger dependents hang off a financial row and the aged-out graph has only
   assert.deepEqual([...outside].sort(), reviewedBlockers, 'A new table references an aged-out table. Classify it, make it a ledger dependent or review it as a blocker.');
 });
 
+/** Tables whose migrated DDL allows an 'uncertain' status or phase. */
+function uncertainTables(): Set<string> {
+  const statements = readdirSync('migrations').filter(file => file.endsWith('.sql')).sort()
+    .flatMap(file => readFileSync(join('migrations', file), 'utf8').replace(/--[^\n]*/g, '').split(';'));
+  return new Set(statements.filter(sql => /'uncertain'/.test(sql))
+    .map(sql => sql.match(/(?:CREATE|ALTER)\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([a-z_]+)"?/i)?.[1]).filter((table): table is string => !!table));
+}
+
+test('uncertain charges stay: paid runs and dispatches reference their receipt, and only financial tables can be uncertain', () => {
+  const schema = readMigrationSchema(), targets = new Map(retentionTargets().map(target => [target.table, target]));
+  const referencesReceipt = (table: string) => [...foreignKeys(schema, table)].some(key => key.table === 'provider_request');
+  // rank_run and prompt_comparison are charged through their dispatches and executions.
+  const chargedBy: Record<string, string> = { rank_run: 'rank_dispatch', prompt_comparison: 'prompt_execution' };
+  const runs = accountClosureInventory.filter(entry => entry.retention?.class === 'financial' && /_run$/.test(entry.table)).map(entry => entry.table);
+  const dependents = closedAccountLedgerDependents.filter(dependent => /dispatch|execution$/.test(dependent.table)).map(dependent => dependent.table);
+  assert.ok(runs.length >= 6 && dependents.length === 2);
+  for (const table of [...runs, ...dependents]) assert.ok(referencesReceipt(chargedBy[table] ?? table), `${chargedBy[table] ?? table} must reference its provider_request receipt.`);
+  // Protected: its own eligibleWhen, a foreign key to a receipt that keeps its referencing rows, or a protected parent.
+  const protectedRow = (table: string): boolean => {
+    const target = targets.get(table)!;
+    return !!target.eligibleWhen || [...foreignKeys(schema, table)].some(key => targets.get(key.table)?.retainsReferencingRows) || (!!target.parent && protectedRow(target.parent));
+  };
+  const uncertain = uncertainTables();
+  assert.ok(uncertain.has('provider_request') && uncertain.has('rank_dispatch'));
+  for (const table of uncertain) {
+    const retention = accountClosureInventory.find(entry => entry.table === table)?.retention;
+    if (retention) assert.equal(retention.class, 'financial', `${table} can be uncertain, so it is financial.`);
+    if (targets.has(table)) assert.ok(protectedRow(table), `${table} can be uncertain but nothing keeps it while the charge is unresolved.`);
+  }
+});
+
+test('the daily job is never retried while it may still run', () => {
+  assert.equal(accountClosureRetentionJobOptions.retryLimit, 0);
+  const { batchRows, runRows, batchMs, ledgerMs } = accountClosureRetentionLimits;
+  const tombstoneMs = Math.ceil(runRows / batchRows) * 30_000;
+  assert.ok(accountClosureRetentionJobOptions.expireInSeconds * 1000 > ledgerMs + batchMs + 30_000 + tombstoneMs);
+});
+
 test('the batch SQL builder selects only aged, closed-only rows in bounded, locked batches', () => {
   const closed = closedOnlySql(['user_id', 'requested_by']);
   assert.match(closed, /^\(t\."user_id" IS NOT NULL OR t\."requested_by" IS NOT NULL\) AND /);
@@ -110,7 +150,7 @@ test('expansion, pruning and deletion follow the foreign-key graph', () => {
   const expand = expandSql(targets, keys);
   // Up and down each foreign key between aged-out tables; none to tables outside the set.
   assert.equal(expand.length, 6);
-  assert.ok(expand.every(sql => sql.includes('FOR UPDATE OF t SKIP LOCKED') && sql.includes('ON CONFLICT DO NOTHING') && sql.includes('$1::timestamptz')));
+  assert.ok(expand.every(sql => sql.includes('FOR UPDATE OF t SKIP LOCKED') && sql.includes('ON CONFLICT DO NOTHING') && sql.includes('$1::timestamptz') && sql.includes('LIMIT $2::int')));
   assert.ok(expand.some(sql => /INSERT INTO pg_temp\.closure_retention_candidate\(tbl,row_id\) SELECT 'receipt'/.test(sql) && sql.includes(`t."id"=f."id" AND t."workspace_id"=f."workspace_id"`)));
   assert.ok(!expand.some(sql => sql.includes('"workspace"') || sql.includes('"live_note"')));
   const prune = pruneSql(targets, keys);

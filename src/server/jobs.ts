@@ -23,7 +23,7 @@ import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} fr
 import {claimDueRankOccurrence} from './rank-recurring.ts';
 import {claimDuePromptOccurrence} from './prompt-recurring.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
-import {accountClosureRetentionCron,accountClosureRetentionQueue,runClosedAccountRetention} from './account-closure-retention.ts';
+import {accountClosureRetentionCron,accountClosureRetentionJobOptions,accountClosureRetentionQueue,runClosedAccountRetention} from './account-closure-retention.ts';
 const reconcilers = [reconcileKeywordJobs, reconcileDomainResearchJobs, reconcileRankJobs, reconcilePromptExecutionJobs, reconcileAiSuggestionJobs, reconcileAiSearchJobs, reconcileContentSupportJobs, reconcileDomainRedirectChecks];
 
 const queueName = 'setup-probe';
@@ -218,9 +218,10 @@ export function startWorker(): Promise<void> {
       await workJobs(boss,accountClosureRetentionQueue,{batchSize:1},async()=>{
         const summary=await runClosedAccountRetention();
         console.log(`Closed-account retention: ${Object.values(summary.deleted).reduce((sum,n)=>sum+n,0)} rows and ${summary.tombstones} tombstones deleted${summary.capped?'; more remain for the next run':''}.`);
+        if(summary.ledgerFailed||summary.tombstonesFailed)console.error('Closed-account retention stopped early; inspect database availability. The next daily run continues.');
         return summary;
       });
-      await boss.schedule(accountClosureRetentionQueue,accountClosureRetentionCron,null,{tz:'UTC'});
+      await boss.schedule(accountClosureRetentionQueue,accountClosureRetentionCron,null,{...accountClosureRetentionJobOptions});
       workerStarted = true;
       await heartbeat();
       heartbeatTimer = setInterval(() => {

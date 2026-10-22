@@ -19,7 +19,16 @@ import { accountClosureInventory, closedAccountLedgerDependents, closedAccountRe
 export const accountClosureRetentionQueue = 'account-closure-retention';
 /** Daily, 03:17 UTC; pg-boss sends one job per occurrence across workers. */
 export const accountClosureRetentionCron = '17 3 * * *';
-export const accountClosureRetentionLimits = { batchRows: 1000, runRows: 20_000, batches: 200 } as const;
+/**
+ * `batchRows`: most rows picked per batch (it halves after a batch overflows and recovers after a successful one);
+ * `runRows`: most rows deleted per run, pulled-in ledger rows and tombstones included; `batchMs` and `ledgerMs` bound
+ * one batch and the whole ledger pass. The worst case (ledger pass, last batch, tombstone pass) stays well under the
+ * job expiry below.
+ */
+export const accountClosureRetentionLimits = { batchRows: 1000, runRows: 20_000, batches: 200, batchMs: 120_000, ledgerMs: 20 * 60_000 } as const;
+export type ClosedAccountRetentionLimits = { -readonly [K in keyof typeof accountClosureRetentionLimits]: number };
+/** A slow run is never retried while it is still running: one attempt, expiring after an hour. */
+export const accountClosureRetentionJobOptions = { tz: 'UTC', retryLimit: 0, expireInSeconds: 3600 } as const;
 
 export type RetentionForeignKey = { child: string; childColumns: readonly string[]; parent: string; parentColumns: readonly string[] };
 export type RetentionTarget = {
@@ -31,7 +40,15 @@ export type RetentionTarget = {
   parent?: string;
 };
 export type AccountReference = { table: string; column: string };
-export type ClosedAccountRetentionSummary = { deleted: Record<string, number>; tombstones: number; batches: number; capped: boolean };
+export type ClosedAccountRetentionSummary = {
+  deleted: Record<string, number>; tombstones: number; batches: number;
+  /** More eligible rows remain for a later run. */
+  capped: boolean;
+  /** Ledger entries passed over in this run because they alone overflowed the cap or the time bounds. */
+  skipped: number;
+  /** The ledger or tombstone pass stopped on an unexpected database error; the other pass still ran. */
+  ledgerFailed: boolean; tombstonesFailed: boolean;
+};
 
 const candidates = 'pg_temp.closure_retention_candidate';
 export const ident = (name: string) => `"${name.replace(/"/g, '""')}"`;
@@ -85,13 +102,16 @@ const internalKeys = (targets: readonly RetentionTarget[], keys: readonly Retent
   return keys.filter(key => names.has(key.child) && names.has(key.parent) && key.child !== key.parent);
 };
 
-/** Pull in eligible rows of the same ledger entry, both up and down each internal foreign key. $1 cutoff. */
+/**
+ * Pull in eligible rows of the same ledger entry, both up and down each internal foreign key. $1 cutoff, $2 the most
+ * rows one statement may add (what is left of the cap plus one, so an overflow is detected without fetching it all).
+ */
 export function expandSql(targets: readonly RetentionTarget[], keys: readonly RetentionForeignKey[]): string[] {
   const byName = new Map(targets.map(target => [target.table, target]));
   return internalKeys(targets, keys).flatMap(key => {
     const step = (add: RetentionTarget, from: string, addColumns: readonly string[], fromColumns: readonly string[]) =>
       `WITH added AS (SELECT t.ctid AS row_id FROM ${ident(add.table)} t JOIN ${ident(from)} f ON ${join('t', addColumns, 'f', fromColumns)}
-        WHERE ${isCandidate(from, 'f')} AND NOT ${isCandidate(add.table, 't')} AND ${eligibleSql(add)} FOR UPDATE OF t SKIP LOCKED)
+        WHERE ${isCandidate(from, 'f')} AND NOT ${isCandidate(add.table, 't')} AND ${eligibleSql(add)} LIMIT $2::int FOR UPDATE OF t SKIP LOCKED)
       INSERT INTO ${candidates}(tbl,row_id) SELECT ${literal(add.table)}, row_id FROM added ON CONFLICT DO NOTHING`;
     return [step(byName.get(key.parent)!, key.child, key.parentColumns, key.childColumns), step(byName.get(key.child)!, key.parent, key.childColumns, key.parentColumns)];
   });
@@ -138,76 +158,31 @@ async function readForeignKeys(client: PoolClient): Promise<RetentionForeignKey[
 }
 
 type Cursor = { createdAt: string; rowId: string };
-type Limits = { batchRows: number; runRows: number; batches: number };
+
+/** A batch that would exceed the cap or its time bound: retried smaller, or its single entry skipped for this run. */
+class BatchOverflow extends Error {}
+/** Statement timeout and lock timeout are bounded-work signals, not failures of the job. */
+const overflowed = (error: unknown) => error instanceof BatchOverflow || ['57014', '55P03'].includes((error as { code?: string })?.code ?? '');
 
 /**
  * Runs one bounded pass. At most `runRows` rows (ledger, audit and tombstones together) are deleted per run and at most
- * `batchRows` rows are picked per table per batch; whatever remains waits for the next daily run. Returns counts only.
+ * `batchRows` rows are picked per batch; whatever remains waits for the next daily run. The tombstone pass runs even
+ * when the ledger pass fails. Returns counts and flags only.
  */
-export async function runClosedAccountRetention(limits: Limits = accountClosureRetentionLimits): Promise<ClosedAccountRetentionSummary> {
+export async function runClosedAccountRetention(options: Partial<ClosedAccountRetentionLimits> = {}): Promise<ClosedAccountRetentionSummary> {
+  const limits: ClosedAccountRetentionLimits = { ...accountClosureRetentionLimits, ...options };
   const targets = retentionTargets();
-  const summary: ClosedAccountRetentionSummary = { deleted: Object.fromEntries(targets.map(target => [target.table, 0])), tombstones: 0, batches: 0, capped: false };
+  const summary: ClosedAccountRetentionSummary = {
+    deleted: Object.fromEntries(targets.map(target => [target.table, 0])), tombstones: 0, batches: 0, capped: false, skipped: 0, ledgerFailed: false, tombstonesFailed: false,
+  };
   const client = await getDatabase().pool.connect();
   try {
     const keys = await readForeignKeys(client);
     const missing = await client.query('SELECT 1 FROM unnest($1::text[]) t WHERE to_regclass(quote_ident(t)) IS NULL', [targets.map(target => target.table)]);
     if (missing.rowCount) throw new Error('Closed-account retention schema is incomplete.');
-    const cutoff = (await client.query<{ cutoff: string }>(`SELECT (now() - interval ${literal(closedAccountRetentionInterval)})::text AS cutoff`)).rows[0].cutoff;
-    const expand = expandSql(targets, keys), prune = pruneSql(targets, keys), remove = deleteSql(targets);
-    const roots = targets.filter(target => target.accountColumns.length);
-    const cursors = new Map<string, Cursor | null>(roots.map(target => [target.table, { createdAt: '-infinity', rowId: '(0,0)' }]));
-    // `budget` bounds the rows picked per batch; it halves when the pulled-in rows of those ledger entries overflow the cap.
-    let remaining = limits.runRows, budget = limits.runRows;
-    while (remaining > 0 && summary.batches < limits.batches && [...cursors.values()].some(Boolean)) {
-      await client.query('BEGIN');
-      try {
-        await client.query("SET LOCAL statement_timeout='30s'; SET LOCAL lock_timeout='1s'");
-        await client.query(`CREATE TEMP TABLE ${candidates.slice('pg_temp.'.length)} (tbl text NOT NULL, row_id tid NOT NULL, PRIMARY KEY (tbl,row_id)) ON COMMIT DROP`);
-        const next = new Map(cursors);
-        let picked = 0;
-        for (const target of roots) {
-          const cursor = cursors.get(target.table);
-          const limit = Math.min(limits.batchRows, Math.min(budget, remaining) - picked);
-          if (!cursor || limit <= 0) continue;
-          // Text keeps the full microsecond precision of the keyset cursor.
-          const rows = (await client.query<{ row_id: string; created_at: string }>(selectRootsSql(target), [cutoff, cursor.createdAt, cursor.rowId, limit])).rows;
-          const last = rows.at(-1);
-          next.set(target.table, rows.length < limit ? null : { createdAt: last!.created_at, rowId: last!.row_id });
-          if (!rows.length) continue;
-          picked += rows.length;
-          await client.query(`INSERT INTO ${candidates}(tbl,row_id) SELECT $1, unnest($2::tid[]) ON CONFLICT DO NOTHING`, [target.table, rows.map(row => row.row_id)]);
-        }
-        for (let pass = 0, added = 1; added && pass < 20; pass++) {
-          added = 0;
-          for (const sql of expand) added += (await client.query(sql, [cutoff])).rowCount ?? 0;
-        }
-        for (let pass = 0, removed = 1; removed && pass < 50; pass++) {
-          removed = 0;
-          for (const sql of prune) removed += (await client.query(sql)).rowCount ?? 0;
-        }
-        const count = Number((await client.query<{ count: string }>(`SELECT count(*) FROM ${candidates}`)).rows[0].count);
-        if (count > remaining) {
-          // The pulled-in rows of these ledger entries exceed the run cap: retry with fewer, or stop for today.
-          // ponytail: an entry larger than what is left of the cap is skipped for this run; one larger than the whole
-          // cap is never aged out. Upgrade path: delete such an entry's dependents across several batches.
-          await client.query('ROLLBACK');
-          summary.capped = true;
-          if (picked <= 1) { summary.batches++; for (const [table, cursor] of next) cursors.set(table, cursor); continue; }
-          budget = Math.floor(picked / 2);
-          continue;
-        }
-        const deleted = count ? (await client.query<Record<string, number>>(remove)).rows[0] : {};
-        await client.query('COMMIT');
-        summary.batches++;
-        for (const [table, n] of Object.entries(deleted)) summary.deleted[table] += n;
-        remaining -= count;
-        for (const [table, cursor] of next) cursors.set(table, cursor);
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => undefined);
-        throw error;
-      }
-    }
-    if (remaining <= 0 && [...cursors.values()].some(Boolean)) summary.capped = true;
+    let remaining = limits.runRows;
+    try { remaining = await ledgerPass(client, limits, targets, keys, summary); }
+    catch { summary.ledgerFailed = true; }
     const tombstones = tombstoneSql(accountReferences(keys));
     while (remaining > 0) {
       await client.query('BEGIN');
@@ -219,9 +194,10 @@ export async function runClosedAccountRetention(limits: Limits = accountClosureR
         summary.tombstones += removed;
         remaining -= removed;
         if (removed < limit) break;
-      } catch (error) {
+      } catch {
         await client.query('ROLLBACK').catch(() => undefined);
-        throw error;
+        summary.tombstonesFailed = true;
+        break;
       }
     }
     if (remaining <= 0) summary.capped = true;
@@ -229,4 +205,79 @@ export async function runClosedAccountRetention(limits: Limits = accountClosureR
   } finally {
     client.release();
   }
+}
+
+/** Ages out financial and audit rows; returns what is left of the run cap. */
+async function ledgerPass(client: PoolClient, limits: ClosedAccountRetentionLimits, targets: RetentionTarget[], keys: RetentionForeignKey[], summary: ClosedAccountRetentionSummary): Promise<number> {
+  const cutoff = (await client.query<{ cutoff: string }>(`SELECT (now() - interval ${literal(closedAccountRetentionInterval)})::text AS cutoff`)).rows[0].cutoff;
+  const expand = expandSql(targets, keys), prune = pruneSql(targets, keys), remove = deleteSql(targets);
+  const roots = targets.filter(target => target.accountColumns.length);
+  const cursors = new Map<string, Cursor | null>(roots.map(target => [target.table, { createdAt: '-infinity', rowId: '(0,0)' }]));
+  const ledgerDeadline = Date.now() + limits.ledgerMs;
+  // `budget` bounds the rows picked per batch: it halves after an overflow and doubles back after a successful batch.
+  let remaining = limits.runRows, budget = limits.batchRows;
+  while (remaining > 0 && summary.batches < limits.batches && [...cursors.values()].some(Boolean)) {
+    if (Date.now() > ledgerDeadline) { summary.capped = true; break; }
+    const batchDeadline = Date.now() + limits.batchMs;
+    const query = <R extends object = Record<string, unknown>>(sql: string, params?: unknown[]) => {
+      if (Date.now() > batchDeadline) throw new BatchOverflow();
+      return client.query<R>(sql, params);
+    };
+    const next = new Map(cursors);
+    let picked = 0, selecting: string | null = null;
+    await client.query('BEGIN');
+    try {
+      await client.query("SET LOCAL statement_timeout='30s'; SET LOCAL lock_timeout='1s'");
+      await client.query(`CREATE TEMP TABLE ${candidates.slice('pg_temp.'.length)} (tbl text NOT NULL, row_id tid NOT NULL, PRIMARY KEY (tbl,row_id)) ON COMMIT DROP`);
+      for (const target of roots) {
+        const cursor = cursors.get(target.table);
+        const limit = Math.min(budget, remaining) - picked;
+        if (!cursor || limit <= 0) continue;
+        selecting = target.table;
+        // Text keeps the full microsecond precision of the keyset cursor.
+        const rows = (await query<{ row_id: string; created_at: string }>(selectRootsSql(target), [cutoff, cursor.createdAt, cursor.rowId, limit])).rows;
+        selecting = null;
+        const last = rows.at(-1);
+        next.set(target.table, rows.length < limit ? null : { createdAt: last!.created_at, rowId: last!.row_id });
+        if (!rows.length) continue;
+        picked += rows.length;
+        await query(`INSERT INTO ${candidates}(tbl,row_id) SELECT $1, unnest($2::tid[]) ON CONFLICT DO NOTHING`, [target.table, rows.map(row => row.row_id)]);
+      }
+      // Pulled-in rows count against the cap as they arrive, so a huge ledger entry stops early instead of timing out.
+      let count = picked;
+      for (let pass = 0, added = 1; added && pass < 20; pass++) {
+        added = 0;
+        for (const sql of expand) {
+          const n = (await query(sql, [cutoff, remaining - count + 1])).rowCount ?? 0;
+          added += n; count += n;
+          if (count > remaining) throw new BatchOverflow();
+        }
+      }
+      for (let pass = 0, removed = 1; removed && pass < 50; pass++) {
+        removed = 0;
+        for (const sql of prune) removed += (await query(sql)).rowCount ?? 0;
+      }
+      count = Number((await query<{ count: string }>(`SELECT count(*) FROM ${candidates}`)).rows[0].count);
+      const deleted = count ? (await query<Record<string, number>>(remove)).rows[0] : {};
+      await client.query('COMMIT');
+      summary.batches++;
+      for (const [table, n] of Object.entries(deleted)) summary.deleted[table] += n;
+      remaining -= count;
+      for (const [table, cursor] of next) cursors.set(table, cursor);
+      budget = Math.min(limits.batchRows, budget * 2);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      if (!overflowed(error)) throw error;
+      summary.capped = true;
+      summary.batches++;
+      if (picked > 1) { budget = Math.max(1, Math.floor(picked / 2)); continue; }
+      // ponytail: a single entry larger than what is left of the cap, or too slow for one batch, is passed over for this
+      // run; one larger than the whole cap is never aged out. Upgrade path: delete its dependents across batches.
+      summary.skipped++;
+      for (const [table, cursor] of next) cursors.set(table, cursor);
+      if (selecting) cursors.set(selecting, null);
+    }
+  }
+  if (remaining <= 0 && [...cursors.values()].some(Boolean)) summary.capped = true;
+  return remaining;
 }

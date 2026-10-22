@@ -67,6 +67,28 @@ export async function runClosedAccountRetentionChecks() {
   await pool.query("INSERT INTO analytics_annotation(id,project_id,user_id,date,note) VALUES($1,$2,$3,now(),'Retention fixture note')", [annotation, project, authored]);
   // An operator closure by an open operator: the closed target alone decides, so the old row goes, then its tombstone.
   await closureAudit(operated, active, old);
+  // A saved keyword still uses an aged run as its metric source: the run, its quote and its receipt stay.
+  const blockedEntry = await keywordEntry(closed, old), savedKeyword = randomUUID();
+  await pool.query("INSERT INTO saved_keyword(id,project_id,keyword,location_code,language_code,metric_source_run_id) VALUES($1,$2,'retention fixture',2840,'en',$3)", [savedKeyword, project, blockedEntry.id]);
+  // Recurring prompt work: an occurrence requested by an open account stays; an occurrence and its quote, which reference
+  // each other, go together.
+  const prompt = randomUUID(), version = randomUUID(), tracker = randomUUID(), openOccurrence = randomUUID(), cycleOccurrence = randomUUID(), cycleQuote = randomUUID();
+  const setup = await pool.connect();
+  try {
+    await setup.query('BEGIN');
+    await setup.query("INSERT INTO project_prompt(id,project_id,current_version_id,topic) VALUES($1,$2,$3,'Retention')", [prompt, project, version]);
+    await setup.query("INSERT INTO prompt_text_version(id,project_id,prompt_id,number,text,lower_text,created_by) VALUES($1,$2,$3,1,'Retention fixture prompt','retention fixture prompt',$4)", [version, project, prompt, active]);
+    await setup.query('COMMIT');
+  } catch (error) { await setup.query('ROLLBACK'); throw error; } finally { setup.release(); }
+  await pool.query(`INSERT INTO prompt_tracker(id,workspace_id,project_id,created_request_id,name,input,definition_hash,calendar,maximum_micros)
+    VALUES($1,$2,$3,$4,'Retention tracker','{"reuseCached":false}',$5,'{"interval":"daily"}',1000)`, [tracker, workspace.id, project, randomUUID(), 'c'.repeat(64)]);
+  const occurrence = (id: string, user: string, requestedBy: string, day: number) => pool.query(`INSERT INTO prompt_occurrence(id,tracker_id,workspace_id,project_id,user_id,requested_by,approval_id,definition_hash,scheduled_for,trigger,request_key,status,created_at)
+    VALUES($1,$2,$3,$4,$5,$6,gen_random_uuid(),$7,now()-$8::interval+make_interval(days=>$9),'calendar',gen_random_uuid(),'skipped',now()-$8::interval)`, [id, tracker, workspace.id, project, user, requestedBy, 'c'.repeat(64), old, day]);
+  await occurrence(openOccurrence, closed, active, 0);
+  await occurrence(cycleOccurrence, closed, closed, 1);
+  await pool.query(`INSERT INTO prompt_execution_quote(id,workspace_id,project_id,user_id,prompt_id,version_id,connection_id,connection_revision,request_actor,key_fingerprint,input,messages,routes,input_hash,created_at,expires_at,recurring_occurrence_id)
+    VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$8,'{}','[]','[]',$8,now()-$9::interval,now()-$9::interval+interval '5 minutes',$10)`, [cycleQuote, workspace.id, project, closed, prompt, version, connection, 'd'.repeat(64), old, cycleOccurrence]);
+  await pool.query("UPDATE prompt_occurrence SET status='quoted',quote_id=$2 WHERE id=$1", [cycleOccurrence, cycleQuote]);
   for (const id of [closed, gone, authored, operated]) await close(id);
 
   const exists = async (table: string, id: string) => (await pool.query(`SELECT 1 FROM ${table} WHERE id::text=$1`, [id])).rowCount === 1;
@@ -97,16 +119,48 @@ export async function runClosedAccountRetentionChecks() {
   assert.equal(await closureAuditExists(operated), false, 'An aged closure audit of a closed target remains because its actor is open.');
   assert.equal(await exists('"user"', gone), false, 'An unreferenced tombstone remains.');
   assert.equal(await exists('"user"', operated), false, 'An unreferenced tombstone remains.');
+  assert.equal(await exists('prompt_occurrence', cycleOccurrence), false, 'The occurrence and quote cycle was not deleted.');
+  assert.equal(await exists('prompt_execution_quote', cycleQuote), false, 'The occurrence and quote cycle was not deleted.');
 
   for (const [table, id] of [['provider_request', uncertainEntry.id], ['keyword_quote', uncertainEntry.quote], ['keyword_research_run', uncertainEntry.id],
     ['provider_request', recentReceipt], ['instance_operator_audit', recentOperatorAudit],
     ['provider_request', activeEntry.id], ['keyword_quote', activeEntry.quote], ['keyword_research_run', activeEntry.id], ['instance_operator_audit', activeAudit],
-    ['analytics_annotation', annotation]] as const) assert.ok(await exists(table, id), `A retained ${table} row was deleted.`);
+    ['analytics_annotation', annotation], ['provider_request', blockedEntry.id], ['keyword_quote', blockedEntry.quote], ['keyword_research_run', blockedEntry.id],
+    ['prompt_occurrence', openOccurrence]] as const) assert.ok(await exists(table, id), `A retained ${table} row was deleted.`);
   assert.ok(await closureAuditExists(closed), 'A recent closure audit was deleted.');
   for (const id of [closed, authored, active]) assert.ok(await exists('"user"', id), 'A referenced or open account row was deleted.');
 
   // Idempotent: a default run finds nothing more among these fixtures.
   await runClosedAccountRetention();
   assert.ok(await exists('provider_request', recentReceipt) && await exists('"user"', closed));
+
+  // Fan-out: one aged rank run with many charged dispatches is larger than a small cap. The run passes over that entry,
+  // still deletes the next eligible receipt and finishes; a run with room deletes the whole entry at once.
+  const ranked = await account('ranked'), small = await account('small'), rankConfig = randomUUID(), rankRun = randomUUID(), dispatches = 12;
+  await pool.query(`INSERT INTO rank_config(id,workspace_id,project_id,name,target_domain,location_code,location_name,location_type,country_location_code,country_iso,language_code,language_name,catalog_verified_at,devices,serp_depth,max_crawl_pages)
+    VALUES($1,$2,$3,'Retention tracker','retention.integration.test',2840,'United States','Country',2840,'US','en','English',clock_timestamp(),'desktop',10,1)`, [rankConfig, workspace.id, project]);
+  await pool.query(`INSERT INTO rank_run(id,workspace_id,project_id,config_id,user_id,trigger,method,status,config_revision,keywords_revision,connection_id,connection_revision,account_fingerprint,connection_name,request,request_hash,task_count,estimate_micros,price_as_of,expires_at,request_key,created_at,started_at,completed_at)
+    VALUES($1,$2,$3,$4,$5,'manual','queued','completed',1,1,$6,1,$7,'Retention fixture','{}',$7,$8,1000,now()-$9::interval,now()-$9::interval+interval '5 minutes',gen_random_uuid(),now()-$9::interval,now()-$9::interval,now()-$9::interval)`,
+    [rankRun, workspace.id, project, rankConfig, ranked, connection, 'e'.repeat(64), dispatches, old]);
+  const dispatchIds: string[] = [];
+  for (let ordinal = 0; ordinal < dispatches; ordinal++) {
+    const id = await receipt(ranked, old);
+    dispatchIds.push(id);
+    await pool.query(`INSERT INTO rank_dispatch(id,workspace_id,project_id,run_id,ordinal,method,task_count,request,request_hash,phase,created_at)
+      VALUES($1,$2,$3,$4,$5,'queued',1,'[{}]',$6,'finished',now()-$7::interval)`, [id, workspace.id, project, rankRun, ordinal, 'f'.repeat(64), old]);
+  }
+  const smallReceipt = await receipt(small, old);
+  for (const id of [ranked, small]) await close(id);
+  const crowded = await runClosedAccountRetention({ batchRows: 5, runRows: 10 });
+  assert.ok(crowded.skipped >= 1 && crowded.capped && !crowded.ledgerFailed && !crowded.tombstonesFailed, 'An oversized ledger entry must be passed over, not fail the run.');
+  assert.ok(Object.values(crowded.deleted).reduce((sum, n) => sum + n, 0) + crowded.tombstones <= 10);
+  assert.ok(await exists('rank_run', rankRun) && await exists('rank_dispatch', dispatchIds[0]), 'An oversized entry was partly deleted.');
+  assert.equal(await exists('provider_request', smallReceipt), false, 'The run did not move on past the oversized entry.');
+  assert.equal(await exists('"user"', small), false, 'The tombstone pass did not run.');
+  const roomy = await runClosedAccountRetention({ batchRows: 5, runRows: 100 });
+  assert.equal(roomy.deleted.rank_run, 1);
+  assert.equal(roomy.deleted.rank_dispatch, dispatches);
+  for (const id of dispatchIds) assert.equal(await exists('provider_request', id), false, 'A rank receipt remains.');
+  assert.equal(await exists('"user"', ranked), false, 'An unreferenced tombstone remains.');
   console.log('PASS closed-account retention ages out only closed accounts\' 7-year ledger and audit rows, keeps receipts under reconciliation and removes unreferenced tombstones within the cap');
 }
