@@ -5,7 +5,7 @@ import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
 import {contentCursor,readContentCursor,contentReceipt} from './project-context.ts';
 import {readScope,summary,transaction,readToken as readReplayToken,readReplayReference} from './session-replay.ts';
-import {replayChunkDto,readReplayChunk} from '../lib/session-replay.ts';
+import {replayChunkDto,readStoredReplayChunk} from '../lib/session-replay.ts';
 import {nativeCollectionPolicy,publicAnalyticsSettings,trackingConsentEpoch} from './native-analytics.ts';
 import {eventPath} from './validation.ts';
 import {heatmapBackgroundUpload,heatmapBackgroundPage,heatmapBackgroundReference,heatmapBegin,heatmapBatch,heatmapPlane,heatmapDepth,heatmapLimits,readHeatmapQuery,replayHeatmapParams,defaultHeatmapSettings,savedReplay,savedReplayWrite,savedReplayAck,savedReplayPoint,savedReplayList,heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll} from '../lib/replay-heatmaps.ts';
@@ -139,7 +139,7 @@ export async function getHeatmapBackground(projectId:string,userId:string,raw:UR
   if(inventory.length!==ref.sequences.length)return heatmapBackgroundPage.parse({...blank,state:'incomplete'});
   // Every page rechecks both current retentions; at most4 original chunks are read, never the whole recording.
   const visible=(await client.query<{sequence:number;final:boolean;sha256:string;payload:Buffer}>('SELECT sequence,final,sha256,payload FROM session_recording_chunk WHERE recording_id=$1 AND sequence=ANY($2::integer[]) AND sequence>$3 ORDER BY sequence LIMIT 5',[recording.id,ref.sequences,after])).rows;
-  const chunks=visible.slice(0,4).map(c=>replayChunkDto.parse({sequence:c.sequence,final:c.final,sha256:c.sha256,bytes:c.payload.length,parts:readReplayChunk(c.payload.toString('base64url')).parts}));
+  const chunks=visible.slice(0,4).map(c=>replayChunkDto.parse({sequence:c.sequence,final:c.final,sha256:c.sha256,bytes:c.payload.length,parts:readStoredReplayChunk(c.payload).parts}));
   const reference=heatmapBackgroundReference.parse({captureId:ref.capture_id,recordingId:ref.recording_id,geometryKey:ref.geometry_key,geometry:ref.geometry,heatmapOffsetMs:ref.heatmap_offset_ms,replayOffsetMs:ref.observed_at.getTime()-Number(recording.first_event_timestamp),meta:ref.meta,snapshot:ref.snapshot,observedAt:ref.observed_at.toISOString(),sequences:ref.sequences});
   return heatmapBackgroundPage.parse({...blank,state:'available',reference,item:summary(recording),chunks,nextAfter:visible.length>4?chunks.at(-1)!.sequence:null});
  });
