@@ -54,3 +54,7 @@ export function reassembleReplay(parts:readonly ReplayPart[]){const pending=new 
 export const replaySummary=z.object({id:z.uuid(),createdAt:z.string().datetime(),deadlineAt:z.string().datetime(),origin:z.string(),entryPath:z.string().nullable(),settings:replaySettings,chunkCount:z.number().int().nonnegative().max(replayLimits.chunks),bytes:z.number().int().nonnegative().max(replayLimits.recordingBytes),lastSequence:z.number().int().nonnegative().max(replayLimits.chunks-1).nullable(),complete:z.boolean(),missingChunks:z.number().int().nonnegative().nullable(),missingFragments:z.number().int().nonnegative().nullable(),resultExpired:z.boolean()}).strict();
 export type ReplaySummary=z.infer<typeof replaySummary>;
 export const replayChunkDto=z.object({sequence:z.number().int().nonnegative().max(replayLimits.chunks-1),final:z.boolean(),sha256:z.string().regex(/^[a-f0-9]{64}$/),bytes:z.number().int().nonnegative().max(replayLimits.chunkBytes),parts:z.array(replayPart).max(replayLimits.eventsPerChunk)}).strict();
+// Playback options posted to the isolated player; public/replay.js repeats this closed check on its side of the MessagePort.
+export const replayRates=[1,2,4,8] as const;
+export const replayPlaybackOption=z.discriminatedUnion('type',[z.object({type:z.literal('speed'),value:z.literal(replayRates)}).strict(),z.object({type:z.literal('skip-inactive'),value:z.boolean()}).strict()]);
+export type ReplayPlaybackOption=z.infer<typeof replayPlaybackOption>;
