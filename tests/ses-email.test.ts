@@ -119,9 +119,12 @@ test('verified hard bounces and complaints are recorded; transient, undetermined
   assert.ok(requests.length <= 1, 'The certificate is cached per process.');
 });
 
-test('nothing is trusted before verification: bad signature, other topic, stale or unsigned bodies are refused without a write', async () => {
+test('nothing is trusted before verification: bad signature, other topic, stale or unsigned bodies are refused without a write', async t => {
   const { adapters, recorded } = harness();
   const valid = JSON.parse(notification(bounce('Permanent', 'General', [{ emailAddress: 'gone@example.com' }])));
+  const logged: string[] = [], warn = console.warn;
+  console.warn = (line: string) => { logged.push(line); };
+  t.after(() => { console.warn = warn; });
   const refused: [string, string][] = [
     [JSON.stringify({ ...valid, Message: valid.Message.replace('gone@', 'victim@') }), 'signature'],
     [JSON.stringify({ ...valid, SignatureVersion: '1' }), 'unsupported-signature-version'],
@@ -132,9 +135,10 @@ test('nothing is trusted before verification: bad signature, other topic, stale 
   ];
   for (const [body, reason] of refused) {
     const response = await handleSesFeedback(post(body), feedbackEnv, adapters);
-    assert.equal(response.status, 403); const reply = await response.json();
-    assert.equal(reply.reason, reason); assert.ok(!JSON.stringify(reply).includes('@'), 'No address is echoed.');
+    assert.equal(response.status, 403, reason);
+    assert.deepEqual(await response.json(), { error: 'Notification refused.' }, 'A generic body: no reason, topic or address is returned.');
   }
+  assert.deepEqual(logged.splice(0), refused.map(([, reason]) => `SES feedback refused: ${reason}.`), 'Only the fixed reason code is logged.');
   assert.deepEqual(recorded, []);
 });
 
@@ -163,4 +167,48 @@ test('a verified subscription confirmation is confirmed only on the constant SNS
   const retry = signed('SubscriptionConfirmation', { Message: 'You have chosen to subscribe.', SubscribeURL: subscribeUrl, Token: 'synthetic-token' });
   assert.equal((await handleSesFeedback(post(retry), feedbackEnv, failing)).status, 503);
   assert.deepEqual(recorded, []);
+});
+
+/** A per-minute budget like api.ts limit(): each call spends one unit and answers false once exhausted. */
+const budget = (maximum: number) => { let used = 0; return { spend: async () => ++used <= maximum, get used() { return used; } }; };
+
+test('forged traffic exhausting the unverified budget cannot starve a validly signed delivery or drive certificate fetches', async t => {
+  const warn = console.warn; console.warn = () => undefined; t.after(() => { console.warn = warn; });
+  const { adapters, recorded, requests } = harness();
+  const unverified = budget(3), verified = budget(600);
+  const admitted = { ...adapters, admission: { unverified: unverified.spend, verified: verified.spend } };
+  const deliver = (address: string) => handleSesFeedback(post(notification(bounce('Permanent', 'General', [{ emailAddress: address }]))), feedbackEnv, admitted);
+  assert.equal((await deliver('first@example.com')).status, 200, 'SNS has delivered before, so its certificate is cached.');
+  const valid = JSON.parse(notification(bounce('Permanent', 'General', [{ emailAddress: 'gone@example.com' }])));
+  for (let index = 0; index < 50; index++) {
+    // Half forge the signature on the cached certificate; half name fresh certificate URLs on the SNS origin.
+    const forged = index % 2 ? { ...valid, Message: valid.Message.replace('gone@', `victim${index}@`) } : { ...valid, SigningCertURL: `https://sns.us-east-1.amazonaws.com/SimpleNotificationService-forged${index}.pem` };
+    assert.ok([403, 503].includes((await handleSesFeedback(post(JSON.stringify(forged)), feedbackEnv, admitted)).status));
+  }
+  assert.ok(unverified.used >= 50, 'Every forged request spent the unverified budget.');
+  assert.ok(requests.filter(url => url.includes('forged')).length <= 3, 'An exhausted unverified budget stops new certificate fetches.');
+  assert.equal(verified.used, 1, 'Forged traffic never spends the verified budget.');
+  const response = await deliver('after-flood@example.com');
+  assert.equal(response.status, 200);
+  assert.deepEqual(recorded, [['first@example.com', 'permanent-bounce'], ['after-flood@example.com', 'permanent-bounce']]);
+  assert.equal(verified.used, 2);
+});
+
+test('verified deliveries over their own budget are deferred to an SNS retry, and a redelivered MessageId is processed once', async () => {
+  const { adapters, recorded } = harness();
+  const body = notification(bounce('Permanent', 'General', [{ emailAddress: 'once@example.com' }]));
+  assert.equal((await handleSesFeedback(post(body), feedbackEnv, { ...adapters, admission: { unverified: async () => true, verified: async () => false } })).status, 503);
+  assert.deepEqual(recorded, [], 'A deferred delivery is not recorded or remembered.');
+  assert.equal((await handleSesFeedback(post(body), feedbackEnv, adapters)).status, 200);
+  assert.deepEqual(await (await handleSesFeedback(post(body), feedbackEnv, adapters)).json(), { ok: true });
+  assert.deepEqual(recorded, [['once@example.com', 'permanent-bounce']]);
+});
+
+test('a failed certificate fetch is not retried for a minute', async t => {
+  const warn = console.warn; console.warn = () => undefined; t.after(() => { console.warn = warn; });
+  let fetches = 0;
+  const failing = { fetch: async () => { fetches++; return new Response('', { status: 404 }); }, store: { async record() { assert.fail('Nothing is recorded.'); } } };
+  const body = JSON.stringify({ ...JSON.parse(notification(bounce('Permanent', 'General', [{ emailAddress: 'gone@example.com' }]))), SigningCertURL: 'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-missing.pem' });
+  for (let index = 0; index < 5; index++) assert.equal((await handleSesFeedback(post(body), feedbackEnv, failing)).status, 503);
+  assert.equal(fetches, 1);
 });

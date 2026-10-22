@@ -8,6 +8,9 @@ export type EmailSuppressionReason = 'permanent-bounce' | 'complaint';
 /**
  * Suppressions are keyed by an unkeyed SHA-256 of the lowercased address, like the per-address rate-limit keys, so the
  * table holds no address text. Lowercasing the local part too errs towards blocking a case variant of a bounced address.
+ * An unkeyed digest is derivable by anyone who knows the address, so it is personal data, not anonymisation.
+ * ponytail: suppression is permanent and has no operator clear or expiry; removing a row takes SQL. A clear/expiry
+ * operation is the upgrade path.
  */
 export function emailAddressDigest(address: string): string {
   return createHash('sha256').update(address.trim().toLowerCase()).digest('hex');
