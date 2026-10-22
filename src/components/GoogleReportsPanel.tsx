@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AppliedFilters, EvidenceSummary, TimeSeriesChart, type ChartPoint, useConfirmDialog } from '@ten98/ui';
+import { AppliedFilters, EvidenceSummary, TimeSeriesChart, type ChartPoint, useConfirmDialog, StatusLine } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
@@ -635,6 +635,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
               availability={snap.imp.dataStatus === 'expired' || !['completed', 'partial'].includes(snap.imp.status) ? 'unavailable' : snap.rows.length === 0 ? 'empty' : 'ready'}
               basis={<>Snapshot status: {impStatus(snap.imp.status)}. A completed import does not establish complete Search Console measurement. Currency: {snap.source.currencyCode ?? 'Unavailable'}.</>}
             />
+            {snapshotChoice !== snap.id && <StatusLine>The selection above has changed. Choose View snapshot to replace these results.</StatusLine>}
           </> : <p className="hint">Showing snapshot requested {new Date(snap.imp.createdAt).toLocaleString()}{snapshotChoice !== snap.id ? ' · The selection above has changed. Choose View snapshot to replace these results.' : ''}</p>}
           {snap.source.provider === 'ga4' && <p className="hint">{isGa4CommerceReport(snap.imp.report) ? ga4CommerceReports[snap.imp.report].description : organicReport(snap.imp.report) ? 'Organic Search session-channel measurements. Landing-page users and trend users are non-additive; only the separate dimensionless overview reports establish whole-range aggregates.' : 'Daily Google Analytics property measurements. User counts are non-additive; no whole-range user total is calculated from these rows. Engagement time is total seconds, not an average.'} Key events remain separate from advertising conversions and native analytics.</p>}
           <p>Snapshot status: {impStatus(snap.imp.status)}</p>
