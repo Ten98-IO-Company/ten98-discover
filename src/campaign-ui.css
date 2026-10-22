@@ -148,3 +148,10 @@ th { font-size:12px; }
 :is(section[aria-label="Session replay"] [aria-label="Recording list"],.ai-search [aria-label="AI search sections"]) .btn[aria-pressed="true"] { color:var(--color-accent); background:var(--color-accent-subtle); border-color:var(--color-accent); }
 
 .ai-search > section[aria-label="Capture a ChatGPT answer with web search"] { inline-size:100%; max-inline-size:var(--form-max); }
+
+/* ponytail: @ten98/ui 0.14.0 BarList row buttons are text-height; Discover keeps 44px targets until the library sizes them. */
+.t98-bar-list-button { min-block-size: var(--control-touch); }
+/* ponytail: the 0.14.0 ShareChart donut is a fixed 9rem; cap it to its card so 320px at 200% zoom does not scroll the page. */
+.t98-share-donut { max-inline-size: 100%; block-size: auto; aspect-ratio: 1; }
+/* ponytail: 0.14.0 chart captions and legends cannot break long words (time zones, series names); at 320px and 200% zoom they overflow the card. */
+.t98-chart { overflow-wrap: anywhere; }

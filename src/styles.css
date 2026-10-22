@@ -26,7 +26,7 @@
 .proj-head p{ margin: 0; }
 .project-origin{ color: var(--muted); font-size: var(--text-xs); margin-bottom: 6px !important; overflow-wrap: anywhere; }
 .proj-head h1{ margin-bottom: 6px; overflow-wrap: anywhere; }
-.annotation-dates, .analytics-axis{ direction: ltr; }
+.annotation-dates{ direction: ltr; }
 .annotation-dates{ display: flex; gap: var(--space-2); overflow-x: auto; padding-block: var(--space-2); margin-block-end: var(--space-4); }
 .annotation-date{ min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; display: grid; gap: var(--space-1); flex-shrink: 0; text-align: center; }
 .annotation-day{ min-inline-size: 0; max-inline-size: 100%; min-block-size: var(--control-touch); white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
@@ -143,8 +143,6 @@
 }
 .conversions table{ min-width: 720px; }
 .conversions td:not(:first-child){ overflow-wrap: normal; }
-.conversion-bar{ height: 6px; margin-top: 10px; background: var(--blue-tint); border-radius: 3px; overflow: hidden; }
-.conversion-bar span{ display: block; height: 100%; background: var(--blue); }
 .conversion-witness{ padding: 14px 0; border-top: 1px solid var(--line); }
 .conversion-witness li{ margin-bottom: 12px; }
 .google-reports{ --control-md: var(--control-touch); }
@@ -172,28 +170,11 @@
 .ai-overview-cards .ai-overview-value{ font-size: var(--text-metric); font-weight: 600; margin-block: 10px 0; font-variant-numeric: tabular-nums; }
 .ai-trend-controls{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .ai-trend-controls .field{ margin: 0; }
-.ai-trend-plot{ display: grid; grid-template-columns: 38px minmax(0,1fr); gap: 8px; min-width: 0; }
-.ai-trend-plot svg{ display: block; width: 100%; height: 180px; }
-.ai-trend-y{ display: flex; flex-direction: column; justify-content: space-between; padding-block: 10px; font-size: var(--text-xs); color: var(--muted); text-align: end; }
-.ai-trend-grid{ stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.ai-trend-line{ fill: none; stroke: var(--color-chart-1); stroke-width: 2; vector-effect: non-scaling-stroke; }
-.ai-trend-point{ fill: var(--color-chart-1); stroke: var(--surface); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.ai-trend-missing{ stroke: var(--muted); stroke-dasharray: 2 4; opacity: .6; vector-effect: non-scaling-stroke; }
-.ai-trend-axis{ display: flex; justify-content: space-between; margin-inline-start: 46px; direction: ltr; font-size: var(--text-xs); color: var(--muted); }
-.ai-leaderboard{ list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.ai-leaderboard li{ padding-block-start: 12px; border-block-start: 1px solid var(--line); }
-.ai-leaderboard li:first-child{ padding-block-start: 0; border-block-start: 0; }
-.ai-leaderboard-heading{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.ai-leaderboard-heading strong{ flex: 1 1 160px; min-width: 0; }
-.ai-leaderboard-share{ display: grid; grid-template-columns: minmax(80px,1fr) minmax(0,1fr); align-items: center; gap: 12px; }
-.ai-leaderboard meter{ width: 100%; min-width: 0; accent-color: var(--color-chart-1); }
-.ai-leaderboard meter::-webkit-meter-optimum-value{ background: var(--color-chart-1); }
-.ai-leaderboard meter::-moz-meter-bar{ background: var(--color-chart-1); }
 @media(max-width:700px){
 .ai-overview-cards{ grid-template-columns: minmax(0,1fr); }
 }
 @media(max-width:480px){
-.ai-trend-controls, .ai-leaderboard-share{ grid-template-columns: minmax(0,1fr); }
+.ai-trend-controls{ grid-template-columns: minmax(0,1fr); }
 }
 .rank-reporting .report-filters :is(input, select), .rank-reporting button{ min-height: var(--control-touch); }
 .row{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -339,8 +320,6 @@ tbody tr:last-child td{ border-bottom: 0; }
 .board-week-cell{position:relative;display:block;min-height:16px;border:1px solid var(--line)}
 .board-preview{min-width:0}
 .board-preview .card{min-width:0;overflow-wrap:anywhere}
-.board-chart-legend{list-style:none;display:flex;flex-wrap:wrap;gap:12px;padding:0}
-.board-chart-legend span{display:inline-block;width:12px;height:12px;margin-inline-end:6px;border-radius:2px}
 @container (max-width:720px){.board-row{grid-template-columns:minmax(0,1fr)}}
 .board-week .sr-only{position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .boards-panel label:has(>input[type='checkbox']){min-height:var(--control-touch);display:flex;align-items:center;gap:8px}
@@ -353,6 +332,5 @@ tbody tr:last-child td{ border-bottom: 0; }
 .heatmap-choices li{min-width:0}
 .heatmap-choices .btn{width:100%;display:flex;gap:12px;align-items:center;justify-content:space-between;text-align:start;flex-wrap:wrap}
 .heatmap-choices small{display:block;color:var(--muted);font-weight:normal}
-.heatmap-plane{display:block;width:100%;height:min(60vh,560px);min-width:0;border:1px solid var(--line);border-radius:8px}
 .heatmaps-panel .table-wrap{min-width:0;max-width:100%}
 .heatmaps-panel table{min-width:540px}

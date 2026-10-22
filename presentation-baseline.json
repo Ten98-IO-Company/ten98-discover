@@ -16,8 +16,8 @@
     "styling": 9
   },
   "src/components/AIInsightsView.tsx": {
-    "element": 225,
-    "styling": 163
+    "element": 196,
+    "styling": 149
   },
   "src/components/AIQueryAnalysisPanel.tsx": {
     "element": 158,
@@ -46,8 +46,8 @@
   },
   "src/components/AnalyticsPanel.tsx": {
     "stylesheet": 1,
-    "element": 398,
-    "styling": 221
+    "element": 343,
+    "styling": 188
   },
   "src/components/AnalyticsResetPanel.tsx": {
     "element": 16,
@@ -71,8 +71,8 @@
     "styling": 29
   },
   "src/components/BoardsPanel.tsx": {
-    "element": 357,
-    "styling": 157
+    "element": 344,
+    "styling": 151
   },
   "src/components/CitationAnalysisPanel.tsx": {
     "element": 1,
@@ -115,8 +115,8 @@
     "styling": 42
   },
   "src/components/ExplorerPanel.tsx": {
-    "element": 529,
-    "styling": 222
+    "element": 483,
+    "styling": 210
   },
   "src/components/GeographyAttribution.tsx": {
     "element": 3,
@@ -124,8 +124,8 @@
   },
   "src/components/GeographyCard.tsx": {
     "stylesheet": 1,
-    "element": 95,
-    "styling": 52
+    "element": 81,
+    "styling": 43
   },
   "src/components/GoogleAppPanel.tsx": {
     "element": 39,
@@ -136,12 +136,12 @@
     "styling": 18
   },
   "src/components/GoogleReportsPanel.tsx": {
-    "element": 181,
-    "styling": 122
+    "element": 176,
+    "styling": 118
   },
   "src/components/HeatmapsPanel.tsx": {
-    "element": 126,
-    "styling": 49
+    "element": 111,
+    "styling": 47
   },
   "src/components/JourneysPanel.tsx": {
     "stylesheet": 1,
@@ -239,8 +239,8 @@
   },
   "src/components/RevenuePanel.tsx": {
     "stylesheet": 1,
-    "element": 262,
-    "styling": 105
+    "element": 242,
+    "styling": 91
   },
   "src/components/SavedKeywordFilterFields.tsx": {
     "element": 76,
@@ -275,16 +275,16 @@
     "styling": 46
   },
   "src/components/TrackedAssetsPanel.tsx": {
-    "element": 252,
-    "styling": 90
+    "element": 228,
+    "styling": 86
   },
   "src/components/UtmPanel.tsx": {
     "element": 65,
     "styling": 28
   },
   "src/components/WebPerformancePanel.tsx": {
-    "element": 105,
-    "styling": 59
+    "element": 82,
+    "styling": 53
   },
   "src/components/WebsiteSharePanel.tsx": {
     "element": 50,

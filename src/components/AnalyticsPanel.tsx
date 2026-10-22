@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AppliedFilters, EvidenceSummary } from '@ten98/ui';
+import { AppliedFilters, BarList, EvidenceSummary, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
 import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, canonicalNavigation, navigationKey, parseNavigation, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
@@ -188,16 +188,19 @@ function ComparisonSummary({data}:{data:Analytics&{comparison:AnalyticsCompariso
   </section>;
 }
 
+const comparisonPoint=(day:Daily|undefined,index:number,metric:'pageViews'|'customEvents'):ChartPoint=>{
+  const value=day?.[metric]??null,gone=!day||day.coverage==='unavailable'||value===null;
+  return {x:index,xLabel:`Day ${index+1}`,y:gone?null:value,state:gone?'unavailable':day.coverage==='partial'?'partial':'observed',note:!day?'No matching day':gone?`${day.date}, unavailable after retention`:`${day.date} (${day.coverage})`};
+};
 function ComparisonChart({data}:{data:Analytics&{comparison:AnalyticsComparison}}){
   const uid=useId(),[metricName,setMetricName]=useState<'pageViews'|'customEvents'>('pageViews'),comparison=data.comparison,prior=comparison.report;
-  const days=Array.from({length:comparison.alignment.slots},(_,i)=>({current:data.daily[i],previous:prior.daily[i]})),max=Math.max(1,...days.flatMap(day=>[day.current?.[metricName]??0,day.previous?.[metricName]??0])),base=170,height=160,slot=12,width=days.length*slot;
+  const days=Array.from({length:comparison.alignment.slots},(_,i)=>({current:data.daily[i],previous:prior.daily[i]})),max=Math.max(1,...days.flatMap(day=>[day.current?.[metricName]??0,day.previous?.[metricName]??0]));
   const label=metricName==='pageViews'?'Recorded pageviews':'Custom events';
   const cell=(day:Daily|undefined)=>day?`${fmtNum(day[metricName])} · ${day.coverage}`:'No matching day';
   return <section className="card analytics-comparison-activity"><div className="row between"><h2>Daily comparison (UTC)</h2><div className="analytics-comparison-metric"><label htmlFor={`${uid}-metric`}>Chart metric</label><select id={`${uid}-metric`} value={metricName} onChange={e=>setMetricName(e.target.value as typeof metricName)}><option value="pageViews">Recorded pageviews</option><option value="customEvents">Custom events</option></select></div></div>
     <p className="hint">Day of each period, aligned from its first UTC date. Missing counterparts are not zero. Visitor estimates are available in the period cards, not as a daily series.</p>
     {data.totals.pageViews===0&&data.totals.customEvents===0&&prior.totals.pageViews===0&&prior.totals.customEvents===0&&<p className="dim">No events recorded in either period.</p>}
-    <svg className="analytics-chart analytics-comparison-chart" viewBox={`0 0 ${width} 180`} preserveAspectRatio="none" role="img" aria-label={`${label} by day of each period. Current solid, previous outlined. Exact dates and unavailable days are in the comparison data table.`}>{days.map((day,index)=><g key={index}>{(['current','previous'] as const).map((period,offset)=>{const observation=day[period],value=observation?.[metricName]??null,x=index*slot+1+offset*5.5;return value===null?<rect className="analytics-comparison-missing" key={period} x={x} y={10} width={4.5} height={height}><title>Day {index+1} · {period}: {observation?`${observation.date}, unavailable after retention`:'No matching day'}</title></rect>:<rect key={period} className={`analytics-comparison-bar-${period}`} x={x} y={base-value/max*height} width={4.5} height={value/max*height}><title>Day {index+1} · {period}: {observation!.date}, {value} {label.toLowerCase()} ({observation!.coverage})</title></rect>;})}</g>)}<line className="analytics-baseline" x1={0} y1={base} x2={width} y2={base}/></svg>
-    <div className="analytics-axis analytics-comparison-axis" aria-hidden="true"><span>Day 1</span><span>Day {days.length}</span></div><p className="analytics-legend"><span className="analytics-key"><span className="analytics-swatch analytics-comparison-swatch-current" aria-hidden="true"/>Current · solid</span><span className="analytics-key"><span className="analytics-swatch analytics-comparison-swatch-previous" aria-hidden="true"/>Previous · outlined</span></p>
+    <TimeSeriesChart label={`${label} by day of each period`} context="Aligned from each period's first UTC date" summary={`Current ${fmtNum(data.totals[metricName])} and previous ${fmtNum(prior.totals[metricName])} ${label.toLowerCase()} over ${days.length} aligned days. Exact dates are in the comparison data table.`} kind="grouped-bars" fit={days.length>=30?'compress':'scroll'} series={(['current','previous'] as const).map(period=>({id:period,label:period==='current'?'Current period':'Previous period',role:period==='current'?'primary':'comparison',points:days.map((day,index)=>comparisonPoint(day[period],index,metricName))}))} yDomain={[0,max]} formatY={value=>value.toLocaleString('en-US')} xHeader="Day of period" formatXTick={(_point,index)=>String(index+1)} notice="Missing counterparts and days outside retention are unavailable, not zero."/>
     <details className="analytics-details"><summary>Comparison data table</summary><div className="table-wrap" tabIndex={0} role="region" aria-label="Comparison daily data, scroll horizontally for dates and values"><table><thead><tr><th scope="col">Day of period</th><th scope="col">Current date (UTC)</th><th scope="col">Current {label.toLowerCase()} · retention</th><th scope="col">Previous date (UTC)</th><th scope="col">Previous {label.toLowerCase()} · retention</th></tr></thead><tbody>{days.map((day,i)=><tr key={i}><th scope="row">{i+1}</th><td>{day.current?.date??'No matching day'}</td><td>{cell(day.current)}</td><td>{day.previous?.date??'No matching day'}</td><td>{cell(day.previous)}</td></tr>)}</tbody></table></div></details>
   </section>;
 }
@@ -311,7 +314,7 @@ function EnvironmentCard({data,busy,field,onFieldChange,onFilter,periodLabel}:{d
       <p className="hint">{measured?'Top 10 categories by estimated visitors. A visitor estimate can appear in more than one category.':'Visitor estimates are unavailable. Categories show recorded pageviews.'}</p>
       <div id={`${uid}-list`} className="analytics-environment-list" role="tabpanel" aria-labelledby={`${uid}-list-${field}`}>
         <div className="analytics-environment-list-heading"><strong>{environmentLabels[field]}</strong><strong>{metricLabel}</strong></div>
-        {rows.length?rows.slice(0,10).map(row=><div className="analytics-environment-item" key={row.value??'not-recorded'}><button type="button" className="analytics-environment-row" disabled={busy} onClick={()=>filter(row)} aria-label={`Filter ${environmentLabels[field]}: ${environmentValue(field,row.value)}`}><span>{environmentValue(field,row.value)}</span><strong>{fmtNum(measured?row.visitors:row.pageViews)}</strong></button><meter aria-hidden="true" min={0} max={max} value={measured?row.visitors??0:row.pageViews}/></div>):<p className="dim">No recorded pageviews match this range and these filters.</p>}
+        <BarList label={`Filter by ${environmentLabels[field]} · ${metricLabel}`} busy={busy} emptyMessage="No recorded pageviews match this range and these filters." items={rows.slice(0,10).map(row=>{const value=measured?row.visitors:row.pageViews;return {id:row.value??'not-recorded',label:environmentValue(field,row.value),value,valueText:fmtNum(value),share:value===null?null:value/max,onSelect:()=>filter(row)};})}/>
       </div>
       <p className="hint">Environment recorded for {fmtNum(environment.coverage.recordedPageViews)} of {fmtNum(environment.coverage.pageViews)} retained pageviews. {fmtNum(environment.coverage.notRecordedPageViews)} not recorded.</p>
       <button type="button" className="btn ghost analytics-environment-more" disabled={busy||!rows.length} onClick={()=>{setSearch('');setNotice('');setOpen(true);}}>More <span className="sr-only">{environmentLabels[field]} details</span></button>
@@ -328,58 +331,20 @@ function EnvironmentCard({data,busy,field,onFieldChange,onFilter,periodLabel}:{d
   </section>;
 }
 
+const dayPoint=(d:Daily,index:number,value:number|null,name:string):ChartPoint=>{
+  const gone=d.coverage==='unavailable'||value===null;
+  return {x:index,xLabel:d.date,y:gone?null:value,state:gone?'unavailable':d.coverage==='partial'?'partial':'observed',note:gone?(d.coverage==='unavailable'?'Unavailable after retention.':`${name} unavailable.`):d.coverage==='partial'?'Partial day: retained portion only.':undefined};
+};
+const dailyTotal=(daily:Daily[],key:'pageViews'|'customEvents')=>daily.some(d=>d.coverage==='unavailable'||d[key]===null)?null:daily.reduce((sum,d)=>sum+(d[key]??0),0);
 export function DailyChart({ daily, metrics = ['pageViews', 'customEvents'] }: { daily: Daily[]; metrics?: readonly ('pageViews' | 'customEvents')[] }) {
-  if (daily.length === 0) return <p className="dim">No daily breakdown available for this range.</p>;
-  const pv = metrics.includes('pageViews'), ce = metrics.includes('customEvents');
-  const max = Math.max(1, ...daily.flatMap((d) => [pv ? d.pageViews ?? 0 : 0, ce ? d.customEvents ?? 0 : 0]));
-  const slot = 12;
-  const height = 160;
-  const base = 170;
-  const width = daily.length * slot;
-  const first = daily[0].date;
-  const last = daily[daily.length - 1].date;
-  return (
-    <>
-      <svg
-        className="analytics-chart"
-        viewBox={`0 0 ${width} 180`}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={`Bar chart of daily ${[pv && 'page views', ce && 'custom events'].filter(Boolean).join(' and ')} in UTC, from ${first} to ${last}. Full numbers in the daily data table below.`}
-      >
-        {daily.map((d, i) => {
-          if (d.coverage === 'unavailable') return <rect key={d.date} x={i * slot + 1} y={10} width={10} height={height} fill="currentColor" opacity={0.12}><title>{d.date}: unavailable after retention</title></rect>;
-          const pvH = ((d.pageViews ?? 0) / max) * height;
-          const ceH = ((d.customEvents ?? 0) / max) * height;
-          const x = i * slot;
-          return (
-            <g key={d.date}>
-              {pv && <rect className="analytics-bar-pv" x={x + 1} y={base - pvH} width={4.5} height={pvH}>
-                <title>{`${d.date}: ${d.pageViews} page views${d.coverage === 'partial' ? ' (partial day)' : ''}`}</title>
-              </rect>}
-              {ce && <rect className="analytics-bar-ce" x={x + 6.5} y={base - ceH} width={4.5} height={ceH}>
-                <title>{`${d.date}: ${d.customEvents} custom events${d.coverage === 'partial' ? ' (partial day)' : ''}`}</title>
-              </rect>}
-            </g>
-          );
-        })}
-        <line className="analytics-baseline" x1={0} y1={base} x2={width} y2={base} />
-      </svg>
-      <div className="analytics-axis" aria-hidden="true">
-        <span>{first}</span>
-        <span>{last}</span>
-      </div>
-      <p className="analytics-legend">
-        {pv && <span className="analytics-key">
-          <span className="analytics-swatch analytics-swatch-pv" aria-hidden="true" /> Page views
-        </span>}
-        {ce && <span className="analytics-key">
-          <span className="analytics-swatch analytics-swatch-ce" aria-hidden="true" /> Custom events
-        </span>}
-      </p>
-      {daily.some(day => day.coverage !== 'complete') && <p className="hint">Shaded days are unavailable after retention. Partial days include only the retained portion; see the daily table.</p>}
-    </>
-  );
+  const pv = metrics.includes('pageViews'), ce = metrics.includes('customEvents'), unavailableDays = daily.filter(d => d.coverage === 'unavailable').length;
+  const series: ChartSeries[] = [
+    ...pv ? [{ id: 'page-views', label: 'Page views', points: daily.map((d, i) => dayPoint(d, i, d.pageViews, 'Page views')) }] : [],
+    ...ce ? [{ id: 'custom-events', label: 'Custom events', points: daily.map((d, i) => dayPoint(d, i, d.customEvents, 'Custom events')) }] : [],
+  ];
+  const label = `Daily ${[pv && 'page views', ce && 'custom events'].filter(Boolean).join(' and ')} (UTC)`;
+  const summary = [pv && `${fmtNum(dailyTotal(daily, 'pageViews'))} page views`, ce && `${fmtNum(dailyTotal(daily, 'customEvents'))} custom events`].filter(Boolean).join(' and ') + ` across ${daily.length} days${unavailableDays ? `; ${unavailableDays} unavailable after retention, so the total is unavailable` : ''}.`;
+  return <TimeSeriesChart label={label} context={daily.length ? `${daily[0].date} to ${daily[daily.length - 1].date}` : undefined} summary={summary} kind={series.length > 1 ? 'grouped-bars' : 'bars'} fit={daily.length >= 30 ? 'compress' : 'scroll'} series={series} yDomain={[0, Math.max(1, ...daily.flatMap(d => [pv ? d.pageViews ?? 0 : 0, ce ? d.customEvents ?? 0 : 0]))]} formatY={value => value.toLocaleString('en-US')} xHeader="Date (UTC)" notice={daily.some(d => d.coverage !== 'complete') ? 'Days outside retention are unavailable, not zero. Partial days include only the retained portion.' : undefined} emptyMessage="No daily breakdown available for this range." />;
 }
 
 export function AnalyticsPanel(props: AnalyticsPanelProps) {
@@ -655,36 +620,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                 <p>Try a wider range, or check back after the project receives traffic.</p>
               </div>
             ) : (
-              <>
-                <DailyChart daily={data.daily} />
-                <details className="analytics-details">
-                  <summary>Daily data table</summary>
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th scope="col">Date (UTC)</th>
-                          <th scope="col" className="analytics-num">
-                            Page views
-                          </th>
-                          <th scope="col" className="analytics-num">
-                            Custom events
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.daily.map((d) => (
-                          <tr key={d.date}>
-                            <td className="mono">{d.date}{d.coverage === 'partial' && <span className="dim"> (partial)</span>}</td>
-                            <td className="analytics-num">{fmtNum(d.pageViews)}</td>
-                            <td className="analytics-num">{fmtNum(d.customEvents)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-              </>
+              <DailyChart daily={data.daily} />
             )}
             <div className="annotation-dates" tabIndex={0} role="region" aria-label="Notes by day, scroll for more dates">
               {data.daily.map(d=><div className="annotation-date" key={d.date}><span className="hint">{d.date}</span>{annotations.dayButton(d.date)}</div>)}
