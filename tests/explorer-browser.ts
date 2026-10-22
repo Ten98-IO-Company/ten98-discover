@@ -37,8 +37,8 @@ try{
   assert.equal((await ctx.request.post(`${config.appUrl}/api/auth/sign-in/email`,{headers:{origin:config.appUrl},data:{email,password}})).status(),200);
   const page=await ctx.newPage();page.setDefaultTimeout(15000);
   await page.goto(config.appUrl);
-  async function nav(label:string,target=page){await closeExplore(target);const menu=target.getByRole('button',{name:'Menu',exact:true});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await (await closeExplore(target)).getByRole('link',{name:label,exact:true}).click();}
-  await nav('Explorer sample');await nav('Explore');
+  async function nav(label:string,target=page){await closeExplore(target);const menu=target.getByRole('button',{name:'Menu',exact:true});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();const project=target.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true});if(await project.evaluate((select:HTMLSelectElement,name:string)=>[...select.options].some(option=>option.text===name),label)){await project.selectOption({label});return;}await (await closeExplore(target)).getByRole('link',{name:label,exact:true}).click();}
+  await nav('Explorer sample');await nav('Traffic explorer');
   const filterDialog=page.getByRole('dialog',{name:'Explore filters',exact:true}),filterTrigger=page.getByRole('button',{name:'Edit filters',exact:true});
   await page.getByRole('button',{name:'Download CSV',exact:true}).waitFor();assert.equal(await filterDialog.isVisible(),false,'Default Explore shows results rather than the editor.');
   let editorReads=0;const observeEditor=(request:any)=>{if(new URL(request.url()).pathname===`/api/projects/${projectId}/explore`)editorReads++;};page.on('request',observeEditor);
@@ -80,13 +80,13 @@ try{
   await page.route(explorePattern,async(route:any)=>{const response=await route.fetch();intercepted();await holding;await route.fulfill({response}).catch(()=>{});},{times:1});
   await (await closeExplore(page)).getByRole('button',{name:'Refresh',exact:true}).click();await received;
   assert.equal(await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).count(),0);
-  await nav('Other sample');await nav('Explore');release!();await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
+  await nav('Other sample');await nav('Traffic explorer');release!();await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
   assert.equal(await page.locator('.metric-value').first().innerText(),'0');assert.equal(await (await editExplore(page)).getByLabel('Group by',{exact:true}).inputValue(),'event');
-  await nav('Explorer sample');await nav('Explore');await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
+  await nav('Explorer sample');await nav('Traffic explorer');await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
   // Additive positive responses are native; mutated bodies below are negative reader fixtures only.
   const tupleSamples=[['google','cpc','spring','page_view'],['google','cpc','spring','page_view'],['google','cpc','spring','signup'],['google','cpc','summer','page_view'],['google','cpc','summer','page_view'],['email','newsletter','spring','page_view'],[undefined,'cpc','spring','page_view'],['','cpc','spring','signup'],['missing','cpc','spring','page_view']];
   for(const [source,medium,campaign,event]of tupleSamples)await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at,dimensions)VALUES(gen_random_uuid(),$1,$2,'/tuple','2026-03-08T12:00:00Z',$3)",[otherId,event,JSON.stringify({campaign:{...(source===undefined?{}:{source}),medium,campaign}})]);
-  await nav('Other sample');await nav('Explore');await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
+  await nav('Other sample');await nav('Traffic explorer');await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
   await (await editExplore(page)).getByLabel('From',{exact:true}).fill('2026-03-08');await (await editExplore(page)).getByLabel('To',{exact:true}).fill('2026-03-08');await (await editExplore(page)).getByLabel('Time zone',{exact:true}).fill('America/New_York');await (await editExplore(page)).getByLabel('Grouping',{exact:true}).selectOption('combined');
   let tupleRequests=0;page.on('request',(request:any)=>{if(new URL(request.url()).pathname===`/api/projects/${otherId}/explore`)tupleRequests++;});
   await (await editExplore(page)).getByRole('button',{name:'Add third field',exact:true}).click();await (await editExplore(page)).getByLabel('Field 3',{exact:true}).selectOption('campaignName');assert.equal(tupleRequests,0,'Grouping changes remain draft-only.');
@@ -137,7 +137,7 @@ try{
     const ctx=propertyContext;await ctx.route('**/*',(route:any)=>{const url=new URL(route.request().url());if(url.origin!==config.appUrl)return route.abort();if(url.pathname===`/api/projects/${projectId}/explore`&&route.request().method()==='GET')propertyExploreReads++;return route.continue();});assert.equal((await ctx.request.post(`${config.appUrl}/api/auth/sign-in/email`,{headers:{origin:config.appUrl},data:{email:propertyEmail,password:propertyPassword}})).status(),200);const page=await ctx.newPage();page.setDefaultTimeout(15000);await page.goto(config.appUrl);
   // Additional actual source rows only after all original value/count/CSV assertions.
   for(const value of [false,'2026-04-01T12:00:00+04:00',[42,'x','x'],[],0.1,0.2])await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at,properties)VALUES(gen_random_uuid(),$1,'signup','/property-series','2026-03-08T12:00:00Z',$2)",[projectId,JSON.stringify(normalizeProperties({' spaced ':value}))]);
-  await nav('Explorer sample',page);await nav('Explore',page);await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
+  await nav('Explorer sample',page);await nav('Traffic explorer',page);await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
   await (await editExplore(page)).getByLabel('From',{exact:true}).fill('2026-03-08');await (await editExplore(page)).getByLabel('To',{exact:true}).fill('2026-03-08');await (await editExplore(page)).getByLabel('Time zone',{exact:true}).fill('America/New_York');await (await editExplore(page)).getByLabel('Group by',{exact:true}).selectOption('property');await (await editExplore(page)).getByLabel('Property key',{exact:true}).fill(' spaced ');
   await (await editExplore(page)).getByRole('checkbox',{name:'Property analysis and event properties',exact:true}).check();const propertyResponse=page.waitForResponse((r:any)=>r.url().includes(`/api/projects/${projectId}/explore?`)&&new URL(r.url()).searchParams.get('propertyView')==='details'&&r.status()===200);await (await editExplore(page)).getByRole('button',{name:'Apply filters',exact:true}).click();const propertyDto=await(await propertyResponse).json();await page.getByRole('region',{name:'Property analysis',exact:true}).waitFor();assert.equal(propertyDto.propertyReport.arrays.occurrences,3);
   await (await closeExplore(page)).getByRole('button',{name:'Array occurrences',exact:true}).click();assert.ok((await page.getByRole('region',{name:'Property series data',exact:true}).innerText()).includes('"x"'));
@@ -187,7 +187,7 @@ try{
   const shareDownload=page.waitForEvent('download');await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).click();assert.equal(await readFile(await(await shareDownload).path(),'utf8'),shareDto.csv);
   }finally{const removed=await pool.query('DELETE FROM event WHERE project_id=$1 AND id=ANY($2::uuid[])',[projectId,shareEventIds]);assert.equal(removed.rowCount,shareEventIds.length,'Only the explicitly created chart fixture events are removed before the composed regressions.');}
   }finally{await propertyContext.close();}
-  await nav('Explorer sample');await nav('Explore');await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
+  await nav('Explorer sample');await nav('Traffic explorer');await (await closeExplore(page)).getByRole('button',{name:'Download CSV'}).waitFor();
   await (await editExplore(page)).getByLabel('Group by',{exact:true}).selectOption('property');await (await editExplore(page)).getByLabel('Property key',{exact:true}).fill('private draft');
   await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspaceId,userId]);
   await (await closeExplore(page)).getByRole('button',{name:'Refresh',exact:true}).click();await page.getByText('This project is unavailable.',{exact:false}).waitFor();
