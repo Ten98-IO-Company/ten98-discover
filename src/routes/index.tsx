@@ -74,7 +74,7 @@ function RouteEntry(){
   const location=useLocation(),raw=new URLSearchParams(location.searchStr)
   // Router normalizes duplicate/JSON view values; public-share intent must never boot private APIs.
   const shared=raw.getAll('view').some(value=>value.includes('tracked-share'))
-  return <AuthErrorBoundary fallback={{ brand: <Brand />, surface: 'card' }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
+  return <AuthErrorBoundary fallback={{ brand: <Brand /> }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
 }
 
 type Status = { configured: boolean; appUrl: string; trackerScript?: string; collectPath?: string | null }
@@ -598,9 +598,9 @@ function App() {
   if (phase === 'recovery') return recovery ? <PasswordRecoveryPanel key={recovery.generation} value={recovery.value} initialEmail={signInEmail}
     onRequest={() => { if (sessionGeneration.current === renderedSession) beginRecovery({ kind: 'request' }) }} onSignIn={changed => { if (sessionGeneration.current !== renderedSession) return; resetSession(); if (changed) setAuthNotice({ kind: 'info', message: 'Password changed. Sign in with your new password. Two-factor authentication is still required if enabled.' }) }} /> : <main className='center'><p role='status'>Loading…</p></main>
 
-  if (phase === 'loading') return <AppStateScreen state='loading' brand={<Brand />} surface='card' message='Loading…' />
+  if (phase === 'loading') return <AppStateScreen state='loading' brand={<Brand />} message='Loading…' />
 
-  if (phase === 'error') return <AppStateScreen state='error' brand={<Brand />} surface='card' title='Unable to load account access' message={pageError} onRetry={() => { setPhase('loading'); void boot() }} />
+  if (phase === 'error') return <AppStateScreen state='error' brand={<Brand />} title='Unable to load account access' message={pageError} onRetry={() => { setPhase('loading'); void boot() }} />
 
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
   if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={resetSession} />
