@@ -3,6 +3,7 @@ import {FunnelBreakdown} from '@ten98/ui';
 import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {api,ApiError,errMsg} from '../lib/api';
 import {MatchFields,PropertyFields,type MatchDraft,type PropertyDraft} from './AnalysisCriteriaFields';
+import {useConfirmDialog} from './useConfirmDialog';
 import type {AnalysisDefinition,AnalysisStep,PropertyPredicate} from '../server/funnel-input';
 import type {AnalysisItem,AnalysisKind,AnalysisResult,AnalysisWitnessResult} from '../server/funnels';
 
@@ -56,6 +57,7 @@ export function matchLabel(m:MatchDraft,goal=false,pageViewsOnly=false){return `
 export function ConversionsPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
 function Panel({projectId,onUnauthorized}:Props){
   const uid=useId(),[kind,setKind]=useState<AnalysisKind>('funnel'),kindRef=useRef(kind);
+  const [confirm,confirmDialog]=useConfirmDialog();
   const [role,setRole]=useState<Role|null>(null),[items,setItems]=useState<AnalysisItem[]>([]),[nextCursor,setNextCursor]=useState<string|null>(null);
   const [view,setView]=useState<'list'|'editor'|'result'|'witnesses'>('list'),[selected,setSelected]=useState<AnalysisItem|null>(null);
   const [opening,setOpening]=useState<{id:string;edit:boolean}|null>(null);
@@ -105,10 +107,10 @@ function Panel({projectId,onUnauthorized}:Props){
       else{const item=data.item;queueMicrotask(()=>{if(alive.current)void evaluate(item,scopeParams(scope),true);});}
     });
   }
-  function leave(){if(writeRef.current||intentRef.current)return false;if(dirty&&!window.confirm('Discard your unsaved definition changes?'))return false;setDirty(false);return true;}
-  function list(){if(!leave())return;stopRead();setView('list');setSelected(null);setOpening(null);setResult(null);setWitness(null);setDraft(blank());setConflict(false);setError('');pendingFocus.current=listFocus.current||uid+'list';void loadList();}
-  function changeKind(next:AnalysisKind){if(next===kindRef.current||!leave())return;clear();kindRef.current=next;setKind(next);setDenied(false);setError('');pendingFocus.current=uid+'list';void loadList();}
-  function create(){if(!leave()||!role||role==='viewer')return;stopRead();setDraft(blank());setSelected(null);setOpening(null);setView('editor');setConflict(false);setMessage('');setError('');pendingFocus.current=uid+'editor';}
+  async function leave(){if(writeRef.current||intentRef.current)return false;if(dirty&&(!await confirm({title:'Discard your unsaved definition changes?',description:'Your edits to this definition have not been saved.',confirmLabel:'Discard changes'})||writeRef.current||intentRef.current))return false;setDirty(false);return true;}
+  async function list(){if(!await leave())return;stopRead();setView('list');setSelected(null);setOpening(null);setResult(null);setWitness(null);setDraft(blank());setConflict(false);setError('');pendingFocus.current=listFocus.current||uid+'list';void loadList();}
+  async function changeKind(next:AnalysisKind){if(next===kindRef.current||!await leave()||next===kindRef.current)return;clear();kindRef.current=next;setKind(next);setDenied(false);setError('');pendingFocus.current=uid+'list';void loadList();}
+  async function create(){if(!role||role==='viewer'||!await leave())return;stopRead();setDraft(blank());setSelected(null);setOpening(null);setView('editor');setConflict(false);setMessage('');setError('');pendingFocus.current=uid+'editor';}
   async function mutate(pending:Intent){
     if(writeRef.current||!alive.current)return;stopRead();const token={};writeRef.current=token;setWriting(true);setError('');setMessage('');const generation=epoch.current;
     let saved:AnalysisItem|null=null,removed=false;
@@ -130,8 +132,8 @@ function Panel({projectId,onUnauthorized}:Props){
     if(intentRef.current){void mutate(intentRef.current);return;}
     try{const value=definition(kind,draft),pending:Intent={action:'save',path:base()+(selected?'/'+selected.id+'/update':''),body:{requestId:crypto.randomUUID(),...(selected?{revision:selected.revision}:{}),definition:value},id:selected?.id??null};intentRef.current=pending;setIntent(pending);void mutate(pending);}catch(e){setError(errMsg(e));}
   }
-  function remove(){
-    if(writeRef.current||intentRef.current||!selected||!role||role==='viewer'||!window.confirm(`Delete “${selected.definition.name}”? This removes its saved definition. Collected events are unchanged.`))return;
+  async function remove(){
+    if(writeRef.current||intentRef.current||!selected||!role||role==='viewer'||!await confirm({title:`Delete “${selected.definition.name}”?`,description:'This removes its saved definition. Collected events are unchanged.',confirmLabel:'Delete definition'})||writeRef.current||intentRef.current)return;
     const pending:Intent={action:'delete',path:base()+'/'+selected.id+'/delete',body:{requestId:crypto.randomUUID(),revision:selected.revision},id:selected.id};intentRef.current=pending;setIntent(pending);void mutate(pending);
   }
   function inspect(stepNumber:number,cursor?:string){
@@ -154,7 +156,7 @@ function Panel({projectId,onUnauthorized}:Props){
     {error&&<div className="alert" role="alert">{error} {denied&&<button className="btn" disabled={reading} onClick={()=>void loadList()}>Reload access</button>}</div>}
     {message&&<p className="notice" role="status">{message}</p>}
     {intent&&!writing&&<div className="banner"><p>The original request is kept unchanged until its outcome is confirmed.</p><button className="btn primary" onClick={()=>void mutate(intent)}>Retry same {intent.action}</button></div>}
-    {conflict&&selected&&<p className="banner">The saved definition changed. <button className="btn" disabled={locked} onClick={()=>{if(!dirty||window.confirm('Discard this draft and load the latest saved definition?'))void openItem(selected.id,view==='editor');}}>Reload saved definition</button></p>}
+    {conflict&&selected&&<p className="banner">The saved definition changed. <button className="btn" disabled={locked} onClick={()=>void (async()=>{if(!dirty||await confirm({title:'Discard this draft and load the latest saved definition?',description:'Your unsaved edits to this definition are replaced by the latest saved version.',confirmLabel:'Load saved definition',danger:false}))void openItem(selected.id,view==='editor');})()}>Reload saved definition</button></p>}
     {view==='list'?<div className="card">
       <div className="row between"><h2 tabIndex={-1} id={uid+'list'}>Saved {kind==='funnel'?'funnels':'goals'}</h2><div className="row"><button className="btn" disabled={locked||reading} onClick={()=>void loadList()}>Refresh list</button>{managed&&<button className="btn primary" disabled={locked} onClick={create}>New {kind}</button>}</div></div>
       <p className="hint">{kind==='funnel'?'Measure how estimated visitors move through ordered activity.':'Measure which estimated visitors complete a page view or custom event.'}</p>
@@ -206,5 +208,6 @@ function Panel({projectId,onUnauthorized}:Props){
         {view==='witnesses'&&<div className="card stack"><h2 id={uid+'witness'} tabIndex={-1}>Matching activity{witness?` for ${kind==='funnel'?'step '+witness.step:'this goal'}`:''}</h2><p className="hint">One observed chain per estimated visitor. These are fresh reads; new events or retention cleanup can change later pages.</p>{witness&&!witness.witnesses.length&&<p>No matching retained activity remains. Refresh the results.</p>}{witness?.witnesses.map((row,i)=><div className="conversion-witness" key={row.events.at(-1)!.id}><h3>Observed visitor {i+1}</h3><ol>{row.events.map((e,index)=><li key={e.id+":"+index}><p>{e.path}</p><p className="hint">{e.eventName} · <time dateTime={e.receivedAt}>{e.receivedAt}</time> · {e.origin}</p></li>)}</ol></div>)}{witness?.nextCursor&&<button className="btn" disabled={reading||locked} onClick={()=>inspect(witness.step,witness.nextCursor!)}>Load more matching activity</button>}</div>}
       </>}
     </>}
+    {confirmDialog}
   </section>;
 }

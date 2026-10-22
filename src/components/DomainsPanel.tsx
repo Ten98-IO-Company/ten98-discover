@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
+import {useConfirmDialog} from './useConfirmDialog';
 
 type Domain = {
   id: string;
@@ -50,6 +51,7 @@ export function DomainsPanel(props: Props) {
 
 function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/domains`;
+  const [confirm, confirmDialog] = useConfirmDialog();
 
   const [state, setState] = useState<State | null>(null);
   const [loading, setLoading] = useState(true);
@@ -287,13 +289,15 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
     });
   };
 
-  const onChallenge = (d: Domain) => {
+  const onChallenge = async (d: Domain) => {
     if (lockRef.current || denied) return;
     if (d.status === 'pending' || d.status === 'verified') {
-      const ok = window.confirm(
-        `Replace the DNS proof for ${d.hostname}? Verification is cleared immediately. A serving domain stops accepting new collection until reverified; visitors must renew consent. The canonical project origin remains allowed.`,
-      );
-      if (!ok) return;
+      const ok = await confirm({
+        title: `Replace the DNS proof for ${d.hostname}?`,
+        description: 'Verification is cleared immediately. A serving domain stops accepting new collection until reverified; visitors must renew consent. The canonical project origin remains allowed.',
+        confirmLabel: 'Replace DNS proof',
+      });
+      if (!ok || lockRef.current) return;
     }
     replaceProof(null);
     void runMutation(async (signal, current) => {
@@ -324,9 +328,10 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
     );
   };
 
-  const onRevoke = (d: Domain) => {
+  const onRevoke = async (d: Domain) => {
     if (lockRef.current || denied) return;
-    if (!window.confirm(`Revoke the proof for ${d.hostname}? A serving domain stops accepting collection immediately. The canonical project origin remains allowed. You can create a new proof later.`)) return;
+    if (!await confirm({title: `Revoke the proof for ${d.hostname}?`, description: 'A serving domain stops accepting collection immediately. The canonical project origin remains allowed. You can create a new proof later.', confirmLabel: 'Revoke proof'})) return;
+    if (lockRef.current) return;
     void runMutation(async (signal, current) => {
       const s = await api<State>(`${base}/${encodeURIComponent(d.id)}/revoke`, {method: 'POST', body: {}, signal});
       if (!current()) return;
@@ -336,9 +341,10 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
     });
   };
 
-  const onRemove = (d: Domain) => {
+  const onRemove = async (d: Domain) => {
     if (lockRef.current || denied) return;
-    if (!window.confirm(`Remove ${d.hostname} from this project? A verified serving domain stops accepting collection immediately. This cannot be undone.`)) return;
+    if (!await confirm({title: `Remove ${d.hostname} from this project?`, description: 'A verified serving domain stops accepting collection immediately. This cannot be undone.', confirmLabel: 'Remove domain'})) return;
+    if (lockRef.current) return;
     void runMutation(async (signal, current) => {
       const s = await api<State>(`${base}/${encodeURIComponent(d.id)}/remove`, {method: 'POST', body: {}, signal});
       if (!current()) return;
@@ -409,10 +415,10 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
             <p className="hint">This allows the exact project origin. Collection settings, privacy choices and browser privacy signals still determine what is recorded.</p>
             <div className="row">
               <button type="button" className="btn primary" disabled={controlsOff} onClick={onInstallTracker}>Install tracker</button>
-              {canonical && canonicalOk && canonical.status !== 'verified' && canonical.status !== 'pending' && <button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(canonical)}>Verify DNS ownership</button>}
+              {canonical && canonicalOk && canonical.status !== 'verified' && canonical.status !== 'pending' && <button type="button" className="btn" disabled={controlsOff} onClick={() => void onChallenge(canonical)}>Verify DNS ownership</button>}
               {canonical && canonical.status === 'pending' && <button type="button" className="btn" disabled={controlsOff || !canonical.challengeExpiresAt || Date.parse(canonical.challengeExpiresAt) <= Date.now()} onClick={() => onVerify(canonical)}>Check DNS proof</button>}
             </div>
-            {canonical && ['pending', 'verified'].includes(canonical.status) && <details className="domain-manage"><summary>Manage DNS ownership</summary><div className="row"><button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(canonical)}>Replace DNS proof</button><button type="button" className="btn ghost" disabled={controlsOff} onClick={() => onRevoke(canonical)}>Revoke proof</button></div></details>}
+            {canonical && ['pending', 'verified'].includes(canonical.status) && <details className="domain-manage"><summary>Manage DNS ownership</summary><div className="row"><button type="button" className="btn" disabled={controlsOff} onClick={() => void onChallenge(canonical)}>Replace DNS proof</button><button type="button" className="btn ghost" disabled={controlsOff} onClick={() => void onRevoke(canonical)}>Revoke proof</button></div></details>}
             {!state.project.canonicalVerifiable && (
               <p className="hint">
                 DNS ownership verification is unavailable for this local, IP or otherwise ineligible hostname.
@@ -605,12 +611,12 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
                                 Edit
                               </button>
                             {(d.status === 'unverified' || d.status === 'expired' || d.status === 'revoked') && (
-                              <button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(d)}>
+                              <button type="button" className="btn" disabled={controlsOff} onClick={() => void onChallenge(d)}>
                                 Create DNS proof
                               </button>
                             )}
                             {(d.status === 'pending' || d.status === 'verified') && (
-                              <button type="button" className="btn" disabled={controlsOff} onClick={() => onChallenge(d)}>
+                              <button type="button" className="btn" disabled={controlsOff} onClick={() => void onChallenge(d)}>
                                 Replace DNS proof
                               </button>
                             )}
@@ -620,11 +626,11 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
                               </button>
                             )}
                             {(d.status === 'pending' || d.status === 'verified') && (
-                              <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => onRevoke(d)}>
+                              <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => void onRevoke(d)}>
                                 Revoke proof
                               </button>
                             )}
-                              <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => onRemove(d)}>
+                              <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => void onRemove(d)}>
                                 Remove
                               </button>
                             {d.role==='redirect_alias' && <RedirectChecks key={`${d.id}:${d.expectedTargetHost}:${d.verifiedAt}:${d.status}`} base={`${base}/${d.id}/redirect-checks`} domain={d} parentBusy={controlsOff} onAccessLoss={handleError} />}
@@ -691,6 +697,7 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
 
         </>
       )}
+      {confirmDialog}
     </section>
   );
 }

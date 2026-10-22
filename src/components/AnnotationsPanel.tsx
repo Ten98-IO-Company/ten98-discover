@@ -2,6 +2,7 @@ import {useEffect,useId,useRef,useState,type CSSProperties} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {api,ApiError,errMsg} from '../lib/api';
+import {useConfirmDialog} from './useConfirmDialog';
 
 type Range={from:string;to:string;timeZone:string};
 type Definition={date:string;allDay:boolean;note:string};
@@ -30,6 +31,7 @@ const summary={minHeight:44,paddingBlock:10};
 // Callers are keyed by account and project; a range change keeps immutable pending intent.
 export function useAnnotations({projectId,range,readOwner,readEnabled=true,onUnauthorized,onAccessLost}:Props){
   const uid=useId(),base=`/api/projects/${encodeURIComponent(projectId)}/annotations`,rangeKey=range?JSON.stringify(range):'';
+  const [confirm,confirmDialog]=useConfirmDialog();
   const [role,setRole]=useState<Role|null>(null),[storedRows,setRows]=useState<Item[]>([]),[storedCursor,setCursor]=useState<string|null>(null),[storedTimeline,setTimeline]=useState<Timeline|null>(null);
   const [scope,setScope]=useState<'range'|'all'>('range'),[day,setDay]=useState(''),[search,setSearch]=useState(''),[appliedSearch,setAppliedSearch]=useState('');
   const [open,setOpen]=useState(false),[editor,setEditor]=useState<Editor|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[storedLoaded,setLoaded]=useState(false),[pending,setPending]=useState<Attempt|null>(null),[readError,setReadError]=useState<{owner:string|undefined;message:string}|null>(null);
@@ -133,7 +135,7 @@ export function useAnnotations({projectId,range,readOwner,readEnabled=true,onUna
       {day&&scope==='range'&&<p className="hint">Notes on {day} ({zone}).</p>}{scope==='all'&&<p className="hint">All project notes, including future dates. Dates shown in {zone}.</p>}
       <form className="row" onSubmit={e=>{e.preventDefault();const text=search.trim();if(!clean(text,200)){setError('Search must be 200 characters or fewer.');return;}void load({search:text});}}><div style={{flex:'1 1 220px',minWidth:0}}><label htmlFor={`${uid}-search`}>Search notes</label><input id={`${uid}-search`} maxLength={200} value={search} disabled={busy||!role} style={field} onChange={e=>setSearch(e.target.value)}/></div><button type="submit" className="btn" disabled={busy||!role}>Search notes</button></form>
       {loaded&&<p className="hint">{rows.length} {rows.length===1?'note':'notes'} shown{cursor?' · More notes available':''}{appliedSearch?` matching “${appliedSearch}”`:''}.</p>}
-      {rows.map(item=><article className="card stack" key={item.id}><p><time dateTime={item.definition.date}>{localDay(item.definition.date,zone)}{item.definition.allDay?' · All day':` · ${new Intl.DateTimeFormat('en-GB',{timeZone:zone,hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(item.definition.date))} (${zone})`}</time></p><p style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{item.definition.note}</p><details><summary style={summary}>Note details</summary><p className="hint">Saved instant: {item.definition.date} · Revision {item.revision}. Dates follow the report time zone; editing only the text keeps this instant and its all-day or timed setting.</p></details>{writable(role)&&<div className="row"><button type="button" className="btn" disabled={locked} onClick={()=>void load({id:item.id})}>Edit annotation</button><button type="button" className="btn" disabled={locked} onClick={()=>{if(!locked&&writable(roleRef.current)&&window.confirm('Delete this annotation? Traffic and CSV exports will stay unchanged.'))void save({kind:'delete',id:item.id,body:{requestId:crypto.randomUUID(),revision:item.revision}});}}>Delete annotation</button></div>}</article>)}
+      {rows.map(item=><article className="card stack" key={item.id}><p><time dateTime={item.definition.date}>{localDay(item.definition.date,zone)}{item.definition.allDay?' · All day':` · ${new Intl.DateTimeFormat('en-GB',{timeZone:zone,hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(item.definition.date))} (${zone})`}</time></p><p style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{item.definition.note}</p><details><summary style={summary}>Note details</summary><p className="hint">Saved instant: {item.definition.date} · Revision {item.revision}. Dates follow the report time zone; editing only the text keeps this instant and its all-day or timed setting.</p></details>{writable(role)&&<div className="row"><button type="button" className="btn" disabled={locked} onClick={()=>void load({id:item.id})}>Edit annotation</button><button type="button" className="btn" disabled={locked} onClick={()=>void (async()=>{if(!locked&&writable(roleRef.current)&&await confirm({title:'Delete this annotation?',description:'Traffic and CSV exports will stay unchanged.',confirmLabel:'Delete annotation'})&&!opRef.current&&pendingRef.current===null)void save({kind:'delete',id:item.id,body:{requestId:crypto.randomUUID(),revision:item.revision}});})()}>Delete annotation</button></div>}</article>)}
       {cursor&&<button type="button" className="btn" disabled={busy} onClick={()=>void load({cursor})}>Load more notes</button>}
       {role==='viewer'&&<p className="hint">You can read notes. An owner, admin or editor can add or change them.</p>}
       {editor&&writable(role)&&<form className="card stack" aria-label={editor.item?'Edit annotation':'Add annotation'} onSubmit={e=>{e.preventDefault();submit();}}><fieldset className="stack" disabled={locked} style={{border:0,padding:0,margin:0,minWidth:0}}>
@@ -146,6 +148,7 @@ export function useAnnotations({projectId,range,readOwner,readEnabled=true,onUna
         <div className="row"><button className="btn" type="submit">{editor.item?'Save annotation':'Add annotation'}</button><button className="btn" type="button" onClick={()=>setEditor(null)}>Cancel note</button></div>
       </fieldset></form>}
     </div></details>
+    {confirmDialog}
   </section>;
   return {panel,dayButton};
 }

@@ -5,6 +5,7 @@ import type {RankRole,RankTracker,RankConnection} from './RankTrackingView';
 import {RankCheckView,type RankQuoteDisplay} from './RankCheckView';
 import {RankCheckResults,type RankResultDisplay,type RankHistoryDisplay} from './RankCheckResults';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {useConfirmDialog} from './useConfirmDialog';
 
 type Status='quoted'|'queued'|'running'|'waiting'|'completed'|'partial'|'failed'|'cancelled'|'skipped';
 type Cost='not_started'|'pending'|'uncertain'|'final';
@@ -61,6 +62,7 @@ function CheckController(props:Props){
   function patch(value:Partial<State>){if(alive.current){state.current={...state.current,...value};setState(state.current);}}
   function invalidate(){op.current?.controller.abort();op.current=null;}
   function locked(){return op.current?.write===true||intent.current!==null;}
+  const [confirm,confirmDialog]=useConfirmDialog();
   function leave(){return !locked()&&(!state.current.dirty||window.confirm('Discard the unsaved rank check setup?'));}
   useBlocker({withResolver:false,shouldBlockFn:()=>!leave(),enableBeforeUnload:()=>locked()||state.current.dirty});
   useEffect(()=>{alive.current=true;if(props.entry.mode==='run'&&uuid(props.entry.runId))void readRun(props.entry.runId,true);else void loadHistory(undefined,true);return()=>{alive.current=false;invalidate();};},[]);
@@ -131,7 +133,7 @@ function CheckController(props:Props){
   function start(){const r=state.current.run;if(props.entry.purpose==='schedule'||!r||locked()||!r.canStart||r.status!=='quoted'||r.quoteExpired||!r.expiresAt||Date.parse(r.expiresAt)<=Date.now())return;mutate('start',`${base}/rank-checks/${r.id}/start`,{},{runId:r.id});}
   function scheduleEligible(){const at=state.current,r=at.run;return at.role==='owner'&&!at.conflict&&r?.status==='quoted'&&r.trigger==='manual'&&r.method==='queued'&&!r.isSubset&&r.startedAt===null&&r.canStart&&!r.quoteExpired&&!!r.expiresAt&&Date.parse(r.expiresAt)>Date.now();}
   function configureSchedule(){if(!scheduleEligible()||!leave())return;const r=state.current.run!;invalidate();patch({dirty:false,reading:false});props.onConfigureSchedule(r.id,r.expiresAt!);}
-  function cancel(){const r=state.current.run;if(!r||locked()||!r.canCancel||!window.confirm('Cancel only work that has not been sent? Dispatched work and charges remain.'))return;mutate('cancel',`${base}/rank-checks/${r.id}/cancel`,{},{runId:r.id});}
+  async function cancel(){const r=state.current.run;if(!r||locked()||!r.canCancel||!await confirm({title:'Cancel only work that has not been sent?',description:'Dispatched work and charges remain.',confirmLabel:'Cancel remaining checks'})||locked()||state.current.run?.id!==r.id||!state.current.run.canCancel)return;mutate('cancel',`${base}/rank-checks/${r.id}/cancel`,{},{runId:r.id});}
   function recover(id:string){const at=state.current,r=at.run;if(locked()||at.role!=='owner'||!r?.dispatches.some(d=>d.id===id&&d.canReconcile)||!props.connections.some(c=>c.id===at.recoveryConnectionId))return;mutate('reconcile',`${base}/rank-checks/${r.id}/reconcile`,{dispatchId:id,connectionId:at.recoveryConnectionId},{runId:r.id});}
   function providers(){if(state.current.role==='owner'&&leave()){invalidate();patch({dirty:false});props.onOpenProviders();}}
   const currentRun=s.run,selection=props.entry.purpose!=='schedule'&&props.entry.keywordIds?`${props.entry.keywordIds.length} selected keywords`:`All ${s.tracker.keywordCount} current keywords`;
@@ -141,8 +143,8 @@ function CheckController(props:Props){
     dispatches:currentRun.dispatches.map(d=>({id:d.id,label:`Request ${d.ordinal+1}`,status:`${d.phase} · ${d.costStatus}`,estimateUsd:d.estimateUsd,actualUsd:d.actualUsd,canRecover:d.canReconcile,diagnostic:d.diagnostic}))}:null;
   const historyRows:RankHistoryDisplay[]=s.history.map(r=>({id:r.id,createdAt:dateText(r.createdAt),method:r.method,selection:selectionText(r),status:r.status+(r.quoteExpired?' · Quote expired':''),cost:r.status==='skipped'?`No quote applied · Known charges $${r.knownChargeUsd}`:`${r.costStatus} · Known $${r.knownChargeUsd} · Maximum $${r.estimateUsd}`,availability:r.dataExpiredAt?'Observations expired':r.rawExpiredAt?'Raw evidence expired':'Retained receipt'}));
   const common={prefix,backLabel:props.backLabel??'Back to tracker',role:s.role,locked:s.writing||intent.current!==null,reading:s.reading,pending:s.pending&&!s.writing,error:s.error,notice:s.notice,onRefresh:refresh,onBack:back,onRetry:()=>{if(intent.current&&!op.current?.write)void send(intent.current);},onOpenProviders:providers};
-  if(s.phase==='setup'||s.phase==='run'&&currentRun?.status==='quoted')return <RankCheckView {...common} schedulePurpose={props.entry.purpose==='schedule'} canConfigureSchedule={scheduleEligible()} onConfigureSchedule={configureSchedule} phase={s.phase==='setup'?'setup':'review'} conflict={s.conflict} selectionLabel={selection} canQuote={writer(s.role)&&(props.entry.purpose!=='schedule'||s.role==='owner')&&props.vaultConfigured&&s.tracker.archivedAt===null&&s.tracker.keywordCount>0} connections={props.vaultConfigured?props.connections:[]} connectionId={s.connectionId} method={s.method} quote={q}
-    onConnection={connectionId=>{if(!locked()){invalidate();patch({connectionId,reading:false,dirty:true});}}} onMethod={method=>{if(!locked()&&props.entry.purpose!=='schedule'){invalidate();patch({method,reading:false,dirty:true});}}} onQuote={quote} onStart={start}/>;
-  return <RankCheckResults {...common} phase={s.phase==='history'?'history':'run'} loaded={s.loaded} history={historyRows} nextCursor={s.nextCursor} run={result} canPrepare={writer(s.role)&&s.tracker.archivedAt===null&&s.tracker.keywordCount>0} connections={props.connections} recoveryConnectionId={s.recoveryConnectionId}
-    onPrepare={prepare} onOpen={open} onMore={()=>{if(s.nextCursor&&!s.reading)void loadHistory(s.nextCursor);}} onHistory={history} onCancel={cancel} onRecoveryConnection={recoveryConnectionId=>{if(!locked())patch({recoveryConnectionId});}} onRecover={recover}/>;
+  if(s.phase==='setup'||s.phase==='run'&&currentRun?.status==='quoted')return <><RankCheckView {...common} schedulePurpose={props.entry.purpose==='schedule'} canConfigureSchedule={scheduleEligible()} onConfigureSchedule={configureSchedule} phase={s.phase==='setup'?'setup':'review'} conflict={s.conflict} selectionLabel={selection} canQuote={writer(s.role)&&(props.entry.purpose!=='schedule'||s.role==='owner')&&props.vaultConfigured&&s.tracker.archivedAt===null&&s.tracker.keywordCount>0} connections={props.vaultConfigured?props.connections:[]} connectionId={s.connectionId} method={s.method} quote={q}
+    onConnection={connectionId=>{if(!locked()){invalidate();patch({connectionId,reading:false,dirty:true});}}} onMethod={method=>{if(!locked()&&props.entry.purpose!=='schedule'){invalidate();patch({method,reading:false,dirty:true});}}} onQuote={quote} onStart={start}/>{confirmDialog}</>;
+  return <><RankCheckResults {...common} phase={s.phase==='history'?'history':'run'} loaded={s.loaded} history={historyRows} nextCursor={s.nextCursor} run={result} canPrepare={writer(s.role)&&s.tracker.archivedAt===null&&s.tracker.keywordCount>0} connections={props.connections} recoveryConnectionId={s.recoveryConnectionId}
+    onPrepare={prepare} onOpen={open} onMore={()=>{if(s.nextCursor&&!s.reading)void loadHistory(s.nextCursor);}} onHistory={history} onCancel={cancel} onRecoveryConnection={recoveryConnectionId=>{if(!locked())patch({recoveryConnectionId});}} onRecover={recover}/>{confirmDialog}</>;
 }

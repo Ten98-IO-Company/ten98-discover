@@ -196,7 +196,7 @@ try{
  await check('native settings retain keyword selection',async()=>{const count=calls.length;await openSettings();await settings().click();assert.equal(await page.getByLabel('Select literal C++ %20',{exact:true}).isChecked(),true);assert.equal(await page.getByText('1 selected',{exact:true}).isVisible(),true);assert.equal(calls.length,count);await before(page.getByRole('button',{name:'Pin selected',exact:true}),page.getByRole('region',{name:'Keywords',exact:true}));});
  await page.getByRole('button',{name:'Pin selected',exact:true}).click();
  await page.getByRole('cell',{name:'Pinned',exact:true}).waitFor();
- await openSettings();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Archive tracker',exact:true}).click();
+ await openSettings();await page.getByRole('button',{name:'Archive tracker',exact:true}).click();await page.getByRole('dialog',{name:'Archive this tracker?',exact:true}).getByRole('button',{name:'Archive tracker',exact:true}).click();
  await page.getByRole('button',{name:'Reactivate tracker',exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Add keywords',exact:true}).count(),0);
  await page.screenshot({path:resolve('private/rank-panel-evidence/r01-archived-settings.png'),fullPage:true});
@@ -204,7 +204,7 @@ try{
  assert.equal(await page.getByLabel('Devices',{exact:true}).isDisabled(),true);
  assert.equal(await page.getByLabel('Tracker name',{exact:true}).isDisabled(),false);
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
- await openSettings();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Reactivate tracker',exact:true}).click();
+ await openSettings();await page.getByRole('button',{name:'Reactivate tracker',exact:true}).click();await page.getByRole('dialog',{name:'Reactivate this tracker?',exact:true}).getByRole('button',{name:'Reactivate tracker',exact:true}).click();
  await page.getByRole('button',{name:'Archive tracker',exact:true}).waitFor();
  console.log('PASS active writes cannot be interrupted; explicit saves restore focus; pin/archive/reactivate preserve authored controls.');
 
@@ -263,7 +263,7 @@ try{
  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await page.getByLabel('Keywords, one per line',{exact:true}).inputValue(),'  C++ %20\n\nMiXeD\nMiXeD');await page.screenshot({path:resolve('private/rank-panel-evidence/r01-add-draft.png'),fullPage:true});
  const added=mutations.length;await page.getByRole('button',{name:'Add keywords',exact:true}).click();await page.getByText('C++ %20',{exact:true}).waitFor();assert.equal(mutations.length,added+1);assert.deepEqual(mutations.at(-1).body.keywords,['  C++ %20','MiXeD','MiXeD']);assert.equal(mutations.at(-1).body.matchCase,true);assert.equal(await page.getByText('MiXeD',{exact:true}).count(),1);assert.equal(await region.locator('tbody tr').count(),4);
  await page.getByLabel('Select all keywords',{exact:true}).check();assert.equal(await page.getByText('4 selected',{exact:true}).isVisible(),true);await page.getByRole('button',{name:'Unpin selected',exact:true}).click();await page.getByText('0 selected',{exact:true}).waitFor();assert.equal(mutations.at(-1).body.pinned,false);assert.equal(mutations.at(-1).body.keywordIds.length,4);
- await page.getByLabel('Select all keywords',{exact:true}).check();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Remove selected',exact:true}).click();await page.getByText('No keywords yet',{exact:true}).waitFor();assert.equal(await region.count(),0);assert.equal(await page.getByRole('button',{name:'Prepare a rank check',exact:true}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Check selected keywords',exact:true}).isDisabled(),true);
+ await page.getByLabel('Select all keywords',{exact:true}).check();await page.getByRole('button',{name:'Remove selected',exact:true}).click();await page.getByRole('dialog',{name:/^Remove \d+ selected keyword\(s\)\?$/}).getByRole('button',{name:'Remove keywords',exact:true}).click();await page.getByText('No keywords yet',{exact:true}).waitFor();assert.equal(await region.count(),0);assert.equal(await page.getByRole('button',{name:'Prepare a rank check',exact:true}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Check selected keywords',exact:true}).isDisabled(),true);
  nextGet=403;await page.getByRole('button',{name:'Refresh tracker',exact:true}).click();await page.getByRole('button',{name:'Reload access',exact:true}).waitFor();for(const width of [320,360,768,1440])await check('denied root '+width,async()=>{await page.setViewportSize({width,height:1000});await targets();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);});
  assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);assert.deepEqual(findings,[],'Every R01 hierarchy, draft and target requirement must pass');console.log('PASS native settings/order/draft retention, all-mode44px targets, long-text LTR/RTL/zoom/forced colors and explicit case-preserving add/unpin/remove without paid work.');
 

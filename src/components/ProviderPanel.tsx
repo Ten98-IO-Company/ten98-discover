@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
+import { useConfirmDialog } from './useConfirmDialog'
 
 type ProviderName = 'openrouter' | 'dataforseo'
 type CheckStatus = 'untested' | 'ok' | 'error'
@@ -59,6 +60,7 @@ export function ProviderPanel({ workspaceId, onUnauthorized }: ProviderPanelProp
 
 function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps) {
   const [data, setData] = useState<ProvidersResponse | null>(null)
+  const [confirm, confirmDialog] = useConfirmDialog()
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [permissionLost, setPermissionLost] = useState(false)
@@ -282,9 +284,10 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
     )
   }
 
-  const revokeConn = (c: ConnectionMeta) => {
+  const revokeConn = async (c: ConnectionMeta) => {
     if (mutLockRef.current || controlsOff || !data) return
-    if (!window.confirm(`Permanently disconnect "${c.name}"? This cannot be undone.`)) return
+    if (!await confirm({ title: `Permanently disconnect "${c.name}"?`, description: 'This cannot be undone.', confirmLabel: 'Disconnect' })) return
+    if (mutLockRef.current) return
     void runMutation(
       signal => api<unknown>(`${base}/${c.id}/revoke`, { method: 'POST', body: {}, signal }),
       'Connection disconnected.',
@@ -398,7 +401,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
                           <div className="row provider-connection-actions">
                             <button type="button" className="btn ghost" disabled={controlsOff || !data.vaultConfigured} onClick={() => checkConn(c)}>Run check</button>
                             <button type="button" className="btn ghost" disabled={controlsOff || !data.vaultConfigured} onClick={() => openRotate(c)}>Rotate credentials</button>
-                            <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => revokeConn(c)}>Disconnect</button>
+                            <button type="button" className="btn ghost" disabled={controlsOff} onClick={() => void revokeConn(c)}>Disconnect</button>
                           </div>
                         </td>
                       </tr>
@@ -557,6 +560,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
           </div>
         </>
       )}
+      {confirmDialog}
     </section>
   )
 }

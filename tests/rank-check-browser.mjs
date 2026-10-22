@@ -109,7 +109,7 @@ try{
  await resultOrder();await targets('Pending result');
  console.log('PASS paid lost-ack,429,malformed nested2xx and absent acknowledgement retry identical body after quote expiry; one dispatch.');
  nextRead='hold';await page.getByRole('button',{name:'Refresh check',exact:true}).click();await page.waitForTimeout(40);assert.ok(held);const oldRead=held;held=null;
- page.once('dialog',d=>d.accept());nextWrite='hold';await page.getByRole('button',{name:'Cancel remaining checks',exact:true}).click();await page.waitForTimeout(40);assert.ok(held);
+ nextWrite='hold';await page.getByRole('button',{name:'Cancel remaining checks',exact:true}).click();await page.getByRole('dialog',{name:'Cancel only work that has not been sent?',exact:true}).getByRole('button',{name:'Cancel remaining checks',exact:true}).click();await page.waitForTimeout(40);assert.ok(held);
  await page.getByRole('link',{name:'Fixture elsewhere',exact:true}).click();assert.equal(new URL(page.url()).pathname,'/');assert.equal(await page.getByRole('button',{name:'Back to tracker',exact:true}).isDisabled(),true);
  await reply(held.route,held.data);held=null;await page.getByText('cancelled',{exact:true}).first().waitFor();await reply(oldRead.route,oldRead.data);assert.equal(await page.getByRole('button',{name:'Cancel remaining checks',exact:true}).count(),0);
  console.log('PASS cancel interrupts held read, never active write; stale GET cannot restore cancelled work.');

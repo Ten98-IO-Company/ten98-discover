@@ -132,9 +132,11 @@ try {
   await dashboard.getByRole('heading', { name: 'Domains and aliases', exact: true }).waitFor();
   await dashboard.getByText(/Verified serving domains can use this project/).waitFor();
   const row = dashboard.getByRole('row').filter({ has: dashboard.getByText('serving.example.com', { exact: true }) });
-  dashboard.once('dialog', async (confirmation: any) => { assert.match(confirmation.message(), /stops accepting collection immediately/); await confirmation.accept(); });
   const revoked = dashboard.waitForResponse((response: any) => response.url().endsWith(`/domains/${domain.id}/revoke`) && response.request().method() === 'POST');
   await row.getByRole('button', { name: 'Revoke proof', exact: true }).click();
+  const confirmation = dashboard.getByRole('dialog', { name: 'Revoke the proof for serving.example.com?', exact: true });
+  assert.match(await confirmation.innerText(), /stops accepting collection immediately/);
+  await confirmation.getByRole('button', { name: 'Revoke proof', exact: true }).click();
   assert.equal((await revoked).status(), 200);
   const refreshed = page.waitForResponse((response: any) => response.url() === `${collector}/api/tracking-config` && response.request().method() === 'POST');
   await page.clock.fastForward(30001); await refreshed;

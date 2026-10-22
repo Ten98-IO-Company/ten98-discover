@@ -3,6 +3,7 @@ import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
 import {RankScheduleView,type ScheduleForm,type ScheduleInfo,type SchedulePreview,type ScheduleQuote} from './RankScheduleView';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
+import {useConfirmDialog} from './useConfirmDialog';
 
 type Props={workspaceId:string;projectId:string;userId:string;trackerId:string;trackerName:string;quoteId?:string;knownQuoteExpiresAt?:string;backLabel?:string;onUnauthorized:()=>void;onBack:()=>void;onPrepareQuote:()=>void};
 type Role=WorkspaceRole;
@@ -66,6 +67,7 @@ function ScheduleController(props:Props){
   function invalidate(){operation.current?.controller.abort();operation.current=null;}
   const locked=()=>operation.current?.write===true||intent.current!==null;
   const current=(op:Operation)=>alive.current&&operation.current===op;
+  const [confirm,confirmDialog]=useConfirmDialog();
   function leave(){return !locked()&&(!state.current.dirty||window.confirm('Discard the unsaved schedule setup?'));}
   useBlocker({withResolver:false,shouldBlockFn:()=>!leave(),enableBeforeUnload:()=>locked()||state.current.dirty});
   useEffect(()=>{alive.current=true;void load();return()=>{alive.current=false;invalidate();};},[]);
@@ -100,11 +102,12 @@ function ScheduleController(props:Props){
     }finally{finish(op);}}
   function approve(){const at=state.current,c=calendar(at.form);if(locked()||at.loading||!at.data?.canManage||at.conflict||!at.quote||!c||!at.preview||!at.form.consent||at.quote.expired||expiry(at.quote)<=Date.now())return;
     try{void send({kind:'approve',revision:at.data.authoredRevision,calendar:c,body:structuredClone({requestId:crypto.randomUUID(),revision:at.data.authoredRevision,quoteId:at.quote.id,...c})});}catch{patch({error:'This browser could not prepare a safe approval request. Reload before trying again.'});}}
-  function disable(){const at=state.current;if(locked()||at.loading||!at.data?.canManage||!at.data.schedule.enabled)return;if(!window.confirm('Disable this schedule? Future scheduled requests, including unsent work, will stop. Requests already sent and their charges remain.'))return;
+  async function disable(){const at=state.current;if(locked()||at.loading||!at.data?.canManage||!at.data.schedule.enabled)return;if(!await confirm({title:'Disable this schedule?',description:'Future scheduled requests, including unsent work, will stop. Requests already sent and their charges remain.',confirmLabel:'Disable schedule'}))return;
+    const now=state.current;if(locked()||now.loading||!now.data?.canManage||!now.data.schedule.enabled)return;
     try{void send({kind:'disable',revision:at.data.authoredRevision,body:{requestId:crypto.randomUUID(),revision:at.data.authoredRevision}});}catch{patch({error:'This browser could not prepare a safe disable request. Reload before trying again.'});}}
   function navigate(callback:()=>void){if(!leave())return;invalidate();patch({dirty:false});callback();}
   const quote=s.quote?{...s.quote,expiresAt:new Date(expiry(s.quote)).toISOString(),expired:s.quote.expired||expiry(s.quote)<=s.now}:null,c=calendar(s.form),editable=!!s.data?.canManage&&!locked()&&!s.loading&&!s.working&&!s.conflict&&quote!==null&&!quote.expired;
-  return <RankScheduleView idPrefix={prefix} backLabel={props.backLabel??'Back to tracker'} trackerName={props.trackerName} schedule={s.data?.schedule??null} quote={quote} preview={s.preview} form={s.form} canManage={!!s.data?.canManage} loading={s.loading} working={s.working} locked={locked()} pending={s.pending} conflict={s.conflict}
+  return <><RankScheduleView idPrefix={prefix} backLabel={props.backLabel??'Back to tracker'} trackerName={props.trackerName} schedule={s.data?.schedule??null} quote={quote} preview={s.preview} form={s.form} canManage={!!s.data?.canManage} loading={s.loading} working={s.working} locked={locked()} pending={s.pending} conflict={s.conflict}
     canPreview={editable&&c!==null} canApprove={editable&&c!==null&&s.preview!==null&&s.form.consent} canDisable={!!s.data?.canManage&&s.data.schedule.enabled&&!s.loading&&!s.working&&!locked()}
-    error={s.error} notice={s.notice} onChange={change} onPreview={()=>void preview()} onApprove={approve} onDisable={disable} onRetry={()=>{if(intent.current)void send(intent.current);}} onRefresh={()=>{if(!leave())return;void load();}} onBack={()=>navigate(props.onBack)} onPrepareQuote={()=>navigate(props.onPrepareQuote)}/>;
+    error={s.error} notice={s.notice} onChange={change} onPreview={()=>void preview()} onApprove={approve} onDisable={disable} onRetry={()=>{if(intent.current)void send(intent.current);}} onRefresh={()=>{if(!leave())return;void load();}} onBack={()=>navigate(props.onBack)} onPrepareQuote={()=>navigate(props.onPrepareQuote)}/>{confirmDialog}</>;
 }

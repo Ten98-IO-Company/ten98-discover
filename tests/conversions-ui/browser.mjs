@@ -151,7 +151,7 @@ try{
   await panel.getByLabel('Name',{exact:true}).fill('Uncommitted local draft');await panel.getByRole('button',{name:'Save funnel',exact:true}).click();
   await panel.getByRole('button',{name:'Reload saved definition',exact:true}).waitFor();assert.equal(await panel.getByLabel('Name',{exact:true}).inputValue(),'Uncommitted local draft');
   assert.equal(await panel.getByRole('button',{name:'Save funnel',exact:true}).isDisabled(),true);
-  await panel.getByRole('button',{name:'Reload saved definition',exact:true}).click();await page.waitForFunction(el=>el.value==='Concurrent saved revision',await panel.getByLabel('Name',{exact:true}).elementHandle());
+  await panel.getByRole('button',{name:'Reload saved definition',exact:true}).click();await page.getByRole('dialog',{name:'Discard this draft and load the latest saved definition?',exact:true}).getByRole('button',{name:'Load saved definition',exact:true}).click();await page.waitForFunction(el=>el.value==='Concurrent saved revision',await panel.getByLabel('Name',{exact:true}).elementHandle());
   await panel.getByLabel('Name',{exact:true}).fill('Final saved funnel');await panel.getByRole('button',{name:'Save funnel',exact:true}).click();await idle();await funnelCounts([3,1,1]);
   console.log('PASS failed edit-read guard and real revision conflict with draft preservation');
 
@@ -194,7 +194,7 @@ try{
 
   stage='delete exact retry and event preservation';
   const deletion=await loseAcknowledgement(apiPath(fixture.goals,'goals',goal.id)+'/delete','503');
-  await panel.getByRole('button',{name:'Delete definition',exact:true}).click();await panel.getByRole('button',{name:'Retry same delete',exact:true}).click();
+  await panel.getByRole('button',{name:'Delete definition',exact:true}).click();await page.getByRole('dialog',{name:'Delete “Purchase event”?',exact:true}).getByRole('button',{name:'Delete definition',exact:true}).click();await panel.getByRole('button',{name:'Retry same delete',exact:true}).click();
   await panel.getByText('No saved goals yet.',{exact:true}).waitFor();assert.equal(deletion.bodies.length,2);assert.equal(deletion.accepted[1].replayed,true);await deletion.dispose();
   await focused(panel.getByRole('heading',{name:'Saved goals',exact:true}));
   assert.equal((await pool.query('SELECT count(*) n FROM analytics_definition WHERE id=$1',[goal.id])).rows[0].n,'0');
