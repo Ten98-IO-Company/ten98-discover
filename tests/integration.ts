@@ -22,6 +22,7 @@ import { runDomainCollectionChecks } from './domain-collection-integration.ts';
 import { runClientRateLimitChecks } from './client-rate-limit-integration.ts';
 import { runCollectorAdmissionChecks } from './collector-admission-integration.ts';
 import { runAccountClosureChecks } from './account-closure-integration.ts';
+import { runClosedAccountRetentionChecks } from './closed-account-retention-integration.ts';
 import { runContentSupportListChecks } from './content-support-list-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
@@ -420,6 +421,8 @@ try {
   await runClientRateLimitChecks();
   stage = 'account closure tombstone, scrub and refusals';
   await runAccountClosureChecks();
+  stage = 'closed-account 7-year retention';
+  await runClosedAccountRetentionChecks();
   stage = 'browser destination revisions and isolation';
   await runDestinationChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   console.log('PASS destination drafts, previews, immutable publishing, rollback and origin/tenant/environment isolation');

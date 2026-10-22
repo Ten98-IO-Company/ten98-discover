@@ -78,6 +78,29 @@ test('kept tables without a workspace or project column are the reviewed instanc
   assert.deepEqual(unscoped, ['account_closure_audit', 'google_app', 'instance_operator_audit', 'oidc_provider', 'rateLimit']);
 });
 
+/**
+ * Owner decision (ten98-code-system#39, "Financial: full 7 years"): financial rows must survive workspace deletion.
+ * Today they reach `workspace` through ON DELETE CASCADE, or are deleted explicitly with their website, which is
+ * harmless only because workspace deletion does not exist yet. When #292 builds it, workspace deletion must tombstone
+ * the workspace (keep its id, scrub its name and other personal fields) so these rows survive. This list records that
+ * requirement and fails when it changes.
+ */
+test('financial tables that a workspace tombstone must preserve when #292 is built', () => {
+  const schema = readMigrationSchema();
+  const financial = accountClosureInventory.filter(entry => entry.retention?.survivesWorkspaceDeletion).map(entry => entry.table);
+  assert.ok(accountClosureInventory.every(entry => entry.retention?.class !== 'financial' || entry.retention.survivesWorkspaceDeletion));
+  const cascading = financial.filter(table => cascadePath(schema, table)).sort();
+  const explicit = financial.filter(table => exceptions.has(table)).sort();
+  assert.deepEqual(cascading, [
+    'ai_content_support_quote', 'ai_content_support_run', 'ai_search_quote', 'ai_search_run', 'ai_suggestion_quote',
+    'domain_research_quote', 'domain_research_run', 'keyword_quote', 'keyword_research_run', 'prompt_execution_quote',
+    'provider_request', 'saved_keyword_refresh_plan',
+  ], 'Must be preserved by a workspace tombstone when #292 is built: workspace deletion must not delete the workspace row under them.');
+  assert.deepEqual(explicit, ['ai_suggestion_run', 'prompt_comparison', 'prompt_occurrence', 'rank_run'],
+    'Deleted explicitly with their website today; workspace deletion (#292) must keep them instead.');
+  assert.deepEqual([...cascading, ...explicit].sort(), [...financial].sort(), 'Every financial table needs a recorded workspace-deletion requirement.');
+});
+
 test('the parser records ON DELETE actions for inline, table and ALTER foreign keys', () => {
   const schema = parseMigrations([
     'CREATE TABLE workspace (id uuid PRIMARY KEY);',
