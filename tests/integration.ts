@@ -21,6 +21,7 @@ import { runExplorerChecks } from './explorer-integration.ts';
 import { runDomainCollectionChecks } from './domain-collection-integration.ts';
 import { runClientRateLimitChecks } from './client-rate-limit-integration.ts';
 import { runCollectorAdmissionChecks } from './collector-admission-integration.ts';
+import { runContentSupportListChecks } from './content-support-list-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -395,6 +396,8 @@ try {
   await runDomainCollectionChecks();
   stage = 'collector admission before shared budgets';
   await runCollectorAdmissionChecks();
+  stage = 'content assessment list source verification';
+  await runContentSupportListChecks();
   stage = 'reports and revocable snapshot shares';
   await runReportsChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'retention policy, cleanup and authorization';

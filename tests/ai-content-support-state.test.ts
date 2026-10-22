@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {contentSupportIdentity,boundedSupport,getContentSupport} from '../src/server/ai-content-support.ts';
+import {contentSupportIdentity,boundedSupport,getContentSupport,getContentSupportRun} from '../src/server/ai-content-support.ts';
 import {getDatabase,closeDatabase} from '../src/server/db.ts';
 import {contentSupportDisposition} from '../src/server/ai-content-support-worker.ts';
 import {nativeOpenApi} from '../src/server/openapi.ts';
@@ -42,29 +42,56 @@ test('stored raw and derived anchors must equal the earliest native query/audit 
   for(const drift of [{max_spend_micros:'30000'},{source_input:input}]){const changed={...fresh,...drift};changed.input_hash=contentSupportIdentity(changed);assert.throws(()=>readSupportPayload(changed),{status:409});}
  }finally{for(const key of keys)if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key];}
 });
-test('the content assessment list reads a 20-row page in a constant number of statements without row locks',async()=>{
+test('the content assessment list verifies the page set-wise, keeps stale-source state equal to detail and takes no row locks',async()=>{
  const keys=['APP_URL','DATABASE_URL','AUTH_SECRET','BOOTSTRAP_TOKEN'],prior=Object.fromEntries(keys.map(k=>[k,process.env[k]]));Object.assign(process.env,{APP_URL:'http://127.0.0.1:3111',DATABASE_URL:'postgres://unused@127.0.0.1:55501/offline',AUTH_SECRET:'a'.repeat(64),BOOTSTRAP_TOKEN:'b'.repeat(64)});
- const project=randomUUID(),workspace=randomUUID(),user=randomUUID(),hash='a'.repeat(64),stamp=(s:number)=>`2026-10-15T00:00:${String(s).padStart(2,'0')}.000001Z`;
+ const project=randomUUID(),workspace=randomUUID(),user=randomUUID(),auditor=randomUUID(),audit=randomUUID(),hash='a'.repeat(64),stamp=(s:number)=>`2026-10-15T00:00:${String(s).padStart(2,'0')}.000001Z`;
  const route={model:'author/model',tag:'provider/leaf',providerName:'Provider',profile:openRouterTextProfile,contextLength:16384,promptCapacity:8192,completionCapacity:4096,promptPrice:'0.000000001',completionPrice:'0.000000001',requestPrice:'0',estimateMicros:'11'};
- const fixture=(count:number)=>Array.from({length:count},(_,i)=>({id:randomUUID(),quote_id:randomUUID(),request_id:randomUUID(),status:'cancelled',charge_status:'cancelled',estimate_micros:'11',actual_micros:null,generation_id:null,diagnostic:null,proposal:null,result_purged_at:null,created_at:new Date(Date.UTC(2026,9,15,0,0,59-i)),run_created:stamp(59-i),run_dispatched:null,run_completed:stamp(59-i)}));
- const pool=getDatabase().pool,connect=pool.connect;let statements:string[]=[],rows:ReturnType<typeof fixture>=[],latched:unknown;
+ // A stored quote that passes the payload check, so only its current source decides its state.
+ const sharedCapture=randomUUID(),sharedPage=randomUUID();let distinctSources=false;
+ const liveQuote=(id:string,request:string)=>{
+  const page=distinctSources?randomUUID():sharedPage,connection=randomUUID(),body='Solar energy',bodyHash=createHash('sha256').update(body).digest('hex'),query={id:contentSupportQueryId('solar'),key:'solar'},older='2026-10-13T00:00:00.000001Z',newer='2026-10-14T00:00:00.000001Z';
+  const input={requestId:request,connectionId:connection,model:'author/model',fundedCredits:true,evaluation:true,maxSpendUsd:'0.030000',source:{kind:'capture' as const,selection:{captureId:distinctSources?randomUUID():sharedCapture,auditRunId:audit,pages:{coverage:null,resourceKind:'html' as const,search:'',searchIn:'url' as const,sort:'url' as const,order:'asc' as const,expectedSelectionRevision:hash}}},expectedQueryReceiptHash:hash,expectedCorpusReceiptHash:hash,selectedQueryIds:[query.id],selectedPageIds:[page]};
+  const prepared=prepareContentSupportQuote({derivationVersion:'immutable-prompt-trim-lower-v1',source:{kind:'capture',queryReceiptHash:hash,corpusReceiptHash:hash},queries:[query],pages:[{id:page,bodySha256:bodyHash,body}],exclusions:{queries:0,pages:0}},route,input.maxSpendUsd);
+  const q:Record<string,unknown>={id,workspace_id:workspace,project_id:project,user_id:user,request_id:request,connection_id:connection,connection_revision:1,request_actor:executionActor(user),key_fingerprint:hash,payload_hash:prepared.payloadHash,schema_hash:prepared.schemaHash,source_kind:'capture',audit_run_id:audit,query_receipt_hash:hash,corpus_receipt_hash:hash,source_input:input,snapshot:{evidence:prepared.snapshot,selection:{queries:[query],pages:[{id:page,auditRunId:audit,url:'https://example.test/',bodySha256:bodyHash,bodyLength:body.length,observedAt:newer,extractionVersion:'static-dom-body-v1'}],exclusions:{queries:0,pages:0}}},messages:prepared.messages,dependencies:[{kind:'query',captureId:input.source.selection.captureId,quoteId:randomUUID(),quoteCreatedAt:older,inputHash:hash,inputFingerprint:hash,resultHash:hash},{kind:'body',pageId:page,auditRunId:audit,auditCompletedAt:newer,observedAt:newer,bodySha256:bodyHash}],source_context_revision:null,source_profile_hash:null,retention_revision:1,raw_days_at_quote:90,derived_days_at_quote:1,raw_anchor:older,derived_anchor:older,route,estimate_micros:'11',max_spend_micros:'30000',quote_created:'2026-10-15T00:00:00.000001Z',quote_expires:'2026-10-15T00:05:00.000001Z',input_hash:'',raw_expired_at:null,input_purged_at:null};
+  q.input_hash=contentSupportIdentity(q as Parameters<typeof contentSupportIdentity>[0]);return q;
+ };
+ const expiredQuote=(id:string,request:string)=>({id,request_id:request,input_hash:hash,payload_hash:hash,schema_hash:hash,query_receipt_hash:hash,corpus_receipt_hash:hash,route,raw_expired_at:new Date(),input_purged_at:new Date(),snapshot:null,source_input:null});
+ type Run={id:string;quote_id:string;request_id:string;created_at:Date;[k:string]:unknown};
+ let runs:Run[]=[],quotes=new Map<string,Record<string,unknown>>(),statements:string[]=[],latched:unknown[]=[];
+ const fixture=(count:number,live:number)=>{runs=[];quotes=new Map();for(let i=0;i<count;i++){const id=randomUUID(),quote=randomUUID(),request=randomUUID();runs.push({id,quote_id:quote,request_id:request,status:'cancelled',charge_status:'cancelled',estimate_micros:'11',actual_micros:null,generation_id:null,diagnostic:null,proposal:null,result_purged_at:null,created_at:new Date(Date.UTC(2026,9,15,0,0,59-i)),run_created:stamp(59-i),run_dispatched:null,run_completed:stamp(59-i)});quotes.set(quote,i<live?liveQuote(quote,request):expiredQuote(quote,request));}};
+ const pool=getDatabase().pool,connect=pool.connect;
  const client={release(){},query:async(sql:string,values:unknown[]=[])=>{statements.push(sql);
   if(sql.startsWith('SELECT workspace_id FROM project'))return{rows:[{workspace_id:workspace}]};
   if(sql.includes('FROM project WHERE id=$1 AND workspace_id=$2'))return{rows:[{id:project,workspaceId:workspace,origin:'https://example.test'}]};
-  if(sql.includes('SELECT role FROM membership'))return{rows:[{role:'owner'}]};
-  if(sql.includes('FROM ai_content_support_run r JOIN provider_request'))return{rows};
-  if(sql.startsWith('UPDATE ai_content_support_quote q')){latched=values[3];return{rows:[]};}
-  if(sql.includes('FROM ai_content_support_quote q WHERE'))return{rows:rows.filter(r=>(values[1] as string[]).includes(r.quote_id)).map(r=>({id:r.quote_id,request_id:r.request_id,input_hash:hash,payload_hash:hash,schema_hash:hash,query_receipt_hash:hash,corpus_receipt_hash:hash,route,raw_expired_at:new Date(),input_purged_at:null,snapshot:null,source_input:null}))};
+  // The requesting owner is current; the audit's author lost manager authority after the quote.
+  if(sql.includes('SELECT role FROM membership'))return{rows:[{role:values[1]===user?'owner':'viewer'}]};
+  if(sql.includes('FROM ai_content_support_run r JOIN provider_request'))return{rows:sql.includes('r.id=$2')?runs.filter(r=>r.id===values[1]):runs};
+  if(sql.startsWith('UPDATE ai_content_support_quote q SET raw_expired_at=COALESCE(q.raw_expired_at,clock_timestamp()),unavailable_reason=COALESCE(q.unavailable_reason,m.reason)')){(values[0] as string[]).forEach((id,i)=>Object.assign(quotes.get(id)!,{raw_expired_at:new Date(),unavailable_reason:(values[1] as string[])[i]}));return{rows:[]};}
+  if(sql.startsWith('UPDATE ai_content_support_quote q')){latched.push(values[3]);return{rows:[]};}
+  if(sql.includes('FROM ai_content_support_quote q WHERE'))return{rows:(sql.includes('ANY($2')?values[1] as string[]:[values[1] as string]).filter(id=>quotes.has(id)).map(id=>structuredClone(quotes.get(id)))};
+  if(sql.startsWith('SELECT * FROM site_audit_run'))return{rows:[{id:audit,project_id:project,workspace_id:workspace,user_id:auditor,deleted_at:null,status:'completed'}]};
   return{rows:[]};}};
  pool.connect=(async()=>client) as unknown as typeof pool.connect;
  try{
-  const read=async(count:number)=>{rows=fixture(count);statements=[];latched=undefined;const list=await getContentSupport(project,user);return {list,statements:[...statements],latched};};
-  const one=await read(1),page=await read(21);
-  assert.equal(page.list.runs.length,20);assert.deepEqual(page.list.runs.map(r=>r.id),rows.slice(0,20).map(r=>r.id),'Page order follows the native (created_at,id) order.');
-  assert.ok(page.list.nextCursor);assert.equal(one.list.nextCursor,null);assert.deepEqual(page.latched,rows.slice(0,20).map(r=>r.quote_id),'Only the visible page is latched.');
+  const read=async(count:number,live:number)=>{fixture(count,live);statements=[];latched=[];const list=await getContentSupport(project,user);return {list,statements:[...statements],latched:[...latched]};};
+  const one=await read(1,0),page=await read(21,0);
+  assert.equal(page.list.runs.length,20);assert.deepEqual(page.list.runs.map(r=>r.id),runs.slice(0,20).map(r=>r.id),'Page order follows the native (created_at,id) order.');
+  assert.ok(page.list.nextCursor);assert.equal(one.list.nextCursor,null);assert.deepEqual(page.latched,[runs.slice(0,20).map(r=>r.quote_id)],'Only the visible page is latched.');
   assert.ok(page.list.runs.every(r=>r.inputExpired&&r.resultExpired&&r.selection===null),'A latched expiry stays unavailable, never an empty selection.');
-  assert.equal(page.statements.length,one.statements.length,'Statement count is independent of page size.');assert.ok(page.statements.length<=11,`${page.statements.length} statements for a 20-row page`);
-  const body=page.statements.slice(page.statements.findIndex(s=>s.includes('SELECT role FROM membership'))+1);assert.equal(body.some(s=>s.includes('FOR UPDATE')),false,'A list read takes no row locks beyond workspace admission.');
-  rows=fixture(0);statements=[];const empty=await getContentSupport(project,user);assert.deepEqual(empty.runs,[]);assert.equal(statements.some(s=>s.startsWith('UPDATE ai_content_support_quote')),false);
+  assert.equal(page.statements.length,one.statements.length,'Statement count is independent of page size.');assert.equal(page.statements.length,11,`${page.statements.length} statements for an expired 20-row page`);
+  // Twenty live rows sharing one source: one verification, one batched mark, one re-latch.
+  fixture(21,20);const first=runs[0],original=structuredClone(quotes.get(first.quote_id)!);statements=[];latched=[];
+  const live={list:await getContentSupport(project,user),statements:[...statements]},liveSql=live.statements;
+  assert.ok(liveSql.length<=18,`${liveSql.length} statements for a live 20-row page`);assert.equal(liveSql.filter(s=>s.startsWith('SELECT * FROM site_audit_run')).length,1,'One source verification per distinct source.');
+  const body=liveSql.slice(liveSql.findIndex(s=>s.includes('FROM ai_content_support_run r JOIN provider_request')));assert.equal(body.some(s=>s.includes('FOR UPDATE')),false,'A list read takes no row locks beyond workspace admission.');
+  assert.ok(live.list.runs.every(r=>r.inputExpired&&r.resultExpired&&r.selection===null),'A changed source is unavailable on the list.');
+  assert.ok([...quotes.values()].slice(0,20).every(q=>q.unavailable_reason==='source_changed'));
+  // The same stale-source fixture read through detail yields the identical run.
+  // Distinct sources cannot share a verification: statements grow with distinct live sources, never with expired rows.
+  distinctSources=true;fixture(21,20);statements=[];const spread=await getContentSupport(project,user);distinctSources=false;
+  assert.ok(spread.runs.every(r=>r.inputExpired));assert.equal(statements.filter(s=>s.startsWith('SELECT * FROM site_audit_run')).length,20);
+  quotes=new Map([[first.quote_id,original]]);runs=[first];assert.equal(original.raw_expired_at,null);
+  const detailed=await getContentSupportRun(project,user,first.id);assert.deepEqual(detailed.run,live.list.runs[0]);assert.equal(quotes.get(first.quote_id)!.unavailable_reason,'source_changed');
+  fixture(0,0);statements=[];const empty=await getContentSupport(project,user);assert.deepEqual(empty.runs,[]);assert.equal(statements.some(s=>s.startsWith('UPDATE ai_content_support_quote')),false);
  }finally{pool.connect=connect;await closeDatabase();for(const key of keys)if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key];}
 });
