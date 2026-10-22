@@ -8,7 +8,7 @@ import {analyticsPathExcluded,nativeCollectionPolicy,publicAnalyticsSettings,tra
 import {contentCursor,readContentCursor} from './project-context.ts';
 import {eventPath} from './validation.ts';
 import type {ReplayEventLocator} from '../lib/replay-heatmaps.ts';
-import {replayBegin,replayUpload,defaultReplaySettings,replayLimits,replaySummary,replayChunkDto,readReplayChunk,reassembleReplay,type ReplayBegin,type ReplayPart,type ReplaySettings} from '../lib/session-replay.ts';
+import {replayBegin,replayUpload,defaultReplaySettings,replayLimits,replaySummary,replayChunkDto,readReplayChunk,readStoredReplayChunk,reassembleReplay,type ReplayBegin,type ReplayPart,type ReplaySettings} from '../lib/session-replay.ts';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 const invalid=()=>new FoundationError(400,'Check the replay request and bounded chunk bytes.');
@@ -44,13 +44,30 @@ export async function beginSessionReplay(request:Request,raw:unknown){const inpu
  return{accepted:row.sampled,reason:row.sampled?null:'not_sampled',recordingId:row.id,token:row.sampled?token(row):null,createdAt:row.created_at.toISOString(),deadlineAt:row.deadline_at.toISOString(),uploadUntil:row.upload_until.toISOString(),settings:row.settings,limits:replayLimits};
  });}
 function checkMetadata(parts:readonly ReplayPart[],origin:string,excludedPaths:string[]){for(const part of parts)if(part.type===4){const url=new URL(String(part.data.href));if(url.origin!==origin||analyticsPathExcluded(url.pathname,excludedPaths))throw invalid();}}
+/** Revalidate a whole recording in sequence order; only its completeness and viewport metadata are kept. */
+export function assembleStoredReplay(payloads:readonly Uint8Array[]){const assembled=reassembleReplay(payloads.flatMap(v=>readStoredReplayChunk(v).parts));return{complete:assembled.complete,missing:assembled.missingFragments.length,metadata:assembled.events.filter(e=>e.type===4)};}
+type Stored={sequence:number;sha256:string};
+type Completion={chunks:Stored[];result:ReturnType<typeof assembleStoredReplay>};
+/**
+ * When this upload is expected to complete the recording, revalidate every chunk before taking the
+ * recording lock. The locked transaction reuses the result only when its committed (sequence, sha256)
+ * rows equal these exactly; otherwise it repeats the work itself. Failure here is never authoritative.
+ */
+async function prepareCompletion(capability:z.infer<typeof epochToken>,input:z.infer<typeof replayUpload>,chunk:ReturnType<typeof readReplayChunk>,sha256:string):Promise<Completion|null>{if(Date.now()>=capability.until)return null;try{return await transaction(async client=>{
+ const row=(await client.query<Row>('SELECT chunk_count,last_sequence,complete FROM session_recording WHERE id=$1 AND project_id=$2 AND sampled',[capability.id,capability.projectId])).rows[0],last=input.final?input.sequence:row?.last_sequence;
+ if(!row||row.complete||last===null||last===undefined||row.chunk_count!==last)return null;
+ const stored=(await client.query<Stored&{payload:Buffer}>('SELECT sequence,sha256,payload FROM session_recording_chunk WHERE recording_id=$1 ORDER BY sequence',[capability.id])).rows;
+ if(stored.some(v=>v.sequence===input.sequence))return null;
+ const ordered=[...stored,{sequence:input.sequence,sha256,payload:chunk.bytes}].sort((a,b)=>a.sequence-b.sequence);
+ return{chunks:ordered.map(({sequence,sha256})=>({sequence,sha256})),result:assembleStoredReplay(ordered.map(v=>v.payload))};
+ });}catch{return null;}}
 export async function uploadSessionReplay(request:Request,raw:unknown){const input=replayUpload.parse(raw),capability=readToken(input.token);let chunk:ReturnType<typeof readReplayChunk>;try{chunk=readReplayChunk(input.data);}catch{throw invalid();}
+ const sha256=digest(Buffer.concat([Buffer.from(input.sequence+':'+input.final+':'),chunk.bytes])),prepared=await prepareCompletion(capability,input,chunk,sha256);
  return collection(request,input,async(client,projectId,settings,epoch)=>{
  const row=(await client.query<Row>('SELECT * FROM session_recording WHERE id=$1 AND project_id=$2 FOR UPDATE',[capability.id,projectId])).rows[0];
  const at=(await client.query('SELECT clock_timestamp() AS at')).rows[0].at as Date;
  if(!row||!row.sampled||row.origin!==new URL(input.url).origin||capability.projectId!==projectId||capability.origin!==row.origin||capability.epoch!==epoch||row.epoch!==epoch||capability.settingsHash!==row.settings_hash||row.settings_hash!==digest(JSON.stringify(settings))||capability.until!==row.upload_until.getTime()||at.getTime()>=capability.until)throw changed();
  const policy=(await client.query('SELECT analytics_settings FROM project WHERE id=$1',[projectId])).rows[0];checkMetadata(chunk.parts,row.origin,publicAnalyticsSettings(policy.analytics_settings).excludedPaths);
- const sha256=digest(Buffer.concat([Buffer.from(input.sequence+':'+input.final+':'),chunk.bytes]));
  const prior=(await client.query('SELECT sha256 FROM session_recording_chunk WHERE recording_id=$1 AND sequence=$2',[row.id,input.sequence])).rows[0];
  if(prior){if(prior.sha256!==sha256)throw changed();return{accepted:true,duplicate:true,recordingId:row.id,sequence:input.sequence,sha256,complete:row.complete};}
  if(row.complete||row.last_sequence!==null&&input.sequence>row.last_sequence||input.final&&row.last_sequence!==null&&row.last_sequence!==input.sequence||input.final&&(await client.query('SELECT 1 FROM session_recording_chunk WHERE recording_id=$1 AND sequence>$2 LIMIT 1',[row.id,input.sequence])).rowCount)throw changed();
@@ -59,13 +76,16 @@ export async function uploadSessionReplay(request:Request,raw:unknown){const inp
  await client.query('INSERT INTO session_recording_chunk(recording_id,sequence,final,sha256,payload,fragment_ids)VALUES($1,$2,$3,$4,$5,$6)',[row.id,input.sequence,input.final,sha256,Buffer.from(chunk.bytes),fragmentIds]);
  // Validate newly completed fragment groups before any partial recording is readable.
  let observed=chunk.parts.filter(p=>p.type!=='fragment');
- if(fragmentIds.length){const related=(await client.query<{payload:Buffer}>('SELECT payload FROM session_recording_chunk WHERE recording_id=$1 AND fragment_ids&&$2::uuid[] ORDER BY sequence',[row.id,fragmentIds])).rows;try{const assembled=reassembleReplay(related.flatMap(v=>readReplayChunk(v.payload.toString('base64url')).parts).filter(p=>p.type==='fragment'&&fragmentIds.includes(p.id)));checkMetadata(assembled.events,row.origin,publicAnalyticsSettings(policy.analytics_settings).excludedPaths);observed=[...observed,...assembled.events];}catch{throw invalid();}}
+ if(fragmentIds.length){const related=(await client.query<{payload:Buffer}>('SELECT payload FROM session_recording_chunk WHERE recording_id=$1 AND fragment_ids&&$2::uuid[] ORDER BY sequence',[row.id,fragmentIds])).rows;try{const assembled=reassembleReplay(related.flatMap(v=>readStoredReplayChunk(v.payload).parts).filter(p=>p.type==='fragment'&&fragmentIds.includes(p.id)));checkMetadata(assembled.events,row.origin,publicAnalyticsSettings(policy.analytics_settings).excludedPaths);observed=[...observed,...assembled.events];}catch{throw invalid();}}
  const times=observed.map(p=>p.timestamp),minimum=Math.min(...times,...(row.first_event_timestamp===null?[]:[Number(row.first_event_timestamp)])),maximum=Math.max(...times,...(row.last_event_timestamp===null?[]:[Number(row.last_event_timestamp)]));
  if(times.length&&maximum-minimum>row.settings.maxDurationMs)throw invalid();
  const last=input.final?input.sequence:row.last_sequence,count=row.chunk_count+1;let complete=false,missing:number|null=null;
  if(last!==null&&count===last+1){
-  const stored=(await client.query<{payload:Buffer}>('SELECT payload FROM session_recording_chunk WHERE recording_id=$1 ORDER BY sequence',[row.id])).rows;
-  try{const assembled=reassembleReplay(stored.flatMap(v=>readReplayChunk(v.payload.toString('base64url')).parts));checkMetadata(assembled.events,row.origin,publicAnalyticsSettings(policy.analytics_settings).excludedPaths);complete=assembled.complete;missing=assembled.missingFragments.length;}catch{throw invalid();}
+  // Rows are immutable and bound to their sha256, so equal (sequence, sha256) rows prove the prepared result.
+  const stored=(await client.query<Stored>('SELECT sequence,sha256 FROM session_recording_chunk WHERE recording_id=$1 ORDER BY sequence',[row.id])).rows;
+  const reuse=prepared&&prepared.chunks.length===stored.length&&prepared.chunks.every((v,i)=>v.sequence===stored[i].sequence&&v.sha256===stored[i].sha256)?prepared.result:null;
+  const payloads=reuse?[]:(await client.query<{payload:Buffer}>('SELECT payload FROM session_recording_chunk WHERE recording_id=$1 ORDER BY sequence',[row.id])).rows.map(v=>v.payload);
+  try{const assembled=reuse??assembleStoredReplay(payloads);checkMetadata(assembled.metadata,row.origin,publicAnalyticsSettings(policy.analytics_settings).excludedPaths);complete=assembled.complete;missing=assembled.missing;}catch{throw invalid();}
  }
  await client.query('UPDATE session_recording SET chunk_count=$2,byte_count=byte_count+$3,last_sequence=$4,complete=$5,missing_fragments=$6,first_event_timestamp=$7,last_event_timestamp=$8 WHERE id=$1',[row.id,count,chunk.bytes.length,last,complete,missing,Number.isFinite(minimum)?minimum:null,Number.isFinite(maximum)?maximum:null]);
  return{accepted:true,duplicate:false,recordingId:row.id,sequence:input.sequence,sha256,complete};
@@ -96,7 +116,7 @@ export async function getSessionReplay(projectId:string,userId:string,recordingI
  FROM session_recording r WHERE project_id=$1 AND id=$2 AND sampled`,[projectId,recordingId,chunks&&after!==null?Number(after):chunks?-1:replayLimits.chunks,scope.cutoff])).rows[0];if(!row)throw absent();const item=summary(row,row.result_expired);if(!chunks)return{role:scope.role,asOf:scope.at,item};
  if(item.resultExpired)return{role:scope.role,asOf:scope.at,item,chunks:[],nextAfter:null};
  const stored=row.page.map(v=>({...v,payload:Buffer.from(v.data,'base64')}));
- const visible=stored.slice(0,4).map(v=>replayChunkDto.parse({sequence:v.sequence,final:v.final,sha256:v.sha256,bytes:v.payload.length,parts:readReplayChunk(v.payload.toString('base64url')).parts}));
+ const visible=stored.slice(0,4).map(v=>replayChunkDto.parse({sequence:v.sequence,final:v.final,sha256:v.sha256,bytes:v.payload.length,parts:readStoredReplayChunk(v.payload).parts}));
  return{role:scope.role,asOf:scope.at,item,chunks:visible,nextAfter:stored.length>4?visible.at(-1)!.sequence:null};
  });}
 
@@ -109,10 +129,10 @@ export async function readReplayReference(client:PoolClient,recordingId:string,l
  let event:ReturnType<typeof reassembleReplay>['events'][number];
  if(locator.kind==='event'){
   if(rows[0].sha256!==locator.chunkSha256)throw changed();
-  const part=readReplayChunk(rows[0].payload.toString('base64url')).parts[locator.index];
+  const part=readStoredReplayChunk(rows[0].payload).parts[locator.index];
   if(!part||part.type==='fragment')throw changed();event=part;
  }else{
-  const parts=rows.flatMap(row=>readReplayChunk(row.payload.toString('base64url')).parts).filter(p=>p.type==='fragment'&&p.id===locator.fragmentId);
+  const parts=rows.flatMap(row=>readStoredReplayChunk(row.payload).parts).filter(p=>p.type==='fragment'&&p.id===locator.fragmentId);
   const assembled=reassembleReplay(parts);
   if(assembled.missingFragments.length||assembled.events.length!==1)throw changed();event=assembled.events[0];
  }

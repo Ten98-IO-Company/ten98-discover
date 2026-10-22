@@ -23,9 +23,28 @@ export type ReplayPart=z.infer<typeof replayPart>;
 
 /** Validate the complete JSON tree before recursive consumers touch untrusted rrweb data. */
 export function boundedTree(value:unknown){const pending=[{value,depth:0}];let nodes=0;while(pending.length){const item=pending.pop()!;if(++nodes>replayLimits.nodes||item.depth>replayLimits.depth)throw Error('Replay JSON exceeds its structural limits.');const v=item.value;if(v===null||typeof v==='boolean')continue;if(typeof v==='number'){if(!Number.isFinite(v))throw Error('Nonfinite replay number.');continue;}if(typeof v==='string'){if(/\u0000|[\uD800-\uDFFF]/u.test(v))throw Error('Invalid replay text.');continue;}if(typeof v!=='object')throw Error('Invalid replay value.');for(const [key,child]of Object.entries(v)){if(['__proto__','constructor','prototype'].includes(key))throw Error('Unsafe replay key.');pending.push({value:child,depth:item.depth+1});}}}
-export function replayBase64(value:string,max=replayLimits.chunkBytes){if(!/^[A-Za-z0-9_-]+$/.test(value))throw Error('Use canonical replay bytes.');const bytes=Uint8Array.from(atob(value.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));if(bytes.length>max)throw Error('Replay bytes exceed their limit.');let encoded='';for(let i=0;i<bytes.length;i+=16384)encoded+=String.fromCharCode(...bytes.subarray(i,i+16384));if(btoa(encoded).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')!==value)throw Error('Use canonical replay bytes.');return bytes;}
+const base64urlAlphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+type HostBase64={Buffer?:{from(value:string,encoding:'base64url'):Uint8Array}};
+type ProposedBase64={fromBase64?:(value:string,options:{alphabet:'base64url'})=>Uint8Array};
+/**
+ * Decode unpadded canonical base64url without a re-encoding round trip. Canonical form is proven
+ * directly from the alphabet, a length that is not 1 mod 4 and zero unused bits in the last character.
+ * The server decodes with Buffer; browsers use Uint8Array.fromBase64 where available, otherwise atob.
+ */
+export function replayBase64(value:string,max=replayLimits.chunkBytes){if(!/^[A-Za-z0-9_-]+$/.test(value))throw Error('Use canonical replay bytes.');
+ const tail=value.length%4;
+ // An impossible length keeps atob's own InvalidCharacterError, as before.
+ if(tail===1){atob(value.replaceAll('-','+').replaceAll('_','/'));throw Error('Use canonical replay bytes.');}
+ if(Math.floor(value.length*3/4)>max)throw Error('Replay bytes exceed their limit.');
+ if(tail&&base64urlAlphabet.indexOf(value[value.length-1])&(tail===2?15:3))throw Error('Use canonical replay bytes.');
+ const host=(globalThis as HostBase64).Buffer;if(host){const bytes=host.from(value,'base64url');return new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength);}
+ const proposed=(Uint8Array as ProposedBase64).fromBase64;if(proposed)return proposed(value,{alphabet:'base64url'});
+ const binary=atob(value.replaceAll('-','+').replaceAll('_','/')),bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);return bytes;}
 function decode(value:Uint8Array){const parsed:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(value));boundedTree(parsed);return parsed;}
-export function readReplayChunk(value:string){const bytes=replayBase64(value),parts=z.array(replayPart).max(replayLimits.eventsPerChunk).parse(decode(bytes));for(const part of parts)if(part.type==='fragment')replayBase64(part.data);return{bytes,parts};}
+function readParts(bytes:Uint8Array){const parts=z.array(replayPart).max(replayLimits.eventsPerChunk).parse(decode(bytes));for(const part of parts)if(part.type==='fragment')replayBase64(part.data);return parts;}
+export function readReplayChunk(value:string){const bytes=replayBase64(value);return{bytes,parts:readParts(bytes)};}
+/** Revalidate stored chunk bytes directly, under the same limits as their canonical wire form. */
+export function readStoredReplayChunk(bytes:Uint8Array){if(!bytes.length)throw Error('Use canonical replay bytes.');if(bytes.length>replayLimits.chunkBytes)throw Error('Replay bytes exceed their limit.');return{bytes,parts:readParts(bytes)};}
 /** Missing fragment groups remain explicit; callers must not label the result complete. */
 export function reassembleReplay(parts:readonly ReplayPart[]){const pending=new Map<string,{total:number;parts:Map<number,Uint8Array>;bytes:number}>(),order:Array<ReplayEvent|string>=[];
  for(const part of parts){if(part.type!=='fragment'){order.push(part);continue;}let group=pending.get(part.id);if(!group){group={total:part.total,parts:new Map(),bytes:0};pending.set(part.id,group);order.push(part.id);}if(group.total!==part.total)throw Error('Conflicting replay fragments.');const bytes=replayBase64(part.data),prior=group.parts.get(part.index);if(prior){if(prior.length!==bytes.length||prior.some((v,i)=>v!==bytes[i]))throw Error('Conflicting replay fragments.');continue;}group.bytes+=bytes.length;if(group.bytes>replayLimits.eventBytes)throw Error('Replay event exceeds its limit.');group.parts.set(part.index,bytes);}
