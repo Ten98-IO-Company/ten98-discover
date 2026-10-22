@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime';
-import { Banner } from '@ten98/ui';
+import { Banner, useConfirmDialog } from '@ten98/ui';
 import { assignableRoles, invitableRoles } from '../lib/team-roles';
 import { api, ApiError, errMsg } from '../lib/api';
 
@@ -39,6 +39,7 @@ export function TeamPanel(props: TeamPanelProps) {
 function TeamPanelContent(props: TeamPanelProps) {
   const { workspaceId, userId, onChanged } = props;
   const [data, setData] = useState<TeamData | null>(null);
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mutating, setBusy] = useState(false);
@@ -225,10 +226,11 @@ function TeamPanelContent(props: TeamPanelProps) {
     });
   }
 
-  function removeMember(m: Member) {
-    if (!window.confirm(`Remove ${m.name} (${m.email}) from this workspace? They will lose access immediately.`)) {
+  async function removeMember(m: Member) {
+    if (!await confirm({ title: `Remove ${m.name} (${m.email}) from this workspace?`, description: 'They will lose access immediately.', confirmLabel: 'Remove member', confirmationText: m.email })) {
       return;
     }
+    if (mutRef.current) return;
     void runMutation(`Could not remove ${m.name}`, async signal => {
       await api<unknown>(
         `/api/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(m.userId)}/remove`,
@@ -248,10 +250,11 @@ function TeamPanelContent(props: TeamPanelProps) {
     });
   }
 
-  function toggleTwoFactor() {
+  async function toggleTwoFactor() {
     if (!data || myRole !== 'owner' || busy) return;
     const required = !data.workspace.twoFactorRequired;
-    if (required && !window.confirm('Members without two-factor authentication will lose access to this workspace’s data, and API keys they created will stop working, until they turn it on. Require it now?')) return;
+    if (required && !await confirm({ title: 'Require two-factor authentication now?', description: 'Members without two-factor authentication will lose access to this workspace’s data, and API keys they created will stop working, until they turn it on.', confirmLabel: 'Require 2FA' })) return;
+    if (mutRef.current) return;
     void runMutation('Could not change the two-factor requirement', async signal => {
       await api<unknown>(`/api/workspaces/${encodeURIComponent(workspaceId)}/two-factor`, { method: 'POST', body: { required }, signal });
     });
@@ -376,7 +379,7 @@ function TeamPanelContent(props: TeamPanelProps) {
                     {canManage && (
                       <td>
                         {canManageMember(m) && (
-                          <button type='button' className='btn' disabled={busy} onClick={() => removeMember(m)}>
+                          <button type='button' className='btn' disabled={busy} onClick={() => void removeMember(m)}>
                             Remove
                           </button>
                         )}
@@ -396,7 +399,7 @@ function TeamPanelContent(props: TeamPanelProps) {
           {data.workspace.twoFactorRequired
             ? <Banner tone='warning' icon='shield' live>Members must turn on two-factor authentication before opening this workspace’s data.</Banner>
             : <p id='two-factor-status' role='status'>Members can open this workspace without two-factor authentication.</p>}
-          <button type='button' className='btn' style={{ minBlockSize: 'var(--control-touch)' }} aria-disabled={busy} aria-describedby={data.workspace.twoFactorRequired ? undefined : 'two-factor-status'} onClick={toggleTwoFactor}>
+          <button type='button' className='btn' style={{ minBlockSize: 'var(--control-touch)' }} aria-disabled={busy} aria-describedby={data.workspace.twoFactorRequired ? undefined : 'two-factor-status'} onClick={() => void toggleTwoFactor()}>
             {data.workspace.twoFactorRequired ? 'Stop requiring two-factor authentication' : 'Require two-factor authentication'}
           </button>
         </section>
@@ -552,6 +555,7 @@ function TeamPanelContent(props: TeamPanelProps) {
           )}
         </section>
       )}
+      {confirmDialog}
     </div>
   );
 }

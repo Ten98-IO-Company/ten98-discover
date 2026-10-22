@@ -1,20 +1,25 @@
 import {Icon} from './CampaignUI'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Checkbox } from '@ten98/ui'
 import { api, ApiError, errMsg } from '../lib/api'
+import { closureAcknowledgements } from './AccountClosurePanel'
 
 type Security = { user: { id: string; twoFactorEnabled: boolean }; hasPassword: boolean }
 type Identity = { id: string; providerName: string; enabled: boolean }
 type Proof = { id: string; purpose: string; providerName: string; issuer: string; subject: string; expiresAt: string }
-type Action = 'set-password' | 'enable-two-factor' | 'disable-two-factor' | 'replace-recovery'
+type Action = 'set-password' | 'enable-two-factor' | 'disable-two-factor' | 'replace-recovery' | 'close-account'
+const actionOptions = (twoFactorEnabled: boolean): [Action, string][] => [['set-password', 'Add a local recovery password'],
+  ...(twoFactorEnabled ? [['disable-two-factor', 'Turn off two-factor authentication'], ['replace-recovery', 'Replace recovery codes']] as [Action, string][] : [['enable-two-factor', 'Set up two-factor authentication']] as [Action, string][]),
+  ['close-account', 'Close account permanently']]
 
-export function OidcRecoveryPanel({ userId, proofId, onUnauthorized, onProofHandled }: {
-  userId: string; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void
+export function OidcRecoveryPanel({ userId, proofId, onUnauthorized, onProofHandled, onClosed }: {
+  userId: string; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void; onClosed: () => void
 }) {
-  return <RecoveryInner key={userId} userId={userId} proofId={proofId} onUnauthorized={onUnauthorized} onProofHandled={onProofHandled} />
+  return <RecoveryInner key={userId} userId={userId} proofId={proofId} onUnauthorized={onUnauthorized} onProofHandled={onProofHandled} onClosed={onClosed} />
 }
 
-function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled }: {
-  userId: string; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void
+function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClosed }: {
+  userId: string; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void; onClosed: () => void
 }) {
   const [security, setSecurity] = useState<Security | null>(null)
   const [identities, setIdentities] = useState<Identity[]>([])
@@ -32,8 +37,8 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled }: {
   const [loading, setLoading] = useState(true)
   const alive = useRef(true), locked = useRef(false)
   const read = useRef<AbortController | null>(null), mutation = useRef<AbortController | null>(null)
-  const callbacks = useRef({ onUnauthorized, onProofHandled })
-  callbacks.current = { onUnauthorized, onProofHandled }
+  const callbacks = useRef({ onUnauthorized, onProofHandled, onClosed })
+  callbacks.current = { onUnauthorized, onProofHandled, onClosed }
   const activeProof = useRef(proofId), consumedProof = useRef<string | null>(null)
   activeProof.current = proofId
   const generation = useRef(0)
@@ -126,6 +131,8 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled }: {
     setPassword(''); setRepeat(''); setFactor('')
     void run(signal => api<{ totpURI?: string; backupCodes?: string[] }>('/api/account/oidc/reauth/confirm', { method: 'POST', body, signal }), async result => {
       consumedProof.current = proof.id
+      // Closure ended every session server-side (docs/account-closure.md).
+      if (action === 'close-account') { callbacks.current.onClosed(); return }
       setEnrollment(result.backupCodes ? { totpURI: result.totpURI, backupCodes: result.backupCodes } : null)
       setNotice(result.totpURI ? 'Confirm an authenticator code below to finish setup.' : action === 'set-password' ? 'Local recovery password saved. You can now use Account security for password and authenticator settings.' : 'Account security updated.')
       setProof(null)
@@ -150,14 +157,15 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled }: {
         <p className='mono' style={{ overflowWrap: 'anywhere' }}>{proof.issuer} · {proof.subject}</p>
         <fieldset disabled={busy || loading} style={{ border: 0, padding: 0, minWidth: 0 }}>
           <div className='field'><label htmlFor='oidc-security-action'>Security change</label><select id='oidc-security-action' value={action} onChange={event => { setAction(event.target.value as Action); setPassword(''); setRepeat(''); setFactor('') }}>
-            <option value='set-password'>Add a local recovery password</option>
-            {security.user.twoFactorEnabled ? <><option value='disable-two-factor'>Turn off two-factor authentication</option><option value='replace-recovery'>Replace recovery codes</option></> : <option value='enable-two-factor'>Set up two-factor authentication</option>}
+            {actionOptions(security.user.twoFactorEnabled).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select></div>
+          {action === 'close-account' && <p role='note'>Closing is permanent. You are signed out everywhere, every API key you issued is revoked, and your linked identities, authenticator, preferences and memberships are removed. You cannot close the account while you are the only owner of a workspace or the only instance operator.</p>}
+          {action === 'close-account' && closureAcknowledgements.map(item => <Checkbox key={item.id} name={`closure-${item.id}`} required label={item.label} />)}
           {action === 'set-password' && <><div className='field'><label htmlFor='oidc-new-password'>New recovery password</label><input id='oidc-new-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} /></div>
             <div className='field'><label htmlFor='oidc-repeat-password'>Repeat recovery password</label><input id='oidc-repeat-password' type='password' autoComplete='new-password' minLength={12} maxLength={128} required value={repeat} onChange={event => setRepeat(event.target.value)} /></div></>}
           {security.user.twoFactorEnabled && <><div className='field'><label htmlFor='oidc-factor-type'>Existing second factor</label><select id='oidc-factor-type' value={recovery ? 'recovery' : 'totp'} onChange={event => { setRecovery(event.target.value === 'recovery'); setFactor('') }}><option value='totp'>Authenticator code</option><option value='recovery'>Recovery code</option></select></div>
             <div className='field'><label htmlFor='oidc-existing-factor'>{recovery ? 'Recovery code' : 'Authenticator code'}</label><input id='oidc-existing-factor' autoComplete='one-time-code' inputMode={recovery ? 'text' : 'numeric'} maxLength={recovery ? 21 : 6} required value={factor} onChange={event => setFactor(event.target.value)} /></div></>}
-          <button className='btn button primary' type='submit'>Apply security change</button>
+          <button className='btn button primary' type='submit'>{action === 'close-account' ? 'Close account permanently' : 'Apply security change'}</button>
           <button className='btn button ghost' type='button' onClick={() => callbacks.current.onProofHandled()}>Cancel</button>
         </fieldset>
       </form>}

@@ -74,7 +74,7 @@ try{
 
   stage='expired receipt and revoked proof';await pool.query('UPDATE domain_redirect_check SET observation=NULL,observation_expired_at=clock_timestamp() WHERE id=$1',[initial.id]);
   await details.getByRole('button',{name:'Refresh checks',exact:true}).click();await details.getByText('Observation expired under workspace retention. Only this check receipt remains.',{exact:true}).waitFor();assert.ok(!(await details.innerText()).includes('HTTP 301'));
-  page.once('dialog',(dialog:any)=>dialog.accept());await row(first.hostname).getByRole('button',{name:'Revoke proof',exact:true}).click();await row(first.hostname).getByText('Revoked',{exact:true}).waitFor();
+  await row(first.hostname).getByRole('button',{name:'Revoke proof',exact:true}).click();await page.getByRole('dialog',{name:`Revoke the proof for ${first.hostname}?`,exact:true}).getByRole('button',{name:'Revoke proof',exact:true}).click();await row(first.hostname).getByText('Revoked',{exact:true}).waitFor();
   const revoked=panel(first.hostname);await revoked.locator('summary').click();await revoked.getByText('Historical configuration; this check does not describe the current alias settings.',{exact:true}).waitFor();assert.equal(await revoked.getByRole('button',{name:'Check redirect',exact:true}).isDisabled(),true);
   console.log('PASS expired evidence remains a receipt; revoked proof disables checks and labels historical configuration');
 

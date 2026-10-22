@@ -1,4 +1,5 @@
 import {useEffect, useId, useRef, useState, type FormEvent} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api, ApiError, errMsg} from '../lib/api';
@@ -24,6 +25,7 @@ export function PromptDiscoveryPanel(props: Props) {
 }
 function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
   const id = useId(), heading = useRef<HTMLHeadingElement>(null), errorFocus = useRef<HTMLParagraphElement>(null);
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const [topic, setTopic] = useState(''), [audience, setAudience] = useState(''), [intent, setIntent] = useState<PromptDiscoveryIntent>('learn');
   const [context, setContext] = useState<Context | null>(null), [loading, setLoading] = useState(true), [readError, setReadError] = useState(''), [lost, setLost] = useState(false);
   const [includeBrand, setIncludeBrand] = useState(false), [competitorId, setCompetitorId] = useState('');
@@ -76,11 +78,11 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
   }, []);
   useEffect(() => { if (error) errorFocus.current?.focus(); }, [error]);
 
-  function build(event: FormEvent) {
+  async function build(event: FormEvent) {
     event.preventDefault();
     try {
       const next = buildPromptQuestions({topic, audience, intent, brand, competitor: competitorName});
-      if (questions.length && !window.confirm('Replace the current starter questions? Your selections will reset.')) return;
+      if (questions.length && !await confirm({title: 'Replace the current starter questions?', description: 'Your selections will reset.', confirmLabel: 'Replace questions', danger: false})) return;
       setQuestions(next); setSelected(next.map((_, index) => index)); setGenerated({signature, topic: normalize(topic)}); setError('');
     } catch (cause) { setError(errMsg(cause)); }
   }
@@ -109,5 +111,6 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
       </form>
       {generated && <div className="card stack" aria-label="Starter questions"><h3>Choose starter questions</h3><p>Edit selected questions before saving. Saving does not run them or start tracking.</p>{stale && <p className="banner" role="status">Inputs changed. Rebuild the questions to continue.</p>}<div className="row"><button className="btn ghost" type="button" style={{minHeight: 44}} onClick={() => setSelected(questions.map((_, index) => index))}>Select all</button><button className="btn ghost" type="button" style={{minHeight: 44}} onClick={() => setSelected([])}>Clear selection</button></div>{questions.map((question, index) => <label key={index} className="card" style={{display: 'flex', alignItems: 'flex-start', gap: 12, minHeight: 44, padding: 'var(--space-3, 12px)', overflowWrap: 'anywhere'}}><input type="checkbox" checked={selected.includes(index)} onChange={event => setSelected(previous => event.target.checked ? [...previous, index] : previous.filter(value => value !== index))}/><span>{question}</span></label>)}<div className="row"><button className="btn primary" type="button" style={{minHeight: 44}} disabled={stale || selected.length === 0} onClick={review}>Review selected prompts</button><span className="hint">{selected.length} selected</span></div></div>}
     </>}
+    {confirmDialog}
   </section>;
 }

@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api,ApiError} from '../lib/api';
@@ -9,13 +10,14 @@ type Pending={operation:'create'|'revoke';shareId:string|null;body:string};
 type Draft={label:string;sections:Record<WebsiteShareSection,boolean>;expiresAt:string};
 const sectionLabels:Record<WebsiteShareSection,string>={overview:'Overview',events:'Events',locations:'Regions and cities'};
 const touch={minHeight:44,maxWidth:'100%',whiteSpace:'normal' as const,overflowWrap:'anywhere' as const};
-const creatorText=(creator:WebsiteShareItem['creator'])=>creator===null?'Created by a deleted account':(creator.member?'Created by ':'Former member: ')+creator.name+' ('+creator.email+')';
+const creatorText=(creator:WebsiteShareItem['creator'])=>creator===null?'Created by a deleted account':(creator.member?'Created by ':'Former member: ')+creator.name+(creator.email?' ('+creator.email+')':'');
 class InvalidReply extends Error{}
 type Props={projectId:string;isCurrent?:()=>boolean;onUnauthorized:()=>void};
 /** Owner/admin management of public website links (P45). The token exists only in this tab and is shown once. */
 export function WebsiteSharePanel({projectId,isCurrent,onUnauthorized}:Props){
  const [rows,setRows]=useState<WebsiteShareList|null>(null),[draft,setDraft]=useState<Draft|null>(null),[pending,setPending]=useState<Pending|null>(null),[secret,setSecret]=useState<{shareId:string;url:string}|null>(null);
  const [busy,setBusy]=useState(false),[writing,setWriting]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
  const mounted=useRef(true),readOp=useRef<AbortController|null>(null),writeLock=useRef(false),cursor=useRef<string|null>(null),back=useRef<string[]>([]),live=useRef({isCurrent,onUnauthorized});live.current={isCurrent,onUnauthorized};
  const allowed=()=>mounted.current&&(live.current.isCurrent?.()??true),base='/api/projects/'+encodeURIComponent(projectId)+'/website-shares';
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;readOp.current?.abort();};},[]);
@@ -30,7 +32,9 @@ export function WebsiteSharePanel({projectId,isCurrent,onUnauthorized}:Props){
  }
  function confirmDiscard(){return !allowed()||!pending&&!draft&&!secret||window.confirm([pending?'The shared-link request may already be saved. Leaving loses its exact retry.':'',draft?'Discard the unsaved public-link draft?':'',secret?'This public URL is shown once. Dismiss it only after copying it.':''].filter(Boolean).join(' ')+' Continue?');}
  useBlocker({shouldBlockFn:()=>!confirmDiscard(),enableBeforeUnload:()=>allowed()&&!!(pending||draft||secret)});
- function newDraft(){if(!allowed()||!confirmDiscard())return;setSecret(null);setDraft({label:'',sections:{overview:true,events:true,locations:false},expiresAt:new Date(Date.now()+30*864e5).toISOString().slice(0,16)});setError('');setNotice('');}
+ // In-page twin of confirmDiscard for button actions; the navigation guard above needs the synchronous native answer.
+ async function confirmDiscardInPage(){if(!allowed()||!pending&&!draft&&!secret)return true;const ok=await confirm({title:draft?'Discard the unsaved public-link draft?':'Continue?',description:[pending?'The shared-link request may already be saved. Leaving loses its exact retry.':'',secret?'This public URL is shown once. Dismiss it only after copying it.':''].filter(Boolean).join(' ')||'The draft has not been saved.',confirmLabel:draft?'Discard draft':'Continue'});return ok&&allowed();}
+ async function newDraft(){if(!allowed()||!await confirmDiscardInPage())return;setSecret(null);setDraft({label:'',sections:{overview:true,events:true,locations:false},expiresAt:new Date(Date.now()+30*864e5).toISOString().slice(0,16)});setError('');setNotice('');}
  function start(operation:Pending['operation'],row?:WebsiteShareItem){
   if(!allowed()||pending||writeLock.current)return;
   try{let body:unknown;const requestId=crypto.randomUUID();
@@ -58,9 +62,9 @@ export function WebsiteSharePanel({projectId,isCurrent,onUnauthorized}:Props){
  return <section className="stack" aria-label="Public website links" aria-busy={busy||writing} style={{minWidth:0,overflowWrap:'anywhere'}}>
   <h3>Public website links</h3>
   <p className="hint">Owner and admin access only. Anyone with a link sees the approved sections of this website's analytics, for the dates they choose, until the link expires or is revoked. Individual sessions, visitors, event properties and filters are never shared.</p>
-  <div className="row" style={{flexWrap:'wrap'}}><button className="btn" type="button" style={touch} disabled={busy} onClick={()=>{back.current=[];void load();}}>Load public links</button><button className="btn" type="button" style={touch} disabled={writing||!!pending} onClick={newDraft}>New public link</button></div>
+  <div className="row" style={{flexWrap:'wrap'}}><button className="btn" type="button" style={touch} disabled={busy} onClick={()=>{back.current=[];void load();}}>Load public links</button><button className="btn" type="button" style={touch} disabled={writing||!!pending} onClick={()=>void newDraft()}>New public link</button></div>
   {error&&<p className="alert" role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}
-  {pending&&<div className="banner" role="status"><p>The {pending.operation} request still needs its exact acknowledgment. Reading the current links does not acknowledge it.</p><div className="row" style={{flexWrap:'wrap'}}><button className="btn" type="button" style={touch} disabled={writing} onClick={()=>void send(pending)}>Retry the same request</button><button className="btn" type="button" style={touch} disabled={writing} onClick={()=>{if(!window.confirm('Discard this exact retry? The original request may already have completed.'))return;setPending(null);setNotice('Retry discarded. The original request may have completed; load the links and revoke any link you cannot use.');}}>Discard the retry</button></div></div>}
+  {pending&&<div className="banner" role="status"><p>The {pending.operation} request still needs its exact acknowledgment. Reading the current links does not acknowledge it.</p><div className="row" style={{flexWrap:'wrap'}}><button className="btn" type="button" style={touch} disabled={writing} onClick={()=>void send(pending)}>Retry the same request</button><button className="btn" type="button" style={touch} disabled={writing} onClick={()=>void (async()=>{if(!await confirm({title:'Discard this exact retry?',description:'The original request may already have completed.',confirmLabel:'Discard the retry'})||writeLock.current||!allowed())return;setPending(null);setNotice('Retry discarded. The original request may have completed; load the links and revoke any link you cannot use.');})()}>Discard the retry</button></div></div>}
   {secret&&<div className="banner stack"><label>New public website URL<input className="input" readOnly value={secret.url} onFocus={event=>event.currentTarget.select()} style={touch}/></label><button className="btn" type="button" style={touch} onClick={()=>void navigator.clipboard.writeText(secret.url).then(()=>setNotice('Public link copied.'),()=>setNotice('Select and copy the URL manually.'))}>Copy public website URL</button><p>Copy this link now. Its secret is kept only in this tab and is never returned by the server.</p><button className="btn" type="button" style={touch} onClick={()=>setSecret(null)}>Dismiss public website URL</button></div>}
   {draft&&<fieldset className="stack" disabled={writing||!!pending}><legend>Create a public link</legend>
    <label>Link name<input className="input" maxLength={120} value={draft.label} onChange={event=>setDraft({...draft,label:event.target.value})} style={touch}/></label>
@@ -69,13 +73,14 @@ export function WebsiteSharePanel({projectId,isCurrent,onUnauthorized}:Props){
     <p className="hint">Overview: totals, daily pageviews, top pages, referrers, browsers, operating systems, devices and countries. Events: custom event counts and names. Page paths, referrer hosts and event names are shown exactly as recorded. Counts are exact and recipients can choose a single day, so on a low-traffic website any section can single out individual visits; regions and cities most of all.</p></fieldset>
    <label>Link expires (UTC)<input className="input" type="datetime-local" value={draft.expiresAt} onChange={event=>setDraft({...draft,expiresAt:event.target.value})} style={touch}/></label>
    <p className="hint">Between one hour and 365 days. A link cannot be edited; to change it, revoke it and create a new one.</p>
-   <div className="row" style={{flexWrap:'wrap'}}><button className="btn primary" type="button" style={touch} onClick={()=>start('create')}>Create public link</button><button className="btn" type="button" style={touch} onClick={()=>{if(confirmDiscard())setDraft(null);}}>Cancel</button></div>
+   <div className="row" style={{flexWrap:'wrap'}}><button className="btn primary" type="button" style={touch} onClick={()=>start('create')}>Create public link</button><button className="btn" type="button" style={touch} onClick={()=>void (async()=>{if(await confirmDiscardInPage())setDraft(null);})()}>Cancel</button></div>
   </fieldset>}
   {busy&&<p role="status">Loading public links…</p>}
   {rows&&<><p className="hint">Existing links never reveal their secrets. To replace a lost link, revoke it and create a new one.</p>
    <ul className="board-list">{rows.items.map(row=><li className="card stack" key={row.id}><h4><bdi>{row.label}</bdi></h4><p>{row.sections.map(key=>sectionLabels[key]).join(', ')}</p><p>{row.state==='active'?'Active':row.state==='expired'?'Expired':'Revoked'} · expires <time dateTime={row.expiresAt}>{row.expiresAt}</time></p><p className="hint">{creatorText(row.creator)}</p>
-    {row.state!=='revoked'&&<button className="btn danger" type="button" style={touch} disabled={writing||!!pending} onClick={()=>{if(confirm('Revoke this public link now? New reads are refused immediately and the link cannot be restored. Pages already open keep what they loaded until their next refresh (up to 5 minutes).'))start('revoke',row);}}>Revoke: {row.label}</button>}</li>)}</ul>
+    {row.state!=='revoked'&&<button className="btn danger" type="button" style={touch} disabled={writing||!!pending} onClick={()=>void (async()=>{if(await confirm({title:'Revoke this public link now?',description:'New reads are refused immediately and the link cannot be restored. Pages already open keep what they loaded until their next refresh (up to 5 minutes).',confirmLabel:'Revoke link'}))start('revoke',row);})()}>Revoke: {row.label}</button>}</li>)}</ul>
    {!rows.items.length&&<p>No public links on this page.</p>}
    <div className="row" style={{flexWrap:'wrap'}}><button className="btn" type="button" style={touch} disabled={busy||!back.current.length} onClick={()=>void load(back.current.pop()||null)}>Previous public links</button><button className="btn" type="button" style={touch} disabled={busy||!rows.nextCursor} onClick={()=>{back.current.push(cursor.current??'');void load(rows.nextCursor);}}>Next 20 public links</button></div></>}
+ {confirmDialog}
  </section>;
 }

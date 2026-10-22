@@ -1,4 +1,5 @@
 import type {RankLocationCoverage} from '../server/dataforseo-rank';
+import { useConfirmDialog } from '@ten98/ui'
 import {useEffect,useId,useRef,useState} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
@@ -64,6 +65,7 @@ function RankController(props:Props){
   function patch(value:Partial<State>){if(!alive.current)return;state.current={...state.current,...value};setState(state.current);}
   function locked(){return operation.current?.write===true||intent.current!==null;}
   function invalidate(){operation.current?.controller.abort();operation.current=null;}
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   function canLeave(){return !locked()&&(!state.current.dirty||window.confirm('Discard unsaved tracker changes?'));}
   useBlocker({withResolver:false,shouldBlockFn:()=>!canLeave(),enableBeforeUnload:()=>state.current.dirty||locked()});
   useEffect(()=>{alive.current=true;void loadList('active');return()=>{alive.current=false;invalidate();};},[]);
@@ -159,7 +161,7 @@ function RankController(props:Props){
   function changeEdit(value:RankEdit){if(!locked())patch({edit:value,dirty:true});}
   function saveEdit(){const at=state.current;if(!at.detail||!safeText(at.edit.name.trim(),120)){patch({error:'Enter a tracker name, up to 120 characters.'});return;}mutate(`${base}/${at.detail.tracker.id}/update`,{revision:at.detail.tracker.authoredRevision,...at.edit},at.detail.tracker.id);}
   function cancelForm(){if(!canLeave())return;invalidate();resetForms();patch({reading:false,focus:'detail-heading'});}
-  function archive(){const at=state.current;if(locked()||!writer(at.role)||!at.detail||!canLeave())return;const archived=at.detail.tracker.archivedAt===null;if(!window.confirm(archived?'Archive this tracker? Its keywords are kept.':'Reactivate this tracker? No rank check will start.'))return;mutate(`${base}/${at.detail.tracker.id}/archive`,{revision:at.detail.tracker.authoredRevision,archived},at.detail.tracker.id);}
+  async function archive(){const at=state.current;if(locked()||!writer(at.role)||!at.detail||!canLeave())return;const archived=at.detail.tracker.archivedAt===null;if(!await confirm(archived?{title:'Archive this tracker?',description:'Its keywords are kept.',confirmLabel:'Archive tracker'}:{title:'Reactivate this tracker?',description:'No rank check will start.',confirmLabel:'Reactivate tracker',danger:false})||locked()||state.current.detail?.tracker.id!==at.detail.tracker.id)return;mutate(`${base}/${at.detail.tracker.id}/archive`,{revision:at.detail.tracker.authoredRevision,archived},at.detail.tracker.id);}
   function add(){if(locked()||!writer(state.current.role)||state.current.detail?.tracker.archivedAt!==null||!canLeave())return;invalidate();resetForms();patch({reading:false,adding:true,focus:'add-heading'});}
   function savedAuthoring(){const at=state.current;return !locked()&&!at.conflict&&writer(at.role)&&at.adding&&at.detail?.tracker.archivedAt===null;}
   function keywordSource(source:'paste'|'saved'){
@@ -205,7 +207,7 @@ function RankController(props:Props){
   }
   function saveWords(){const at=state.current;if(!at.detail)return;const words=at.words.split(/\r?\n/).filter(w=>w.trim()!=='');if(words.length<1||words.length>2000||words.some(w=>!str(w,200))){patch({error:'Enter 1–2,000 nonempty lines, each up to 200 characters. A tracker can contain 1,000 unique keywords.'});return;}mutate(`${base}/${at.detail.tracker.id}/keywords/add`,{revision:at.detail.tracker.authoredRevision,keywords:words,matchCase:at.matchCase},at.detail.tracker.id);}
   function selection(id:string,checked:boolean){const at=state.current;if(locked()||at.conflict||!writer(at.role)||!at.detail?.keywords.some(k=>k.id===id))return;patch({selected:checked?[...new Set([...at.selected,id])]:at.selected.filter(k=>k!==id)});}
-  function keywordMutation(kind:'pin'|'remove',pinned?:boolean){const at=state.current;if(locked()||!writer(at.role)||!at.detail||at.selected.length===0||!canLeave())return;if(kind==='remove'&&!window.confirm(`Remove ${at.selected.length} selected keyword(s)?`))return;mutate(`${base}/${at.detail.tracker.id}/keywords/${kind}`,{revision:at.detail.tracker.authoredRevision,keywordIds:at.selected,...(kind==='pin'?{pinned}:{})},at.detail.tracker.id);}
+  async function keywordMutation(kind:'pin'|'remove',pinned?:boolean){const at=state.current;if(locked()||!writer(at.role)||!at.detail||at.selected.length===0||!canLeave())return;if(kind==='remove'&&(!await confirm({title:`Remove ${at.selected.length} selected keyword(s)?`,description:'They are removed from this tracker.',confirmLabel:'Remove keywords'})||locked()||state.current.detail?.tracker.id!==at.detail.tracker.id))return;mutate(`${base}/${at.detail.tracker.id}/keywords/${kind}`,{revision:at.detail.tracker.authoredRevision,keywordIds:at.selected,...(kind==='pin'?{pinned}:{})},at.detail.tracker.id);}
   function checks(mode:'history'|'setup',subset=false){const at=state.current;if(!at.detail||!canLeave()||mode==='setup'&&(!writer(at.role)||at.detail.tracker.archivedAt!==null||!at.detail.keywords.length)||subset&&!at.selected.length)return;const keywordIds=subset?[...at.selected]:undefined;invalidate();resetForms();patch({reading:false});setCheck({generation:++checkGeneration.current,mode,...(keywordIds?{keywordIds}:{})});}
   function latest(){if(!state.current.detail||!canLeave())return;invalidate();resetForms();patch({reading:false});setObservations(true);}
   function openReporting(){if(!state.current.detail||!canLeave())return;invalidate();resetForms();patch({reading:false});setReporting(true);}
@@ -221,12 +223,12 @@ function RankController(props:Props){
   if(historyPanel)return <>{historyPanel}{schedulePanel??checkPanel}</>;
   if(schedulePanel)return schedulePanel;
   if(checkPanel)return checkPanel;
-  return <RankTrackingView {...s} prefix={prefix} locked={s.writing||intent.current!==null} pending={s.pending&&!s.writing}
+  return <><RankTrackingView {...s} prefix={prefix} locked={s.writing||intent.current!==null} pending={s.pending&&!s.writing}
     onChecks={()=>checks('history')} onPrepareCheck={()=>checks('setup')} onPrepareSelected={()=>checks('setup',true)} onObservations={latest} onSchedule={openSchedule} onReporting={openReporting}
     onRefresh={refresh} onFilter={filter=>{if(canLeave()){resetForms();void loadList(filter);}}} onMore={()=>{if(state.current.nextCursor&&!state.current.reading)void loadList(state.current.filter,state.current.nextCursor);}}
     onNew={newTracker} onOpen={open} onBack={back} onCreateChange={changeCreate} onCatalog={()=>void catalog()} onLocalQuery={localQuery} onSearchLocal={()=>void searchLocal()} onMoreLocal={()=>void searchLocal(true)} onCreate={createTracker} onCancelCreate={back}
     onKeywordSource={keywordSource} onSavedKeywordQuery={savedKeywordQuery} onSearchSavedKeywords={()=>void loadSavedKeywords()} onMoreSavedKeywords={()=>void loadSavedKeywords(true)} onSelectSavedKeyword={selectSavedKeyword} onSelectAllSavedKeywords={selectAllSavedKeywords} onAddSavedKeywordsToDraft={addSavedKeywordsToDraft}
     onEdit={edit} onEditChange={changeEdit} onSaveEdit={saveEdit} onCancelEdit={cancelForm} onArchive={archive} onAdd={add} onWords={words=>{if(!locked())patch({words,dirty:true});}} onMatchCase={matchCase=>{if(!locked())patch({matchCase,dirty:true});}} onSaveWords={saveWords} onCancelWords={cancelForm}
     onSelect={selection} onSelectAll={checked=>{if(!locked()&&!state.current.conflict&&writer(state.current.role))patch({selected:checked?state.current.detail?.keywords.map(k=>k.id)??[]:[]});}} onPin={pinned=>keywordMutation('pin',pinned)} onRemove={()=>keywordMutation('remove')}
-    onRetry={()=>{if(intent.current&&!operation.current?.write)void send(intent.current);}} onReload={refresh} onOpenProviders={()=>{if(state.current.role==='owner'&&canLeave()){resetForms();invalidate();props.onOpenProviders();}}}/>
+    onRetry={()=>{if(intent.current&&!operation.current?.write)void send(intent.current);}} onReload={refresh} onOpenProviders={()=>{if(state.current.role==='owner'&&canLeave()){resetForms();invalidate();props.onOpenProviders();}}}/>{confirmDialog}</>;
 }

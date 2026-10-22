@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import { api, ApiError, errMsg } from '../lib/api';
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
@@ -167,6 +168,7 @@ function DestinationsInner({
   onUnauthorized: () => void;
 }) {
   const [mgmt, setMgmt] = useState<ManagementDTO | null>(null);
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
   const [draft, setDraft] = useState<Configuration | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pendingWrite, setPendingWrite] = useState(false);
@@ -339,26 +341,33 @@ function DestinationsInner({
     void runMutation('/draft', { expectedVersion: mgmt.draftVersion, configuration: draft });
   };
 
-  const publish = () => {
+  const publish = async () => {
     if (!mgmt) return;
     const target = environment === 'live' ? 'Live' : 'Test';
     if (
-      !window.confirm(
-        `Publish this draft to ${target}? A new revision with a fresh consent epoch is created — every visitor must grant consent again before any vendor tag runs.`,
-      )
+      !await confirm({
+        title: `Publish this draft to ${target}?`,
+        description: 'A new revision with a fresh consent epoch is created — every visitor must grant consent again before any vendor tag runs.',
+        confirmLabel: `Publish to ${target}`,
+        danger: false,
+      })
     )
       return;
+    if (busyRef.current) return;
     void runMutation('/publish', { expectedVersion: mgmt.draftVersion });
   };
 
-  const rollback = (h: HistoryEntry) => {
+  const rollback = async (h: HistoryEntry) => {
     if (!mgmt) return;
     if (
-      !window.confirm(
-        `Roll back to revision v${h.number}? A new revision with a fresh consent epoch is created and the current draft is replaced.`,
-      )
+      !await confirm({
+        title: `Roll back to revision v${h.number}?`,
+        description: 'A new revision with a fresh consent epoch is created and the current draft is replaced.',
+        confirmLabel: 'Roll back',
+      })
     )
       return;
+    if (busyRef.current) return;
     void runMutation('/rollback', { expectedVersion: mgmt.draftVersion, revisionId: h.id });
   };
 
@@ -511,7 +520,7 @@ function DestinationsInner({
       <div className="card">
         <div className="row between">
           <h3>Configured destinations</h3>
-          {(dirty || pendingWrite || conflicted) && <button type="button" className="btn" disabled={loading || mutating} onClick={() => { if (window.confirm('Reload saved settings? This replaces your local edits with the saved settings.')) void refresh(); }}>Reload saved state</button>}
+          {(dirty || pendingWrite || conflicted) && <button type="button" className="btn" disabled={loading || mutating} onClick={() => void (async () => { if (await confirm({ title: 'Reload saved settings?', description: 'This replaces your local edits with the saved settings.', confirmLabel: 'Reload saved settings', danger: false })) void refresh(); })()}>Reload saved state</button>}
           <button type="button" className="btn primary" disabled={!dirty || busy} onClick={saveDraft}>
             Save draft
           </button>
@@ -911,7 +920,7 @@ function DestinationsInner({
           consent again before any vendor tag runs, changes propagate within about 60 seconds, and no
           historical events are replayed.
         </p>
-        <button type="button" className="btn primary" disabled={!canPublish} onClick={publish}>
+        <button type="button" className="btn primary" disabled={!canPublish} onClick={() => void publish()}>
           Publish to {environment === 'live' ? 'Live' : 'Test'}
         </button>
       </div>
@@ -946,7 +955,7 @@ function DestinationsInner({
                           type="button"
                           className="btn ghost"
                           disabled={busy || dirty}
-                          onClick={() => rollback(h)}
+                          onClick={() => void rollback(h)}
                         >
                           Roll back
                         </button>
@@ -994,6 +1003,7 @@ function DestinationsInner({
           style={{ width: '100%', resize: 'vertical' }}
         />
       </div>
+      {confirmDialog}
     </div>
   );
 }

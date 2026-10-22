@@ -1,7 +1,7 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import {Link} from '@tanstack/react-router';
-import {RunCostSummary} from '@ten98/ui';
+import {RunCostSummary, useConfirmDialog} from '@ten98/ui';
 import {SavedKeywordsPanel,type ResearchSaveSeed} from './SavedKeywordsPanel';
 import {isKeywordMetricRow} from '../lib/keyword-metrics';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
@@ -125,6 +125,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   const notifiedRef=useRef(false);
   const resultHeading=useRef<HTMLHeadingElement|null>(null),focusResult=useRef(false);
   const [clock,setClock]=useState(Date.now());
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   unauthRef.current=onUnauthorized;
   useEffect(()=>{onLockChange(writing||lostStart);},[writing,lostStart,onLockChange]);
 
@@ -292,7 +293,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
     }finally{finish(op);}
   }
   async function cancelRun(){
-    if(!selected?.canCancel||!window.confirm('Cancel this queued run? Requests already sent may still be charged.'))return;
+    if(!selected?.canCancel||!await confirm({title:'Cancel this queued run?',description:'Requests already sent may still be charged.',confirmLabel:'Cancel run'}))return;
     const id=selected.id;const op=begin(true,true);if(!op)return;setErr(null);setMsg(null);
     try{
       const state=await access(op);if(!state||!current(op))return;
@@ -414,7 +415,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
           <p>The start request was sent but the response was lost, so this run may already exist. Retrying sends the exact same request (same quote ID and request key); no new charge key is created and paid work is never silently retried.</p>
           <div className="row">
             <button type="button" className="btn primary" onClick={startRun} disabled={writing}>Retry same request</button>
-            <button type="button" className="btn" onClick={()=>{if(window.confirm('Discard local retry controls? The server request may already exist; this does not cancel it.')){clearQuote();setErr(null);setMsg('Local retry controls cleared. Check Recent runs before starting new research.');}}} disabled={writing}>Dismiss retry controls</button>
+            <button type="button" className="btn" onClick={()=>void (async()=>{if(await confirm({title:'Discard local retry controls?',description:'The server request may already exist; this does not cancel it.',confirmLabel:'Dismiss retry controls'})&&!activeRef.current?.write){clearQuote();setErr(null);setMsg('Local retry controls cleared. Check Recent runs before starting new research.');}})()} disabled={writing}>Dismiss retry controls</button>
           </div>
         </div>
       :
@@ -487,6 +488,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
           </tbody>
         </table></div>}
     </div>
+    {confirmDialog}
   </section>;
 }
 

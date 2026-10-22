@@ -1,4 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
+import { useConfirmDialog } from '@ten98/ui'
 import {api, ApiError, errMsg} from '../lib/api';
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
@@ -128,6 +129,7 @@ export function PromptsPanel(props: Props) {
 
 function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAISearch}: Props) {
   const base = `/api/projects/${encodeURIComponent(projectId)}/prompts`;
+  const [confirm, confirmDialog] = useConfirmDialog({ danger: true });
 
   const [execution, setExecution] = useState<{generation: number; entry: ExecutionEntry} | null>(null);
   const [suggestions, setSuggestions] = useState<number | null>(null);
@@ -585,8 +587,8 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
     runAttempt({kind: 'update', promptId: editing.id, requestId, body: {requestId, revision: editing.revision, text, topic, tags, enabled: fEnabled}});
   };
 
-  const onArchive = (p: Prompt) => {
-    if (!window.confirm('Archive this prompt? Its versions stay in history and you can restore it anytime. Select OK to archive.')) return;
+  const onArchive = async (p: Prompt) => {
+    if (!await confirm({title: 'Archive this prompt?', description: 'Its versions stay in history and you can restore it anytime.', confirmLabel: 'Archive prompt'})) return;
     const requestId = crypto.randomUUID();
     runAttempt({kind: 'archive', promptId: p.id, requestId, body: {requestId, revision: p.revision}});
   };
@@ -928,7 +930,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
                             Restore
                           </button>
                         ) : (
-                          <button type="button" className="btn ghost" onClick={() => onArchive(p)} disabled={busy || !!retryAttempt}>
+                          <button type="button" className="btn ghost" onClick={() => void onArchive(p)} disabled={busy || !!retryAttempt}>
                             Archive
                           </button>
                         ))}
@@ -998,6 +1000,7 @@ function PromptsPanelInner({workspaceId, projectId, userId, onUnauthorized,onAIS
           )}
         </div>
       )}
+      {confirmDialog}
     </section>
   );
 }

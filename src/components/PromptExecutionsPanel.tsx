@@ -1,5 +1,5 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {RunCostSummary} from '@ten98/ui';
+import {RunCostSummary, useConfirmDialog} from '@ten98/ui';
 import {Link} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,type OpenRouterCatalog} from '../lib/openrouter-models';
@@ -102,6 +102,7 @@ export function PromptExecutionsPanel(props:Props){
 }
 function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLabel='Back to library',onEvidenceExpired,initialExpiredAnswerIds=[],initialExpiredInputComparisonIds=[]}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/prompt-executions',uid=useId();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [screen,setScreen]=useState<Screen>(entry.kind==='configure'?'setup':entry.kind==='receipt'?'detail':'history');
   const [metadata,setMetadata]=useState<Metadata|null>(null),[role,setRole]=useState<Role|null>(null);
   const [comparison,setComparison]=useState<Comparison|null>(null),[quote,setQuote]=useState<Quote|null>(null);
@@ -178,10 +179,10 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
   useEffect(()=>{mounted.current=true;void refreshMetadata();return ()=>{mounted.current=false;generation.current++;operation.current?.controller.abort();operation.current=null;};},[B]);
   useEffect(()=>{if(focusNext.current){heading.current?.focus();focusNext.current=false;}},[screen,quote?.id,comparison?.id,accessLost]);
   useEffect(()=>{if(!quote)return;const timer=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(timer);},[quote?.id]);
-  function mayLeave(){return !attemptRef.current||window.confirm('This start may already have been accepted. Leaving discards local retry controls and does not stop server work. Leave this run?');}
-  function back(){if(operation.current?.write||!mayLeave())return;invalidate();setPending(null);backRef.current();}
-  function history(){if(operation.current?.write||!mayLeave())return;invalidate();restoreReceipt.current=false;setPending(null);setQuote(null);setComparison(null);setCards({});selection.current=null;setError(null);setNotice(null);move('history');void refreshMetadata();}
-  function setup(){if(operation.current?.write||entry.kind!=='configure'||!mayLeave())return;invalidate();setPending(null);setQuote(null);setError(null);setNotice(null);move('setup');}
+  async function mayLeave(){return !attemptRef.current||(await confirm({title:'Leave this run?',description:'This start may already have been accepted. Leaving discards local retry controls and does not stop server work.',confirmLabel:'Leave run'})&&!operation.current?.write);}
+  async function back(){if(operation.current?.write||!await mayLeave())return;invalidate();setPending(null);backRef.current();}
+  async function history(){if(operation.current?.write||!await mayLeave())return;invalidate();restoreReceipt.current=false;setPending(null);setQuote(null);setComparison(null);setCards({});selection.current=null;setError(null);setNotice(null);move('history');void refreshMetadata();}
+  async function setup(){if(operation.current?.write||entry.kind!=='configure'||!await mayLeave())return;invalidate();setPending(null);setQuote(null);setError(null);setNotice(null);move('setup');}
   function edit(change:()=>void){if(operation.current?.write||attemptRef.current)return;if(operation.current)invalidate();setQuote(null);setError(null);setNotice(null);change();}
   function showComparison(data:DetailResponse,explicit=true){
     if(data.comparison.inputExpired){expiredInputs.current.add(data.comparison.id);expiryRef.current?.({comparisonId:data.comparison.id,answerIds:[],inputIds:data.comparison.runs.map(run=>run.id)});}
@@ -369,6 +370,7 @@ function Panel({workspaceId,projectId,userId,entry,onBack,onUnauthorized,backLab
         </article>;})}</div><p className="hint">These direct API responses do not establish consumer ChatGPT behavior, live web search, ranking or brand visibility. Reused answers may be up to seven days old; provider model updates in place may not be detected. Recurring tracking requires a separate explicit owner approval and always requests fresh answers.</p>
       </div>:<div><p>{error?'The selected run could not be read.':'Loading the selected run.'}</p>{error&&selection.current&&<button type="button" className="btn" onClick={()=>void openComparison(selection.current!)} disabled={writing}>Retry loading run</button>}</div>)}
     </>}
+    {confirmDialog}
   </section>;
 }
 function AnswerView({run,card,busy,onAnswer,onSources}:{run:RunSummary;card:Card;busy:boolean;onAnswer:()=>void;onSources:()=>void}){

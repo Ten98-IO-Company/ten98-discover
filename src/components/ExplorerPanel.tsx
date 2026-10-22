@@ -1,4 +1,4 @@
-import {AppliedFilters,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment} from '@ten98/ui';
+import {AppliedFilters,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment, useConfirmDialog} from '@ten98/ui';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {analyticsFieldLimit,analyticsSelectionFields} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
@@ -297,6 +297,7 @@ export function ExplorerPanel(props:Props){
 }
 function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppliedRange}:Props){
   const uid=useId(),filterDialog=useRef<HTMLDialogElement>(null),filterButton=useRef<HTMLButtonElement>(null);
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const location=useLocation(),controlled=!!search&&!!onNavigate,nav:ExplorerNavigation=controlled?explorerNavigation(search!):{},navText=JSON.stringify(nav),entry=location.state.__TSR_key;
   const restored=nav.exploreInvalid?null:readExplorerScope(nav.exploreQuery),invalidLink=controlled&&!restored;
   const routeReady=!controlled||location.pathname==='/'&&!location.hash&&search!.view==='explore'&&search!.project===projectId&&navigationKey(parseNavigation(location.search))===navigationKey(search!)&&canonicalNavigation(location.searchStr,search!);
@@ -472,7 +473,8 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
     if(savedOp.current||pendingRef.current||!canSave(savedRoleRef.current)||accessDenied.current)return;
     if(kind!=='create'&&!selected)return;
     if(kind==='delete'){
-      if(window.confirm('Delete this saved filter? Your report draft and results will stay unchanged.'))void saveAttempt({kind,id:selected!.id,body:{requestId:crypto.randomUUID(),revision:selected!.revision}});return;
+      const target=selected!;
+      void (async()=>{if(!await confirm({title:'Delete this saved filter?',description:'Your report draft and results will stay unchanged.',confirmLabel:'Delete saved filter'})||savedOp.current||pendingRef.current||accessDenied.current)return;void saveAttempt({kind,id:target.id,body:{requestId:crypto.randomUUID(),revision:target.revision}});})();return;
     }
     const name=savedName.trim();if(!clean(name,200)||!name){setSavedError('Enter a name of 1 to 200 characters.');return;}
     const query=kind==='rename'?{qs:selected!.definition.query}:draftFilterQuery(draft);if('error'in query){setSavedError(query.error);if(query.advanced)focusAdvanced(`${uid}-report-advanced`,query.advanced);return;}
@@ -675,7 +677,7 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
         {cohortRole&&cohortItems.length===0&&!cohortBusy&&<p className="hint">No saved cohorts yet.</p>}
         {cohortRole==='viewer'&&<p className="hint">You can load cohorts. An owner, admin or editor can save changes.</p>}
         <details ref={cohortManager}><summary>Manage cohorts</summary><div className="stack">
-          {canSave(cohortRole)&&<div className="row"><button className="btn" type="button" disabled={cohortLocked} onClick={()=>{setCohortEditor({item:null,name:'',draft:{...initialDraft(),from:appliedDates.get('from')!,to:appliedDates.get('to')!,timeZone:appliedDates.get('timeZone')!}});setCohortError('');}}>New cohort</button>{cohortSelected&&<><button className="btn" type="button" disabled={cohortLocked} onClick={()=>void readCohorts(cohortSelected.id,'edit')}>Edit cohort</button><button className="btn" type="button" disabled={cohortLocked} onClick={()=>{if(!cohortPendingRef.current&&window.confirm(`Delete ${cohortSelected.definition.name}? Existing report results remain a snapshot. Future reports cannot use this cohort.`))void saveCohort({kind:'delete',id:cohortSelected.id,body:{requestId:crypto.randomUUID(),revision:cohortSelected.revision}});}}>Delete cohort</button></>}</div>}
+          {canSave(cohortRole)&&<div className="row"><button className="btn" type="button" disabled={cohortLocked} onClick={()=>{setCohortEditor({item:null,name:'',draft:{...initialDraft(),from:appliedDates.get('from')!,to:appliedDates.get('to')!,timeZone:appliedDates.get('timeZone')!}});setCohortError('');}}>New cohort</button>{cohortSelected&&<><button className="btn" type="button" disabled={cohortLocked} onClick={()=>void readCohorts(cohortSelected.id,'edit')}>Edit cohort</button><button className="btn" type="button" disabled={cohortLocked} onClick={()=>void (async()=>{if(!cohortPendingRef.current&&await confirm({title:`Delete ${cohortSelected.definition.name}?`,description:'Existing report results remain a snapshot. Future reports cannot use this cohort.',confirmLabel:'Delete cohort'})&&!cohortPendingRef.current&&!cohortOp.current)void saveCohort({kind:'delete',id:cohortSelected.id,body:{requestId:crypto.randomUUID(),revision:cohortSelected.revision}});})()}>Delete cohort</button></>}</div>}
           {cohortEditor&&qualification&&canSave(cohortRole)&&<form className="card stack" aria-label="Cohort qualification" onSubmit={e=>{e.preventDefault();submitCohort();}}><fieldset className="stack" disabled={cohortLocked} style={{border:0,padding:0,margin:0,minWidth:0}}>
             <div><label htmlFor={`${uid}-cohort-name`}>Cohort name</label><input id={`${uid}-cohort-name`} autoFocus maxLength={200} value={cohortEditor.name} onChange={e=>setCohortEditor({...cohortEditor,name:e.target.value})}/><p className="hint">{cohortEditor.name.length}/200 characters</p></div>
             <div className="explorer-toolbar"><div><label htmlFor={`${uid}-qfrom`}>Qualification from</label><input id={`${uid}-qfrom`} type="date" required max={qualification.to} value={qualification.from} onChange={e=>patchQualification({from:e.target.value})}/></div><div><label htmlFor={`${uid}-qto`}>Qualification to</label><input id={`${uid}-qto`} type="date" required min={qualification.from} value={qualification.to} onChange={e=>patchQualification({to:e.target.value})}/></div><div><label htmlFor={`${uid}-qtz`}>Qualification time zone</label><input id={`${uid}-qtz`} required list={`${uid}-tzl`} value={qualification.timeZone} onChange={e=>patchQualification({timeZone:e.target.value})}/></div></div>
@@ -847,6 +849,7 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
           </div>
         )}
       </>)}
+      {confirmDialog}
     </section>
   );
 }

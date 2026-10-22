@@ -1,6 +1,6 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
-import {ReportPanel} from '@ten98/ui';
+import {ReportPanel, useConfirmDialog} from '@ten98/ui';
 import {auditCoverages,auditIssueCodes,auditNavigation,type AuditNavigation,type NavigationSearch} from '../lib/navigation';
 import {normalizeAuditPageFields,type AuditPageFields} from '../lib/site-audit-pages';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
@@ -171,6 +171,7 @@ function TextItems({items}:{items:string[]}){return items.length?<ul>{items.map(
 export function SiteAuditPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
 function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenRetention}:Props){
   const B='/api/projects/'+encodeURIComponent(projectId)+'/audits',uid=useId();
+  const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [setup,setSetup]=useState<Setup|null>(null),[role,setRole]=useState<Role|null>(null);
   const [history,setHistory]=useState<List<Run>>(empty),[run,setRun]=useState<Run|null>(null),[page,setPage]=useState<Page|null>(null);
   const [issues,setIssues]=useState<List<Issue>>(empty),[pages,setPages]=useState<List<Page>>(empty),[links,setLinks]=useState<List<Edge>>(empty);
@@ -338,7 +339,7 @@ function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenR
   async function start(e:FormEvent){
     e.preventDefault();if(mutation.current||!manages(role)||!attemptRef.current&&!setup?.canStart)return;
     let intent=attemptRef.current;
-    if(!intent){const selected=setup?.origins.find(o=>(o.domainId??'canonical')===domain),limit=Number(maxPages);if(!selected||!setup||!path.startsWith('/')||path.startsWith('//')||/[?#]/.test(path)||!Number.isInteger(limit)||limit<1||limit>setup.limits.maxPages){setError('Choose an eligible domain, a query-free rooted path and a valid whole page limit.');return;}if(limit>500&&!window.confirm(`Audit up to ${limit} HTML pages? The 30-minute deadline starts when queued, including waiting time.`))return;intent={requestId:crypto.randomUUID(),domainId:selected.domainId,startPath:path,maxPages:limit,mode:'static',retainBodyText};attemptRef.current=intent;attemptOrigin.current=selected.origin;setAttempt(intent);}
+    if(!intent){const selected=setup?.origins.find(o=>(o.domainId??'canonical')===domain),limit=Number(maxPages);if(!selected||!setup||!path.startsWith('/')||path.startsWith('//')||/[?#]/.test(path)||!Number.isInteger(limit)||limit<1||limit>setup.limits.maxPages){setError('Choose an eligible domain, a query-free rooted path and a valid whole page limit.');return;}if(limit>500&&(!await confirm({title:`Audit up to ${limit} HTML pages?`,description:'The 30-minute deadline starts when queued, including waiting time.',confirmLabel:'Start audit',danger:false})||mutation.current||attemptRef.current))return;intent={requestId:crypto.randomUUID(),domainId:selected.domainId,startPath:path,maxPages:limit,mode:'static',retainBodyText};attemptRef.current=intent;attemptOrigin.current=selected.origin;setAttempt(intent);}
     const op=beginWrite();if(!op)return;
     try{
       const data=await api<unknown>(B,{method:'POST',body:intent});if(!currentWrite(op))return;
@@ -350,7 +351,7 @@ function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenR
   }
   async function mutate(action:'cancel'|'delete'){
     const selected=runRef.current;if(mutation.current||!selected||!manages(role)||!(action==='cancel'?selected.canCancel:selected.canDelete))return;
-    if(!window.confirm(action==='cancel'?'Cancel this audit? Requests already in progress may take a moment to stop. Collected observations stay in history.':'Delete this audit and its collected details? This cannot be undone. A minimal request record is kept to prevent accidental reruns.'))return;
+    if(!await confirm(action==='cancel'?{title:'Cancel this audit?',description:'Requests already in progress may take a moment to stop. Collected observations stay in history.',confirmLabel:'Cancel audit'}:{title:'Delete this audit and its collected details?',description:'This cannot be undone. A minimal request record is kept to prevent accidental reruns.',confirmLabel:'Delete audit'})||mutation.current||runRef.current?.id!==selected.id)return;
     const op=beginWrite();if(!op)return;
     try{const data=await api<unknown>(B+'/'+selected.id+'/'+action,{method:'POST',body:{}});if(!currentWrite(op))return;
       if(action==='cancel'){if(!record(data)||!roleValue(data.role)||!validRun(data.run,projectId)||data.run.id!==selected.id)throw new Error('Cancellation could not be confirmed. Refresh the audit before trying again.');receiveRole(data.role,op.sequence);receiveRun(data.run,op.sequence);setMessage(data.run.status==='cancelling'?'Cancellation request accepted.':'Audit cancellation confirmed.');}
@@ -518,5 +519,6 @@ function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenR
         {!!links.rows.length&&<div className="table-wrap" tabIndex={0} role="region" aria-label="Recorded page links"><table><thead><tr><th>Relation</th><th>{view.direction==='in'?'Source page':'Target URL'}</th><th>Anchor</th></tr></thead><tbody>{links.rows.map(edge=><tr key={edge.id}><td>{words(edge.kind)}{edge.nofollow?' · nofollow':''}</td><td>{view.direction==='in'?<button className="btn" disabled={writing} onClick={()=>selectPage(edge.sourcePageId)}>View source page</button>:<>{edge.targetUrl}{edge.targetPageId?<p><button className="btn" disabled={writing} onClick={()=>selectPage(edge.targetPageId!)}>View target page</button></p>:<p className="hint">No saved HTML target. This does not establish a broken link.</p>}</>}</td><td>{edge.anchorStatus==='available'?edge.anchor||'Observed empty anchor':words(edge.anchorStatus)}</td></tr>)}</tbody></table></div>}{links.cursor&&<button className="btn" disabled={writing||busy.links} onClick={()=>void loadLinks(links.cursor!)}>Load more links</button>}
       </section>}
     </>}
+    {confirmDialog}
   </section>;
 }
