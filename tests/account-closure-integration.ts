@@ -65,7 +65,7 @@ export async function runAccountClosureChecks() {
   await pool.query("INSERT INTO membership(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'owner'),($4,$2,'owner'),($5,$3,'owner'),($1,$6,'editor')", [w, a.id, b.id, w2, w3, c.id]);
   await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Closure site',$3,gen_random_uuid(),'infinity')", [project, w, `https://${suffix}.closure.integration.test`]);
   await pool.query('INSERT INTO instance_operator(user_id,source) VALUES($1,\'host\'),($2,\'host\') ON CONFLICT DO NOTHING', [o.id, a.id]);
-  await pool.query("INSERT INTO user_preference(user_id,time_zone,locale,theme,revision) VALUES($1,'UTC','en','dark',1)", [a.id]);
+  await pool.query("INSERT INTO user_preference(user_id,time_zone,locale,theme,revision) VALUES($1,'UTC','en-US','dark',1)", [a.id]);
   await pool.query("INSERT INTO provider_connection(id,workspace_id,provider,name) VALUES($1,$2,'dataforseo','Closure synthetic, no credentials')", [connection, w]);
   const financial = randomUUID();
   await pool.query(`INSERT INTO provider_request(id,workspace_id,connection_id,connection_revision,user_id,request_key,operation,input_hash,estimate_micros,actual_micros,status,budget_month)
