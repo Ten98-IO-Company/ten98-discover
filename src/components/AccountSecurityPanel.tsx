@@ -23,7 +23,8 @@ type Op = 'password' | 'enable' | 'verify' | 'disable' | 'recovery' | 'revoke' |
 
 const isAbort = (e: unknown): boolean => e instanceof Error && e.name === 'AbortError'
 
-export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expectedUserId: string; onUnauthorized: () => void }) {
+/** onFactorChanged runs after a factor is verified or turned off, so the shell can re-read workspace two-factor locks. */
+export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorChanged }: { expectedUserId: string; onUnauthorized: () => void; onFactorChanged?: () => void }) {
   const presentation=useAccountPresentation(),preferences=presentation?.data?.user.id===expectedUserId?presentation.data.preferences:accountPreferencesDefaults
   const fmt=(iso:string)=>{const date=new Date(iso);if(Number.isNaN(date.getTime()))return iso;try{return new Intl.DateTimeFormat(accountLocaleMapping(preferences.locale).formatLocale,{timeZone:preferences.timeZone,dateStyle:'medium',timeStyle:'short'}).format(date)}catch{return `${iso} (saved time zone unavailable in this browser)`}}
   const [data, setData] = useState<SecurityData | null>(null)
@@ -220,6 +221,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       setData(previous => previous ? { ...previous, user: { ...previous.user, twoFactorEnabled: true } } : previous)
       setSetupUri(null)
       setProof('')
+      onFactorChanged?.()
     })
   }
 
@@ -235,6 +237,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       setSetupUri(null)
       setCodes(null)
       setProof('')
+      onFactorChanged?.()
     })
   }
 

@@ -39,7 +39,8 @@ svg { flex-shrink:0; }
 label { font-size:13px; color:var(--color-text-muted); }
 .field { min-inline-size:0; color:var(--color-text-muted); }
 .field > label { margin:0; font-weight:500; }
-input:not([type='checkbox']):not([type='radio']),select,textarea { min-inline-size:0; max-inline-size:100%; min-block-size:var(--control-md); padding:10px 11px; border:1px solid var(--color-border-control); border-radius:6px; background:var(--color-surface); color:var(--color-text); font:inherit; font-size:13px; }
+/* Element specificity only, so @ten98/ui component classes (SearchField, .t98-input) keep their own geometry. */
+input:where(:not([type='checkbox']):not([type='radio'])),select,textarea { min-inline-size:0; max-inline-size:100%; min-block-size:var(--control-md); padding:10px 11px; border:1px solid var(--color-border-control); border-radius:6px; background:var(--color-surface); color:var(--color-text); font:inherit; font-size:13px; }
 .field input:not([type='checkbox']):not([type='radio']),.field select,.field textarea { inline-size:100%; }
 input[type='checkbox'],input[type='radio'] { accent-color:var(--color-accent); }
 textarea { resize:vertical; }

@@ -587,6 +587,8 @@ function App() {
 
   const renderedSession = sessionGeneration.current, renderedIntent = intent.current.generation
   const unauthorized = () => { if (sessionGeneration.current === renderedSession) resetSession() }
+  // A verified or removed factor changes workspace two-factor locks; re-read memberships so the shell banner and projects follow.
+  const factorChanged = () => { if (sessionGeneration.current === renderedSession) refreshMemberships().catch(e => setAppError(errMsg(e))) }
   // The server already ended every session of the closed account; only local state and the neutral notice remain.
   const accountClosed = () => {
     if (sessionGeneration.current !== renderedSession) return
@@ -681,7 +683,7 @@ function App() {
         {project&&workspace&&<SidebarNav label='Project sections' linkComponent={ShellLink} filter={toolSearch} groups={projectNavGroups} />}
         </Stack></div>
         <SidebarFooter version={appVersion}>
-          {project&&<SidebarStatus tone={lastReceived?'connected':'idle'} label={lastReceived?'Retained events received':'No retained events yet'}/>}
+          {project&&<SidebarStatus tone={lastReceived&&!eventsError?'connected':'idle'} label={eventsError?'Event history unavailable':lastReceived?'Retained events received':'No retained events yet'}/>}
           <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target('preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
@@ -693,7 +695,7 @@ function App() {
         {workspace?.twoFactorLocked&&<Banner tone='warning' icon='shield' title='Two-factor authentication required' linkComponent={ShellLink} action={{label:'Open account security',href:'security'}}>This workspace requires two-factor authentication. Turn it on in Account security to open its projects and reports.</Banner>}
         {authNotice && <Alert tone={authNotice.kind === 'error' ? 'danger' : 'info'} onDismiss={() => setAuthNotice(null)}>{authNotice.message}</Alert>}
         {appError !== '' && <Alert tone='danger'>{appError}</Alert>}
-        {projectsError !== '' && !workspace?.twoFactorLocked && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
+        {projectsError !== '' && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
         {/* First-strong isolates keep a right-to-left project name from reordering the origin (PageHeader takes text only). */}
         {project && workspace && projectView && <PageHeader title={pageTitles[view]} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
@@ -702,7 +704,7 @@ function App() {
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
         {view === 'preferences' && me && <AccountPreferencesPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} /><AccountClosurePanel key={`closure:${me.user.id}`} userId={me.user.id} onClosed={accountClosed} onUnauthorized={unauthorized} onOpenTeam={id => go({ workspace: id, view: 'team' })} onOpenIdentity={() => go(target('identity'))} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
+        {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} onFactorChanged={factorChanged} /><AccountClosurePanel key={`closure:${me.user.id}`} userId={me.user.id} onClosed={accountClosed} onUnauthorized={unauthorized} onOpenTeam={id => go({ workspace: id, view: 'team' })} onOpenIdentity={() => go(target('identity'))} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
         {view === 'identity' && me && <>
           <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={unauthorized} onClosed={accountClosed} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
           <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
