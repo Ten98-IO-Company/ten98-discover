@@ -1,20 +1,12 @@
 import { OidcProviderButtons } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react';
 import { api, errMsg } from '../lib/api';
+import { authorizationRedirect, navigableHttpUrl } from '../lib/oidc-authorization';
 
 interface Provider { id: string; name: string }
 
-// Only http(s) URLs may be navigated to; plain http is limited to loopback for local tests.
-export function httpUrl(s: string): string | null {
-  try {
-    const u = new URL(s);
-    if (u.protocol === 'https:') return u.toString();
-    if (u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]')) return u.toString();
-    return null;
-  } catch {
-    return null;
-  }
-}
+// Kept for the other OIDC panels' imports; sign-in below also pins the provider's origin.
+export const httpUrl = navigableHttpUrl;
 
 export function OidcSignIn({invitationToken}: {invitationToken?: string}) {
   const [providers, setProviders] = useState<Provider[] | null>(null);
@@ -54,9 +46,9 @@ export function OidcSignIn({invitationToken}: {invitationToken?: string}) {
     const current = () => mounted.current && serial === generation.current && tokenRef.current === token && !controller.signal.aborted;
     try {
       const body = invitationToken ? {providerId, invitationToken} : {providerId};
-      const r = await api<{authorizationUrl: string}>('/api/auth/oidc/start', {method: 'POST', body, signal: controller.signal});
+      const r = await api<{authorizationUrl: string; authorizationOrigin: string}>('/api/auth/oidc/start', {method: 'POST', body, signal: controller.signal});
       if (!current()) return;
-      const u = httpUrl(r.authorizationUrl);
+      const u = authorizationRedirect(r.authorizationUrl, r.authorizationOrigin);
       if (!u) { setErr('The server returned an invalid sign-in address. Nothing was opened.'); return; }
       window.location.assign(u);
     } catch (e) {
