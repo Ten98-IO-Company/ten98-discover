@@ -12,8 +12,9 @@ function authorization(value:unknown){
   if(!validText(login,254)||login.includes(':')||!validText(password,4096))invalid();
   return 'Basic '+Buffer.from(login+':'+password,'utf8').toString('base64');
 }
-// ponytail: kept instead of @ten98/runtime readResponseText, which cannot enforce the declared
-// Content-Length precheck or the exact identity byte count. Adopt if the runtime adds both.
+// ponytail: kept instead of @ten98/runtime readResponseText. Its contentLength mode (0.2.0) always pairs the
+// declared-size precheck with an exact identity byte count, which non-AI routes do not require, and it has
+// no chunk-count ceiling, so a stream of tiny chunks would cost seconds to reach the byte limit.
 async function boundedJson(response:Response,maximum:number,identity=false){
   if(!response.body)invalid();
   const reader=response.body.getReader(),parts:Uint8Array[]=[];let size=0;
