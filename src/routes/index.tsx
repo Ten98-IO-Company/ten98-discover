@@ -822,7 +822,7 @@ function App() {
             </section>
             <section aria-label='Check website events' aria-busy={eventsBusy} style={{minWidth:0,overflowWrap:'anywhere'}}>
               <ResourceCard title='Check that events arrive' description='Open your website, visit a page, then check for an event received by this project.' icon='chart'
-                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<AppIcon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Link style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} className={events !== null && events.total > 0 ? 'btn primary' : 'btn'} to='/' search={target('project')}>View analytics</Link></>}>
+                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<AppIcon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Button style={{minHeight:44,whiteSpace:'normal'}} variant={events !== null && events.total > 0 ? 'primary' : 'secondary'} href='project' component={ShellLink}>View analytics</Button></>}>
                 <TrackerStatus resource={project.origin}
                   installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
@@ -832,7 +832,7 @@ function App() {
                 {events !== null && events.total === 0 && <p>No events in retained history yet. This page checks automatically for 10 minutes. Confirm the tag is published and visit your website. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
                 {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
                 <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
-                <Link to='/' search={target('events')}>Inspect recent events</Link>
+                <Button style={{minHeight:44,whiteSpace:'normal'}} variant='ghost' href='events' component={ShellLink}>Inspect recent events</Button>
               </ResourceCard>
             </section>
             <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>
