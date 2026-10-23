@@ -1,5 +1,5 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, AuthErrorBoundary, Banner, Button, PageHeader, SectionNav, SidebarStatus, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import { Alert, AppStateScreen, AuthErrorBoundary, Banner, Button, PageHeader, SectionNav, SidebarStatus, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
 import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SectionNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -681,12 +681,12 @@ function App() {
         {project&&workspace&&<SidebarNav label='Project sections' linkComponent={ShellLink} filter={toolSearch} groups={projectNavGroups} />}
         </div>
         <SidebarFooter version={appVersion}>
-          {project&&<SidebarStatus tone={lastReceived?'connected':'idle'} label={lastReceived?'Retained events received':'No retained events yet'} linkComponent={ShellLink} action={lastReceived?undefined:{label:'Install tracker',href:'installation'}} />}
+          {project&&<SidebarStatus tone={lastReceived?'connected':'idle'} label={lastReceived?'Retained events received':'No retained events yet'}/>}
           <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target('preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
       topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
-        <div className='page-content content'>
+        <div className='page-content content'><Stack gap={6}>
         {settingsView&&<SectionNav label='Settings sections' linkComponent={ShellLink} items={settingsItems} />}
 
         {!projectView&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>{workspaceTool?'Workspace tools include all projects.':'Selected project'}</Banner>}
@@ -863,7 +863,7 @@ function App() {
         )}
         </>}
 
-        </div>
+        </Stack></div>
     </AppShell></NavRoutesContext.Provider></AccountPresentationContext.Provider>
   )
 }
