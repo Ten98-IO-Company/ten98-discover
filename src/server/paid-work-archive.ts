@@ -70,7 +70,7 @@ export async function archivePaidWork(client: PoolClient, scope: PaidWorkScope):
        SELECT $3, t.id, t.workspace_id, ${has('project_id') ? 't.project_id' : 'NULL'},
          array_remove(ARRAY[${accounts.map(column => `t.${ident(column)}`).join(',')}]::text[], NULL),
          (SELECT jsonb_object_agg(f.key, f.value) FROM jsonb_each(to_jsonb(t)) f WHERE f.key=ANY($4::text[])), ${created}
-       FROM ${ident(table)} t WHERE t.workspace_id=$1 AND ($2::text IS NULL OR t.project_id=$2)
+       FROM ${ident(table)} t WHERE t.workspace_id=$1 AND ${has('project_id') ? '($2::text IS NULL OR t.project_id=$2)' : '$2::text IS NULL'}
        ON CONFLICT (source_table, source_id) DO NOTHING`,
       [scope.workspaceId, scope.projectId ?? null, table, shape.filter(column => archivedColumn(column.name, column.type)).map(column => column.name)]);
     counts[table] = result.rowCount ?? 0;
@@ -87,8 +87,8 @@ export async function* exportPaidWorkArchive(client: PoolClient, scope: PaidWork
     const rows = (await client.query<{ source_table: string; source_id: string; workspace_id: string; project_id: string | null; account_ids: string[]; created_at: string; archived_at: string; record: Record<string, unknown> }>(
       // Text keeps the full microsecond precision of the keyset cursor.
       `SELECT source_table, source_id::text, workspace_id, project_id, account_ids, created_at::text, archived_at::text, record FROM paid_work_archive
-       WHERE workspace_id=$1 AND ($2::text IS NULL OR project_id=$2) AND (created_at, source_table, source_id) > ($3::timestamptz, $4, $5::uuid)
-       ORDER BY created_at, source_table, source_id LIMIT $6`, [scope.workspaceId, scope.projectId ?? null, ...cursor, pageRows])).rows;
+       WHERE workspace_id=$1 AND ($2::text IS NULL OR project_id=$2) AND (created_at, source_table COLLATE "C", source_id) > ($3::timestamptz, $4 COLLATE "C", $5::uuid)
+       ORDER BY created_at, source_table COLLATE "C", source_id LIMIT $6`, [scope.workspaceId, scope.projectId ?? null, ...cursor, pageRows])).rows;
     for (const row of rows) yield { sourceTable: row.source_table, sourceId: row.source_id, workspaceId: row.workspace_id, projectId: row.project_id, accountIds: row.account_ids, createdAt: row.created_at, archivedAt: row.archived_at, record: row.record };
     if (rows.length < pageRows) return;
     const last = rows.at(-1)!;
