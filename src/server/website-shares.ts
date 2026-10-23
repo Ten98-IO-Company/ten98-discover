@@ -8,14 +8,14 @@ import {contentCursor,contentReceipt,readContentCursor} from './project-context.
 import {projectAnalytics} from './analytics.ts';
 import {websiteShareCreate,websiteShareRevoke,websiteShareRead,websiteShareLimits,projectWebsiteShare,type WebsiteShareItem,type WebsiteShareSection,type WebsiteShareWrite} from '../lib/website-shares.ts';
 
-// Website public share grants (P45; P02 under D6), docs/website-shares.md. Owner/admin cookie management plus one capability read.
+// Website public share grants (P45; P02 under D6), https://github.com/Ten98-IO-Company/ten98-discover/wiki/Web-Analytics#public-share-links. Owner/admin cookie management plus one capability read.
 const missing=()=>new FoundationError(404,'Website share not found or unavailable.');
 const digest=(token:string)=>createHash('sha256').update(token).digest('hex');
 export const canonicalShareToken=(token:unknown):token is string=>typeof token==='string'&&/^[A-Za-z0-9_-]{43}$(?![\s\S])/.test(token)&&Buffer.from(token,'base64url').toString('base64url')===token;
 type Role='owner'|'admin';
 type Row={id:string;label:string;sections:WebsiteShareSection[];created_at:Date;expires_at:Date;revoked_at:Date|null;state:WebsiteShareItem['state'];creator_name:string|null;creator_email:string|null;creator_member:boolean|null};
 // Creator identity is shown to current owners/admins only (D6); a removed creator keeps the row but loses management.
-// A closed creator shows as the "Closed account" tombstone name with no address (docs/account-closure.md).
+// A closed creator shows as the "Closed account" tombstone name with no address (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#account-closure).
 const itemSql=`SELECT s.id,s.label,s.sections,s.created_at,s.expires_at,s.revoked_at,
  CASE WHEN s.revoked_at IS NOT NULL THEN 'revoked' WHEN s.expires_at<=clock_timestamp() THEN 'expired' ELSE 'active' END AS state,
  u.name AS creator_name,CASE WHEN u.closed_at IS NULL THEN u.email END AS creator_email,CASE WHEN u.id IS NULL THEN NULL ELSE m.user_id IS NOT NULL END AS creator_member
