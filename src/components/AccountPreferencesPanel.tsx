@@ -37,7 +37,7 @@ export function AccountPreferencesPanel({expectedUserId,onUnauthorized}:{expecte
       setReloadRequired(true);setError(failure instanceof ApiError&&failure.status===409?'Preferences changed on another device. Reload saved preferences before saving again.':errMsg(failure));
     }finally{if(current()){locked.current=false;request.current=null;setBusy(false);}}
   }
-  return <section className="account-settings account-preferences" aria-label="Profile and appearance">
+  return <section className="account-settings account-preferences">
     <p className="dim">Personal settings follow your account across workspaces. Changes apply after Save.</p>
     {account?.loading&&<p role="status">Loading saved preferences…</p>}
     {account?.error&&<div className="alert" role="alert">{account.error}</div>}

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AppliedFilters, BarList, EvidenceSummary, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
+import { AppliedFilters, BarList, DataTable, EvidenceSummary, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
 import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, canonicalNavigation, navigationKey, parseNavigation, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
@@ -637,26 +637,9 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             {data.pages.length === 0 ? (
               <p className="dim">{data.coverage.status === 'complete' ? 'No page views in this range.' : 'No page views are available in the retained portion.'}</p>
             ) : (
-              <div className="table-wrap table-cards">
-                <table>
-                  <thead>
-                    <tr>
-                      <th scope="col">Path</th>
-                      <th scope="col" className="analytics-num">
-                        Page views
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.pages.slice(0, 20).map((p) => (
-                      <tr key={p.path}>
-                        <td className="mono analytics-path" data-label="Path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('path',{type:'string',value:p.path})} aria-label={`Filter Path: ${p.path}`}><bdi dir="ltr">{p.path}</bdi></button></td>
-                        <td className="analytics-num" data-label="Page views">{fmtNum(p.pageViews)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable ariaLabel="Top pages" responsive="stack" searchable={false} sortable={false} pagination={false} rows={data.pages.slice(0, 20)} rowKey={p => p.path}
+                columns={[{ key: 'path', header: 'Path', rowHeader: true, wrap: true, render: p => <button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('path',{type:'string',value:p.path})} aria-label={`Filter Path: ${p.path}`}><bdi dir="ltr">{p.path}</bdi></button> },
+                  { key: 'pageViews', header: 'Page views', numeric: true, render: p => fmtNum(p.pageViews) }]} />
             )}
           </section>
 
@@ -666,26 +649,9 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             {data.events.length === 0 ? (
               <p className="dim">{data.coverage.status === 'complete' ? 'No custom events in this range.' : 'No custom events are available in the retained portion.'}</p>
             ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th scope="col">Event name</th>
-                      <th scope="col" className="analytics-num">
-                        Count
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.events.slice(0, 20).map((ev) => (
-                      <tr key={ev.name}>
-                        <td className="mono analytics-path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('event',{type:'string',value:ev.name})} aria-label={`Filter Event: ${ev.name}`}><bdi>{ev.name}</bdi></button></td>
-                        <td className="analytics-num">{fmtNum(ev.count)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable ariaLabel="Top custom events" responsive="stack" searchable={false} sortable={false} pagination={false} rows={data.events.slice(0, 20)} rowKey={ev => ev.name}
+                columns={[{ key: 'name', header: 'Event name', rowHeader: true, wrap: true, render: ev => <button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('event',{type:'string',value:ev.name})} aria-label={`Filter Event: ${ev.name}`}><bdi>{ev.name}</bdi></button> },
+                  { key: 'count', header: 'Count', numeric: true, render: ev => fmtNum(ev.count) }]} />
             )}
           </section>
 
@@ -696,17 +662,9 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             {data.referrers.length === 0 ? (
               <><p className="dim">{data.coverage.status === 'complete' ? 'No referrer hosts are recorded in this range.' : 'No referrer hosts are recorded in the retained portion.'}</p>{data.coverage.status!=='unavailable'&&search?.workspace&&<><p className="hint">Referrer capture is optional. Collection changes apply to future events.</p><Link className="btn ghost" to="/" search={{workspace:search.workspace,project:projectId,view:'collection'}}>Review collection settings</Link></>}</>
             ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th scope="col">Referrer</th><th scope="col" className="analytics-num">{referrersMeasured?'Estimated visitors':'Page views'}</th></tr></thead>
-                  <tbody>
-                    {data.referrers.map(row=><tr key={row.host}>
-                      <td className="analytics-path"><button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('referrer',{type:'string',value:row.host})} aria-label={`Filter Referrer: ${row.host}`}><bdi dir="ltr">{row.host}</bdi></button></td>
-                      <td className="analytics-num">{fmtNum(referrersMeasured?row.visitors:row.pageViews)}</td>
-                    </tr>)}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable ariaLabel="Top referrers" responsive="stack" searchable={false} sortable={false} pagination={false} rows={data.referrers} rowKey={row => row.host}
+                columns={[{ key: 'host', header: 'Referrer', rowHeader: true, wrap: true, render: row => <button type="button" className="analytics-dimension-label" disabled={busy} onClick={()=>applyDimensionRow('referrer',{type:'string',value:row.host})} aria-label={`Filter Referrer: ${row.host}`}><bdi dir="ltr">{row.host}</bdi></button> },
+                  { key: 'measure', header: referrersMeasured ? 'Estimated visitors' : 'Page views', numeric: true, render: row => fmtNum(referrersMeasured ? row.visitors : row.pageViews) }]} />
             )}
           </section>}
           <EnvironmentCard data={data} busy={busy} field={environmentField} onFieldChange={setEnvironmentField} onFilter={applyFilter}/>

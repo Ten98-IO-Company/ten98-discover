@@ -3,7 +3,7 @@
 // Suites never share an installation: prerequisite data must be seeded by the suite or this runner, not left by another suite.
 // Needs a built .output, PLAYWRIGHT_MODULE and a local PostgreSQL (NATIVE_BROWSER_POSTGRES, default postgres://ten98@127.0.0.1:5432).
 // Each run creates, migrates and finally drops its own database; it never touches a saved installation. Every FLAG is set to 1.
-// The installation is claimed through /api/setup unless --unclaimed is given (suites that claim it themselves). Suites that
+// The installation is claimed through /api/auth/setup unless --unclaimed is given (suites that claim it themselves). Suites that
 // pin their database name prefix or port get --database (name = prefix + 12 hex) and --database-port (a local TCP proxy).
 // --no-worker skips the queue worker for suites that start their own worker with a synthetic provider transport;
 // --self-hosted starts neither server nor worker and leaves the installation unclaimed, for suites that host the app themselves.

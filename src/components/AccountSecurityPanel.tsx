@@ -1,5 +1,6 @@
 import {AppIcon} from '@ten98/ui/app';
-import { Field, Form, Input, useConfirmDialog } from '@ten98/ui'
+import { Button, Field, Form, Input, PasswordChangeFlow, SessionListFlow, useConfirmDialog } from '@ten98/ui'
+import type { PasswordChangeValues } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { useAccountPresentation } from '../lib/account-presentation'
@@ -38,9 +39,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
   const [copyNote, setCopyNote] = useState<Record<string, string>>({})
 
   // Sensitive values: memory only, never logged/persisted, never rendered from GET metadata.
-  const [curPw, setCurPw] = useState('')
-  const [newPw, setNewPw] = useState('')
-  const [newPw2, setNewPw2] = useState('')
+  const [passwordForm, setPasswordForm] = useState(0)
   const [enablePw, setEnablePw] = useState('')
   const [disablePw, setDisablePw] = useState('')
   const [disableFactor, setDisableFactor] = useState('')
@@ -76,9 +75,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
     setSetupUri(null)
     setCodes(null)
     setProof('')
-    setCurPw('')
-    setNewPw('')
-    setNewPw2('')
+    setPasswordForm(n => n + 1)
     setEnablePw('')
     setDisablePw('')
     setRecoveryPw('')
@@ -144,7 +141,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
     const ctrl = new AbortController()
     mutCtrlRef.current = ctrl
     // Clear submitted passwords immediately; a failed request requires re-entry.
-    setCurPw(''); setNewPw(''); setNewPw2(''); setEnablePw(''); setDisablePw(''); setRecoveryPw('')
+    setPasswordForm(n => n + 1); setEnablePw(''); setDisablePw(''); setRecoveryPw('')
     if (op === 'verify') setProof('')
     if (op === 'enable' || op === 'recovery') setCodes(null)
     try {
@@ -193,13 +190,11 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
     if (mountedRef.current && version === secretVersion.current) setCopyNote(m => ({ ...m, [key]: note }))
   }
 
-  const submitPassword = async (): Promise<void> => {
+  const submitPassword = async ({ currentPassword, newPassword }: PasswordChangeValues): Promise<void> => {
     setFieldErrs({})
     setPwOk('')
-    if (curPw === '') { fieldErr('password', 'currentPassword', 'Enter your current password.'); return }
-    if (newPw.length < 12 || newPw.length > 128) { fieldErr('password', 'newPassword', 'Choose a new password between 12 and 128 characters.'); return }
-    if (newPw !== newPw2) { fieldErr('password', 'confirmPassword', 'The new passwords do not match. Re-enter them.'); return }
-    await mutate<unknown>('password', '/api/account/password', { currentPassword: curPw, newPassword: newPw }, () => {
+    if (newPassword.length < 12 || newPassword.length > 128) { fieldErr('password', 'newPassword', 'Choose a new password between 12 and 128 characters.'); return }
+    await mutate<unknown>('password', '/api/account/password', { currentPassword, newPassword }, () => {
       setPwOk('Password changed. Your other sessions were signed out.')
     })
   }
@@ -250,16 +245,9 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
     })
   }
 
-  const revokeSession = async (s: SessionInfo): Promise<void> => {
-    if (s.current && !await confirm({ title: 'Sign out of this browser session?', description: 'This signs you out of this browser session.', confirmLabel: 'Sign out this session' })) return
-    await mutate<unknown>('revoke', '/api/account/sessions/revoke', { sessionId: s.id }, () => {
-      if (s.current) {
-        clearSensitive()
-        setData(null)
-        onUnauthRef.current()
-        return false
-      }
-    })
+  // The shared list confirms each sign-out and never offers the current session; the account menu signs this browser out.
+  const revokeSession = async (sessionId: string): Promise<void> => {
+    await mutate<unknown>('revoke', '/api/account/sessions/revoke', { sessionId })
   }
 
   const revokeOthers = async (): Promise<void> => {
@@ -268,7 +256,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
 
   if (data === null) {
     return (
-      <section className="account-settings panel settings-panel" aria-busy={loading} aria-label="Account security">
+      <section className="account-settings panel settings-panel" aria-busy={loading}>
         <h2>Account security</h2>
         {loadErr !== '' ? (
           <>
@@ -282,7 +270,6 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
     )
   }
 
-  const others = data.sessions.filter(s => !s.current)
   const twoFaOn = data.user.twoFactorEnabled
   let setupKey: string | null = null
   if (setupUri) { try { setupKey = new URL(setupUri).searchParams.get('secret') } catch { /* The full URI remains available below. */ } }
@@ -299,33 +286,11 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
         {loadErr !== '' && <div className="alert" role="alert">{loadErr}</div>}
       </section>
 
-      <section className="panel settings-panel" aria-busy={busy === 'password'} aria-label="Password">
-        <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="lock" size={18}/></span><div><h2>Password</h2></div></div>
-        {data.hasPassword ? (
-          <Form fieldErrors={fieldErrs} onSubmit={() => submitPassword()}>
-            <p className="hint field-help">Changing your password signs out all other sessions.</p>
-            <Field label="Current password" htmlFor="pw-current" error={fieldErrs.currentPassword}>
-              <input id="pw-current" name="currentPassword" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={curPw} onChange={e => setCurPw(e.target.value)} />
-            </Field>
-            <Field label="New password" htmlFor="pw-new" description="Use 12 to 128 characters." error={fieldErrs.newPassword}>
-              <input id="pw-new" name="newPassword" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={blocked} value={newPw} onChange={e => setNewPw(e.target.value)} />
-            </Field>
-            <Field label="Repeat new password" htmlFor="pw-new2" error={fieldErrs.confirmPassword}>
-              <input id="pw-new2" name="confirmPassword" type="password" autoComplete="new-password" minLength={12} maxLength={128} required disabled={blocked} value={newPw2} onChange={e => setNewPw2(e.target.value)} />
-            </Field>
-            {errs.password ? <div className="alert" role="alert">{errs.password}</div> : null}
-            {pwOk !== '' ? <p className="hint field-help" role="status">{pwOk}</p> : null}
-            <button type="submit" className="btn button primary" disabled={blocked}>
-              {busy === 'password' ? 'Changing…' : 'Change password'}
-            </button>
-          </Form>
-        ) : (
-          <div className="empty">
-            <p><strong>No local password</strong></p>
-            <p>This account has no local password, so password and two-factor settings are unavailable here.</p>
-          </div>
-        )}
-      </section>
+      <PasswordChangeFlow key={passwordForm} hasPassword={data.hasPassword} description='Changing your password signs out all other sessions.'
+        policy={{ minLength: 12, maxLength: 128, hint: 'Use 12 to 128 characters.' }} busy={busy === 'password'} disabled={blocked && busy !== 'password'}
+        error={errs.password} notice={pwOk ? { tone: 'success', text: pwOk } : undefined} fieldErrors={fieldErrs}
+        messages={{ confirmation: 'Repeat new password', mismatch: 'The new passwords do not match. Re-enter them.', noPassword: 'This account has no local password, so password and two-factor settings are unavailable here.' }}
+        onSubmit={submitPassword} />
 
       <section className="panel settings-panel" aria-busy={busy === 'enable' || busy === 'verify' || busy === 'disable' || busy === 'recovery'} aria-label="Two-factor authentication">
         <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="shield" size={18}/></span><div><h2>Two-factor authentication</h2></div>{twoFaOn ? <span className="pill badge good configured">On</span> : <span className="pill badge">Off</span>}</div>
@@ -339,7 +304,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
                 <p className="hint field-help">Save these codes securely. They are shown only once.</p>
                 <div className="field">
                   <label htmlFor="tfa-codes">Recovery codes</label>
-                  <textarea id="tfa-codes" className="snippet" readOnly rows={Math.max(1, Math.min(codes.length, 12))} style={{ width: '100%' }} value={codes.join('\n')} onFocus={e => e.currentTarget.select()} />
+                  <textarea id="tfa-codes" className="snippet" readOnly rows={Math.max(1, Math.min(codes.length, 12))} value={codes.join('\n')} onFocus={e => e.currentTarget.select()} />
                 </div>
                 <div className="row button-wrap">
                   <button type="button" className="btn button" disabled={blocked} onClick={() => void copy('codes', codes.join('\n'))}>Copy codes</button>
@@ -374,7 +339,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
                 </div>}
                 <div className="field">
                   <label htmlFor="tfa-uri">Setup URI</label>
-                  <textarea id="tfa-uri" className="snippet" readOnly rows={3} style={{ width: '100%' }} value={setupUri} onFocus={e => e.currentTarget.select()} />
+                  <textarea id="tfa-uri" className="snippet" readOnly rows={3} value={setupUri} onFocus={e => e.currentTarget.select()} />
                 </div>
                 <div className="row button-wrap">
                   <button type="button" className="btn button" disabled={blocked} onClick={() => void copy('uri', setupUri)}>Copy setup URI</button>
@@ -425,45 +390,13 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
         )}
       </section>
 
-      <section className="panel settings-panel account-sessions-card" aria-busy={busy === 'revoke' || busy === 'others'} aria-label="Sessions">
-        <div className="row between">
-          <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="monitor" size={18}/></span><div><h2>Sessions</h2><p>Devices signed in to your account</p></div></div>
-          <div className="row button-wrap">
-            <button type="button" className="btn button ghost" disabled={blocked} onClick={() => void load()}>Refresh</button>
-            {others.length > 0 && (
-              <button type="button" className="btn button" disabled={blocked} onClick={() => void revokeOthers()}>
-                {busy === 'others' ? 'Signing out…' : 'Sign out all other sessions'}
-              </button>
-            )}
-          </div>
-        </div>
-        {errs.revoke ? <div className="alert" role="alert">{errs.revoke}</div> : null}
-        {errs.others ? <div className="alert" role="alert">{errs.others}</div> : null}
-        <div className="table-wrap">
-          <table style={{ minWidth: '44rem' }}>
-            <thead>
-              <tr><th>Device</th><th>Created</th><th>Expires</th><th /></tr>
-            </thead>
-            <tbody>
-              {data.sessions.map(s => (
-                <tr key={s.id}>
-                  <td style={{ minWidth: '18rem', maxWidth: '30rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
-                    {s.userAgent ?? 'Unknown device'}
-                    {s.current && <> <span className="pill good">This session</span></>}
-                  </td>
-                  <td className="mono">{fmt(s.createdAt)}</td>
-                  <td className="mono">{fmt(s.expiresAt)}</td>
-                  <td>
-                    <button type="button" className="btn button ghost" disabled={blocked} onClick={() => void revokeSession(s)}>
-                      {s.current ? 'Sign out' : 'Revoke'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <SessionListFlow title='Sessions' description='Devices signed in to your account' busy={busy === 'revoke' || busy === 'others'} disabled={blocked && busy !== 'revoke' && busy !== 'others'}
+        error={errs.revoke || errs.others} formatDate={value => fmt(String(value))}
+        sessions={data.sessions.map(s => ({ id: s.id, device: s.userAgent ?? 'Unknown device', location: fmt(s.createdAt), lastActiveAt: s.expiresAt, current: s.current }))}
+        messages={{ location: 'Signed in', lastActive: 'Expires', current: 'This session', revoke: 'Revoke', revokeTitle: 'Revoke this session?', revokeDescription: 'That device is signed out the next time it contacts the server.' }}
+        onRevoke={({ id }) => revokeSession(id)} onRevokeOthers={revokeOthers} />
+      {/* SessionListFlow has no slot for extra actions, so the refresh sits after its region. */}
+      <Button variant='ghost' style={{ minHeight: 44 }} disabled={blocked} onClick={() => void load()}>Refresh sessions</Button>
       {confirmDialog}
     </div>
   )

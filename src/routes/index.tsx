@@ -1,12 +1,11 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, AuthErrorBoundary, Banner, Button, PageHeader, SectionNav, SidebarStatus, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
-import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SectionNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
+import { Alert, AppStateScreen, DataTable, ProjectCreateFlow, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SettingsGroupId, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import type { HistoryState } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
@@ -30,7 +29,8 @@ import { ContextPanel } from '../components/ContextPanel'
 import { PromptsPanel } from '../components/PromptsPanel'
 import { AIInsightsPanel } from '../components/AIInsightsPanel'
 import ReportsPanel from '../components/ReportsPanel'
-import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
+import { TeamPanel } from '../components/TeamPanel'
+import { navigableHttpUrl } from '../lib/oidc-authorization'
 import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
 import { AccountClosurePanel } from '../components/AccountClosurePanel'
@@ -150,6 +150,7 @@ function App() {
   const [jobError, setJobError] = useState('')
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
+  const signOutLock = useRef(false)
   const [view, updateView] = useState<AppView>('project')
   const [analyticsApplied,setAnalyticsApplied]=useState<{userId:string;projectId:string;from:string;to:string;explorerEntry?:string}|null>(null)
   const rememberAnalyticsRange=useCallback((userId:string,projectId:string,range:{from:string;to:string},explorerEntry?:string)=>setAnalyticsApplied(previous=>previous?.userId===userId&&previous.projectId===projectId&&previous.from===range.from&&previous.to===range.to&&previous.explorerEntry===explorerEntry?previous:{userId,projectId,...range,explorerEntry}),[])
@@ -311,8 +312,9 @@ function App() {
     if(entering&&phase==='app')void loadAccountPreferences()
   },[view,phase])
   useEffect(()=>{
-    document.documentElement.dataset.theme=phase==='app'&&accountPreferences.data!==null&&accountPreferences.data.user.id===me?.user.id?accountPreferences.data.preferences.theme:'light'
-    return()=>{document.documentElement.dataset.theme='light'}
+    // Without an applied account preference (sign-in, recovery, state screens, unavailable preferences) the browser's own light or dark setting applies.
+    document.documentElement.dataset.theme=phase==='app'&&accountPreferences.data!==null&&accountPreferences.data.user.id===me?.user.id?accountPreferences.data.preferences.theme:'system'
+    return()=>{document.documentElement.dataset.theme='system'}
   },[phase,me?.user.id,accountPreferences.data])
   useEffect(()=>()=>{preferencesGeneration.current++;preferencesRequest.current?.abort()},[])
 
@@ -499,6 +501,17 @@ function App() {
     }
   }
 
+  async function createWorkspace(name: string) {
+    const session = sessionGeneration.current, navigation = intent.current.generation
+    try {
+      const d = await api<{ workspace: { id: string } }>('/api/workspaces', { method: 'POST', body: { name } })
+      if (sessionGeneration.current === session) await refreshMemberships(d.workspace.id, navigation)
+    } catch (e) {
+      if (sessionGeneration.current !== session || guardAuth(e)) return
+      throw e
+    }
+  }
+
   async function handleSetup(v: SetupValues) {
     const session = ++sessionGeneration.current
     await api('/api/auth/setup', { method: 'POST', body: v })
@@ -564,19 +577,30 @@ function App() {
     } catch (e) { setPageError(errMsg(e)); setPhase('error') }
   }
 
-  async function signOut() {
+  // Resolves to the failure message, or null when signed out or already in progress.
+  async function signOut(): Promise<string | null> {
+    // Synchronous lock: the onboarding screen's sign-out button cannot be disabled, so a second click must not send again.
+    if (signOutLock.current) return null
+    signOutLock.current = true
     const session = sessionGeneration.current
     setSignOutBusy(true); setAppError('')
     try {
       const out = await api<{ providerSignOutUrl?: string } | null>('/api/auth/sign-out', { method: 'POST', body: {} })
-      if (sessionGeneration.current !== session) return
+      if (sessionGeneration.current !== session) return null
       // End the editor before redirecting: a stale draft blocker must never delay sign-out.
       flushSync(() => resetSession())
       // Provider sessions also end at the identity provider (RP-initiated sign-out); its page is the last stop.
-      if (out?.providerSignOutUrl &&/^https?:\/\//.test(out.providerSignOutUrl)) { window.location.assign(out.providerSignOutUrl); return }
+      const providerSignOut = navigableHttpUrl(out?.providerSignOutUrl)
+      if (providerSignOut) { window.location.assign(providerSignOut); return null }
       go({ view: 'project' }, true)
-    } catch (e) { if (sessionGeneration.current === session && !guardAuth(e)) setAppError(`Could not sign out: ${errMsg(e)}`) }
-    finally { setSignOutBusy(false) }
+      return null
+    } catch (e) {
+      if (sessionGeneration.current !== session || guardAuth(e)) return null
+      const message = `Could not sign out: ${errMsg(e)}`
+      setAppError(message)
+      return message
+    }
+    finally { signOutLock.current = false; setSignOutBusy(false) }
   }
 
   async function copySnippet(text: string) {
@@ -612,6 +636,12 @@ function App() {
   if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
     onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
+
+  const settingsViews: AppView[] = ['preferences','security','identity','team','workspace','keys','providers','retention','google-app']
+  const settingsView = settingsViews.includes(view)
+  // An account without a workspace gets the onboarding screen; account and workspace settings keep the shell.
+  if (me && me.workspaces.length === 0 && !settingsView) return <WorkspaceSetup email={me.user.email} onCreate={createWorkspace} onRefresh={() => { refreshMemberships().catch(e => { setPageError(errMsg(e)); setPhase('error') }) }}
+    signOutBusy={signOutBusy} onSignOut={signOut} onAccount={() => go(target('preferences'))} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
   const canWrite = workspace !== undefined && ['owner', 'admin', 'editor'].includes(workspace.role)
@@ -653,12 +683,12 @@ function App() {
     { id: 'research', label: 'Research', items: [navItem('context','Project context','folder','project context business brief'), navItem('prompts','Saved prompts','terminal','prompts saved prompts prompt library'), navItem('ai-insights','Answer analysis','activity','ai insights answer analysis retained answers brand visibility'), navItem('ai-search','ChatGPT answers','search','ai search chatgpt answers query analysis'), navItem('keywords','Keywords','search'), navItem('domain-seo','Domain SEO','globe','domain seo backlinks'), navItem('ranks','Rank tracking','trending-up','rank tracking')] },
     { id: 'connect', label: 'Connect', items: [navItem('installation','Install tracker','code','install tracker'), { ...navItem('destinations','Destinations','external'), hidden: !adminRole }, navItem('collection','Collection and privacy','shield','collection and privacy'), { ...navItem('domains','Domains','globe'), hidden: !adminRole }] },
   ]
-  const settingsViews: AppView[] = ['preferences','security','identity','team','workspace','keys','providers','retention','google-app']
-  const settingsView = settingsViews.includes(view)
-  const settingsItem = (id: AppView, label: string): SectionNavItem => ({ id, label, href: id, current: view === id })
-  const settingsItems: SectionNavItem[] = [settingsItem('preferences','Your account'), settingsItem('security','Security'), settingsItem('identity','Identity & SSO'),
-    ...adminRole ? [settingsItem('team','Workspace & access'), settingsItem('keys','API access')] : [], ...workspace?.role === 'owner' ? [settingsItem('providers','Integrations')] : [],
-    ...workspace ? [settingsItem('retention','Retention')] : [], settingsItem('workspace','New workspace'), ...me!.instanceOperator ? [settingsItem('google-app','Google setup')] : []]
+  // Group order (account, workspace, operator) keeps the established tab order; New workspace closes the workspace group.
+  const settingsItem = (id: AppView, label: string, group: SettingsGroupId, allowed = true): SettingsNavItem => ({ id, label, group, href: id, allowed })
+  const settingsItems: SettingsNavItem[] = [settingsItem('preferences','Your account','account'), settingsItem('security','Security','account'), settingsItem('identity','Identity & SSO','account'),
+    settingsItem('team','Workspace & access','workspace',adminRole), settingsItem('keys','API access','workspace',adminRole), settingsItem('providers','Integrations','workspace',workspace?.role === 'owner'),
+    settingsItem('retention','Retention','workspace',workspace !== undefined), settingsItem('workspace','New workspace','workspace'), settingsItem('google-app','Google setup','operator',me!.instanceOperator)]
+  const settingsIntro = view === 'keys' ? 'Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.' : view === 'providers' ? 'Manage provider credentials and pause paid requests.' : view === 'workspace' ? 'Keep each team’s projects and access separate.' : undefined
   const navRoutes: NavRoutes = { search: key => key === 'boards' ? { workspace: workspaceId, view: 'boards' } : key === 'project' || key === 'compare' ? analyticsTarget(key) : key === 'explore' ? exploreTarget() : target(key as AppView),
     analyticsState: previous => ({ ...previous, analyticsReturn: explorerReturnState && me && project && readExplorerReturn(explorerReturnState, me.user.id, workspaceId, project.id) ? explorerReturnState : undefined }) }
 
@@ -689,9 +719,8 @@ function App() {
       </>}
       topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
         <div className='page-content content'><Stack gap={6}>
-        {settingsView&&<SectionNav label='Settings sections' linkComponent={ShellLink} items={settingsItems} />}
 
-        {!projectView&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>{workspaceTool?'Workspace tools include all projects.':'Selected project'}</Banner>}
+        {!projectView&&!settingsView&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>{workspaceTool?'Workspace tools include all projects.':'Selected project'}</Banner>}
         {workspace?.twoFactorLocked&&<Banner tone='warning' icon='shield' title='Two-factor authentication required' linkComponent={ShellLink} action={{label:'Open account security',href:'security'}}>This workspace requires two-factor authentication. Turn it on in Account security to open its projects and reports.</Banner>}
         {authNotice && <Alert tone={authNotice.kind === 'error' ? 'danger' : 'info'} onDismiss={() => setAuthNotice(null)}>{authNotice.message}</Alert>}
         {appError !== '' && <Alert tone='danger'>{appError}</Alert>}
@@ -699,9 +728,10 @@ function App() {
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
         {/* First-strong isolates keep a right-to-left project name from reordering the origin (same isolation as <bdi> without adding raw elements). */}
         {project && workspace && projectView && <PageHeader title={pageTitles[view]} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
-        {!projectView && view !== 'workspace' && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={pageTitles[view]}
-          description={view === 'keys' ? 'Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.' : view === 'providers' ? 'Manage provider credentials and pause paid requests.' : undefined} />}
-        {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
+        {!projectView && !settingsView && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={pageTitles[view]} />}
+        {settingsView && <SettingsLayout title={view === 'workspace' ? 'Create workspace' : pageTitles[view]} scope={pageScope} items={settingsItems} current={view} linkComponent={ShellLink} navigationLabel='Settings sections'>
+        {settingsIntro && <Text tone='muted'>{settingsIntro}</Text>}
+        {view === 'workspace' && <WorkspaceCreateSection onCreate={createWorkspace} />}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
         {view === 'preferences' && me && <AccountPreferencesPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} onFactorChanged={factorChanged} /><AccountClosurePanel key={`closure:${me.user.id}`} userId={me.user.id} onClosed={accountClosed} onUnauthorized={unauthorized} onOpenTeam={id => go({ workspace: id, view: 'team' })} onOpenIdentity={() => go(target('identity'))} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
@@ -712,6 +742,8 @@ function App() {
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
+        </SettingsLayout>}
         {(view==='links'||view==='pixels')&&workspace&&me&&<TrackedAssetsPanel workspaceId={workspaceId} userId={me.user.id} role={workspace.role} kind={view==='links'?'link':'pixel'} appUrl={appUrl} query={search.assetInvalid?'unsupported=1':search.assetQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.view===view&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={(query,kind)=>go({workspace:workspaceId,view:kind==='pixel'?'pixels':kind==='link'?'links':view,...query?{assetQuery:query}:{}})} onUnauthorized={unauthorized}/>}
         {view === 'collection' && project && workspace && me && <AnalyticsSettingsPanel projectId={project.id} userId={me.user.id} workspaceId={workspace.id} onDeleted={()=>{if(activeWorkspace.current!==workspace.id||activeProject.current!==project.id||currentMe.current?.user.id!==me.user.id)return;activateProject('');loadedProjects.current=(loadedProjects.current??[]).filter(item=>item.id!==project.id);setProjects(loadedProjects.current);go({workspace:workspace.id,view:'project'},true);void loadProjects(workspace.id);}} readOwner={(routeLocation.state.__TSR_key??routeLocation.href)+':'+workspace?.role} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===project.id&&search.view==='collection'&&canonicalNavigation(routeLocation.searchStr,search)} isCurrent={()=>sessionGeneration.current===renderedSession&&intent.current.generation===renderedIntent&&currentMe.current!==null&&currentMe.current.user.id===me.user.id&&activeWorkspace.current===workspaceId&&activeProject.current===project.id&&(router.state.location.state.__TSR_key??router.state.location.href)===(routeLocation.state.__TSR_key??routeLocation.href)&&navigationKey(parseNavigation(router.state.location.search))===navigationKey(search)&&currentMe.current.workspaces.some(w=>w.id===workspaceId&&w.role===workspace?.role)} onUnauthorized={unauthorized} />}
         {view === 'campaigns' && project && me && <UtmPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
@@ -733,19 +765,13 @@ function App() {
         {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} />}
-        {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
         </>}
-        {projectView && !workspace && <section className='card'><p>No workspace is linked to this account.</p><Link className='btn primary' to='/' search={target('workspace')}>Create workspace</Link></section>}
         {(view === 'new-project' || (projectView && projects !== null && project === null)) && workspace && canWrite && (
-          <section className='card onboarding-card' aria-labelledby='create-h'>
-            <span className='eyebrow'>Website setup</span>
-            <h1 id='create-h'>{projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'}</h1>
-            <p className='dim'>Enter a project name and website address.</p>
-            <CreateProjectForm key={workspaceId} onCreate={createProject} />
-          </section>
+          <><PageHeader eyebrow='Website setup' title={projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'} description='Enter a project name and website address.' />
+          <ProjectCreateSection key={workspaceId} onCreate={createProject} /></>
         )}
         {projectView && workspace && projects !== null && project === null && !canWrite && (
           <section className='card'>
@@ -785,16 +811,9 @@ function App() {
               )}
               {events !== null && events.events.length > 0 && (
                 <>
-                  <div className='table-wrap' role='region' aria-label='Retained event rows' tabIndex={0}>
-                    <table aria-labelledby='ev-h'>
-                      <thead><tr><th scope='col'>Event</th><th scope='col'>Origin</th><th scope='col'>Path</th><th scope='col'>Received</th></tr></thead>
-                      <tbody>
-                        {events.events.map((ev) => (
-                          <tr key={ev.id}><td>{ev.eventName}</td><td className='mono'>{ev.origin}</td><td className='mono'>{ev.path}</td><td className='mono'>{fmt(ev.receivedAt)}</td></tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <DataTable caption='Retained event rows' captionHidden responsive='stack' searchable={false} sortable={false} pagination={false} rows={events.events} rowKey={ev => ev.id}
+                    columns={[{ key: 'event', header: 'Event', rowHeader: true, wrap: true, render: ev => ev.eventName }, { key: 'origin', header: 'Origin', wrap: true, render: ev => <bdi dir='ltr'>{ev.origin}</bdi> },
+                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt}>{fmt(ev.receivedAt)}</time> }]} />
                   <p className='dim footnote'>Showing the latest {events.events.length} of {events.total} persisted events.</p>
                 </>
               )}
@@ -946,35 +965,53 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
     cancel={{ label: 'Back to sign in', onClick: onCancel }} onSubmit={submit} />
 }
 
-function CreateProjectForm({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {
-  const [name, setName] = useState('')
-  const [origin, setOrigin] = useState('')
+// Values stay in the uncontrolled fields after an error; a successful create remounts the form empty.
+function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [state, setState] = useState<{ generation: number; error: string; fieldErrors?: { name?: string; origin?: string } }>({ generation: 0, error: '' })
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
-    const n = name.trim()
-    if (n === '') { setError('Enter a project name.'); return }
-    const parsed = parseOrigin(origin)
-    if (!parsed.origin) { setError(parsed.error ?? 'Enter a valid website address.'); return }
-    setBusy(true); setError('')
-    try {
-      await onCreate(n, parsed.origin)
-      setName(''); setOrigin('')
-    } catch (err) { setError(errMsg(err)) }
+  async function submit(v: { name: string; origin?: string }) {
+    const name = v.name.trim()
+    if (name === '') { setState(s => ({ ...s, error: '', fieldErrors: { name: 'Enter a project name.' } })); return }
+    const parsed = parseOrigin(v.origin ?? '')
+    if (!parsed.origin) { setState(s => ({ ...s, error: '', fieldErrors: { origin: parsed.error ?? 'Enter a valid website address.' } })); return }
+    setBusy(true); setState(s => ({ ...s, error: '', fieldErrors: undefined }))
+    try { await onCreate(name, parsed.origin); setState(s => ({ generation: s.generation + 1, error: '' })) }
+    catch (err) { setState(s => ({ ...s, error: errMsg(err) })) }
     finally { setBusy(false) }
   }
 
-  return (
-    <form onSubmit={(e) => void submit(e)}>
-      <div className='field'><label htmlFor='pn'>Project name</label>
-        <input id='pn' autoComplete='off' required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></div>
-      <div className='field'><label htmlFor='po'>Website address</label>
-        <input id='po' inputMode='url' autoComplete='off' placeholder='https://example.com' required value={origin} onChange={(e) => setOrigin(e.target.value)} />
-        <p className='hint'>Use your website address, for example https://example.com, without a page path.</p></div>
-      {error !== '' && <Alert tone='danger'>{error}</Alert>}
-      <button className='btn primary' disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button>
-    </form>
-  )
+  return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Create project' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Creating…'
+    error={state.error || undefined} fieldErrors={state.fieldErrors} onSubmit={submit}
+    messages={{ nameLabel: 'Project name', originLabel: 'Website address', originHint: 'Use your website address, for example https://example.com, without a page path.', create: 'Create project' }} />
+}
+
+// Shared by the onboarding screen and the New workspace settings tab.
+function useWorkspaceNameSubmit(onCreate: (name: string) => Promise<void>) {
+  const [busy, setBusy] = useState(false)
+  const [outcome, setOutcome] = useState<AuthOutcome & { field?: string }>(noOutcome)
+  async function submit(v: WorkspaceCreateValues) {
+    const name = v.name.trim()
+    if (name === '') { setOutcome({ ...noOutcome, field: 'Enter a workspace name.' }); return }
+    setBusy(true); setOutcome(noOutcome)
+    try { await onCreate(name) }
+    catch (e) { const failure = failureOutcome(e); setOutcome(failure.error ? { ...failure, error: `Could not create the workspace: ${failure.error}` } : failure) }
+    finally { setBusy(false) }
+  }
+  return { busy, error: outcome.error || undefined, unconfirmed: outcome.unconfirmed || undefined, fieldErrors: outcome.field ? { name: outcome.field } : undefined, submit, clear: () => setOutcome(noOutcome) }
+}
+
+function WorkspaceCreateSection({ onCreate }: { onCreate: (name: string) => Promise<void> }) {
+  const { submit, clear: _clear, ...state } = useWorkspaceNameSubmit(onCreate)
+  return <WorkspaceCreateFlow mode='create' hideTitle title='Create workspace' defaultValues={{ name: '' }} busyLabel='Creating…' {...state} onSubmit={submit}
+    messages={{ nameLabel: 'Workspace name', create: 'Create workspace' }} />
+}
+
+// The screen shows its own most recent failure: starting a sign-out clears a create error and starting a create clears a sign-out error.
+function WorkspaceSetup({ email, onCreate, onRefresh, onSignOut, signOutBusy, onAccount }: { email: string; onCreate: (name: string) => Promise<void>; onRefresh: () => void; onSignOut: () => Promise<string | null>; signOutBusy: boolean; onAccount: () => void }) {
+  const [signOutError, setSignOutError] = useState('')
+  const { submit, clear, ...state } = useWorkspaceNameSubmit(name => { setSignOutError(''); return onCreate(name) })
+  const signOut = async () => { clear(); setSignOutError(''); const failure = await onSignOut(); if (failure) setSignOutError(failure) }
+  return <WorkspaceOnboarding brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' email={email} help='Keep each team’s projects and access separate.'
+    {...state} error={signOutError || state.error} onSubmit={submit} onRefresh={onRefresh} signOut={{ label: signOutBusy ? 'Signing out…' : 'Sign out', onClick: () => void signOut() }} account={{ label: 'Account settings', onClick: onAccount }} />
 }

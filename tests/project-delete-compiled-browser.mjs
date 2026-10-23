@@ -32,7 +32,7 @@ try{
  await replayFrame.waitForFunction(()=>document.head.querySelector('style')!==null,null,{timeout:10000});
  await page.evaluate(()=>document.querySelector('iframe[title="csp replay probe"]').remove());step('replay data: frame executed /replay.js under the inherited document policy');
  const workspaceId=await page.getByRole('combobox',{name:'Workspace',exact:true}).inputValue();assert.match(workspaceId,/^[0-9a-f-]{36}$/);
- async function create(name,origin){await page.goto(base+'/?workspace='+workspaceId+'&view=new-project',{waitUntil:'domcontentloaded'});await page.fill('#pn',name);await page.fill('#po',origin);await page.getByRole('button',{name:'Create project'}).click();await projectOption(name).waitFor({state:'attached'});}
+ async function create(name,origin){await page.goto(base+'/?workspace='+workspaceId+'&view=new-project',{waitUntil:'domcontentloaded'});await page.getByLabel('Project name',{exact:true}).fill(name);await page.getByLabel('Website address',{exact:true}).fill(origin);await page.getByRole('button',{name:'Create project'}).click();await projectOption(name).waitFor({state:'attached'});}
  await create('Doomed website','https://doomed.compiled-delete.test');await create('Surviving website','https://surviving.compiled-delete.test');step('two projects created');
  const doomedId=await projectOption('Doomed website').getAttribute('value');assert.match(doomedId,/^[0-9a-f-]{36}$/);
  await page.goto(base+'/?workspace='+workspaceId+'&project='+doomedId+'&view=collection',{waitUntil:'domcontentloaded'});
