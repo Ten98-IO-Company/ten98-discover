@@ -111,23 +111,30 @@ export async function runPaidWorkArchiveChecks() {
     WHERE table_schema=current_schema() AND table_name=ANY($1::text[])`, [paidWorkArchiveTables])).rows.map(row => [row.key, row.udt]));
   const exists = async (table: string, id: string) => (await pool.query(`SELECT 1 FROM ${table} WHERE id=$1`, [id])).rowCount === 1;
 
-  // A failed copy aborts the deletion: the website, its paid work and the archive are unchanged.
-  const connect = pool.connect.bind(pool);
-  let copyFailed = false;
-  pool.connect = (async () => {
-    const client = await connect(), query = client.query.bind(client);
-    client.query = ((sql: unknown, values?: unknown[]) => {
-      if (typeof sql === 'string' && sql.trimStart().startsWith('INSERT INTO paid_work_archive')) { copyFailed = true; return Promise.reject(new Error('Synthetic archive failure.')); }
-      return query(sql as string, values);
-    }) as typeof client.query;
-    const release = client.release.bind(client);
-    client.release = (...args: Parameters<typeof release>) => { client.query = query as typeof client.query; release(...args); };
-    return client;
-  }) as typeof pool.connect;
-  try { await assert.rejects(deleteProject(workspace.id, faulted, owner, { requestId: randomUUID(), revision: 1, confirmation: 'DELETE' }), /Synthetic archive failure/); }
-  finally { pool.connect = connect as typeof pool.connect; }
-  assert.ok(copyFailed && await exists('project', faulted) && await exists('keyword_research_run', faultKeyword.id), 'A failed archive copy must roll back the website deletion.');
-  assert.equal((await archived(faulted)).length, 0);
+  /** Runs `work` with every pooled client failing the first statement that starts with `prefix`; true when it was hit. */
+  async function failing(prefix: string, work: () => Promise<unknown>) {
+    const connect = pool.connect.bind(pool);
+    let hit = false;
+    pool.connect = (async () => {
+      const client = await connect(), query = client.query.bind(client);
+      client.query = ((sql: unknown, values?: unknown[]) => {
+        if (!hit && typeof sql === 'string' && sql.trimStart().startsWith(prefix)) { hit = true; return Promise.reject(new Error('Synthetic deletion failure.')); }
+        return query(sql as string, values);
+      }) as typeof client.query;
+      const release = client.release.bind(client);
+      client.release = (...args: Parameters<typeof release>) => { client.query = query as typeof client.query; release(...args); };
+      return client;
+    }) as typeof pool.connect;
+    try { await assert.rejects(work(), /Synthetic deletion failure/); } finally { pool.connect = connect as typeof pool.connect; }
+    return hit;
+  }
+  // The copy and the delete are one transaction: a failure during the copy, or after it (the deletion receipt is the last
+  // statement), leaves the website, its paid work and the archive unchanged.
+  for (const prefix of ['INSERT INTO paid_work_archive', 'INSERT INTO project_deletion_request(']) {
+    assert.ok(await failing(prefix, () => deleteProject(workspace.id, faulted, owner, { requestId: randomUUID(), revision: 1, confirmation: 'DELETE' })), `${prefix} was not reached.`);
+    assert.ok(await exists('project', faulted) && await exists('keyword_research_run', faultKeyword.id) && await exists('keyword_quote', faultKeyword.quote), `A failure at ${prefix} must roll back the website deletion.`);
+    assert.equal((await archived(faulted)).length, 0, `A failure at ${prefix} must roll back the archive copy.`);
+  }
 
   // Website deletion archives every paid-work row of the website, then deletes them with it.
   const revision = (await getProjectDeletion(workspace.id, project, owner)).item!.revision;
@@ -140,7 +147,9 @@ export async function runPaidWorkArchiveChecks() {
     assert.equal(row.workspace_id, workspace.id);
     assert.equal(row.created_at, created.get(`${row.source_table}:${row.source_id}`), `${row.source_table} keeps its ledger entry's creation time.`);
     assert.equal(row.record.id, row.source_id);
-    for (const key of Object.keys(row.record)) assert.ok(archivedColumn(key, columnTypes.get(`${row.source_table}.${key}`)!), `${row.source_table}.${key} must not be archived.`);
+    // The provider kind is added for rows that name a connection, because the connection goes with its workspace.
+    for (const key of Object.keys(row.record)) assert.ok(key === 'provider' ? columnTypes.has(`${row.source_table}.connection_id`) : archivedColumn(key, columnTypes.get(`${row.source_table}.${key}`)!), `${row.source_table}.${key} must not be archived.`);
+    if (columnTypes.has(`${row.source_table}.connection_id`)) assert.equal(row.record.provider, 'dataforseo', `${row.source_table} lost its provider kind.`);
     for (const key of ['encrypted_credentials', 'key_fingerprint', 'account_fingerprint', 'request_actor', 'connection_name', 'diagnostic', 'input', 'messages', 'request', 'raw_result', 'keyword', 'reason'])
       assert.equal(Object.hasOwn(row.record, key), false, `${row.source_table}.${key} reached the archive.`);
     assert.equal(JSON.stringify(row.record).includes(marker), false, `${row.source_table} archived a name or free text.`);
@@ -156,12 +165,26 @@ export async function runPaidWorkArchiveChecks() {
   assert.deepEqual((await pool.query('SELECT to_jsonb(r) AS row FROM provider_request r WHERE workspace_id=$1 ORDER BY id', [workspace.id])).rows, receipts, 'The workspace receipts stay live and unchanged.');
   assert.equal((await archived(kept)).length, 0, 'Another website of the workspace is not archived.');
   assert.ok(await exists('keyword_research_run', keptKeyword.id));
-  console.log('PASS website deletion copies every paid-work row (accounting fields only, no credential, name or free text) to the archive in its transaction, and a failed copy deletes nothing');
+  // Reconciliation fields of a charge survive with it.
+  const quoteRecord = bySource.get(`keyword_quote:${keyword.quote}`)!.record;
+  for (const key of ['id', 'workspace_id', 'project_id', 'user_id', 'connection_id', 'connection_revision', 'estimate_micros', 'created_at', 'expires_at', 'provider']) assert.ok(Object.hasOwn(quoteRecord, key), `keyword_quote.${key} is needed to reconcile.`);
+  const runRecord = bySource.get(`keyword_research_run:${keyword.id}`)!.record;
+  for (const key of ['id', 'quote_id', 'status', 'dispatched_at', 'completed_at', 'created_at']) assert.ok(Object.hasOwn(runRecord, key), `keyword_research_run.${key} is needed to reconcile.`);
+  console.log('PASS website deletion copies every paid-work row (accounting and reconciliation fields only, no credential, name or free text) to the archive in its transaction; a failure during or after the copy deletes and archives nothing');
 
   // Workspace scope: a workspace delete after archiving keeps its receipts and every website's paid work.
   const other = (await createWorkspace(owner, { name: `${marker} other workspace` })).workspace, otherProject = await website('other', other.id), otherConnection = randomUUID();
   await pool.query("INSERT INTO provider_connection(id,workspace_id,provider,name) VALUES($1,$2,'dataforseo',$3)", [otherConnection, other.id, marker]);
   const otherEntry = await keywordEntry(owner, otherProject, other.id, otherConnection);
+  // An uncertain charge is never archived away: it stays live for reconciliation and the uncertain-charge block.
+  await pool.query("UPDATE provider_request SET status='uncertain',actual_micros=NULL WHERE id=$1", [otherEntry.id]);
+  const refused = await pool.connect();
+  try {
+    await refused.query('BEGIN');
+    await assert.rejects(archivePaidWork(refused, { workspaceId: other.id }), (error: unknown) => (error as { status?: number }).status === 409);
+  } finally { await refused.query('ROLLBACK'); refused.release(); }
+  assert.equal((await pool.query('SELECT 1 FROM paid_work_archive WHERE workspace_id=$1', [other.id])).rowCount, 0);
+  await pool.query("UPDATE provider_request SET status='settled',actual_micros=900 WHERE id=$1", [otherEntry.id]);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -174,6 +197,9 @@ export async function runPaidWorkArchiveChecks() {
   assert.deepEqual(otherRows, [{ key: `keyword_quote:${otherEntry.quote}`, project_id: otherProject }, { key: `keyword_research_run:${otherEntry.id}`, project_id: otherProject }, { key: `provider_request:${otherEntry.id}`, project_id: null }]
     .sort((a, b) => a.key.localeCompare(b.key)));
   assert.equal(await exists('provider_request', otherEntry.id), false);
+  const otherReceipt = (await pool.query<{ record: Record<string, unknown> }>("SELECT record FROM paid_work_archive WHERE source_table='provider_request' AND source_id=$1", [otherEntry.id])).rows[0].record;
+  assert.deepEqual(Object.fromEntries(['request_key', 'operation', 'status', 'estimate_micros', 'actual_micros', 'provider_reference', 'provider'].map(key => [key, key === 'request_key' ? typeof otherReceipt[key] : otherReceipt[key]])),
+    { request_key: 'string', operation: 'archive.fixture', status: 'settled', estimate_micros: 1000, actual_micros: 900, provider_reference: 'provider-charge-1', provider: 'dataforseo' }, 'An archived receipt keeps its idempotency key, charge and provider.');
 
   // Operator export: the scope's rows in pages, oldest first, and a website filter.
   const exportClient = await pool.connect();
@@ -187,7 +213,7 @@ export async function runPaidWorkArchiveChecks() {
     for await (const row of exportPaidWorkArchive(exportClient, { workspaceId: other.id, projectId: otherProject })) site.push(row.sourceTable);
     assert.deepEqual(site.sort(), ['keyword_quote', 'keyword_research_run']);
   } finally { exportClient.release(); }
-  console.log('PASS workspace-scope archiving is idempotent and survives a workspace delete; the operator export pages a workspace or one website');
+  console.log('PASS workspace-scope archiving refuses an uncertain charge, is idempotent and survives a workspace delete; the operator export pages a workspace or one website');
 
   // Retention: recent archive rows stay and keep the closed account they name; 7-year-old rows go, and then the tombstone.
   await pool.query(`UPDATE "user" SET name='Closed account',email='closed-' || gen_random_uuid() || '@invalid',image=NULL,"emailVerified"=false,"twoFactorEnabled"=false,closed_at=clock_timestamp() WHERE id=$1`, [closer]);

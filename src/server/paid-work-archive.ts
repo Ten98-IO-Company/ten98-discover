@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { FoundationError } from './auth.ts';
 import { accountClosureInventory, closedAccountLedgerDependents } from './account-closure-inventory.ts';
 import { ident, readForeignKeys } from './account-closure-retention.ts';
 
@@ -42,8 +43,15 @@ export type PaidWorkScope = { workspaceId: string; projectId?: string };
  * Copies the scope's paid-work rows into the archive and returns the count per table. Call it in the deleting
  * transaction, before the first delete. A website scope copies every table with a `project_id`; the workspace-level
  * `provider_request` ledger survives website deletion and is copied with its workspace. Idempotent per source row.
+ * A row with a `connection_id` also records the connection's provider kind, since the connection goes with its workspace.
+ *
+ * Uncertain or open charges are never archived away: website deletion refuses them before calling this (project-delete.ts),
+ * and a workspace scope is refused here while any receipt of the workspace is reserved, dispatched or uncertain, so
+ * reconciliation and the uncertain-charge block keep seeing it.
  */
 export async function archivePaidWork(client: PoolClient, scope: PaidWorkScope): Promise<Record<string, number>> {
+  if (scope.projectId === undefined && (await client.query("SELECT 1 FROM provider_request WHERE workspace_id=$1 AND status IN('reserved','dispatched','uncertain') LIMIT 1", [scope.workspaceId])).rowCount)
+    throw new FoundationError(409, 'Finish or cancel reserved work and reconcile uncertain provider charges before deleting this workspace.');
   const columns = (await client.query<{ table_name: string; column_name: string; udt_name: string }>(
     `SELECT table_name::text, column_name::text, udt_name::text FROM information_schema.columns
      WHERE table_schema=current_schema() AND table_name=ANY($1::text[]) ORDER BY table_name, ordinal_position`, [paidWorkArchiveTables])).rows;
@@ -69,7 +77,8 @@ export async function archivePaidWork(client: PoolClient, scope: PaidWorkScope):
       `INSERT INTO paid_work_archive(source_table,source_id,workspace_id,project_id,account_ids,record,created_at)
        SELECT $3, t.id, t.workspace_id, ${has('project_id') ? 't.project_id' : 'NULL'},
          array_remove(ARRAY[${accounts.map(column => `t.${ident(column)}`).join(',')}]::text[], NULL),
-         (SELECT jsonb_object_agg(f.key, f.value) FROM jsonb_each(to_jsonb(t)) f WHERE f.key=ANY($4::text[])), ${created}
+         (SELECT jsonb_object_agg(f.key, f.value) FROM jsonb_each(to_jsonb(t)) f WHERE f.key=ANY($4::text[]))${has('connection_id')
+           ? ` || jsonb_build_object('provider', (SELECT c.provider FROM provider_connection c WHERE c.id=t.connection_id AND c.workspace_id=t.workspace_id))` : ''}, ${created}
        FROM ${ident(table)} t WHERE t.workspace_id=$1 AND ${has('project_id') ? '($2::text IS NULL OR t.project_id=$2)' : '$2::text IS NULL'}
        ON CONFLICT (source_table, source_id) DO NOTHING`,
       [scope.workspaceId, scope.projectId ?? null, table, shape.filter(column => archivedColumn(column.name, column.type)).map(column => column.name)]);

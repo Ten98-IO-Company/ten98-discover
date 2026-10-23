@@ -7,6 +7,7 @@ import { getDatabase } from '../src/server/db.ts';
 import { projectAnalytics } from '../src/server/analytics.ts';
 import { createApiKey } from '../src/server/api-keys.ts';
 import { getRetention, previewRetention, runRetentionBatch, saveRetention } from '../src/server/retention.ts';
+import { runClosedAccountRetention } from '../src/server/account-closure-retention.ts';
 
 export async function runRetentionCoverageChecks() {
   assert.equal(process.env.TEN98_INTEGRATION_TEST, '1');
@@ -103,5 +104,13 @@ export async function runRetentionCoverageChecks() {
   await http(`${route}/preview`,403,{revision:3,settings:current.settings},cookie);
   await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspaceId,userId]);
   await http(route,404,undefined,cookie);
-  console.log('PASS retention coverage: partial UTC day, unavailable versus zero, extension watermark, protected cookie routes, signed expiry, scopes and retained counts');
+  // Paid-work archive (#292): workspace retention never shortens it; only the daily 7-year job removes a row, and again
+  // finds nothing more.
+  const agedArchive=randomUUID(),recentArchive=randomUUID();
+  for(const [id,age] of [[agedArchive,'7 years 1 day'],[recentArchive,'6 years 11 months']])await pool.query("INSERT INTO paid_work_archive(source_table,source_id,workspace_id,project_id,account_ids,record,created_at) VALUES('keyword_quote',$1,$2,$3,'{}',jsonb_build_object('id',$1::text),now()-$4::interval)",[id,workspaceId,projectId,age]);
+  const archivedIds=async()=>(await pool.query<{id:string}>('SELECT source_id::text AS id FROM paid_work_archive WHERE workspace_id=$1 ORDER BY created_at',[workspaceId])).rows.map(row=>row.id);
+  await pool.query("UPDATE project SET retention_next_run_at=clock_timestamp() WHERE id=$1",[projectId]);await runRetentionBatch(projectId);
+  assert.deepEqual(await archivedIds(),[agedArchive,recentArchive],'Workspace analytics retention must not delete archived paid work.');
+  for(let run=0;run<2;run++){const summary=await runClosedAccountRetention();assert.ok(!summary.archiveFailed);assert.deepEqual(await archivedIds(),[recentArchive],'Only 7-year-old archive rows go, and a repeat run is a no-op.');}
+  console.log('PASS retention coverage: partial UTC day, unavailable versus zero, extension watermark, protected cookie routes, signed expiry, scopes, retained counts and the 7-year paid-work archive');
 }
