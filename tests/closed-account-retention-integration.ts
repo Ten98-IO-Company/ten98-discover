@@ -25,7 +25,8 @@ export async function runClosedAccountRetentionChecks() {
   const active = await account('active'), closed = await account('closed'), gone = await account('gone'), authored = await account('authored'), operated = await account('operated');
   const { workspace } = await createWorkspace(active, { name: 'Closed-account retention fixture' });
   const project = randomUUID(), connection = randomUUID();
-  await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [project, workspace.id, 'Retention fixture', 'https://retention.integration.test', randomUUID()]);
+  // The live worker's website retention must not prune these backdated fixtures first.
+  await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,$3,$4,$5,'infinity')", [project, workspace.id, 'Retention fixture', 'https://retention.integration.test', randomUUID()]);
   await pool.query("INSERT INTO provider_connection(id,workspace_id,provider,name) VALUES($1,$2,'dataforseo','Retention fixture, no credentials')", [connection, workspace.id]);
 
   async function receipt(user: string, age: string, status = 'settled') {
