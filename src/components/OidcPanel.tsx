@@ -1,4 +1,4 @@
-import {Icon} from './CampaignUI';
+import {AppIcon} from '@ten98/ui/app';
 import { useConfirmDialog } from '@ten98/ui'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
@@ -189,7 +189,7 @@ function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofH
         ? <OperatorSection data={opData} busy={busy} mutate={mutate} reload={reload} />
         : (
           <section className="panel settings-panel integration-settings-card">
-            <div className="provider-settings-heading"><span className="provider-initial"><Icon name="settings" size={18}/></span><div><h2>Identity providers (operator)</h2><p>Manage your installation’s sign-in providers</p></div></div>
+            <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="settings" size={18}/></span><div><h2>Identity providers (operator)</h2><p>Manage your installation’s sign-in providers</p></div></div>
             <p role="alert" className="alert">Your operator access changed or provider management is unavailable here. Operator access is granted explicitly on this host; owning a workspace does not grant it.</p>
             <button type="button" className="btn button ghost" onClick={reload}>Try again</button>
           </section>
@@ -224,7 +224,7 @@ function ProofReview({proof, instanceOperator, vaultOk, busy, mutate, onDone, on
 
   return (
     <section className="panel settings-panel integration-settings-card">
-      <div className="provider-settings-heading"><span className="provider-initial"><Icon name="shield" size={18}/></span><div><h2>{proof.purpose === 'link' ? 'Review identity before linking' : 'Review test sign-in'}</h2><p>{proof.providerName}</p></div></div>
+      <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="shield" size={18}/></span><div><h2>{proof.purpose === 'link' ? 'Review identity before linking' : 'Review test sign-in'}</h2><p>{proof.providerName}</p></div></div>
       <p>
         {proof.purpose === 'link'
           ? `Sign-in at ${proof.providerName} returned this identity. It is linked to your account only if you confirm below.`
@@ -292,7 +292,7 @@ function AccountSection({providers, identities, hasPassword, busy, mutate, reloa
 
   return (
     <section className="panel settings-panel integration-settings-card">
-      <div className="provider-settings-heading"><span className="provider-initial"><Icon name="key" size={18}/></span><div><h2>Your sign-in methods</h2><p>Connect the identities you use to sign in</p></div></div>
+      <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="key" size={18}/></span><div><h2>Your sign-in methods</h2><p>Connect the identities you use to sign in</p></div></div>
       <p className="provider-source">{identities.length} linked {identities.length === 1 ? 'identity' : 'identities'}</p>
       {err && <p role="alert" className="alert">{err}</p>}
       {identities.length === 0 ? (
@@ -432,7 +432,7 @@ function OperatorSection({data, busy, mutate, reload}: {
 
   return (
     <section className="panel settings-panel integration-settings-card">
-      <div className="provider-settings-heading"><span className="provider-initial"><Icon name="settings" size={18}/></span><div><h2>Identity providers (operator)</h2><p>Manage your installation’s sign-in providers</p></div></div>
+      <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="settings" size={18}/></span><div><h2>Identity providers (operator)</h2><p>Manage your installation’s sign-in providers</p></div></div>
       <p className="hint field-help">Operator access is granted explicitly on this host; owning a workspace does not grant it.</p>
       <div className="field">
         <label htmlFor={fid + '-cb'}>Callback URL — register this exact address with your identity provider</label>

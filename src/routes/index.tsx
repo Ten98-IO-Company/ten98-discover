@@ -1,6 +1,6 @@
-import { Brand, Icon } from '../components/CampaignUI'
-import { Alert, AppStateScreen, AuthErrorBoundary, Button, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
-import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
+import { AppBrand, AppIcon } from '@ten98/ui/app'
+import { Alert, AppStateScreen, AuthErrorBoundary, Banner, Button, PageHeader, SectionNav, SidebarStatus, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SectionNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
@@ -74,11 +74,11 @@ function RouteEntry(){
   const location=useLocation(),raw=new URLSearchParams(location.searchStr)
   // Router normalizes duplicate/JSON view values; public-share intent must never boot private APIs.
   const shared=raw.getAll('view').some(value=>value.includes('tracked-share'))
-  return <AuthErrorBoundary fallback={{ brand: <Brand /> }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
+  return <AuthErrorBoundary fallback={{ brand: <AppBrand product='Discover' /> }}>{shared?<SharedTrackedAssetPanel search={location.searchStr} fragment={location.hash} entry={location.state.__TSR_key??location.href}/>:<App/>}</AuthErrorBoundary>
 }
 
 type Status = { configured: boolean; appUrl: string; trackerScript?: string; collectPath?: string | null }
-type Workspace = { id: string; name: string; role: string }
+type Workspace = { id: string; name: string; role: string; twoFactorLocked?: boolean }
 type Me = { user: { id: string; name: string; email: string }; instanceOperator: boolean; workspaces: Workspace[] }
 type Project = { id: string; name: string; origin: string; publicKey: string; eventCount: number; lastEventAt: string | null; retainedFrom: string | null }
 type EventsData = { events: { id: string; eventName: string; path: string; origin: string; receivedAt: string }[]; total: number; retainedFrom: string | null }
@@ -596,11 +596,11 @@ function App() {
   }
 
   if (phase === 'recovery') return recovery ? <PasswordRecoveryPanel key={recovery.generation} value={recovery.value} initialEmail={signInEmail}
-    onRequest={() => { if (sessionGeneration.current === renderedSession) beginRecovery({ kind: 'request' }) }} onSignIn={changed => { if (sessionGeneration.current !== renderedSession) return; resetSession(); if (changed) setAuthNotice({ kind: 'info', message: 'Password changed. Sign in with your new password. Two-factor authentication is still required if enabled.' }) }} /> : <main className='center'><p role='status'>Loading…</p></main>
+    onRequest={() => { if (sessionGeneration.current === renderedSession) beginRecovery({ kind: 'request' }) }} onSignIn={changed => { if (sessionGeneration.current !== renderedSession) return; resetSession(); if (changed) setAuthNotice({ kind: 'info', message: 'Password changed. Sign in with your new password. Two-factor authentication is still required if enabled.' }) }} /> : <AppStateScreen state='loading' brand={<AppBrand product='Discover' />} message='Loading…' />
 
-  if (phase === 'loading') return <AppStateScreen state='loading' brand={<Brand />} message='Loading…' />
+  if (phase === 'loading') return <AppStateScreen state='loading' brand={<AppBrand product='Discover' />} message='Loading…' />
 
-  if (phase === 'error') return <AppStateScreen state='error' brand={<Brand />} title='Unable to load account access' message={pageError} onRetry={() => { setPhase('loading'); void boot() }} />
+  if (phase === 'error') return <AppStateScreen state='error' brand={<AppBrand product='Discover' />} title='Unable to load account access' message={pageError} onRetry={() => { setPhase('loading'); void boot() }} />
 
   if (phase === 'setup') return <OwnerForm onSetup={handleSetup} onSignInInstead={(email) => { setSignInEmail(email); setPhase('signin') }} />
   if (phase === 'factor') return <FactorForm onSubmit={handleFactor} onCancel={resetSession} />
@@ -651,6 +651,12 @@ function App() {
     { id: 'research', label: 'Research', items: [navItem('context','Project context','folder','project context business brief'), navItem('prompts','Saved prompts','terminal','prompts saved prompts prompt library'), navItem('ai-insights','Answer analysis','activity','ai insights answer analysis retained answers brand visibility'), navItem('ai-search','ChatGPT answers','search','ai search chatgpt answers query analysis'), navItem('keywords','Keywords','search'), navItem('domain-seo','Domain SEO','globe','domain seo backlinks'), navItem('ranks','Rank tracking','trending-up','rank tracking')] },
     { id: 'connect', label: 'Connect', items: [navItem('installation','Install tracker','code','install tracker'), { ...navItem('destinations','Destinations','external'), hidden: !adminRole }, navItem('collection','Collection and privacy','shield','collection and privacy'), { ...navItem('domains','Domains','globe'), hidden: !adminRole }] },
   ]
+  const settingsViews: AppView[] = ['preferences','security','identity','team','workspace','keys','providers','retention','google-app']
+  const settingsView = settingsViews.includes(view)
+  const settingsItem = (id: AppView, label: string): SectionNavItem => ({ id, label, href: id, current: view === id })
+  const settingsItems: SectionNavItem[] = [settingsItem('preferences','Your account'), settingsItem('security','Security'), settingsItem('identity','Identity & SSO'),
+    ...adminRole ? [settingsItem('team','Workspace & access'), settingsItem('keys','API access')] : [], ...workspace?.role === 'owner' ? [settingsItem('providers','Integrations')] : [],
+    ...workspace ? [settingsItem('retention','Retention')] : [], settingsItem('workspace','New workspace'), ...me!.instanceOperator ? [settingsItem('google-app','Google setup')] : []]
   const navRoutes: NavRoutes = { search: key => key === 'boards' ? { workspace: workspaceId, view: 'boards' } : key === 'project' || key === 'compare' ? analyticsTarget(key) : key === 'explore' ? exploreTarget() : target(key as AppView),
     analyticsState: previous => ({ ...previous, analyticsReturn: explorerReturnState && me && project && readExplorerReturn(explorerReturnState, me.user.id, workspaceId, project.id) ? explorerReturnState : undefined }) }
 
@@ -665,48 +671,34 @@ function App() {
     preferencesGeneration.current++;preferencesRequest.current?.abort();preferencesRequest.current=null;setAccountPreferences({data:null,loading:false,error:message})
   }}
   return (
-    <AccountPresentationContext.Provider value={presentation}><AppShell sidebarLabel='Application navigation' skipLinkLabel='Skip to main content' mainLabel='Main content' navigation={{open:menuOpen,onOpenChange:setMenuOpen}}
+    <AccountPresentationContext.Provider value={presentation}><NavRoutesContext.Provider value={navRoutes}><AppShell sidebarLabel='Application navigation' skipLinkLabel='Skip to main content' mainLabel='Main content' navigation={{open:menuOpen,onOpenChange:setMenuOpen}}
       sidebar={<>
-        <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><Brand /></Link>
+        <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><AppBrand product='Discover' /></Link>
         <div className='side-body sidebar-nav'>
-        <NavRoutesContext.Provider value={navRoutes}>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
           onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Create project',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.'}} />
         {workspace&&<SidebarNav label='Workspace measurement' linkComponent={ShellLink} filter={toolSearch} groups={workspaceNavGroups} />}
         {project&&workspace&&<SidebarNav label='Project sections' linkComponent={ShellLink} filter={toolSearch} groups={projectNavGroups} />}
-        </NavRoutesContext.Provider>
         </div>
         <SidebarFooter version={appVersion}>
-          <Link className={`nav-item${['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)?' selected':''}`} to='/' search={target('preferences')}><Icon name='settings'/><span>Settings</span></Link>
+          {project&&<SidebarStatus tone={lastReceived?'connected':'idle'} label={lastReceived?'Retained events received':'No retained events yet'} linkComponent={ShellLink} action={lastReceived?undefined:{label:'Install tracker',href:'installation'}} />}
+          <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target('preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
       topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
         <div className='page-content content'>
-        {['preferences','security','identity','team','workspace','keys','providers','retention','google-app'].includes(view)&&<nav className='tabs settings-navigation' aria-label='Settings sections'>
-          <Link className={view==='preferences'?'active':''} to='/' search={target('preferences')}>Your account</Link>
-          <Link className={view==='security'?'active':''} to='/' search={target('security')}>Security</Link>
-          <Link className={view==='identity'?'active':''} to='/' search={target('identity')}>Identity & SSO</Link>
-          {workspace&&['owner','admin'].includes(workspace.role)&&<Link className={view==='team'?'active':''} to='/' search={target('team')}>Workspace & access</Link>}
-          {workspace&&['owner','admin'].includes(workspace.role)&&<Link className={view==='keys'?'active':''} to='/' search={target('keys')}>API access</Link>}
-          {workspace?.role==='owner'&&<Link className={view==='providers'?'active':''} to='/' search={target('providers')}>Integrations</Link>}
-          {workspace&&<Link className={view==='retention'?'active':''} to='/' search={target('retention')}>Retention</Link>}
-          <Link className={view==='workspace'?'active':''} to='/' search={target('workspace')}>New workspace</Link>
-          {me!.instanceOperator&&<><Link className={view==='google-app'?'active':''} to='/' search={target('google-app')}>Google setup</Link></>}
-        </nav>}
+        {settingsView&&<SectionNav label='Settings sections' linkComponent={ShellLink} items={settingsItems} />}
 
-        {!projectView&&project&&<div className='context-return'><span>{workspaceTool?'Workspace tools include all projects.':'Selected project'}</span><Link className='btn ghost' to='/' search={target('project')}><Icon name='arrow' size={15}/>Return to {project.name}</Link></div>}
-        {authNotice && <div role={authNotice.kind === 'error' ? 'alert' : 'status'} className={authNotice.kind === 'error' ? 'alert' : 'notice'}>{authNotice.message} <button className='btn ghost' onClick={() => setAuthNotice(null)}>Dismiss</button></div>}
-        {appError !== '' && <div role='alert' className='alert'>{appError}</div>}
-        {projectsError !== '' && <div role='alert' className='alert'>{projectsError} <button className='btn' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</button></div>}
+        {!projectView&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>{workspaceTool?'Workspace tools include all projects.':'Selected project'}</Banner>}
+        {workspace?.twoFactorLocked&&<Banner tone='warning' icon='shield' title='Two-factor authentication required' linkComponent={ShellLink} action={{label:'Open account security',href:'security'}}>This workspace requires two-factor authentication. Turn it on in Account security to open its projects and reports.</Banner>}
+        {authNotice && <Alert tone={authNotice.kind === 'error' ? 'danger' : 'info'} onDismiss={() => setAuthNotice(null)}>{authNotice.message}</Alert>}
+        {appError !== '' && <Alert tone='danger'>{appError}</Alert>}
+        {projectsError !== '' && !workspace?.twoFactorLocked && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
-        {project && workspace && projectView && <header className='proj-head page-heading'>
-          <h1>{pageTitles[view]}</h1>
-          <p className='project-origin'><bdi>{project.name}</bdi> · <bdi>{project.origin}</bdi></p>
-        </header>}
-        {!projectView && view !== 'workspace' && view !== 'new-project' && <header className='proj-head page-heading'><span className='eyebrow'>{pageScope}</span><h1>{pageTitles[view]}</h1>
-          {view === 'keys' && <p className='dim'>Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.</p>}
-          {view === 'providers' && <p className='dim'>Manage provider credentials and pause paid requests.</p>}
-        </header>}
+        {/* First-strong isolates keep a right-to-left project name from reordering the origin (PageHeader takes text only). */}
+        {project && workspace && projectView && <PageHeader title={pageTitles[view]} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
+        {!projectView && view !== 'workspace' && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={pageTitles[view]}
+          description={view === 'keys' ? 'Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.' : view === 'providers' ? 'Manage provider credentials and pause paid requests.' : undefined} />}
         {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
         {view === 'preferences' && me && <AccountPreferencesPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} />}
@@ -781,7 +773,7 @@ function App() {
               </div>
               {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint'>History before {fmt((events?.retainedFrom ?? project.retainedFrom)!)} is unavailable after retention. This is not a lifetime total.</p>}
               {lastReceived !== null && <p className='dim'>Last retained event received {fmt(lastReceived)}</p>}
-              {eventsError !== '' && <div role='alert' className='alert'>{eventsError}</div>}
+              {eventsError !== '' && <Alert tone='danger'>{eventsError}</Alert>}
               {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
@@ -828,7 +820,7 @@ function App() {
             </section>
             <section aria-label='Check website events' aria-busy={eventsBusy} style={{minWidth:0,overflowWrap:'anywhere'}}>
               <ResourceCard title='Check that events arrive' description='Open your website, visit a page, then check for an event received by this project.' icon='chart'
-                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<Icon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Link style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} className={events !== null && events.total > 0 ? 'btn primary' : 'btn'} to='/' search={target('project')}>View analytics</Link></>}>
+                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<AppIcon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Link style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} className={events !== null && events.total > 0 ? 'btn primary' : 'btn'} to='/' search={target('project')}>View analytics</Link></>}>
                 <TrackerStatus resource={project.origin}
                   installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
@@ -851,7 +843,7 @@ function App() {
                 </div>
               </div>
               <p className='dim'>Checks whether the background worker can receive and complete a job. Choose Refresh status to see its result.</p>
-              {jobError !== '' && <div role='alert' className='alert'>{jobError}</div>}
+              {jobError !== '' && <Alert tone='danger'>{jobError}</Alert>}
               {jobs === null && jobError === '' && <p role='status' className='dim'>Loading checks…</p>}
               {jobs !== null && jobs.length === 0 && <div className='empty'><p><strong>No checks yet.</strong> Run a check to verify that background processing is working.</p></div>}
               {jobs !== null && jobs.length > 0 && (
@@ -872,7 +864,7 @@ function App() {
         </>}
 
         </div>
-    </AppShell></AccountPresentationContext.Provider>
+    </AppShell></NavRoutesContext.Provider></AccountPresentationContext.Provider>
   )
 }
 
@@ -908,7 +900,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
     } finally { setBusy(false) }
   }
 
-  return <FirstUserSetupFlow key={form.generation} brand={<Brand />} aside={authStory} label='Account access' title='Create owner account'
+  return <FirstUserSetupFlow key={form.generation} brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Create owner account'
     description='Create the owner account and its default workspace. The setup token comes from your server configuration.'
     workspaceName passwordPolicy={{ minLength: 12, maxLength: 128, hint: 'At least 12 characters.' }}
     defaultValues={{ name: form.name, email: form.email, workspaceName: form.workspaceName }}
@@ -927,7 +919,7 @@ function SignInForm({ initialEmail, onSignIn, onForgot, onCancel, notice }: { in
     finally { setBusy(false) }
   }
 
-  return <SignInFlow brand={<Brand />} aside={authStory} label='Account access' title='Sign in' defaultValues={{ email: initialEmail }}
+  return <SignInFlow brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Sign in' defaultValues={{ email: initialEmail }}
     busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
     notice={notice ? { tone: notice.kind === 'error' ? 'danger' : 'info', text: notice.message } : undefined}
     forgotPassword={{ onClick: email => onForgot(email.trim()) }} cancel={onCancel ? { label: 'Back to invitation', onClick: onCancel } : undefined}
@@ -944,7 +936,7 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
     catch (e) { setOutcome(failureOutcome(e)) }
     finally { setBusy(false) }
   }
-  return <TwoFactorChallengeFlow brand={<Brand />} aside={authStory} label='Account access' title='Verify your sign-in' mode={mode}
+  return <TwoFactorChallengeFlow brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Verify your sign-in' mode={mode}
     onModeChange={next => { setMode(next); setOutcome(noOutcome) }} busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
     messages={{ authenticatorLabel: 'Authenticator code', authenticatorDescription: 'Enter the six-digit code from your authenticator app.', recoveryDescription: 'Enter one unused recovery code. Each code can only be used once.', useAuthenticator: 'Use authenticator' }}
     cancel={{ label: 'Back to sign in', onClick: onCancel }} onSubmit={submit} />
@@ -977,7 +969,7 @@ function CreateProjectForm({ onCreate }: { onCreate: (name: string, origin: stri
       <div className='field'><label htmlFor='po'>Website address</label>
         <input id='po' inputMode='url' autoComplete='off' placeholder='https://example.com' required value={origin} onChange={(e) => setOrigin(e.target.value)} />
         <p className='hint'>Use your website address, for example https://example.com, without a page path.</p></div>
-      {error !== '' && <div role='alert' className='alert'>{error}</div>}
+      {error !== '' && <Alert tone='danger'>{error}</Alert>}
       <button className='btn primary' disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button>
     </form>
   )

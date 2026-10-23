@@ -2,7 +2,7 @@ import { InvitationAcceptFlow } from '@ten98/ui';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { authStory } from './AuthLayout';
-import { Brand } from './CampaignUI';
+import { AppBrand } from '@ten98/ui/app';
 import { api, ApiError, errMsg } from '../lib/api';
 
 type InspectInfo = { workspaceName: string; email: string; role: string; expiresAt: string };
@@ -123,7 +123,7 @@ function InvitePanelContent(props: InvitePanelProps) {
   }
 
   const frame = {
-    brand: <Brand />,
+    brand: <AppBrand product='Discover' />,
     aside: authStory,
     busy,
     cancel: { label: 'Cancel', onClick: () => onCancel() },

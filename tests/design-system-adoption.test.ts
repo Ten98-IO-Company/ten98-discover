@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {readFile} from 'node:fs/promises';
+import {readFile,readdir} from 'node:fs/promises';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {AppBrand, AppIcon} from '@ten98/ui/app';
@@ -23,15 +23,17 @@ test('shared icons retain the established geometry, sizing and unknown-name fall
 });
 
 test('Discover consumes package tokens, styles and visual elements without copied foundations',async()=>{
- const [tokens,styles,bridge,sharedTokens,sharedStyles]=await Promise.all([
-  readFile('src/design-tokens.css','utf8'),readFile('src/campaign-ui.css','utf8'),readFile('src/components/CampaignUI.tsx','utf8'),
+ const sources=(await readdir('src',{recursive:true})).map(name=>name.replaceAll('\\','/')).filter(name=>name.endsWith('.tsx'));
+ const [tokens,styles,sharedTokens,sharedStyles,...code]=await Promise.all([
+  readFile('src/design-tokens.css','utf8'),readFile('src/campaign-ui.css','utf8'),
   readFile(new URL(import.meta.resolve('@ten98/ui/app-tokens.css')),'utf8'),readFile(new URL(import.meta.resolve('@ten98/ui/app.css')),'utf8'),
+  ...sources.map(name=>readFile('src/'+name,'utf8')),
  ]);
  assert.equal(tokens.trim(),"@import '@ten98/ui/app-tokens.css';");
  assert.match(styles,/^@import '@ten98\/ui\/app\.css';\s*@import '@ten98\/ui\/product\.css';\s*\/\* Discover adapters:/);
- assert.doesNotMatch(bridge,/<svg\b|const paths\b|brand-mark|brand-dot/,'The app must use the package visual elements');
- assert.match(bridge,/export \{ AppIcon as Icon \} from '@ten98\/ui\/app'/);
- assert.match(bridge,/<AppBrand product="Discover"\s*\/>/);
+ assert.ok(sources.includes('routes/index.tsx')&&!sources.some(name=>/CampaignUI/.test(name)),'No app-local brand or icon bridge remains');
+ code.forEach((source,index)=>assert.doesNotMatch(source,/brand-mark|brand-dot|CampaignUI/,sources[index]+' must use the package visual elements'));
+ assert.match(code[sources.indexOf('routes/index.tsx')],/<AppBrand product='Discover' \/>/);
  assert.match(sharedTokens,/@import ['"]\.\/tokens\.css['"]/);
  assert.match(sharedTokens,/--color-accent:\s*var\(--t98-accent\)/);
  assert.match(sharedStyles,/\.brand-mark\s*\{/);

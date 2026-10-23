@@ -191,8 +191,8 @@ try {
   assert.equal(await main.getByRole('heading', {name:'Retained events', level:2, exact:true}).count(), 1);
   assert.equal(await main.getByText('No retained events available.', {exact:true}).count(), 1);
   assert.equal(await main.getByText('Events currently retained', {exact:true}).count(), 0);
-  assert.equal(await main.locator('.proj-head > p.dim').count(), 0);
-  assert.equal(await main.locator('.project-origin').innerText(), 'Shell fixture project · ' + website);
+  assert.equal(await main.locator('.t98-page-header p.dim').count(), 0);
+  assert.equal(await main.locator('.t98-page-header .t98-page-description').innerText(), '⁨Shell fixture project⁩ · ⁨' + website + '⁩');
   assert.equal(await page.getByText('Development preview', {exact:true}).count(), 1);
   assert.equal(await page.locator('.app-footer').count(), 0);
   await count(0); await capture('events-empty-1440');
@@ -242,7 +242,7 @@ try {
   assert.equal(await snippetRegion().getAttribute('tabindex'), '0');
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);
   assert.equal(await main.getByRole('heading', {name:'Tracking snippet', level:2, exact:true}).count(), 1);
-  assert.equal(await main.locator('.proj-head > p.dim').count(), 0);
+  assert.equal(await main.locator('.t98-page-header p.dim').count(), 0);
   await button('Copy snippet').click(); await main.getByText('Copied to clipboard.', {exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(() => window.__shellClipboardWrites), [expectedSnippet]);
   await page.evaluate(() => { window.__shellClipboardFailure = true; });

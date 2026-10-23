@@ -95,6 +95,8 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
     `/api/projects/${requiredProject}/events`, `/api/projects/${requiredProject}/realtime`, `/api/projects/${requiredProject}/google`, `/api/PROJECTS/${requiredProject.toUpperCase()}/events`]) await locked(path, primary);
   await locked(`/api/projects/${requiredProject}/analytics/export`, primary, {});
   for (const path of ['/api/me', '/api/account/security', '/api/account/preferences', `/api/workspaces/${options.workspaceId}/projects`]) await expect(path, primary, 200);
+  const lockedWorkspaces = async () => (await expect('/api/me', primary, 200)).workspaces.filter((item: { twoFactorLocked: boolean }) => item.twoFactorLocked === true).map((item: { id: string }) => item.id);
+  assert.deepEqual(await lockedWorkspaces(), [requiredWorkspace], '/api/me marks only the requiring workspace as locked for a member without a factor.');
   await expect(`/api/workspaces/${randomUUID()}/projects`, primary, 404);
   const ownWorkspace = (await expect('/api/workspaces', primary, 201, { name: 'Two-factor owner fixture' })).workspace;
   assert.equal(ownWorkspace.role, 'owner');
@@ -177,6 +179,7 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
 
   // Enrolment regains access in the same browser; only a current owner with a factor sets the requirement, idempotently.
   for (const path of [`/api/workspaces/${requiredWorkspace}/projects`, `/api/projects/${requiredProject}/events`, `/api/projects/${requiredProject}/realtime`]) await expect(path, primary, 200);
+  assert.deepEqual(await lockedWorkspaces(), [], 'Enrolment clears the /api/me lock flag.');
   for (let attempt = 0; attempt < 2; attempt++) assert.deepEqual(await expect(ownSetter, primary, 200, { required: true }), { twoFactorRequired: true });
   assert.equal(await factorRequired(ownWorkspace.id), true);
   assert.equal((await expect(`/api/workspaces/${ownWorkspace.id}/team`, primary, 200)).workspace.twoFactorRequired, true);

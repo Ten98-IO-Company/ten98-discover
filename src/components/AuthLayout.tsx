@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react'
 import { AuthLayout as SharedAuthLayout, AuthStory } from '@ten98/ui'
-import { Brand } from './CampaignUI'
+import { AppBrand } from '@ten98/ui/app'
 
 type AuthLayoutProps = Pick<ComponentProps<typeof SharedAuthLayout>, 'children' | 'title' | 'description' | 'footer'>
 
@@ -11,5 +11,5 @@ export const authStory = <AuthStory label='ten98 Discover' eyebrow='SEO, AEO and
 
 /** Screens not yet on a shared flow; the shared layout supplies the single main landmark. */
 export function AuthLayout({ children, ...props }: AuthLayoutProps) {
-  return <SharedAuthLayout {...props} label='Account access' brand={<Brand />} aside={authStory}>{children}</SharedAuthLayout>
+  return <SharedAuthLayout {...props} label='Account access' brand={<AppBrand product='Discover' />} aside={authStory}>{children}</SharedAuthLayout>
 }
