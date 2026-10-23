@@ -17,7 +17,11 @@ export async function runMcpChecks(){
   const config=getConfig(),database=new URL(config.databaseUrl),origin='http://127.0.0.1:3111';
   assert.equal(database.hostname,'127.0.0.1');const ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&database.pathname==='/ten98_mcp_ci';assert.equal(database.port,ci?'5432':'55501');if(!ci)assert.match(database.pathname,/^\/ten98_mcp_[a-f0-9]{12}$/);assert.equal(database.search,'');assert.equal(config.appUrl,origin);
   for(const name of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[name],undefined);
-  const {pool}=getDatabase();assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public'")).rows[0].n,0);
+  const {pool}=getDatabase();
+  // Saturate the current and next minute so a request that crosses a minute boundary still sees the limit; clear both rows once the 429 block ends so the seed cannot leak into later steps.
+  const seedLimit=(key:string,count:number)=>pool.query("INSERT INTO request_limit(key,minute,count) SELECT $1,floor(extract(epoch FROM now())/60)+n,$2::integer FROM generate_series(0,1) n ON CONFLICT(key,minute) DO UPDATE SET count=excluded.count",[key,count]);
+  const clearLimit=(key:string)=>pool.query('DELETE FROM request_limit WHERE key=$1',[key]);
+  assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname='public'")).rows[0].n,0);
   const client=await pool.connect();try{await client.query('BEGIN');await client.query('CREATE TABLE schema_version(version text PRIMARY KEY,checksum text NOT NULL)');for(const source of await migrationSources()){await client.query(source.sql);await client.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}await initializeProviderAccountIdentity(client,true);await client.query('COMMIT');}finally{client.release();}await assertSchema();
   // Use the production server's lazy Node request adapter; eager toWeb consumes bodies even when headers reject them.
   const {toNodeHandler}=createRequire(import.meta.resolve('nitro/package.json'))('srvx/node');
@@ -236,7 +240,7 @@ export async function runMcpChecks(){
         await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,source)SELECT gen_random_uuid(),$1,'page_view','/'||repeat(chr(1),2030)||lpad(v::text,4,'0')||lpad(s::text,2,'0'),'2024-03-10T12:00:00Z'::timestamptz+s*interval '1 second',$2,md5(v::text)||md5(v::text),'browser'FROM generate_series(1,100)v CROSS JOIN generate_series(1,7)s",[wide,a]);
         const largeQuery={from:'2024-03-10',to:'2024-03-10',timeZone:'UTC',steps:'7'},large=await projectJourneys(wide,{kind:'api-key',token:reportKey.token},new URLSearchParams(largeQuery));assert.equal(large.paths!.length,100);assert.ok(Buffer.byteLength(JSON.stringify(large))>8*1024*1024);assert.ok(Buffer.byteLength(JSON.stringify(large))<12*1024*1024);
         for(const modern of [true,false]){const result=await call(cases[0].name,{projectId:wide,query:largeQuery},reportKey.token,modern);assert.equal(result.status,200);assert.equal(result.wire.result.isError,true);assert.equal(result.wire.result.structuredContent.error.status,503);assert.equal(result.wire.result.structuredContent.paths,undefined);assert.ok(result.bytes<4096);}
-        const rateKey=await reportActor();for(const spec of cases){const prefix=spec.path==='retention-report'?'retention-report':spec.path;await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),30)ON CONFLICT(key,minute)DO UPDATE SET count=30",[prefix+':'+rateKey.userId]);const denied=await call(spec.name,{projectId:p,query:spec.query},rateKey.token);assert.equal(denied.wire.result.structuredContent.error.status,429);const native=await http('/api/projects/'+p+'/'+spec.path+'?'+new URLSearchParams(spec.query),{authorization:'Bearer '+rateKey.token});assert.equal(native.status,429);}
+        const rateKey=await reportActor();for(const spec of cases){const prefix=spec.path==='retention-report'?'retention-report':spec.path;await seedLimit(prefix+':'+rateKey.userId,30);const denied=await call(spec.name,{projectId:p,query:spec.query},rateKey.token);assert.equal(denied.wire.result.structuredContent.error.status,429);const native=await http('/api/projects/'+p+'/'+spec.path+'?'+new URLSearchParams(spec.query),{authorization:'Bearer '+rateKey.token});assert.equal(native.status,429);await clearLimit(prefix+':'+rateKey.userId);}
         assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);
         reportEvidence.large={nativeBytes:Buffer.byteLength(JSON.stringify(large)),nativePaths:large.paths!.length,mcp:'whole-error-no-prefix'};
         reportEvidence.groups.push('whole-result-cap-shared-native-rates-zero-provider');console.log('PASS additive complete MCP envelope refuses large native report, shared native rate keys and zero provider work');
@@ -285,12 +289,12 @@ export async function runMcpChecks(){
               reportEvidence.waits.push({tool:writeMode?'ten98_update_context':'ten98_read_context',action:'revocation',status:result.status});persist();
             }finally{await lock.query('ROLLBACK').catch(()=>{});lock.release();await pending?.catch(()=>{});}
           }
-          await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),120)ON CONFLICT(key,minute)DO UPDATE SET count=120",['project-content:'+ru]);
+          await seedLimit('project-content:'+ru,120);
           assert.equal((await call('ten98_read_context',{projectId:cp},contextKey.token)).wire.result.structuredContent.error.status,429);
           assert.equal((await call('ten98_update_context',{projectId:cp,...rawPatch,requestId:randomUUID()},contextWriteKey.token)).wire.result.structuredContent.error.status,429);
           assert.equal((await http(contextPath,{authorization:'Bearer '+contextKey.token})).status,429);
           assert.equal((await http(contextPath+'/update',{authorization:'Bearer '+contextWriteKey.token},{...rawPatch,requestId:randomUUID()})).status,429);
-          assert.equal(await receipts(),2);
+          assert.equal(await receipts(),2);await clearLimit('project-content:'+ru);
           reportEvidence.groups.push('context-cas-receipts-scopes-tenancy-two-waits-shared-rate');console.log('PASS additive context read/CAS write equivalence, bounded receipts, write-not-read scopes, foreign tenancy, two observed authority waits and the shared native rate key');
         }
 
@@ -324,8 +328,9 @@ export async function runMcpChecks(){
           for(const [name,token] of [['ten98_list_segments',segmentsKey.token],['ten98_list_annotations',annotationsKey.token]] as const){const foreign=await call(name,{projectId:foreignProject},token);assert.equal(foreign.status,200);assert.equal(foreign.wire.result.structuredContent.error.status,404);assert.equal(JSON.stringify(foreign.wire).includes(foreignProject),false);}
           const rateActor=await reportActor(),rateSegments=await makeKey(rateActor.userId,['segments:read']),rateAnnotations=await makeKey(rateActor.userId,['annotations:read']);
           for(const family of families){
-            const key=family.path==='annotations'?rateAnnotations:rateSegments;await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),60)ON CONFLICT(key,minute)DO UPDATE SET count=60",[family.limit+rateActor.userId+':read']);
+            const key=family.path==='annotations'?rateAnnotations:rateSegments;await seedLimit(family.limit+rateActor.userId+':read',60);
             assert.equal((await call(family.name,{projectId:sp,query:family.query},key.token)).wire.result.structuredContent.error.status,429);assert.equal((await http('/api/projects/'+sp+'/'+family.path+'?'+new URLSearchParams(family.query),{authorization:'Bearer '+key.token})).status,429);
+            await clearLimit(family.limit+rateActor.userId+':read');
           }
           {
             const key=await makeKey(ru,['segments:read']),lock=await pool.connect();let pending:ReturnType<typeof call>|undefined;
@@ -411,12 +416,12 @@ export async function runMcpChecks(){
           for(const [name,token,args] of [['ten98_read_rank_tracker',rankKey.token,{trackerId}],['ten98_list_rank_runs',rankKey.token,{trackerId}],['ten98_list_saved_keywords',keywordsKey.token,{}]] as const){const foreign=await call(name,{projectId:foreignProject,...args},token);assert.equal(foreign.status,200);assert.equal(foreign.wire.result.structuredContent.error.status,404);assert.equal(JSON.stringify(foreign.wire).includes(foreignProject),false);}
           assert.equal((await call('ten98_read_rank_tracker',{projectId:rp,trackerId:randomUUID()},rankKey.token)).wire.result.structuredContent.error.status,404);
           assert.equal((await call('ten98_read_rank_matrix',{projectId:rp,trackerId,query:{device:'mobile'}},rankKey.token)).wire.result.structuredContent.error.status,400,'mobile is not enabled on this tracker');
-          // Rate parity: the saved-keyword readers carry both native limits. The read limit is proven first while the first limit is far from full, then its saturated row is removed so the first limit is proven on its own.
+          // Rate parity: the saved-keyword readers carry both native limits. The read limit is proven first while the first limit is far from full; every seeded limit is cleared after its own proof, so the first limit is then proven on its own.
           const seoActor=await reportActor(),rateRank=await makeKey(seoActor.userId,['rank:read']),rateKeywords=await makeKey(seoActor.userId,['keywords:read']);
           for(const [prefix,maximum,name,path,key,args,body] of [['rank-read:',120,'ten98_list_rank_trackers','rank-trackers',rateRank,{},undefined],['rank-read:',120,'ten98_list_rank_runs',runsPath,rateRank,{trackerId},undefined],['rank-report:',30,'ten98_read_rank_distribution',distributionPath,rateRank,{trackerId},undefined],['saved-keyword-read:',60,'ten98_list_saved_keyword_tags','saved-keywords/tags/list',rateKeywords,{},{}],['saved-keyword:',120,'ten98_list_saved_keywords','saved-keywords/list',rateKeywords,{},{}]] as const){
-            if(prefix==='saved-keyword:')await pool.query('DELETE FROM request_limit WHERE key=$1',['saved-keyword-read:'+seoActor.userId]);
-            await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),$2)ON CONFLICT(key,minute)DO UPDATE SET count=$2",[prefix+seoActor.userId,maximum]);
+            await seedLimit(prefix+seoActor.userId,maximum);
             assert.equal((await call(name,{projectId:rp,...args},key.token)).wire.result.structuredContent.error.status,429,name);assert.equal((await http('/api/projects/'+rp+'/'+path,{authorization:'Bearer '+key.token},body)).status,429,path);
+            await clearLimit(prefix+seoActor.userId);
           }
           {
             const key=await makeKey(ru,['rank:read']),lock=await pool.connect();let pending:ReturnType<typeof call>|undefined;
@@ -488,8 +493,9 @@ export async function runMcpChecks(){
           assert.equal((await call('ten98_list_domain_redirect_checks',{projectId:gp,domainId:randomUUID()},domainsKey.token)).wire.result.structuredContent.error.status,404);
           const rateActor=await reportActor(),rateGoogle=await makeKey(rateActor.userId,['google:read']),rateDomains=await makeKey(rateActor.userId,['domains:read']);
           for(const [limitKey,maximum,name,path,key,args] of [['google:read:'+rateActor.userId,120,'ten98_list_google_sources','google',rateGoogle,{}],['domain-settings:'+rateActor.userId,60,'ten98_list_domains','domains',rateDomains,{}],['domain-redirect:'+rateActor.userId+':read',60,'ten98_list_domain_redirect_checks','domains/'+domainId+'/redirect-checks',rateDomains,{domainId}]] as const){
-            await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),$2)ON CONFLICT(key,minute)DO UPDATE SET count=$2",[limitKey,maximum]);
+            await seedLimit(limitKey,maximum);
             assert.equal((await call(name,{projectId:gp,...args},key.token)).wire.result.structuredContent.error.status,429,name);assert.equal((await http('/api/projects/'+gp+'/'+path,{authorization:'Bearer '+key.token})).status,429,path);
+            await clearLimit(limitKey);
           }
           for(const [table,name,pattern,scope] of [['google_import','ten98_list_google_sources','SELECT i.*,i.date_from::text AS date_from%','google:read'],['project_domain','ten98_list_domains','SELECT * FROM project_domain WHERE project_id=$1 ORDER BY%','domains:read']] as const){
             const key=await makeKey(ru,[scope]),lock=await pool.connect();let pending:ReturnType<typeof call>|undefined;
@@ -542,8 +548,8 @@ export async function runMcpChecks(){
           assert.equal((await call('ten98_read_site_audit',{projectId:ap,runId:randomUUID()},auditsKey.token)).wire.result.structuredContent.error.status,404);
           assert.equal((await call('ten98_list_site_audit_issues',{projectId:ap,runId:randomUUID()},auditsKey.token)).wire.result.structuredContent.error.status,404);
           const rateActor=await reportActor(),rateAudits=await makeKey(rateActor.userId,['audits:read']);
-          await pool.query("INSERT INTO request_limit(key,minute,count)VALUES($1,floor(extract(epoch FROM now())/60),120)ON CONFLICT(key,minute)DO UPDATE SET count=120",['audits:'+rateActor.userId+':read']);
-          assert.equal((await call('ten98_list_site_audits',{projectId:ap},rateAudits.token)).wire.result.structuredContent.error.status,429);assert.equal((await http('/api/projects/'+ap+'/audits',{authorization:'Bearer '+rateAudits.token})).status,429);
+          await seedLimit('audits:'+rateActor.userId+':read',120);
+          assert.equal((await call('ten98_list_site_audits',{projectId:ap},rateAudits.token)).wire.result.structuredContent.error.status,429);assert.equal((await http('/api/projects/'+ap+'/audits',{authorization:'Bearer '+rateAudits.token})).status,429);await clearLimit('audits:'+rateActor.userId+':read');
           {
             const key=await makeKey(ru,['audits:read']),lock=await pool.connect();let pending:ReturnType<typeof call>|undefined;
             try{await lock.query('BEGIN');await lock.query('LOCK TABLE site_audit_issue IN ACCESS EXCLUSIVE MODE');
@@ -566,7 +572,7 @@ export async function runMcpChecks(){
       }
     }
 
-    await pool.query("INSERT INTO request_limit(key,minute,count) VALUES($1,floor(extract(epoch FROM now())/60),120) ON CONFLICT(key,minute) DO UPDATE SET count=120",['api-key:'+all.key.id]);assert.equal((await rpc('tools/list')).status,429);
+    await seedLimit('api-key:'+all.key.id,120);assert.equal((await rpc('tools/list')).status,429);await clearLimit('api-key:'+all.key.id);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM provider_request')).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int AS n FROM import_probe')).rows[0].n,0);assert.equal((await pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND state='idle in transaction'")).rows[0].n,0);
     console.log('PASS shared rate budget and zero provider/probe work or idle transactions');
   }finally{server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
