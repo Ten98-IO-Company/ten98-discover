@@ -674,12 +674,12 @@ function App() {
     <AccountPresentationContext.Provider value={presentation}><NavRoutesContext.Provider value={navRoutes}><AppShell sidebarLabel='Application navigation' skipLinkLabel='Skip to main content' mainLabel='Main content' navigation={{open:menuOpen,onOpenChange:setMenuOpen}}
       sidebar={<>
         <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><AppBrand product='Discover' /></Link>
-        <div className='side-body sidebar-nav'>
+        <div className='side-body sidebar-nav'><Stack gap={5}>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
           onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Create project',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.'}} />
         {workspace&&<SidebarNav label='Workspace measurement' linkComponent={ShellLink} filter={toolSearch} groups={workspaceNavGroups} />}
         {project&&workspace&&<SidebarNav label='Project sections' linkComponent={ShellLink} filter={toolSearch} groups={projectNavGroups} />}
-        </div>
+        </Stack></div>
         <SidebarFooter version={appVersion}>
           {project&&<SidebarStatus tone={lastReceived?'connected':'idle'} label={lastReceived?'Retained events received':'No retained events yet'}/>}
           <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target('preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
