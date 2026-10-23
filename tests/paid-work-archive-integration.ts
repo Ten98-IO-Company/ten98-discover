@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -214,6 +215,70 @@ export async function runPaidWorkArchiveChecks() {
     assert.deepEqual(site.sort(), ['keyword_quote', 'keyword_research_run']);
   } finally { exportClient.release(); }
   console.log('PASS workspace-scope archiving refuses an uncertain charge, is idempotent and survives a workspace delete; the operator export pages a workspace or one website');
+
+  // The open-receipt check runs under the workspace row lock (the W gate every reserve/dispatch/settle path takes), so a
+  // concurrent holder of the gate blocks archiving instead of racing it.
+  const holder = await pool.connect(), waiter = await pool.connect();
+  try {
+    await holder.query('BEGIN'); await holder.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE', [workspace.id]);
+    await waiter.query('BEGIN'); await waiter.query("SET LOCAL lock_timeout='200ms'");
+    await assert.rejects(archivePaidWork(waiter, { workspaceId: workspace.id }), (error: unknown) => (error as { code?: string }).code === '55P03', 'Workspace archiving ran without the workspace gate.');
+  } finally {
+    await waiter.query('ROLLBACK'); waiter.release();
+    await holder.query('ROLLBACK'); holder.release();
+  }
+  console.log('PASS workspace-scope archiving waits for the workspace gate before checking open receipts');
+
+  // The real CLI: only a named instance operator exports, and each export is audited before any row is read.
+  const operator = await account('operator');
+  await pool.query("INSERT INTO instance_operator(user_id,source) VALUES($1,'host')", [operator]);
+  const operatorEmail = `operator-${suffix}@archive.integration.test`, ownerEmail = `owner-${suffix}@archive.integration.test`;
+  const audits = async () => (await pool.query<{ user_id: string; scope: string }>("SELECT user_id,scope FROM instance_operator_audit WHERE action='paid_work_export' AND user_id=ANY($1) ORDER BY id", [[operator, owner]])).rows;
+  const cli = (...args: string[]) => {
+    const block = 'data:text/javascript,' + encodeURIComponent("globalThis.fetch=async()=>{throw new Error('No network allowed in paid-work export acceptance');}");
+    const result = spawnSync(process.execPath, ['--import', block, 'src/server/cli.ts', 'paid-work', 'export', ...args],
+      { cwd: process.cwd(), env: process.env, encoding: 'utf8', timeout: 45_000, maxBuffer: 4_000_000, windowsHide: true });
+    for (const secret of [config.databaseUrl, config.authSecret, config.bootstrapToken]) assert.ok(!(result.stdout + result.stderr).includes(secret), 'The CLI printed secret configuration.');
+    return result;
+  };
+  const refusals: [string[], RegExp][] = [
+    [['--workspace', workspace.id], /^Usage: cli\.ts /],
+    [['--workspace', workspace.id, '--operator'], /^Usage: cli\.ts /],
+    [['--workspace', workspace.id, '--operator', operatorEmail, '--operator', operatorEmail], /^Usage: cli\.ts /],
+    [['--workspace', workspace.id, '--operator', operatorEmail, '--project', project], /^Usage: cli\.ts /],
+    [['--operator', operatorEmail], /^Usage: cli\.ts /],
+    [['--workspace', 'not-a-uuid', '--operator', operatorEmail], /^Workspace and website ids are UUIDs\./],
+    [['--workspace', workspace.id, '--website', `${project}x`, '--operator', operatorEmail], /^Workspace and website ids are UUIDs\./],
+    [['--workspace', workspace.id, '--operator', 'not-an-email'], /^Supply the instance operator account email\./],
+    [['--workspace', workspace.id, '--operator', ownerEmail], /^This action requires an instance operator\./],
+    [['--workspace', workspace.id, '--operator', `nobody-${suffix}@archive.integration.test`], /^This action requires an instance operator\./],
+  ];
+  for (const [args, message] of refusals) {
+    const result = cli(...args);
+    assert.equal(result.status, 1, `${args.join(' ')} must exit non-zero.`);
+    assert.match(result.stderr, message, args.join(' '));
+    assert.equal(result.stdout, '', 'A refused export prints no row.');
+  }
+  assert.deepEqual(await audits(), [], 'A refused export is not audited.');
+
+  const exported = cli('--operator', operatorEmail.toUpperCase(), '--workspace', workspace.id.toUpperCase());
+  assert.equal(exported.status, 0, exported.stderr);
+  const lines = exported.stdout.split('\n');
+  assert.equal(lines.pop(), '', 'JSON Lines end with a newline.');
+  const exportedRows = lines.map(line => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(exportedRows.length, deletedRows.length);
+  assert.match(exported.stderr, new RegExp(`^Exported ${deletedRows.length} archived paid-work rows\\.`));
+  for (const row of exportedRows) {
+    assert.deepEqual(Object.keys(row).sort(), ['accountIds', 'archivedAt', 'createdAt', 'projectId', 'record', 'sourceId', 'sourceTable', 'workspaceId']);
+    assert.equal(row.workspaceId, workspace.id);
+    for (const key of Object.keys(row.record as object)) assert.doesNotMatch(key, /fingerprint|actor|credential|secret|token|password|name|email|(^|_)ip(_|$)|address|agent|^(request|input|diagnostic|result|messages|routes)$/i, `${row.sourceTable}.${key} reached the export.`);
+  }
+  assert.ok(!exported.stdout.includes(marker) && !exported.stdout.includes('@archive.integration.test'), 'The export holds a name, email or free text.');
+  const site = cli('--website', otherProject, '--operator', operatorEmail, '--workspace', other.id);
+  assert.equal(site.status, 0, site.stderr);
+  assert.deepEqual(site.stdout.trim().split('\n').map(line => JSON.parse(line).sourceTable).sort(), ['keyword_quote', 'keyword_research_run']);
+  assert.deepEqual(await audits(), [{ user_id: operator, scope: `workspace:${workspace.id}` }, { user_id: operator, scope: `workspace:${other.id}/website:${otherProject}` }], 'Each export is audited with its operator and scope.');
+  console.log('PASS the paid-work export CLI refuses bad arguments, non-UUID ids, a missing, unknown or non-operator account with a non-zero exit and no audit; an instance operator gets JSON Lines without secret or personal fields, audited per scope');
 
   // Retention: recent archive rows stay and keep the closed account they name; 7-year-old rows go, and then the tombstone.
   await pool.query(`UPDATE "user" SET name='Closed account',email='closed-' || gen_random_uuid() || '@invalid',image=NULL,"emailVerified"=false,"twoFactorEnabled"=false,closed_at=clock_timestamp() WHERE id=$1`, [closer]);

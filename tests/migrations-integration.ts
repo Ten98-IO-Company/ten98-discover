@@ -93,7 +93,7 @@ try {
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') LIMIT 1`);
   assert.equal(existing.rowCount, 0, 'Use a separate empty test database; existing schemas and data will not be modified.');
   const sources = await migrationSources();
-  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042', '0043', '0044', '0045', '0046', '0047', '0048', '0049', '0050', '0051', '0052', '0053', '0054', '0055', '0056', '0057', '0058', '0059', '0060', '0061', '0062', '0063', '0064', '0065', '0066', '0067', '0068', '0069', '0070', '0071', '0072']);
+  assert.deepEqual(sources.map(({ version }) => version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018', '0019', '0020', '0021', '0022', '0023', '0024', '0025', '0026', '0027', '0028', '0029', '0030', '0031', '0032', '0033', '0034', '0035', '0036', '0037', '0038', '0039', '0040', '0041', '0042', '0043', '0044', '0045', '0046', '0047', '0048', '0049', '0050', '0051', '0052', '0053', '0054', '0055', '0056', '0057', '0058', '0059', '0060', '0061', '0062', '0063', '0064', '0065', '0066', '0067', '0068', '0069', '0070', '0071', '0072', '0073']);
   assert.equal(sources.find(m=>m.version==='0029')!.checksum,'8c7559f0e64f899bae4dc36aa9afa521b69624dba7849f28dfc3c1cb730097de','Append0030 without rewriting the published0029 migration.');
   assert.equal(sources.find(m=>m.version==='0030')!.checksum,'87b06aefbfe1b2228bda7fe91a28563265e908b92f07574ad3cb7e5380bbb28e','Append0031 without rewriting the published0030 migration.');
   assert.equal(sources.find(m=>m.version==='0031')!.checksum,'0a5d1fc0ee88c4aad84dbb41b32eb2d80bf0b5d816a907dfabb5a0228925ee65','Append0032 without rewriting published0031.');
@@ -115,7 +115,8 @@ try {
   assert.equal(sources.find(source=>source.filename==='0069_project_shares.sql')!.checksum,'0aea191c40d9ba7e3a1f22c77eb349a2f7d2f1ebbf37fb5ed6bb4abe1dc4c7ab','Preserve the exact registered migration 0069_project_shares.sql.');
   assert.equal(sources.find(source=>source.filename==='0070_account_closure.sql')!.checksum,'dc007eb9beb585e0b90f4811bebd085f08efc52abf5da4878e9da40512a0114f','Preserve the exact registered migration 0070_account_closure.sql.');
   assert.equal(sources.find(source=>source.filename==='0071_email_suppression.sql')!.checksum,'fa9376e190b8b21813aa9558f996cbfb05d3bf2e7449665a7c0efd2ad746248b','Preserve the exact registered migration 0071_email_suppression.sql.');
-  assert.equal(sources.at(-1)?.filename,'0072_paid_work_archive.sql','Register0072 after the published0071 migration.');
+  assert.equal(sources.find(source=>source.filename==='0072_paid_work_archive.sql')!.checksum,'3dde3cbd3ecdeebf6a751bdfdb1ddccf1d0625c5f71e1fad488b651b303e1cf9','Preserve the exact registered migration 0072_paid_work_archive.sql.');
+  assert.equal(sources.at(-1)?.filename,'0073_operator_export_audit.sql','Register0073 after the published0072 migration.');
   const foundation = await migrationSource();
 
   stage = 'seed original foundation schema and data';
@@ -1011,7 +1012,7 @@ try {
   console.log('PASS native registered SQL68-to69 creates exactly the empty project_share table (project cascade, creator SET NULL, unique token hash, declared sections and lifetime checks, millisecond stamps, page index) with no backfill or receipt, preserving every populated68 row, column, index, constraint, table and checksum');
   // 0070 adds account closure (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#account-closure): the nullable closed_at tombstone marker with its consistency check, the
   // empty closure audit table and the closed-account triggers. No backfill: every existing account stays open.
-  // The current CLI applies0071 and0072 too; apply ONLY0070 natively so its row/schema oracles stay unchanged. The CLI71-to72
+  // The current CLI applies0071 to0073 too; apply ONLY0070 natively so its row/schema oracles stay unchanged. The CLI72-to73
   // upgrade below is this suite's actual CLI stage.
   stage='native registered SQL upgrade populated0069 to0070';
   const auditTable70='account_closure_audit',history69=await history(),data69Kept=await rows61(),schema69Kept=await schemaSnapshot(),tables70=[...tables69,auditTable70].sort();
@@ -1043,7 +1044,7 @@ try {
   assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'0070 starts no queue.');
   console.log('PASS native registered SQL69-to70 adds the nullable closed_at marker with its tombstone check, the empty account_closure_audit table and the closed-account triggers with no backfill, preserving every populated69 row, column, index, constraint, table and checksum');
   // 0071 creates the empty transactional email suppression table (#304): digests only, no backfill.
-  // The current CLI applies0072 too; apply ONLY0071 natively so its row/schema oracles stay unchanged.
+  // The current CLI applies0072 and0073 too; apply ONLY0071 natively so its row/schema oracles stay unchanged.
   stage='native registered SQL upgrade populated0070 to0071';
   const suppressionTable71='email_suppression',history70=await history(),data70Kept=await rows61(),schema70Kept=await schemaSnapshot(),tables71=[...tables70,suppressionTable71].sort();
   assert.deepEqual(schema70Kept,schema70,'Schema70 is unchanged by its rolled-back probes before0071.');
@@ -1064,10 +1065,12 @@ try {
   assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'0071 starts no queue.');
   console.log('PASS native registered SQL70-to71 creates exactly the empty email_suppression table (digest primary key, declared reasons) with no backfill, preserving every populated70 row, column, index, constraint, table and checksum');
   // 0072 creates the empty paid-work archive (#292, #291): rows are copied only by a later website or workspace deletion.
-  stage='actual current CLI upgrade populated0071 to0072';
+  // The current CLI applies0073 too; apply ONLY0072 natively so its row/schema oracles stay unchanged.
+  stage='native registered SQL upgrade populated0071 to0072';
   const archiveTable72='paid_work_archive',history71=await history(),data71Kept=await rows61(),schema71Kept=await schemaSnapshot(),tables72=[...tables71,archiveTable72].sort();
   assert.deepEqual(schema71Kept,schema71,'Schema71 is unchanged by its rolled-back probes before0072.');
-  assert.match(runMigrate(0),/Database migrations applied: 0072\./);await assertSchema();
+  const archive72Source=sources.find(source=>source.version==='0072')!,archive72Client=await pool.connect();
+  try{await archive72Client.query('BEGIN');await archive72Client.query(archive72Source.sql);await archive72Client.query('INSERT INTO schema_version VALUES($1,$2)',[archive72Source.version,archive72Source.checksum]);await archive72Client.query('COMMIT');}finally{await archive72Client.query('ROLLBACK').catch(()=>{});archive72Client.release();}await assert.rejects(assertSchema(),{code:'SCHEMA_MISMATCH'});
   assert.deepEqual((await history()).slice(0,71),history71,'0072 preserves every published migration checksum.');
   assert.deepEqual(await rows61(),data71Kept,'0072 preserves EVERY populated71 row and field.');
   assert.deepEqual((await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public'AND tablename<>'schema_version'ORDER BY tablename")).rows.map(row=>row.tablename),tables72,'0072 creates exactly the paid-work archive table and drops none.');
@@ -1081,7 +1084,30 @@ try {
   assert.equal(await probe72(`'{"status":"settled"}'`,"ARRAY['account']"),1,'Schema72 admits an object record.');assert.equal(await probe72(`'[]'`,"ARRAY[]::text[]"),0,'Schema72 refuses a non-object record.');assert.equal(await probe72(`'{}'`,'ARRAY[NULL]::text[]'),0,'Schema72 refuses a null account id.');
   assert.equal((await pool.query('SELECT 1 FROM '+pg.escapeIdentifier(archiveTable72))).rowCount,0,'The probes roll back.');
   assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'0072 starts no queue.');
-  console.log('PASS actual CLI71-to72 creates exactly the empty paid_work_archive table (no foreign key, object records, non-null account ids, scope/age/account indexes) with no backfill, preserving every populated71 row, column, index, constraint, table and checksum');
+  console.log('PASS native registered SQL71-to72 creates exactly the empty paid_work_archive table (no foreign key, object records, non-null account ids, scope/age/account indexes) with no backfill, preserving every populated71 row, column, index, constraint, table and checksum');
+  // 0073 lets the operator audit record a paid-work export (follow-up to #370): one nullable scope column and the widened
+  // action check. No backfill; existing audit rows keep a null scope.
+  stage='actual current CLI upgrade populated0072 to0073';
+  const operatorAudit73='instance_operator_audit',history72=await history(),data72Kept=await rows61(),schema72Kept=await schemaSnapshot(),audit72=(await pool.query('SELECT to_jsonb(a) AS row FROM instance_operator_audit a ORDER BY id')).rows;
+  assert.deepEqual(schema72Kept,schema72,'Schema72 is unchanged by its rolled-back probes before0073.');
+  assert.match(runMigrate(0),/Database migrations applied: 0073\./);await assertSchema();
+  assert.deepEqual((await history()).slice(0,72),history72,'0073 preserves every published migration checksum.');
+  assert.deepEqual(await rows61(),data72Kept,'0073 preserves EVERY populated72 row and field.');
+  assert.deepEqual((await pool.query("SELECT to_jsonb(a)-'scope' AS row FROM instance_operator_audit a ORDER BY id")).rows,audit72,'0073 keeps every operator audit row.');
+  assert.equal((await pool.query('SELECT 1 FROM instance_operator_audit WHERE scope IS NOT NULL')).rowCount,0,'0073 backfills no scope.');
+  assert.deepEqual((await pool.query<{tablename:string}>("SELECT tablename FROM pg_tables WHERE schemaname='public'AND tablename<>'schema_version'ORDER BY tablename")).rows.map(row=>row.tablename),tables72,'0073 creates and drops no table.');
+  const schema73=await schemaSnapshot(),row73=(row:{table_name?:string;tablename?:string;column_name?:string;name?:string})=>(row.table_name??row.tablename)===operatorAudit73&&(row.column_name==='scope'||row.name==='instance_operator_audit_action_check'||row.name==='instance_operator_audit_scope_check');
+  assert.deepEqual({columns:schema73.columns.filter(row=>!row73(row)),constraints:schema73.constraints.filter(row=>!row73(row)),indexes:schema73.indexes},{columns:schema72Kept.columns,constraints:schema72Kept.constraints.filter(row=>!row73(row)),indexes:schema72Kept.indexes},'0073 changes no other populated72 column, index, key or constraint.');
+  assert.deepEqual(schema73.columns.filter(row73).map(row=>[row.column_name,row.data_type,row.is_nullable,row.column_default]),[['scope','text','YES',null]],'0073 adds one nullable scope column.');
+  // Rolled-back probes: an export needs a well-formed scope, and a role change never carries one.
+  const probe73=async(action:string,scope:string|null)=>{const probe=await pool.connect();try{await probe.query('BEGIN');await probe.query('INSERT INTO instance_operator_audit(user_id,action,scope) VALUES($1,$2,$3)',['probe',action,scope]);return 1;}catch(error){assert.equal((error as {code?:string}).code,'23514');return 0;}finally{await probe.query('ROLLBACK').catch(()=>{});probe.release();}};
+  const id73='0f0e0d0c-0b0a-4908-8706-050403020100';
+  assert.equal(await probe73('paid_work_export',`workspace:${id73}`),1,'Schema73 admits a workspace export.');assert.equal(await probe73('paid_work_export',`workspace:${id73}/website:${id73}`),1,'Schema73 admits a website export.');
+  assert.equal(await probe73('paid_work_export',null),0,'Schema73 refuses an export without scope.');assert.equal(await probe73('grant',`workspace:${id73}`),0,'Schema73 refuses a scoped role change.');
+  assert.equal(await probe73('paid_work_export','workspace:Acme Ltd'),0,'Schema73 refuses free text.');assert.equal(await probe73('export',`workspace:${id73}`),0,'Schema73 refuses an undeclared action.');assert.equal(await probe73('grant',null),1,'Schema73 still admits a role change.');
+  assert.deepEqual((await pool.query("SELECT to_jsonb(a)-'scope' AS row FROM instance_operator_audit a ORDER BY id")).rows,audit72,'The probes roll back.');
+  assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'0073 starts no queue.');
+  console.log('PASS actual CLI72-to73 adds only the nullable instance_operator_audit.scope column and the paid_work_export action (scope required exactly for exports, ids only) with no backfill, preserving every populated72 row, column, index, constraint, table and checksum');
   const upgradedHistory = sources.map(({ version, checksum }) => ({ version, checksum }));
   assert.deepEqual(await history(), upgradedHistory);
   const upgradedRecords = pre63(await records());
@@ -1099,11 +1125,11 @@ try {
     assert.equal((await pool.query(`SELECT 1 FROM ${table}`)).rowCount, 0, 'Upgrade must not grant instance authority or record an implicit grant.');
   }
   const upgradedSchema = await schemaSnapshot();
-  stage='actual current CLI schema0072 no-op';assert.match(runMigrate(0),/Database migrations already applied; all checksums verified\./);
+  stage='actual current CLI schema0073 no-op';assert.match(runMigrate(0),/Database migrations already applied; all checksums verified\./);
   assert.deepEqual(pre65(await identityRecords()),identity40,'Repeat migration cannot backfill basis or change existing identity evidence.');
   assert.deepEqual(await history(), upgradedHistory);
-  const noOp70Schema=await schemaSnapshot();assert.deepEqual(noOp70Schema, upgradedSchema);assert.deepEqual(noOp70Schema,schema72,'Actual72 no-op preserves the populated72 schema exactly.');
-  const noOp64Schema={columns:noOp70Schema.columns.filter(row=>!row70(row)&&!row71(row)&&!row72(row)),constraints:noOp70Schema.constraints.filter(row=>!row70(row)&&!row71(row)&&!row72(row)),indexes:noOp70Schema.indexes.filter(row=>!row70(row)&&!row71(row)&&!row72(row))};assert.deepEqual(pre64(pre63(pre65(await rows54()))),pre64(pre63(data54)),'Actual69 no-op preserves all54 fields including RUM storage and unchanged replay settings.');assert.deepEqual(pre64(pre63(pre65(await rows55()))),pre64(pre63(data55)),'Actual69 no-op preserves every populated55 recording field except new declared saved defaults.');assert.deepEqual(await chunks55(),chunk55Before,'Actual69 no-op preserves every original55 chunk byte, hash, sequence and key.');assert.deepEqual((await pool.query('SELECT saved_name,saved_at,saved_revision FROM session_recording WHERE id=$1',[replay55Id])).rows,[saved56]);assert.deepEqual(pre64(pre63(pre65(await rows56()))),pre64(pre63(data56)),'Actual69 no-op preserves complete populated56 storage beyond the0063 cap projection (D3), the0064 removal and the0065 click-ID columns.');assert.deepEqual(await heatmap56Bytes(),heatmap56Before);assert.deepEqual(pre64(pre63(pre65(await rows57()))),pre64(pre63(data57)),'Actual69 no-op preserves populated57 board rows and actor receipt.');assert.deepEqual(await board57Bytes(),board57Before);assert.deepEqual(pre64(pre63(pre65(await rows58()))),pre64(pre63(data58)),'Actual69 no-op preserves every populated58 asset, observation, share and actor receipt.');assert.equal((await pool.query('SELECT 1 FROM heatmap_background')).rowCount,0,'Actual69 no-op creates no background sample.');assert.equal((await pool.query('SELECT 1 FROM project WHERE replay_retained_from IS NOT NULL')).rowCount,0);assert.deepEqual(pre64(pre63(pre65(await all51Rows()))),pre64(pre63(data53)),'Actual69 no-op preserves every populated53 row.');assert.equal((await pool.query('SELECT 1 FROM web_performance')).rowCount,0,'Actual69 no-op leaves RUM storage empty.');assert.deepEqual(pre64(pre63(pre65(await all51Rows()))),pre64(pre63(data52)),'Actual69 no-op preserves every populated52 row and retained Google observation.');
+  const noOp70Schema=await schemaSnapshot();assert.deepEqual(noOp70Schema, upgradedSchema);assert.deepEqual(noOp70Schema,schema73,'Actual73 no-op preserves the populated73 schema exactly.');
+  const noOp64Schema={columns:noOp70Schema.columns.filter(row=>!row70(row)&&!row71(row)&&!row72(row)&&!row73(row)),constraints:noOp70Schema.constraints.filter(row=>!row70(row)&&!row71(row)&&!row72(row)).flatMap(row=>row73(row)?schema72Kept.constraints.filter(prior=>prior.table_name===row.table_name&&prior.name===row.name):[row]),indexes:noOp70Schema.indexes.filter(row=>!row70(row)&&!row71(row)&&!row72(row))};assert.deepEqual(pre64(pre63(pre65(await rows54()))),pre64(pre63(data54)),'Actual69 no-op preserves all54 fields including RUM storage and unchanged replay settings.');assert.deepEqual(pre64(pre63(pre65(await rows55()))),pre64(pre63(data55)),'Actual69 no-op preserves every populated55 recording field except new declared saved defaults.');assert.deepEqual(await chunks55(),chunk55Before,'Actual69 no-op preserves every original55 chunk byte, hash, sequence and key.');assert.deepEqual((await pool.query('SELECT saved_name,saved_at,saved_revision FROM session_recording WHERE id=$1',[replay55Id])).rows,[saved56]);assert.deepEqual(pre64(pre63(pre65(await rows56()))),pre64(pre63(data56)),'Actual69 no-op preserves complete populated56 storage beyond the0063 cap projection (D3), the0064 removal and the0065 click-ID columns.');assert.deepEqual(await heatmap56Bytes(),heatmap56Before);assert.deepEqual(pre64(pre63(pre65(await rows57()))),pre64(pre63(data57)),'Actual69 no-op preserves populated57 board rows and actor receipt.');assert.deepEqual(await board57Bytes(),board57Before);assert.deepEqual(pre64(pre63(pre65(await rows58()))),pre64(pre63(data58)),'Actual69 no-op preserves every populated58 asset, observation, share and actor receipt.');assert.equal((await pool.query('SELECT 1 FROM heatmap_background')).rowCount,0,'Actual69 no-op creates no background sample.');assert.equal((await pool.query('SELECT 1 FROM project WHERE replay_retained_from IS NOT NULL')).rowCount,0);assert.deepEqual(pre64(pre63(pre65(await all51Rows()))),pre64(pre63(data53)),'Actual69 no-op preserves every populated53 row.');assert.equal((await pool.query('SELECT 1 FROM web_performance')).rowCount,0,'Actual69 no-op leaves RUM storage empty.');assert.deepEqual(pre64(pre63(pre65(await all51Rows()))),pre64(pre63(data52)),'Actual69 no-op preserves every populated52 row and retained Google observation.');
   assert.deepEqual(pre64(pre63(pre65(await rows59()))),pre64(pre63(data59)),'Actual69 no-op preserves EVERY prior59 table field/row beyond the0063 cap projection (D3), the0064 removal and the0065 click-ID columns.');for(const table of shareTables60)assert.equal((await pool.query('SELECT 1 FROM '+pg.escapeIdentifier(table))).rowCount,0,'Actual69 no-op creates no public board grant or actor receipt.');
   assert.deepEqual(pre63(await records()), upgradedRecords);
   await assertSchema();
