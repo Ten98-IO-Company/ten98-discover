@@ -304,7 +304,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
                 <p className="hint field-help">Save these codes securely. They are shown only once.</p>
                 <div className="field">
                   <label htmlFor="tfa-codes">Recovery codes</label>
-                  <textarea id="tfa-codes" className="snippet" readOnly rows={Math.max(1, Math.min(codes.length, 12))} style={{ width: '100%' }} value={codes.join('\n')} onFocus={e => e.currentTarget.select()} />
+                  <textarea id="tfa-codes" className="snippet" readOnly rows={Math.max(1, Math.min(codes.length, 12))} value={codes.join('\n')} onFocus={e => e.currentTarget.select()} />
                 </div>
                 <div className="row button-wrap">
                   <button type="button" className="btn button" disabled={blocked} onClick={() => void copy('codes', codes.join('\n'))}>Copy codes</button>
@@ -339,7 +339,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
                 </div>}
                 <div className="field">
                   <label htmlFor="tfa-uri">Setup URI</label>
-                  <textarea id="tfa-uri" className="snippet" readOnly rows={3} style={{ width: '100%' }} value={setupUri} onFocus={e => e.currentTarget.select()} />
+                  <textarea id="tfa-uri" className="snippet" readOnly rows={3} value={setupUri} onFocus={e => e.currentTarget.select()} />
                 </div>
                 <div className="row button-wrap">
                   <button type="button" className="btn button" disabled={blocked} onClick={() => void copy('uri', setupUri)}>Copy setup URI</button>
@@ -395,7 +395,8 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
         sessions={data.sessions.map(s => ({ id: s.id, device: s.userAgent ?? 'Unknown device', location: fmt(s.createdAt), lastActiveAt: s.expiresAt, current: s.current }))}
         messages={{ location: 'Signed in', lastActive: 'Expires', current: 'This session', revoke: 'Revoke', revokeTitle: 'Revoke this session?', revokeDescription: 'That device is signed out the next time it contacts the server.' }}
         onRevoke={({ id }) => revokeSession(id)} onRevokeOthers={revokeOthers} />
-      <Button variant='ghost' disabled={blocked} onClick={() => void load()}>Refresh sessions</Button>
+      {/* SessionListFlow has no slot for extra actions, so the refresh sits after its region. */}
+      <Button variant='ghost' style={{ minHeight: 44 }} disabled={blocked} onClick={() => void load()}>Refresh sessions</Button>
       {confirmDialog}
     </div>
   )
