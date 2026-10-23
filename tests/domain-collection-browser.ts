@@ -106,9 +106,9 @@ try {
   const editFilters = async () => { if (!await filters.isVisible()) await explore.getByRole('button', { name: 'Edit filters', exact: true }).click(); return filters; };
   await (await editFilters()).getByLabel('Group by', { exact: true }).selectOption('origin');
   await (await editFilters()).getByRole('button', { name: 'Apply filters', exact: true }).click();
-  const table = explore.getByRole('region', { name: 'Breakdown data, scroll horizontally for all columns' });
-  await table.getByRole('cell', { name: serving, exact: true }).waitFor();
-  assert.equal(await table.getByRole('cell', { name: canonical, exact: true }).count(), 1);
+  const table = explore.getByRole('table', { name: 'Breakdown data', exact: true });
+  await table.getByRole('rowheader', { name: serving, exact: true }).waitFor();
+  assert.equal(await table.getByRole('rowheader', { name: canonical, exact: true }).count(), 1);
   await (await editFilters()).getByText('More filters', { exact: true }).click();
   await (await editFilters()).getByLabel('Enable Origin', { exact: true }).check();
   await (await editFilters()).getByLabel('Origin equals', { exact: true }).fill(serving);

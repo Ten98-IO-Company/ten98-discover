@@ -265,9 +265,9 @@
 .explorer .explorer-summary-metrics{ grid-template-columns: repeat(auto-fit,minmax(min(100%,110px),1fr)); gap: var(--space-2); }
 .explorer .explorer-summary-metrics .card{ padding: var(--space-3); }
 .explorer .explorer-property-views{ flex-wrap: nowrap; overflow-x: auto; max-inline-size: 100%; padding-block: var(--space-1); }
+/* The event property pivot keeps every returned row in its own bounded scroll region (DataTable has no class hook). */
+.explorer [role="region"][aria-label="Event property pivot table"]{ max-block-size: min(60dvh,30rem); overflow: auto; }
 .explorer-property-views .btn{ flex: 0 0 auto; }
-.explorer .explorer-property-pivot{ max-block-size: min(60dvh,30rem); overflow: auto; }
-.explorer-property-pivot th{ position: sticky; inset-block-start: 0; background: var(--color-surface); z-index: 1; }
 .tracked-assets{ --control-md: var(--control-touch); min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; }
 .tracked-assets.stack, .tracked-assets .stack{ display: grid; grid-template-columns: minmax(0,1fr); gap: var(--space-3); }
 .tracked-assets :is(form,fieldset,details,section,header,nav,label,.row){ min-inline-size: 0; }
