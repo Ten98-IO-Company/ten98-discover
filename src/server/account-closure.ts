@@ -6,7 +6,7 @@ import { accountClosureInventory, type ClosureParameter } from './account-closur
 import { emailLimitKey, emailLimitScopes } from './client-rate-limit.ts';
 import { cancelQueuedProbes } from './jobs.ts';
 
-/** Account closure (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure): a tombstone, not erasure. App-owned identity layer. */
+/** Account closure (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#account-closure): a tombstone, not erasure. App-owned identity layer. */
 export type ClosureActor = { kind: 'self'; userId: string } | { kind: 'operator'; userId: string; reason: string };
 declare const stepUpVerified: unique symbol;
 /**

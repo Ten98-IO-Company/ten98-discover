@@ -15,7 +15,7 @@ import { getBoss, stopJobs } from '../src/server/jobs.ts';
 import { authenticatorCode } from './account-security-integration.ts';
 
 // Needs an isolated synthetic PostgreSQL database; never a real installation. Every account, workspace and row here is
-// created by this module, and fixtures stay for inspection. Account closure contract: https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure.
+// created by this module, and fixtures stay for inspection. Account closure contract: https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#account-closure.
 type Jar = Map<string, string>;
 type Reply = { status: number; body: Record<string, any> };
 

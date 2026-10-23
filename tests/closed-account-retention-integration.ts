@@ -6,7 +6,7 @@ import { createWorkspace } from '../src/server/teams.ts';
 import { runClosedAccountRetention, type ClosedAccountRetentionSummary } from '../src/server/account-closure-retention.ts';
 
 // Needs an isolated synthetic PostgreSQL database; never a real installation. Every account and row here is created by
-// this module and backdated explicitly; fixtures stay for inspection. Contract: https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure#retention.
+// this module and backdated explicitly; fixtures stay for inspection. Contract: https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#closed-account-retention.
 export async function runClosedAccountRetentionChecks() {
   assert.equal(process.env.TEN98_INTEGRATION_TEST, '1');
   const config = getConfig();

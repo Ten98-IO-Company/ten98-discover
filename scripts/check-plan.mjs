@@ -67,7 +67,7 @@ for (const [id, entry] of Object.entries(registerMap.requirements)) {
 for (const kind of Object.keys(inventory)) for (const key of inventory[kind]) assert.ok(mapped[kind].has(key), `docs/register-map.json: unmapped ${kind} entry ${key}; add it to the requirement rows it implements`);
 const readme = readFileSync(resolve(root, 'README.md'), 'utf8');
 assert.ok(readme.includes(`${wiki})`), 'README must link the canonical GitHub wiki');
-assert.match(readme, /development foundation; not a V1 release/);
+assert.match(readme, /development foundation, not a V1 release/, 'README must keep the status line that CLAUDE.md states');
 assert.ok(!readme.includes('wiki.ten98.io'), 'README must not link Docmost; the GitHub wiki is canonical');
 assert.ok(readFileSync(resolve(root, 'AGENTS.md'), 'utf8').includes(baseline.url), 'AGENTS.md must link the canonical requirement register');
 // Moved docs: source, tests, scripts, configuration and migrations may cite a docs/*.md path only while it exists (a redirect

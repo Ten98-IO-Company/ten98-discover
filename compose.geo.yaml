@@ -1,5 +1,5 @@
 # Optional, explicitly installed DB-IP City Lite. No download occurs at startup.
-# Include this file on EVERY subsequent Compose upgrade/restart; see https://github.com/Ten98-IO-Company/ten98-discover/wiki/Docker-Setup.
+# Include this file on EVERY subsequent Compose upgrade/restart; see https://github.com/Ten98-IO-Company/ten98-discover/wiki/Deployment#geography-database.
 services:
   web:
     memswap_limit: 1G

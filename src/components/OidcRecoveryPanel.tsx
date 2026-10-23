@@ -131,7 +131,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
     setPassword(''); setRepeat(''); setFactor('')
     void run(signal => api<{ totpURI?: string; backupCodes?: string[] }>('/api/account/oidc/reauth/confirm', { method: 'POST', body, signal }), async result => {
       consumedProof.current = proof.id
-      // Closure ended every session server-side (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure).
+      // Closure ended every session server-side (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#account-closure).
       if (action === 'close-account') { callbacks.current.onClosed(); return }
       setEnrollment(result.backupCodes ? { totpURI: result.totpURI, backupCodes: result.backupCodes } : null)
       setNotice(result.totpURI ? 'Confirm an authenticator code below to finish setup.' : action === 'set-password' ? 'Local recovery password saved. You can now use Account security for password and authenticator settings.' : 'Account security updated.')

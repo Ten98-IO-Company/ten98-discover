@@ -43,7 +43,7 @@ metadata=$(helper inspect)
 IFS=' ' read -r mode app_url app_port project <<EOF
 $metadata
 EOF
-[ -n "$project" ] || fail 'Deployment metadata is missing. Read https://github.com/Ten98-IO-Company/ten98-discover/wiki/Docker-Setup before adopting an existing configuration.'
+[ -n "$project" ] || fail 'Deployment metadata is missing. Read https://github.com/Ten98-IO-Company/ten98-discover/wiki/Deployment before adopting an existing configuration.'
 image="ten98-monitor:$project"
 docker tag "$helper_image" "$image"
 # Compose gives inherited shell variables precedence over .env. Never mix an
@@ -80,5 +80,5 @@ compose exec -T worker node src/server/cli.ts diagnose worker
 printf 'Application and worker checks passed. Open %s\n' "$app_url"
 printf '%s\n' 'Read BOOTSTRAP_TOKEN privately from .env. Never paste it into logs or support requests.'
 if [ "$mode" != local ]; then
-  printf '%s\n' 'Public DNS, browser-trusted HTTPS and collection from another device still require the external checks in https://github.com/Ten98-IO-Company/ten98-discover/wiki/Docker-Setup.'
+  printf '%s\n' 'Public DNS, browser-trusted HTTPS and collection from another device still require the external checks in https://github.com/Ten98-IO-Company/ten98-discover/wiki/Deployment.'
 fi

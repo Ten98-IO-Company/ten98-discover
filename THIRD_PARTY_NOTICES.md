@@ -95,7 +95,7 @@ The native SVG uses a fitted nonpolar Mercator projection, retaining Polygon/Mul
 
 ## Search-query analysis adaptation
 
-The bounded helper in `src/server/ai-search-evidence.ts`, specified by the [AI search evidence](https://github.com/Ten98-IO-Company/ten98-discover/wiki/AI-Search-Evidence) wiki page, adapts the ASCII tokenizer, 99-word stopword set and word-frequency/change behavior in [`apps/web/src/lib/fanout-analysis.ts`](https://github.com/elmohq/elmo/blob/3c673d0253d01ae030fa41519f62ad7e54f2281b/apps/web/src/lib/fanout-analysis.ts), Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`, for `src/server/ai-search-evidence.ts`. The complete MIT notice below applies (Copyright 2026 Blue Whale Software, LLC). Native query derivation uses immutable prompt text, typed unavailable evidence and explicit eligible-answer denominators. The pure helper is implemented and independently tested; paid capture, persistence, reporting and live-provider acceptance remain separate work.
+The bounded helper in `src/server/ai-search-evidence.ts`, specified by the [AI search evidence](https://github.com/Ten98-IO-Company/ten98-discover/wiki/AI-Search#chatgpt-answers) wiki page, adapts the ASCII tokenizer, 99-word stopword set and word-frequency/change behavior in [`apps/web/src/lib/fanout-analysis.ts`](https://github.com/elmohq/elmo/blob/3c673d0253d01ae030fa41519f62ad7e54f2281b/apps/web/src/lib/fanout-analysis.ts), Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`, for `src/server/ai-search-evidence.ts`. The complete MIT notice below applies (Copyright 2026 Blue Whale Software, LLC). Native query derivation uses immutable prompt text, typed unavailable evidence and explicit eligible-answer denominators. The pure helper is implemented and independently tested; paid capture, persistence, reporting and live-provider acceptance remain separate work.
 
 ## Citation classification adaptation
 
@@ -113,7 +113,7 @@ Upstream curated-list provenance comments, including Wikipedia seed references, 
 
 ## Project-context classifier adaptation
 
-`src/server/context-input.ts` functions `classificationTerms` and `classifyPrompt` adapt the behavior and structure of [`packages/lib/src/tag-utils.ts`](https://github.com/elmohq/elmo/blob/3c673d0253d01ae030fa41519f62ad7e54f2281b/packages/lib/src/tag-utils.ts) from Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`. The implementation combines substring classification and explicit user-tag overrides, adds a classifier version, and uses stored project profile aliases. Tests are newly authored synthetic fixtures. Other context and prompt storage/API code is original, informed by the pinned schemas documented in `docs/research.md`; no upstream dependency manifest or assets were copied.
+`src/server/context-input.ts` functions `classificationTerms` and `classifyPrompt` adapt the behavior and structure of [`packages/lib/src/tag-utils.ts`](https://github.com/elmohq/elmo/blob/3c673d0253d01ae030fa41519f62ad7e54f2281b/packages/lib/src/tag-utils.ts) from Elmo commit `3c673d0253d01ae030fa41519f62ad7e54f2281b`. The implementation combines substring classification and explicit user-tag overrides, adds a classifier version, and uses stored project profile aliases. Tests are newly authored synthetic fixtures. Other context and prompt storage/API code is original; no upstream dependency manifest or assets were copied.
 
 Elmo notice, retained with this adaptation:
 

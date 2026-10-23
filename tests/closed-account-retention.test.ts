@@ -9,7 +9,7 @@ import {
 } from '../src/server/account-closure-retention.ts';
 import { readMigrationSchema, type MigrationSchema } from './helpers/migration-schema.ts';
 
-/** Closed-account retention (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Account-Closure#retention): classification coverage and the batch SQL builder. */
+/** Closed-account retention (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#closed-account-retention): classification coverage and the batch SQL builder. */
 
 // The same account-link heuristic as the closure inventory coverage test.
 const accountLink = /user_?id|_by$|actor|inviter/i;

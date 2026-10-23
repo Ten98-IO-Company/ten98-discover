@@ -4,7 +4,7 @@ import {environmentCatalog} from './analytics-environment.ts';
 import {geographyName,serializeGeographyKey,type GeoField,type GeographyKey,type GeoCountryKey} from './analytics-geography.ts';
 import type {AnalyticsReport} from './analytics-comparison.ts';
 
-// Website (project analytics) public share contract; https://github.com/Ten98-IO-Company/ten98-discover/wiki/Website-Shares. Pure: server, browser and offline tests import it.
+// Website (project analytics) public share contract; https://github.com/Ten98-IO-Company/ten98-discover/wiki/Web-Analytics#public-share-links. Pure: server, browser and offline tests import it.
 export const websiteShareSections=['overview','events','locations'] as const;
 export type WebsiteShareSection=typeof websiteShareSections[number];
 export const websiteShareLimits=Object.freeze({bodyBytes:4096,readBodyBytes:1024,responseBytes:2097152,pageSize:20,refreshMs:300000,minLifetimeMs:3600000,maxLifetimeMs:365*86400000});

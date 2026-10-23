@@ -1,6 +1,6 @@
 # Codex continuation
 
-Read [AGENTS.md](AGENTS.md), [README.md](README.md) and the relevant [foundation contracts](https://github.com/Ten98-IO-Company/ten98-discover/wiki/Foundation) before editing. Apply the current skill selector and project guardrails. Codex/GPT owns implementation and integration; use fresh bounded workers with disjoint files and independent review. Do not resume archived workers or historical branch instructions.
+Read [AGENTS.md](AGENTS.md), [README.md](README.md) and the relevant [foundation contracts](https://github.com/Ten98-IO-Company/ten98-discover/wiki/Development) before editing. Apply the current skill selector and project guardrails. Codex/GPT owns implementation and integration; use fresh bounded workers with disjoint files and independent review. Do not resume archived workers or historical branch instructions.
 
 Discover is a development foundation, not a V1 release. Full first-release parity remains required within the accepted owner decisions below. Use the [81-requirement register](https://wiki.ten98.io/s/ten98-docs/p/parity-1fPLxG5kX5), [release gaps](https://wiki.ten98.io/s/ten98-docs/p/release-status-vBt9k2HJBg), current source and owning GitHub issues to select work and verify completion. Historical issue [#207](https://github.com/Ten98-IO-Company/ten98-monitor/issues/207) and its merged changes are evidence, not instructions to repeat completed work.
 
@@ -12,7 +12,7 @@ These decisions define scope; they do not establish implementation or acceptance
 
 | Decision | Required contract |
 | --- | --- |
-| D1 — Attribution | With campaign capture enabled and current analytics consent, retain the six bounded raw click IDs (gclid, fbclid, msclkid, ttclid, li_fat_id, twclid), derive Paid ads in pinned Umami order and erase the IDs with their event rows. Preserve consent-epoch rotation and the declared measurement differences in [attribution](https://github.com/Ten98-IO-Company/ten98-discover/wiki/Attribution). |
+| D1 — Attribution | With campaign capture enabled and current analytics consent, retain the six bounded raw click IDs (gclid, fbclid, msclkid, ttclid, li_fat_id, twclid), derive Paid ads in pinned Umami order and erase the IDs with their event rows. Preserve consent-epoch rotation and the declared measurement differences in [attribution](https://github.com/Ten98-IO-Company/ten98-discover/wiki/Analytics-Reports#attribution). |
 | D2 — Providers | OpenRouter is the sole V1 LLM transport; DataForSEO ChatGPT is the consumer-surface scraper. No direct OpenAI/Anthropic/Mistral adapters or additional scrapers are required. Preserve the current text-only/web-search boundary. |
 | D3 — Accounting | No app-enforced per-connection, workspace, quote or run monetary limits or automatic pauses. Provider wallet refusals are request errors. Keep quotes, idempotent reservations, receipts, reconciliation, usage reporting and the uncertain-charge ledger block. Keep the manual workspace emergency pause; new workspaces start unpaused. Start authorizes every child job; children retain their own time limits and the parent finishes after its last child. |
 | D4 — Domain rank | DataForSEO's explicitly labelled 0–100 rank is the only rating. No Ahrefs connector. |
@@ -49,7 +49,7 @@ pnpm build
 
 Run affected native/browser/CI gates under [AGENTS.md](AGENTS.md) and the [foundation workflow](.github/workflows/foundation.yml). Windows Vite's optional net-use mapping probe may return ENOSYS only through the exact pinned asynchronous test guard; this does not authorize subprocess execution or broader networking.
 
-Deployment follows [Docker setup](https://github.com/Ten98-IO-Company/ten98-discover/wiki/Docker-Setup). Keep the existing Compose project name and volumes on upgrades. Publication/deployment requires the current task authorization and qualified combined-tree checks, not a historical handoff approval.
+Deployment follows [Docker setup](https://github.com/Ten98-IO-Company/ten98-discover/wiki/Deployment). Keep the existing Compose project name and volumes on upgrades. Publication/deployment requires the current task authorization and qualified combined-tree checks, not a historical handoff approval.
 
 Check actual prior spend and the current manual pause/uncertain ledger before any authorized live test. Preserve the owner's cumulative allowance; never reset it or confuse it with an app-enforced budget. No secrets, provider payloads, production logs or private synthetic evidence belong in Git. Local retained evidence is ignored; reproduce missing checks on a clean clone rather than inventing results.
 
