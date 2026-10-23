@@ -29,7 +29,8 @@ export const campaignTools: readonly SectionTab[] = [{ view: 'campaigns', label:
 const tabOf: Partial<Record<AppView, AppView>> = { compare: 'project', links: 'campaigns', pixels: 'campaigns' }
 
 export interface SettingsEntry { view: AppView; label: string; group: SettingsGroupId }
-export const settingsGroupLabels: Record<SettingsGroupId, string> = { project: 'Project', workspace: 'Workspace', account: 'Account', operator: 'Advanced' }
+// The library's Account, Workspace and Project labels stay; only the operator group is renamed, as in Campaign.
+export const settingsGroupLabels: Partial<Record<SettingsGroupId, string>> = { operator: 'Advanced' }
 export const settingsEntries: readonly SettingsEntry[] = [
   { view: 'installation', label: 'Tracking code', group: 'project' }, { view: 'domains', label: 'Domains', group: 'project' },
   { view: 'collection', label: 'Privacy', group: 'project' }, { view: 'destinations', label: 'Forwarding', group: 'project' },
