@@ -1,12 +1,11 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, AuthErrorBoundary, Banner, Button, PageHeader, SectionNav, SidebarStatus, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
-import type { FirstUserSetupValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SectionNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
+import { Alert, AppStateScreen, ProjectCreateFlow, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SectionNav, SidebarStatus, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SectionNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import type { HistoryState } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
@@ -30,7 +29,8 @@ import { ContextPanel } from '../components/ContextPanel'
 import { PromptsPanel } from '../components/PromptsPanel'
 import { AIInsightsPanel } from '../components/AIInsightsPanel'
 import ReportsPanel from '../components/ReportsPanel'
-import { TeamPanel, CreateWorkspaceForm } from '../components/TeamPanel'
+import { TeamPanel } from '../components/TeamPanel'
+import { navigableHttpUrl } from '../lib/oidc-authorization'
 import { InvitePanel } from '../components/InvitePanel'
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel'
 import { AccountClosurePanel } from '../components/AccountClosurePanel'
@@ -499,6 +499,17 @@ function App() {
     }
   }
 
+  async function createWorkspace(name: string) {
+    const session = sessionGeneration.current, navigation = intent.current.generation
+    try {
+      const d = await api<{ workspace: { id: string } }>('/api/workspaces', { method: 'POST', body: { name } })
+      if (sessionGeneration.current === session) await refreshMemberships(d.workspace.id, navigation)
+    } catch (e) {
+      if (sessionGeneration.current !== session || guardAuth(e)) return
+      throw e
+    }
+  }
+
   async function handleSetup(v: SetupValues) {
     const session = ++sessionGeneration.current
     await api('/api/setup', { method: 'POST', body: v })
@@ -573,7 +584,8 @@ function App() {
       // End the editor before redirecting: a stale draft blocker must never delay sign-out.
       flushSync(() => resetSession())
       // Provider sessions also end at the identity provider (RP-initiated sign-out); its page is the last stop.
-      if (out?.providerSignOutUrl &&/^https?:\/\//.test(out.providerSignOutUrl)) { window.location.assign(out.providerSignOutUrl); return }
+      const providerSignOut = navigableHttpUrl(out?.providerSignOutUrl)
+      if (providerSignOut) { window.location.assign(providerSignOut); return }
       go({ view: 'project' }, true)
     } catch (e) { if (sessionGeneration.current === session && !guardAuth(e)) setAppError(`Could not sign out: ${errMsg(e)}`) }
     finally { setSignOutBusy(false) }
@@ -612,6 +624,12 @@ function App() {
   if (phase === 'signin') return <SignInForm initialEmail={signInEmail} onSignIn={handleSignIn} notice={authNotice}
     onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
+
+  const settingsViews: AppView[] = ['preferences','security','identity','team','workspace','keys','providers','retention','google-app']
+  const settingsView = settingsViews.includes(view)
+  // An account without a workspace gets the onboarding screen; account and workspace settings keep the shell.
+  if (me && me.workspaces.length === 0 && !settingsView) return <WorkspaceSetup email={me.user.email} onCreate={createWorkspace} onRefresh={() => { refreshMemberships().catch(e => { setPageError(errMsg(e)); setPhase('error') }) }}
+    signOutBusy={signOutBusy} onSignOut={() => void signOut()} onAccount={() => go(target('preferences'))} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
   const canWrite = workspace !== undefined && ['owner', 'admin', 'editor'].includes(workspace.role)
@@ -653,8 +671,6 @@ function App() {
     { id: 'research', label: 'Research', items: [navItem('context','Project context','folder','project context business brief'), navItem('prompts','Saved prompts','terminal','prompts saved prompts prompt library'), navItem('ai-insights','Answer analysis','activity','ai insights answer analysis retained answers brand visibility'), navItem('ai-search','ChatGPT answers','search','ai search chatgpt answers query analysis'), navItem('keywords','Keywords','search'), navItem('domain-seo','Domain SEO','globe','domain seo backlinks'), navItem('ranks','Rank tracking','trending-up','rank tracking')] },
     { id: 'connect', label: 'Connect', items: [navItem('installation','Install tracker','code','install tracker'), { ...navItem('destinations','Destinations','external'), hidden: !adminRole }, navItem('collection','Collection and privacy','shield','collection and privacy'), { ...navItem('domains','Domains','globe'), hidden: !adminRole }] },
   ]
-  const settingsViews: AppView[] = ['preferences','security','identity','team','workspace','keys','providers','retention','google-app']
-  const settingsView = settingsViews.includes(view)
   const settingsItem = (id: AppView, label: string): SectionNavItem => ({ id, label, href: id, current: view === id })
   const settingsItems: SectionNavItem[] = [settingsItem('preferences','Your account'), settingsItem('security','Security'), settingsItem('identity','Identity & SSO'),
     ...adminRole ? [settingsItem('team','Workspace & access'), settingsItem('keys','API access')] : [], ...workspace?.role === 'owner' ? [settingsItem('providers','Integrations')] : [],
@@ -701,7 +717,7 @@ function App() {
         {project && workspace && projectView && <PageHeader title={pageTitles[view]} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
         {!projectView && view !== 'workspace' && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={pageTitles[view]}
           description={view === 'keys' ? 'Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.' : view === 'providers' ? 'Manage provider credentials and pause paid requests.' : undefined} />}
-        {view === 'workspace' && <section className='card'><h1>Create workspace</h1><p className='dim'>Keep each team’s projects and access separate.</p><CreateWorkspaceForm onCreated={async (id) => { if (sessionGeneration.current === renderedSession) await refreshMemberships(id, renderedIntent) }} onUnauthorized={unauthorized} /></section>}
+        {view === 'workspace' && <><PageHeader eyebrow='Your account' title='Create workspace' description='Keep each team’s projects and access separate.' /><WorkspaceCreateSection onCreate={createWorkspace} /></>}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
         {view === 'preferences' && me && <AccountPreferencesPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} onFactorChanged={factorChanged} /><AccountClosurePanel key={`closure:${me.user.id}`} userId={me.user.id} onClosed={accountClosed} onUnauthorized={unauthorized} onOpenTeam={id => go({ workspace: id, view: 'team' })} onOpenIdentity={() => go(target('identity'))} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
@@ -738,14 +754,9 @@ function App() {
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
         </>}
-        {projectView && !workspace && <section className='card'><p>No workspace is linked to this account.</p><Link className='btn primary' to='/' search={target('workspace')}>Create workspace</Link></section>}
         {(view === 'new-project' || (projectView && projects !== null && project === null)) && workspace && canWrite && (
-          <section className='card onboarding-card' aria-labelledby='create-h'>
-            <span className='eyebrow'>Website setup</span>
-            <h1 id='create-h'>{projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'}</h1>
-            <p className='dim'>Enter a project name and website address.</p>
-            <CreateProjectForm key={workspaceId} onCreate={createProject} />
-          </section>
+          <><PageHeader eyebrow='Website setup' title={projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'} description='Enter a project name and website address.' />
+          <ProjectCreateSection key={workspaceId} onCreate={createProject} /></>
         )}
         {projectView && workspace && projects !== null && project === null && !canWrite && (
           <section className='card'>
@@ -944,35 +955,50 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
     cancel={{ label: 'Back to sign in', onClick: onCancel }} onSubmit={submit} />
 }
 
-function CreateProjectForm({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {
-  const [name, setName] = useState('')
-  const [origin, setOrigin] = useState('')
+// Values stay in the uncontrolled fields after an error; a successful create remounts the form empty.
+function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [state, setState] = useState<{ generation: number; error: string; fieldErrors?: { name?: string; origin?: string } }>({ generation: 0, error: '' })
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
-    const n = name.trim()
-    if (n === '') { setError('Enter a project name.'); return }
-    const parsed = parseOrigin(origin)
-    if (!parsed.origin) { setError(parsed.error ?? 'Enter a valid website address.'); return }
-    setBusy(true); setError('')
-    try {
-      await onCreate(n, parsed.origin)
-      setName(''); setOrigin('')
-    } catch (err) { setError(errMsg(err)) }
+  async function submit(v: { name: string; origin?: string }) {
+    const name = v.name.trim()
+    if (name === '') { setState(s => ({ ...s, error: '', fieldErrors: { name: 'Enter a project name.' } })); return }
+    const parsed = parseOrigin(v.origin ?? '')
+    if (!parsed.origin) { setState(s => ({ ...s, error: '', fieldErrors: { origin: parsed.error ?? 'Enter a valid website address.' } })); return }
+    setBusy(true); setState(s => ({ ...s, error: '', fieldErrors: undefined }))
+    try { await onCreate(name, parsed.origin); setState(s => ({ generation: s.generation + 1, error: '' })) }
+    catch (err) { setState(s => ({ ...s, error: errMsg(err) })) }
     finally { setBusy(false) }
   }
 
-  return (
-    <form onSubmit={(e) => void submit(e)}>
-      <div className='field'><label htmlFor='pn'>Project name</label>
-        <input id='pn' autoComplete='off' required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></div>
-      <div className='field'><label htmlFor='po'>Website address</label>
-        <input id='po' inputMode='url' autoComplete='off' placeholder='https://example.com' required value={origin} onChange={(e) => setOrigin(e.target.value)} />
-        <p className='hint'>Use your website address, for example https://example.com, without a page path.</p></div>
-      {error !== '' && <Alert tone='danger'>{error}</Alert>}
-      <button className='btn primary' disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button>
-    </form>
-  )
+  return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Create project' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Creating…'
+    error={state.error || undefined} fieldErrors={state.fieldErrors} onSubmit={submit}
+    messages={{ nameLabel: 'Project name', originLabel: 'Website address', originHint: 'Use your website address, for example https://example.com, without a page path.', create: 'Create project' }} />
+}
+
+// Shared by the onboarding screen and the New workspace settings tab.
+function useWorkspaceNameSubmit(onCreate: (name: string) => Promise<void>) {
+  const [busy, setBusy] = useState(false)
+  const [outcome, setOutcome] = useState<AuthOutcome & { field?: string }>(noOutcome)
+  async function submit(v: WorkspaceCreateValues) {
+    const name = v.name.trim()
+    if (name === '') { setOutcome({ ...noOutcome, field: 'Enter a workspace name.' }); return }
+    setBusy(true); setOutcome(noOutcome)
+    try { await onCreate(name) }
+    catch (e) { const failure = failureOutcome(e); setOutcome(failure.error ? { ...failure, error: `Could not create the workspace: ${failure.error}` } : failure) }
+    finally { setBusy(false) }
+  }
+  return { busy, error: outcome.error || undefined, unconfirmed: outcome.unconfirmed || undefined, fieldErrors: outcome.field ? { name: outcome.field } : undefined, submit }
+}
+
+function WorkspaceCreateSection({ onCreate }: { onCreate: (name: string) => Promise<void> }) {
+  const { submit, ...state } = useWorkspaceNameSubmit(onCreate)
+  return <WorkspaceCreateFlow mode='create' hideTitle title='Create workspace' defaultValues={{ name: '' }} busyLabel='Creating…' {...state} onSubmit={submit}
+    messages={{ nameLabel: 'Workspace name', create: 'Create workspace' }} />
+}
+
+function WorkspaceSetup({ email, onCreate, onRefresh, onSignOut, signOutBusy, onAccount }: { email: string; onCreate: (name: string) => Promise<void>; onRefresh: () => void; onSignOut: () => void; signOutBusy: boolean; onAccount: () => void }) {
+  const { submit, ...state } = useWorkspaceNameSubmit(onCreate)
+  return <WorkspaceOnboarding brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' email={email} help='Keep each team’s projects and access separate.'
+    {...state} onSubmit={submit} onRefresh={onRefresh} signOut={{ label: signOutBusy ? 'Signing out…' : 'Sign out', onClick: onSignOut }} account={{ label: 'Account settings', onClick: onAccount }} />
 }

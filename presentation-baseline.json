@@ -271,8 +271,8 @@
     "styling": 154
   },
   "src/components/TeamPanel.tsx": {
-    "element": 112,
-    "styling": 46
+    "element": 105,
+    "styling": 42
   },
   "src/components/TrackedAssetsPanel.tsx": {
     "element": 228,
@@ -294,7 +294,7 @@
     "element": 3
   },
   "src/routes/index.tsx": {
-    "element": 113,
-    "styling": 67
+    "element": 95,
+    "styling": 56
   }
 }

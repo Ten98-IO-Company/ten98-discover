@@ -473,6 +473,13 @@ try {
   assert.equal(await (await accountPanel()).getByRole('link', {name:'Account security', exact:true}).isVisible(), true);
   assert.equal(await (await accountPanel()).getByRole('button', {name:'Sign out', exact:true}).isEnabled(), true);
   await page.keyboard.press('Escape');
+  // Without a workspace, project pages become the shared workspace onboarding screen; account settings stay one step away.
+  await page.goto(origin + '/?view=project'); await page.getByRole('heading', {name:'Workspace access', exact:true, level:1}).waitFor();
+  assert.equal(await page.locator('h1').count(), 1, 'The onboarding screen owns the single h1.');
+  assert.equal(await page.getByRole('heading', {name:'Create a workspace', exact:true, level:2}).count(), 1);
+  assert.equal(await page.getByLabel('Workspace name', {exact:true}).isVisible(), true);
+  assert.equal(await page.locator('.t98-shell-sidebar').count(), 0, 'No shell navigation without a workspace.');
+  await page.getByText('Account settings', {exact:true}).click(); await heading('Profile and appearance').waitFor();
   noWorkspaces = false; projectListCount = 2; role = 'viewer';
   console.log('PASS shell: account identity in the top bar menu, workspace/project switcher, Settings role sections, owner/admin/editor/viewer/operator and empty scope, native keyboard and request-free menu.');
 
