@@ -102,11 +102,15 @@ async function worker() {
   });
 }
 
+// Set once the built server is loaded: it then owns the process-wide pool, which this command must not close on return.
+let serving = false;
+
 /** The container's web command: the schema is current before the built server is loaded, so it never serves an older one. */
 async function startWeb() {
   await startWhenDatabaseReady('web', async () => {
-    // The built server opens its own pool; this one is only for migration.
+    // Start the built server with a fresh pool; this one was only for migration.
     await closeDatabase();
+    serving = true;
     await import(new URL('../../.output/server/index.mjs', import.meta.url).href);
   });
 }
@@ -161,5 +165,5 @@ try {
   process.exitCode = 1;
 } finally {
   await stopJobs().catch(() => { console.error('Job shutdown failed.'); process.exitCode = 1; });
-  await closeDatabase().catch(() => { console.error('Database shutdown failed.'); process.exitCode = 1; });
+  if (!serving) await closeDatabase().catch(() => { console.error('Database shutdown failed.'); process.exitCode = 1; });
 }
