@@ -697,7 +697,7 @@ function App() {
         {appError !== '' && <Alert tone='danger'>{appError}</Alert>}
         {projectsError !== '' && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
-        {/* First-strong isolates keep a right-to-left project name from reordering the origin (PageHeader takes text only). */}
+        {/* First-strong isolates keep a right-to-left project name from reordering the origin (same isolation as <bdi> without adding raw elements). */}
         {project && workspace && projectView && <PageHeader title={pageTitles[view]} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
         {!projectView && view !== 'workspace' && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={pageTitles[view]}
           description={view === 'keys' ? 'Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.' : view === 'providers' ? 'Manage provider credentials and pause paid requests.' : undefined} />}
