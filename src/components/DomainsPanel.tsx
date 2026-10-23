@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import { useConfirmDialog } from '@ten98/ui'
+import { DataTable, useConfirmDialog } from '@ten98/ui'
 import {api, ApiError, errMsg} from '../lib/api';
 
 type Domain = {
@@ -549,51 +549,16 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
           {state.domains.every(d => d.role === 'canonical') ? (
             <p className="dim">Your project website is already listed. Add another domain only if you serve pages or keep redirect aliases elsewhere.</p>
           ) : (
-            <div className="table-wrap table-cards domain-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Hostname</th>
-                    <th>Purpose</th>
-                    <th>Collection origin</th>
-                    <th>DNS ownership</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {state.domains.filter(d => d.role !== 'canonical').map((d) => {
-                    const pendingLive =
-                      d.status === 'pending' && d.challengeExpiresAt !== null && Date.parse(d.challengeExpiresAt) > Date.now();
-                    return (
-                      <tr key={d.id} id={`domain-${d.id}`} tabIndex={-1}>
-                        <td data-label="Hostname">
-                          <bdi dir="ltr" className="mono">{d.hostname}</bdi>{' '}
-                        </td>
-                        <td data-label="Purpose">{ROLE_LABEL[d.role]}{d.expectedTargetHost && <p className="hint">Expected target: <bdi dir="ltr">{d.expectedTargetHost}</bdi></p>}</td>
-                        <td data-label="Collection origin">{d.role === 'redirect_alias' ? 'Not allowed by this alias' : d.status === 'verified' ? <><strong>Origin allowed</strong><p className="hint"><bdi dir="ltr">https://{d.hostname}</bdi></p></> : 'Verify ownership first'}</td>
-                        <td data-label="DNS ownership">
-                          <span
-                            className={
-                              d.status === 'verified'
-                                ? 'pill good'
-                                : d.status === 'expired' || d.status === 'revoked'
-                                  ? 'pill bad'
-                                  : 'pill'
-                            }
-                          >
-                            {STATUS_LABEL[d.status]}
-                          </span>
-                          <div className="hint">
-                          {d.status === 'verified' && d.verifiedAt
-                            ? `Control verified on ${fmt(d.verifiedAt)}`
-                            : d.status === 'pending'
-                              ? `Proof expires ${fmt(d.challengeExpiresAt)}`
-                              : d.status === 'expired' && d.challengeExpiresAt
-                                ? `Expired ${fmt(d.challengeExpiresAt)}`
-                                : null}
-                          </div>
-                        </td>
-                        <td data-label="Actions">
+            <div className="domain-table">
+              <DataTable caption="Additional domains" captionHidden responsive="stack" searchable={false} sortable={false} pagination={false} rows={state.domains.filter(d => d.role !== 'canonical')} rowKey={d => d.id}
+                columns={[
+                  { key: 'hostname', header: 'Hostname', rowHeader: true, wrap: true, render: d => <bdi dir="ltr" className="mono" id={`domain-${d.id}`} tabIndex={-1}>{d.hostname}</bdi> },
+                  { key: 'purpose', header: 'Purpose', wrap: true, render: d => <>{ROLE_LABEL[d.role]}{d.expectedTargetHost && <p className="hint">Expected target: <bdi dir="ltr">{d.expectedTargetHost}</bdi></p>}</> },
+                  { key: 'origin', header: 'Collection origin', wrap: true, render: d => d.role === 'redirect_alias' ? 'Not allowed by this alias' : d.status === 'verified' ? <><strong>Origin allowed</strong><p className="hint"><bdi dir="ltr">https://{d.hostname}</bdi></p></> : 'Verify ownership first' },
+                  { key: 'dns', header: 'DNS ownership', wrap: true, render: d => <>
+                    <span className={d.status === 'verified' ? 'pill good' : d.status === 'expired' || d.status === 'revoked' ? 'pill bad' : 'pill'}>{STATUS_LABEL[d.status]}</span>
+                    <div className="hint">{d.status === 'verified' && d.verifiedAt ? `Control verified on ${fmt(d.verifiedAt)}` : d.status === 'pending' ? `Proof expires ${fmt(d.challengeExpiresAt)}` : d.status === 'expired' && d.challengeExpiresAt ? `Expired ${fmt(d.challengeExpiresAt)}` : null}</div></> },
+                  { key: 'actions', header: 'Actions', wrap: true, render: d => { const pendingLive = d.status === 'pending' && d.challengeExpiresAt !== null && Date.parse(d.challengeExpiresAt) > Date.now(); return (
                           <div className="row">
                               <button
                                 type="button"
@@ -634,13 +599,8 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
                                 Remove
                               </button>
                             {d.role==='redirect_alias' && <RedirectChecks key={`${d.id}:${d.expectedTargetHost}:${d.verifiedAt}:${d.status}`} base={`${base}/${d.id}/redirect-checks`} domain={d} parentBusy={controlsOff} onAccessLoss={handleError} />}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          </div> ); } },
+                ]} />
             </div>
           )}
           <details><summary>About ownership and redirect checks</summary><p className="footnote">
