@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {createServer,createServerModuleRunnerTransport} from 'vite';
+import {ESModulesEvaluator,ModuleRunner} from 'vite/module-runner';
 import {parse, type DefaultTreeAdapterTypes as Html} from 'parse5';
 import {FoundationError} from '../src/server/auth.ts';
 import {reportDocument, sanitizeReportHtml, saveReport,createReportShare,handleReportShare} from '../src/server/reports.ts';
@@ -105,4 +107,18 @@ test('missing public reports reuse shared presentation without changing their se
   const authored=reportDocument('<h1>Saved snapshot</h1><script>active()</script>');
   assert.deepEqual(Object.fromEntries(authored.headers),headers);
   assert.equal(await authored.text(),'<!DOCTYPE html>\n<html><head></head><body><h1>Saved snapshot</h1></body></html>');
+});
+
+test('the Nitro dev module runner serves the same missing-report document as Node',async()=>{
+  const request=()=>new Request('https://app.invalid/share/invalid');
+  const native=await (await handleReportShare(request())).text();
+  const server=await createServer({configFile:false,cacheDir:'private/reports-dev-runner-'+process.pid,appType:'custom',ssr:{external:true},server:{host:'127.0.0.1',middlewareMode:true,hmr:false,ws:false,watch:null}});
+  // Mirrors nitro's dev worker: its default import.meta has no working resolve().
+  const runner=new ModuleRunner({transport:createServerModuleRunnerTransport({channel:server.environments.ssr.hot}),hmr:false},new ESModulesEvaluator());
+  try {
+    const reports=await runner.import<typeof import('../src/server/reports.ts')>('/src/server/reports.ts');
+    const missing=await reports.handleReportShare(request());
+    assert.equal(missing.status,404);
+    assert.equal(await missing.text(),native);
+  } finally { await runner.close(); await server.close(); }
 });
