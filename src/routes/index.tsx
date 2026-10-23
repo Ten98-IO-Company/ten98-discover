@@ -150,6 +150,7 @@ function App() {
   const [jobError, setJobError] = useState('')
   const [appError, setAppError] = useState('')
   const [signOutBusy, setSignOutBusy] = useState(false)
+  const signOutLock = useRef(false)
   const [view, updateView] = useState<AppView>('project')
   const [analyticsApplied,setAnalyticsApplied]=useState<{userId:string;projectId:string;from:string;to:string;explorerEntry?:string}|null>(null)
   const rememberAnalyticsRange=useCallback((userId:string,projectId:string,range:{from:string;to:string},explorerEntry?:string)=>setAnalyticsApplied(previous=>previous?.userId===userId&&previous.projectId===projectId&&previous.from===range.from&&previous.to===range.to&&previous.explorerEntry===explorerEntry?previous:{userId,projectId,...range,explorerEntry}),[])
@@ -576,6 +577,9 @@ function App() {
   }
 
   async function signOut() {
+    // Synchronous lock: the onboarding screen's sign-out button cannot be disabled, so a second click must not send again.
+    if (signOutLock.current) return
+    signOutLock.current = true
     const session = sessionGeneration.current
     setSignOutBusy(true); setAppError('')
     try {
@@ -588,7 +592,7 @@ function App() {
       if (providerSignOut) { window.location.assign(providerSignOut); return }
       go({ view: 'project' }, true)
     } catch (e) { if (sessionGeneration.current === session && !guardAuth(e)) setAppError(`Could not sign out: ${errMsg(e)}`) }
-    finally { setSignOutBusy(false) }
+    finally { signOutLock.current = false; setSignOutBusy(false) }
   }
 
   async function copySnippet(text: string) {
@@ -629,7 +633,7 @@ function App() {
   const settingsView = settingsViews.includes(view)
   // An account without a workspace gets the onboarding screen; account and workspace settings keep the shell.
   if (me && me.workspaces.length === 0 && !settingsView) return <WorkspaceSetup email={me.user.email} onCreate={createWorkspace} onRefresh={() => { refreshMemberships().catch(e => { setPageError(errMsg(e)); setPhase('error') }) }}
-    signOutBusy={signOutBusy} onSignOut={() => void signOut()} onAccount={() => go(target('preferences'))} />
+    signOutBusy={signOutBusy} signOutError={appError} onSignOut={() => void signOut()} onAccount={() => go(target('preferences'))} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
   const canWrite = workspace !== undefined && ['owner', 'admin', 'editor'].includes(workspace.role)
@@ -1000,8 +1004,8 @@ function WorkspaceCreateSection({ onCreate }: { onCreate: (name: string) => Prom
     messages={{ nameLabel: 'Workspace name', create: 'Create workspace' }} />
 }
 
-function WorkspaceSetup({ email, onCreate, onRefresh, onSignOut, signOutBusy, onAccount }: { email: string; onCreate: (name: string) => Promise<void>; onRefresh: () => void; onSignOut: () => void; signOutBusy: boolean; onAccount: () => void }) {
+function WorkspaceSetup({ email, onCreate, onRefresh, onSignOut, signOutBusy, signOutError, onAccount }: { email: string; onCreate: (name: string) => Promise<void>; onRefresh: () => void; onSignOut: () => void; signOutBusy: boolean; signOutError: string; onAccount: () => void }) {
   const { submit, ...state } = useWorkspaceNameSubmit(onCreate)
   return <WorkspaceOnboarding brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' email={email} help='Keep each team’s projects and access separate.'
-    {...state} onSubmit={submit} onRefresh={onRefresh} signOut={{ label: signOutBusy ? 'Signing out…' : 'Sign out', onClick: onSignOut }} account={{ label: 'Account settings', onClick: onAccount }} />
+    {...state} error={state.error ?? (signOutError || undefined)} onSubmit={submit} onRefresh={onRefresh} signOut={{ label: signOutBusy ? 'Signing out…' : 'Sign out', onClick: onSignOut }} account={{ label: 'Account settings', onClick: onAccount }} />
 }
