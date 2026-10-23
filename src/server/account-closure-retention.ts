@@ -6,7 +6,8 @@ import { accountClosureInventory, closedAccountLedgerDependents, closedAccountRe
  * Closed-account retention (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#closed-account-retention, owner decision ten98-code-system#39, closes #291).
  *
  * A daily job deletes financial and audit rows that name only closed accounts once they are 7 years past `created_at`,
- * then deletes closed `user` tombstones that nothing references any more. Rows of open accounts are never candidates.
+ * then paid-work archive rows of deleted websites and workspaces 7 years past theirs (#292), then closed `user` tombstones
+ * that no live or archived row references any more. Live rows of open accounts are never candidates.
  *
  * Each batch runs in one transaction: pick the oldest eligible rows per table (locked, SKIP LOCKED), pull in the rows of
  * the same ledger entry along foreign keys between the aged-out tables, drop every candidate that a retained row still
@@ -21,8 +22,8 @@ export const accountClosureRetentionQueue = 'account-closure-retention';
 export const accountClosureRetentionCron = '17 3 * * *';
 /**
  * `batchRows`: most rows picked per batch (it halves after a batch overflows and recovers after a successful one);
- * `runRows`: most rows deleted per run, pulled-in ledger rows and tombstones included; `batchMs` and `ledgerMs` bound
- * one batch and the whole ledger pass. The worst case (ledger pass, last batch, tombstone pass) stays well under the
+ * `runRows`: most rows deleted per run, pulled-in ledger rows, archive rows and tombstones included; `batchMs` and `ledgerMs` bound
+ * one batch and the whole ledger pass. The worst case (ledger pass, last batch, archive and tombstone passes) stays well under the
  * job expiry below.
  */
 export const accountClosureRetentionLimits = { batchRows: 1000, runRows: 20_000, batches: 200, batchMs: 120_000, ledgerMs: 20 * 60_000 } as const;
@@ -41,13 +42,14 @@ export type RetentionTarget = {
 };
 export type AccountReference = { table: string; column: string };
 export type ClosedAccountRetentionSummary = {
-  deleted: Record<string, number>; tombstones: number; batches: number;
+  /** `archived`: paid-work archive rows deleted. */
+  deleted: Record<string, number>; archived: number; tombstones: number; batches: number;
   /** More eligible rows remain for a later run. */
   capped: boolean;
   /** Ledger entries passed over in this run because they alone overflowed the cap or the time bounds. */
   skipped: number;
-  /** The ledger or tombstone pass stopped on an unexpected database error; the other pass still ran. */
-  ledgerFailed: boolean; tombstonesFailed: boolean;
+  /** A pass stopped on an unexpected database error; the later passes still ran. */
+  ledgerFailed: boolean; archiveFailed: boolean; tombstonesFailed: boolean;
 };
 
 const candidates = 'pg_temp.closure_retention_candidate';
@@ -139,15 +141,45 @@ export function deleteSql(targets: readonly RetentionTarget[]): string {
   return `WITH ${steps.join(',\n  ')}\n  SELECT ${targets.map((target, i) => `(SELECT count(*) FROM d${i})::int AS ${ident(target.table)}`).join(', ')}`;
 }
 
-/** Closed tombstones no row references any more, oldest closure first. $1 limit. */
+/** Closed tombstones no live or archived row references any more, oldest closure first. $1 limit. */
 export function tombstoneSql(references: readonly AccountReference[]): string {
-  const unreferenced = references.map(ref => `NOT EXISTS (SELECT 1 FROM ${ident(ref.table)} r WHERE r.${ident(ref.column)}=v.id)`).join('\n      AND ');
+  const unreferenced = [...references.map(ref => `NOT EXISTS (SELECT 1 FROM ${ident(ref.table)} r WHERE r.${ident(ref.column)}=v.id)`),
+    'NOT EXISTS (SELECT 1 FROM paid_work_archive r WHERE r.account_ids @> ARRAY[v.id])'].join('\n      AND ');
   return `DELETE FROM "user" u WHERE u.id IN (SELECT v.id FROM "user" v WHERE v.closed_at IS NOT NULL
       AND ${unreferenced}
     ORDER BY v.closed_at, v.id LIMIT $1 FOR UPDATE SKIP LOCKED)`;
 }
 
-async function readForeignKeys(client: PoolClient): Promise<RetentionForeignKey[]> {
+/**
+ * Paid-work archive rows (src/server/paid-work-archive.ts) 7 years past the source row's `created_at`, oldest first. They
+ * belong to deleted websites and workspaces, so account state does not matter. $1 limit.
+ */
+export const archiveSql = `DELETE FROM paid_work_archive a USING (SELECT source_table, source_id FROM paid_work_archive
+    WHERE created_at < now() - interval ${literal(closedAccountRetentionInterval)} ORDER BY created_at, source_table, source_id LIMIT $1 FOR UPDATE SKIP LOCKED) x
+  WHERE a.source_table=x.source_table AND a.source_id=x.source_id`;
+
+/** Runs one `$1`-limited DELETE in short transactions until it removes fewer rows than asked or `remaining` is used up. */
+async function batchedPass(client: PoolClient, sql: string, batchRows: number, remaining: number): Promise<{ removed: number; failed: boolean }> {
+  let removed = 0;
+  while (remaining - removed > 0) {
+    await client.query('BEGIN');
+    try {
+      await client.query("SET LOCAL statement_timeout='30s'; SET LOCAL lock_timeout='1s'");
+      const limit = Math.min(batchRows, remaining - removed);
+      const count = (await client.query(sql, [limit])).rowCount ?? 0;
+      await client.query('COMMIT');
+      removed += count;
+      if (count < limit) break;
+    } catch {
+      await client.query('ROLLBACK').catch(() => undefined);
+      return { removed, failed: true };
+    }
+  }
+  return { removed, failed: false };
+}
+
+/** Foreign keys of the current schema from the live catalog, each with its ordered columns. */
+export async function readForeignKeys(client: PoolClient): Promise<RetentionForeignKey[]> {
   const columns = (key: string, relation: string) => `ARRAY(SELECT a.attname::text FROM unnest(k.${key}) WITH ORDINALITY o(n,i)
     JOIN pg_attribute a ON a.attrelid=k.${relation} AND a.attnum=o.n ORDER BY o.i)`;
   return (await client.query<{ child: string; parent: string; child_columns: string[]; parent_columns: string[] }>(
@@ -165,15 +197,16 @@ class BatchOverflow extends Error {}
 const overflowed = (error: unknown) => error instanceof BatchOverflow || ['57014', '55P03'].includes((error as { code?: string })?.code ?? '');
 
 /**
- * Runs one bounded pass. At most `runRows` rows (ledger, audit and tombstones together) are deleted per run and at most
- * `batchRows` rows are picked per batch; whatever remains waits for the next daily run. The tombstone pass runs even
- * when the ledger pass fails. Returns counts and flags only.
+ * Runs one bounded pass. At most `runRows` rows (ledger, audit, archive and tombstones together) are deleted per run and
+ * at most `batchRows` rows are picked per batch; whatever remains waits for the next daily run. The archive and tombstone
+ * passes run even when an earlier pass fails. Returns counts and flags only.
  */
 export async function runClosedAccountRetention(options: Partial<ClosedAccountRetentionLimits> = {}): Promise<ClosedAccountRetentionSummary> {
   const limits: ClosedAccountRetentionLimits = { ...accountClosureRetentionLimits, ...options };
   const targets = retentionTargets();
   const summary: ClosedAccountRetentionSummary = {
-    deleted: Object.fromEntries(targets.map(target => [target.table, 0])), tombstones: 0, batches: 0, capped: false, skipped: 0, ledgerFailed: false, tombstonesFailed: false,
+    deleted: Object.fromEntries(targets.map(target => [target.table, 0])), archived: 0, tombstones: 0, batches: 0, capped: false, skipped: 0,
+    ledgerFailed: false, archiveFailed: false, tombstonesFailed: false,
   };
   const client = await getDatabase().pool.connect();
   try {
@@ -183,23 +216,11 @@ export async function runClosedAccountRetention(options: Partial<ClosedAccountRe
     let remaining = limits.runRows;
     try { remaining = await ledgerPass(client, limits, targets, keys, summary); }
     catch { summary.ledgerFailed = true; }
-    const tombstones = tombstoneSql(accountReferences(keys));
-    while (remaining > 0) {
-      await client.query('BEGIN');
-      try {
-        await client.query("SET LOCAL statement_timeout='30s'; SET LOCAL lock_timeout='1s'");
-        const limit = Math.min(limits.batchRows, remaining);
-        const removed = (await client.query(tombstones, [limit])).rowCount ?? 0;
-        await client.query('COMMIT');
-        summary.tombstones += removed;
-        remaining -= removed;
-        if (removed < limit) break;
-      } catch {
-        await client.query('ROLLBACK').catch(() => undefined);
-        summary.tombstonesFailed = true;
-        break;
-      }
-    }
+    // Archive rows go before tombstones, so an account the archive alone named is removed in the same run.
+    const archive = await batchedPass(client, archiveSql, limits.batchRows, remaining);
+    summary.archived = archive.removed; summary.archiveFailed = archive.failed; remaining -= archive.removed;
+    const tombstones = await batchedPass(client, tombstoneSql(accountReferences(keys)), limits.batchRows, remaining);
+    summary.tombstones = tombstones.removed; summary.tombstonesFailed = tombstones.failed; remaining -= tombstones.removed;
     if (remaining <= 0) summary.capped = true;
     return summary;
   } finally {
