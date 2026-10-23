@@ -40,7 +40,7 @@
     "react-dom": "19.2.8",
     "saxes": "6.0.0",
     "ua-parser-js": "1.0.41",
-    "zod": "4.5.4"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
