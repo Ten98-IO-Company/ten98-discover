@@ -50,6 +50,8 @@ Use native subagents for bounded work in this chat. Start each worker with fresh
 
 ## Application boundaries
 
+Web (`cli.ts start-web`, the image CMD) and worker apply pending migrations before serving or working, under the database's one migration advisory lock (`migrationLockKey` in `src/server/db.ts`); a failure or 5-minute timeout exits non-zero. `MIGRATE_ON_START=false` restores operator-run `cli.ts migrate` (they then wait for the schema). Startup migration makes no provider or external request.
+
 Enforce workspace authorization at every server entry point, including MCP, exports and jobs. Keep public analytics ingestion separate from dashboard login. Preserve no-data versus zero. Paid jobs require a server-side ledger reservation, idempotency/reconciliation and an enabled scheduler. Never make a paid call during boot/healthcheck. Provider keys remain encrypted server-side. Replay and rendering are explicit settings with masking and isolated execution.
 
 ## Public repository

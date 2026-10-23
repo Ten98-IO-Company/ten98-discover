@@ -36,7 +36,7 @@ export function validModelReservation(routes:unknown,total:unknown,models:string
 
 // Same complete-response boundary as AIQueryAnalysisPanel; kept in this shared
 // picker module so both model setup controllers reuse it without a new service.
-export class ModelResponseError extends Error { constructor(message:string,readonly readOnly:boolean){super(message);} }
+export class ModelResponseError extends Error { readonly readOnly:boolean;constructor(message:string,readOnly:boolean){super(message);this.readOnly=readOnly;} }
 export async function modelApi<T=unknown>(path:string,opts:{method?:string;body?:unknown;signal?:AbortSignal}={}):Promise<T>{
  if(!/^\/api\/(?:projects|workspaces)\/[a-f0-9-]{36}\//i.test(path)||!['GET','POST'].includes(opts.method??'GET'))throw Error('Unsupported model request.');
  const signal=AbortSignal.any([...(opts.signal?[opts.signal]:[]),AbortSignal.timeout(45000)]);let response:Response;

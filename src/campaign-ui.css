@@ -3,7 +3,7 @@
 
 /* Discover adapters: native forms/routes, accessible states, semantic themes and RTL. */
 :root { --t98-sidebar-width:232px; }
-body { background:var(--color-canvas); color:var(--color-text); font:14px/1.5 var(--font-sans); }
+body { font-family:var(--font-sans); line-height:1.5; }
 [hidden] { display:none!important; }
 svg { flex-shrink:0; }
 .brand { text-align:start; }
@@ -62,9 +62,8 @@ input:focus,select:focus,textarea:focus { outline:3px solid var(--color-focus); 
 .banner { color:var(--color-warning); background:var(--color-warning-subtle); border:1px solid var(--color-warning); }
 .table-wrap { min-inline-size:0; max-inline-size:100%; overflow-x:auto; }
 table { inline-size:100%; border-collapse:collapse; font-size:12px; }
-th { font-size:11px; font-weight:500; text-align:start; color:var(--color-text-muted); background:var(--color-surface-subtle); border-block-end:1px solid var(--color-border); padding:12px 22px; }
-td { padding:16px 22px; border-block-end:1px solid var(--color-border); vertical-align:middle; }
-tbody tr:last-child td { border-block-end:0; }
+th { font-size:11px; font-weight:500; text-align:start; color:var(--color-text-muted); background:var(--color-surface-subtle); border-block-end:1px solid var(--color-border); }
+td { padding-block:16px; border-block-end:1px solid var(--color-border); vertical-align:middle; }
 .empty { color:var(--color-text-muted); background:var(--color-surface); border:0; margin:0; }
 .empty strong { font-size:15px; color:var(--color-text); }
 .empty-icon { display:inline-flex; align-items:center; justify-content:center; inline-size:48px; block-size:48px; border-radius:12px; background:var(--color-accent-subtle); color:var(--color-accent); }
@@ -92,7 +91,6 @@ dialog::backdrop { background:var(--color-overlay); backdrop-filter:blur(3px); }
  .connection-callout { flex-wrap:wrap; }
 }
 @media(forced-colors:active) { :focus-visible,input:focus,select:focus,textarea:focus { outline-color:Highlight; } :is(input,select,textarea,.btn,.button) { border-color:ButtonBorder; } }
-@media(prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none!important; animation:none!important; scroll-behavior:auto!important; } }
 
 :is(.btn,.button):not(.primary):not(:disabled) { color:var(--color-text); }
 :is(.btn,.button):not(.primary):not(:disabled):hover { background:var(--color-surface-subtle); }

@@ -3,12 +3,13 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getConfig } from './config.ts';
 import { FoundationError } from './auth.ts';
-import { assertSchema, closeDatabase, getDatabase, migrationLedger } from './db.ts';
+import { assertSchema, closeDatabase, getDatabase } from './db.ts';
+import { migrateDatabase, StartupError, startWhenDatabaseReady } from './startup-migrate.ts';
 import { startWorker, stopJobs } from './jobs.ts';
 import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts';
 import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
-import {initializeProviderAccountIdentity,assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
+import {assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
 import { setInstanceOperator } from './instance-operators.ts';
 import { closeAccountFromHost } from './account-security.ts';
 import { quarantineRestoredSpending } from './restore-quarantine.ts';
@@ -38,19 +39,7 @@ async function setup() {
 }
 
 async function migrate() {
-  const client = await getDatabase().pool.connect();
-  let applied: readonly string[];
-  try {
-    // Identity guards inspect every financial-reference table, so key capture runs after all pending tables exist
-    // and inside the same migration transaction.
-    applied = await migrationLedger.migrate(client, {
-      afterApply: async (_client, versions) => {
-        if (versions.includes('0022') || versions.includes('0023')) await initializeProviderAccountIdentity(client, versions.includes('0022'));
-      },
-    });
-  } finally {
-    client.release();
-  }
+  const applied = await migrateDatabase();
   console.log(applied.length ? `Database migrations applied: ${applied.join(', ')}.` : 'Database migrations already applied; all checksums verified.');
 }
 
@@ -98,12 +87,14 @@ async function readOperatorSecret(): Promise<unknown> {
 }
 
 async function worker() {
-  await assertSchema();
-  await assertCredentialKeys();
-  await assertOidcCredentialsReadable();
-  await assertGoogleCredentialsReadable();
-  await assertProviderAccountIdentityReadable();
-  await startWorker();
+  await startWhenDatabaseReady('worker', async () => {
+    await assertSchema();
+    await assertCredentialKeys();
+    await assertOidcCredentialsReadable();
+    await assertGoogleCredentialsReadable();
+    await assertProviderAccountIdentityReadable();
+    await startWorker();
+  });
   console.log('Foundation worker ready. Explicit imports and owner-approved rank schedules are enabled.');
   await new Promise<void>((resolve) => {
     process.once('SIGTERM', resolve);
@@ -111,9 +102,18 @@ async function worker() {
   });
 }
 
+/** The container's web command: the schema is current before the built server is loaded, so it never serves an older one. */
+async function startWeb() {
+  await startWhenDatabaseReady('web', async () => {
+    // The built server opens its own pool; this one is only for migration.
+    await closeDatabase();
+    await import(new URL('../../.output/server/index.mjs', import.meta.url).href);
+  });
+}
+
 try {
   const [command, option, ...extra] = process.argv.slice(2);
-  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (reason: 1-500 characters, no personal data; operator secret JSON on standard input)';
+  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | start-web | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (reason: 1-500 characters, no personal data; operator secret JSON on standard input)';
   const closing = command === 'account' && option === 'close' && extra.length === 5 && extra[1] === '--operator' && extra[3] === '--reason';
   if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : command === 'account' ? !closing : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
     throw new CliError(usage);
@@ -149,12 +149,13 @@ try {
       console.log('Account closed and audited. Its sessions, credentials, API keys and memberships were removed.');
       break;
     }
+    case 'start-web': await startWeb(); break;
     case 'worker': await worker(); break;
     case 'diagnose': await diagnose(option === 'worker'); break;
     default: throw new CliError(usage);
   }
 } catch (error) {
-  console.error(error instanceof CliError ? error.message
+  console.error(error instanceof CliError || error instanceof StartupError ? error.message
     : (error as { code?: string })?.code === 'SCHEMA_MISMATCH' ? 'Database schema is incompatible with this application. Use the matching image and migrations.'
     : 'Command failed. Check configuration, database availability, schema and filesystem permissions; credentials have been redacted.');
   process.exitCode = 1;

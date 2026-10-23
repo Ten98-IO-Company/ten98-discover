@@ -17906,7 +17906,7 @@ if (mode === 'record') {
       document.body.style.margin = '0'; document.body.style.overflow = 'hidden';
       // The same array is narrowed only after every original envelope/tree/time check.
       var replayEvents=/** @type {Ten98Tracker.ReplayEnvelope[]} */ (events);
-      player = new core.Replayer(replayEvents,{root:document.body,speed:1,showWarning:false,showDebug:false,skipInactive:false,mouseTail:false,triggerFocus:false,UNSAFE_replayCanvas:false});
+      player = new core.Replayer(replayEvents,{root:document.body,speed:1,showWarning:false,showDebug:false,skipInactive:!heatmap,mouseTail:false,triggerFocus:false,UNSAFE_replayCanvas:false});
       player.disableInteract(); duration = Math.max(0,player.getMetaData().totalTime); player.on('resize',scale); pauseAt(heatmap?duration:0);if(heatmap)player.enableInteract();scale();
       // Recorded links/forms must never navigate even inside the isolated frame.
       player.iframe.addEventListener('load',function () { try { var doc = /** @type {Ten98Tracker.ReplayPlayer} */ (player).iframe.contentDocument; ['click','submit'].forEach(function (type) { /** @type {Document} */ (doc).addEventListener(type,function (e) { e.preventDefault(); e.stopImmediatePropagation(); },true); }); } catch (_) {} });
@@ -17919,7 +17919,9 @@ if (mode === 'record') {
           if (command.type === 'destroy') { destroy(); /** @type {MessagePort} */ (port).close(); port = null; return; }
           if (!player) return;
           if(heatmap){if(command.type==='heatmap-position'&&Object.keys(command).sort().join(',')==='axis,type,value'&&['x','y'].includes(/** @type {string} */ (command.axis))&&Number.isFinite(/** @type {number} */ (command.value))){var g=/** @type {Ten98Tracker.HeatmapPlayback} */ (heatmap).geometry,max=command.axis==='x'?g.pageWidth-g.viewportWidth:g.pageHeight-g.viewportHeight;if(/** @type {number} */ (command.value)<0||/** @type {number} */ (command.value)>max)throw Error('Invalid position.');var view=/** @type {Window} */ (player.iframe.contentWindow);view.scrollTo(command.axis==='x'?/** @type {number} */ (command.value)-(g.direction==='rtl'?g.pageWidth-g.viewportWidth:0):view.scrollX,command.axis==='y'?/** @type {number} */ (command.value):view.scrollY);if(heatmapPaint)heatmapPaint();}return;}
-          if (command.type === 'speed' && [.5,1,1.5,2].includes(/** @type {number} */ (command.value))) player.setConfig({speed:/** @type {number} */ (command.value)});
+          // Closed playback options mirror src/lib/session-replay.ts replayPlaybackOption; any other shape or value is ignored.
+          if (command.type === 'speed' && Object.keys(command).sort().join(',') === 'type,value' && [1,2,4,8].includes(/** @type {number} */ (command.value))) player.setConfig({speed:/** @type {number} */ (command.value)});
+          else if (command.type === 'skip-inactive' && Object.keys(command).sort().join(',') === 'type,value' && typeof command.value === 'boolean') player.setConfig({skipInactive:command.value});
           else if (['play','pause'].includes(/** @type {string} */ (command.type)) && Number.isFinite(/** @type {number} */ (command.offset)) && /** @type {number} */ (command.offset) >= 0 && /** @type {number} */ (command.offset) <= duration) { playing = command.type === 'play'; if (playing) player.play(/** @type {number} */ (command.offset)); else pauseAt(/** @type {number} */ (command.offset)); send({type:'tick',time:position(),playing:playing}); }
         } catch (_) { fail(); }
       };

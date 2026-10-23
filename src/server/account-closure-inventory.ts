@@ -5,7 +5,8 @@
  * so a new table needs an explicit decision here before it can ship.
  *
  * Rules: `delete` removes the rows; `scrub` rewrites only the listed fields and keeps the row; `cancel` stops pending
- * work; `tombstone` is the user row itself; `keep` leaves the row unchanged for the stated reason.
+ * work; `tombstone` is the user row itself; `keep` leaves the row unchanged for the stated reason. A kept table that
+ * names an account also has a `retention` class; tests/closed-account-retention.test.ts fails when one is missing.
  *
  * Statements run in array order inside the closure transaction, after the account, its workspaces, memberships and the
  * operator set are locked. `params` names each placeholder in order: the account id, its previous email (lowercase) or
@@ -23,7 +24,65 @@ export type ClosureInventoryEntry = {
   /** Applied by the closure transaction; absent for `keep` and for steps account-closure.ts performs in code. */
   readonly sql?: string;
   readonly params?: readonly ClosureParameter[];
+  /** How long a kept row that names a closed account stays (owner decision ten98-code-system#39). Kept tables only. */
+  readonly retention?: ClosedAccountRetention;
 };
+
+/**
+ * Retention of kept rows that name a closed account (docs/account-closure.md#retention).
+ *
+ * - `financial`: receipts, the paid-work ledger and the uncertain-charge ledger. Kept 7 years from `created_at`, then
+ *   deleted by the daily closed-account retention job. They hold no personal data and must survive a future workspace
+ *   deletion (#292), which therefore has to tombstone the workspace rather than cascade into them.
+ * - `audit`: security events. Kept 7 years from `created_at` or until workspace deletion, whichever ends first.
+ * - `workspace`: authored content, configuration, non-paid work records and mutation receipts. Kept with the workspace
+ *   and never aged out by the job; while any of them names the account, its tombstone stays.
+ */
+export type ClosedAccountRetentionClass = 'financial' | 'audit' | 'workspace';
+export type ClosedAccountRetention = {
+  readonly class: ClosedAccountRetentionClass;
+  /** Columns that hold an account id. A row ages out only when every non-null one names a closed account. */
+  readonly accountColumns: readonly string[];
+  /** Financial rows must outlive workspace deletion; everything else may go with the workspace. */
+  readonly survivesWorkspaceDeletion: boolean;
+  readonly reason: string;
+  /** Extra SQL condition on alias `t` that a row must also meet before it ages out. */
+  readonly eligibleWhen?: string;
+  /** Rows of other aged-out tables that reference a still-retained row of this table are retained too. */
+  readonly retainsReferencingRows?: boolean;
+  /**
+   * Audit only: the subject column whose closed account alone decides ageing out, even when the actor is still open.
+   * Financial rows age out only when every account column names a closed account.
+   */
+  readonly subjectColumn?: string;
+};
+/** The financial and audit classes age out after this interval from each row's `created_at`. */
+export const closedAccountRetentionInterval = '7 years';
+
+const financialReason = 'Paid-work ledger or receipt: workspace-billed, no personal billing data. Kept 7 years from creation, including after workspace deletion.';
+const auditReason = 'Security audit event naming account ids only. Kept 7 years from creation or until workspace deletion, whichever ends first.';
+const workspaceReason = 'Workspace-owned content, configuration or non-paid work record; kept with the workspace, not aged out. The tombstone stays while it names the account.';
+const financial = (accountColumns: readonly string[] = ['user_id'], extra: Partial<ClosedAccountRetention> = {}): ClosedAccountRetention =>
+  ({ class: 'financial', accountColumns, survivesWorkspaceDeletion: true, reason: financialReason, ...extra });
+const audit = (accountColumns: readonly string[]): ClosedAccountRetention =>
+  ({ class: 'audit', accountColumns, subjectColumn: 'user_id', survivesWorkspaceDeletion: false, reason: auditReason });
+const workspaceOwned = (accountColumns: readonly string[], reason = workspaceReason): ClosedAccountRetention =>
+  ({ class: 'workspace', accountColumns, survivesWorkspaceDeletion: false, reason });
+const mutationReceipt = workspaceOwned(['actor_id'], 'Idempotency receipt for a workspace mutation, not a paid-work receipt, and it has no created_at; kept with the workspace. The tombstone stays while it names the account.');
+const nonPaidWork = workspaceOwned(['user_id'], 'Non-paid workspace work record (no provider charge or quote); kept with the workspace like authored content.');
+const liveSchedule = workspaceOwned(['approval_user_id'], 'Live recurring schedule configuration; the account is only its approver. Kept with the workspace.');
+
+/**
+ * Financial rows without an account column that belong to another financial row: they age out only together with
+ * `parent` (and every other financial row they reference), never on their own.
+ */
+export type ClosedAccountLedgerDependent = { readonly table: string; readonly parent: string; readonly reason: string };
+export const closedAccountLedgerDependents: readonly ClosedAccountLedgerDependent[] = [
+  { table: 'prompt_execution', parent: 'prompt_comparison', reason: 'One charged generation of a prompt comparison; its id is the provider_request receipt.' },
+  { table: 'prompt_comparison_item', parent: 'prompt_comparison', reason: 'Explorer link row of a comparison execution; cascades from the comparison.' },
+  { table: 'rank_dispatch', parent: 'rank_run', reason: 'One charged rank dispatch with its financial evidence; its id is the provider_request receipt.' },
+  { table: 'rank_task', parent: 'rank_dispatch', reason: 'Tasks of a rank dispatch.' },
+];
 
 const keepActor = 'Names the account only as the actor of workspace-billed or audited work; the id now resolves to the "Closed account" tombstone and the row holds no personal data.';
 const keepContent = "Names the account only as the actor of workspace-billed or audited work. Its free-text and JSON columns hold the workspace's own work (inputs, results, diagnostics, notes), kept with the workspace as for any departing member and governed by workspace retention; the app writes no account identifier into them.";
@@ -71,45 +130,45 @@ export const accountClosureInventory: readonly ClosureInventoryEntry[] = [
   { table: 'rateLimit', rule: 'keep', columns: [], reason: 'Unused: the library limiter is disabled and the table holds no account key.' },
   { table: 'user', rule: 'tombstone', columns: ['name', 'email', 'emailVerified', 'image', 'twoFactorEnabled', 'closed_at'],
     reason: 'The row stays so actor references remain valid: name "Closed account", email closed-<random uuid>@invalid with no hash of the old address, no image, unverified, no second factor, closed_at set. Triggers keep it final.' },
-  { table: 'instance_operator_audit', rule: 'keep', columns: ['user_id'], reason: 'Role audit names only the account id; no email, IP address or user agent is stored.' },
-  { table: 'account_closure_audit', rule: 'keep', columns: ['user_id', 'actor_user_id', 'reason'], reason: 'The closure security event: account ids, kind and an operator reason only.' },
+  { table: 'instance_operator_audit', rule: 'keep', columns: ['user_id'], reason: 'Role audit names only the account id; no email, IP address or user agent is stored.', retention: audit(['user_id']) },
+  { table: 'account_closure_audit', rule: 'keep', columns: ['user_id', 'actor_user_id', 'reason'], reason: 'The closure security event: account ids, kind and an operator reason only.', retention: audit(['user_id', 'actor_user_id']) },
 
   // Shares and authored workspace content stay with the workspace; the creator id shows as "Closed account".
-  { table: 'project_share', rule: 'keep', columns: ['token_hash', 'created_by', 'label'], reason: 'Workspace-owned share; access never resolves through the creator, and listings show the tombstone name.' },
-  { table: 'tracking_revision', rule: 'keep', columns: ['created_by', 'configuration'], reason: keepContent },
-  { table: 'analytics_annotation', rule: 'keep', columns: ['user_id', 'note'], reason: keepContent },
-  { table: 'context_competitor', rule: 'keep', columns: ['name', 'updated_by', 'primary_domain', 'domains', 'aliases', 'notes'], reason: keepContent },
-  { table: 'context_key_page', rule: 'keep', columns: ['updated_by', 'url', 'topic', 'notes'], reason: keepContent },
-  { table: 'context_research', rule: 'keep', columns: ['created_by', 'summary'], reason: keepContent },
-  { table: 'context_section', rule: 'keep', columns: ['updated_by', 'key', 'title', 'content'], reason: keepContent },
-  { table: 'prompt_text_version', rule: 'keep', columns: ['created_by', 'text', 'lower_text'], reason: keepContent },
-  { table: 'board_share_request', rule: 'keep', columns: ['actor_id'], reason: keepActor },
-  { table: 'custom_board_request', rule: 'keep', columns: ['actor_id'], reason: keepActor },
-  { table: 'tracked_asset_request', rule: 'keep', columns: ['actor_id'], reason: keepActor },
-  { table: 'project_deletion_request', rule: 'keep', columns: ['actor_id'], reason: keepActor },
+  { table: 'project_share', rule: 'keep', columns: ['token_hash', 'created_by', 'label'], reason: 'Workspace-owned share; access never resolves through the creator, and listings show the tombstone name.', retention: workspaceOwned(['created_by']) },
+  { table: 'tracking_revision', rule: 'keep', columns: ['created_by', 'configuration'], reason: keepContent, retention: workspaceOwned(['created_by']) },
+  { table: 'analytics_annotation', rule: 'keep', columns: ['user_id', 'note'], reason: keepContent, retention: workspaceOwned(['user_id']) },
+  { table: 'context_competitor', rule: 'keep', columns: ['name', 'updated_by', 'primary_domain', 'domains', 'aliases', 'notes'], reason: keepContent, retention: workspaceOwned(['updated_by']) },
+  { table: 'context_key_page', rule: 'keep', columns: ['updated_by', 'url', 'topic', 'notes'], reason: keepContent, retention: workspaceOwned(['updated_by']) },
+  { table: 'context_research', rule: 'keep', columns: ['created_by', 'summary'], reason: keepContent, retention: workspaceOwned(['created_by']) },
+  { table: 'context_section', rule: 'keep', columns: ['updated_by', 'key', 'title', 'content'], reason: keepContent, retention: workspaceOwned(['updated_by']) },
+  { table: 'prompt_text_version', rule: 'keep', columns: ['created_by', 'text', 'lower_text'], reason: keepContent, retention: workspaceOwned(['created_by']) },
+  { table: 'board_share_request', rule: 'keep', columns: ['actor_id'], reason: keepActor, retention: mutationReceipt },
+  { table: 'custom_board_request', rule: 'keep', columns: ['actor_id'], reason: keepActor, retention: mutationReceipt },
+  { table: 'tracked_asset_request', rule: 'keep', columns: ['actor_id'], reason: keepActor, retention: mutationReceipt },
+  { table: 'project_deletion_request', rule: 'keep', columns: ['actor_id'], reason: keepActor, retention: mutationReceipt },
 
   // Financial and paid-work rows: kept unchanged (workspace-billed, no personal billing data).
-  { table: 'provider_request', rule: 'keep', columns: ['user_id', 'provider_reference'], reason: keepContent },
-  { table: 'keyword_quote', rule: 'keep', columns: ['user_id', 'request'], reason: keepContent },
-  { table: 'keyword_research_run', rule: 'keep', columns: ['user_id', 'diagnostic', 'result', 'reconciliation_evidence'], reason: keepContent },
-  { table: 'saved_keyword_refresh_plan', rule: 'keep', columns: ['user_id', 'connection_name'], reason: keepActor },
-  { table: 'prompt_execution_quote', rule: 'keep', columns: ['user_id', 'request_actor', 'input', 'messages', 'routes', 'cache_plan'], reason: keepContent },
-  { table: 'prompt_comparison', rule: 'keep', columns: ['user_id'], reason: keepActor },
-  { table: 'prompt_occurrence', rule: 'keep', columns: ['user_id', 'requested_by', 'reason'], reason: keepContent },
-  { table: 'prompt_tracker', rule: 'keep', columns: ['name', 'approval_user_id', 'input', 'calendar'], reason: keepContent },
-  { table: 'rank_config', rule: 'keep', columns: ['name', 'location_name', 'language_name', 'approval_user_id', 'target_domain', 'last_skip_reason'], reason: keepContent },
-  { table: 'rank_run', rule: 'keep', columns: ['user_id', 'connection_name', 'request', 'approval_snapshot', 'diagnostic'], reason: keepContent },
-  { table: 'ai_suggestion_quote', rule: 'keep', columns: ['user_id', 'request_actor', 'input', 'snapshot', 'messages', 'route'], reason: keepContent },
-  { table: 'ai_suggestion_run', rule: 'keep', columns: ['user_id', 'raw_result', 'proposal', 'accepted_candidate_ids', 'evidence', 'diagnostic'], reason: keepContent },
-  { table: 'ai_search_quote', rule: 'keep', columns: ['user_id', 'price_mode', 'price_source', 'input'], reason: keepContent },
-  { table: 'ai_search_run', rule: 'keep', columns: ['user_id', 'result', 'financial_evidence', 'preflight_evidence', 'diagnostic'], reason: keepContent },
-  { table: 'ai_content_support_quote', rule: 'keep', columns: ['user_id', 'request_actor', 'source_kind', 'dependencies', 'source_input', 'snapshot', 'messages', 'route', 'unavailable_reason'], reason: keepContent },
-  { table: 'ai_content_support_run', rule: 'keep', columns: ['user_id', 'raw_result', 'proposal', 'financial_evidence', 'diagnostic'], reason: keepContent },
-  { table: 'domain_research_quote', rule: 'keep', columns: ['user_id', 'request'], reason: keepContent },
-  { table: 'domain_research_run', rule: 'keep', columns: ['user_id', 'diagnostic', 'result', 'reconciliation_evidence'], reason: keepContent },
-  { table: 'domain_redirect_check', rule: 'keep', columns: ['user_id', 'hostname', 'expected_target_host', 'diagnostic', 'observation'], reason: keepContent },
-  { table: 'site_audit_run', rule: 'keep', columns: ['user_id', 'domain_hostname', 'origin', 'config', 'stop_reason', 'coverage', 'summary'], reason: keepContent },
-  { table: 'google_import', rule: 'keep', columns: ['user_id', 'source', 'quality', 'diagnostic'], reason: keepContent },
+  { table: 'provider_request', rule: 'keep', columns: ['user_id', 'provider_reference'], reason: keepContent, retention: financial(['user_id'], { eligibleWhen: "t.status IN ('settled','cancelled')", retainsReferencingRows: true }) },
+  { table: 'keyword_quote', rule: 'keep', columns: ['user_id', 'request'], reason: keepContent, retention: financial() },
+  { table: 'keyword_research_run', rule: 'keep', columns: ['user_id', 'diagnostic', 'result', 'reconciliation_evidence'], reason: keepContent, retention: financial() },
+  { table: 'saved_keyword_refresh_plan', rule: 'keep', columns: ['user_id', 'connection_name'], reason: keepActor, retention: financial() },
+  { table: 'prompt_execution_quote', rule: 'keep', columns: ['user_id', 'request_actor', 'input', 'messages', 'routes', 'cache_plan'], reason: keepContent, retention: financial() },
+  { table: 'prompt_comparison', rule: 'keep', columns: ['user_id'], reason: keepActor, retention: financial() },
+  { table: 'prompt_occurrence', rule: 'keep', columns: ['user_id', 'requested_by', 'reason'], reason: keepContent, retention: financial(['user_id', 'requested_by']) },
+  { table: 'prompt_tracker', rule: 'keep', columns: ['name', 'approval_user_id', 'input', 'calendar'], reason: keepContent, retention: liveSchedule },
+  { table: 'rank_config', rule: 'keep', columns: ['name', 'location_name', 'language_name', 'approval_user_id', 'target_domain', 'last_skip_reason'], reason: keepContent, retention: liveSchedule },
+  { table: 'rank_run', rule: 'keep', columns: ['user_id', 'connection_name', 'request', 'approval_snapshot', 'diagnostic'], reason: keepContent, retention: financial() },
+  { table: 'ai_suggestion_quote', rule: 'keep', columns: ['user_id', 'request_actor', 'input', 'snapshot', 'messages', 'route'], reason: keepContent, retention: financial() },
+  { table: 'ai_suggestion_run', rule: 'keep', columns: ['user_id', 'raw_result', 'proposal', 'accepted_candidate_ids', 'evidence', 'diagnostic'], reason: keepContent, retention: financial() },
+  { table: 'ai_search_quote', rule: 'keep', columns: ['user_id', 'price_mode', 'price_source', 'input'], reason: keepContent, retention: financial() },
+  { table: 'ai_search_run', rule: 'keep', columns: ['user_id', 'result', 'financial_evidence', 'preflight_evidence', 'diagnostic'], reason: keepContent, retention: financial() },
+  { table: 'ai_content_support_quote', rule: 'keep', columns: ['user_id', 'request_actor', 'source_kind', 'dependencies', 'source_input', 'snapshot', 'messages', 'route', 'unavailable_reason'], reason: keepContent, retention: financial() },
+  { table: 'ai_content_support_run', rule: 'keep', columns: ['user_id', 'raw_result', 'proposal', 'financial_evidence', 'diagnostic'], reason: keepContent, retention: financial() },
+  { table: 'domain_research_quote', rule: 'keep', columns: ['user_id', 'request'], reason: keepContent, retention: financial() },
+  { table: 'domain_research_run', rule: 'keep', columns: ['user_id', 'diagnostic', 'result', 'reconciliation_evidence'], reason: keepContent, retention: financial() },
+  { table: 'domain_redirect_check', rule: 'keep', columns: ['user_id', 'hostname', 'expected_target_host', 'diagnostic', 'observation'], reason: keepContent, retention: nonPaidWork },
+  { table: 'site_audit_run', rule: 'keep', columns: ['user_id', 'domain_hostname', 'origin', 'config', 'stop_reason', 'coverage', 'summary'], reason: keepContent, retention: nonPaidWork },
+  { table: 'google_import', rule: 'keep', columns: ['user_id', 'source', 'quality', 'diagnostic'], reason: keepContent, retention: nonPaidWork },
 
   // Workspace labels, hashes and website-visitor measurement: not dashboard account data.
   { table: 'workspace', rule: 'keep', columns: ['name'], reason: keepWorkspace },

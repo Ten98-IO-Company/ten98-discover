@@ -45,6 +45,11 @@ export function validateAnalyticsNetworkConfig(env: NodeJS.ProcessEnv = process.
   readConfig(env);
 }
 
+/** The validated ANALYTICS_NETWORK_MODE: off, direct or proxy. */
+export function analyticsNetworkMode(env: NodeJS.ProcessEnv = process.env): 'off' | 'direct' | 'proxy' {
+  return readConfig(env).mode as 'off' | 'direct' | 'proxy';
+}
+
 /** Read the original srvx Node transport only; a cloned/plain Request has no peer. */
 export function extractAnalyticsPeer(request: Request): string | undefined {
   const runtime = ownValue(request, 'runtime');

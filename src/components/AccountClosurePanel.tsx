@@ -15,6 +15,9 @@ const consequences = [
   'Workspaces keep their data, reports, share links and usage records. Share links you created keep working.',
 ]
 
+/** Owner-approved privacy notice (docs/account-closure.md); both closure paths show it verbatim. */
+export const closurePrivacyNotice = "Closing your account. When you close your account, we delete your password, sign-in methods, two-factor settings, sessions and API keys, and remove your name, email address and picture. You are removed from every workspace. What you created in a workspace stays with that workspace and shows 'Closed account' as its author. We keep some records without your personal details: receipts and records of paid work and charges for 7 years from when each was created, even if the workspace is later deleted, because we must keep them for accounting and tax; and audit and security records for 7 years from when each was created or until the workspace is deleted, whichever comes first. We do not currently keep backups of account data. You can sign up again with the same email address as a new account; a closed account cannot be restored."
+
 /** Both closure paths (password and identity provider) require these before submitting. */
 export const closureAcknowledgements = [
   { id: 'permanent', label: 'I understand that closing is permanent and cannot be undone.' },
@@ -75,7 +78,7 @@ export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTe
     {data && blocked && <Alert tone='warning' title='Closing is not available yet'>
       <Stack gap={2}>
         {data.blockers.workspaces.length > 0 && <>
-          <Text>You are the only owner of these workspaces. Transfer ownership to another member, or delete the workspace, before closing your account.</Text>
+          <Text>You are the only owner of these workspaces. Transfer ownership to another member before closing your account.</Text>
           <List>{data.blockers.workspaces.map(workspace => <ListItem key={workspace.id}>
             <Button variant='ghost' onClick={() => onOpenTeam(workspace.id)}>{`Open team settings for ${isolate(workspace.name)}`}</Button>
           </ListItem>)}</List>
@@ -95,6 +98,7 @@ export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTe
       onConfirm={close} onCancel={() => { setReviewing(false); setPassword(''); setFactor(''); setError('') }}>
       <Stack gap={3}>
         <List>{consequences.map(item => <ListItem key={item}>{item}</ListItem>)}</List>
+        <Text>{closurePrivacyNotice}</Text>
         <Field label='Current password' htmlFor='account-closure-password'>
           <Input id='account-closure-password' type='password' autoComplete='current-password' maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} />
         </Field>

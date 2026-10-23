@@ -15,13 +15,14 @@ const page=await context.newPage();page.setDefaultTimeout(10000);
 page.on('pageerror',e=>evidence.errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&!m.text().startsWith('Failed to load resource:'))evidence.errors.push(m.text());});page.on('response',r=>{if(r.url().includes('/api/'))evidence.api.push(r.request().method()+' '+r.status()+' '+new URL(r.url()).pathname);});
 const step=(name)=>{evidence.steps.push(name);console.log('STEP '+name);};
 try{
+ const projectSelect=()=>page.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true}),projectOption=name=>projectSelect().locator('option').filter({hasText:new RegExp('^'+name+'$')});
  const landing=await page.goto(base+'/',{waitUntil:'domcontentloaded'});
  evidence.csp=landing.headers()['content-security-policy']??null;const headerNonce=evidence.csp?.match(/'nonce-([^']+)'/)?.[1];assert.ok(headerNonce,'The compiled document must carry a nonce policy.');
  assert.equal(await page.evaluate(()=>document.querySelector('script[type="module"]').nonce),headerNonce,'The module entry script must carry the header nonce.');step('document policy nonce matches the module entry script');
- await page.getByRole('heading',{name:'Secure this installation'}).waitFor();
+ await page.getByRole('heading',{name:'Create owner account'}).waitFor();
  await page.getByLabel('Setup token',{exact:true}).fill(token);await page.getByLabel('Your name',{exact:true}).fill('Compiled owner');await page.getByLabel('Email address',{exact:true}).fill('owner@compiled-delete.test');await page.getByLabel('Password',{exact:true}).fill('synthetic-password-12345');await page.getByLabel('Workspace name',{exact:true}).fill('Compiled workspace');
  await page.getByRole('button',{name:'Create owner account'}).click();
- await page.getByRole('navigation',{name:'Projects'}).waitFor();step('owner claimed and signed in');
+ await projectSelect().waitFor({state:'attached'});step('owner claimed and signed in');
  // Mirrors the ReplayPreview player document in src/components/SessionReplayPanel.tsx: a data: frame inherits the page policy, mints its own
  // nonce and must still execute /replay.js (which injects its <style>); a template change there must be mirrored here.
  await page.evaluate(()=>new Promise((done,fail)=>{const nonce=crypto.randomUUID().replaceAll('-',''),asset=new URL('/replay.js',window.location.href);
@@ -31,22 +32,22 @@ try{
  await replayFrame.waitForFunction(()=>document.head.querySelector('style')!==null,null,{timeout:10000});
  await page.evaluate(()=>document.querySelector('iframe[title="csp replay probe"]').remove());step('replay data: frame executed /replay.js under the inherited document policy');
  const workspaceId=await page.getByRole('combobox',{name:'Workspace',exact:true}).inputValue();assert.match(workspaceId,/^[0-9a-f-]{36}$/);
- async function create(name,origin){await page.goto(base+'/?workspace='+workspaceId+'&view=new-project',{waitUntil:'domcontentloaded'});await page.fill('#pn',name);await page.fill('#po',origin);await page.getByRole('button',{name:'Create project'}).click();await page.getByRole('navigation',{name:'Projects'}).getByRole('link',{name,exact:true}).waitFor();}
+ async function create(name,origin){await page.goto(base+'/?workspace='+workspaceId+'&view=new-project',{waitUntil:'domcontentloaded'});await page.fill('#pn',name);await page.fill('#po',origin);await page.getByRole('button',{name:'Create project'}).click();await projectOption(name).waitFor({state:'attached'});}
  await create('Doomed website','https://doomed.compiled-delete.test');await create('Surviving website','https://surviving.compiled-delete.test');step('two projects created');
- const doomedHref=await page.getByRole('navigation',{name:'Projects'}).getByRole('link',{name:'Doomed website',exact:true}).getAttribute('href');const doomedId=new URLSearchParams(doomedHref.split('?')[1]).get('project');assert.match(doomedId,/^[0-9a-f-]{36}$/);
+ const doomedId=await projectOption('Doomed website').getAttribute('value');assert.match(doomedId,/^[0-9a-f-]{36}$/);
  await page.goto(base+'/?workspace='+workspaceId+'&project='+doomedId+'&view=collection',{waitUntil:'domcontentloaded'});
  await page.getByRole('heading',{name:'Collection and privacy',level:2}).waitFor();
- await page.getByRole('button',{name:'Delete website',exact:true}).click();await page.getByText('Doomed website',{exact:true}).first().waitFor();
+ await page.getByRole('button',{name:'Delete website',exact:true}).click();await page.locator('main').getByText('Doomed website',{exact:true}).first().waitFor();
  await page.getByRole('textbox',{name:'Type DELETE to confirm',exact:true}).fill('DELETE');await page.getByRole('button',{name:'Permanently delete website'}).click();step('deletion confirmed in the compiled settings view');
  await page.waitForURL(url=>{const p=new URL(url).searchParams;return p.get('workspace')===workspaceId&&p.get('view')==='project'&&p.get('project')===null;});step('router navigated to the workspace project view without a project parameter');
- const projects=page.getByRole('navigation',{name:'Projects'});await projects.getByRole('link',{name:'Surviving website',exact:true}).waitFor();
+ await projectOption('Surviving website').waitFor({state:'attached'});
  await page.waitForFunction(()=>![...document.querySelectorAll('nav[aria-label="Projects"] a')].some(a=>a.textContent==='Doomed website'));step('selector entry removed while the surviving project remains');
  const settings=await page.evaluate(async id=>{const r=await fetch('/api/projects/'+id+'/analytics-settings',{credentials:'same-origin'});return r.status;},doomedId);assert.equal(settings,404);step('deleted project settings answer 404 for the signed-in owner');
- await page.reload({waitUntil:'domcontentloaded'});await projects.getByRole('link',{name:'Surviving website',exact:true}).waitFor();assert.equal(await projects.getByRole('link',{name:'Doomed website',exact:true}).count(),0);step('reloaded catalog omits the deleted project');
+ await page.reload({waitUntil:'domcontentloaded'});await projectOption('Surviving website').waitFor({state:'attached'});assert.equal(await projectOption('Doomed website').count(),0);step('reloaded catalog omits the deleted project');
  await page.goto(base+'/?workspace='+workspaceId+'&project='+doomedId+'&view=project',{waitUntil:'domcontentloaded'});await page.getByText('That project is no longer available in this workspace. Choose a current project.',{exact:true}).waitFor();step('stale deep link reports the project as no longer available');
  await page.screenshot({path:resolve(out,'after-delete.png'),fullPage:true});
  // Website public share (P45): the owner creates a link in Collection and privacy; a fresh context carrying the owner's cookies opens it.
- const survivingHref=await projects.getByRole('link',{name:'Surviving website',exact:true}).getAttribute('href');const survivingId=new URLSearchParams(survivingHref.split('?')[1]).get('project');
+ const survivingId=await projectOption('Surviving website').getAttribute('value');
  await page.goto(base+'/?workspace='+workspaceId+'&project='+survivingId+'&view=collection',{waitUntil:'domcontentloaded'});await page.getByRole('heading',{name:'Collection and privacy',level:2}).waitFor();
  await page.getByRole('button',{name:'New public link',exact:true}).click();await page.getByRole('textbox',{name:'Link name',exact:true}).fill('Compiled public link');await page.getByRole('button',{name:'Create public link',exact:true}).click();
  const shareUrl=await page.getByRole('textbox',{name:'New public website URL'}).inputValue();assert.match(shareUrl,new RegExp('^'+base.replaceAll('.','\\.')+'/share/websites/[0-9a-f-]{36}#[A-Za-z0-9_-]{43}$'));step('owner created a public website link from Collection and privacy');

@@ -45,7 +45,7 @@ function PublicCard({value}:{value:PublicBoardCard}){
  }
  return <>{retention}{body}{'evidenceIncomplete'in value.data&&value.data.evidenceIncomplete&&<p className="banner">Revenue evidence is incomplete. Missing observations can change attribution and totals; these are not lower bounds.</p>}</>;
 }
-class ShareReadError extends Error{constructor(readonly status=0){super(unavailable);}}
+class ShareReadError extends Error{readonly status:number;constructor(status=0){super(unavailable);this.status=status;}}
 async function request(path:string,token:string,signal:AbortSignal,body?:unknown,header='X-Ten98-Board-Share'):Promise<unknown>{
  const active=AbortSignal.any([signal,AbortSignal.timeout(25000)]);let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
  try{const response=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:active,headers:{[header]:token,...body===undefined?{}:{'Content-Type':'application/json'}},...body===undefined?{}:{body:JSON.stringify(body)}});

@@ -219,7 +219,6 @@
 .prompt-table th:first-child, .prompt-table td:first-child{ min-width: 240px; width: 34%; }
 .prompt-table th:last-child, .prompt-table td:last-child{ min-width: 210px; }
 .prompt-table:focus-visible{ outline: 3px solid var(--color-focus); outline-offset: 2px; }
-tbody tr:last-child td{ border-bottom: 0; }
 .jobs{ display: flex; flex-direction: column; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
 .jobs li{ display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .err-text{ color: var(--danger); font-size: var(--text-xs); }

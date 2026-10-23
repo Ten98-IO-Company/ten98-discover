@@ -392,7 +392,8 @@ function App() {
     activateProject(selectedProject?.id ?? '')
     setNavigationPending(false)
     const resolved = resolveNavigation(requested, workspaceId || undefined, project?.id, view)
-    if (navigationKey(resolved) !== navigationKey(requested) || !canonicalNavigation(window.location.search, resolved)) go(resolved, true)
+    // Record the resolved scope before the canonical replace so the router event does not clear the error reported above.
+    if (navigationKey(resolved) !== navigationKey(requested) || !canonicalNavigation(window.location.search, resolved)) { rememberIntent(resolved); go(resolved, true) }
   }
 
   function resetSession() {

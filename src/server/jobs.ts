@@ -23,6 +23,7 @@ import {rankPollQueue,executeRankDispatch,pollRankDispatch,reconcileRankJobs} fr
 import {claimDueRankOccurrence} from './rank-recurring.ts';
 import {claimDuePromptOccurrence} from './prompt-recurring.ts';
 import {startSiteAuditWorker,reconcileSiteAudits,stopSiteAudits} from './site-audit-worker.ts';
+import {accountClosureRetentionCron,accountClosureRetentionJobOptions,accountClosureRetentionQueue,runClosedAccountRetention} from './account-closure-retention.ts';
 const reconcilers = [reconcileKeywordJobs, reconcileDomainResearchJobs, reconcileRankJobs, reconcilePromptExecutionJobs, reconcileAiSuggestionJobs, reconcileAiSearchJobs, reconcileContentSupportJobs, reconcileDomainRedirectChecks];
 
 const queueName = 'setup-probe';
@@ -34,10 +35,13 @@ const queueName = 'setup-probe';
  * `startAfter`, which a NOTIFY on insert cannot announce, so that queue keeps plain 2 s polling.
  */
 export const jobPolling = { pollingIntervalSeconds: 2, notifyPollingIntervalSeconds: 30 } as const;
-export const jobQueues = (): { name: string; notify: boolean }[] => [queueName, googleQueue, keywordQueue, domainResearchQueue, promptExecutionQueue, suggestionQueue, aiSearchQueue, contentSupportQueue, domainRedirectQueue, siteAuditQueue, rankQueue, rankPollQueue]
+export const jobQueues = (): { name: string; notify: boolean }[] => [queueName, googleQueue, keywordQueue, domainResearchQueue, promptExecutionQueue, suggestionQueue, aiSearchQueue, contentSupportQueue, domainRedirectQueue, siteAuditQueue, rankQueue, rankPollQueue, accountClosureRetentionQueue]
   .map((name) => ({ name, notify: name !== rankPollQueue }));
-/** Only the worker holds the dedicated LISTEN connection; producers emit NOTIFY regardless. */
-export const bossOptions = (connectionString: string, listen: boolean) => ({ connectionString, schedule: false, connectionTimeoutMillis: 5000, useListenNotify: listen });
+/**
+ * Only the worker holds the dedicated LISTEN connection; producers emit NOTIFY regardless. The worker also runs the
+ * pg-boss cron timekeeper for the daily closed-account retention job; web processes never schedule.
+ */
+export const bossOptions = (connectionString: string, listen: boolean) => ({ connectionString, schedule: listen, connectionTimeoutMillis: 5000, useListenNotify: listen });
 let listenForJobs = false;
 let bossPromise: Promise<PgBoss> | undefined;
 let workerPromise: Promise<void> | undefined;
@@ -74,10 +78,11 @@ export function getBoss(): Promise<PgBoss> {
  * a backlog (for example the prompt children committed in one transaction, which Postgres folds
  * into one NOTIFY) drains back to back instead of waiting out the idle backstop.
  */
-export async function workJobs<T extends object>(boss: PgBoss, name: string, options: Pick<WorkOptions, 'batchSize' | 'pollingIntervalSeconds'>, handler: (jobs: Job<T>[]) => Promise<void>) {
+export async function workJobs<T extends object>(boss: PgBoss, name: string, options: Pick<WorkOptions, 'batchSize' | 'pollingIntervalSeconds'>, handler: (jobs: Job<T>[]) => Promise<unknown>) {
   let workerId: string | undefined;
+  // A single-job batch stores the handler's resolved value as the job output.
   workerId = await boss.work<T>(name, { ...jobPolling, ...options }, async (jobs) => {
-    try { await handler(jobs); } finally { if (workerId && jobs.length) boss.notifyWorker(workerId); }
+    try { return await handler(jobs); } finally { if (workerId && jobs.length) boss.notifyWorker(workerId); }
   });
   return workerId;
 }
@@ -208,6 +213,15 @@ export function startWorker(): Promise<void> {
       await workJobs<{runId:string}>(boss,contentSupportQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeContentSupport(job.data?.runId);});
       await workJobs<{checkId:string}>(boss,domainRedirectQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainRedirectCheck(job.data?.checkId);});
       await startSiteAuditWorker(boss);
+      // Closed-account retention (docs/account-closure.md#retention): one bounded run a day. Its per-table counts are the
+      // job output in pgboss.job; they hold no account ids or personal data.
+      await workJobs(boss,accountClosureRetentionQueue,{batchSize:1},async()=>{
+        const summary=await runClosedAccountRetention();
+        console.log(`Closed-account retention: ${Object.values(summary.deleted).reduce((sum,n)=>sum+n,0)} rows and ${summary.tombstones} tombstones deleted${summary.capped?'; more remain for the next run':''}.`);
+        if(summary.ledgerFailed||summary.tombstonesFailed)console.error('Closed-account retention stopped early; inspect database availability. The next daily run continues.');
+        return summary;
+      });
+      await boss.schedule(accountClosureRetentionQueue,accountClosureRetentionCron,null,{...accountClosureRetentionJobOptions});
       workerStarted = true;
       await heartbeat();
       heartbeatTimer = setInterval(() => {

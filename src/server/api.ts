@@ -15,7 +15,7 @@ import {getProjectDeletion,deleteProject} from './project-delete.ts';
 import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
-import { clientRateKey, emailLimitKey } from './client-rate-limit.ts';
+import { clientAddressesIdentifyVisitors, clientRateKey, emailLimitKey, visitorRateKey } from './client-rate-limit.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {exportAnalytics,analyticsExportLimits} from './analytics-export.ts';
@@ -43,6 +43,7 @@ import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitati
 import { handleAccountSecurity } from './account-security.ts';
 import { AccountClosureBlocked } from './account-closure.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
+import { handleSesFeedback, sesFeedbackPath } from './ses-feedback.ts';
 import { authenticateApiKey, authorizeApiKey, createApiKey, listApiKeys, parseApiKeyHeaders, revokeApiKey, type ApiKeyScope } from './api-keys.ts';
 import { assertCredentialKeys, checkProvider, listProviders, revokeProvider, saveBudget, saveProvider } from './providers.ts';
 import { assertOidcCredentialsReadable, handleOidc, oidcSignOutUrl } from './oidc.ts';
@@ -109,6 +110,22 @@ async function limit(key: string, maximum: number, client?:PoolClient) {
      ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING count`, [key, maximum],
   );
   if (rows[0].count > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
+}
+
+/**
+ * Per-minute public collection limits. A client is one resolved visitor address, counted only when the installation identifies
+ * visitors by address (see visitorRateKey); its value leaves room for visitors behind a shared network address. Each site is keyed
+ * by its internal project id; the global value is an instance capacity ceiling well above any single site.
+ */
+export const collectorLimits = { client: 1200, site: { collector: 3000, heatmap: 3000, replay: 3000, 'tracking-config': 600 }, global: 60000 } as const;
+
+let collectorClientLimitNoticed = false;
+
+/** The project a public site key names when the request origin is allowed for it, or null. */
+async function collectionProject(siteKey: string, origin: string): Promise<{ id: string } | null> {
+  const { pool } = getDatabase();
+  const project = (await pool.query<{ id: string; origin: string }>('SELECT id,origin FROM project WHERE public_key=$1', [siteKey])).rows[0];
+  return project && await collectionOriginAllowed(pool, origin, project) ? project : null;
 }
 
 async function signedIn(request: Request) {
@@ -186,6 +203,10 @@ export async function handleApi(request: Request): Promise<Response> {
       websiteShareReads++;
       try{return json(await readWebsiteShare(publicWebsite[1],token,await readJson(request,websiteShareLimits.readBodyBytes)),200,{'referrer-policy':'no-referrer','x-robots-tag':'noindex, nofollow'});}finally{websiteShareReads--;}
     }
+    // Public SES feedback (SNS) is separate from dashboard authentication; the runtime verifies the signature before any write.
+    // Independent budgets (see ses-feedback.ts): refusals never spend the certificate or verified delivery budgets.
+    if(path===sesFeedbackPath){const within=(key:string,maximum:number)=>()=>limit(key,maximum).then(()=>true,error=>{if(error instanceof FoundationError&&error.status===429)return false;throw error;});
+      return await handleSesFeedback(request,process.env,{admission:{certificate:within('ses-feedback:certificate',30),refused:within('ses-feedback:refused',60),verified:within('ses-feedback:verified',600)}});}
     const apiToken = parseApiKeyHeaders(request.headers);
     const principal = apiToken ? await authenticateApiKey(apiToken) : null;
     if (principal) {
@@ -243,36 +264,50 @@ export async function handleApi(request: Request): Promise<Response> {
     if (path === '/api/collect' || path === '/api/tracking-config' || path === '/api/replay/begin' || path === '/api/replay/chunks'||path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches'||path==='/api/heatmaps/backgrounds') {
       const origin = request.headers.get('origin');
       if (!origin) throw new FoundationError(403, 'A configured website origin is required.');
-      // Count the shared collection budget only for configured origins, so unconfigured traffic cannot exhaust it for every website.
+      // Admission order: a configured origin, then per client, then per site (internal project id, resolved sites only), then the
+      // instance ceiling. A refused request stops before the later limits, so unconfigured origins and unknown site keys never count
+      // toward a site or the shared ceiling, and only resolved sites create per-site rows.
       if (!await collectionOriginAllowed(getDatabase().pool, origin)) throw new FoundationError(403, 'Website origin is not configured.');
-      await limit('collector:global', 6000);
+      // Per client only where an address identifies one visitor; otherwise the per-site and global limits apply alone.
+      const clientKey = visitorRateKey(request, 'collector');
+      if (clientKey) await limit(clientKey, collectorLimits.client);
+      else if (!collectorClientLimitNoticed && !clientAddressesIdentifyVisitors()) {
+        collectorClientLimitNoticed = true;
+        console.warn('Per-client collection limiting is off until TRUSTED_PROXIES or ANALYTICS_TRUSTED_PROXIES names the reverse proxy (or ANALYTICS_NETWORK_MODE=direct when there is none).');
+      }
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
-      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+      if (request.method === 'OPTIONS') { await limit('collector:global', collectorLimits.global); return new Response(null, { status: 204, headers: cors }); }
       if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405, cors);
+      const siteRefusal = () => new FoundationError(403, 'Event does not match an allowed website origin.');
+      const admitSite = async (scope: 'collector' | 'heatmap' | 'replay' | 'tracking-config', siteKey: string, refusal: FoundationError) => {
+        const project = await collectionProject(siteKey, origin);
+        if (!project) throw refusal;
+        await limit(`${scope}:${project.id}`, collectorLimits.site[scope]);
+        await limit('collector:global', collectorLimits.global);
+      };
       if(path==='/api/heatmaps/begin'||path==='/api/heatmaps/batches'||path==='/api/heatmaps/backgrounds'){
         if(request.url.includes('?')||request.url.includes('#'))throw new FoundationError(400,'Heatmap collection has no query parameters.');
-        const begin=path.endsWith('/begin'),background=path.endsWith('/backgrounds'),raw=await readJson(request,background?4096:begin?8192:32768),input=background?heatmapBackgroundUpload.parse(raw):begin?heatmapBegin.parse(raw):heatmapBatch.parse(raw);await limit(`heatmap:${input.siteKey}`,3000);
+        const begin=path.endsWith('/begin'),background=path.endsWith('/backgrounds'),raw=await readJson(request,background?4096:begin?8192:32768),input=background?heatmapBackgroundUpload.parse(raw):begin?heatmapBegin.parse(raw):heatmapBatch.parse(raw);
+        await admitSite('heatmap',input.siteKey,siteRefusal());
         return json(background?await associateHeatmapBackground(request,input):begin?await beginHeatmap(request,input):await collectHeatmap(request,input),202,cors);
       }
       if(path==='/api/replay/begin'||path==='/api/replay/chunks'){
         if(url.search)throw new FoundationError(400,'Replay collection has no query parameters.');
         const raw=await readJson(request,path.endsWith('/begin')?8192:360448),input=path.endsWith('/begin')?replayBegin.parse(raw):replayUpload.parse(raw);
-        await limit(`replay:${input.siteKey}`,3000);
+        await admitSite('replay',input.siteKey,siteRefusal());
         return json(path.endsWith('/begin')?await beginSessionReplay(request,input):await uploadSessionReplay(request,input),202,cors);
       }
       if (path === '/api/tracking-config') {
         const input = z.object({ siteKey: z.uuid(), environment: z.enum(['live', 'test']) }).strict().parse(await readJson(request));
-        await limit(`tracking-config:${input.siteKey}`, 600);
+        await admitSite('tracking-config', input.siteKey, new FoundationError(404, 'Not found'));
         return json(await getPublicDestinations(input.siteKey, input.environment, origin), 200, cors);
       }
       const raw = await readJson(request, identifyBodyLimit);
       const type=(raw as {type?:unknown}|null)?.type;
       if(type==='performance'&&Buffer.byteLength(JSON.stringify(raw),'utf8')>16384)throw new FoundationError(413,'The performance observation is too large.');
       const event = type==='performance'?performanceObservation.parse(raw):type==='identify' ? parseIdentifyInput(raw) : eventInput.parse(raw);
-      const { rows } = await getDatabase().pool.query('SELECT id,origin FROM project WHERE public_key=$1', [event.siteKey]);
-      const project = rows[0];
-      if (!project || new URL(event.url).origin !== origin || !await collectionOriginAllowed(getDatabase().pool, origin, project)) throw new FoundationError(403, 'Event does not match an allowed website origin.');
-      await limit(`collector:${project.id}`, 3000);
+      if (new URL(event.url).origin !== origin) throw siteRefusal();
+      await admitSite('collector', event.siteKey, siteRefusal());
       // Origin and a site key are public routing values, never visitor identity proof.
       if('type'in event&&event.type==='performance')return json(await collectPerformance(request,event,extractAnalyticsPeer(request)),202,cors);
       if ('type' in event) {

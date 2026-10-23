@@ -63,13 +63,13 @@ try {
       await page.getByLabel('Email address', { exact: true }).fill(fixture.email);
       await page.getByLabel('Password', { exact: true }).fill(fixture.password);
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-      await page.getByLabel('Workspace', { exact: true }).selectOption(fixture.workspaceId);
+      await page.locator('aside.t98-shell-sidebar').getByRole('combobox', { name: 'Workspace', exact: true }).selectOption(fixture.workspaceId);
       await page.getByRole('heading', { name: 'Web analytics', exact: true }).waitFor();
       async function navigation() { const toggle = page.getByRole('button', { name: /^(Menu|Close menu)$/ }); if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click(); }
       async function section(name: string) { await navigation(); await page.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click(); }
       async function settings(name: string) {
         await navigation();
-        await page.locator('#app-navigation').getByRole('link', { name: 'Settings', exact: true }).click();
+        await page.locator('aside.t98-shell-sidebar').getByRole('link', { name: 'Settings', exact: true }).click();
         await page.getByRole('navigation', { name: 'Settings sections', exact: true }).getByRole('link', { name, exact: true }).click();
       }
       await settings('Google setup');
@@ -85,7 +85,7 @@ try {
       await page.getByRole('status').filter({ hasText: 'Google authorization returned.' }).waitFor();
       assert.equal(await page.getByRole('alert').filter({ hasText: 'Google authorization returned.' }).count(), 0, 'A successful return must not be announced as an error.');
       assert.equal(new URL(page.url()).hash, '', 'OAuth state/code/target fragment must be cleared from browser history.');
-      assert.equal(await page.getByLabel('Workspace', { exact: true }).inputValue(), fixture.workspaceId, 'Callback must select its authorized workspace, not the first membership.');
+      assert.equal(await page.locator('aside.t98-shell-sidebar').getByRole('combobox', { name: 'Workspace', exact: true }).inputValue(), fixture.workspaceId, 'Callback must select its authorized workspace, not the first membership.');
       assert.equal(await page.getByLabel('Project', { exact: true }).inputValue(), fixture.projectId, 'Callback must select its authorized project.');
       const connection = page.locator('section').filter({ has: page.getByText('Browser Search Console', { exact: true }) }).last();
       await connection.getByRole('button', { name: 'Load available properties', exact: true }).click();
@@ -269,7 +269,7 @@ try {
         try{
           await gaContext.route('**/*',(route:any)=>{if(new URL(route.request().url()).origin!==config.appUrl){gaExternal++;return route.abort();}return route.continue();});
           const gaPage=await gaContext.newPage();gaPage.setDefaultTimeout(15000);gaPage.on('pageerror',()=>gaErrors++);await gaPage.goto(config.appUrl);await gaPage.getByLabel('Email address', { exact: true }).fill(ga4.email);await gaPage.getByLabel('Password',{exact:true}).fill(ga4.password);await gaPage.getByRole('button',{name:'Sign in',exact:true}).click();await gaPage.getByRole('heading',{name:'Web analytics',exact:true}).waitFor();
-          assert.equal(await gaPage.getByLabel('Workspace',{exact:true}).inputValue(),ga4.workspaceId);const menu=gaPage.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await gaPage.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Google reports',exact:true}).click();
+          assert.equal(await gaPage.locator('aside.t98-shell-sidebar').getByRole('combobox',{name:'Workspace',exact:true}).inputValue(),ga4.workspaceId);const menu=gaPage.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await gaPage.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Google reports',exact:true}).click();
           const source=gaPage.locator('section.google-connection').filter({has:gaPage.getByRole('heading',{name:'GA4 report inventory',exact:true})});await gaPage.getByLabel('Google source',{exact:true}).selectOption(ga4.connectionId);await source.getByText('Import a snapshot',{exact:true}).click();await source.getByLabel('Report',{exact:true}).waitFor();
           for(const [report,label,column]of [['ga4_pages','Pages and screens','Page path and screen class'],['ga4_acquisition','Traffic acquisition','Session campaign'],['ga4_key_events','Key events','Is key event']]){
             await source.getByLabel('Report',{exact:true}).selectOption(report);await source.getByLabel('Start date',{exact:true}).fill('2024-03-01');await source.getByLabel('End date',{exact:true}).fill('2024-03-01');

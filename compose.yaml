@@ -9,8 +9,10 @@
 # First run:
 #   pnpm run setup:local                        # generates .env (32-byte hex values, refuses overwrite)
 #   docker compose build
-#   docker compose run --rm migrate   # one-shot schema migration
-#   docker compose up -d web worker
+#   docker compose up -d web worker   # each applies pending migrations before starting (advisory-locked)
+#
+# MIGRATE_ON_START=false makes web and worker wait (up to 5 minutes) for an
+# explicit `docker compose run --rm migrate`, e.g. after taking a backup.
 
 x-app: &app
   image: ${TEN98_IMAGE:-ten98-monitor:foundation}
@@ -54,8 +56,16 @@ x-app: &app
     EMAIL_CLOUDFLARE_ACCOUNT_ID_FILE: ${EMAIL_CLOUDFLARE_ACCOUNT_ID_FILE:-}
     EMAIL_CLOUDFLARE_API_TOKEN: ${EMAIL_CLOUDFLARE_API_TOKEN:-}
     EMAIL_CLOUDFLARE_API_TOKEN_FILE: ${EMAIL_CLOUDFLARE_API_TOKEN_FILE:-}
+    EMAIL_SES_REGION: ${EMAIL_SES_REGION:-}
+    EMAIL_SES_ACCESS_KEY_ID: ${EMAIL_SES_ACCESS_KEY_ID:-}
+    EMAIL_SES_ACCESS_KEY_ID_FILE: ${EMAIL_SES_ACCESS_KEY_ID_FILE:-}
+    EMAIL_SES_SECRET_ACCESS_KEY: ${EMAIL_SES_SECRET_ACCESS_KEY:-}
+    EMAIL_SES_SECRET_ACCESS_KEY_FILE: ${EMAIL_SES_SECRET_ACCESS_KEY_FILE:-}
+    EMAIL_SES_CONFIGURATION_SET: ${EMAIL_SES_CONFIGURATION_SET:-}
+    EMAIL_SES_SNS_TOPIC_ARNS: ${EMAIL_SES_SNS_TOPIC_ARNS:-}
     # Compose injects its internal artifact path; .env ARTIFACT_DIR is host-only.
     ARTIFACT_DIR: /data/artifacts
+    MIGRATE_ON_START: ${MIGRATE_ON_START:-true}
   depends_on:
     postgres:
       # Convenience only; app code handles its own schema readiness too.
@@ -134,7 +144,8 @@ services:
     profiles: ["tools"]
     restart: "no"
     # One-shot job: no healthcheck (image ships none), no artifacts volume.
-    # Operators run it explicitly: docker compose run --rm migrate
+    # Optional with MIGRATE_ON_START (default); required when it is false:
+    #   docker compose run --rm migrate
 
 volumes:
   pgdata:
