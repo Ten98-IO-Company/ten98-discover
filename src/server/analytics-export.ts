@@ -31,11 +31,11 @@ export function analyticsExportZip(contents:readonly Buffer[],check:()=>void=()=
 }
 type ExportRow={dataset:number;value:unknown;observations:number;identified:number;visitors:number|null};
 const rowSchema=z.object({dataset:z.number().int().min(0).max(6),value:z.unknown(),observations:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),identified:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),visitors:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable()}).strict();
-/** Country groups are closed geography keys: absence reads Unavailable, a completed lookup without a country reads Unknown, known rows read the ISO code. */
+/** Country groups are closed geography keys: absence reads Unavailable; a completed lookup is recorded, as the ISO code or Unknown (the on-screen label). */
 function exportValue(dataset:number,value:unknown):[state:string,value:unknown]{
  if(dataset!==6)return[value===null?'not-recorded':'recorded',value];
  if(serializeGeographyKey('country',value)===null)throw new FoundationError(503,'Analytics counts cannot be exported safely.');const key=value as GeoCountryKey;
- return key.state==='known'?['recorded',key.country]:key.state==='unknown'?['unknown','Unknown']:['not-recorded',null];
+ return key.state==='known'?['recorded',key.country]:key.state==='unknown'?['recorded','Unknown']:['not-recorded',null];
 }
 type ExportWindow={asOf:string;retainedFrom:string;start:string;end:string;coverage:'complete'|'partial'|'unavailable'};
 export function analyticsExportCsv(rows:readonly ExportRow[],window:ExportWindow,scope:string,check:()=>void=()=>{}){
