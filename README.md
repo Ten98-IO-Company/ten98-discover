@@ -20,7 +20,7 @@ Installation, configuration and guides are in the [wiki](https://github.com/Ten9
 ## Community
 - Questions and ideas: [Discussions](https://github.com/Ten98-IO-Company/ten98-discover/discussions)
 - Bugs and feature requests: [Issues](https://github.com/Ten98-IO-Company/ten98-discover/issues)
-- Roadmap: [Ten98 Project](https://github.com/orgs/Ten98-IO-Company/projects/1)
+- Roadmap: [Discover project board](https://github.com/orgs/Ten98-IO-Company/projects/3)
 - Contributing: [contributing guide](https://github.com/Ten98-IO-Company/.github/blob/main/CONTRIBUTING.md) · [Code of Conduct](https://github.com/Ten98-IO-Company/.github/blob/main/CODE_OF_CONDUCT.md) · [contributor rules](AGENTS.md)
 
 ## Security
