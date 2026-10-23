@@ -130,7 +130,7 @@ export const accountClosureInventory: readonly ClosureInventoryEntry[] = [
   { table: 'rateLimit', rule: 'keep', columns: [], reason: 'Unused: the library limiter is disabled and the table holds no account key.' },
   { table: 'user', rule: 'tombstone', columns: ['name', 'email', 'emailVerified', 'image', 'twoFactorEnabled', 'closed_at'],
     reason: 'The row stays so actor references remain valid: name "Closed account", email closed-<random uuid>@invalid with no hash of the old address, no image, unverified, no second factor, closed_at set. Triggers keep it final.' },
-  { table: 'instance_operator_audit', rule: 'keep', columns: ['user_id'], reason: 'Role audit names only the account id; no email, IP address or user agent is stored.', retention: audit(['user_id']) },
+  { table: 'instance_operator_audit', rule: 'keep', columns: ['user_id', 'scope'], reason: 'Role and paid-work export audit names only the account id and, for an export, the opaque workspace and website ids; no email, IP address or user agent is stored.', retention: audit(['user_id']) },
   { table: 'account_closure_audit', rule: 'keep', columns: ['user_id', 'actor_user_id', 'reason'], reason: 'The closure security event: account ids, kind and an operator reason only.', retention: audit(['user_id', 'actor_user_id']) },
 
   // Shares and authored workspace content stay with the workspace; the creator id shows as "Closed account".

@@ -50,7 +50,8 @@
     "0068_workspace_two_factor",
     "0070_account_closure",
     "0071_email_suppression",
-    "0072_paid_work_archive"
+    "0072_paid_work_archive",
+    "0073_operator_export_audit"
    ]
   },
   "P05": {
@@ -235,7 +236,8 @@
     "0005_provider_core",
     "0022_provider_account_identity",
     "0063_no_app_budgets",
-    "0072_paid_work_archive"
+    "0072_paid_work_archive",
+    "0073_operator_export_audit"
    ]
   },
   "P11": {

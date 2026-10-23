@@ -10,7 +10,7 @@ import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts
 import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
 import {assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
-import { setInstanceOperator } from './instance-operators.ts';
+import { auditOperatorPaidWorkExport, setInstanceOperator } from './instance-operators.ts';
 import { closeAccountFromHost } from './account-security.ts';
 import { quarantineRestoredSpending } from './restore-quarantine.ts';
 import { exportPaidWorkArchive } from './paid-work-archive.ts';
@@ -87,11 +87,17 @@ async function readOperatorSecret(): Promise<unknown> {
   try { return JSON.parse(text); } catch { throw new CliError('The operator secret must be one JSON object.'); }
 }
 
-/** Archived paid-work rows of a deleted website or workspace (#292), one JSON object per line on standard output. */
-async function exportArchive(workspaceId: string, projectId?: string) {
+/**
+ * Archived paid-work rows of a deleted website or workspace (#292), one JSON object per line on standard output. The named
+ * instance operator is verified and the export audited (instance_operator_audit) before any row is read.
+ */
+async function exportArchive(operatorEmail: string, workspace: string, website?: string) {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (![workspaceId, projectId ?? workspaceId].every(id => uuid.test(id))) throw new CliError('Workspace and website ids are UUIDs.');
+  if (![workspace, website ?? workspace].every(id => uuid.test(id))) throw new CliError('Workspace and website ids are UUIDs.');
+  const workspaceId = workspace.toLowerCase(), projectId = website?.toLowerCase();
   await assertSchema();
+  try { await auditOperatorPaidWorkExport(operatorEmail, { workspaceId, projectId }); }
+  catch (error) { if (error instanceof FoundationError) throw new CliError(error.message); throw error; }
   const client = await getDatabase().pool.connect();
   let rows = 0;
   try {
@@ -136,9 +142,12 @@ async function startWeb() {
 
 try {
   const [command, option, ...extra] = process.argv.slice(2);
-  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | start-web | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (reason: 1-500 characters, no personal data; operator secret JSON on standard input) | paid-work export --workspace <workspace-id> [--website <website-id>]';
+  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | start-web | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (reason: 1-500 characters, no personal data; operator secret JSON on standard input) | paid-work export --workspace <workspace-id> [--website <website-id>] --operator <operator-email>';
   const closing = command === 'account' && option === 'close' && extra.length === 5 && extra[1] === '--operator' && extra[3] === '--reason';
-  const exporting = command === 'paid-work' && option === 'export' && extra[0] === '--workspace' && (extra.length === 2 || extra.length === 4 && extra[2] === '--website');
+  // Each flag once, in any order: --workspace and --operator are required, --website is optional.
+  const exportFlags = new Map(extra.flatMap((value, i) => i % 2 ? [] : [[value, extra[i + 1]] as const]));
+  const exporting = command === 'paid-work' && option === 'export' && extra.length % 2 === 0 && exportFlags.size === extra.length / 2
+    && [...exportFlags.keys()].every(flag => ['--workspace', '--website', '--operator'].includes(flag)) && exportFlags.has('--workspace') && exportFlags.has('--operator');
   if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : command === 'account' ? !closing : command === 'paid-work' ? !exporting : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
     throw new CliError(usage);
   }
@@ -173,7 +182,7 @@ try {
       console.log('Account closed and audited. Its sessions, credentials, API keys and memberships were removed.');
       break;
     }
-    case 'paid-work': await exportArchive(extra[1], extra[3]); break;
+    case 'paid-work': await exportArchive(exportFlags.get('--operator')!, exportFlags.get('--workspace')!, exportFlags.get('--website')); break;
     case 'start-web': await startWeb(); break;
     case 'worker': await worker(); break;
     case 'diagnose': await diagnose(option === 'worker'); break;
