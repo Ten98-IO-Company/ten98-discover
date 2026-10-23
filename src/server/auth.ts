@@ -54,6 +54,8 @@ function createAuth(client?: PoolClient, captureReset?: (message: ResetPasswordM
     database: drizzleAdapter(client ? drizzle(client, { schema }) : getDatabase().db, { provider: 'pg', schema }),
     baseURL: config.appUrl,
     secret: config.authSecret,
+    // Self-hosted installs send no data to Ten98 or third parties; pin this rather than rely on the library default.
+    telemetry: { enabled: false },
     trustedOrigins: [config.appUrl],
     appName: 'ten98 Discover',
     // Database adapter failures can contain query parameters. Report safe errors at our API boundary.
