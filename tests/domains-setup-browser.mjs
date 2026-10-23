@@ -78,7 +78,7 @@ try {
   console.log('PASS canonical unverified is an allowed exact origin, privacy caveat, optional setup and native-router installation scope.');
 
   stage = 'serving setup and visible one-time proof'; await fresh(); await add('www.ten98.example');
-  assert.match(await row('www.ten98.example').innerText(), /Verify ownership first/); assert.equal(await row('www.ten98.example').getByText('www.ten98.example', {exact: true}).evaluate(node => node === document.activeElement), true, 'Focus moves to the added domain in its row header.'); assert.equal(await page.locator('.domain-add').getAttribute('open'), null);
+  assert.match(await row('www.ten98.example').innerText(), /Verify ownership first/); assert.equal(await row('www.ten98.example').evaluate(node => node === document.activeElement), true); assert.equal(await page.locator('.domain-add').getAttribute('open'), null);
   const beforeChallenge = writes.length; await row('www.ten98.example').getByRole('button', {name: 'Create DNS proof', exact: true}).click(); await proof().waitFor(); await settled(); assert.equal(writes.length, beforeChallenge + 1);
   assert.match(await proof().getByRole('heading').innerText(), /www.ten98.example/); assert.equal(await proof().getByRole('heading').evaluate(node => node === document.activeElement), true); assert.equal(await proof().evaluate(node => node.closest('details:not([open])') === null), true);
   assert.equal(await proof().evaluate(node => node.getBoundingClientRect().top < document.querySelector('.domain-add').getBoundingClientRect().top), true);
