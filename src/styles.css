@@ -207,10 +207,6 @@
 .domains-panel summary{ padding-block: 10px; cursor: pointer; font-weight: 500; }
 .domains-panel :is(p, bdi, td, dd){ overflow-wrap: anywhere; }
 .domains-panel :is(h3, .domain-origin){ margin-block: 0 10px; }
-.domain-facts{ margin-block: 12px; }
-.domain-facts > div{ display: flex; flex-wrap: wrap; gap: 6px 16px; margin-block: 8px; }
-.domain-facts dt{ color: var(--muted); min-inline-size: 150px; }
-.domain-facts dd{ margin: 0; }
 .domains-panel .domain-add{ margin-block: 12px; }
 .domains-panel .domain-table td{ vertical-align: top; }
 .domains-panel .domain-table .row{ align-items: flex-start; }
