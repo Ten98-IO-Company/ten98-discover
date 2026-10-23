@@ -906,7 +906,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   const [outcome, setOutcome] = useState(noOutcome)
   const [ownerExists, setOwnerExists] = useState(false)
   // Remounting after success clears the password; the other entries are kept.
-  const [form, setForm] = useState({ generation: 0, name: '', email: '', workspaceName: '' })
+  const [form, setForm] = useState({ generation: 0, name: '', email: '', workspaceName: 'My workspace' })
 
   async function submit(v: FirstUserSetupValues) {
     // The first sign-up claims the installation; @ten98/ui 0.23.0 still renders a setup-token field, which is never sent.
