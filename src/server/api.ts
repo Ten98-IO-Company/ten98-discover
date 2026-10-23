@@ -122,7 +122,7 @@ async function limitWindow(key: string, maximum: number, minutes: number) {
        WHERE earlier.key=$1 AND earlier.minute < current.minute AND earlier.minute > current.minute - $3::integer),0) AS total FROM current`,
     [key, maximum, minutes],
   );
-  if (Number(rows[0].total) > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
+  if (Number(rows[0].total) > maximum) throw new FoundationError(429, `Too many attempts. Wait ${minutes} minutes and try again.`);
 }
 
 /**

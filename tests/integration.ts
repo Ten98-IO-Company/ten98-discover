@@ -165,6 +165,9 @@ try {
   const claim = { name: ' Test owner ', email: ' OWNER@integration.test ', password, workspaceName: 'Primary workspace' };
   for (const path of ['/api/auth/setup', '/api/setup']) {
     await expectStatus(path, 400, { method: 'POST', body: { ...claim, password: 'short' } });
+    // A leftover `token` is tolerated, but every other unknown field is still refused.
+    await expectStatus(path, 400, { method: 'POST', body: { ...claim, token: 'leftover', password: 'short' } });
+    await expectStatus(path, 400, { method: 'POST', body: { ...claim, unexpected: true } });
     await expectStatus(path, 403, { method: 'POST', body: claim, origin: 'https://untrusted.integration.test' });
   }
   // Force a late failure after user/account writes to prove bootstrap is all-or-nothing.
@@ -185,7 +188,8 @@ try {
 
   stage = 'racing installation claims';
   // Without a setup token the first sign-up claims the installation; the canonical path races its alias.
-  const competitors = [claim, { ...claim, email: ' OTHER-OWNER@integration.test ', name: 'Other owner' }];
+  // The second competitor carries a leftover setup token, as a page cached across the upgrade may send; it is ignored.
+  const competitors = [claim, { ...claim, token: 'leftover-cached-page-token', email: ' OTHER-OWNER@integration.test ', name: 'Other owner' }];
   const claims = await Promise.all(competitors.map((body, index) => request(index ? '/api/setup' : '/api/auth/setup', { method: 'POST', body })));
   assert.deepEqual(claims.map((item) => item.response.status).sort(), [200, 409], 'Exactly one concurrent setup must succeed.');
   const winnerIndex = claims.findIndex((item) => item.response.status === 200);
@@ -216,8 +220,11 @@ try {
   assert.equal((await expectStatus('/api/status', 200)).body.configured, true);
   const workspaceA = owner.body.workspaces[0].id as string;
   await retainHistoricalAnalytics(workspaceA, ownerCookie);
-  for (const path of ['/api/auth/setup', '/api/setup']) {
-    const late = await expectStatus(path, 409, { method: 'POST', body: { ...claim, email: 'late-owner@integration.test' } });
+  // Setup allows 10 attempts per client in 15 minutes and this stage has used them; start a fresh window for the late claims.
+  await pool.query("DELETE FROM request_limit WHERE key LIKE 'setup:client:%'");
+  for (const path of ['/api/auth/setup', '/api/setup']) for (const token of [undefined, 'leftover-cached-page-token']) {
+    const late = await expectStatus(path, 409, { method: 'POST', body: { ...claim, email: 'late-owner@integration.test', ...token ? { token } : {} } });
+    assert.equal(late.body.error, 'Setup is complete. Sign in with the owner account.', 'A late claim gets the same refusal with or without a leftover token.');
     assert.equal(late.cookie, '', 'A refused claim starts no session.');
   }
   await expectStatus('/api/auth/sign-up/email', 404, { method: 'POST', body: { name: 'Unauthorized', email: 'unauthorized@integration.test', password } });
