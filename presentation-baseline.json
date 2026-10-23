@@ -71,8 +71,8 @@
     "styling": 29
   },
   "src/components/BoardsPanel.tsx": {
-    "element": 344,
-    "styling": 151
+    "element": 292,
+    "styling": 147
   },
   "src/components/CitationAnalysisPanel.tsx": {
     "element": 1,
@@ -263,8 +263,8 @@
     "styling": 67
   },
   "src/components/SharedBoardPanel.tsx": {
-    "element": 113,
-    "styling": 41
+    "element": 103,
+    "styling": 40
   },
   "src/components/SiteAuditPanel.tsx": {
     "element": 332,
