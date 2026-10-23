@@ -576,22 +576,29 @@ function App() {
     } catch (e) { setPageError(errMsg(e)); setPhase('error') }
   }
 
-  async function signOut() {
+  // Resolves to the failure message, or null when signed out or already in progress.
+  async function signOut(): Promise<string | null> {
     // Synchronous lock: the onboarding screen's sign-out button cannot be disabled, so a second click must not send again.
-    if (signOutLock.current) return
+    if (signOutLock.current) return null
     signOutLock.current = true
     const session = sessionGeneration.current
     setSignOutBusy(true); setAppError('')
     try {
       const out = await api<{ providerSignOutUrl?: string } | null>('/api/auth/sign-out', { method: 'POST', body: {} })
-      if (sessionGeneration.current !== session) return
+      if (sessionGeneration.current !== session) return null
       // End the editor before redirecting: a stale draft blocker must never delay sign-out.
       flushSync(() => resetSession())
       // Provider sessions also end at the identity provider (RP-initiated sign-out); its page is the last stop.
       const providerSignOut = navigableHttpUrl(out?.providerSignOutUrl)
-      if (providerSignOut) { window.location.assign(providerSignOut); return }
+      if (providerSignOut) { window.location.assign(providerSignOut); return null }
       go({ view: 'project' }, true)
-    } catch (e) { if (sessionGeneration.current === session && !guardAuth(e)) setAppError(`Could not sign out: ${errMsg(e)}`) }
+      return null
+    } catch (e) {
+      if (sessionGeneration.current !== session || guardAuth(e)) return null
+      const message = `Could not sign out: ${errMsg(e)}`
+      setAppError(message)
+      return message
+    }
     finally { signOutLock.current = false; setSignOutBusy(false) }
   }
 
@@ -633,7 +640,7 @@ function App() {
   const settingsView = settingsViews.includes(view)
   // An account without a workspace gets the onboarding screen; account and workspace settings keep the shell.
   if (me && me.workspaces.length === 0 && !settingsView) return <WorkspaceSetup email={me.user.email} onCreate={createWorkspace} onRefresh={() => { refreshMemberships().catch(e => { setPageError(errMsg(e)); setPhase('error') }) }}
-    signOutBusy={signOutBusy} signOutError={appError} onSignOut={() => void signOut()} onAccount={() => go(target('preferences'))} />
+    signOutBusy={signOutBusy} onSignOut={signOut} onAccount={() => go(target('preferences'))} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
   const canWrite = workspace !== undefined && ['owner', 'admin', 'editor'].includes(workspace.role)
@@ -992,17 +999,20 @@ function useWorkspaceNameSubmit(onCreate: (name: string) => Promise<void>) {
     catch (e) { const failure = failureOutcome(e); setOutcome(failure.error ? { ...failure, error: `Could not create the workspace: ${failure.error}` } : failure) }
     finally { setBusy(false) }
   }
-  return { busy, error: outcome.error || undefined, unconfirmed: outcome.unconfirmed || undefined, fieldErrors: outcome.field ? { name: outcome.field } : undefined, submit }
+  return { busy, error: outcome.error || undefined, unconfirmed: outcome.unconfirmed || undefined, fieldErrors: outcome.field ? { name: outcome.field } : undefined, submit, clear: () => setOutcome(noOutcome) }
 }
 
 function WorkspaceCreateSection({ onCreate }: { onCreate: (name: string) => Promise<void> }) {
-  const { submit, ...state } = useWorkspaceNameSubmit(onCreate)
+  const { submit, clear: _clear, ...state } = useWorkspaceNameSubmit(onCreate)
   return <WorkspaceCreateFlow mode='create' hideTitle title='Create workspace' defaultValues={{ name: '' }} busyLabel='Creating…' {...state} onSubmit={submit}
     messages={{ nameLabel: 'Workspace name', create: 'Create workspace' }} />
 }
 
-function WorkspaceSetup({ email, onCreate, onRefresh, onSignOut, signOutBusy, signOutError, onAccount }: { email: string; onCreate: (name: string) => Promise<void>; onRefresh: () => void; onSignOut: () => void; signOutBusy: boolean; signOutError: string; onAccount: () => void }) {
-  const { submit, ...state } = useWorkspaceNameSubmit(onCreate)
+// The screen shows its own most recent failure: starting a sign-out clears a create error and starting a create clears a sign-out error.
+function WorkspaceSetup({ email, onCreate, onRefresh, onSignOut, signOutBusy, onAccount }: { email: string; onCreate: (name: string) => Promise<void>; onRefresh: () => void; onSignOut: () => Promise<string | null>; signOutBusy: boolean; onAccount: () => void }) {
+  const [signOutError, setSignOutError] = useState('')
+  const { submit, clear, ...state } = useWorkspaceNameSubmit(name => { setSignOutError(''); return onCreate(name) })
+  const signOut = async () => { clear(); setSignOutError(''); const failure = await onSignOut(); if (failure) setSignOutError(failure) }
   return <WorkspaceOnboarding brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' email={email} help='Keep each team’s projects and access separate.'
-    {...state} error={state.error ?? (signOutError || undefined)} onSubmit={submit} onRefresh={onRefresh} signOut={{ label: signOutBusy ? 'Signing out…' : 'Sign out', onClick: onSignOut }} account={{ label: 'Account settings', onClick: onAccount }} />
+    {...state} error={signOutError || state.error} onSubmit={submit} onRefresh={onRefresh} signOut={{ label: signOutBusy ? 'Signing out…' : 'Sign out', onClick: () => void signOut() }} account={{ label: 'Account settings', onClick: onAccount }} />
 }
