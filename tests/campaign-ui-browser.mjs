@@ -29,7 +29,7 @@ async function fresh({mode='signin',view='project',theme='light',operator=false,
    if(!path.startsWith('/api/')){if(method==='GET')return route.continue();unexpected.push(method+' '+path);return route.abort();}
    requests.push({method,path});let body,status=200;
    const get=()=>assert.equal(method,'GET',path+' is read-only in this probe');
-   if(path==='/api/status'){get();body={configured:mode!=='setup',appUrl:origin};}
+   if(path==='/api/session'){get();body={setupRequired:mode==='setup',appUrl:origin,user:null};}
    else if(path==='/api/me'){get();if(mode!=='app'){status=401;body={error:'Synthetic sign-in required'};}else body={user,instanceOperator:operator,workspaces:withProject?[{id:workspace,name:'Synthetic workspace',role:'owner',...locked?{twoFactorLocked:!factor.enrolled}:{}}]:[]};}
    else if(path==='/api/account/preferences'){get();body={version:'account-preferences-v1',user,preferences:{revision:1,timeZone:'UTC',locale:'en-US',theme,updatedAt:'2026-10-18T00:00:00.000Z'}};}
    else if(path==='/api/auth/oidc/providers'){get();body={providers:providers?[{id:provider,name:'Example organization'}]:[]};}
