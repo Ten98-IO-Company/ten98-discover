@@ -312,8 +312,9 @@ function App() {
     if(entering&&phase==='app')void loadAccountPreferences()
   },[view,phase])
   useEffect(()=>{
-    document.documentElement.dataset.theme=phase==='app'&&accountPreferences.data!==null&&accountPreferences.data.user.id===me?.user.id?accountPreferences.data.preferences.theme:'light'
-    return()=>{document.documentElement.dataset.theme='light'}
+    // Without an applied account preference (sign-in, recovery, state screens, unavailable preferences) the browser's own light or dark setting applies.
+    document.documentElement.dataset.theme=phase==='app'&&accountPreferences.data!==null&&accountPreferences.data.user.id===me?.user.id?accountPreferences.data.preferences.theme:'system'
+    return()=>{document.documentElement.dataset.theme='system'}
   },[phase,me?.user.id,accountPreferences.data])
   useEffect(()=>()=>{preferencesGeneration.current++;preferencesRequest.current?.abort()},[])
 
