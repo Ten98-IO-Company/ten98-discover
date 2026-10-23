@@ -9,10 +9,10 @@ import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
 import {collectorLimits,handleApi} from '../src/server/api.ts';
 import {clientLimitKey} from '../src/server/client-rate-limit.ts';
 
-type MakeRequest=(path:string,init?:RequestInit)=>Request;
+export type MakeRequest=(path:string,init?:RequestInit)=>Request;
 // Runs the work with Requests carrying a real loopback Node transport, as srvx supplies it. `via(address)` adds a forwarded
 // client address, which counts only while loopback is a configured trusted proxy.
-async function withTransport<T>(appUrl:string,work:(peer:MakeRequest,via:(address:string)=>MakeRequest)=>Promise<T>):Promise<T>{
+export async function withTransport<T>(appUrl:string,work:(peer:MakeRequest,via:(address:string)=>MakeRequest)=>Promise<T>):Promise<T>{
   let outcome:{value:T}|{error:unknown}|undefined;
   const server=createServer((req,res)=>{
     const make=(forwardedFor?:string):MakeRequest=>(path,init={})=>{const headers=new Headers(init.headers);if(forwardedFor)headers.set('x-forwarded-for',forwardedFor);return Object.assign(new Request(new URL(path,appUrl),{...init,headers}),{runtime:{name:'node',node:{req}}});};
@@ -26,8 +26,8 @@ async function withTransport<T>(appUrl:string,work:(peer:MakeRequest,via:(addres
   return outcome.value;
 }
 
-const networkSettings=['TRUSTED_PROXIES','ANALYTICS_TRUSTED_PROXIES','ANALYTICS_NETWORK_MODE','ANALYTICS_EXCLUDED_IPS'] as const;
-function useNetwork(values:Partial<Record<typeof networkSettings[number],string>>){for(const key of networkSettings){if(values[key]===undefined)delete process.env[key];else process.env[key]=values[key];}}
+export const networkSettings=['TRUSTED_PROXIES','ANALYTICS_TRUSTED_PROXIES','ANALYTICS_NETWORK_MODE','ANALYTICS_EXCLUDED_IPS'] as const;
+export function useNetwork(values:Partial<Record<typeof networkSettings[number],string>>){for(const key of networkSettings){if(values[key]===undefined)delete process.env[key];else process.env[key]=values[key];}}
 
 // Needs an isolated synthetic PostgreSQL database; never a real installation.
 // Collection admission counts per client (only where an address identifies one visitor), then per site by internal project id,
