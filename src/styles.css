@@ -210,6 +210,8 @@
 .domains-panel .domain-add{ margin-block: 12px; }
 .domains-panel .domain-table td{ vertical-align: top; }
 .domains-panel .domain-table .row{ align-items: flex-start; }
+/* @ten98/ui Disclosure has no width option. Cap the open redirect history and let it wrap inside the nowrap table so it never widens the Actions column; a percentage cap is cyclic in table sizing. */
+.domains-panel .domain-table .t98-disclosure{ max-inline-size: 460px; white-space: normal; }
 .domains-panel [tabindex='-1']:focus-visible{ outline: 2px solid var(--color-focus); outline-offset: 4px; }
 .prompt-table table{ min-width: 900px; }
 .prompt-table th:first-child, .prompt-table td:first-child{ min-width: 240px; width: 34%; }
