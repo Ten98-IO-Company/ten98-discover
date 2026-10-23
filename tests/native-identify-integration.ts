@@ -6,7 +6,7 @@ import {getConfig} from '../src/server/config.ts';
 import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
 import {parseIdentifyInput} from '../src/server/identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from '../src/server/native-identify.ts';
-import {analyticsIdentity,collectNative,trackingConsentEpoch} from '../src/server/native-analytics.ts';
+import {analyticsIdentity,analyticsSettings,collectNative,saveAnalyticsSettings,trackingConsentEpoch} from '../src/server/native-analytics.ts';
 import {getRetention,previewRetention,runRetentionBatch,saveRetention} from '../src/server/retention.ts';
 import {expireSessionProperties} from '../src/server/session-property-retention.ts';
 import {handleApi} from '../src/server/api.ts';
@@ -110,6 +110,26 @@ export async function runNativeIdentifyChecks(){
     assert.equal((await pool.query('SELECT 1 FROM event e JOIN analytics_session_property s ON s.project_id=e.project_id AND s.visitor_key=e.visitor_id WHERE e.project_id=$1',[basicProfile.project])).rowCount,0,'No retroactive profile attachment to basic activity.');
     assert.equal((await pool.query('SELECT 1 FROM analytics_identity_link WHERE project_id=$1',[basicProfile.project])).rowCount,0);
     console.log('PASS basic events cannot identify or claim link proof; later consented profile cannot attach to a basic key');
+
+    // #371: identify mid-visit keeps the visit's anonymous key for the events after it, so funnels and revenue see one visitor.
+    const visit=await fixture(),visitSettings=await analyticsSettings(visit.project,owner);
+    await saveAnalyticsSettings(visit.project,owner,{revision:visitSettings.revision,settings:{...visitSettings.settings,collectionMode:'consent-first',linkIdentities:true}});
+    const visitConsent={analytics:true as const,epoch:trackingConsentEpoch((await pool.query('SELECT analytics_epoch FROM project WHERE id=$1',[visit.project])).rows[0].analytics_epoch,null)};
+    const observe=async(name:string,path:string,extra:Record<string,unknown>={})=>{const result=await collectNative(visit.request(),visit.siteKey,{eventId:randomUUID(),name,url:visit.origin+path,consent:visitConsent,...extra},ip);
+      assert.ok(result.accepted&&'context' in result&&result.context);return result.context;};
+    const landing=await observe('page_view','/pricing/'),checkout=await observe('page_view','/checkout/',{context:landing});
+    const identified=await visit.send(visit.raw({plan:'pro'},{consent:visitConsent,context:checkout,dimensions:{distinctId:'buyer-371'}}));assert.ok(identified.accepted&&!identified.duplicate);
+    await observe('signup','/checkout/',{context:identified.context,dimensions:{distinctId:'buyer-371'}});
+    const visitRows=async()=>(await pool.query('SELECT event_name,path,visitor_id,visit_id,identity_link_evidence_version AS evidence FROM event WHERE project_id=$1 ORDER BY received_at,id',[visit.project])).rows;
+    const inVisit=await visitRows();assert.deepEqual(inVisit.map(r=>[r.event_name,r.path]),[['page_view','/pricing/'],['page_view','/checkout/'],['signup','/checkout/']]);
+    assert.equal(new Set(inVisit.map(r=>r.visitor_id)).size,1,'Pre-identify views and the identified event share one visitor key.');assert.equal(new Set(inVisit.map(r=>r.visit_id)).size,1);
+    assert.deepEqual(inVisit.map(r=>r.evidence),[null,null,null],'The continued anonymous key never becomes link evidence.');
+    const visitLinks=(await pool.query('SELECT visitor_key FROM analytics_identity_link WHERE project_id=$1',[visit.project])).rows,visitProfile=await visit.rows();
+    assert.equal(visitLinks.length,1);assert.notEqual(visitLinks[0].visitor_key,inVisit[0].visitor_id,'The shared anonymous key is never linked.');
+    assert.deepEqual(visitProfile.map(r=>[r.visitor_key,r.property_key]),[[visitLinks[0].visitor_key,'plan']],'Profiles stay on the explicit key.');
+    await observe('signup','/account/',{dimensions:{distinctId:'buyer-371'}});
+    const explicitRow=(await visitRows()).at(-1)!;assert.equal(explicitRow.visitor_id,visitLinks[0].visitor_key);assert.equal(explicitRow.evidence,1);
+    console.log('PASS identify mid-visit continues the anonymous visit key for later events without linking it; explicit key outside it (#371)');
 
     const retention=await fixture(),rInput=retention.raw({old:1,recent:2});await retention.send(rInput);
     await pool.query("UPDATE analytics_session_property SET updated_at=clock_timestamp()-interval '10 days' WHERE project_id=$1 AND property_key='old'",[retention.project]);

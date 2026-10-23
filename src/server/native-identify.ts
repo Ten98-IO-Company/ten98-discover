@@ -31,7 +31,9 @@ export async function collectIdentify(request:Request,input:IdentifyInput,peerAd
     const now=state.now as Date,sentAt=new Date(input.sentAt),expiresAt=new Date(sentAt.getTime()+86_400_000);
     if(sentAt.getTime()>now.getTime()+300_000)throw new FoundationError(400,'Check the identify request timestamp.');
     if(now>=expiresAt)throw new IdentifyRequestExpired();
-    const identity=analyticsIdentity({projectId:project.id,ip:resolveAnalyticsNetwork(request,peerAddress),userAgent,distinctId:input.dimensions?.distinctId,context:input.context,epoch:project.analytics_epoch,now});
+    const keyInput={projectId:project.id,ip:resolveAnalyticsNetwork(request,peerAddress),userAgent,distinctId:input.dimensions?.distinctId,context:input.context,epoch:project.analytics_epoch,now};
+    // Profile, link and receipt stay on the explicit key; only the returned context may continue the current anonymous visit.
+    const identity=analyticsIdentity(keyInput);
     if(!identity){await client.query('COMMIT');return {accepted:false,reason:'identity_unavailable'};}
     const {dimensions:_,...operation}=input;
     const operationHash=createHmac('sha256',getConfig().authSecret).update(JSON.stringify(['ten98.identify.receipt.v1',identity.visitor,canonicalHash(operation)])).digest('hex');
@@ -54,7 +56,7 @@ export async function collectIdentify(request:Request,input:IdentifyInput,peerAd
       ON CONFLICT(project_id,visitor_key,property_key) DO UPDATE SET property=excluded.property,updated_at=excluded.updated_at`,[project.id,identity.visitor,JSON.stringify(input.properties),state.accepted_at]);
     await client.query(`INSERT INTO analytics_identify_receipt(project_id,request_id,visitor_key,operation_hash,sent_at,expires_at,accepted_at)
       VALUES($1,$2,$3,$4,$5,$6,$7)`,[project.id,input.requestId,identity.visitor,operationHash,sentAt,expiresAt,state.accepted_at]);
-    await client.query('COMMIT');return {accepted:true,duplicate:false,context:identity.context};
+    await client.query('COMMIT');return {accepted:true,duplicate:false,context:analyticsIdentity({...keyInput,continueAnonymousVisit:true})!.context};
   }catch(error){await client.query('ROLLBACK').catch(()=>{});if((error as {code?:string})?.code==='57014')throw new FoundationError(503,'Identify processing took too long. The outcome may be unknown.');throw error;}
   finally{client.release();}
 }
