@@ -268,7 +268,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
 
   if (data === null) {
     return (
-      <section className="account-settings panel settings-panel" aria-busy={loading} aria-label="Account security">
+      <section className="account-settings panel settings-panel" aria-busy={loading}>
         <h2>Account security</h2>
         {loadErr !== '' ? (
           <>
