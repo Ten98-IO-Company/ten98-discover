@@ -1,5 +1,5 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, ProjectCreateFlow, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import { Alert, AppStateScreen, DataTable, ProjectCreateFlow, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
 import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SettingsGroupId, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -811,16 +811,9 @@ function App() {
               )}
               {events !== null && events.events.length > 0 && (
                 <>
-                  <div className='table-wrap' role='region' aria-label='Retained event rows' tabIndex={0}>
-                    <table aria-labelledby='ev-h'>
-                      <thead><tr><th scope='col'>Event</th><th scope='col'>Origin</th><th scope='col'>Path</th><th scope='col'>Received</th></tr></thead>
-                      <tbody>
-                        {events.events.map((ev) => (
-                          <tr key={ev.id}><td>{ev.eventName}</td><td className='mono'>{ev.origin}</td><td className='mono'>{ev.path}</td><td className='mono'>{fmt(ev.receivedAt)}</td></tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <DataTable caption='Retained event rows' captionHidden responsive='stack' searchable={false} sortable={false} pagination={false} rows={events.events} rowKey={ev => ev.id}
+                    columns={[{ key: 'event', header: 'Event', rowHeader: true, wrap: true, render: ev => ev.eventName }, { key: 'origin', header: 'Origin', wrap: true, render: ev => <bdi dir='ltr'>{ev.origin}</bdi> },
+                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt}>{fmt(ev.receivedAt)}</time> }]} />
                   <p className='dim footnote'>Showing the latest {events.events.length} of {events.total} persisted events.</p>
                 </>
               )}
