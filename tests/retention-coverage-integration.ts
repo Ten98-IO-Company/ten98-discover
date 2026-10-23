@@ -107,7 +107,7 @@ export async function runRetentionCoverageChecks() {
   // Paid-work archive (#292): workspace retention never shortens it; only the daily 7-year job removes a row, and again
   // finds nothing more.
   const agedArchive=randomUUID(),recentArchive=randomUUID();
-  for(const [id,age] of [[agedArchive,'7 years 1 day'],[recentArchive,'6 years 11 months']])await pool.query("INSERT INTO paid_work_archive(source_table,source_id,workspace_id,project_id,account_ids,record,created_at) VALUES('keyword_quote',$1,$2,$3,'{}',jsonb_build_object('id',$1::text),now()-$4::interval)",[id,workspaceId,projectId,age]);
+  for(const [id,age] of [[agedArchive,'7 years 1 day'],[recentArchive,'6 years 11 months']])await pool.query("INSERT INTO paid_work_archive(source_table,source_id,workspace_id,project_id,account_ids,record,created_at) VALUES('keyword_quote',$1::uuid,$2,$3,'{}',jsonb_build_object('id',$1::uuid),now()-$4::interval)",[id,workspaceId,projectId,age]);
   const archivedIds=async()=>(await pool.query<{id:string}>('SELECT source_id::text AS id FROM paid_work_archive WHERE workspace_id=$1 ORDER BY created_at',[workspaceId])).rows.map(row=>row.id);
   await pool.query("UPDATE project SET retention_next_run_at=clock_timestamp() WHERE id=$1",[projectId]);await runRetentionBatch(projectId);
   assert.deepEqual(await archivedIds(),[agedArchive,recentArchive],'Workspace analytics retention must not delete archived paid work.');
