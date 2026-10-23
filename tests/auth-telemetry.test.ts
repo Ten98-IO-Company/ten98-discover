@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-// Self-hosted installs send no data to Ten98 or third parties: Better Auth telemetry stays pinned off, even if the
-// library default or the BETTER_AUTH_TELEMETRY environment variable changes.
+// Self-hosted installs send no data to Ten98 or third parties: Better Auth telemetry stays off even if the library
+// default changes, and configuration refuses BETTER_AUTH_TELEMETRY, which would otherwise force it on.
 test('Better Auth telemetry is pinned off', async () => {
   Object.assign(process.env, { APP_URL: 'http://localhost:3000', AUTH_SECRET: 'a'.repeat(32), BOOTSTRAP_TOKEN: 'b'.repeat(32), DATABASE_URL: 'postgresql://synthetic@localhost:5432/synthetic' });
   const { getAuth } = await import('../src/server/auth.ts');
@@ -12,4 +12,12 @@ test('Better Auth telemetry is pinned off', async () => {
   } finally {
     await closeDatabase();
   }
+});
+
+test('configuration refuses BETTER_AUTH_TELEMETRY, which would force telemetry on', async () => {
+  const { getConfig } = await import('../src/server/config.ts');
+  const env = { APP_URL: 'http://localhost:3000', AUTH_SECRET: 'a'.repeat(32), BOOTSTRAP_TOKEN: 'b'.repeat(32), DATABASE_URL: 'postgresql://synthetic@localhost:5432/synthetic' };
+  for (const value of ['1', 'true', 'TRUE', 'yes']) assert.throws(() => getConfig({ ...env, BETTER_AUTH_TELEMETRY: value }), /BETTER_AUTH_TELEMETRY is not supported/);
+  for (const value of ['0', 'false', ' FALSE ']) assert.doesNotThrow(() => getConfig({ ...env, BETTER_AUTH_TELEMETRY: value }));
+  assert.doesNotThrow(() => getConfig(env));
 });

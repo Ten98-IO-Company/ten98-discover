@@ -29,6 +29,9 @@ export function trustedProxies(env: NodeJS.ProcessEnv = process.env): TrustedPro
 }
 
 export function getConfig(env: NodeJS.ProcessEnv = process.env) {
+  // Self-hosted installs send no data to Ten98 or third parties. Better Auth turns telemetry on when this variable is
+  // truthy, whatever its own option says, so refuse it here instead of trusting the library default.
+  if (env.BETTER_AUTH_TELEMETRY && !['0', 'false'].includes(env.BETTER_AUTH_TELEMETRY.trim().toLowerCase())) throw new Error('BETTER_AUTH_TELEMETRY is not supported; Discover never sends telemetry');
   validateAnalyticsNetworkConfig(env);
   trustedProxies(env);
   const aliases = collectorAliases(env);
