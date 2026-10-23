@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {createContext,useContext} from 'react';
 import {ApiError} from './api';
 import {accountPreferencesWireDtoSchema,type AccountPreferencesDto} from './account-preferences';
@@ -25,16 +26,17 @@ export async function requestAccountPreferences(callerSignal:AbortSignal,body?:u
   }
   if(response.ok&&response.status!==200){await response.body?.cancel();throw new Error('The account response could not be verified. Reload saved preferences.');}
   if(!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')){await response.body?.cancel();throw new Error('The account response could not be verified. Reload saved preferences.');}
-  const length=response.headers.get('content-length');
-  const identity=!response.headers.get('content-encoding')||response.headers.get('content-encoding')?.toLowerCase()==='identity';
-  if(length!==null&&(!/^\d+$/.test(length)||!Number.isSafeInteger(Number(length))||identity&&Number(length)>8192)){await response.body?.cancel();throw new Error('The account response exceeded its limit. Reload saved preferences.');}
-  const reader=response.body?.getReader();if(!reader)throw new Error('The account response was empty. Reload saved preferences.');
-  const parts:Uint8Array[]=[];let bytes=0;
-  try{for(;;){let chunk:ReadableStreamReadResult<Uint8Array>;try{chunk=await reader.read();}catch(error){if(signal.aborted)throw error;throw new ApiError('The request could not be confirmed. Reload saved preferences before trying again.');}const {done,value}=chunk;if(done)break;bytes+=value.byteLength;if(bytes>8192){await reader.cancel();throw new Error('The account response exceeded its limit. Reload saved preferences.');}parts.push(value);}}
-  finally{reader.releaseLock();}
-  if(length!==null&&identity&&Number(length)!==bytes)throw new Error('The account response was incomplete. Reload saved preferences.');
-  const whole=new Uint8Array(bytes);let offset=0;for(const part of parts){whole.set(part,offset);offset+=part.byteLength;}
-  let value:unknown;try{value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(whole));}catch{throw new Error('The account response could not be verified. Reload saved preferences.');}
+  if(!response.body)throw new Error('The account response was empty. Reload saved preferences.');
+  let value:unknown;
+  try{value=JSON.parse(await readResponseText(response,{maxBytes:8192,contentLength:'exact',signal}));}
+  catch(error){
+    if(signal.aborted)throw error;
+    const code=(error as {code?:unknown}).code;
+    if(error instanceof RangeError||code==='CONTENT_LENGTH_INVALID')throw new Error('The account response exceeded its limit. Reload saved preferences.');
+    if(code==='RESPONSE_INCOMPLETE')throw new Error('The account response was incomplete. Reload saved preferences.');
+    if(error instanceof SyntaxError||code==='RESPONSE_DECODE_INVALID')throw new Error('The account response could not be verified. Reload saved preferences.');
+    throw new ApiError('The request could not be confirmed. Reload saved preferences before trying again.');
+  }
   if(!response.ok){const error=new ApiError(typeof value==='object'&&value!==null&&'error'in value&&typeof value.error==='string'?value.error:'Account preferences could not be saved. Reload them before trying again.');error.status=response.status;throw error;}
   const parsed=accountPreferencesWireDtoSchema.safeParse(value);if(!parsed.success)throw new Error('The account response could not be verified. Reload saved preferences.');return parsed.data;
   } catch(error) {

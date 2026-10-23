@@ -1231,7 +1231,7 @@ SOFTWARE.
 
 ## Current ten98 shared packages
 
-The current manifest pins `@ten98/ui` 0.21.0 (`vendor/ten98-ui-0.21.0.tgz`, SHA-256 `3e676eb72a59c2e2c0458046e8fb1b3d67366d8a75b46abaf3a2414130a9dcbe`) and `@ten98/runtime` 0.2.0 (`vendor/ten98-runtime-0.2.0.tgz`, SHA-256 `89d2563ee4969b5576a18584854667c18cb38acbaf7ec3ddbb75db5026806346`). Both are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
+The current manifest pins `@ten98/ui` 0.21.0 (`vendor/ten98-ui-0.21.0.tgz`, SHA-256 `3e676eb72a59c2e2c0458046e8fb1b3d67366d8a75b46abaf3a2414130a9dcbe`) and `@ten98/runtime` 0.3.0 (`vendor/ten98-runtime-0.3.0.tgz`, SHA-256 `940f1e27bd041a771c484c39262666778837626328b23160c765845b8d9c289e`). Both are MIT, copyright 2026 Ten98, and include their license text. Sources: [design system](https://github.com/Ten98-IO-Company/ten98-design-system), [code system](https://github.com/Ten98-IO-Company/ten98-code-system). The Ten98 MIT notice below remains applicable.
 
 Earlier version sections retain their original attribution and review evidence. Their package bytes are preserved unchanged in the [historical archive release](https://github.com/Ten98-IO-Company/ten98-code-system/releases/tag/archive-2026-10-20); they are no longer installation inputs in this working tree.
 

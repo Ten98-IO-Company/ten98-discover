@@ -52,7 +52,7 @@ async function request(path:string,token:string,signal:AbortSignal,body?:unknown
  const active=AbortSignal.any([signal,AbortSignal.timeout(25000)]);
  const response=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:active,headers:{[header]:token,...body===undefined?{}:{'Content-Type':'application/json'}},...body===undefined?{}:{body:JSON.stringify(body)}});
  if(!response.ok){await response.body?.cancel();throw new ShareReadError(response.status);}if(!response.body||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw new ShareReadError();
- const text=await readResponseText(response,{maxBytes:boardLimits.responseBytes}).catch(error=>{throw error instanceof RangeError?new ShareReadError():error;});return JSON.parse(text);
+ try{return JSON.parse(await readResponseText(response,{maxBytes:boardLimits.responseBytes,signal:active}));}catch(error){throw error instanceof RangeError?new ShareReadError():error;}
 }
 const fragmentValue=(value:string)=>value.startsWith('#')?value.slice(1):value;
 type ShareEntryCapture={owner:string;seenFragment:string;capturedFragment:string|null;rawFragment:string|null;scrubPending:boolean;version:number};

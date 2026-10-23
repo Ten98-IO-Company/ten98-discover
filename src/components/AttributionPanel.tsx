@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {AppliedFilters,EvidenceSummary} from '@ten98/ui';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
@@ -88,8 +89,11 @@ export function readAttributionResult(value:unknown,queryString:string,projectId
 async function fetchResult(path:string,signal:AbortSignal):Promise<unknown>{
  let response:Response;try{response=await fetch(path,{credentials:'same-origin',signal,redirect:'error'});}catch(error){if(signal.aborted)throw error;throw new ApiError('Network error. Check your connection, then refresh the applied report.');}const limit=response.ok?attributionLimits.responseBytes:8192;
  const failure=(message:string)=>{if(response.ok)return Error(message);const error=new ApiError(message);error.status=response.status;return error;};if(!response.body)throw failure('The attribution response was empty.');
- const reader=response.body.getReader(),parts:Uint8Array[]=[];let total=0;try{while(true){const part=await reader.read();if(part.done)break;total+=part.value.byteLength;if(total>limit)throw failure('The attribution response exceeded its safe size. Narrow the filters.');parts.push(part.value);}}catch(error){await reader.cancel().catch(()=>{});throw failure(error instanceof Error?error.message:'The attribution response was incomplete.');}finally{reader.releaseLock();}
- const bytes=new Uint8Array(total);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}let data:unknown;try{data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{if(response.ok)throw Error('The attribution response was incomplete or malformed.');}
+ let data:unknown;try{data=JSON.parse(await readResponseText(response,{maxBytes:limit}));}catch(error){
+  if(error instanceof RangeError)throw failure('The attribution response exceeded its safe size. Narrow the filters.');
+  if(error instanceof SyntaxError||(error as {code?:unknown}).code==='RESPONSE_DECODE_INVALID'){if(response.ok)throw Error('The attribution response was incomplete or malformed.');}
+  else throw failure(error instanceof Error?error.message:'The attribution response was incomplete.');
+ }
  if(!response.ok){const error=new ApiError(record(data)&&typeof data.error==='string'?data.error:'Attribution could not load. Try again.');error.status=response.status;throw error;}if(response.headers.get('content-type')?.split(';')[0].trim()!=='application/json')throw Error('The attribution response type could not be verified.');return data;
 }
 const reasons={event_history_unavailable:'This date range is no longer retained.',identity_unavailable:'Conversions were recorded, but none have native visitor and visit keys.',cohort_membership_unavailable:'Retained qualification evidence cannot establish this cohort.',session_property_selection_unavailable:'Current session-property evidence cannot establish this selection.'};
