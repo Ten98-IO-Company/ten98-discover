@@ -10,7 +10,7 @@ import { AppBrand } from '@ten98/ui/app'
 async function loadAuthLayout() {
  const source=await readFile(new URL('../src/components/AuthLayout.tsx',import.meta.url),'utf8')
  const {code}=await transformWithOxc(source.replace(/^import[^\n]*\n/gm,'').replace(/export (const|function)/g,'$1'),'AuthLayout.tsx',{jsx:{runtime:'classic'}})
- return new Function('React','SharedAuthLayout','AuthStory','Brand',code+';return AuthLayout;')(React,SharedAuthLayout,AuthStory,()=>React.createElement(AppBrand,{product:'Discover'}))
+ return new Function('React','SharedAuthLayout','AuthStory','AppBrand',code+';return AuthLayout;')(React,SharedAuthLayout,AuthStory,AppBrand)
 }
 
 test('Discover shares auth presentation while preserving app-owned headings and native forms', async () => {

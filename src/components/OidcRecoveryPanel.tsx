@@ -1,4 +1,4 @@
-import {Icon} from './CampaignUI'
+import {AppIcon} from '@ten98/ui/app';
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Checkbox, Text } from '@ten98/ui'
 import { api, ApiError, errMsg } from '../lib/api'
@@ -143,7 +143,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
   if (loading && !security) return <p className='dim' role='status'>Loading identity recovery settings…</p>
   if (security?.hasPassword && !notice && !enrollment) return null
   return <section className='account-settings identity-recovery panel settings-panel integration-settings-card' aria-label='Identity account security' aria-busy={busy || loading}>
-    <div className="provider-settings-heading"><span className="provider-initial"><Icon name="shield" size={18}/></span><div><h2>Identity account security</h2><p>Recovery for accounts connected to an identity provider</p></div></div>
+    <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="shield" size={18}/></span><div><h2>Identity account security</h2><p>Recovery for accounts connected to an identity provider</p></div></div>
     {error && <div className='alert' role='alert'>{error}<button className='btn button' disabled={busy} onClick={() => void load()}>Reload settings</button></div>}
     {notice && <p role='status'>{notice}</p>}
     {security && !security.hasPassword && <>

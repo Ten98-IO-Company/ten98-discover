@@ -4,6 +4,7 @@ import {Resolver} from 'node:dns/promises';
 import {isIP} from 'node:net';
 import {performance} from 'node:perf_hooks';
 import {toUSVString} from 'node:util';
+import {normalizeClientAddress} from '@ten98/runtime';
 import {normalizePublicHostname} from './domains.ts';
 import {addressKey,publicNetworkAddress} from './public-network.ts';
 
@@ -16,6 +17,12 @@ export type RedirectTransport={resolve:(hostname:string,signal:AbortSignal)=>Pro
 class RedirectFailure extends Error {
   outcome:RedirectObservation['outcome'];
   constructor(outcome:RedirectObservation['outcome']){super('Redirect observation unavailable.');this.outcome=outcome;}
+}
+
+/** The connected socket peer is the pinned address. IPv4-mapped IPv6 unwraps; zone ids and invalid text never match. */
+export function pinnedPeer(remote:unknown,pinned:string):boolean {
+  const peer=normalizeClientAddress(remote);
+  return peer!==null&&peer===normalizeClientAddress(pinned);
 }
 
 /** URLs are transient; only cleanUrl output may enter evidence or diagnostics. */
@@ -88,8 +95,7 @@ export async function requestRedirectHeaders(url:URL,address:Address,signal:Abor
     request.once('error',fail);
     request.once('upgrade',(_response,socket)=>{socket.destroy();fail();});
     request.once('socket',socket=>socket.once(url.protocol==='https:'?'secureConnect':'connect',()=>{
-      const remote=socket.remoteAddress?.replace(/^::ffff:/,'');
-      if(!remote||addressKey(remote)!==addressKey(address.address)){request.destroy();fail();}
+      if(!pinnedPeer(socket.remoteAddress,address.address)){request.destroy();fail();}
     }));
     request.end();
   });

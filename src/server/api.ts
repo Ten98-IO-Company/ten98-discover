@@ -1049,7 +1049,9 @@ export async function handleApi(request: Request): Promise<Response> {
       return json({ workspace: { ...result.workspace, role: result.role } }, 201);
     }
     if (path === '/api/me' && request.method === 'GET') {
-      const { rows } = await getDatabase().pool.query('SELECT w.id,w.name,m.role FROM workspace w JOIN membership m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.created_at,w.id', [user.id]);
+      const { rows } = await getDatabase().pool.query(
+      // twoFactorLocked mirrors the teams.ts lockedMember gate so the shell can explain the 403 before any workspace read.
+      'SELECT w.id,w.name,m.role,EXISTS(SELECT 1 FROM workspace_two_factor_requirement r JOIN "user" u ON u.id=m.user_id WHERE r.workspace_id=w.id AND NOT u."twoFactorEnabled") AS "twoFactorLocked" FROM workspace w JOIN membership m ON m.workspace_id=w.id WHERE m.user_id=$1 ORDER BY w.created_at,w.id', [user.id]);
       return json({ user: { id: user.id, name: user.name, email: user.email }, instanceOperator: await isInstanceOperator(user.id), workspaces: rows });
     }
     let match = path.match(new RegExp(`^/api/workspaces/(${id})/(team|rename|invitations|transfer-ownership|two-factor)$`, 'i'));
