@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import { DataTable, useConfirmDialog } from '@ten98/ui'
+import { DataTable, DescriptionList, Disclosure, useConfirmDialog } from '@ten98/ui'
 import {api, ApiError, errMsg} from '../lib/api';
 
 type Domain = {
@@ -408,10 +408,10 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
           <section className="field domain-website" aria-labelledby="domain-website-title">
             <h3 id="domain-website-title">Your website</h3>
             <p className="domain-origin"><bdi dir="ltr">{state.project.origin}</bdi> <span className="pill">Project origin</span></p>
-            <dl className="domain-facts">
-              <div><dt>Collection origin</dt><dd>Origin allowed</dd></div>
-              <div><dt>DNS ownership</dt><dd>{!canonicalOk ? 'Not available for this origin' : canonical ? <>{STATUS_LABEL[canonical.status]}{canonical.status === 'verified' && canonical.verifiedAt ? ` on ${fmt(canonical.verifiedAt)}` : ' — optional for the canonical origin'}</> : 'Not verified — optional for the canonical origin'}</dd></div>
-            </dl>
+            <DescriptionList items={[
+              {key: 'origin', term: 'Collection origin', description: 'Origin allowed'},
+              {key: 'dns', term: 'DNS ownership', description: !canonicalOk ? 'Not available for this origin' : canonical ? <>{STATUS_LABEL[canonical.status]}{canonical.status === 'verified' && canonical.verifiedAt ? ` on ${fmt(canonical.verifiedAt)}` : ' — optional for the canonical origin'}</> : 'Not verified — optional for the canonical origin'},
+            ]} />
             <p className="hint">This allows the exact project origin. Collection settings, privacy choices and browser privacy signals still determine what is recorded.</p>
             <div className="row">
               <button type="button" className="btn primary" disabled={controlsOff} onClick={onInstallTracker}>Install tracker</button>
@@ -702,8 +702,7 @@ function RedirectChecks({base,domain,parentBusy,onAccessLoss}:{base:string;domai
   }
   const active=state?.checks.some(check=>check.status==='queued'||check.status==='running')??false;
   const cooldown=!!state?.nextAllowedAt&&Date.parse(state.nextAllowedAt)>Date.now();
-  return <details className="field" onToggle={event=>{if(event.currentTarget.open&&!state&&!busy&&!denied)void run();}} style={{minWidth:220,maxWidth:460,whiteSpace:'normal'}}>
-    <summary>HTTP redirect checks</summary>
+  return <Disclosure variant="plain" summary="HTTP redirect checks" onOpenChange={open=>{if(open&&!state&&!busy&&!denied)void run();}}>
     <p className="hint">Manual, headers-only observation. Up to eight redirects; no JavaScript, visitor counting or automatic polling. Query strings and fragments are never saved.</p>
     {error&&<p role="alert" className="alert">{error}</p>}
     {busy&&<p role="status">Updating redirect history…</p>}
@@ -729,5 +728,5 @@ function RedirectChecks({base,domain,parentBusy,onAccessLoss}:{base:string;domai
       </>}
     </article>)}
     {state&&state.checks.length===20&&<p className="hint">Showing the most recent 20 checks for this alias.</p>}
-  </details>;
+  </Disclosure>;
 }
