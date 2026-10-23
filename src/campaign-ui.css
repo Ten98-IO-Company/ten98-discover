@@ -45,7 +45,8 @@ input:where(:not([type='checkbox']):not([type='radio'])),select,textarea { min-i
 input[type='checkbox'],input[type='radio'] { accent-color:var(--color-accent); }
 textarea { resize:vertical; }
 ::placeholder { color:var(--color-text-placeholder); opacity:1; }
-:focus-visible { outline:3px solid var(--color-focus); outline-offset:2px; }
+/* Zero specificity: a default ring for app elements; @ten98/ui components keep their own focus treatment (the shell main and map shapes opt out). */
+:where(:focus-visible) { outline:3px solid var(--color-focus); outline-offset:2px; }
 input:focus,select:focus,textarea:focus { outline:3px solid var(--color-focus); outline-offset:2px; border-color:var(--color-focus); }
 .pill { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:600; border-radius:5px; padding:4px 8px; background:var(--color-accent-subtle); color:var(--color-accent); }
 .pill::before { content:''; inline-size:5px; block-size:5px; border-radius:50%; background:currentColor; }
@@ -76,7 +77,7 @@ dialog::backdrop { background:var(--color-overlay); backdrop-filter:blur(3px); }
  :root { --control-md:var(--control-touch); }
  .content { padding-block-end:24px; }
  .card { padding:18px; }
- :is(.btn,.button,.nav-item,summary,.icon-button),input:not([type='checkbox']):not([type='radio']),select { min-block-size:44px; }
+ :is(.btn,.button,.t98-button,.nav-item,summary,.icon-button),input:not([type='checkbox']):not([type='radio']),select { min-block-size:44px; }
  .auth-form :is(input:not([type='checkbox']):not([type='radio']),select,.btn,.button) { min-block-size:44px; }
  .auth-shell { grid-template-rows:auto 1fr; }
  .auth-story p:not(.auth-story-title),.auth-story > small,.auth-channels { display:none; }
