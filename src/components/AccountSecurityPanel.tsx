@@ -1,4 +1,4 @@
-import {Icon} from './CampaignUI'
+import {AppIcon} from '@ten98/ui/app';
 import { Field, Form, Input, useConfirmDialog } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
@@ -23,7 +23,8 @@ type Op = 'password' | 'enable' | 'verify' | 'disable' | 'recovery' | 'revoke' |
 
 const isAbort = (e: unknown): boolean => e instanceof Error && e.name === 'AbortError'
 
-export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expectedUserId: string; onUnauthorized: () => void }) {
+/** onFactorChanged runs after a factor is verified or turned off, so the shell can re-read workspace two-factor locks. */
+export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorChanged }: { expectedUserId: string; onUnauthorized: () => void; onFactorChanged?: () => void }) {
   const presentation=useAccountPresentation(),preferences=presentation?.data?.user.id===expectedUserId?presentation.data.preferences:accountPreferencesDefaults
   const fmt=(iso:string)=>{const date=new Date(iso);if(Number.isNaN(date.getTime()))return iso;try{return new Intl.DateTimeFormat(accountLocaleMapping(preferences.locale).formatLocale,{timeZone:preferences.timeZone,dateStyle:'medium',timeStyle:'short'}).format(date)}catch{return `${iso} (saved time zone unavailable in this browser)`}}
   const [data, setData] = useState<SecurityData | null>(null)
@@ -220,6 +221,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       setData(previous => previous ? { ...previous, user: { ...previous.user, twoFactorEnabled: true } } : previous)
       setSetupUri(null)
       setProof('')
+      onFactorChanged?.()
     })
   }
 
@@ -235,6 +237,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       setSetupUri(null)
       setCodes(null)
       setProof('')
+      onFactorChanged?.()
     })
   }
 
@@ -288,7 +291,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
     <div className="account-settings account-security">
       <section className="panel settings-panel account-summary-card" aria-label="Account">
         <div className="provider-settings-heading">
-          <span className="provider-initial"><Icon name="user" size={18}/></span>
+          <span className="provider-initial"><AppIcon name="user" size={18}/></span>
           <div><h2>Account</h2><p>{data.user.name} · <bdi dir="ltr">{data.user.email}</bdi></p></div>
           {twoFaOn ? <span className="pill badge good configured">2FA on</span> : <span className="pill badge">2FA off</span>}
         </div>
@@ -297,7 +300,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       </section>
 
       <section className="panel settings-panel" aria-busy={busy === 'password'} aria-label="Password">
-        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="lock" size={18}/></span><div><h2>Password</h2></div></div>
+        <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="lock" size={18}/></span><div><h2>Password</h2></div></div>
         {data.hasPassword ? (
           <Form fieldErrors={fieldErrs} onSubmit={() => submitPassword()}>
             <p className="hint field-help">Changing your password signs out all other sessions.</p>
@@ -325,7 +328,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
       </section>
 
       <section className="panel settings-panel" aria-busy={busy === 'enable' || busy === 'verify' || busy === 'disable' || busy === 'recovery'} aria-label="Two-factor authentication">
-        <div className="provider-settings-heading"><span className="provider-initial"><Icon name="shield" size={18}/></span><div><h2>Two-factor authentication</h2></div>{twoFaOn ? <span className="pill badge good configured">On</span> : <span className="pill badge">Off</span>}</div>
+        <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="shield" size={18}/></span><div><h2>Two-factor authentication</h2></div>{twoFaOn ? <span className="pill badge good configured">On</span> : <span className="pill badge">Off</span>}</div>
         {!data.hasPassword ? (
           <p className="hint field-help">A local password is required to manage two-factor authentication.</p>
         ) : (
@@ -424,7 +427,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
 
       <section className="panel settings-panel account-sessions-card" aria-busy={busy === 'revoke' || busy === 'others'} aria-label="Sessions">
         <div className="row between">
-          <div className="provider-settings-heading"><span className="provider-initial"><Icon name="monitor" size={18}/></span><div><h2>Sessions</h2><p>Devices signed in to your account</p></div></div>
+          <div className="provider-settings-heading"><span className="provider-initial"><AppIcon name="monitor" size={18}/></span><div><h2>Sessions</h2><p>Devices signed in to your account</p></div></div>
           <div className="row button-wrap">
             <button type="button" className="btn button ghost" disabled={blocked} onClick={() => void load()}>Refresh</button>
             {others.length > 0 && (
