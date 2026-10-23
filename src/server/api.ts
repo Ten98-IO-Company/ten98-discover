@@ -1120,6 +1120,9 @@ export async function handleApi(request: Request): Promise<Response> {
           const access = await client.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [match[1], user.id]);
           if (!['owner', 'admin', 'editor'].includes(access.rows[0]?.role)) throw new FoundationError(404, 'Workspace not found or unavailable.');
           const { rows } = await client.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5) RETURNING id,name,origin,public_key AS "publicKey"', [randomUUID(), match[1], input.name, input.origin, randomUUID()]);
+          // New websites show where visits come from out of the box: only the referrer hostname is kept, never its path or query.
+          // The column default stays off, so websites created before this change keep their stored choice.
+          await client.query(`UPDATE project SET analytics_settings=analytics_settings||'{"captureReferrer":true}'::jsonb WHERE id=$1`, [rows[0].id]);
           await client.query('COMMIT');
           return json({ project: rows[0] }, 201);
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
