@@ -15,6 +15,13 @@ export function secret(name: string, env: NodeJS.ProcessEnv = process.env): stri
   return value;
 }
 
+const trustedProxiesSetting = (env: NodeJS.ProcessEnv) => env.TRUSTED_PROXIES?.trim() ? env.TRUSTED_PROXIES : env.ANALYTICS_TRUSTED_PROXIES;
+
+/** Whether the effective trusted-proxy list (TRUSTED_PROXIES, else ANALYTICS_TRUSTED_PROXIES) names any proxy. */
+export function trustedProxiesConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!trustedProxiesSetting(env)?.trim();
+}
+
 // TRUSTED_PROXIES changes only at restart (or in tests that set process.env), so one parsed copy is kept per value.
 let parsedProxies: { raw: unknown; list: TrustedProxies } | null = null;
 
@@ -23,7 +30,7 @@ let parsedProxies: { raw: unknown; list: TrustedProxies } | null = null;
  * applies, so one list describes the installation's proxy. Empty: the transport peer is the client.
  */
 export function trustedProxies(env: NodeJS.ProcessEnv = process.env): TrustedProxies {
-  const raw = env.TRUSTED_PROXIES?.trim() ? env.TRUSTED_PROXIES : env.ANALYTICS_TRUSTED_PROXIES;
+  const raw = trustedProxiesSetting(env);
   if (!parsedProxies || parsedProxies.raw !== raw) parsedProxies = { raw, list: parseTrustedProxies(raw) };
   return parsedProxies.list;
 }

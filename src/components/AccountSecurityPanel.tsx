@@ -1,5 +1,5 @@
 import {Icon} from './CampaignUI'
-import { Field, Form, useConfirmDialog } from '@ten98/ui'
+import { Field, Form, Input, useConfirmDialog } from '@ten98/ui'
 import { useEffect, useRef, useState } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { useAccountPresentation } from '../lib/account-presentation'
@@ -42,6 +42,7 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
   const [newPw2, setNewPw2] = useState('')
   const [enablePw, setEnablePw] = useState('')
   const [disablePw, setDisablePw] = useState('')
+  const [disableFactor, setDisableFactor] = useState('')
   const [recoveryPw, setRecoveryPw] = useState('')
   const [proof, setProof] = useState('')
   const [setupUri, setSetupUriState] = useState<string | null>(null)
@@ -226,7 +227,10 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
     setFieldErrs({})
     if (!await confirm({ title: 'Turn off two-factor authentication?', description: 'Turning off two-factor authentication removes this layer of sign-in protection. Workspaces that require it will block your access, and API keys you created there will stop working, until you turn it on again.', confirmLabel: 'Turn off 2FA' })) return
     if (disablePw === '') { fieldErr('disable', 'disablePassword', 'Enter your current password to turn off 2FA.'); return }
-    await mutate<unknown>('disable', '/api/account/two-factor/disable', { password: disablePw }, () => {
+    const factor = disableFactor.trim()
+    if (factor === '') { fieldErr('disable', 'disableFactor', 'Enter an authenticator or recovery code to turn off 2FA.'); return }
+    await mutate<unknown>('disable', '/api/account/two-factor/disable', { password: disablePw, ...(/^\d{6}$/.test(factor) ? { code: factor } : { backupCode: factor }) }, () => {
+      setDisableFactor('')
       setData(previous => previous ? { ...previous, user: { ...previous.user, twoFactorEnabled: false } } : previous)
       setSetupUri(null)
       setCodes(null)
@@ -403,6 +407,9 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized }: { expec
                   <p><strong>Turn off 2FA</strong></p>
                   <Field label="Current password" htmlFor="tfa-disable-pw" error={fieldErrs.disablePassword}>
                     <input id="tfa-disable-pw" name="disablePassword" type="password" autoComplete="current-password" maxLength={128} required disabled={blocked} value={disablePw} onChange={e => setDisablePw(e.target.value)} />
+                  </Field>
+                  <Field label="Authenticator or recovery code" htmlFor="tfa-disable-factor" description="Enter the 6-digit code from your authenticator, or one unused recovery code." error={fieldErrs.disableFactor}>
+                    <Input id="tfa-disable-factor" name="disableFactor" autoComplete="one-time-code" maxLength={21} required disabled={blocked} value={disableFactor} onChange={e => setDisableFactor(e.target.value)} />
                   </Field>
                   {errs.disable ? <div className="alert" role="alert">{errs.disable}</div> : null}
                   <button type="submit" className="btn button" disabled={blocked}>

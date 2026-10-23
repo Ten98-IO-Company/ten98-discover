@@ -275,8 +275,19 @@ export async function runAccountSecurityChecks(options: Options): Promise<void> 
   await expect('/api/account/password', primary, 200, { currentPassword: nextPassword, newPassword: finalPassword });
   await expect('/api/me', recovered, 401);
   await expect('/api/auth/two-factor/verify-backup-code', pendingPassword, 401, { code: replaced.backupCodes[1] });
+  await resetBudget();
+  // Turning off two-factor needs the password and a current factor; a refused password leaves the recovery code unused.
   await expect('/api/account/two-factor/disable', primary, 400, { password: 'incorrect password' });
-  await expect('/api/account/two-factor/disable', primary, 200, { password: finalPassword });
+  await expect('/api/account/two-factor/disable', primary, 400, { password: 'incorrect password', backupCode: replaced.backupCodes[2] });
+  await expect('/api/account/two-factor/disable', primary, 400, { password: finalPassword });
+  const currentStep = Math.floor(Date.now() / 30_000), currentCodes = new Set([-1, 0, 1].map((offset) => authenticatorCode(secret, currentStep + offset)));
+  let refusedCode = '000000';
+  while (currentCodes.has(refusedCode)) refusedCode = String(Number(refusedCode) + 1).padStart(6, '0');
+  await expect('/api/account/two-factor/disable', primary, 400, { password: finalPassword, code: refusedCode });
+  await expect('/api/account/two-factor/disable', primary, 400, { password: finalPassword, code: authenticatorCode(secret), backupCode: replaced.backupCodes[2] });
+  assert.equal((await expect('/api/account/security', primary, 200)).user.twoFactorEnabled, true, 'A refused disable leaves two-factor on.');
+  assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 1);
+  await expect('/api/account/two-factor/disable', primary, 200, { password: finalPassword, backupCode: replaced.backupCodes[2] });
   assert.equal((await expect('/api/account/security', primary, 200)).user.twoFactorEnabled, false);
   assert.equal((await pool.query('SELECT 1 FROM "twoFactor" WHERE "userId"=$1', [userId])).rowCount, 0);
 
