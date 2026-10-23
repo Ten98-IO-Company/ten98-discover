@@ -713,7 +713,7 @@ function App() {
         {appError !== '' && <Alert tone='danger'>{appError}</Alert>}
         {projectsError !== '' && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
-        {/* First-strong isolates keep a right-to-left project name from reordering the origin (PageHeader takes text only). */}
+        {/* First-strong isolates keep a right-to-left project name from reordering the origin (same isolation as <bdi> without adding raw elements). */}
         {project && workspace && projectView && <PageHeader title={pageTitles[view]} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
         {!projectView && view !== 'workspace' && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={pageTitles[view]}
           description={view === 'keys' ? 'Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.' : view === 'providers' ? 'Manage provider credentials and pause paid requests.' : undefined} />}
@@ -833,7 +833,7 @@ function App() {
             </section>
             <section aria-label='Check website events' aria-busy={eventsBusy} style={{minWidth:0,overflowWrap:'anywhere'}}>
               <ResourceCard title='Check that events arrive' description='Open your website, visit a page, then check for an event received by this project.' icon='chart'
-                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<AppIcon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Link style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} className={events !== null && events.total > 0 ? 'btn primary' : 'btn'} to='/' search={target('project')}>View analytics</Link></>}>
+                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<AppIcon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Button style={{minHeight:44,whiteSpace:'normal'}} variant={events !== null && events.total > 0 ? 'primary' : 'secondary'} href='project' component={ShellLink}>View analytics</Button></>}>
                 <TrackerStatus resource={project.origin}
                   installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
@@ -843,7 +843,7 @@ function App() {
                 {events !== null && events.total === 0 && <p>No events in retained history yet. This page checks automatically for 10 minutes. Confirm the tag is published and visit your website. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
                 {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
                 <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
-                <Link to='/' search={target('events')}>Inspect recent events</Link>
+                <Button style={{minHeight:44,whiteSpace:'normal'}} variant='ghost' href='events' component={ShellLink}>Inspect recent events</Button>
               </ResourceCard>
             </section>
             <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>
