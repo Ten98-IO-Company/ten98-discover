@@ -18,6 +18,7 @@ import { getDatabase } from './db.ts';
 import { credentialKeys, decryptCredentials, encryptCredentials } from './credential-vault.ts';
 import { applyOidcAccountSecurity, localIdentityProofInput, oidcSecurityActionInput, requireLocalIdentityProof } from './account-security.ts';
 import { requireInstanceOperator } from './instance-operators.ts';
+import { authorizationRedirect } from '../lib/oidc-authorization.ts';
 import { acceptVerifiedOidcInvitation, inspectInvitation } from './teams.ts';
 import { readJson } from './validation.ts';
 
@@ -296,12 +297,16 @@ async function beginFlow(request: Request, providerId: string, purpose: Flow['pu
       authorizationEndpoint: settings.metadata.authorization_endpoint, redirectURI: `${getConfig().appUrl}/api/auth/oidc/callback`,
       state, codeVerifier: payload.verifier, nonce: payload.nonce, scopes: ['openid', 'email', 'profile'], prompt: 'login',
       ...(purpose === 'account' ? { additionalParams: { max_age: '0' } } : {}) });
+    // The browser re-checks this origin before navigating; refuse here first rather than hand it a redirect it must reject.
+    const authorizationOrigin = new URL(settings.metadata.authorization_endpoint).origin;
+    const authorizationUrl = authorizationRedirect(authorization.href, authorizationOrigin);
+    if (authorizationUrl === null) unavailable('The identity provider authorization address is invalid.');
     await client.query('DELETE FROM oidc_transaction WHERE expires_at<=clock_timestamp()');
     await client.query(`INSERT INTO oidc_transaction(id,provider_id,provider_revision,purpose,state_hash,browser_hash,user_id,session_id,credential,expires_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+interval '10 minutes')`,
     [id, provider.id, revision, purpose, digest(state), digest(browser), current?.user.id ?? null, current?.session.id ?? null,
       encryptCredentials(payload, vaultContext(id, revision, 'oidc-transaction'))]);
-    return json({ authorizationUrl: authorization.href }, 200, [bindingCookie(id, browser)]);
+    return json({ authorizationUrl, authorizationOrigin }, 200, [bindingCookie(id, browser)]);
   });
 }
 
