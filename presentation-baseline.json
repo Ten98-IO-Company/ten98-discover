@@ -46,8 +46,8 @@
   },
   "src/components/AnalyticsPanel.tsx": {
     "stylesheet": 1,
-    "element": 343,
-    "styling": 188
+    "element": 313,
+    "styling": 176
   },
   "src/components/AnalyticsResetPanel.tsx": {
     "element": 16,
@@ -294,7 +294,7 @@
     "element": 3
   },
   "src/routes/index.tsx": {
-    "element": 95,
-    "styling": 56
+    "element": 84,
+    "styling": 52
   }
 }

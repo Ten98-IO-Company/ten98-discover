@@ -137,7 +137,7 @@ try {
   const button = name => main.getByRole('button', {name, exact:true});
   const heading = name => main.getByRole('heading', {name, exact:true, level:1});
   const eventPanel = () => main.locator('section[aria-labelledby="ev-h"]');
-  const eventRegion = () => main.getByRole('region', {name:'Retained event rows', exact:true});
+  const eventRegion = () => main.getByRole('region', {name:'Retained event rows table', exact:true});
   const snippetRegion = () => main.locator('pre[role="region"][aria-label="Tracking snippet"][tabindex="0"]');
   const diagnostics = () => main.locator('details').filter({has:page.locator('summary', {hasText:/^Background worker diagnostics$/})});
   const count = async expected => assert.equal((await eventPanel().locator('.big-num').innerText()).trim(), String(expected), 'Retained count stays exact.');
@@ -211,9 +211,9 @@ try {
   holdEvents = false; await release(heldEvents); heldEvents = undefined;
   await eventRegion().waitFor(); await count(7);
   assert.equal(await eventRegion().getAttribute('tabindex'), '0');
-  assert.equal(await eventRegion().locator('table').getAttribute('aria-labelledby'), 'ev-h');
+  assert.equal(await eventRegion().getByRole('table', {name:'Retained event rows', exact:true}).count(), 1, 'The events table keeps its accessible name.');
   assert.deepEqual(await eventRegion().locator('thead th').allTextContents(), ['Event','Origin','Path','Received']);
-  assert.deepEqual(await eventRegion().locator('tbody tr').first().locator('td').allTextContents(), ['pageview',website,rows[0].path,await fmt(observedAt)]);
+  assert.deepEqual(await eventRegion().locator('tbody tr').first().locator('th, td').allTextContents(), ['pageview',website,rows[0].path,await fmt(observedAt)]);
   assert.equal(await main.getByText(`History before ${await fmt(retainedFrom)} is unavailable after retention. This is not a lifetime total.`, {exact:true}).isVisible(), true);
   assert.equal(await main.getByText(`Last retained event received ${await fmt(observedAt)}`, {exact:true}).isVisible(), true);
   assert.equal(await main.getByText('Showing the latest 2 of 7 persisted events.', {exact:true}).isVisible(), true);
@@ -329,15 +329,21 @@ try {
           const box = await control.boundingBox();
           if (!box || box.height < 44) responsiveFindings.push(`${view} ${width}: ${(await control.innerText()).trim()} touch target is ${box?.height ?? 'missing'}px; requires at least 44px.`);
         }
-        if (view === 'events') for (const cell of await region.locator('tbody tr > td:first-child').all()) {
+        if (view === 'events') for (const cell of await region.locator('tbody tr > :first-child').all()) {
           const lines = await cell.evaluate(element => {
             const range = document.createRange(); range.selectNodeContents(element);
             return [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0).length;
           });
           if (lines !== 1) responsiveFindings.push(`events ${width}: ${await cell.innerText()} event name wraps across ${lines} lines.`);
         }
-        await region.focus(); await page.keyboard.press('ArrowRight');
-        await page.waitForFunction(name => document.querySelector(`[role="region"][aria-label="${name}"]`).scrollLeft > 0, view === 'events' ? 'Retained event rows' : 'Tracking snippet');
+        if (view === 'events') {
+          // Narrow screens stack each event as labelled values, so nothing needs horizontal scrolling.
+          assert.equal(await region.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, `events ${width}: rows fit without horizontal scrolling.`);
+          assert.deepEqual([...new Set(await region.locator('tbody tr').first().locator('th, td').evaluateAll(cells => cells.map(cell => cell.dataset.label)))], ['Event','Origin','Path','Received'], `events ${width}: every value keeps its column label.`);
+        } else {
+          await region.focus(); await page.keyboard.press('ArrowRight');
+          await page.waitForFunction(name => document.querySelector(`[role="region"][aria-label="${name}"]`).scrollLeft > 0, 'Tracking snippet');
+        }
       }
       await capture(view + '-' + width);
     }
