@@ -1,9 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { readResponseText } from '@ten98/runtime';
+import { readResponseText, SES_REGIONS, sendSesEmail } from '@ten98/runtime';
 import { Socket, isIP } from 'node:net';
 import type { SendMailOptions, SMTPTransportOptions } from 'nodemailer';
 import { z } from 'zod';
 import { environmentValue } from './config.ts';
+import { isEmailSuppressed } from './email-suppression.ts';
 
 const malformedUnicode = /[\uD800-\uDFFF]/u;
 const mailbox = z.string().max(254).email(); // Exactly one bare mailbox; no names/lists/header syntax.
@@ -20,9 +21,18 @@ export class EmailDeliveryError extends Error {
 }
 
 function configuration(env: NodeJS.ProcessEnv) {
-  const transport = z.enum(['disabled', 'smtp', 'cloudflare']).parse(env.EMAIL_TRANSPORT || 'disabled');
+  const transport = z.enum(['disabled', 'smtp', 'cloudflare', 'ses']).parse(env.EMAIL_TRANSPORT || 'disabled');
   if (transport === 'disabled') return { transport };
   const from = mailbox.parse(environmentValue('EMAIL_FROM', env));
+  // Amazon SES v2 through @ten98/runtime: the region must be on its allowlist, whose endpoints are constant origins.
+  if (transport === 'ses') return { transport, from,
+    region: z.string().refine(v => SES_REGIONS.includes(v)).parse(env.EMAIL_SES_REGION),
+    credentials: {
+      accessKeyId: z.string().regex(/^[A-Z0-9]{16,128}$/).parse(environmentValue('EMAIL_SES_ACCESS_KEY_ID', env)),
+      secretAccessKey: z.string().min(16).max(256).regex(/^[A-Za-z0-9/+=]+$/).parse(environmentValue('EMAIL_SES_SECRET_ACCESS_KEY', env)),
+    },
+    configurationSetName: env.EMAIL_SES_CONFIGURATION_SET ? z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).parse(env.EMAIL_SES_CONFIGURATION_SET) : undefined,
+  };
   if (transport === 'cloudflare') return { transport, from,
     accountId: z.string().regex(/^[a-f0-9]{32}$/).parse(environmentValue('EMAIL_CLOUDFLARE_ACCOUNT_ID', env)),
     token: z.string().min(1).max(4096).regex(/^[A-Za-z0-9_-]+$/).parse(environmentValue('EMAIL_CLOUDFLARE_API_TOKEN', env)),
@@ -37,13 +47,13 @@ function configuration(env: NodeJS.ProcessEnv) {
 }
 
 /** Configuration only: does not contact a provider, verify entitlement or promise delivery. */
-export function getEmailStatus(env: NodeJS.ProcessEnv = process.env): { configured: boolean; transport: 'disabled' | 'smtp' | 'cloudflare' } {
+export function getEmailStatus(env: NodeJS.ProcessEnv = process.env): { configured: boolean; transport: 'disabled' | 'smtp' | 'cloudflare' | 'ses' } {
   try { const config = configuration(env); return { configured: config.transport !== 'disabled', transport: config.transport }; }
   catch { return { configured: false, transport: 'disabled' }; }
 }
 
 type SmtpSender = { sendMail(message: SendMailOptions): Promise<unknown>; close(): void };
-type Fixtures = { fetch?: (url: string, init: RequestInit) => Promise<Response>; smtp?: (options: SMTPTransportOptions) => SmtpSender };
+type Fixtures = { fetch?: (url: string, init: RequestInit) => Promise<Response>; smtp?: (options: SMTPTransportOptions) => SmtpSender; isSuppressed?: (address: string) => Promise<boolean> };
 const fixtures = new AsyncLocalStorage<Fixtures>();
 /** Trusted in-process test seam only. No request, URL or deployment flag can select an adapter. */
 export function withEmailTransportsForTests<T>(adapters: Fixtures, action: () => Promise<T>): Promise<T> { return fixtures.run(adapters, action); }
@@ -71,6 +81,14 @@ export async function sendTransactionalEmail(input: TransactionalEmail, env: Nod
   const escaped = message.text.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
   const mail = { from: config.from, ...message, html: '<div>' + escaped.replace(/\r\n|\r|\n/g, '<br>') + '</div>' };
   try {
+    if (config.transport === 'ses') {
+      // Hard bounces and complaints reported through the SES feedback webhook block further sends (#304).
+      if (await untilAborted((fixtures.getStore()?.isSuppressed ?? isEmailSuppressed)(message.to), controller.signal)) throw new EmailDeliveryError();
+      const send = fixtures.getStore()?.fetch as typeof fetch | undefined;
+      // Any failure, uncertain or definite, is the same unconfirmed error: one attempt and no automatic retry.
+      await untilAborted(sendSesEmail({ region: config.region, credentials: config.credentials, message: mail, configurationSetName: config.configurationSetName, signal: controller.signal, ...(send ? { fetch: send } : {}) }), controller.signal);
+      return { accepted: true, delivery: 'unconfirmed' };
+    }
     if (config.transport === 'cloudflare') {
       const response = await untilAborted((fixtures.getStore()?.fetch ?? fetch)(`https://api.cloudflare.com/client/v4/accounts/${config.accountId}/email/sending/send`, {
         method: 'POST', redirect: 'error', signal: controller.signal,
