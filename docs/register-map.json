@@ -49,7 +49,8 @@
     "0009_oidc_account_security",
     "0068_workspace_two_factor",
     "0070_account_closure",
-    "0071_email_suppression"
+    "0071_email_suppression",
+    "0072_paid_work_archive"
    ]
   },
   "P05": {
@@ -233,7 +234,8 @@
    "migrations": [
     "0005_provider_core",
     "0022_provider_account_identity",
-    "0063_no_app_budgets"
+    "0063_no_app_budgets",
+    "0072_paid_work_archive"
    ]
   },
   "P11": {
@@ -612,7 +614,8 @@
     "POST /api/workspaces/{workspaceId}/projects/{projectId}/delete"
    ],
    "migrations": [
-    "0061_project_deletions"
+    "0061_project_deletions",
+    "0072_paid_work_archive"
    ]
   },
   "P47": {
@@ -907,7 +910,8 @@
    ],
    "migrations": [
     "0013_retention",
-    "0061_project_deletions"
+    "0061_project_deletions",
+    "0072_paid_work_archive"
    ]
   },
   "P71": {
