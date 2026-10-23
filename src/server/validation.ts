@@ -84,11 +84,11 @@ export async function readJson(request: Request, maxBytes = 8192): Promise<unkno
   try {
     text = await readResponseText(new Response(request.body), { maxBytes });
   } catch (error) {
-    // The runtime marks its byte limit with RESPONSE_TOO_LARGE; malformed UTF-8 carries the fatal decoder's Node code.
+    // The runtime marks its byte limit with RESPONSE_TOO_LARGE and malformed UTF-8 with RESPONSE_DECODE_INVALID.
     // Anything else, including an error raised by the body stream itself, is a read failure.
     const code = (error as NodeJS.ErrnoException | null)?.code;
     if (error instanceof RangeError && code === 'RESPONSE_TOO_LARGE') throw new InputError(413, 'body too large');
-    if (code === 'ERR_ENCODING_INVALID_ENCODED_DATA') throw new InputError(400, 'body is not valid utf-8');
+    if (code === 'RESPONSE_DECODE_INVALID') throw new InputError(400, 'body is not valid utf-8');
     throw new InputError(400, 'failed to read request body');
   }
   if (text.trim() === '') throw new InputError(400, 'empty body');

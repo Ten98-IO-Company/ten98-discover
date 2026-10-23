@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useEffect,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
 import {boardLimits,decodePublicBoardManifest,decodePublicBoardCard,parseHostedBoardShare,parseHostedWebsiteShare,type PublicBoardCard} from '../lib/boards';
 import {decodePublicWebsiteShare,websiteShareLimits,type PublicWebsiteShare} from '../lib/website-shares';
@@ -47,11 +48,10 @@ function PublicCard({value}:{value:PublicBoardCard}){
 }
 class ShareReadError extends Error{readonly status:number;constructor(status=0){super(unavailable);this.status=status;}}
 async function request(path:string,token:string,signal:AbortSignal,body?:unknown,header='X-Ten98-Board-Share'):Promise<unknown>{
- const active=AbortSignal.any([signal,AbortSignal.timeout(25000)]);let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
- try{const response=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:active,headers:{[header]:token,...body===undefined?{}:{'Content-Type':'application/json'}},...body===undefined?{}:{body:JSON.stringify(body)}});
+ const active=AbortSignal.any([signal,AbortSignal.timeout(25000)]);
+ const response=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'omit',referrerPolicy:'no-referrer',cache:'no-store',redirect:'error',signal:active,headers:{[header]:token,...body===undefined?{}:{'Content-Type':'application/json'}},...body===undefined?{}:{body:JSON.stringify(body)}});
  if(!response.ok){await response.body?.cancel();throw new ShareReadError(response.status);}if(!response.body||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw new ShareReadError();
- reader=response.body.getReader();const decoder=new TextDecoder('utf-8',{fatal:true});let text='',bytes=0;for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.length;if(bytes>boardLimits.responseBytes)throw new ShareReadError();text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();return JSON.parse(text);
- }finally{await reader?.cancel().catch(()=>{});}
+ try{return JSON.parse(await readResponseText(response,{maxBytes:boardLimits.responseBytes,signal:active}));}catch(error){throw error instanceof RangeError?new ShareReadError():error;}
 }
 const fragmentValue=(value:string)=>value.startsWith('#')?value.slice(1):value;
 type ShareEntryCapture={owner:string;seenFragment:string;capturedFragment:string|null;rawFragment:string|null;scrubPending:boolean;version:number};
