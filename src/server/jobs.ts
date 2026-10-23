@@ -217,8 +217,8 @@ export function startWorker(): Promise<void> {
       // job output in pgboss.job; they hold no account ids or personal data.
       await workJobs(boss,accountClosureRetentionQueue,{batchSize:1},async()=>{
         const summary=await runClosedAccountRetention();
-        console.log(`Closed-account retention: ${Object.values(summary.deleted).reduce((sum,n)=>sum+n,0)} rows and ${summary.tombstones} tombstones deleted${summary.capped?'; more remain for the next run':''}.`);
-        if(summary.ledgerFailed||summary.tombstonesFailed)console.error('Closed-account retention stopped early; inspect database availability. The next daily run continues.');
+        console.log(`Closed-account retention: ${Object.values(summary.deleted).reduce((sum,n)=>sum+n,0)} rows, ${summary.archived} paid-work archive rows and ${summary.tombstones} tombstones deleted${summary.capped?'; more remain for the next run':''}.`);
+        if(summary.ledgerFailed||summary.archiveFailed||summary.tombstonesFailed)console.error('Closed-account retention stopped early; inspect database availability. The next daily run continues.');
         return summary;
       });
       await boss.schedule(accountClosureRetentionQueue,accountClosureRetentionCron,null,{...accountClosureRetentionJobOptions});
