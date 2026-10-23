@@ -15,7 +15,7 @@ import {getProjectDeletion,deleteProject} from './project-delete.ts';
 import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
-import { clientRateKey, emailLimitKey } from './client-rate-limit.ts';
+import { clientAddressesIdentifyVisitors, clientRateKey, emailLimitKey, visitorRateKey } from './client-rate-limit.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {exportAnalytics,analyticsExportLimits} from './analytics-export.ts';
@@ -113,11 +113,13 @@ async function limit(key: string, maximum: number, client?:PoolClient) {
 }
 
 /**
- * Per-minute public collection limits. A client is one resolved address (unresolvable clients share one key), so its value
- * leaves room for visitors behind a shared network address; each site is keyed by its internal project id; the global value is
- * an instance capacity ceiling well above any single site.
+ * Per-minute public collection limits. A client is one resolved visitor address, counted only when the installation identifies
+ * visitors by address (see visitorRateKey); its value leaves room for visitors behind a shared network address. Each site is keyed
+ * by its internal project id; the global value is an instance capacity ceiling well above any single site.
  */
 export const collectorLimits = { client: 1200, site: { collector: 3000, heatmap: 3000, replay: 3000, 'tracking-config': 600 }, global: 60000 } as const;
+
+let collectorClientLimitNoticed = false;
 
 /** The project a public site key names when the request origin is allowed for it, or null. */
 async function collectionProject(siteKey: string, origin: string): Promise<{ id: string } | null> {
@@ -266,7 +268,13 @@ export async function handleApi(request: Request): Promise<Response> {
       // instance ceiling. A refused request stops before the later limits, so unconfigured origins and unknown site keys never count
       // toward a site or the shared ceiling, and only resolved sites create per-site rows.
       if (!await collectionOriginAllowed(getDatabase().pool, origin)) throw new FoundationError(403, 'Website origin is not configured.');
-      await limit(clientRateKey(request, 'collector'), collectorLimits.client);
+      // Per client only where an address identifies one visitor; otherwise the per-site and global limits apply alone.
+      const clientKey = visitorRateKey(request, 'collector');
+      if (clientKey) await limit(clientKey, collectorLimits.client);
+      else if (!collectorClientLimitNoticed && !clientAddressesIdentifyVisitors()) {
+        collectorClientLimitNoticed = true;
+        console.warn('Per-client collection limiting is off until TRUSTED_PROXIES or ANALYTICS_TRUSTED_PROXIES names the reverse proxy (or ANALYTICS_NETWORK_MODE=direct when there is none).');
+      }
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
       if (request.method === 'OPTIONS') { await limit('collector:global', collectorLimits.global); return new Response(null, { status: 204, headers: cors }); }
       if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405, cors);

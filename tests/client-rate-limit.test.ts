@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { FoundationError } from '../src/server/auth.ts';
 import { handleAccountSecurity } from '../src/server/account-security.ts';
-import { clientLimitKey, clientRateKey, requestClientAddress } from '../src/server/client-rate-limit.ts';
+import { clientLimitKey, clientRateKey, requestClientAddress, visitorRateKey } from '../src/server/client-rate-limit.ts';
 import { getConfig } from '../src/server/config.ts';
 
 const appUrl = 'http://localhost:3000';
@@ -50,6 +50,25 @@ test('forwarding headers are honoured only from configured trusted proxies', asy
     assert.equal(requestClientAddress(fromPeer('/', { headers: { 'x-forwarded-for': 'malformed' } }), { TRUSTED_PROXIES: '127.0.0.1' }), null);
     assert.equal(requestClientAddress(spoofed, { ANALYTICS_TRUSTED_PROXIES: '127.0.0.1' }), '198.51.100.7', 'the analytics proxy list applies when TRUSTED_PROXIES is unset');
     assert.equal(requestClientAddress(spoofed, { TRUSTED_PROXIES: '10.0.0.0/8', ANALYTICS_TRUSTED_PROXIES: '127.0.0.1' }), '127.0.0.1', 'an explicit TRUSTED_PROXIES wins');
+  });
+});
+
+test('collection per-client keys exist only where an address identifies one visitor', async () => {
+  const secretEnv = { AUTH_SECRET: 'a'.repeat(32) };
+  await withTransport(async fromPeer => {
+    const direct = fromPeer('/api/collect');
+    assert.equal(visitorRateKey(direct, 'collector', secretEnv), null, 'with no trusted proxy and no direct mode the peer may be a shared proxy');
+    assert.equal(visitorRateKey(new Request(`${appUrl}/api/collect`), 'collector', { ...secretEnv, TRUSTED_PROXIES: '127.0.0.1' }), null, 'an unresolved client gets no shared key');
+    assert.equal(visitorRateKey(fromPeer('/api/collect'), 'collector', { ...secretEnv, TRUSTED_PROXIES: '127.0.0.1' }), null, 'a trusted peer without a chain is unresolved');
+    assert.equal(visitorRateKey(direct, 'collector', { ...secretEnv, ANALYTICS_NETWORK_MODE: 'direct' }), clientLimitKey('collector', '127.0.0.1', secretEnv.AUTH_SECRET), 'direct mode asserts the peer is the visitor');
+    assert.equal(visitorRateKey(direct, 'collector', { ...secretEnv, ANALYTICS_NETWORK_MODE: 'proxy', ANALYTICS_TRUSTED_PROXIES: '10.0.0.1' }), clientLimitKey('collector', '127.0.0.1', secretEnv.AUTH_SECRET), 'the analytics proxy list enables per-client limits');
+    // Behind a trusted gateway that appends the real client, a client-supplied left-most entry cannot choose the key.
+    const gateway = { ...secretEnv, TRUSTED_PROXIES: '127.0.0.1' }, real = clientLimitKey('collector', '198.51.100.7', secretEnv.AUTH_SECRET);
+    const first = visitorRateKey(fromPeer('/api/collect', { headers: { 'x-forwarded-for': '203.0.113.66, 198.51.100.7' } }), 'collector', gateway);
+    const second = visitorRateKey(fromPeer('/api/collect', { headers: { 'x-forwarded-for': '192.0.2.44, 198.51.100.7' } }), 'collector', gateway);
+    assert.equal(first, real, 'the right-most untrusted entry is the client');
+    assert.equal(second, first, 'different spoofed prefixes from the same real client share one key');
+    assert.notEqual(first, clientLimitKey('collector', '203.0.113.66', secretEnv.AUTH_SECRET));
   });
 });
 
