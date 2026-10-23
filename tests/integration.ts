@@ -20,6 +20,7 @@ import { runRetentionCoverageChecks } from './retention-coverage-integration.ts'
 import { runExplorerChecks } from './explorer-integration.ts';
 import { runDomainCollectionChecks } from './domain-collection-integration.ts';
 import { runClientRateLimitChecks } from './client-rate-limit-integration.ts';
+import { runSetupRateLimitChecks } from './setup-rate-limit-integration.ts';
 import { runEmailSuppressionChecks } from './email-suppression-integration.ts';
 import { runCollectorAdmissionChecks } from './collector-admission-integration.ts';
 import { runAccountClosureChecks } from './account-closure-integration.ts';
@@ -421,6 +422,8 @@ try {
   await runOidcChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   stage = 'per-client identity rate limits';
   await runClientRateLimitChecks();
+  stage = 'per-client setup rate limit';
+  await runSetupRateLimitChecks();
   stage = 'SES email suppression';
   await runEmailSuppressionChecks();
   stage = 'account closure tombstone, scrub and refusals';
