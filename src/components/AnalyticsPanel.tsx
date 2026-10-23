@@ -658,7 +658,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
           <GeographyCard key={queryKey} period="current" detail={data.geographyDetail} onDetail={loadLocation} data={data.geography} range={data.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation}/>
           {data.referrers&&<section className="card analytics-breakdown">
             <h2>Top referrers</h2>
-            <p className="hint">Up to 20 external referrer hosts in this date range. In-site navigation and page views without a recorded referrer are not listed; referrer capture is off by default and is turned on in Collection and privacy. Selecting a host filters every report by that referrer, including in-site navigation from it.</p>
+            <p className="hint">Up to 20 external referrer hosts in this date range. In-site navigation and page views without a recorded referrer are not listed; referrer capture is off by default and is turned on in Collection and privacy. Selecting a host filters every report to page views carrying that referrer; bounce rate and visit duration still cover each whole visit that includes one.</p>
             {data.referrers.length === 0 ? (
               <><p className="dim">{data.coverage.status === 'complete' ? 'No referrer hosts are recorded in this range.' : 'No referrer hosts are recorded in the retained portion.'}</p>{data.coverage.status!=='unavailable'&&search?.workspace&&<><p className="hint">Referrer capture is optional. Collection changes apply to future events.</p><Link className="btn ghost" to="/" search={{workspace:search.workspace,project:projectId,view:'collection'}}>Review collection settings</Link></>}</>
             ) : (

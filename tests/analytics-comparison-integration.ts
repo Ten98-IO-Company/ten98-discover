@@ -187,5 +187,17 @@ async function runDimensionRegressionChecks(pool:pg.Pool,workspace:string,owner:
  const legacy=await project();await event(legacy,'page_view',{referrerHost:12});await event(legacy,'page_view',{referrerHost:null});await event(legacy,'page_view',{});
  const grouped=await exploreAnalytics(legacy,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02',groupBy:'referrer'}));assert.deepEqual(grouped.breakdown.groups.map(row=>row.type).sort(),['missing','null','number']);
  console.log('PASS all five malformed scalar JSON types beyond top20 refuse whole current/prior reports while exact selection, SQL missing and legacy Explorer types remain valid');
+
+ // #372: only the landing view carries an external referrer, so a referrer selection must still measure bounce and duration over each matching visit's whole page views.
+ const sourced=await project(),[hn,single,other]=['c','d','e'].map(c=>c.repeat(64));for(const id of [hn,single,other])await pool.query("INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,'2024-03-01','2024-03-02')",[sourced,id]);
+ const self={origin:'https://sourced.test',referrerHost:'sourced.test'};
+ for(const [dimensions,time,visitor]of [[{referrerHost:'news.example'},'2024-03-01T12:00:00Z',hn],[self,'2024-03-01T12:00:30Z',hn],[{},'2024-03-01T12:01:00Z',hn],[{referrerHost:'news.example'},'2024-03-01T13:00:00Z',single],[{referrerHost:'other.example'},'2024-03-01T14:00:00Z',other],[self,'2024-03-01T14:00:40Z',other]]as const)await event(sourced,'page_view',dimensions,time,visitor,visitor);
+ const bySource=await projectAnalytics(sourced,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02',selection:new URLSearchParams({referrer:'news.example'}).toString()}));
+ assert.deepEqual(bySource.totals,{pageViews:2,customEvents:0},'Event-level counts keep only page views carrying the selected referrer.');
+ assert.equal(bySource.measurement.identifiedPageViews,2);assert.equal(bySource.measurement.visitors,2);assert.equal(bySource.measurement.visits,2);
+ assert.equal(bySource.measurement.bounceRate,50,'One of the two visits from the referrer browsed further pages; it is not a bounce.');
+ assert.equal(bySource.measurement.averageVisitSeconds,30,'Visit duration spans each matching visit, not only its landing view.');
+ const allSources=await projectAnalytics(sourced,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02'}));assert.equal(allSources.measurement.visits,3);assert.ok(Math.abs(allSources.measurement.bounceRate!-100/3)<1e-9);assert.equal(allSources.measurement.averageVisitSeconds,(60+0+40)/3);
+ console.log('PASS a referrer selection measures bounce rate and visit duration over the whole matching visits, as unfiltered reports do');
 }
 if(import.meta.main){try{await runComparisonChecks();}finally{await closeDatabase();}}

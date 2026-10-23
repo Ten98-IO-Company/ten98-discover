@@ -12,14 +12,15 @@ import {parseAdvancedPredicates,type AdvancedPredicates} from './advanced-predic
 import {advancedPredicateSql} from './advanced-predicates.ts';
 import {analyticsDimensionValueSql,analyticsCustomVisitsSql,selfReferralSql} from './analytics-dimensions.ts';
 
-export const analyticsSummarySql={
- visits:`visits AS (
+const visitsSql=(source:string)=>`visits AS (
       SELECT visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
         bool_or(visit_has_custom) AS custom,
         extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
-      FROM observations WHERE visit_id IS NOT NULL GROUP BY visitor_id,visit_id
+      FROM ${source} WHERE visit_id IS NOT NULL GROUP BY visitor_id,visit_id
       HAVING count(*) FILTER (WHERE event_name='page_view')>0
-    )`,
+    )`;
+export const analyticsSummarySql={
+ visits:visitsSql('observations'),
  totals:`json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
         'customEvents',count(*) FILTER (WHERE event_name<>'page_view'))`,
  measurement:`json_build_object('version','umami-3.4-hour-cache-v1',
@@ -141,7 +142,8 @@ export async function projectAnalytics(projectId: string, userId: string, params
         AND (NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
         AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
         AND (NOT $7::jsonb ? 'device' OR CASE WHEN $7::jsonb->>'device'='not-recorded' THEN e.dimensions->>'device' IS NULL ELSE e.dimensions->>'device'=$7::jsonb->>'device' END)
-    ), all_observations AS MATERIALIZED (SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM geography_candidates s LEFT JOIN custom_visits c ON c.period=s.period AND c.visitor_id=s.visitor_id AND c.visit_id=s.visit_id WHERE ${geographyFilterSql('$14::jsonb')} AND (${predicate})),
+    ), scoped_observations AS (SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM geography_candidates s LEFT JOIN custom_visits c ON c.period=s.period AND c.visitor_id=s.visitor_id AND c.visit_id=s.visit_id WHERE ${geographyFilterSql('$14::jsonb')}),
+    all_observations AS MATERIALIZED (SELECT * FROM scoped_observations s WHERE (${predicate})),
     dimension_labeled AS MATERIALIZED (SELECT s.*,d.value AS label FROM all_observations s CROSS JOIN LATERAL (SELECT ${analyticsDimensionValueSql('$16::text','s')} AS value) d
       WHERE $16::text IS NOT NULL AND (CASE WHEN $16='event' THEN event_name<>'page_view' ELSE true END)),
     dimension_visits AS (SELECT period,label,visitor_id,visit_id,count(*) FILTER(WHERE event_name='page_view') AS pageviews,bool_or(visit_has_custom) AS custom,
@@ -159,7 +161,10 @@ export async function projectAnalytics(projectId: string, userId: string, params
         'counterpart',CASE WHEN b.period IS NULL THEN NULL ELSE json_build_object('pageViews',b.pageviews,'customEvents',b.custom,'identifiedPageViews',b.identified,'visitors',b.visitors,'visits',b.visits,'bounceRate',b.bounce,'averageVisitSeconds',b.duration) END) ORDER BY a.rank)
         FROM dimension_ranked a LEFT JOIN dimension_groups b ON b.period<>a.period AND b.label IS NOT DISTINCT FROM a.label WHERE a.period=q.period AND a.rank<=20),'[]'::json) AS dimension_rows,r.*
     FROM periods q CROSS JOIN clock c CROSS JOIN LATERAL (
-    WITH observations AS MATERIALIZED (SELECT * FROM all_observations WHERE period=q.period), ${analyticsSummarySql.visits}, buckets AS (
+    WITH observations AS MATERIALIZED (SELECT * FROM all_observations WHERE period=q.period),
+    ${selection?`-- A selection picks visits by their matching page views; bounce and duration still measure each whole visit, as unfiltered.
+    visit_observations AS MATERIALIZED (SELECT v.* FROM scoped_observations v WHERE v.period=q.period AND (v.visitor_id,v.visit_id) IN (SELECT visitor_id,visit_id FROM observations WHERE event_name='page_view')),
+    ${visitsSql('visit_observations')}`:analyticsSummarySql.visits}, buckets AS (
       SELECT (received_at AT TIME ZONE 'UTC')::date AS day,
         count(*) FILTER (WHERE event_name='page_view') AS views,
         count(*) FILTER (WHERE event_name<>'page_view') AS custom
