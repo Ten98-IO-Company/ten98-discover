@@ -28,4 +28,6 @@ Report vulnerabilities privately through [GitHub private vulnerability reporting
 
 ## Legal
 - Licence: [MIT](LICENSE). Third-party components and their licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). This is an independent combined project, not an official product of the upstream projects.
+- Ten98 and the Ten98 logo are trademarks of Ten98 Technologies Ltd. The MIT licence covers the code, not the name or logo: forks must use their own name and branding.
+- The hosted apps at \*.ten98.io are covered by the Ten98 privacy policy (https://ten98.io/legal/privacy). Self-hosted installs are run by their operator and send no data to Ten98.
 - Provided "as is", without warranty, as stated in the licence.
