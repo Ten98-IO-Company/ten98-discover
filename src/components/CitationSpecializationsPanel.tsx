@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useEffect,useId,useRef,useState} from 'react';
 import { useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
@@ -77,7 +78,9 @@ function Controller(props:Props){
    const params=new URLSearchParams();for(const [k,v]of Object.entries({...selection.filters,...selection.navigation}))if(v!==null)params.set(k,v);if(pages.at(-1))params.set('cursor',pages.at(-1)!);
    const response=await fetch(base+'?'+params,{credentials:'same-origin',redirect:'error',signal:op.signal});if(!current(op)){await response.body?.cancel();return;}if(!response.ok){await response.body?.cancel();throw httpError(response.status);}
    if(!/^application\/json(?:;\s*charset=utf-8)?$/i.test(response.headers.get('content-type')??'')){await response.body?.cancel();throw new Error('The report response could not be verified. Reload the report.');}
-   const bytes=await body(response,op,2*1024*1024);if(!current(op))return;const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));if(!validSpecializedCitationReport(value,selection.filters,selection.navigation,pages.length-1))throw new Error('The report response could not be verified. Reload the report.');
+   if(!response.body)throw new Error('The response was empty.');let text:string;
+   try{text=await readResponseText(response,{maxBytes:2*1024*1024,signal:op.signal});}catch(error){if(!current(op)||op.signal.aborted)throw new Error('The request was cancelled.');throw error instanceof RangeError?new Error('The response exceeds its capacity. Narrow the report.'):error;}
+   if(!current(op))return;if(!text)throw new Error('The response was empty.');const value:unknown=JSON.parse(text);if(!validSpecializedCitationReport(value,selection.filters,selection.navigation,pages.length-1))throw new Error('The report response could not be verified. Reload the report.');
    if(pages.length>1&&old&&value.selectionRevision!==old.selectionRevision||value.evidenceStates.some(e=>expired.current.has(e.id)&&e.eligibility!=='expired'))throw httpError(409);
    learn(value.evidenceStates.filter(e=>e.eligibility==='expired').map(e=>e.id));patch({role:value.role,data:value,focus:true});
   }catch(error){failure(error,op);}finally{finish(op);}

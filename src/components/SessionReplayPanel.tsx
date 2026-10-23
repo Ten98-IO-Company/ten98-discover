@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {z} from 'zod';
 import {workspaceRoles} from '@ten98/runtime';
@@ -47,14 +48,16 @@ function intent(raw:string){
   return{id,cursor:page,saved:list==='saved',search:search??'',canonical:canonical.toString()};
 }
 export async function readReplayResponse<T>(url:string,schema:z.ZodType<T>,signal:AbortSignal,body?:unknown):Promise<T>{
-  const combined=AbortSignal.any([signal,AbortSignal.timeout(15000)]);let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+  const combined=AbortSignal.any([signal,AbortSignal.timeout(15000)]);
   try{
     const response=await fetch(url,{credentials:'same-origin',cache:'no-store',redirect:'error',signal:combined,...(body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})});
     if(!response.ok){await response.body?.cancel().catch(()=>{});const e=new ApiError(response.status===401?'Your session expired. Sign in again.':[403,404].includes(response.status)?'Replay access is unavailable. Recorded content was cleared.':response.status===400?'This replay page is no longer available. Start from the newest recordings.':'The replay read was not completed. Retry this read.');e.status=response.status;throw e;}
-    const length=response.headers.get('content-length'),encoding=response.headers.get('content-encoding');if(!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body||length!==null&&(!/^(0|[1-9]\d*)$/.test(length)||Number(length)>2097152))throw invalid();
-    reader=response.body.getReader();let bytes=0,text='';const decoder=new TextDecoder('utf-8',{fatal:true});for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>2097152)throw invalid();text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();if((!encoding||encoding==='identity')&&length!==null&&Number(length)!==bytes)throw invalid();
+    if(!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body)throw invalid();
+    let text:string;
+    try{text=await readResponseText(response,{maxBytes:2097152,contentLength:'exact',signal:combined});}
+    catch(error){const code=(error as {code?:unknown}).code;throw error instanceof RangeError||code==='CONTENT_LENGTH_INVALID'||code==='RESPONSE_INCOMPLETE'?invalid():error;}
     let data:unknown;try{data=JSON.parse(text);}catch{throw invalid();}const parsed=schema.safeParse(data);if(!parsed.success)throw invalid();return parsed.data;
-  }catch(error){if(signal.aborted||error instanceof ApiError||error instanceof InvalidReplay)throw error;throw new Error('The replay request was not received completely. Retry this read.');}finally{await reader?.cancel().catch(()=>{});}
+  }catch(error){if(signal.aborted||error instanceof ApiError||error instanceof InvalidReplay)throw error;throw new Error('The replay request was not received completely. Retry this read.');}
 }
 
 export function SessionReplayPanel({projectId,userId,query='',onNavigate,onUnauthorized,onSettings,readOwner='',readEnabled=true}:Props){

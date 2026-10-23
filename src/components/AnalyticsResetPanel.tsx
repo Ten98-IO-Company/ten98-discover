@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useEffect,useRef,useState} from 'react';
 import {analyticsResetInput,analyticsResetState,analyticsResetResult,type AnalyticsResetInput,type AnalyticsResetState,type AnalyticsResetResult} from '../lib/analytics-reset';
 
@@ -6,10 +7,8 @@ export async function request(url:string,signal:AbortSignal,body?:unknown):Promi
  const response=await fetch(url,{method:body?'POST':'GET',credentials:'same-origin',headers:body?{'content-type':'application/json'}:{},signal,...body?{body:JSON.stringify(body)}:{}});
  if(!response.ok){await response.body?.cancel();throw new ResetError(response.status);}
  if(!response.headers.get('content-type')?.startsWith('application/json')){await response.body?.cancel();throw Error('Invalid reset reply.');}
- const reader=response.body?.getReader();if(!reader)throw Error('Missing reset reply.');const chunks:Uint8Array[]=[];let length=0;
- try{while(true){const part=await reader.read();if(part.done)break;length+=part.value.length;if(length>4096)throw Error('Oversized reset reply.');chunks.push(part.value);}}
- catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
- const bytes=new Uint8Array(length);let at=0;for(const chunk of chunks){bytes.set(chunk,at);at+=chunk.length;}return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+ if(!response.body)throw Error('Missing reset reply.');
+ try{return JSON.parse(await readResponseText(response,{maxBytes:4096,signal}));}catch(error){throw error instanceof RangeError?Error('Oversized reset reply.'):error;}
 }
 type Props={projectId:string;userId:string;disabled?:boolean;authorityOwner?:string;isCurrent?:()=>boolean;pendingRequest?:{current:AnalyticsResetInput|null};onUnauthorized:()=>void;onReset:()=>void;onBusy?:(busy:boolean)=>void};
 export function AnalyticsResetPanel(props:Props){return <ResetInner key={props.projectId+':'+props.userId} {...props}/>;}

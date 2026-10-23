@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {useLocation} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
@@ -35,10 +36,16 @@ async function readReport(path:string,signal:AbortSignal):Promise<unknown>{
   let response:Response;try{response=await fetch(path,{credentials:'same-origin',signal,redirect:'error'});}catch(e){if(signal.aborted)throw e;throw new ApiError('Network error. Check your connection, then reload this report.');}
   const failure=(message:string)=>{if(response.ok)return new Error(message);const error=new ApiError(message);error.status=response.status;return error;},limit=response.ok?retentionLimits.json:8192;
   try{
-    const length=response.headers.get('content-length');if(response.redirected||response.url&&new URL(response.url).origin!==window.location.origin||response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json'||length!==null&&(!/^\d{1,12}$/.test(length)||Number(length)>limit)||!response.body)throw failure('The retention response type or size could not be verified.');
-    const reader=response.body.getReader(),bytes=new Uint8Array(limit);let written=0;
-    try{while(true){const part=await reader.read();if(part.done)break;if(part.value.byteLength>limit-written)throw failure('The retention response exceeded its safe size. Narrow the entry filters.');bytes.set(part.value,written);written+=part.value.byteLength;}}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
-    let value:unknown;try{value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes.subarray(0,written)));}catch{throw failure('The retention response was incomplete or malformed.');}
+    if(response.redirected||response.url&&new URL(response.url).origin!==window.location.origin||response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json'||!response.body)throw failure('The retention response type or size could not be verified.');
+    let value:unknown;
+    try{value=JSON.parse(await readResponseText(response,{maxBytes:limit,contentLength:'limit',signal}));}
+    catch(error){
+      if(error instanceof RangeError)throw failure('The retention response exceeded its safe size. Narrow the entry filters.');
+      const code=(error as {code?:unknown}).code;
+      if(code==='CONTENT_LENGTH_INVALID')throw failure('The retention response type or size could not be verified.');
+      if(error instanceof SyntaxError||code==='RESPONSE_DECODE_INVALID')throw failure('The retention response was incomplete or malformed.');
+      throw error;
+    }
     if(!response.ok)throw failure(record(value)&&clean(value.error,4096)?value.error:'The retention report could not load. Try again.');return value;
   }catch(e){await response.body?.cancel().catch(()=>{});if(signal.aborted)throw e;if(!response.ok&&!(e instanceof ApiError))throw failure('The retention report could not load. Try again.');throw e;}
 }
