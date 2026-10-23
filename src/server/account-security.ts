@@ -22,6 +22,7 @@ const codeInput = z.object({ code: z.string().regex(/^\d{6}$/) }).strict();
 const backupInput = z.object({ code: z.string().regex(/^[A-Za-z0-9]{5}-[A-Za-z0-9]{15}$/) }).strict();
 const signInInput = z.object({ email: z.string().trim().toLowerCase().email().max(254), password: currentPassword }).strict();
 const recoveryEmailInput = signInInput.pick({ email: true }).strict();
+export const localIdentityProofInput = z.object({ password: currentPassword, code: codeInput.shape.code.optional(), backupCode: backupInput.shape.code.optional() }).strict();
 const resetPasswordInput = z.object({ token: z.string().length(24).regex(/^[A-Za-z0-9]{24}$/), newPassword: z.string().min(12).max(128) }).strict();
 const invalidReset = 'This reset link is invalid, expired or already used. Request a new link and use a password between 12 and 128 characters.';
 const accountInputs = {
@@ -30,7 +31,7 @@ const accountInputs = {
   '/api/account/sessions/revoke-others': z.object({}).strict(),
   '/api/account/two-factor/enable': passwordInput,
   '/api/account/two-factor/verify': codeInput,
-  '/api/account/two-factor/disable': passwordInput,
+  '/api/account/two-factor/disable': localIdentityProofInput,
   '/api/account/two-factor/recovery-codes': passwordInput,
 } as const;
 
@@ -121,8 +122,6 @@ async function rememberCode(client: PoolClient, userId: string, code: string) {
   await client.query('INSERT INTO verification(id,identifier,value,"expiresAt") VALUES($1,$2,\'used\',clock_timestamp()+interval \'90 seconds\')',
     [randomUUID(), `totp-used:${userId}:${createHash('sha256').update(code).digest('hex')}`]);
 }
-
-export const localIdentityProofInput = z.object({ password: currentPassword, code: codeInput.shape.code.optional(), backupCode: backupInput.shape.code.optional() }).strict();
 
 async function requireFactorProof(client: PoolClient, request: Request, userId: string, details: { code?: string; backupCode?: string }) {
   if ((!details.code && !details.backupCode) || (details.code && details.backupCode)) throw new FoundationError(400, 'Enter an authenticator code or a recovery code to verify this action.');
@@ -379,8 +378,14 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
       return json({ ok: true, twoFactorEnabled: true }, 200, response);
     }
     if (path === '/api/account/two-factor/disable') {
-      if (!(await client.query("SELECT 1 FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [userId])).rowCount) throw new FoundationError(409, 'Verify your linked identity provider before changing account security.');
-      const response = await invoke(auth, request, '/two-factor/disable', parsed(passwordInput, input));
+      const details = parsed(accountInputs[path], input);
+      const credential = await client.query<{ password: string }>("SELECT password FROM account WHERE \"userId\"=$1 AND \"providerId\"='credential' AND password IS NOT NULL", [userId]);
+      if (!credential.rowCount) throw new FoundationError(409, 'Verify your linked identity provider before changing account security.');
+      // The password is checked before the factor so a refused password never consumes a recovery code or authenticator window.
+      if (!await verifyPassword({ hash: credential.rows[0].password, password: details.password })) throw new FoundationError(400, 'The current password was not accepted.');
+      // Turning off two-factor needs the second factor as well as the password.
+      if (current.user.twoFactorEnabled) await requireFactorProof(client, request, userId, details);
+      const response = await invoke(auth, request, '/two-factor/disable', { password: details.password });
       if (!response.ok) return rejected(response, 'The current password was not accepted.');
       await keepResponseSession(client, auth, request, response, userId, providerId);
       return json({ ok: true, twoFactorEnabled: false }, 200, response);
