@@ -479,6 +479,17 @@ try {
   assert.equal(await page.getByRole('heading', {name:'Create a workspace', exact:true, level:2}).count(), 1);
   assert.equal(await page.getByLabel('Workspace name', {exact:true}).isVisible(), true);
   assert.equal(await page.locator('.t98-shell-sidebar').count(), 0, 'No shell navigation without a workspace.');
+  // A failed sign-out on the onboarding screen is shown there, and a second click while it is pending sends nothing.
+  const signOutsBefore = calls.signOut; holdSignOut = true;
+  const onboardingSignOutHeld = new Promise(resolve => { signOutHeldResolve = resolve; });
+  const onboardingSignOut = page.getByRole('button', {name:'Sign out', exact:true});
+  await onboardingSignOut.click(); await onboardingSignOutHeld;
+  await page.getByRole('button', {name:'Signing out…', exact:true}).click();
+  assert.equal(calls.signOut, signOutsBefore + 1, 'A pending onboarding sign-out is not sent twice.');
+  await release(heldSignOut); heldSignOut = undefined; holdSignOut = false;
+  await page.getByRole('alert').filter({hasText:'Could not sign out: Synthetic sign-out unavailable.'}).waitFor();
+  assert.equal(await page.getByRole('heading', {name:'Workspace access', exact:true, level:1}).count(), 1, 'The failed sign-out keeps the onboarding screen.');
+  calls.signOut = signOutsBefore; // The later sign-out scenario counts only its own requests.
   await page.getByText('Account settings', {exact:true}).click(); await heading('Profile and appearance').waitFor();
   noWorkspaces = false; projectListCount = 2; role = 'viewer';
   console.log('PASS shell: account identity in the top bar menu, workspace/project switcher, Settings role sections, owner/admin/editor/viewer/operator and empty scope, native keyboard and request-free menu.');
