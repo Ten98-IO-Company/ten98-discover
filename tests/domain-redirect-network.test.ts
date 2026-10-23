@@ -7,7 +7,7 @@ import https from 'node:https';
 import http from 'node:http';
 import {addressKey,publicNetworkAddress} from '../src/server/public-network.ts';
 import {permittedOidcAddress} from '../src/server/oidc.ts';
-import {observeDomainRedirect,redirectUrl,requestRedirectHeaders,type RedirectTransport} from '../src/server/domain-redirect-network.ts';
+import {observeDomainRedirect,pinnedPeer,redirectUrl,requestRedirectHeaders,type RedirectTransport} from '../src/server/domain-redirect-network.ts';
 
 const publicAddress={address:'1.1.1.1',family:4 as const};
 const resolve:RedirectTransport['resolve']=async()=>[publicAddress];
@@ -114,4 +114,11 @@ test('real native agents ignore inherited proxies and abort a stalled header req
   const timer=setTimeout(()=>child.kill(),10000);
   try{const code=await new Promise<number|null>((resolve,reject)=>{child.once('exit',resolve);child.once('error',reject);});assert.equal(code,0,stderr);assert.match(stdout,/PASS contained native/);}
   finally{clearTimeout(timer);}
+});
+
+test('pinned peer check compares canonical addresses and never matches zone ids or invalid peers',()=>{
+  for(const [peer,pinned] of [['1.1.1.1','1.1.1.1'],['::ffff:1.1.1.1','1.1.1.1'],['2606:4700:4700:0:0:0:0:1111','2606:4700:4700::1111'],['2606:4700:4700::1111','2606:4700:4700::1111']] as const)assert.equal(pinnedPeer(peer,pinned),true,peer);
+  for(const [peer,pinned] of [['8.8.8.8','1.1.1.1'],['::ffff:8.8.8.8','1.1.1.1'],['2606:4700:4700::1111%eth0','2606:4700:4700::1111'],['[2606:4700:4700::1111]','2606:4700:4700::1111'],[' 1.1.1.1','1.1.1.1'],['','1.1.1.1'],[undefined,'1.1.1.1'],['not-address','not-address'],['::ffff:1.1.1.1','::ffff:8.8.8.8']] as const)assert.equal(pinnedPeer(peer,pinned),false,String(peer));
+  // Node reports mapped peers as lowercase dotted quads; other spellings of the same IPv4 address now also match it.
+  assert.equal(pinnedPeer('::ffff:101:101','1.1.1.1'),true);assert.equal(pinnedPeer('::FFFF:1.1.1.1','1.1.1.1'),true);
 });

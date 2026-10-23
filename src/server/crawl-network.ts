@@ -5,8 +5,8 @@ import {performance} from 'node:perf_hooks';
 import {Readable,Transform,Writable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {createGunzip} from 'node:zlib';
-import {redirectUrl,resolveRedirectHost} from './domain-redirect-network.ts';
-import {addressKey,publicNetworkAddress} from './public-network.ts';
+import {pinnedPeer,redirectUrl,resolveRedirectHost} from './domain-redirect-network.ts';
+import {publicNetworkAddress} from './public-network.ts';
 
 export type CrawlDocumentKind='html'|'robots'|'sitemap';
 export type CrawlDownloadReason='blocked'|'dns_error'|'network_error'|'peer_mismatch'|'timeout'|'aborted'|'invalid_response'|'redirect'|'http_status'|'bodyless'|'partial_response'|'unsupported_mime'|'unsupported_encoding'|'wire_limit'|'expanded_limit'|'incomplete_body'|'invalid_compression';
@@ -134,8 +134,7 @@ async function requestDocument(url:URL,address:{address:string;family:4|6},kind:
     });
     request.once('upgrade',(_response,socket)=>{socket.destroy();finish(failure('invalid_response'));});
     request.once('socket',socket=>socket.once(url.protocol==='https:'?'secureConnect':'connect',()=>{
-      const remote=socket.remoteAddress?.replace(/^::ffff:/,'');
-      if(!remote||addressKey(remote)!==addressKey(address.address)){finish(failure('peer_mismatch'));return;}
+      if(!pinnedPeer(socket.remoteAddress,address.address)){finish(failure('peer_mismatch'));return;}
       peerChecked=true;
     }));
     signal.addEventListener('abort',abort,{once:true});

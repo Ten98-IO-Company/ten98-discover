@@ -129,3 +129,33 @@ test('readJson maps stream read failures to 400', async () => {
   const body = new ReadableStream<Uint8Array>({ start(c) { c.error(new Error('boom')); } });
   await assert.rejects(readJson(makeRequest(body)), isStatus(400));
 });
+
+test('readJson keeps its fixed messages when delegating to the runtime reader', async () => {
+  const message = (text: string, status: number) => (e: unknown) => e instanceof InputError && e.status === status && e.message === text;
+  await assert.rejects(readJson(makeRequest([new Uint8Array(32)]), 16), message('body too large', 413));
+  await assert.rejects(readJson(makeRequest([new Uint8Array([0x7b, 0xff, 0x7d])])), message('body is not valid utf-8', 400));
+  // A multibyte sequence truncated at the end of the body is malformed too.
+  await assert.rejects(readJson(makeRequest([new Uint8Array([0x22, 0xe2, 0x82])])), message('body is not valid utf-8', 400));
+  await assert.rejects(readJson(makeRequest(new ReadableStream<Uint8Array>({ start(c) { c.error(new Error('boom')); } }))), message('failed to read request body', 400));
+  // A stream that fails with its own RangeError is a read failure, not the byte limit.
+  await assert.rejects(readJson(makeRequest(new ReadableStream<Uint8Array>({ start(c) { c.error(new RangeError('upstream')); } }))), message('failed to read request body', 400));
+  assert.deepEqual(await readJson(makeRequest([new TextEncoder().encode('{"a":'), new TextEncoder().encode('"é"}')]), 16), { a: 'é' });
+});
+
+test('readJson accepts exactly the byte limit across chunks and strips a leading BOM', async () => {
+  const bytes = new TextEncoder().encode('{"k":"é"}');
+  const split = [bytes.subarray(0, 7), bytes.subarray(7)];
+  assert.deepEqual(await readJson(makeRequest(split), bytes.byteLength), { k: 'é' });
+  await assert.rejects(readJson(makeRequest(split), bytes.byteLength - 1), isStatus(413));
+  assert.deepEqual(await readJson(makeRequest([new Uint8Array([0xef, 0xbb, 0xbf]), new TextEncoder().encode('{}')])), {});
+});
+
+test('readJson rejects a body that is both malformed and oversized without reading past the bad chunk', async () => {
+  // Decoding is now incremental, so malformed bytes before the limit is crossed report 400 rather than 413.
+  let pulls = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(c) { pulls++; c.enqueue(pulls === 1 ? new Uint8Array([0xff]) : new Uint8Array(32)); },
+  });
+  await assert.rejects(readJson(makeRequest(body), 16), isStatus(400));
+  assert.ok(pulls <= 2);
+});

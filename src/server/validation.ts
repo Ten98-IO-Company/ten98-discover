@@ -1,3 +1,4 @@
+import { readResponseText } from '@ten98/runtime';
 import { z } from 'zod';
 
 export class InputError extends Error {
@@ -79,32 +80,16 @@ export async function readJson(request: Request, maxBytes = 8192): Promise<unkno
     if (declared > maxBytes) throw new InputError(413, 'body too large');
   }
   if (request.body === null) throw new InputError(400, 'empty body');
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {});
-        throw new InputError(413, 'body too large');
-      }
-      chunks.push(value);
-    }
-  } catch (error) {
-    if (error instanceof InputError) throw error;
-    throw new InputError(400, 'failed to read request body');
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = Buffer.concat(chunks, total);
   let text: string;
   try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    throw new InputError(400, 'body is not valid utf-8');
+    text = await readResponseText(new Response(request.body), { maxBytes });
+  } catch (error) {
+    // The runtime marks its byte limit with RESPONSE_TOO_LARGE; malformed UTF-8 carries the fatal decoder's Node code.
+    // Anything else, including an error raised by the body stream itself, is a read failure.
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (error instanceof RangeError && code === 'RESPONSE_TOO_LARGE') throw new InputError(413, 'body too large');
+    if (code === 'ERR_ENCODING_INVALID_ENCODED_DATA') throw new InputError(400, 'body is not valid utf-8');
+    throw new InputError(400, 'failed to read request body');
   }
   if (text.trim() === '') throw new InputError(400, 'empty body');
   try {
