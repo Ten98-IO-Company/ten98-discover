@@ -1,4 +1,4 @@
-import {AppliedFilters,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment, useConfirmDialog} from '@ten98/ui';
+import {AppliedFilters,DataTable,EvidenceSummary,ShareChart,TimeSeriesChart,type ChartPoint,type ChartTone,type ShareSegment, useConfirmDialog} from '@ten98/ui';
 import {retentionCoverage} from '../lib/analytics-comparison';
 import {analyticsFieldLimit,analyticsSelectionFields} from '../lib/analytics-dimensions';
 import {isGeo,fieldValueLabel,patchLocationFilters,GeographyValueControl,KINDS,FILTERS,PROP_TYPES,TIMEZONES,utcDate,labelOf,num,decimal,emptyAdvanced,initialDraft,buildParams,record,uuid,clean,draftFilterQuery,savedPredicates,validSaved,sameDefinition,preciseDate,buildAdvanced,readAdvanced,focusAdvanced,validAdvancedResult,qualificationDraft,validCohort,sameCohortDefinition,reportParams,validSessionSelection,sessionReason,AdvancedSummary,SessionStatus,AdvancedControls,ExactFilterControls,type SessionSelection,type FilterRow,type Draft,type Definition,type SavedFilter,type CohortRef} from './ExplorerFilters';
@@ -8,6 +8,7 @@ import {explorerNavigation,analyticsNavigation,analyticsNavigationNames,geograph
 import {analyticsExplorerQuery} from './AnalyticsPanel';
 import {defaultParseSearch} from '@tanstack/react-router';
 import {api,ApiError,errMsg} from '../lib/api';
+import {readExploreJson} from '../lib/explorer-combination';
 import {useAnnotations} from './AnnotationsPanel';
 import type {AdvancedPredicates} from '../server/advanced-predicate-input';
 import type {advancedPredicateMethod} from '../server/advanced-predicates';
@@ -166,19 +167,10 @@ function validTupleResult(result:ExploreResult,params:URLSearchParams):boolean{
   }
   return result.breakdown.returnedGroupEvents===events&&events<=result.totals.events&&identified<=result.totals.identifiedEvents&&views<=result.totals.pageViews&&identifiedViews<=result.totals.identifiedEvents&&(result.breakdown.truncated||events===result.totals.events&&identified===result.totals.identifiedEvents&&views===result.totals.pageViews);
 }
-export async function readCombination(path:string,signal:AbortSignal):Promise<ExploreResult>{
-  const response=await fetch(path,{credentials:'same-origin',redirect:'error',signal:AbortSignal.any([signal,AbortSignal.timeout(20000)])});
-  const failure=(message:string)=>{const error=new ApiError(message);error.status=response.status;return error;};
-  if([401,403,404].includes(response.status)){void response.body?.cancel();throw failure(response.status===401?'Your session has expired. Sign in again.':'This project is unavailable.');}
-  if(response.ok&&response.status!==200){void response.body?.cancel();throw failure('The combination response status could not be verified.');}
-  if(!response.body||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw failure('The combination response could not be verified. Refresh the applied report.');
-  const reader=response.body.getReader(),limit=response.ok?2097152:8192,parts:Uint8Array[]=[];let size=0;
-  try{for(;;){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;if(size>limit)throw failure('The complete combination response is too large. Narrow the filters.');parts.push(next.value);}}finally{await reader.cancel().catch(()=>{});}
-  const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
-  let value:unknown;try{value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw failure('The combination response was incomplete or malformed.');}
-  if(!response.ok)throw failure(record(value)&&typeof value.error==='string'?value.error:'The combination report could not be loaded.');
-  return value as ExploreResult;
-}
+// Report tables are already ordered and capped by the server.
+const plainTable={searchable:false,sortable:false,pagination:false} as const;
+type BreakdownGroup=ExploreResult['breakdown']['groups'][number];
+export const readCombination=(path:string,signal:AbortSignal)=>readExploreJson<ExploreResult>(path,signal);
 function redactedReport(result:ExploreResult){return Object.values(result.totals).every(n=>n===null)&&result.daily.every(day=>day.events===null&&day.pageViews===null&&day.customEvents===null)&&result.numeric===null&&result.breakdown.groups.length===0&&result.breakdown.totalGroups===null&&result.breakdown.returnedGroupEvents===null&&result.breakdown.truncated===false&&result.properties.keys.length===0&&result.properties.truncated===false;}
 export function validCohortResult(result:ExploreResult,params:URLSearchParams,projectId:string){
   if(params.has('propertyView')&&!validPropertyReport(result,params))return false;
@@ -263,20 +255,29 @@ function PropertyDetails({report,days,timeZone,totalEvents,onNext,onFirst,tab,se
     {(tab==='values'||tab==='arrays')&&<><p className="hint">Chart shows the first {shown.length} returned series. The table includes every returned series. {tab==='arrays'?`${num(report.arrays.samples)} array samples · ${num(report.arrays.occurrences)} element occurrences. `:''}{tab==='arrays'&&report.arrays.truncated?'Array values truncated at100; narrow filters for the rest.':''}</p>
       <TimeSeriesChart label="Typed property occurrences by local event day" context={timeZone} summary="Stacked bars show the first returned series per local event day. Exact counts and coverage for every series are in the Property series data table." kind="stacked-bars" series={shown.map((s,j)=>({id:String(j),label:`${s.type}: ${s.type==='missing'?'Missing / uncollected':JSON.stringify(s.value)}`,tone:(j%5+1) as ChartTone,points:days.map((day,i)=>dayPoint(day,i,s.counts[i]))}))} yDomain={[0,max]} xHeader="Local event date" fit={dailyFit(days.length)} tableColumns={[{header:'Coverage',values:days.map(d=>d.skipped?'Skipped date':d.coverage)}]} emptyMessage="No returned property values for this population."/>
       <PropertyShares items={series.map(s=>({key:JSON.stringify([s.type,s.value]),label:`${s.type}: ${s.type==='missing'?'Missing / uncollected':JSON.stringify(s.value)}`,count:s.total}))} total={tab==='arrays'?report.arrays.occurrences:totalEvents} label={tab==='arrays'?'Array occurrence shares':'Typed property value shares'}/>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Property series data"><table><thead><tr><th>Type</th><th>Value</th><th>Total</th><th>Share of observed total</th>{days.map(d=><th key={d.date}>{d.date}<div className="hint">{d.skipped?'Skipped date':d.coverage}</div></th>)}</tr></thead><tbody>{series.map((s,i)=><tr key={i}><td>{s.type}</td><td><bdi>{s.type==='missing'?'Missing / uncollected':JSON.stringify(s.value)}</bdi></td><td>{s.total}</td><td>{`${(s.total/Number(tab==='arrays'?report.arrays.occurrences:totalEvents)*100).toFixed(1)}%`}</td>{s.counts.map((n,j)=><td key={j}>{num(n)}</td>)}</tr>)}</tbody></table></div></>}
+      <DataTable ariaLabel="Property series data" {...plainTable} emptyTitle="No property values in this population." emptyDescription={null} rows={series.map((s,i)=>({...s,i}))} rowKey={s=>String(s.i)}
+        columns={[{key:'type',header:'Type',render:s=>s.type},{key:'value',header:'Value',rowHeader:true,wrap:true,render:s=><bdi>{s.type==='missing'?'Missing / uncollected':JSON.stringify(s.value)}</bdi>},{key:'total',header:'Total',numeric:true,render:s=>s.total},
+          {key:'share',header:'Share of observed total',numeric:true,render:s=>`${(s.total/Number(tab==='arrays'?report.arrays.occurrences:totalEvents)*100).toFixed(1)}%`},
+          ...days.map((d,j)=>({key:'day'+j,header:`${d.date} (${d.skipped?'Skipped date':d.coverage})`,numeric:true,render:(s:{counts:(number|null)[]})=>num(s.counts[j])}))]}/></>}
     {tab==='numbers'&&<><div className="metric-grid" aria-label="Numeric property summary">{([['Total',report.numberStats.sum],['Average',report.numberStats.average],['Median',report.numberStats.median],['Minimum',report.numberStats.min],['Maximum',report.numberStats.max]]as const).map(([label,value])=><div className="metric" key={label}><div className="metric-label">{label}</div><div className="metric-value"><bdi>{decimal(value)}</bdi></div></div>)}</div>
       <p className="hint">{num(report.numberStats.samples)} observed numeric samples. {report.countsAreLowerBounds?'These sums, averages and extrema describe only the observed population; they are not lower bounds. ':''}Sum and average share one signed scale. Very small bars can be below a pixel; the table and CSV retain exact decimals. Empty or unavailable samples have no bar.</p>
       {report.numberStats.samples!==null&&report.numberStats.samples>0?<TimeSeriesChart label="Numeric property sum and average by local event day" context="Signed scale relative to the largest sum or average magnitude" summary="Bar heights share one signed scale, so very large decimals stay comparable. Each point's note and the Numeric property series table give the exact decimals." kind="grouped-bars" series={(['sum','average']as const).map((key,j)=>({id:key,label:key==='sum'?'Sum':'Average',role:j===0?'primary' as const:'comparison' as const,points:report.numbers.map((n,i)=>({...dayPoint(days[i],i,coordinates[i*2+j],n.samples===0?'No numeric samples.':n[key]===null?undefined:`Exact ${key} ${n[key]}.`),title:`${days[i].date}: ${key} ${n[key]??'unavailable'} (${days[i].skipped?'skipped date':days[i].coverage})`}))}))} yDomain={[-1,1]} formatY={signedShare} baselineLabel="Zero" xHeader="Local event date" fit={dailyFit(days.length)} tableColumns={[{header:'Samples',values:report.numbers.map(n=>num(n.samples))}]}/>:<p className="hint">{report.numberStats.samples===null?'Numeric chart unavailable.':'No numeric samples in this population.'}</p>}
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Numeric property series"><table><thead><tr><th>Local event date</th><th>Samples</th><th>Exact sum</th><th>Exact average</th><th>Coverage</th></tr></thead><tbody>{report.numbers.map((n,i)=><tr key={days[i].date}><td>{days[i].date}</td><td>{num(n.samples)}</td><td>{decimal(n.sum)}</td><td>{decimal(n.average)}</td><td>{days[i].skipped?'Skipped date':days[i].coverage}</td></tr>)}</tbody></table></div></>}
+      <DataTable ariaLabel="Numeric property series" {...plainTable} responsive="stack" emptyTitle="No local event dates in this range." emptyDescription={null} rows={report.numbers.map((n,i)=>({...n,day:days[i]}))} rowKey={n=>n.day.date}
+        columns={[{key:'date',header:'Local event date',rowHeader:true,render:n=>n.day.date},{key:'samples',header:'Samples',numeric:true,render:n=>num(n.samples)},{key:'sum',header:'Exact sum',numeric:true,render:n=>decimal(n.sum)},{key:'average',header:'Exact average',numeric:true,render:n=>decimal(n.average)},{key:'coverage',header:'Coverage',render:n=>n.day.skipped?'Skipped date':n.day.coverage}]}/></>}
     {tab==='dates'&&<><p className="hint">These are property date values, not the date the event was received. Calendar summaries use <bdi>{timeZone}</bdi>; weeks start Monday. {num(dates.samples)} observed date samples. Histogram and weekday summaries include every matching date value. {report.dates.truncated?'The exact UTC table shows the first100 values; narrow filters for the rest.':'Exact UTC values are preserved below.'}</p>
       <div className="metric-grid" aria-label="Property date summary">{[['Top weekday',topWeekday===null?null:propertyWeekdays[topWeekday],topWeekday===null?null:weekdayMax],['Top date',dates.topDate?.date??null,dates.topDate?.count??null],['Earliest date',dates.earliest,null],['Latest date',dates.latest,null]].map(([label,value,count])=><div className="metric" key={String(label)}><div className="metric-label">{label}</div><div className="metric-value"><bdi>{value??(dates.samples===null?'Unavailable':'No samples')}</bdi></div>{count!==null&&<div className="hint">{count} occurrences · {(Number(count)/Number(dates.samples)*100).toFixed(1)}%</div>}</div>)}</div>
       <p className="hint">Automatic calendar bucket: {dates.unit??(dates.samples===null?'Unavailable':'No samples')}. Missing buckets between the earliest and latest observed dates are zero; unavailable history is never zero-filled.</p>
       {dates.samples!==null&&dates.samples>0?<TimeSeriesChart label="Property date value histogram" context={`${dates.unit} buckets · ${timeZone}`} summary="Complete observed population by local calendar bucket. Exact counts are in the Property date histogram data table." kind="bars" xScale="band" series={[{id:'occurrences',label:'Occurrences',points:dates.histogram.map((bucket,i)=>({x:i,xLabel:bucket.date,y:bucket.count}))}]} yDomain={[0,dateMax]} xHeader="Local bucket start" fit={dates.unit==='day'?dailyFit(dates.histogram.length):undefined}/>:<p className="hint">{dates.samples===null?'Property date chart unavailable.':'No property date samples in this population.'}</p>}
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Property date histogram data"><table><thead><tr><th>Local bucket start</th><th>Occurrences</th></tr></thead><tbody>{dates.histogram.map(bucket=><tr key={bucket.date}><td>{bucket.date}</td><td>{bucket.count}</td></tr>)}</tbody></table></div>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Property weekday distribution"><table><thead><tr><th>Weekday</th><th>Occurrences</th><th>Share</th></tr></thead><tbody>{propertyWeekdays.map((day,i)=><tr key={day}><td>{day}</td><td>{num(dates.weekdays?.[i]??null)}</td><td>{dates.samples===null?'Unavailable':dates.samples===0?'No samples':`${(dates.weekdays![i]/dates.samples*100).toFixed(1)}%`}</td></tr>)}</tbody></table></div>
+      <DataTable ariaLabel="Property date histogram data" {...plainTable} responsive="stack" emptyTitle={dates.samples===null?"Property date histogram unavailable.":"No property date samples in this population."} emptyDescription={null} rows={dates.histogram} rowKey={bucket=>bucket.date}
+        columns={[{key:'date',header:'Local bucket start',rowHeader:true,render:bucket=>bucket.date},{key:'count',header:'Occurrences',numeric:true,render:bucket=>bucket.count}]}/>
+      <DataTable ariaLabel="Property weekday distribution" {...plainTable} responsive="stack" rows={propertyWeekdays.map((day,i)=>({day,i}))} rowKey={row=>row.day}
+        columns={[{key:'day',header:'Weekday',rowHeader:true,render:row=>row.day},{key:'count',header:'Occurrences',numeric:true,render:row=>num(dates.weekdays?.[row.i]??null)},{key:'share',header:'Share',numeric:true,render:row=>dates.samples===null?'Unavailable':dates.samples===0?'No samples':`${(dates.weekdays![row.i]/dates.samples*100).toFixed(1)}%`}]}/>
       <PropertyShares items={dates.weekdays===null?[]:propertyWeekdays.map((label,i)=>({key:label,label,count:dates.weekdays![i]}))} total={dates.samples} label="Property weekday shares"/>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Date property distribution"><table><thead><tr><th>Property date (UTC)</th><th>Occurrences</th></tr></thead><tbody>{report.dates.values.map(d=><tr key={d.value}><td><time dateTime={d.value}>{d.value}</time></td><td>{d.count}</td></tr>)}</tbody></table></div></>}
-    {tab==='events'&&<><p className="hint">Up to50 matching events, including events without visitor identifiers. Missing properties differ from explicit null. {allKeys.length>100?'First100 property columns shown; CSV preserves every returned event property.':''}</p><div className="table-wrap explorer-property-pivot" tabIndex={0} role="region" aria-label="Event property pivot"><table><thead><tr><th>Received at (UTC)</th><th>Event</th><th>Path</th>{pivotKeys.map(key=><th key={key}><bdi>{key}</bdi></th>)}</tr></thead><tbody>{report.events.map(e=><tr key={e.id}><td>{e.receivedAt}</td><td><bdi>{e.eventName}</bdi></td><td><bdi>{e.path}</bdi></td>{pivotKeys.map(key=>{const value=e.properties[key];return <td key={key}><bdi>{value?`${value.type} ${JSON.stringify(value.value)}`:'Missing / uncollected'}</bdi></td>;})}</tr>)}</tbody></table></div><div className="row"><button className="btn" type="button" onClick={onFirst}>First events</button><button className="btn" type="button" disabled={!report.nextCursor} onClick={onNext}>Next50 events</button></div></>}
+      <DataTable ariaLabel="Date property distribution" {...plainTable} responsive="stack" emptyTitle="No property date values in this population." emptyDescription={null} rows={report.dates.values} rowKey={d=>d.value}
+        columns={[{key:'value',header:'Property date (UTC)',rowHeader:true,render:d=><time dateTime={d.value}>{d.value}</time>},{key:'count',header:'Occurrences',numeric:true,render:d=>d.count}]}/></>}
+    {tab==='events'&&<><p className="hint">Up to50 matching events, including events without visitor identifiers. Missing properties differ from explicit null. {allKeys.length>100?'First100 property columns shown; CSV preserves every returned event property.':''}</p><div className="explorer-property-pivot"><DataTable ariaLabel="Event property pivot" {...plainTable} stickyHeader emptyTitle="No matching events in this population." emptyDescription={null} rows={report.events} rowKey={e=>e.id}
+        columns={[{key:'received',header:'Received at (UTC)',render:e=>e.receivedAt},{key:'event',header:'Event',rowHeader:true,render:e=><bdi>{e.eventName}</bdi>},{key:'path',header:'Path',render:e=><bdi>{e.path}</bdi>},
+          ...pivotKeys.map(key=>({key:'property:'+key,header:`⁨${key}⁩`,render:(e:{properties:Record<string,{type:string;value:unknown}|undefined>})=>{const value=e.properties[key];return <bdi>{value?`${value.type} ${JSON.stringify(value.value)}`:'Missing / uncollected'}</bdi>;}}))]}/></div><div className="row"><button className="btn" type="button" onClick={onFirst}>First events</button><button className="btn" type="button" disabled={!report.nextCursor} onClick={onNext}>Next50 events</button></div></>}
   </section>;
 }
 
@@ -760,22 +761,14 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
           {result.breakdown.groups.length===0?(
             <p className="hint dim">{sessionUnavailable?'Review the session-property evidence above. Unavailable selection does not mean no matching events.':cohortMembershipUnavailable?'Qualification data cannot establish membership. Review the qualification period and identifier coverage.':result.coverage.status==='unavailable'?'This history is no longer available. Choose a more recent range.':'No retained events match these filters. Change the dates or remove filters.'}</p>
           ):(
-            <div className="table-wrap" tabIndex={0} role="region" aria-label="Breakdown data, scroll horizontally for all columns">
-              <table>
-                <thead><tr>{result.query.fields?result.query.fields.map(field=><th key={field} scope="col">{labelOf(GROUPS,field)}</th>):<><th>Value</th><th>Type</th></>}<th>Events</th><th>{result.query.fields?'Visitors (all events)':'Visitors'}</th>{result.query.fields&&<><th scope="col">Page views</th><th scope="col">Estimated visitors (page views)</th><th scope="col">Visits (page views)</th><th scope="col">Bounce rate</th><th scope="col">Average observed visit duration</th></>}</tr></thead>
-                <tbody>
-                  {result.breakdown.groups.slice(0,result.query.fields?500:100).map((g,i)=>(
-                    <tr key={i}>
-                      {result.query.fields?(g.value as Array<{type:string;value:unknown}>).map((atom,index)=>{const field=result.query.fields![index],label=groupValue(atom.type,atom.value,field);return <td key={field}>{isGeo(field)?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(field,{on:true,value:atom.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,field)}: ${label}`}><bdi>{label}</bdi></button>:<><bdi>{label}</bdi> <span className="hint">({groupType(atom.type)})</span></>}</td>;}):<><td>{isGeo(result.query.groupBy??'')?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(result.query.groupBy!,{on:true,value:g.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,result.query.groupBy??'')}: ${groupValue(g.type,g.value,result.query.groupBy)}`}><bdi>{groupValue(g.type,g.value,result.query.groupBy)}</bdi></button>:groupValue(g.type,g.value,result.query.groupBy)}</td>
-                      <td>{isGeo(result.query.groupBy??'')?parseGeographyKey(result.query.groupBy as GeoField,g.value)?.state==='known'?'Known location':parseGeographyKey(result.query.groupBy as GeoField,g.value)?.state==='unknown'?'Unknown':'Not recorded':groupType(g.type)}</td></>}
-                      <td>{g.events}</td>
-                      <td>{g.visitors==null?'Unavailable':g.visitors}</td>
-                      {result.query.fields&&<><td>{g.pageViews}</td><td>{num(g.estimatedVisitors??null)}</td><td>{num(g.visits??null)}</td><td>{g.bounceRate==null?'Unavailable':<bdi>{new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(g.bounceRate)}%</bdi>}</td><td>{g.averageVisitSeconds==null?'Unavailable':<bdi>{new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(g.averageVisitSeconds)} s</bdi>}</td></>}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable ariaLabel="Breakdown data" {...plainTable} responsive="stack" rows={result.breakdown.groups.slice(0,result.query.fields?500:100).map((g,i)=>({...g,i}))} rowKey={g=>String(g.i)}
+              columns={[...(result.query.fields?result.query.fields.map((field,index)=>({key:'field:'+field,header:labelOf(GROUPS,field),rowHeader:index===0,wrap:true,render:(g:{value:unknown})=>{const atom=(g.value as Array<{type:string;value:unknown}>)[index],label=groupValue(atom.type,atom.value,field);return isGeo(field)?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(field,{on:true,value:atom.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,field)}: ${label}`}><bdi>{label}</bdi></button>:<><bdi>{label}</bdi> <span className="hint">({groupType(atom.type)})</span></>;}})):[
+                  {key:'value',header:'Value',rowHeader:true,wrap:true,render:(g:{type:string;value:unknown})=>isGeo(result.query.groupBy??'')?<button type="button" className="analytics-environment-label" onClick={()=>{patchFilter(result.query.groupBy!,{on:true,value:g.value as string});setFormError('');}} aria-label={`Use ${labelOf(GROUPS,result.query.groupBy??'')}: ${groupValue(g.type,g.value,result.query.groupBy)}`}><bdi>{groupValue(g.type,g.value,result.query.groupBy)}</bdi></button>:groupValue(g.type,g.value,result.query.groupBy)},
+                  {key:'type',header:'Type',render:(g:{type:string;value:unknown})=>isGeo(result.query.groupBy??'')?parseGeographyKey(result.query.groupBy as GeoField,g.value)?.state==='known'?'Known location':parseGeographyKey(result.query.groupBy as GeoField,g.value)?.state==='unknown'?'Unknown':'Not recorded':groupType(g.type)}]),
+                {key:'events',header:'Events',numeric:true,render:g=>g.events},{key:'visitors',header:result.query.fields?'Visitors (all events)':'Visitors',numeric:true,render:g=>g.visitors==null?'Unavailable':g.visitors},
+                ...(result.query.fields?[{key:'pageViews',header:'Page views',numeric:true,render:(g:BreakdownGroup)=>g.pageViews},{key:'estimatedVisitors',header:'Estimated visitors (page views)',numeric:true,render:(g:BreakdownGroup)=>num(g.estimatedVisitors??null)},{key:'visits',header:'Visits (page views)',numeric:true,render:(g:BreakdownGroup)=>num(g.visits??null)},
+                  {key:'bounceRate',header:'Bounce rate',numeric:true,render:(g:BreakdownGroup)=>g.bounceRate==null?'Unavailable':<bdi>{new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(g.bounceRate)}%</bdi>},
+                  {key:'duration',header:'Average observed visit duration',numeric:true,render:(g:BreakdownGroup)=>g.averageVisitSeconds==null?'Unavailable':<bdi>{new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(g.averageVisitSeconds)} s</bdi>}]:[])]}/>
           )}
         </div>
 
@@ -798,33 +791,10 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
         </details>
         <details className="card">
           <summary>Daily data ({result.daily.length} {result.daily.length===1?'day':'days'})</summary>
-          <div className="table-wrap" tabIndex={0} role="region" aria-label="Daily data, scroll horizontally for all columns">
-            <table>
-              <thead><tr><th>Date</th><th>Events</th><th>Page views</th><th>Custom events</th><th>Coverage</th><th>Notes</th></tr></thead>
-              <tbody>
-                {result.daily.map(d=>(
-                  <tr key={d.date}>
-                    <td>
-                      {d.date}
-                      {d.skipped?(
-                        <div className="hint dim">This calendar date did not occur in {result.range.timeZone}.</div>
-                      ):(
-                        <details>
-                          <summary className="hint dim">UTC boundaries</summary>
-                          <div className="hint dim">{d.start} – {d.end}</div>
-                        </details>
-                      )}
-                    </td>
-                    <td>{d.skipped?'—':num(d.events)}</td>
-                    <td>{d.skipped?'—':num(d.pageViews)}</td>
-                    <td>{d.skipped?'—':num(d.customEvents)}</td>
-                    <td>{d.coverage}</td>
-                    <td>{annotations.dayButton(d.date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable ariaLabel="Daily data" {...plainTable} responsive="stack" emptyTitle="No local dates in this range." emptyDescription={null} rows={result.daily} rowKey={d=>d.date}
+            columns={[{key:'date',header:'Date',rowHeader:true,render:d=><>{d.date}{d.skipped?<div className="hint dim">This calendar date did not occur in {result.range.timeZone}.</div>:<details><summary className="hint dim">UTC boundaries</summary><div className="hint dim">{d.start} – {d.end}</div></details>}</>},
+              {key:'events',header:'Events',numeric:true,render:d=>d.skipped?'—':num(d.events)},{key:'pageViews',header:'Page views',numeric:true,render:d=>d.skipped?'—':num(d.pageViews)},{key:'customEvents',header:'Custom events',numeric:true,render:d=>d.skipped?'—':num(d.customEvents)},
+              {key:'coverage',header:'Coverage',render:d=>d.coverage},{key:'notes',header:'Notes',render:d=>annotations.dayButton(d.date)}]}/>
         </details>
         <GeographyAttribution/>{result.geographyProvenance&&<p className="hint">Location source builds across matching report events: {num(result.geographyProvenance.databaseCount)}{result.geographyProvenance.oldestDatabaseBuild?` · oldest ${new Date(result.geographyProvenance.oldestDatabaseBuild*1000).toISOString().slice(0,10)}`:''}{result.geographyProvenance.newestDatabaseBuild?` · newest ${new Date(result.geographyProvenance.newestDatabaseBuild*1000).toISOString().slice(0,10)}`:''}. This uses retained report events, not the cohort qualification period or current database file.</p>}
       </>)}
@@ -835,17 +805,8 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
           <div className="card stack">
             <h3>Property values</h3>
             <p className="hint dim">{result.numeric.samples} numeric {result.numeric.samples===1?'sample':'samples'} · exact decimal values</p>
-            <div className="table-wrap" tabIndex={0} role="region" aria-label="Numeric property data, scroll horizontally for all columns">
-              <table>
-                <thead><tr><th>Sum</th><th>Average</th><th>Min</th><th>Max</th></tr></thead>
-                <tbody><tr>
-                  <td>{decimal(result.numeric.sum)}</td>
-                  <td>{decimal(result.numeric.average)}</td>
-                  <td>{decimal(result.numeric.min)}</td>
-                  <td>{decimal(result.numeric.max)}</td>
-                </tr></tbody>
-              </table>
-            </div>
+            <DataTable ariaLabel="Numeric property data" {...plainTable} responsive="stack" rows={[result.numeric]} rowKey={()=>'numeric'}
+              columns={[{key:'sum',header:'Sum',numeric:true,render:n=>decimal(n.sum)},{key:'average',header:'Average',numeric:true,render:n=>decimal(n.average)},{key:'min',header:'Min',numeric:true,render:n=>decimal(n.min)},{key:'max',header:'Max',numeric:true,render:n=>decimal(n.max)}]}/>
           </div>
         )}
       </>)}
