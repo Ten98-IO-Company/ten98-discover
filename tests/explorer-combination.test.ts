@@ -43,3 +43,17 @@ test('explorer combination reader lets an abort propagate unchanged', async () =
     await assert.rejects(pending, (error: Error) => error.name === 'AbortError');
   } finally { globalThis.fetch = original; }
 });
+
+test('explorer combination reader lets a timeout during the body read propagate unchanged', async () => {
+  // The 20-second request deadline errors the body with TimeoutError; it must not read as a malformed response.
+  let body!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(stream) { body = stream; stream.enqueue(new TextEncoder().encode('{"a":')); } });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(stream, { status: 200, headers: json });
+  try {
+    const pending = readExploreJson('/api/projects/p/explore', new AbortController().signal);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    body.error(new DOMException('The operation timed out.', 'TimeoutError'));
+    await assert.rejects(pending, (error: Error) => error.name === 'TimeoutError');
+  } finally { globalThis.fetch = original; }
+});

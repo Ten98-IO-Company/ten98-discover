@@ -12,7 +12,8 @@ export async function readExploreJson<T>(path: string, signal: AbortSignal): Pro
   let text: string;
   try { text = await readResponseText(response, { maxBytes: response.ok ? 2097152 : 8192 }); }
   catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw error;
+    // A cancelled or timed-out read surfaces as itself, as it did before the runtime reader.
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw error;
     throw failure(response.status, error instanceof RangeError ? 'The complete combination response is too large. Narrow the filters.' : 'The combination response was incomplete or malformed.');
   }
   let value: unknown;
