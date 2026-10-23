@@ -16,6 +16,36 @@ test('report timestamps use the report time zone, not the browser zone (#373)',(
   assert.equal(formatReportInstant('2026-10-23T21:45:00Z','Not/AZone'),'2026-10-23T21:45:00Z');
 });
 
+test('report times follow daylight-saving changes in the report zone',()=>{
+  // Spring forward: 02:00 EST becomes 03:00 EDT, so 01:59 local is followed by 03:00.
+  assert.equal(formatReportInstant('2026-03-08T06:59:00Z','America/New_York'),'2026-03-08 01:59 America/New_York');
+  assert.equal(formatReportInstant('2026-03-08T07:00:00Z','America/New_York'),'2026-03-08 03:00 America/New_York');
+  // Fall back: 01:30 local occurs twice, so two different instants show identically; panels expose the ISO instant as a title.
+  assert.equal(formatReportInstant('2026-11-01T05:30:00Z','America/New_York'),'2026-11-01 01:30 America/New_York');
+  assert.equal(formatReportInstant('2026-11-01T06:30:00Z','America/New_York'),'2026-11-01 01:30 America/New_York');
+  assert.equal(formatReportInstant('2026-11-01T07:30:00Z','America/New_York'),'2026-11-01 02:30 America/New_York');
+});
+
+test('UTC output matches the retired Analytics fmtUtc byte for byte',()=>{
+  // Expected strings were produced by the removed `${new Date(iso).toISOString().slice(0,16).replace('T',' ')} UTC`.
+  const expected:[string,string][]=[
+    ['1970-01-01T00:00:00.000Z','1970-01-01 00:00 UTC'],
+    ['2000-02-29T12:00:00Z','2000-02-29 12:00 UTC'],
+    ['2025-12-31T23:59:59.999Z','2025-12-31 23:59 UTC'],
+    ['2026-01-01T00:00:00Z','2026-01-01 00:00 UTC'],
+    ['2026-01-01T00:00:00.000001Z','2026-01-01 00:00 UTC'],
+    ['2026-10-24T00:00:00Z','2026-10-24 00:00 UTC'],
+    ['2026-10-23T21:45:00.123456Z','2026-10-23 21:45 UTC'],
+    ['2026-12-31T23:59:00Z','2026-12-31 23:59 UTC'],
+    ['2027-01-01T00:00:00.000Z','2027-01-01 00:00 UTC'],
+    ['2026-06-15T12:34:56+03:00','2026-06-15 09:34 UTC'],
+  ];
+  for(const[iso,text]of expected)assert.equal(formatReportInstant(iso,'UTC'),text,iso);
+  const analytics=readFileSync(new URL('../src/components/AnalyticsPanel.tsx',import.meta.url),'utf8');
+  assert.doesNotMatch(analytics,/fmtUtc/);
+  assert.match(analytics,/formatReportInstant\(data\.lastReceivedAt,'UTC'\)/);
+});
+
 test('Revenue, Conversions and Attribution do not format report times in the browser zone (#373)',()=>{
   for(const file of['RevenuePanel','ConversionsPanel','AttributionPanel']){
     const source=readFileSync(new URL(`../src/components/${file}.tsx`,import.meta.url),'utf8');
@@ -23,4 +53,14 @@ test('Revenue, Conversions and Attribution do not format report times in the bro
     assert.match(source,/formatReportInstant\(/,file);
   }
   assert.doesNotMatch(readFileSync(new URL('../src/components/RevenuePanel.tsx',import.meta.url),'utf8'),/ as of\{/,'missing space before the time');
+  const conversions=readFileSync(new URL('../src/components/ConversionsPanel.tsx',import.meta.url),'utf8');
+  assert.doesNotMatch(conversions,/>\{e\.receivedAt\}</,'matching-activity times must not show the raw ISO value');
+  assert.match(conversions,/formatReportInstant\(e\.receivedAt,witness\.range\.timeZone\)/);
+});
+
+test('report status lines carry the exact instant for repeated fall-back hours',()=>{
+  const source=(file:string)=>readFileSync(new URL(`../src/components/${file}.tsx`,import.meta.url),'utf8');
+  assert.match(source('RevenuePanel'),/<p role="status" title=\{!busy&&report\?report\.asOf:undefined\}>/);
+  assert.match(source('AttributionPanel'),/<p role="status" title=\{!busy&&shown\?shown\.asOf:undefined\}>/);
+  assert.match(source('ConversionsPanel'),/<p className="hint" title=\{result\.generatedAt\}>/);
 });
