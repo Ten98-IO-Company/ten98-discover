@@ -102,7 +102,8 @@ async function worker() {
   });
 }
 
-// Set once the built server is loaded: it then owns the process-wide pool, which this command must not close on return.
+// Set once the built server has loaded: it then owns the process-wide pool, which this command must not close on return.
+// A server that fails to load leaves the flag unset, so the pool is still closed and the process can exit.
 let serving = false;
 
 /** The container's web command: the schema is current before the built server is loaded, so it never serves an older one. */
@@ -110,8 +111,8 @@ async function startWeb() {
   await startWhenDatabaseReady('web', async () => {
     // Start the built server with a fresh pool; this one was only for migration.
     await closeDatabase();
-    serving = true;
     await import(new URL('../../.output/server/index.mjs', import.meta.url).href);
+    serving = true;
   });
 }
 
