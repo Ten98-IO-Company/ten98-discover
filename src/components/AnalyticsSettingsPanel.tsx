@@ -400,9 +400,9 @@ function PanelInner({projectId,userId,onUnauthorized,authorityOwner,isCurrent,re
             checked={draft.captureReferrer}
             onChange={(e) => set('captureReferrer', e.target.checked)}
           />
-          Referrer hostname
+          Referring website
         </label>
-        <p className="hint">Stores the referrer hostname only, never the path, query, or fragment.</p>
+        <p className="hint">Shows which website sent each visit, such as google.com. Only the website name is kept, never the page, search terms or full link.</p>
         <label className="row">
           <input
             type="checkbox" style={{width: 'auto', flexShrink: 0}}
