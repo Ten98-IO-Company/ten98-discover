@@ -15,7 +15,6 @@ test-results/
 *.sql
 !migrations/*.sql
 *.dump
-*.sqlite*
 *.pem
 *.key
 .research/
