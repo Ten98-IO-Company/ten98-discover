@@ -112,6 +112,19 @@ async function limit(key: string, maximum: number, client?:PoolClient) {
   if (rows[0].count > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
 }
 
+/** Counts like limit, then refuses once the key's total over the last `minutes` minutes (at most 60, the expiry) exceeds the maximum. */
+async function limitWindow(key: string, maximum: number, minutes: number) {
+  const { rows } = await getDatabase().pool.query(
+    `WITH expired AS (DELETE FROM request_limit WHERE minute < floor(extract(epoch FROM now()) / 60) - 60),
+     current AS (INSERT INTO request_limit(key,minute,count) VALUES ($1,floor(extract(epoch FROM now()) / 60),1)
+       ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING minute,count)
+     SELECT current.count + COALESCE((SELECT sum(earlier.count) FROM request_limit earlier
+       WHERE earlier.key=$1 AND earlier.minute < current.minute AND earlier.minute > current.minute - $3::integer),0) AS total FROM current`,
+    [key, maximum, minutes],
+  );
+  if (Number(rows[0].total) > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
+}
+
 /**
  * Per-minute public collection limits. A client is one resolved visitor address, counted only when the installation identifies
  * visitors by address (see visitorRateKey); its value leaves room for visitors behind a shared network address. Each site is keyed
@@ -349,7 +362,7 @@ export async function handleApi(request: Request): Promise<Response> {
       }
     }
     if (path === '/api/setup' && request.method === 'POST') {
-      await limit('setup', 10);
+      await limitWindow(clientRateKey(request, 'setup'), 10, 15);
       const body = await readJson(request) as Parameters<typeof claimInstallation>[0];
       await claimInstallation(body);
       const signIn = await getAuth().handler(new Request(`${config.appUrl}/api/auth/sign-in/email`, {
