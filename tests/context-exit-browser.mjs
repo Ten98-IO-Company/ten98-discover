@@ -10,7 +10,7 @@ assert.ok(process.env.PLAYWRIGHT_MODULE);
 const W='10000000-0000-4000-8000-000000000001',P='20000000-0000-4000-8000-000000000001',U='30000000-0000-4000-8000-000000000001',stamp='2026-10-19T00:00:00Z';
 const user={id:U,name:'Synthetic context user',email:'context@example.com'};
 const original=()=>({project:{id:P,name:'Synthetic project',origin:'https://context.example'},role:'owner',revision:1,profile:{name:'Saved brand',aliases:[]},sections:[],missingSections:['business_overview','current_goal','positioning','writing_preferences'],customSections:[{key:'custom:audience',title:'Audience',content:'Saved audience',updatedAt:stamp,updatedBy:U}],competitors:[],keyPages:[],researchLog:[],researchLogNextCursor:null,reportTemplates:[],reportTemplatesTruncated:false});
-const errors=[],unexpected=[],groups=[];let browser,context,page,origin,model,writeMode,held=null,signedOut,writes,apiRequests=0,contexts=0,signOutMode='ok',heldSignOut=null,signOutCalls=0;
+const errors=[],unexpected=[],groups=[];let browser,context,page,origin,model,writeMode,held=null,signedOut,writes,apiRequests=0,contexts=0,signOutMode='ok',heldSignOut=null,signOutCalls=0,providerSignOut=null;
 // Regression control removes only the new blocker in Vite memory; source stays unchanged.
 const oracle=process.env.TEN98_CONTEXT_EXIT_ORACLE==='1';
 const plugins=oracle?[{name:'original-context-exit-control',enforce:'pre',transform(code,id){if(!id.replaceAll(String.fromCharCode(92),'/').endsWith('/src/components/ContextPanel.tsx'))return;const line=code.split(String.fromCharCode(10)).find(line=>line.startsWith('  useBlocker({shouldBlockFn:()=>protectExit'));assert.ok(line,'One reviewed context blocker must match');return code.replace(line,'');}}]:[];
@@ -28,7 +28,7 @@ const edit=async(name='Draft brand')=>{await button('Edit business context').cli
 const json=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
 async function release(status=200){const pending=held;assert.ok(pending);held=null;await json(pending.route,status===200?pending.body:{error:'Synthetic save status '+status},status).catch(()=>{});}
 async function fresh(view='context'){
- if(held){await held.route.abort().catch(()=>{});held=null;}await context?.close();model=original();writeMode=null;signedOut=false;writes=[];signOutMode='ok';signOutCalls=0;
+ if(held){await held.route.abort().catch(()=>{});held=null;}await context?.close();model=original();writeMode=null;signedOut=false;writes=[];signOutMode='ok';signOutCalls=0;providerSignOut=null;
  assert.ok(++contexts<=24,'24-context cap');context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block',reducedMotion:'reduce'});
  await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname;
@@ -39,7 +39,7 @@ async function fresh(view='context'){
    else if(path==='/api/me'){status=signedOut?401:200;body=signedOut?{error:'Synthetic session ended'}:{user,instanceOperator:false,workspaces:[{id:W,name:'Synthetic workspace',role:'owner'}]};}
    else if(path==='/api/account/preferences')body={version:'account-preferences-v1',user,preferences:{revision:1,timeZone:'UTC',locale:'en-US',theme:'light',updatedAt:stamp}};
    else if(path==='/api/auth/oidc/providers')body={providers:[]};
-   else if(path==='/api/auth/sign-out'&&req.method()==='POST'){signOutCalls++;if(signOutMode==='hold'){assert.equal(heldSignOut,null);heldSignOut=route;return;}signedOut=true;body=null;}
+   else if(path==='/api/auth/sign-out'&&req.method()==='POST'){signOutCalls++;if(signOutMode==='hold'){assert.equal(heldSignOut,null);heldSignOut=route;return;}signedOut=true;body=providerSignOut===null?null:{providerSignOutUrl:providerSignOut};}
    else if(path===`/api/workspaces/${W}/projects`)body={projects:[{id:P,name:'Synthetic project',origin:'https://context.example',publicKey:'synthetic-key',eventCount:0,lastEventAt:null,retainedFrom:null}]};
    else if(path===`/api/projects/${P}/events`)body={events:[],total:0,retainedFrom:null};
    else if(path===`/api/projects/${P}/context`&&req.method()==='GET')body=structuredClone(model);
@@ -115,5 +115,14 @@ try{
   }
   if(unknown){writeMode='lost';await button('Save changes').click();await button('Retry same save').waitFor();}await cleanAction(async()=>{await button('Account menu').click();await button('Sign out').click();await page.getByRole('button',{name:'Sign in',exact:true}).waitFor();});assert.equal(await brand().count(),0);assert.equal(await button('Retry same save').count(),0);assert.equal(signedOut,true);assert.equal(signOutCalls,unknown?1:2);await cleanAction(()=>page.reload());
  }pass('Busy sign-out refuses duplicates; failure preserves session/draft; reopened dropdown retry and acknowledged sign-out clear drafts and uncertain attempts without prompts');
+ await fresh();await ready();
+ for(const unsafe of ['https://idp.example.com/end-session#state','http://idp.example.com/end-session','https://user:secret@idp.example.com/end-session','javascript:alert(1)']){
+  providerSignOut=unsafe;await button('Account menu').click();await button('Sign out').click();await page.getByRole('button',{name:'Sign in',exact:true}).waitFor();await frame();
+  assert.equal(new URL(page.url()).origin,origin,'An unsafe provider sign-out URL is never navigated: '+unsafe);assert.deepEqual(unexpected,[]);
+  signedOut=false;await page.reload();await ready();
+ }
+ providerSignOut='https://idp.example.com/end-session?client_id=synthetic';const leaving=page.waitForRequest(req=>req.url()===providerSignOut);await button('Account menu').click();await button('Sign out').click();await leaving;
+ assert.deepEqual(unexpected.splice(0),[providerSignOut],'A safe provider sign-out URL is the only external navigation');
+ pass('Provider sign-out navigates only to an https (or loopback http) URL without credentials or a fragment');
  assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);console.log('PASS '+groups.length+' context-exit groups / '+apiRequests+' API requests / '+contexts+' contexts; synthetic client behavior only; zero external requests or page errors');
 }catch(error){if(page&&!page.isClosed()){await page.screenshot({path:resolve('private/swarm/runtime13-ui19/context-failure.png'),fullPage:false,timeout:1500}).catch(()=>{});console.error('FAILURE_AX '+await page.locator('body').ariaSnapshot({timeout:1500}).catch(()=>'<unavailable>'));}throw error;}finally{clearTimeout(deadline);if(heldSignOut){await heldSignOut.abort().catch(()=>{});heldSignOut=null;}if(held){await held.route.abort().catch(()=>{});held=null;}await context?.close();await browser?.close();await server.close();assert.equal(browser?.isConnected()??false,false);assert.equal(server.httpServer?.listening??false,false);console.log('CLEANUP owned Edge and loopback Vite stopped');clearTimeout(watchdog);}
