@@ -71,8 +71,8 @@
     "styling": 29
   },
   "src/components/BoardsPanel.tsx": {
-    "element": 344,
-    "styling": 151
+    "element": 292,
+    "styling": 147
   },
   "src/components/CitationAnalysisPanel.tsx": {
     "element": 1,
@@ -263,20 +263,20 @@
     "styling": 67
   },
   "src/components/SharedBoardPanel.tsx": {
-    "element": 113,
-    "styling": 41
+    "element": 103,
+    "styling": 40
   },
   "src/components/SiteAuditPanel.tsx": {
-    "element": 332,
-    "styling": 154
+    "element": 302,
+    "styling": 152
   },
   "src/components/TeamPanel.tsx": {
     "element": 105,
     "styling": 42
   },
   "src/components/TrackedAssetsPanel.tsx": {
-    "element": 228,
-    "styling": 86
+    "element": 180,
+    "styling": 83
   },
   "src/components/UtmPanel.tsx": {
     "element": 65,

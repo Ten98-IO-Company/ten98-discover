@@ -1,5 +1,6 @@
-import {readResponseText} from '@ten98/runtime';
 import {useEffect,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
+import {readResponseText} from '@ten98/runtime';
+import {DataTable} from '@ten98/ui';
 import {boardLimits,decodePublicBoardManifest,decodePublicBoardCard,parseHostedBoardShare,parseHostedWebsiteShare,type PublicBoardCard} from '../lib/boards';
 import {decodePublicWebsiteShare,websiteShareLimits,type PublicWebsiteShare} from '../lib/website-shares';
 import {serializeGeographyKey,type GeoCountryKey} from '../lib/analytics-geography';
@@ -17,7 +18,7 @@ const unavailable='This shared board is unavailable, revoked, expired or could n
 const percent=(value:number|null)=>value===null?'Unavailable':(value*100).toFixed(1)+'%';
 const money=(value:string|null,currency:string)=><bdi dir="ltr">{value===null?'Unavailable':value+' '+currency}</bdi>;
 function Table({name,columns,rows}:{name:string;columns:string[];rows:ReactNode[][]}){
- return <div className="table-wrap" role="region" aria-label={name} tabIndex={0}><table><thead><tr>{columns.map((label,i)=><th scope="col" key={i}>{label}</th>)}</tr></thead><tbody>{rows.map((row,i)=><tr key={i}>{row.map((cell,j)=>j===0?<th scope="row" key={j}>{cell}</th>:<td key={j}>{cell}</td>)}</tr>)}</tbody></table>{rows.length===0&&<p>No matching retained rows. Unavailable evidence is not zero.</p>}</div>;
+ return <DataTable ariaLabel={name} searchable={false} sortable={false} pagination={false} responsive="stack" emptyTitle="No matching retained rows." emptyDescription="Unavailable evidence is not zero." rows={rows.map((cells,i)=>({cells,i}))} rowKey={(row:{i:number})=>String(row.i)} columns={columns.map((label,j)=>({key:'c'+j,header:label,rowHeader:j===0,wrap:true,render:(row:{cells:ReactNode[]})=>row.cells[j]}))}/>;
 }
 function PublicCard({value}:{value:PublicBoardCard}){
  if(value.status==='unsupported')return <p role="status" className="banner">{value.message} No other scope or dataset was substituted.</p>;
