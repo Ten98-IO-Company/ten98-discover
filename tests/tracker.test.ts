@@ -1019,8 +1019,8 @@ test('tracker propagates a nonempty CSP nonce to both local loaders without inve
 // Synthetic coordinator/transport VM checks, not proof of real rrweb masking or player isolation.
 const REPLAY_SETTINGS={enabled:true,sampleRate:1,maskLevel:'strict',maxDurationMs:300000,blockSelector:'.private'};
 const REPLAY_CHOICE={...ANALYTICS,replay:true};
-function makeReplayEnv(options:{tab?:Map<string,string>;preference?:unknown;sampled?:boolean;settings?:Record<string,unknown>;collectionMode?:'cookieless';nonce?:string;pageUrl?:string}={}){
- const suppliedReplay=options.settings&&Object.hasOwn(options.settings,'replay')?options.settings.replay:REPLAY_SETTINGS;
+function makeReplayEnv(options:{tab?:Map<string,string>;preference?:unknown;sampled?:boolean;settings?:Record<string,unknown>;replySettings?:Record<string,unknown>;collectionMode?:'cookieless';nonce?:string;pageUrl?:string}={}){
+ const suppliedReplay=options.replySettings??(options.settings&&Object.hasOwn(options.settings,'replay')?options.settings.replay:REPLAY_SETTINGS);
  const e=makeEnv({settings:{replay:REPLAY_SETTINGS,...options.settings},preference:options.preference,collectionMode:options.collectionMode,scriptNonce:options.nonce,pageUrl:options.pageUrl}),tab=options.tab??new Map<string,string>(),tabCalls:string[]=[],calls:Array<{path:string;body:Record<string,unknown>;options:{body:string;signal:AbortSignal}}>=[],callbacks:Array<(event:unknown)=>void>=[],stored=new Map<number,{sha256:string;body:string}>();
  const control={loseAck:false,hold:false,refuse:false,renewBegin:false,stops:0,active:0,maxActive:0},held:Array<()=>void>=[];let reply:Record<string,unknown>|undefined;
  Object.defineProperty(e.sandbox,'sessionStorage',{value:{getItem(key:string){tabCalls.push('read');return tab.get(key)??null;},setItem(key:string,value:string){tabCalls.push('write');tab.set(key,value);},removeItem(key:string){tabCalls.push('remove');tab.delete(key);}},configurable:true});
@@ -1049,6 +1049,17 @@ test('replay VM keeps all legacy choices and basic analytics separate; only samp
  e.setScript(SECOND_SITE,SCRIPT_SRC);e.run();await e.drain();await e.grant(REPLAY_CHOICE,SECOND_SITE);assert.equal(e.begins().length,1,'A second site cannot mint a competing document replay capability.');assert.equal(e.callbacks.length,1);assert.ok(e.payloads.some(payload=>payload.siteKey===SECOND_SITE),'The second site retains ordinary analytics.');await e.grant(ANALYTICS);assert.equal(e.control.stops,1);assert.equal(e.sandbox.__ten98FoundationHub.replayOwner,null);await e.grant(REPLAY_CHOICE,SECOND_SITE);assert.equal(e.begins().length,1,'The losing site does not repeatedly compete after the owner withdraws.');
  const skipped=makeReplayEnv({sampled:false,settings:{replay:{...REPLAY_SETTINGS,sampleRate:0}}});skipped.run();await skipped.drain();await skipped.grant(REPLAY_CHOICE);assert.equal(skipped.begins().length,1);assert.equal(skipped.scripts.some(script=>new URL(script.src).pathname==='/replay.js'),false);await skipped.grant(REPLAY_CHOICE);assert.equal(skipped.begins().length,1);
  for(const replay of [{...REPLAY_SETTINGS,enabled:'yes'},{...REPLAY_SETTINGS,maxDurationMs:1},{...REPLAY_SETTINGS,future:true}]){const invalid=makeReplayEnv({settings:{replay}});invalid.run();await invalid.drain();assert.equal((await invalid.grant(REPLAY_CHOICE)).ok,false);assert.equal(invalid.tabCalls.length,0);}
+});
+test('replay VM accepts a begin reply whose settings differ only in key order and still rejects different settings',async()=>{
+ // PostgreSQL JSONB returns stored settings in its own key order (#377).
+ const reordered={enabled:true,maskLevel:'strict',sampleRate:1,blockSelector:'.private',maxDurationMs:300000};
+ assert.notEqual(JSON.stringify(reordered),JSON.stringify(REPLAY_SETTINGS));
+ const e=makeReplayEnv({replySettings:reordered});e.run();await e.drain();await e.grant(REPLAY_CHOICE);assert.equal(e.begins().length,1);await e.loadReplay();e.emit(replayMeta);await e.runTimers(2000);await e.drain();
+ assert.equal(e.chunks().length,1);assert.equal(JSON.parse([...e.tab.values()][0]).terminal,false);
+ for(const replySettings of [{...reordered,maskLevel:'moderate'},{...reordered,sampleRate:0.5},{...reordered,blockSelector:''},{...reordered,future:true},{enabled:true,maskLevel:'strict',sampleRate:1,blockSelector:'.private'}]){
+  const refused=makeReplayEnv({replySettings});refused.run();await refused.drain();await refused.grant(REPLAY_CHOICE);assert.equal(refused.begins().length,2,'An unmatched reply gets one same-request retry, then fails closed.');assert.equal(new Set(refused.begins().map(call=>call.body.requestId)).size,1);
+  assert.equal(refused.scripts.some(script=>new URL(script.src).pathname==='/replay.js'),false,'A reply for different settings never loads the recorder.');assert.equal(JSON.parse([...refused.tab.values()][0]).terminal,true);
+ }
 });
 test('replay VM batches bounded UTF8 fragments, validates matching hashes and retries only the exact same committed chunk once',async()=>{
  const e=makeReplayEnv();e.run();await e.drain();await e.grant(REPLAY_CHOICE);await e.loadReplay();e.control.loseAck=true;e.emit(replayMeta);const large={...replaySnapshot,data:{node:{type:0,childNodes:[{type:3,textContent:'字'.repeat(180000)}]},initialOffset:{left:0,top:0}}};e.emit(large);await e.runTimers(2000);for(let n=0;n<20;n++)await e.drain();assert.ok(e.chunks().length>2);assert.equal(e.chunks()[0].options.body,e.chunks()[1].options.body);assert.equal(e.control.maxActive,1);

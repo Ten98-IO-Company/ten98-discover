@@ -238,13 +238,16 @@
   function replayFail(c) { var allowed=false;try{allowed=/** @type {NonNullable<Ten98Tracker.BootstrapHub["replayAllowed"]>} */ (/** @type {Ten98Tracker.BootstrapHub} */ (hub()).replayAllowed)(c.state)&&nativeReady(c.state,true);}catch(_){}stopReplay(c.state,!allowed,true); }
   /** @param {unknown} value @param {string[]} names @returns {value is Record<string,unknown>} */
   function replayKeys(value, names) { return !!(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === names.length && names.every(function (key) { return Object.prototype.hasOwnProperty.call(value, key); })); }
+  // Exact same keys and primitive values in any order: the begin reply's settings come back from JSONB with reordered keys.
+  /** @param {unknown} value @param {Ten98Tracker.ReplaySettings} settings */
+  function replaySameSettings(value, settings) { var expected = /** @type {Record<string,unknown>} */ (/** @type {unknown} */ (settings)), names = Object.keys(expected); return replayKeys(value,names) && names.every(function (key) { return value[key] === expected[key]; }); }
   /** @param {unknown} raw @param {Ten98Tracker.ReplaySettings} settings @param {boolean} [terminal] @returns {raw is Ten98Tracker.ReplayReply} */
   function replayReply(raw, settings, terminal) {
     var value = /** @type {Ten98Tracker.ReplayReply} */ (raw);
     if (!replayKeys(value,['accepted','reason','recordingId','token','createdAt','deadlineAt','uploadUntil','settings','limits']) || typeof value.accepted !== 'boolean' ||
       typeof value.recordingId !== 'string' || value.recordingId.length!==36 || !replayUuid.test(value.recordingId) || value.reason !== (value.accepted ? null : 'not_sampled') ||
       (value.accepted ? !(terminal && value.token === null) && (typeof value.token !== 'string' || value.token.length > 4096 || !/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(value.token)) : value.token !== null) ||
-      JSON.stringify(value.settings) !== JSON.stringify(settings) || !replayKeys(value.limits,Object.keys(replayLimits)) || Object.keys(replayLimits).some(function (key) { return value.limits[key] !== replayLimits[key]; })) return false;
+      !replaySameSettings(value.settings,settings) || !replayKeys(value.limits,Object.keys(replayLimits)) || Object.keys(replayLimits).some(function (key) { return value.limits[key] !== replayLimits[key]; })) return false;
     return /** @type {('createdAt'|'deadlineAt'|'uploadUntil')[]} */ (['createdAt','deadlineAt','uploadUntil']).every(function (key) { try { return new Date(value[key]).toISOString() === value[key]; } catch (_) { return false; } }) &&
       Date.parse(value.deadlineAt)-Date.parse(value.createdAt) === settings.maxDurationMs && Date.parse(value.uploadUntil)-Date.parse(value.deadlineAt) === 60000;
   }
@@ -252,7 +255,7 @@
   function replayStored(raw, state, settings) {
     var value = /** @type {Ten98Tracker.ReplayRecord} */ (raw);
     return replayKeys(value,['version','siteKey','collector','origin','epoch','settings','requestId','beginUrl','localDeadline','nextSequence','usedBytes','terminal','reply']) && value.version === 1 &&
-      value.siteKey === state.siteKey && value.collector === state.origin && value.origin === location.origin && value.epoch === /** @type {Ten98Tracker.PublicConfig} */ (state.config).consentEpoch && JSON.stringify(value.settings) === JSON.stringify(settings) &&
+      value.siteKey === state.siteKey && value.collector === state.origin && value.origin === location.origin && value.epoch === /** @type {Ten98Tracker.PublicConfig} */ (state.config).consentEpoch && replaySameSettings(value.settings,settings) &&
       typeof value.requestId==='string' && value.requestId.length===36 && replayUuid.test(value.requestId) && typeof value.beginUrl === 'string' && value.beginUrl.length <= 4096 && new URL(value.beginUrl).origin === location.origin && !new URL(value.beginUrl).username && !new URL(value.beginUrl).password && !/[?#]/.test(value.beginUrl) &&
       Number.isFinite(value.localDeadline) && value.localDeadline <= Date.now()+settings.maxDurationMs && Number.isSafeInteger(value.nextSequence) && value.nextSequence >= 0 && value.nextSequence <= 1024 && Number.isSafeInteger(value.usedBytes) && value.usedBytes >= 0 && value.usedBytes <= 67108864 &&
       typeof value.terminal === 'boolean' && (value.reply === null || replayReply(value.reply, settings, value.terminal) && value.localDeadline <= Date.parse(value.reply.deadlineAt));
