@@ -337,7 +337,7 @@ test('properties are native-only unless they meet each vendor contract; dimensio
 
 test('SPA page_views after pushState, replaceState and popstate carry the previous in-app page origin while the landing view keeps the external referrer origin; no path or private query/hash leaks', async () => {
   // D11 (2026-10-17): like pinned Umami, an in-app navigation reports the previous in-app page as its referrer. Capture stays
-  // origin-only (docs/analytics-measurement.md), so that self-referral is the site's own origin; document.referrer is unchanged by
+  // origin-only (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Web-Analytics#referrers), so that self-referral is the site's own origin; document.referrer is unchanged by
   // pushState and still describes only the landing view.
   const inApp = { language: 'en-GB', referrer: 'https://site.example' };
   const e = makeEnv({ settings: { captureReferrer: true } }); await e.start();
