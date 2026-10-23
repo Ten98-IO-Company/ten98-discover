@@ -38,7 +38,7 @@ sh scripts/deploy.sh local http://localhost:3000 3000 ten98-monitor
 
 - Follow the [Docker setup guide](docker-setup.md) for the shared POSIX shell procedure (including Windows through WSL2), existing/bundled HTTPS, safe reruns, backups and upgrades. This is a source-built development deployment, not a published release image.
 - Setup generates an exclusive private `.env` with independent 32-byte database/auth/bootstrap secrets and an encryption keyring. It refuses to overwrite saved configuration. Native development retains `pnpm run setup:local` (not the `pnpm setup` builtin).
-- Docker startup does **not** auto-migrate; the separate `migrate` run is required. `postgres` starts via the migrate service's healthy dependency.
+- Docker web and worker apply pending migrations at startup under one advisory lock (`MIGRATE_ON_START`, default `true`). With `MIGRATE_ON_START=false`, run `docker compose run --rm migrate` explicitly; web and worker wait up to 5 minutes for it.
 - Compose binds `127.0.0.1:3000` only; the database is never published.
 - Read `BOOTSTRAP_TOKEN` privately from `.env` to claim ownership. Never paste it into issues or logs. Choose a 12–128 character password.
 
@@ -125,7 +125,7 @@ The chart and tables use server receipt dates in UTC. Query/hash-only navigation
 
 ## Use the team and analytics flows
 
-For an existing development install, back up its database and stop web/worker before upgrading. Build the new image, run `docker compose run --rm migrate`, then start web/worker again. Repeat migrations are safe. The old application image cannot serve the upgraded schema; rolling back requires the matching pre-upgrade database backup.
+For an existing development install, back up its database and stop web/worker before upgrading. Build the new image, then start web/worker again; they apply pending migrations before starting (or run `docker compose run --rm migrate` first when `MIGRATE_ON_START=false`). Repeat migrations are safe. The old application image cannot serve the upgraded schema; rolling back requires the matching pre-upgrade database backup.
 
 ## Current limitations
 
