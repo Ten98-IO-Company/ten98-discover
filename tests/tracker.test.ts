@@ -617,6 +617,16 @@ test('identify is native-only and selects future identity synchronously', async 
   assert.equal(signals.some(signal => signal.aborted), false); held.forEach(resolve => resolve()); await Promise.all([a, b]);
 });
 
+test('identify keeps the anonymous visit context for the events after it; a new explicit ID starts without one (#371)', async () => {
+  const e = makeEnv(); await e.start(); assert.equal(e.payloads[0].dimensions.distinctId, undefined);
+  e.flags.identifyResponse = {accepted: true, duplicate: false};
+  const pending = identify(e, {plan: 'pro'}, 'buyer'); e.sandbox.ten98.track('signup'); assert.equal((await pending).status, 'accepted'); await e.drain();
+  assert.equal(e.identifyPayloads[0].context, 'signed-synthetic-context');
+  assert.deepEqual([e.payloads.at(-1)!.name, e.payloads.at(-1)!.dimensions.distinctId, e.payloads.at(-1)!.context], ['signup', 'buyer', 'signed-synthetic-context']);
+  await identify(e, {}, 'other-buyer'); assert.equal(e.identifyPayloads.at(-1)!.context, undefined);
+  e.sandbox.ten98.track('switched'); await e.drain(); assert.equal(e.payloads.at(-1)!.context, undefined);
+});
+
 test('identify and reset resolve one site without cross-site identity or consent changes', async () => {
   const e = makeEnv({secondCollector: true}); await e.start(); await identify(e, {}, 'primary');
   e.setScript(SECOND_SITE, SCRIPT_SRC); e.run(); await e.drain(); await e.grant(ANALYTICS, SECOND_SITE); await identify(e, {}, 'secondary', {siteKey: SECOND_SITE});

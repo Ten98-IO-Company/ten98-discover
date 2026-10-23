@@ -556,9 +556,9 @@
       // another path in the same generation reports the previous in-app page, whose origin is this page's own (a self-referral, as
       // pinned Umami sends it); custom events follow the page they occur on. A switch justified by a sent view holds for the generation;
       // one justified by a still-pending view holds unless that view is dropped unsent. ponytail: a generation over-approximates the
-      // server's visitor key (resetIdentity, A->B->A or a regrant can repeat an external landing) and misses server-only rotations (UTC
-      // month, IP, user agent); the server never credits a self-referral, so those keys show no referrer at worst. Upgrade path: the
-      // collector returns the key it used.
+      // server's visitor key (resetIdentity, A->B->A, a regrant or identify within a continued anonymous visit can repeat an external
+      // landing) and misses server-only rotations (UTC month, IP, user agent); the server never credits a self-referral, so those keys
+      // show no referrer at worst. Upgrade path: the collector returns the key it used.
       var prior = state.nativePageObservation, switched = state.selfReferral;
       var inApp = !!switched && switched.generation === generation && !(switched.from && switched.from.dropped);
       if (!inApp && event.name === PAGE_VIEW && prior && prior.generation === generation && !prior.dropped && prior.url !== event.url) {
@@ -697,13 +697,16 @@
       try { snapshot = identifySnapshot(identifier, properties); } catch (_) { return outcome('invalid', 'invalid_input'); }
       var changed = snapshot.identifier !== undefined && snapshot.identifier !== state.nativeIdentifier;
       var nextId = snapshot.identifier === undefined ? state.nativeIdentifier : snapshot.identifier, epoch = state.config.consentEpoch;
+      // Identifying an anonymous visitor keeps its signed visit context, so the collector can keep the current visit's key
+      // (#371). Switching between explicit identifiers still starts without one.
+      var context = changed && state.nativeIdentifier !== undefined ? null : state.nativeContext;
       requestId = uuid(); sentAt = new Date().toISOString(); controller = new AbortController();
       var activeController = controller;
       var body = JSON.stringify({type: 'identify', siteKey: state.siteKey, requestId: requestId, sentAt: sentAt, url: currentUrl(), properties: snapshot.properties,
-        dimensions: nextId === undefined ? undefined : {distinctId: nextId}, context: changed ? undefined : state.nativeContext || undefined, consent: {analytics: true, epoch: epoch}});
+        dimensions: nextId === undefined ? undefined : {distinctId: nextId}, context: context || undefined, consent: {analytics: true, epoch: epoch}});
       if (new TextEncoder().encode(body).length > 16384) return outcome('invalid', 'invalid_input');
       if (!nativeReady(state, true)) return outcome('not_sent', 'collection_unavailable');
-      if (changed) { nativeStop(state); state.nativeIdentifier = nextId; }
+      if (changed) { nativeStop(state); state.nativeIdentifier = nextId; state.nativeContext = context; }
       var generation = state.nativeGeneration;
       state.nativeRequests.add(activeController);
       /** @type {Promise<Ten98Tracker.IdentifyOutcome>} */
