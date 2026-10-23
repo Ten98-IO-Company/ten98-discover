@@ -67,7 +67,7 @@ export function backlinkUrlMatches(value:string,r:BacklinkRequest){
 export function backlinkPayload(request:BacklinkRequest,id:string):Record<string,unknown>{
  const r=parseBacklinkRequest(request),t=backlinkTarget(r.target,r.scope);if(!z.uuid().safeParse(id).success)bad();
  // OpenSEO89e5 path-boundary LIKE adaptation; fixed scheme/host and no regex.
- // Current native contracts: docs/backlink-research.md. No hidden extra tasks.
+ // Current native contracts: https://github.com/Ten98-IO-Company/ten98-discover/wiki/SEO-Research#backlink-research. No hidden extra tasks.
  const escape=(v:string)=>v.replace(/[\\%_]/g,c=>'\\'+c),folder=r.scope==='subfolder';
  const scopeFilter:unknown[]=folder?[['url_to','=',t.target],'or',['url_to','like',escape(t.target)+'/%'],'or',['url_to','like',escape(t.target)+'?%']]:r.scope==='exact_url'?['url_to','in',new URL(t.target).pathname==='/'?[t.target,t.target.slice(0,-1)]:[t.target]]:r.scope==='subdomains'?[['domain_to','=',t.hostname],'or',['domain_to','like','%.'+escape(t.hostname)]]:['domain_to','=',t.hostname];
  const base={target:folder?t.hostname.replace(/^www\./,''):t.target,include_subdomains:r.scope==='subdomains'||folder&&t.hostname.startsWith('www.'),exclude_internal_backlinks:true,backlinks_status_type:r.status,rank_scale:'one_hundred',tag:'ten98:domain:'+r.report+':'+id.toLowerCase()};

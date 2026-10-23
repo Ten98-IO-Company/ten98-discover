@@ -213,7 +213,7 @@ export function startWorker(): Promise<void> {
       await workJobs<{runId:string}>(boss,contentSupportQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeContentSupport(job.data?.runId);});
       await workJobs<{checkId:string}>(boss,domainRedirectQueue,{batchSize:1},async jobs=>{for(const job of jobs)await executeDomainRedirectCheck(job.data?.checkId);});
       await startSiteAuditWorker(boss);
-      // Closed-account retention (docs/account-closure.md#retention): one bounded run a day. Its per-table counts are the
+      // Closed-account retention (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#closed-account-retention): one bounded run a day. Its per-table counts are the
       // job output in pgboss.job; they hold no account ids or personal data.
       await workJobs(boss,accountClosureRetentionQueue,{batchSize:1},async()=>{
         const summary=await runClosedAccountRetention();

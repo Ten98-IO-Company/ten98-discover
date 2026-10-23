@@ -1008,7 +1008,7 @@ try {
   assert.equal((await pool.query('SELECT 1 FROM '+pg.escapeIdentifier(shareTable69))).rowCount,0,'The probes roll back.');assert.deepEqual(await rows61(),data68Kept,'The probes change no populated68 row.');
   assert.equal((await pool.query("SELECT to_regnamespace('pgboss')::text AS schema")).rows[0].schema,bossSchema42,'0069 starts no queue.');
   console.log('PASS native registered SQL68-to69 creates exactly the empty project_share table (project cascade, creator SET NULL, unique token hash, declared sections and lifetime checks, millisecond stamps, page index) with no backfill or receipt, preserving every populated68 row, column, index, constraint, table and checksum');
-  // 0070 adds account closure (docs/account-closure.md): the nullable closed_at tombstone marker with its consistency check, the
+  // 0070 adds account closure (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#account-closure): the nullable closed_at tombstone marker with its consistency check, the
   // empty closure audit table and the closed-account triggers. No backfill: every existing account stays open.
   // The current CLI applies0071 too; apply ONLY0070 natively so its row/schema oracles stay unchanged. The CLI70-to71 upgrade
   // below is this suite's actual CLI stage.

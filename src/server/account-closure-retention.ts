@@ -3,7 +3,7 @@ import { getDatabase } from './db.ts';
 import { accountClosureInventory, closedAccountLedgerDependents, closedAccountRetentionInterval, type ClosedAccountRetention } from './account-closure-inventory.ts';
 
 /**
- * Closed-account retention (docs/account-closure.md#retention, owner decision ten98-code-system#39, closes #291).
+ * Closed-account retention (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#closed-account-retention, owner decision ten98-code-system#39, closes #291).
  *
  * A daily job deletes financial and audit rows that name only closed accounts once they are 7 years past `created_at`,
  * then deletes closed `user` tombstones that nothing references any more. Rows of open accounts are never candidates.
