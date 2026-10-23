@@ -25,6 +25,7 @@ import { runCollectorAdmissionChecks } from './collector-admission-integration.t
 import { runAccountClosureChecks } from './account-closure-integration.ts';
 import { runClosedAccountRetentionChecks } from './closed-account-retention-integration.ts';
 import { runContentSupportListChecks } from './content-support-list-integration.ts';
+import { runStartupMigrateChecks } from './startup-migrate-integration.ts';
 
 // Run against a fresh, migrated local database with the web and worker processes running.
 // Fixtures are intentionally retained for inspection; this test never clears a database.
@@ -426,6 +427,8 @@ try {
   await runAccountClosureChecks();
   stage = 'closed-account 7-year retention';
   await runClosedAccountRetentionChecks();
+  stage = 'startup migration lock, failure and timeout';
+  await runStartupMigrateChecks();
   stage = 'browser destination revisions and isolation';
   await runDestinationChecks({ baseUrl: base.href, appUrl: config.appUrl, ownerCookie, ownerId: owner.body.user.id, workspaceId: workspaceA });
   console.log('PASS destination drafts, previews, immutable publishing, rollback and origin/tenant/environment isolation');

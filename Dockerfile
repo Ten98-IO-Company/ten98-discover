@@ -30,4 +30,6 @@ RUN mkdir -p /data/artifacts && chown -R node:node /data
 USER node
 EXPOSE 3000
 # No installs at startup; no image HEALTHCHECK (Compose defines them).
-CMD ["node", ".output/server/index.mjs"]
+# start-web applies pending migrations under the migration advisory lock (MIGRATE_ON_START, default true),
+# then loads .output/server/index.mjs; a failed or timed-out migration exits non-zero without serving.
+CMD ["node", "src/server/cli.ts", "start-web"]
