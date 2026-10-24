@@ -96,6 +96,7 @@ test('invitation resend and new link: managers only, pending only, rotate the li
   }
   const action = (jar: Jar, id: string, kind: 'resend' | 'new-link') => call(jar, `/api/workspaces/${workspaceId}/invitations/${id}/${kind}`, {});
   const works = async (token: string) => (await call(new Map(), '/api/invitations/inspect', { token })).status === 200;
+  const spentOn = async (key: string) => Number((await pool.query('SELECT coalesce(sum(count),0)::int AS total FROM request_limit WHERE key=$1', [key])).rows[0].total);
   const stored = async (id: string) => (await pool.query('SELECT token_hash, expires_at FROM workspace_invitation WHERE id=$1', [id])).rows[0];
 
   await t.test('(a) without a transport, resend answers 409, sends nothing and keeps the link', async () => {
@@ -180,6 +181,7 @@ test('invitation resend and new link: managers only, pending only, rotate the li
     }
     assert.deepEqual(await stored(expired.id), before, 'An expired invitation is not revived.');
     assert.equal(sends.length, sent);
+    for (const id of [accepted.id, revoked.id, expired.id]) assert.equal(await spentOn(`invitation-resend:${id}`), 0, 'A refused resend spends no budget.');
   });
 
   await t.test('(f) resends are limited per invitation and per workspace before the link changes', async () => {
@@ -195,10 +197,11 @@ test('invitation resend and new link: managers only, pending only, rotate the li
     assert.equal(refused.status, 429);
     assert.equal(sends.length, sent); assert.deepEqual(await stored(inv.id), before);
     assert.ok(await works(token), 'A refused resend keeps the current link working.');
+    assert.equal(await spentOn(`invitation-resend:${inv.id}`), 3, 'The refused resend is not counted.');
     assert.equal((await action(owner.jar, inv.id, 'new-link')).status, 200, 'New link is not a resend and stays available.');
 
     // Resends so far in this workspace: two in (c) and three here. The workspace allows 20 per hour.
-    const spent = Number((await pool.query('SELECT sum(count)::int AS total FROM request_limit WHERE key=$1', [`invitation-resend:workspace:${workspaceId}`])).rows[0].total);
+    const spent = await spentOn(`invitation-resend:workspace:${workspaceId}`);
     assert.equal(spent, 5);
     const pending = [];
     for (let index = spent; index < 21; index++) pending.push(await invite());
@@ -207,6 +210,9 @@ test('invitation resend and new link: managers only, pending only, rotate the li
     assert.equal((await action(admin.jar, last.id, 'resend')).status, 429, 'The 21st resend in a workspace hour is refused.');
     assert.equal(sends.length, lastSent); assert.deepEqual(await stored(last.id), lastBefore);
     assert.ok(await works(last.token));
+    assert.equal(await spentOn(`invitation-resend:workspace:${workspaceId}`), 20, 'The refused resend is not counted against the workspace.');
+    assert.equal(await spentOn(`invitation-resend:${last.id}`), 0, 'A refusal at a later limit rolls back the earlier per-invitation count.');
+    assert.equal(await spentOn(`invitation-email:${sha256(last.email)}`), 0);
   });
 
   await t.test('(g) no invitation capability reaches logs, limiter keys, error replies or stored rows', async () => {

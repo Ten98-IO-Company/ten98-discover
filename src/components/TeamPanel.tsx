@@ -244,10 +244,14 @@ function TeamPanelContent(props: TeamPanelProps) {
     });
   }
 
-  async function newInviteLink(inv: Invitation) {
-    if (!await confirm({ title: `Issue a new invitation link for ${inv.email}?`, description: 'The current link stops working immediately. No email is sent; you copy and share the new link yourself.', confirmLabel: 'Issue new link' })) return;
-    if (mutRef.current) return;
-    runInviteAction({ kind: 'new-link', invitation: inv });
+  // Both actions replace the current link, so each is confirmed once; an exact retry of an unconfirmed outcome is not asked again.
+  async function confirmInviteAction(action: InviteAction) {
+    const { kind, invitation: inv } = action;
+    const confirmed = kind === 'resend'
+      ? await confirm({ title: `Resend the invitation to ${inv.email}?`, description: 'This sends a new invitation email and the previous link stops working.', confirmLabel: 'Resend email' })
+      : await confirm({ title: `Issue a new invitation link for ${inv.email}?`, description: 'The current link stops working immediately. No email is sent; you copy and share the new link yourself.', confirmLabel: 'Issue new link' });
+    if (!confirmed || mutRef.current) return;
+    runInviteAction(action);
   }
 
   function changeRole(m: Member, role: Role) {
@@ -498,10 +502,10 @@ function TeamPanelContent(props: TeamPanelProps) {
                       <td>
                         {canManageInvite(inv) && (
                           <Inline gap={2}>
-                            <Button type='button' variant='secondary' disabled={busy} aria-label={`Resend invitation email to ${inv.email}`} onClick={() => runInviteAction({ kind: 'resend', invitation: inv })}>
+                            <Button type='button' variant='secondary' disabled={busy} aria-label={`Resend email to ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'resend', invitation: inv })}>
                               Resend email
                             </Button>
-                            <Button type='button' variant='secondary' disabled={busy} aria-label={`New invitation link for ${inv.email}`} onClick={() => void newInviteLink(inv)}>
+                            <Button type='button' variant='secondary' disabled={busy} aria-label={`New link for ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'new-link', invitation: inv })}>
                               New link
                             </Button>
                             <Button type='button' variant='secondary' disabled={busy} onClick={() => revokeInvite(inv)}>

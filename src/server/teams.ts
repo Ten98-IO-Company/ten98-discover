@@ -193,20 +193,16 @@ async function lockPendingInvitation(client: PoolClient, workspaceId: string, us
   return { id: invitation.id, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt };
 }
 
-/** Owner/admin: the pending invitation a resend would address, without changing it. */
-export async function pendingInvitation(workspaceId: string, userId: string, invitationId: string): Promise<Invitation> {
-  parse(idInput, workspaceId); parse(idInput, userId); parse(idInput, invitationId);
-  return transaction(client => lockPendingInvitation(client, workspaceId, userId, invitationId));
-}
-
 /**
  * Owner/admin: replaces a pending invitation's token and restarts its seven days, keeping its id, email, role and inviter.
  * Only the token hash is stored, so this is also how a resend gets a link to email; the previous link stops working.
+ * `admit` runs in the same transaction after authorization and the pending check; a refusal there rolls back everything it spent.
  */
-export async function rotateInvitation(workspaceId: string, userId: string, invitationId: string) {
+export async function rotateInvitation(workspaceId: string, userId: string, invitationId: string, admit?: (client: PoolClient, invitation: Invitation) => Promise<void>) {
   parse(idInput, workspaceId); parse(idInput, userId); parse(idInput, invitationId);
   return transaction(async (client) => {
-    await lockPendingInvitation(client, workspaceId, userId, invitationId);
+    const pending = await lockPendingInvitation(client, workspaceId, userId, invitationId);
+    await admit?.(client, pending);
     const token = randomBytes(32).toString('base64url');
     const result = await client.query<Invitation>(
       `UPDATE workspace_invitation SET token_hash=$3,expires_at=clock_timestamp()+interval '7 days'

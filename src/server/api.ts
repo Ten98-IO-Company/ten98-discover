@@ -39,7 +39,7 @@ import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from '
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
-import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, pendingInvitation, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, rotateInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
+import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, rotateInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
 import { AccountClosureBlocked } from './account-closure.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
@@ -113,8 +113,8 @@ async function limit(key: string, maximum: number, client?:PoolClient) {
 }
 
 /** Counts like limit, then refuses once the key's total over the last `minutes` minutes (at most 60, the expiry) exceeds the maximum. */
-async function limitWindow(key: string, maximum: number, minutes: number) {
-  const { rows } = await getDatabase().pool.query(
+async function limitWindow(key: string, maximum: number, minutes: number, client?: PoolClient) {
+  const { rows } = await (client ?? getDatabase().pool).query(
     `WITH expired AS (DELETE FROM request_limit WHERE minute < floor(extract(epoch FROM now()) / 60) - 60),
      current AS (INSERT INTO request_limit(key,minute,count) VALUES ($1,floor(extract(epoch FROM now()) / 60),1)
        ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING minute,count)
@@ -1109,17 +1109,18 @@ export async function handleApi(request: Request): Promise<Response> {
       if (match[2] === 'invitations' && match[4] === 'revoke') { z.object({}).strict().parse(input); await revokeInvitation(match[1], user.id, match[3]); return json({ ok: true }); }
       if (match[2] === 'invitations' && (match[4] === 'resend' || match[4] === 'new-link')) {
         z.object({}).strict().parse(input);
-        if (match[4] === 'resend') {
-          const { email: to } = await pendingInvitation(match[1], user.id, match[3]);
-          // Refused before the token rotates, so these answers leave the current link working.
+        // Resend checks and spends its budgets inside the rotation transaction after authorization and the pending check, so any
+        // refusal (409 without a transport, 429 at any limit) rolls back every count it spent and leaves the current link working.
+        const [workspaceKey, invitationKey] = [match[1].toLowerCase(), match[3].toLowerCase()];
+        const admit = match[4] !== 'resend' ? undefined : async (client: PoolClient, invitation: { email: string }) => {
           if (!getEmailStatus().configured) throw new FoundationError(409, 'Email is not set up on this installation, so nothing was sent and the current link still works. Use New link to get a link you can copy and share yourself.');
           // Per invitation and per workspace, then the invitation route's address and installation budgets.
-          await limitWindow(`invitation-resend:${match[3].toLowerCase()}`, 3, 60);
-          await limitWindow(`invitation-resend:workspace:${match[1].toLowerCase()}`, 20, 60);
-          await limit(emailLimitKey('invitation-email', to), 3);
-          await limit('invitation-email:global', 20);
-        }
-        const result = await rotateInvitation(match[1], user.id, match[3]);
+          await limitWindow(`invitation-resend:${invitationKey}`, 3, 60, client);
+          await limitWindow(`invitation-resend:workspace:${workspaceKey}`, 20, 60, client);
+          await limit(emailLimitKey('invitation-email', invitation.email), 3, client);
+          await limit('invitation-email:global', 20, client);
+        };
+        const result = await rotateInvitation(match[1], user.id, match[3], admit);
         const inviteUrl = `${config.appUrl}/#invite=${result.token}`;
         if (match[4] === 'new-link') return json({ invitation: result.invitation, inviteUrl });
         // After commit, one attempt as for a new invitation; on failure the rotated link is still returned for manual sharing.
