@@ -978,7 +978,7 @@ function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: s
 
   return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Add website' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Adding…'
     error={state.error || undefined} fieldErrors={state.fieldErrors} onSubmit={submit}
-    messages={{ nameLabel: 'Website name', originLabel: 'Website address', originHint: 'For example example.com. You can paste any page of your site.', create: 'Add website' }} />
+    messages={{ nameLabel: 'Website name', originLabel: 'Website address', originHint: 'For example https://example.com. You can paste any page of your site.', create: 'Add website' }} />
 }
 
 // Shared by the onboarding screen and the New workspace settings tab.
