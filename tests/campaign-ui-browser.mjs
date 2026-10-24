@@ -85,7 +85,7 @@ async function authGeometry(label){
 async function brandAndAuthChrome(){
  // Exact visible values from the inspected ten98-campaign src/styles.css and SVG contract;
  // 44px hit targets are the existing Discover accessibility exception to 43px auth controls.
- assert.equal((await style(page.locator('.auth-story'))).background,'rgb(238, 233, 250)');
+ assert.equal((await style(page.locator('.auth-story'))).background,'rgb(247, 247, 248)');
  const mark=await style(page.locator('.auth-story .brand-mark'));assert.equal(mark.width,37);assert.equal(mark.height,37);assert.equal(mark.radius,'11px');
  assert.equal(await page.locator('.auth-story .brand strong').textContent(),'ten98.');assert.equal(await page.locator('.auth-story .brand small').textContent(),'DISCOVER');
  assert.equal((await style(page.locator('.auth-story .brand strong'))).font,'25px');

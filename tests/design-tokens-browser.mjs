@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {createHash} from 'node:crypto';
-import {writeFile,mkdir} from 'node:fs/promises';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {readCssSource} from './css-source.mjs';
 import {launchChromium} from './helpers/playwright.mjs';
@@ -11,6 +11,11 @@ assert.equal(process.env.TEN98_DESIGN_TOKENS_BROWSER,'1','Explicit token-probe o
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Supply an installed Playwright entry point');
 const evidence=resolve('private/design-token-evidence');
 const css=await readCssSource('src/design-tokens.css');
+// @ten98/ui bundles Inter beside its token CSS. The only URLs allowed are same-package relative font files, and the
+// probe serves exactly those from the installed package, so no font request can leave the fixture origin.
+const localFont=/^\.\/fonts\/[\w.-]+\.woff2$/;
+const cssUrls=[...css.matchAll(/url\s*\(\s*(['"]?)([^'")]*)\1\s*\)/gi)].map(match=>match[2]);
+const fontFiles=await Promise.all(cssUrls.filter(url=>localFont.test(url)).map(async url=>[url.slice(1),{type:'font/woff2',body:await readFile(new URL(url,import.meta.resolve('@ten98/ui/app-tokens.css')))}]));
 const colors={
  canvas:['#F8F9FC','#10161F'],surface:['#FFFFFF','#17202C'],'surface-subtle':['#F5F4FA','#1D2938'],'surface-raised':['#FFFFFF','#223044'],text:['#252435','#EAF0F8'],'text-muted':['#696374','#ADB9CA'],'text-placeholder':['#68758A','#A0ADBF'],border:['#EAEAF1','#344258'],'border-control':['#8793A5','#788BA6'],accent:['#5943CE','#C2B6FF'],'accent-hover':['#4731B6','#D3CAFF'],'accent-active':['#3D2B9C','#E3DDFF'],'on-accent':['#FFFFFF','#2C2056'],'accent-subtle':['#EFECFC','#352A54'],success:['#176B49','#80D8AE'],'success-subtle':['#EAF5EF','#173C2D'],warning:['#825208','#F3CC78'],'warning-subtle':['#FFF5DC','#3E321B'],danger:['#B42318','#FFA399'],'danger-subtle':['#FEEDEB','#492A2A'],info:['#245AA8','#99C2FF'],'info-subtle':['#EDF4FF','#223751'],'disabled-text':['#696374','#A0ADBF'],'disabled-surface':['#F5F4FA','#1D2938'],focus:['#5943CE','#C2B6FF'],'chart-1':['#5943CE','#C2B6FF'],'chart-2':['#14796F','#71CFC3'],'chart-3':['#926008','#E5BE73'],'chart-4':['#9A417F','#E7A0CC'],'chart-5':['#59687C','#B0BDD1'],overlay:['rgb(16 22 31 / 40%)','rgb(0 0 0 / 60%)'],
 };
@@ -33,8 +38,8 @@ button,input{font:inherit;min-height:var(--control-md);padding-inline:var(--spac
 </style><main><p>Token test probe — synthetic, no application or live services</p><p class="muted">Supporting text</p><p class="muted-tint">Supporting text on the accent tint</p><button type="button" class="primary">Primary</button><button type="button">Secondary</button><button type="button" disabled>Disabled example</button><label>Example input <input placeholder="Example only"></label>
 ${['success','warning','danger','info'].map(t=>`<p data-tone="${t}" style="color:var(--color-${t});background:var(--color-${t}-subtle)">${t} text</p>`).join('')}
 </main></html>`;
-const paths=new Map([['/probe',{type:'text/html; charset=utf-8',body:html}],['/tokens.css',{type:'text/css; charset=utf-8',body:css}]]),requests=[],external=[],errors=[],failures=[],passed=[];
-const server=createServer((request,response)=>{const path=new URL(request.url,'http://localhost').pathname;requests.push({path,method:request.method});if(request.method!=='GET'||!paths.has(path)){response.writeHead(path==='/favicon.ico'?204:404);return response.end();}const file=paths.get(path);response.writeHead(200,{'content-type':file.type,'cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'"});response.end(file.body);});
+const paths=new Map([['/probe',{type:'text/html; charset=utf-8',body:html}],['/tokens.css',{type:'text/css; charset=utf-8',body:css}],...fontFiles]),requests=[],external=[],errors=[],failures=[],passed=[];
+const server=createServer((request,response)=>{const path=new URL(request.url,'http://localhost').pathname;requests.push({path,method:request.method});if(request.method!=='GET'||!paths.has(path)){response.writeHead(path==='/favicon.ico'?204:404);return response.end();}const file=paths.get(path);response.writeHead(200,{'content-type':file.type,'cache-control':'no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'"});response.end(file.body);});
 let browser,page;
 try{
  await new Promise((done,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',done);});
@@ -57,6 +62,10 @@ try{
      const scope=legacy?/^:root$|^\.t98-theme$|^\[data-theme\]$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/:/^:root$|^\.t98-theme$|^\[data-density=["']?(comfortable|compact)["']?\]$|^(?::root|html)?\[data-theme=["']?(light|dark|system)["']?\]$/;
      for(const selector of rule.selectorText.split(',').map(s=>s.trim()))if(!scope.test(selector))bad.push(selector);
      for(const property of rule.style){(property.startsWith('--t98-')?canonical:properties).add(property);if(!property.startsWith('--')&&property!=='color-scheme')bad.push(property);}
+    }else if(rule instanceof CSSFontFaceRule){
+     // Bundled font faces may load only same-package relative files; any other source is not token CSS.
+     const sources=[...rule.style.getPropertyValue('src').matchAll(/url\(\s*(['"]?)([^'")]*)\1\s*\)/g)].map(match=>match[2]);
+     if(!sources.length||!sources.every(url=>/^\.\/fonts\/[\w.-]+\.woff2$/.test(url)))bad.push(rule.cssText.slice(0,100));
     }else bad.push(rule.cssText.slice(0,100));
    }}
    inspect(sheet.cssRules);return{properties:[...properties].sort(),canonical:[...canonical].sort(),bad};
@@ -76,11 +85,11 @@ try{
   await writeFile(resolve(evidence,'contrast.json'),JSON.stringify(measured,null,2));
  });
  await group('focus-token rendering and forced-colors/reduced-motion compatibility probe',async()=>{
-  for(const mode of ['light','dark']){await theme(mode);await page.locator('input').focus();await page.keyboard.press('Shift+Tab');const focus=await page.evaluate(()=>{const e=document.activeElement,s=getComputedStyle(e);return{width:s.outlineWidth,offset:s.outlineOffset,style:s.outlineStyle,color:s.outlineColor,background:getComputedStyle(e.parentElement).backgroundColor};});assert.equal(focus.width,'3px');assert.equal(focus.offset,'2px');assert.notEqual(focus.style,'none');assert.ok(ratio(focus.color,focus.background)>=3);}
-  await page.emulateMedia({forcedColors:'active',reducedMotion:'reduce'});assert.equal(await page.evaluate(()=>matchMedia('(forced-colors: active)').matches),true);await page.locator('input').focus();await page.keyboard.press('Shift+Tab');const forced=await page.evaluate(()=>{const e=document.activeElement,s=getComputedStyle(e);return{width:s.outlineWidth,style:s.outlineStyle,adjust:s.forcedColorAdjust,color:s.outlineColor,background:getComputedStyle(e.parentElement).backgroundColor};});assert.equal(forced.width,'3px');assert.notEqual(forced.style,'none');assert.notEqual(forced.adjust,'none');assert.ok(ratio(forced.color,forced.background)>=3);
+  for(const mode of ['light','dark']){await theme(mode);await page.locator('input').focus();await page.keyboard.press('Shift+Tab');const focus=await page.evaluate(()=>{const e=document.activeElement,s=getComputedStyle(e);return{width:s.outlineWidth,offset:s.outlineOffset,style:s.outlineStyle,color:s.outlineColor,background:getComputedStyle(e.parentElement).backgroundColor};});assert.equal(focus.width,'2px');assert.equal(focus.offset,'2px');assert.notEqual(focus.style,'none');assert.ok(ratio(focus.color,focus.background)>=3);}
+  await page.emulateMedia({forcedColors:'active',reducedMotion:'reduce'});assert.equal(await page.evaluate(()=>matchMedia('(forced-colors: active)').matches),true);await page.locator('input').focus();await page.keyboard.press('Shift+Tab');const forced=await page.evaluate(()=>{const e=document.activeElement,s=getComputedStyle(e);return{width:s.outlineWidth,style:s.outlineStyle,adjust:s.forcedColorAdjust,color:s.outlineColor,background:getComputedStyle(e.parentElement).backgroundColor};});assert.equal(forced.width,'2px');assert.notEqual(forced.style,'none');assert.notEqual(forced.adjust,'none');assert.ok(ratio(forced.color,forced.background)>=3);
   await page.emulateMedia({forcedColors:'none',reducedMotion:'no-preference'});assert.equal(await page.locator('input').evaluate(e=>getComputedStyle(e).transitionDuration),'0.12s, 0.12s');await page.emulateMedia({reducedMotion:'reduce'});assert.equal(await page.locator('input').evaluate(e=>getComputedStyle(e).transitionDuration),'0s');await page.screenshot({path:resolve(evidence,'token-probe-accessibility.png')});
  });
- await group('isolated CSS-only source and zero application/remote requests',async()=>{assert.doesNotMatch(css,/@import|url\s*\(/i);assert.equal(await page.locator('script,iframe,img,video,object,embed').count(),0);assert.deepEqual(external,[]);assert.deepEqual(errors,[]);assert.ok(requests.every(r=>r.method==='GET'&&(paths.has(r.path)||r.path==='/favicon.ico')));assert.equal((await context.cookies()).length,0);});
+ await group('isolated CSS-only source and zero application/remote requests',async()=>{assert.doesNotMatch(css,/@import/i);assert.doesNotMatch(css.replace(/@font-face\s*\{[^}]*\}/gi,''),/url\s*\(/i,'Only font faces reference files');assert.equal(cssUrls.length,(css.match(/url\s*\(/gi)??[]).length);assert.ok(cssUrls.length>0&&cssUrls.every(url=>localFont.test(url)),'Token CSS loads only same-package relative font files, never a remote, protocol-relative or data source');assert.equal(await page.locator('script,iframe,img,video,object,embed').count(),0);assert.deepEqual(external,[]);assert.deepEqual(errors,[]);assert.ok(requests.every(r=>r.method==='GET'&&(paths.has(r.path)||r.path==='/favicon.ico')));assert.equal((await context.cookies()).length,0);});
  await writeFile(resolve(evidence,'result.json'),JSON.stringify({cssSha256:createHash('sha256').update(css).digest('hex'),browserVersion:browser.version(),passed,failures,limits:['Token values/theme behavior and representative in-memory property application only.','Focus/forced-colors/reduced-motion rules belong to the test probe, not token-only CSS or accepted production styling.','No standalone8-group specimen pass, application layout/navigation/theme preference or accessibility certification is claimed. Actual app viewport, RTL and zoom acceptance remains separate.']},null,2));
  assert.equal(failures.length,0,`${failures.length} token probe group(s) failed; see private/design-token-evidence/result.json`);
 }finally{await browser?.close();await new Promise(done=>server.close(done));}
