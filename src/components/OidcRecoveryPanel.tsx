@@ -2,6 +2,7 @@ import {AppIcon} from '@ten98/ui/app';
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Checkbox, Text } from '@ten98/ui'
 import { api, ApiError, errMsg } from '../lib/api'
+import { authorizationRedirect } from '../lib/oidc-authorization'
 import { closureAcknowledgements, closurePrivacyNotice } from './AccountClosurePanel'
 
 type Security = { user: { id: string; twoFactorEnabled: boolean }; hasPassword: boolean }
@@ -116,10 +117,10 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
     }
   }
   function start(identityId: string) {
-    void run(signal => api<{ authorizationUrl: string }>('/api/account/oidc/reauth/start', { method: 'POST', body: { identityId }, signal }), result => {
-      const url = new URL(result.authorizationUrl)
-      if (url.username || url.password || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) throw new Error('The identity sign-in address is invalid. Start again.')
-      window.location.assign(url.href)
+    void run(signal => api<{ authorizationUrl: string; authorizationOrigin: string }>('/api/account/oidc/reauth/start', { method: 'POST', body: { identityId }, signal }), result => {
+      const href = authorizationRedirect(result.authorizationUrl, result.authorizationOrigin)
+      if (href === null) throw new Error('The identity sign-in address is invalid. Start again.')
+      window.location.assign(href)
     })
   }
   function confirm(event: FormEvent) {
