@@ -37,7 +37,7 @@ export const settingsGroupLabels: Partial<Record<SettingsGroupId, string>> = { o
 export const settingsEntries: readonly SettingsEntry[] = [
   { view: 'installation', label: 'Tracking code', group: 'project', keywords: ['install tracker', 'tracking snippet'] }, { view: 'domains', label: 'Domains', group: 'project' },
   { view: 'collection', label: 'Privacy', group: 'project', keywords: ['collection and privacy', 'consent'] }, { view: 'destinations', label: 'Forwarding', group: 'project', keywords: ['destinations'] },
-  { view: 'context', label: 'Brand and competitors', group: 'project', keywords: ['project context', 'business brief'] },
+  { view: 'context', label: 'Brand and competitors', group: 'project', keywords: ['project context', 'business brief'] }, { view: 'imports', label: 'Imports', group: 'project', keywords: ['google search console', 'ga4 import'] },
   { view: 'team', label: 'Members', group: 'workspace', keywords: ['team', 'invite'] }, { view: 'keys', label: 'API keys', group: 'workspace', keywords: ['ten98 api access', 'mcp'] },
   { view: 'providers', label: 'Connections', group: 'workspace', keywords: ['ai and search providers', 'integrations', 'dataforseo', 'openrouter'] }, { view: 'retention', label: 'Data retention', group: 'workspace' },
   { view: 'workspace', label: 'New workspace', group: 'workspace' },

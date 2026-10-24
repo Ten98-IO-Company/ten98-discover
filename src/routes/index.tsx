@@ -199,7 +199,7 @@ function App() {
     if (pending.value.kind === 'proof') { go({ ...intent.current.search, view: 'identity' }, true); return true }
     if (pending.value.kind === 'google') {
       const value = pending.value
-      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: value.kind }, true); return true }
+      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: 'imports' }, true); return true }
       else setAuthNotice({ kind: 'error', message: 'Authorization returned, but that workspace is no longer available. Choose a current workspace.' })
     }
   }
@@ -772,7 +772,8 @@ function App() {
         {view === 'ranks' && project && me && <Suspense fallback={<p role="status">Loading rank tracking…</p>}><RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} /></Suspense>}
         {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} />}
+        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='reports' onManage={() => go(target('imports'))} />}
+        {view === 'imports' && project && me && settingsFrame(<GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='setup' />)}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />)}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
