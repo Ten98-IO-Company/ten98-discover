@@ -146,7 +146,8 @@ try {
   const snippetRegion = () => main.locator('pre[role="region"][aria-label="Tracking snippet"][tabindex="0"]');
   const diagnostics = () => main.locator('section.diagnostics');
   const count = async expected => assert.equal((await eventPanel().locator('.big-num').innerText()).trim(), String(expected), 'Retained count stays exact.');
-  const fmt = value => page.evaluate(value => new Date(value).toLocaleString(), value);
+  // Retained event times are shown as report instants in UTC (YYYY-MM-DD HH:mm UTC), independent of the browser locale.
+  const fmt = value => { const iso = new Date(value).toISOString(); return `${iso.slice(0,10)} ${iso.slice(11,16)} UTC`; };
   const fit = async label => {
     const sizes = await page.evaluate(() => ({document:document.documentElement.scrollWidth, viewport:innerWidth}));
     if (sizes.document > sizes.viewport + 1) responsiveFindings.push(`${label}: document ${sizes.document}px exceeds viewport ${sizes.viewport}px.`);
