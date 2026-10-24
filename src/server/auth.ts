@@ -103,7 +103,7 @@ export class FoundationError extends Error {
 }
 
 // The first sign-up claims an unclaimed installation; there is no setup token (owner decision, 2026-10-23).
-// A page cached across the upgrade, or @ten98/ui 0.23.0's form, may still send `token`: accept it and discard it unread.
+// A page cached across the upgrade may still send `token`: accept it and discard it unread.
 const claimInput = z.object({
   token: z.string().max(512).optional(),
   name: z.string().trim().min(1).max(120),
