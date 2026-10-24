@@ -134,7 +134,7 @@ function RecoveryInner({ userId, proofId, onUnauthorized, onProofHandled, onClos
       // Closure ended every session server-side (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#account-closure).
       if (action === 'close-account') { callbacks.current.onClosed(); return }
       setEnrollment(result.backupCodes ? { totpURI: result.totpURI, backupCodes: result.backupCodes } : null)
-      setNotice(result.totpURI ? 'Confirm an authenticator code below to finish setup.' : action === 'set-password' ? 'Local recovery password saved. You can now use Account security for password and authenticator settings.' : 'Account security updated.')
+      setNotice(result.totpURI ? 'Confirm an authenticator code below to finish setup.' : action === 'set-password' ? 'Local recovery password saved. You can now use Security settings for password and authenticator settings.' : 'Account security updated.')
       setProof(null)
       await load(null)
       if (alive.current && activeProof.current === proof.id) callbacks.current.onProofHandled()

@@ -60,7 +60,7 @@ const RankTrackingPanel = lazy(() =>
 function RankTrackingLoadFailed() {
   return (
     <div role="alert">
-      <p>Rank tracking couldn’t load. Reload this page to try again.</p>
+      <p>Rankings couldn’t load. Reload this page to try again.</p>
       <button className="btn" type="button" style={{ minHeight: 44 }} onClick={() => window.location.reload()}>Reload page</button>
     </div>
   )
@@ -788,7 +788,7 @@ function App() {
         )}
         {view === 'project' && workspace && project !== null && (
           <>
-            {events?.total === 0 && <section className='connection-callout'><div><strong>No retained events available.</strong><p>Add the tracking snippet, then review Collection and privacy to choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Install tracker</Link></section>}
+            {events?.total === 0 && <section className='connection-callout'><div><strong>No retained events available.</strong><p>Add the tracking code to your site. Privacy settings choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Get tracking code</Link></section>}
             <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onAppliedRange={rememberAnalyticsRange} onReturnToExplorer={verifiedExplorerReturn?()=>router.history.push(verifiedExplorerReturn):undefined} search={{...target('project'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('project'),...value})} onUnauthorized={unauthorized} />
           </>
         )}
@@ -814,7 +814,7 @@ function App() {
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
                   <p><strong>No retained events available.</strong></p>
-                  <p>Install your tracker, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><Link className='btn' to='/' search={target('installation')}>Install tracker</Link>
+                  <p>Install your tracker, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><Link className='btn' to='/' search={target('installation')}>Get tracking code</Link>
                 </div>
               )}
               {events !== null && events.events.length > 0 && (
@@ -838,10 +838,10 @@ function App() {
               <pre className='snippet' role='region' aria-label='Tracking snippet' tabIndex={0}><code>{snippet}</code></pre>
               {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
               {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
-              <p className='dim footnote'>Use <Link to='/' search={target('domains')}>Domains</Link> for other serving domains. <Link to='/' search={target('collection')}>Collection and privacy</Link> controls consent and optional data. Browser privacy signals and explicit refusals stop collection.{isLocal ? ' External websites cannot reach this localhost collector; deploy it at a public HTTPS address first.' : ''}</p>
+              <p className='dim footnote'>Use <Link to='/' search={target('domains')}>Domains</Link> for other serving domains. <Link to='/' search={target('collection')}>Privacy settings</Link> control consent and optional data. Browser privacy signals and explicit refusals stop collection.{isLocal ? ' External websites cannot reach this localhost collector; deploy it at a public HTTPS address first.' : ''}</p>
               <details className='installation-help'>
                 <summary>Custom events and collection details</summary>
-                <p className='dim footnote'>When collection is allowed, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Advertising pixels and visitor identification still need explicit consent.</p>
+                <p className='dim footnote'>When collection is allowed, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Privacy settings. Advertising pixels and visitor identification still need explicit consent.</p>
                 <p>For buttons and links, you can also declare an event in your HTML:</p>
                 <pre className='snippet' tabIndex={0} aria-label='HTML custom event example'><code>{'<button type="button" data-ten98-event="signup" data-ten98-event-plan="starter">Sign up</button>'}</code></pre>
                 <p className='dim footnote'>Only the nearest element with a declared event is tracked. Attribute properties are passed as strings; use the JavaScript call for numbers, arrays, nested properties or advertising conversion fields. Use fixed, non-personal values. Click tracking does not delay navigation, and delivery during navigation is best effort.</p>
