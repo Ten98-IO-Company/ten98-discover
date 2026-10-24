@@ -62,10 +62,14 @@ export async function handleSesFeedback(request: Request, env: NodeJS.ProcessEnv
   if (new URL(request.url).search) return reply(400, { error: 'Query parameters are not accepted.' });
   if (request.headers.has('authorization') || request.headers.has('x-api-key')) return reply(403, { error: 'Credentials are not accepted here.' });
   const declared = request.headers.get('content-length');
-  if (declared !== null && (!/^\d{1,9}$/.test(declared.trim()) || Number(declared.trim()) > maxBodyBytes)) return reply(413, { error: 'Body too large.' });
   let raw: string;
-  try { raw = await readResponseText(new Response(request.body), { maxBytes: maxBodyBytes, signal: AbortSignal.timeout(bodyReadMs) }); }
-  catch { return reply(400, { error: 'Unreadable body.' }); }
+  try { raw = await readResponseText(new Response(request.body, declared === null ? {} : { headers: { 'content-length': declared } }), { maxBytes: maxBodyBytes, signal: AbortSignal.timeout(bodyReadMs), contentLength: 'limit' }); }
+  catch (error) {
+    // An oversize declaration is refused before reading (413). Node's HTTP parser never delivers more than a declared
+    // length, so a streamed overflow only occurs without one and stays 400, like a malformed declaration (CONTENT_LENGTH_INVALID).
+    const tooLarge = declared !== null && (error as NodeJS.ErrnoException | null)?.code === 'RESPONSE_TOO_LARGE';
+    return tooLarge ? reply(413, { error: 'Body too large.' }) : reply(400, { error: 'Unreadable body.' });
+  }
 
   const send = adapters.fetch ?? fetch, admission = adapters.admission ?? unlimited;
   let verified: SnsVerification;

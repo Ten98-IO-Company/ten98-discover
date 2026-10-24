@@ -97,6 +97,22 @@ test('readJson validates content-length: honest oversize 413, malformed 400', as
   await assert.rejects(readJson(makeRequest('{}', { ...h, 'content-length': '1.5' })), isStatus(400));
 });
 
+test('readJson Content-Length precheck uses the runtime limit mode: oversize 413, invalid 400 before reading', async () => {
+  const h = { 'content-type': 'application/json' };
+  const refused = (status: number, message: string) => (e: unknown) => e instanceof InputError && e.status === status && e.message === message;
+  for (const length of ['abc', '-1', '1.5', '1e3', '010', '12345678901234567']) {
+    let pulled = false;
+    const body = new ReadableStream<Uint8Array>({ pull(c) { pulled = true; c.enqueue(new TextEncoder().encode('{}')); c.close(); } }, { highWaterMark: 0 });
+    await assert.rejects(readJson(makeRequest(body, { ...h, 'content-length': length })), refused(400, 'invalid content-length'), length);
+    assert.equal(pulled, false, `an invalid Content-Length (${length}) is refused before the body is read`);
+  }
+  await assert.rejects(readJson(makeRequest('{}', { ...h, 'content-length': '101' }), 100), refused(413, 'body too large'));
+  await assert.rejects(readJson(makeRequest('{}', { ...h, 'content-length': '9007199254740993' }), 100), refused(413, 'body too large'));
+  assert.deepEqual(await readJson(makeRequest('{}', { ...h, 'content-length': '100' }), 100), {}, 'a declaration at the limit is admitted; limit mode does not demand an exact count');
+  assert.deepEqual(await readJson(makeRequest('{}', { ...h, 'content-length': '0' })), {}, 'limit mode does not demand an exact count');
+  await assert.rejects(readJson(makeRequest(null, { ...h, 'content-length': '2' })), refused(400, 'empty body'));
+});
+
 test('readJson bounds real bytes despite lying content-length, without leaking body', async () => {
   const chunk = new TextEncoder().encode(`{"s":"${'SECRET-'.repeat(30)}"}`);
   const r = makeRequest([chunk], { 'content-type': 'application/json', 'content-length': '10' });

@@ -42,7 +42,7 @@ export async function runCollectorAdmissionChecks(){
   const first=site(),second=site(),{project,siteKey,origin}=first;
   await pool.query("INSERT INTO workspace(id,name) VALUES($1,'Collector admission fixture')",[workspace]);
   for(const fixture of [first,second])await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Collector admission fixture',$3,$4,'infinity')",[fixture.project,workspace,fixture.origin,fixture.siteKey]);
-  const unknownClient='collector:client:unknown',loopbackClient=clientLimitKey('collector','127.0.0.1',secret);
+  const unknownClient='collector:client:unresolved',loopbackClient=clientLimitKey('collector','127.0.0.1',secret);
   const clientA=clientLimitKey('collector','198.51.100.7',secret),clientB=clientLimitKey('collector','198.51.100.8',secret);
   const siteKeys=['collector','heatmap','replay','tracking-config'].map(scope=>`${scope}:${project}`),fixtureKeys=[...siteKeys,`collector:${second.project}`,clientA,clientB];
   // Seed the current and next minute so a minute boundary cannot flake the comparison.
