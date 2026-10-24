@@ -49,13 +49,16 @@ export async function requireNamedInstanceOperator(client: PoolClient, email: un
  * clear by operator id. Neither the address nor its digest is logged or audited. Returns whether one was recorded.
  */
 export async function clearEmailSuppressionAsOperator(operatorEmail: unknown, address: unknown): Promise<boolean> {
-  const parsed = z.string().trim().email().max(254).safeParse(address);
-  if (!parsed.success) throw new FoundationError(400, 'Supply the suppressed email address.');
+  // Deliberately looser than an email validator: SES can report addresses (quoted or unusual local parts) that strict
+  // validation rejects, and those must stay clearable. The suppression digest trims and lowercases the same value.
+  const value = typeof address === 'string' ? address.trim() : '';
+  const parts = value.split('@');
+  if (value.length > 320 || parts.length !== 2 || !parts[0] || !parts[1]) throw new FoundationError(400, 'Supply the suppressed email address.');
   const client = await getDatabase().pool.connect();
   try {
     await client.query('BEGIN');
     const operatorId = await requireNamedInstanceOperator(client, operatorEmail);
-    const cleared = await deleteEmailSuppression(parsed.data, client);
+    const cleared = await deleteEmailSuppression(value, client);
     await client.query("INSERT INTO instance_operator_audit(user_id,action) VALUES($1,'email_suppression_clear')", [operatorId]);
     await client.query('COMMIT');
     return cleared;

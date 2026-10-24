@@ -20,7 +20,7 @@ const normalise = (address: string) => address.trim().toLowerCase();
  * Suppressions are keyed by an HMAC-SHA256 of the lowercased address with the server secret under its own label (#310),
  * so the table holds no address text and a guessed address cannot be confirmed without AUTH_SECRET. Lowercasing the local
  * part too errs towards blocking a case variant of a bounced address. Rotating AUTH_SECRET orphans keyed rows, which then
- * stop blocking; this is the same trade-off as the other AUTH_SECRET-keyed digests.
+ * stop blocking until the address bounces or complains again. Rows written before #310 are unkeyed and unaffected.
  */
 export function emailAddressDigest(address: string): string {
   return createHmac('sha256', getConfig().authSecret).update('ten98.email-suppression.v1:' + normalise(address)).digest('hex');
@@ -39,15 +39,15 @@ export async function isEmailSuppressed(address: string, db: Pool | PoolClient =
 }
 
 /**
- * Idempotent: SNS delivers at least once. A hard bounce is kept over a later complaint, a hard bounce after a complaint
- * makes the suppression permanent, and a complaint after an expired one starts a new period. Each write first purges
- * expired complaints, so they are not kept as personal data.
+ * Idempotent: SNS delivers at least once. A hard bounce is kept unchanged over a later complaint, a hard bounce after a
+ * complaint makes the suppression permanent, and any repeat complaint on a complaint row starts a new period. Each write
+ * first purges expired complaints, so they are not kept as personal data.
  */
 export async function recordEmailSuppression(address: string, reason: EmailSuppressionReason, db: Pool | PoolClient = getDatabase().pool): Promise<void> {
   await db.query(`DELETE FROM email_suppression WHERE NOT ${active}`);
   await db.query(`INSERT INTO email_suppression(address_hash,reason,keyed) VALUES($1,$2,true)
     ON CONFLICT (address_hash) DO UPDATE SET reason=EXCLUDED.reason, created_at=clock_timestamp()
-    WHERE email_suppression.reason='complaint' AND EXCLUDED.reason='permanent-bounce'`, [emailAddressDigest(address), reason]);
+    WHERE email_suppression.reason='complaint'`, [emailAddressDigest(address), reason]);
 }
 
 /** Removes one address's suppression, keyed or legacy, and reports whether one was recorded. Callers authorize and audit. */
