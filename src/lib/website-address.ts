@@ -12,3 +12,8 @@ export function parseWebsiteAddress(raw: string): { origin?: string; error?: str
   return { origin: u.origin }
 }
 
+
+// A readable default name for a new website: its host without a leading www., within the 120-character name limit.
+export function websiteNameFromOrigin(origin: string): string {
+  return new URL(origin).hostname.replace(/^www\./, '').slice(0, 120)
+}

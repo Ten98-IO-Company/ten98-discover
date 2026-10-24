@@ -89,7 +89,7 @@ try {
       assert.equal(await page.getByRole('alert').filter({ hasText: 'Google authorization returned.' }).count(), 0, 'A successful return must not be announced as an error.');
       assert.equal(new URL(page.url()).hash, '', 'OAuth state/code/target fragment must be cleared from browser history.');
       assert.equal(await page.locator('aside.t98-shell-sidebar').getByRole('combobox', { name: 'Workspace', exact: true }).inputValue(), fixture.workspaceId, 'Callback must select its authorized workspace, not the first membership.');
-      assert.equal(await page.getByLabel('Project', { exact: true }).inputValue(), fixture.projectId, 'Callback must select its authorized project.');
+      assert.equal(await page.getByLabel('Website', { exact: true }).inputValue(), fixture.projectId, 'Callback must select its authorized project.');
       const connection = page.locator('section').filter({ has: page.getByText('Browser Search Console', { exact: true }) }).last();
       await connection.getByRole('button', { name: 'Load available properties', exact: true }).click();
       await connection.getByRole('radio', { name: /sc-domain:example.test/ }).check();

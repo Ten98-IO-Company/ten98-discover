@@ -60,7 +60,7 @@ try {
     await tabs.getByRole('link',{name:tab,exact:true}).click();
   }
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
-  await navigation();await page.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true}).selectOption({label:'Retention browser project'});
+  await navigation();await page.locator('aside.t98-shell-sidebar').getByLabel('Website',{exact:true}).selectOption({label:'Retention browser project'});
   await page.getByText('This date range is partial after retention.',{exact:false}).waitFor();
   const daily=page.getByRole('figure',{name:/^Daily page views and custom events \(UTC\)/});
   await daily.getByText('View data table',{exact:true}).click();
