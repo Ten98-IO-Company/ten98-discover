@@ -18,7 +18,9 @@
    ],
    "routes": [
     "GET /api/projects/{projectId}/website-shares",
-    "POST /api/workspaces/{workspaceId}/invitations"
+    "POST /api/workspaces/{workspaceId}/invitations",
+    "POST /api/workspaces/{workspaceId}/invitations/{invitationId}/new-link",
+    "POST /api/workspaces/{workspaceId}/invitations/{invitationId}/resend"
    ],
    "migrations": [
     "0001_foundation",

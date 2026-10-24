@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime';
-import { Banner, useConfirmDialog } from '@ten98/ui';
+import { Alert, Banner, Button, Inline, useConfirmDialog } from '@ten98/ui';
 import { assignableRoles, invitableRoles } from '../lib/team-roles';
 import { api, ApiError, errMsg } from '../lib/api';
 
 type Member = { userId: string; name: string; email: string; role: Role };
 type Invitation = { id: string; email: string; role: Role; expiresAt: string };
 type InviteDelivery = 'accepted' | 'failed' | 'disabled';
+type InviteAction = { kind: 'resend' | 'new-link'; invitation: Invitation };
+type InviteLink = { email: string; url: string; delivery: InviteDelivery; kind: 'create' | InviteAction['kind'] };
 type TeamData = {
   workspace: { id: string; name: string; twoFactorRequired: boolean };
   role: Role;
@@ -48,7 +50,9 @@ function TeamPanelContent(props: TeamPanelProps) {
   const [name, setName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<Role>('editor');
-  const [inviteLink, setInviteLink] = useState<{ email: string; url: string; delivery: InviteDelivery } | null>(null);
+  const [inviteLink, setInviteLink] = useState<InviteLink | null>(null);
+  // A resend or new link whose reply was lost; only that exact request is offered again.
+  const [attempt, setAttempt] = useState<InviteAction | null>(null);
   const [copied, setCopied] = useState(false);
   const [transferTo, setTransferTo] = useState('');
   const [transferEmail, setTransferEmail] = useState('');
@@ -193,7 +197,7 @@ function TeamPanelContent(props: TeamPanelProps) {
         { method: 'POST', body: { email, role: inviteRoles.includes(inviteRole) ? inviteRole : 'editor' }, signal },
       );
       return () => {
-        setInviteLink({ email: res.invitation.email, url: res.inviteUrl, delivery: res.email });
+        setInviteLink({ email: res.invitation.email, url: res.inviteUrl, delivery: res.email, kind: 'create' });
         setCopied(false);
         setInviteEmail('');
       };
@@ -212,8 +216,38 @@ function TeamPanelContent(props: TeamPanelProps) {
           setInviteLink(null);
           setCopied(false);
         }
+        setAttempt(current => current?.invitation.id === inv.id ? null : current);
       };
     });
+  }
+
+  function runInviteAction(action: InviteAction) {
+    const { kind, invitation: inv } = action;
+    void runMutation(kind === 'resend' ? `Could not resend the invitation to ${inv.email}` : `Could not issue a new link for ${inv.email}`, async signal => {
+      let res: { invitation: Invitation; inviteUrl: string; email?: 'accepted' | 'failed' };
+      try {
+        res = await api(
+          `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(inv.id)}/${kind}`,
+          { method: 'POST', body: {}, signal },
+        );
+      } catch (e) {
+        // Network loss or a server error may follow a committed rotation, so the old link may already be gone.
+        const unknown = !(e instanceof ApiError) || e.status === 0 || e.status >= 500;
+        if (!signal.aborted) setAttempt(unknown ? action : null);
+        throw e;
+      }
+      return () => {
+        setAttempt(null);
+        setInviteLink({ email: res.invitation.email, url: res.inviteUrl, delivery: res.email ?? 'disabled', kind });
+        setCopied(false);
+      };
+    });
+  }
+
+  async function newInviteLink(inv: Invitation) {
+    if (!await confirm({ title: `Issue a new invitation link for ${inv.email}?`, description: 'The current link stops working immediately. No email is sent; you copy and share the new link yourself.', confirmLabel: 'Issue new link' })) return;
+    if (mutRef.current) return;
+    runInviteAction({ kind: 'new-link', invitation: inv });
   }
 
   function changeRole(m: Member, role: Role) {
@@ -463,9 +497,17 @@ function TeamPanelContent(props: TeamPanelProps) {
                     {canManage && (
                       <td>
                         {canManageInvite(inv) && (
-                          <button type='button' className='btn' disabled={busy} onClick={() => revokeInvite(inv)}>
-                            Revoke
-                          </button>
+                          <Inline gap={2}>
+                            <Button type='button' variant='secondary' disabled={busy} aria-label={`Resend invitation email to ${inv.email}`} onClick={() => runInviteAction({ kind: 'resend', invitation: inv })}>
+                              Resend email
+                            </Button>
+                            <Button type='button' variant='secondary' disabled={busy} aria-label={`New invitation link for ${inv.email}`} onClick={() => void newInviteLink(inv)}>
+                              New link
+                            </Button>
+                            <Button type='button' variant='secondary' disabled={busy} onClick={() => revokeInvite(inv)}>
+                              Revoke
+                            </Button>
+                          </Inline>
                         )}
                       </td>
                     )}
@@ -474,6 +516,15 @@ function TeamPanelContent(props: TeamPanelProps) {
               </tbody>
             </table>
           </div>
+        )}
+        {attempt && (
+          <Alert tone='warning' title='Outcome not confirmed' actions={<Inline gap={2}>
+            <Button type='button' variant='secondary' disabled={busy} onClick={() => runInviteAction(attempt)}>Retry same request</Button>
+            <Button type='button' variant='ghost' disabled={busy} onClick={() => setAttempt(null)}>Dismiss</Button>
+          </Inline>}>
+            The {attempt.kind === 'resend' ? 'resend' : 'new link'} request for {attempt.invitation.email} was not confirmed. The
+            previous link may already have stopped working. Retry the same request to get a working link.
+          </Alert>
         )}
       </section>
 
@@ -520,7 +571,15 @@ function TeamPanelContent(props: TeamPanelProps) {
           {inviteLink && (
             <div className='banner' role='status'>
               <p>
-                {inviteLink.delivery === 'accepted' ? (
+                {inviteLink.kind === 'new-link' ? (
+                  <>New invitation link for {inviteLink.email}. The previous link no longer works. Copy the link below and share it
+                  yourself — no email was sent.</>
+                ) : inviteLink.kind === 'resend' && inviteLink.delivery === 'accepted' ? (
+                  <>Invitation emailed again to {inviteLink.email}. The email provider accepted the message; delivery is not confirmed. The previous link no longer works.</>
+                ) : inviteLink.kind === 'resend' ? (
+                  <>The invitation email to {inviteLink.email} could not be sent. The previous link no longer works. Copy the new
+                  link below and share it yourself.</>
+                ) : inviteLink.delivery === 'accepted' ? (
                   <><strong>Invitation created for {inviteLink.email}.</strong> The email provider accepted the message; delivery is not confirmed. You can also copy the link below.</>
                 ) : inviteLink.delivery === 'failed' ? (
                   <><strong>Invitation created for {inviteLink.email}, but the email could not be sent.</strong> Copy the link
