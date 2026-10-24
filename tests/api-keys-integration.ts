@@ -95,6 +95,20 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
     await authenticateApiKey(usageKey.token);
     const next = await recorded(usageKey.key.id, aged);
     assert.ok(next.lastUsedAt! >= first.lastUsedAt!, 'A use more than a minute after the recorded one writes the new time.');
+    // Requests authenticate more than once; near-simultaneous authentications of a stale key queue one write, not one each.
+    await pool.query("UPDATE api_key SET last_used_at=last_used_at-interval '61 seconds' WHERE id=$1", [usageKey.key.id]);
+    const staleAt = (await usage(usageKey.key.id)).lastUsedAt!;
+    const poolQuery = pool.query;
+    let useWrites = 0;
+    pool.query = function (this: typeof pool, ...args: unknown[]) {
+      if (typeof args[0] === 'string' && args[0].startsWith('UPDATE api_key SET last_used_at')) useWrites++;
+      return (poolQuery as (...input: unknown[]) => unknown).apply(this, args);
+    } as typeof pool.query;
+    try {
+      await Promise.all([authenticateApiKey(usageKey.token), authorizeApiKey(usageKey.token, workspaceId, 'projects:read')]);
+    } finally { pool.query = poolQuery; }
+    assert.equal(useWrites, 1, 'Two concurrent authentications of a stale key queue exactly one last-use write.');
+    const latest = await recorded(usageKey.key.id, staleAt);
 
     // A key issued before 0074 has no recorded prefix; it is listed without one and still records its use.
     await pool.query("INSERT INTO api_key(id,workspace_id,issuer_user_id,name,token_hash,scopes,expires_at) VALUES($1,$2,$3,'Issued before prefixes',$4,ARRAY['projects:read'],clock_timestamp()+interval '1 day')",
@@ -104,7 +118,7 @@ export async function runApiKeyChecks(options: Options): Promise<void> {
     const usageList = await listApiKeys(workspaceId, options.ownerId);
     const usageEntry = usageList.keys.find((key) => key.id === usageKey.key.id)!, legacyEntry = usageList.keys.find((key) => key.id === legacyId)!;
     assert.equal(usageEntry.displayPrefix, usageKey.token.slice(0, 13));
-    assert.deepEqual(usageEntry.lastUsedAt, next.lastUsedAt, 'The list shows the recorded last use.');
+    assert.deepEqual(usageEntry.lastUsedAt, latest.lastUsedAt, 'The list shows the recorded last use.');
     assert.equal(legacyEntry.displayPrefix, null, 'A pre-existing key shows no prefix; none is derived.');
     assert.ok(legacyEntry.lastUsedAt instanceof Date);
     assert.equal(usageList.keys.find((key) => key.id === revokedUse.key.id)!.lastUsedAt, null);

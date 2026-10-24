@@ -109,11 +109,16 @@ export async function revokeApiKey(workspaceId: string, userId: string, keyId: s
 
 // Records a successful use at most once a minute per key. It runs on its own pooled connection and is not awaited, so a
 // request neither waits for it nor holds its row lock; SKIP LOCKED leaves a row another transaction holds to a later use.
+// A request may authenticate more than once, so one write per key is in flight per process; others are dropped, not queued.
+const recordingUse = new Set<string>();
 function recordApiKeyUse(id: string): void {
+  if (recordingUse.has(id)) return;
+  recordingUse.add(id);
   void getDatabase().pool.query(
     `UPDATE api_key SET last_used_at=clock_timestamp() WHERE id=(SELECT id FROM api_key WHERE id=$1
-       AND (last_used_at IS NULL OR last_used_at<clock_timestamp()-interval '1 minute') FOR UPDATE SKIP LOCKED)`, [id],
-  ).catch(() => console.error('API key last-used update failed; check database availability.'));
+       AND (last_used_at IS NULL OR last_used_at<clock_timestamp()-interval '1 minute') FOR NO KEY UPDATE SKIP LOCKED)`, [id],
+  ).catch(() => console.error('API key last-used update failed; check database availability.'))
+    .finally(() => recordingUse.delete(id));
 }
 
 export async function authenticateApiKey(token: string, client?: Pick<PoolClient, 'query'>): Promise<ApiKeyPrincipal> {
