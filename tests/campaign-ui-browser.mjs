@@ -90,7 +90,7 @@ async function brandAndAuthChrome(){
  assert.equal(await page.locator('.auth-story .brand strong').textContent(),'ten98.');assert.equal(await page.locator('.auth-story .brand small').textContent(),'DISCOVER');
  assert.equal((await style(page.locator('.auth-story .brand strong'))).font,'25px');
  assert.equal((await style(page.locator('.auth-story .brand'))).paddingBottom,'0px');
- const orbit=await style(page.locator('.auth-orbit'));assert.equal(orbit.width,550);assert.equal(orbit.height,550);assert.equal(orbit.border,'90px');assert.equal(orbit.borderColor,'rgb(228, 218, 243)');
+ const orbit=await style(page.locator('.auth-orbit'));assert.equal(orbit.width,550);assert.equal(orbit.height,550);assert.equal(orbit.border,'90px');assert.equal(orbit.borderColor,'rgb(240, 238, 252)');
  assert.equal((await style(page.locator('.auth-form-inner'))).maxWidth,'360px');
  assert.equal(await page.locator('.auth-channels > span').count(),3);
  for(const span of await page.locator('.auth-channels > span').all()){assert.equal((await style(span)).border,'0px');const svg=span.locator('svg');assert.equal(await svg.getAttribute('viewBox'),'0 0 24 24');assert.equal(await svg.getAttribute('stroke-width'),'1.7');assert.equal(await svg.getAttribute('stroke-linecap'),'round');assert.equal((await style(svg)).width,17);}
