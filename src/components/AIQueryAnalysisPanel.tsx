@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useEffect,useId,useRef,useState} from 'react';
 import {EvidenceSummary} from '@ten98/ui';
 import {ApiError,errMsg} from '../lib/api';
@@ -13,11 +14,7 @@ export async function readAISearch(path:string,signal:AbortSignal,body?:unknown)
  const failed=(message:string)=>Object.assign(new ApiError(message),{status:response.status});
  try{
   if(response.url!==new URL(path,window.location.origin).href||!response.body)throw Error('The AI search response could not be verified.');
-  const reader=response.body.getReader(),parts:Uint8Array[]=[],limit=response.ok?2*1024*1024:8192;let size=0;
-  try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>limit)throw Error('The AI search response exceeded its complete size limit.');parts.push(part.value);}}catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
-  const encoding=response.headers.get('content-encoding'),length=response.headers.get('content-length');if((!encoding||encoding==='identity')&&length!==null&&(!/^\d+$/.test(length)||Number(length)!==size))throw Error('The AI search response was incomplete.');
-  const bytes=new Uint8Array(size);let offset=0;for(const p of parts){bytes.set(p,offset);offset+=p.length;}
-  const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  let value:unknown;try{value=JSON.parse(await readResponseText(response,{maxBytes:response.ok?2*1024*1024:8192,contentLength:'exact',signal}));}catch(error){const code=(error as {code?:unknown}).code;if(error instanceof RangeError)throw Error('The AI search response exceeded its complete size limit.');if(code==='CONTENT_LENGTH_INVALID'||code==='RESPONSE_INCOMPLETE')throw Error('The AI search response was incomplete.');throw error;}
   if(!response.ok)throw failed(value&&typeof value==='object'&&'error'in value&&typeof value.error==='string'?value.error:'AI search is unavailable for this access.');
   if(response.headers.get('content-type')?.split(';')[0].trim()!=='application/json')throw Error('The AI search response type could not be verified.');return value;
  }catch(error){if(!response.ok)throw failed(error instanceof Error?error.message:'AI search could not load.');throw error;}

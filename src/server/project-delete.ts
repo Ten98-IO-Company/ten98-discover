@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {FoundationError} from './auth.ts';
 import {getDatabase} from './db.ts';
 import {canonicalHash} from './context-input.ts';
+import {archivePaidWork} from './paid-work-archive.ts';
 import {projectDeleteInput,projectDeleteState,projectDeleteResult} from '../lib/project-delete.ts';
 
 const missing=()=>new FoundationError(404,'Website not found or unavailable.');
@@ -37,7 +38,9 @@ export async function deleteProject(workspaceId:string,projectId:string,userId:s
    UNION ALL SELECT id FROM domain_research_run WHERE project_id=$1)
    SELECT 1 FROM provider_request p JOIN ids ON ids.id=p.id WHERE p.workspace_id=$2 AND p.status IN('reserved','dispatched','uncertain') LIMIT 1`,[projectId,workspaceId]);
   if(active.rowCount)throw new FoundationError(409,'Finish or cancel reserved work and reconcile uncertain provider charges before deleting this website.');
-  // Same W gate serializes all reserve/dispatch/settle paths. No financial row is modified.
+  // Same W gate serializes all reserve/dispatch/settle paths. No financial row is modified: each paid-work row of the
+  // website is copied to the archive first (#292), in this transaction, so a failed copy deletes nothing.
+  await archivePaidWork(client,{workspaceId,projectId});
   // Break the existing recurring quote/occurrence cycle, then only the NO ACTION/RESTRICT
   // children. Remaining exact-project dependents use their existing FK cascade.
   await client.query('UPDATE prompt_execution_quote SET recurring_occurrence_id=NULL,recurring_models_hash=NULL WHERE project_id=$1',[projectId]);
