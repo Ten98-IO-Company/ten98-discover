@@ -898,7 +898,7 @@ function App() {
 }
 
 function AIInsightsSection(props:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void;onBack:()=>void}) {
-  return <AIInsightsPanel {...props} backLabel='Back to saved prompts' />
+  return <AIInsightsPanel {...props} backLabel='Back to prompts' />
 }
 
 // A status-0 ApiError means the request may or may not have completed; every other failure is a definite error.
