@@ -129,7 +129,7 @@ async function authThemePairs(){
 async function headerContentContained(){
  return page.locator('.t98-shell-header').evaluate(header=>{
   const bounds=header.getBoundingClientRect(),visible=e=>!!e&&e.getClientRects().length>0&&getComputedStyle(e).visibility==='visible',inside=e=>{const r=e.getBoundingClientRect();return r.left>=bounds.left-1&&r.right<=bounds.right+1&&r.top>=bounds.top-1&&r.bottom<=bounds.bottom+1;};
-  const required=['.t98-app-topbar__breadcrumb','.t98-app-topbar__current','.t98-app-topbar__actions','.avatar'].map(selector=>header.querySelector(selector));
+  const required=['.t98-app-topbar__breadcrumb','.t98-app-topbar__current','.t98-app-topbar__actions','.t98-avatar'].map(selector=>header.querySelector(selector));
   if(innerWidth<=760)required.push(header.querySelector('.t98-app-topbar__menu'));
   if(required.some(e=>!e))return false;
   return required.every(e=>visible(e)&&inside(e))&&[...header.querySelectorAll('.t98-app-topbar__crumbs > *,.t98-app-topbar__actions > *')].filter(visible).every(inside);
