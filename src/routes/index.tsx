@@ -9,6 +9,7 @@ import { createContext, lazy, Suspense, type ReactNode, useCallback, useContext,
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
 import { appSections, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels } from '../lib/app-sections'
+import { formatReportInstant } from '../lib/report-time'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
 import { WebsiteQuickShare } from '../components/WebsiteSharePanel'
@@ -198,7 +199,7 @@ function App() {
     if (pending.value.kind === 'proof') { go({ ...intent.current.search, view: 'identity' }, true); return true }
     if (pending.value.kind === 'google') {
       const value = pending.value
-      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: value.kind }, true); return true }
+      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: 'imports' }, true); return true }
       else setAuthNotice({ kind: 'error', message: 'Authorization returned, but that workspace is no longer available. Choose a current workspace.' })
     }
   }
@@ -799,7 +800,8 @@ function App() {
         {view === 'ranks' && project && me && <Suspense fallback={<p role="status">Loading rank tracking…</p>}><RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} /></Suspense>}
         {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} />}
+        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='reports' onManage={() => go(target('imports'))} />}
+        {view === 'imports' && project && me && settingsFrame(<GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='setup' />)}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />)}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
@@ -831,12 +833,12 @@ function App() {
                 <div>
                   <h2 id='ev-h'>Retained events</h2>
                   <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
-                  {eventsReadAt !== null && <Text tone='muted'>Read {fmt(eventsReadAt)}</Text>}
+                  {eventsReadAt !== null && <Text tone='muted' title={eventsReadAt}>Read {formatReportInstant(eventsReadAt,'UTC')}</Text>}
                 </div>
                 <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
               </div>
-              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint'>History before {fmt((events?.retainedFrom ?? project.retainedFrom)!)} is unavailable after retention. This is not a lifetime total.</p>}
-              {lastReceived !== null && <p className='dim'>Last retained event received {fmt(lastReceived)}</p>}
+              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint' title={(events?.retainedFrom ?? project.retainedFrom)!}>History before {formatReportInstant((events?.retainedFrom ?? project.retainedFrom)!,'UTC')} is unavailable after retention. This is not a lifetime total.</p>}
+              {lastReceived !== null && <p className='dim' title={lastReceived}>Last retained event received {formatReportInstant(lastReceived,'UTC')}</p>}
               {eventsError !== '' && <Alert tone='danger'>{eventsError}</Alert>}
               {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
               {events !== null && events.events.length === 0 && (
@@ -849,7 +851,7 @@ function App() {
                 <>
                   <DataTable caption='Retained event rows' captionHidden responsive='stack' searchable={false} sortable={false} pagination={false} rows={events.events} rowKey={ev => ev.id}
                     columns={[{ key: 'event', header: 'Event', rowHeader: true, wrap: true, render: ev => ev.eventName }, { key: 'origin', header: 'Origin', wrap: true, render: ev => <bdi dir='ltr'>{ev.origin}</bdi> },
-                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt}>{fmt(ev.receivedAt)}</time> }]} />
+                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt} title={ev.receivedAt}>{formatReportInstant(ev.receivedAt,'UTC')}</time> }]} />
                   <p className='dim footnote'>Showing the latest {events.events.length} of {events.total} persisted events.</p>
                 </>
               )}
@@ -883,7 +885,7 @@ function App() {
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
                 {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
                 {firstEventSeen && (events?.total ?? 0) > 0 && <StatusLine tone='success'>First event received. Your tracker is sending events to this project.</StatusLine>}
-                {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt}>{fmt(events.events[0].receivedAt)}</time>.</p>}
+                {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt} title={events.events[0].receivedAt}>{formatReportInstant(events.events[0].receivedAt,'UTC')}</time>.</p>}
                 {events !== null && events.total === 0 && <p>No events in retained history yet. This page checks automatically for 10 minutes. Confirm the tag is published and visit your website. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
                 {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
                 <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
@@ -900,7 +902,7 @@ function App() {
 }
 
 function AIInsightsSection(props:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void;onBack:()=>void}) {
-  return <AIInsightsPanel {...props} backLabel='Back to saved prompts' />
+  return <AIInsightsPanel {...props} backLabel='Back to prompts' />
 }
 
 // A status-0 ApiError means the request may or may not have completed; every other failure is a definite error.

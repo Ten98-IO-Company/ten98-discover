@@ -16,7 +16,7 @@ export const appSections: readonly AppSection[] = [
     keywords: ['funnels', 'attribution', 'utm campaigns', 'tracked links', 'tracking images', 'pixels'] },
   { id: 'search', label: 'Search', icon: 'search', tabs: [{ view: 'keywords', label: 'Keywords' }, { view: 'ranks', label: 'Rankings' }, { view: 'domain-seo', label: 'Domain overview' }, { view: 'audits', label: 'Site health' }, { view: 'google', label: 'Google' }],
     keywords: ['seo', 'keyword research', 'rank tracking', 'domain seo', 'backlinks', 'site audits', 'search console', 'google analytics', 'ga4', 'google reports'] },
-  { id: 'ai', label: 'AI visibility', icon: 'compass', tabs: [{ view: 'prompts', label: 'Prompts' }, { view: 'ai-insights', label: 'Answers' }, { view: 'ai-search', label: 'ChatGPT' }],
+  { id: 'ai', label: 'AI visibility', icon: 'compass', tabs: [{ view: 'prompts', label: 'Prompts' }, { view: 'ai-insights', label: 'Answers' }],
     keywords: ['ai search', 'ai insights', 'saved prompts', 'answer analysis', 'chatgpt answers', 'citations', 'aeo', 'geo'] },
   { id: 'reports', label: 'Reports', icon: 'grid', tabs: [{ view: 'boards', label: 'Boards' }, { view: 'reports', label: 'Saved reports' }],
     keywords: ['boards', 'dashboards', 'share', 'templates'] },
@@ -25,6 +25,8 @@ export const appSections: readonly AppSection[] = [
 // Some tabs hold a second strip of modes or tools: the Dashboard's period comparison and the campaign tools.
 export const subTabs: Partial<Record<AppView, readonly SectionTab[]>> = {
   project: [{ view: 'project', label: 'Summary' }, { view: 'compare', label: 'Compare periods' }],
+  // Answers from API models and from the ChatGPT app are measured separately and never pooled.
+  'ai-insights': [{ view: 'ai-insights', label: 'API models' }, { view: 'ai-search', label: 'ChatGPT app' }],
   campaigns: [{ view: 'campaigns', label: 'Campaign tags' }, { view: 'links', label: 'Tracked links' }, { view: 'pixels', label: 'Tracking images' }],
 }
 const tabOf: Partial<Record<AppView, AppView>> = Object.fromEntries(Object.entries(subTabs).flatMap(([tab, entries]) => entries!.map(entry => [entry.view, tab])))
@@ -35,7 +37,7 @@ export const settingsGroupLabels: Partial<Record<SettingsGroupId, string>> = { o
 export const settingsEntries: readonly SettingsEntry[] = [
   { view: 'installation', label: 'Tracking code', group: 'project', keywords: ['install tracker', 'tracking snippet'] }, { view: 'domains', label: 'Domains', group: 'project' },
   { view: 'collection', label: 'Privacy', group: 'project', keywords: ['collection and privacy', 'consent'] }, { view: 'destinations', label: 'Forwarding', group: 'project', keywords: ['destinations'] },
-  { view: 'context', label: 'Brand and competitors', group: 'project', keywords: ['project context', 'business brief'] },
+  { view: 'context', label: 'Brand and competitors', group: 'project', keywords: ['project context', 'business brief'] }, { view: 'imports', label: 'Imports', group: 'project', keywords: ['google search console', 'ga4 import'] },
   { view: 'team', label: 'Members', group: 'workspace', keywords: ['team', 'invite'] }, { view: 'keys', label: 'API keys', group: 'workspace', keywords: ['ten98 api access', 'mcp'] },
   { view: 'providers', label: 'Connections', group: 'workspace', keywords: ['ai and search providers', 'integrations', 'dataforseo', 'openrouter'] }, { view: 'retention', label: 'Data retention', group: 'workspace' },
   { view: 'workspace', label: 'New workspace', group: 'workspace' },
