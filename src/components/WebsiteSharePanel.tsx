@@ -114,7 +114,9 @@ export function WebsiteQuickShare({projectId,onUnauthorized}:{projectId:string;o
    checkWrite(result,projectId,next,body.requestId);
    setAttempt(null);
    if(next.operation==='revoke'){setLink(null);setNotice('Link revoked. It stops working on its next read.');}
-   else if(result.item?.state==='active'){const href=new URL('/share/websites/'+result.ack.shareId,window.location.origin);href.hash=body.token;setLink({shareId:result.ack.shareId,url:href.href});setNotice('Link created. Copy it now: it is shown only once.');}
+   else if(result.item?.state==='active'){const href=new URL('/share/websites/'+result.ack.shareId,window.location.origin);href.hash=body.token;setLink({shareId:result.ack.shareId,url:href.href});
+    // The same click that created the link copies it; if the browser refuses, the link stays on screen with Copy link.
+    navigator.clipboard.writeText(href.href).then(()=>setNotice('Link created and copied. It is shown only once.'),()=>setNotice('Link created. Copy it now: it is shown only once.'));}
    else setNotice('This link is no longer active, so it is not shown. Create a new link if you still need one.');
   }catch(cause){
    if(cause instanceof ApiError&&cause.status===401){setOpen(false);onUnauthorized();}
@@ -129,7 +131,7 @@ export function WebsiteQuickShare({projectId,onUnauthorized}:{projectId:string;o
  // A pending attempt is always retried byte for byte; only a settled state mints a new request ID.
  const retry=attempt?()=>void send(attempt):null;
  const footer=link?<><Button variant="danger" disabled={busy} onClick={retry??(()=>void revoke())}>{attempt?'Retry':'Revoke link'}</Button><Button variant="secondary" disabled={busy} onClick={()=>void close()}>Done</Button></>
-  :<><Button variant="secondary" disabled={busy} onClick={()=>void close()}>Cancel</Button><Button disabled={busy} onClick={retry??create}>{attempt?'Retry':busy?'Creating…':'Create link'}</Button></>;
+  :<><Button variant="secondary" disabled={busy} onClick={()=>void close()}>Cancel</Button><Button disabled={busy} onClick={retry??create}>{attempt?'Retry':busy?'Creating…':'Create and copy link'}</Button></>;
  return <>
   <Button variant="secondary" onClick={()=>{reset();setOpen(true);}}>Share</Button>
   <Dialog open={open} onOpenChange={next=>{if(busy)return;if(next)setOpen(true);else void close();}} onBeforeClose={()=>{if(!attempt&&!link)return;void close();return false;}} closeDisabled={busy} title="Share this dashboard" footer={footer}

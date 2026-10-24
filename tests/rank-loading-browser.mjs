@@ -151,13 +151,21 @@ async function run(name, options, check) {
     return target;
   }
   // Projects are chosen in the shared Workspace/Project switcher (a native select), not as sidebar links.
-  async function selectProject(name) { await menu(); await page.locator('aside.t98-shell-sidebar').getByLabel('Project', {exact: true}).selectOption({label: name}); }
-  async function open() { await page.goto(url()); await page.locator('main').waitFor(); await page.waitForURL(/analyticsTo=/, {timeout: 3000}).catch(() => {}); /* the app may normalize the URL once, closing a drawer opened earlier */ await (await link('Analytics')).waitFor(); }
+  async function selectProject(name) { await menu(); await page.locator('aside.t98-shell-sidebar').getByLabel('Website', {exact: true}).selectOption({label: name}); }
+  async function open() { await page.goto(url()); await page.locator('main').waitFor(); await page.waitForURL(/analyticsTo=/, {timeout: 3000}).catch(() => {}); /* the app may normalize the URL once, closing a drawer opened earlier */ await (await link('Overview')).waitFor(); }
+  // Pages are tabs within a sidebar section (src/lib/app-sections.ts); open the section first when its tab strip is absent.
+  const pages = section => page.locator('main').getByRole('navigation', {name: section + ' pages', exact: true});
+  async function tab(section, name) {
+    if (await pages(section).count() === 0) { await (await link(section)).click(); await pages(section).waitFor(); }
+    return pages(section).getByRole('link', {name, exact: true});
+  }
+  const ranks = () => tab('Search', 'Rankings'), events = () => tab('Overview', 'Latest events');
+  const eventsShown = async () => { await page.getByRole('heading', {name: 'Overview', level: 1, exact: true}).waitFor(); await pages('Overview').locator('a[aria-current="page"]').filter({hasText: 'Latest events'}).waitFor(); };
   const loaded = () => page.getByRole('heading', {name: 'Saved trackers', exact: true}).waitFor();
   const loading = () => page.getByRole('status').filter({hasText: 'Loading rank tracking'}).waitFor();
   const rankCalls = () => calls.filter(call => rankApi(call.path));
   try {
-    await check({page, context, calls, url, open, menu, link, selectProject, loaded, loading, rankCalls,
+    await check({page, context, calls, url, open, menu, link, ranks, events, eventsShown, selectProject, loaded, loading, rankCalls,
       held: () => codeHeld, release: releaseCode, observedAssets, syntheticProject: () => syntheticProject});
     await Promise.all(tasks);
     assert.ok(observedAssets.has(routeAsset), 'Actual production routes module was exercised');
@@ -176,7 +184,7 @@ try {
   await run('cold overview excludes rank code/API; first keyboard entry reads the current real scope', {}, async t => {
     await t.open(); await wait(150);
     assert.equal(t.calls.some(call => call.path === rankAsset), false); assert.equal(t.rankCalls().length, 0);
-    const target = await t.link('Rank tracking'); await target.focus(); await wait(100);
+    const target = await t.ranks(); await target.focus(); await wait(100);
     assert.equal(t.calls.some(call => call.path === rankAsset), false, 'Focusing navigation must not preload the rank family');
     await target.press('Enter'); await t.loaded();
     assert.equal(t.calls.filter(call => call.path === rankAsset).length, 1);
@@ -186,19 +194,19 @@ try {
     await t.page.screenshot({path: resolve(artifactDir, 'rank-loaded-1440.png'), fullPage: true});
   });
   await run('delayed code can be abandoned for another view without a stale rank read or mount', {code: 'hold'}, async t => {
-    await t.open(); await (await t.link('Rank tracking')).click(); await t.loading(); assert.equal(t.held(), true);
-    await (await t.link('Recent events')).click(); await t.page.getByRole('heading', {name: 'Recent events', level: 1, exact: true}).waitFor();
+    await t.open(); await (await t.ranks()).click(); await t.loading(); assert.equal(t.held(), true);
+    await (await t.events()).click(); await t.eventsShown();
     t.release(); await wait(250);
     assert.equal(t.rankCalls().length, 0); assert.equal(await t.page.getByRole('heading', {name: 'Saved trackers', exact: true}).count(), 0);
-    await (await t.link('Rank tracking')).click(); await t.loaded(); assert.equal(t.rankCalls().length, 1);
+    await (await t.ranks()).click(); await t.loaded(); assert.equal(t.rankCalls().length, 1);
   });
   await run('project A→B→A during a held module mounts only the final selected scope', {code: 'hold', project: true}, async t => {
     await t.open(); const first = fixtureData.projects.find(project => project.id === projectId);
     const second = fixtureData.projects.find(project => project.id !== projectId) ?? {id: otherProjectId, name: 'Contained alternate project'};
-    assert.ok(first); await (await t.link('Rank tracking')).click(); await t.loading();
-    await t.selectProject(second.name); await (await t.link('Rank tracking')).click(); await t.loading();
+    assert.ok(first); await (await t.ranks()).click(); await t.loading();
+    await t.selectProject(second.name); await (await t.ranks()).click(); await t.loading();
     assert.equal(new URL(t.page.url()).searchParams.get('project'), second.id);
-    await t.selectProject(first.name); await (await t.link('Rank tracking')).click(); await t.loading();
+    await t.selectProject(first.name); await (await t.ranks()).click(); await t.loading();
     assert.equal(t.rankCalls().length, 0); t.release(); await t.loaded();
     assert.deepEqual(t.rankCalls().map(call => call.path), [`/api/projects/${projectId}/rank-trackers`]);
     assert.equal(new URL(t.page.url()).searchParams.get('project'), projectId);
@@ -206,28 +214,28 @@ try {
   await run('contained session A→B→A while code waits never mounts for an ended session', {code: 'hold', session: true}, async t => {
     async function signOut() { await t.page.getByRole('button', {name: 'Account menu', exact: true}).click(); await t.page.getByRole('button', {name: 'Sign out', exact: true}).click(); await t.page.getByLabel('Password', {exact: true}).waitFor(); }
     async function signIn(actor) { await t.page.getByLabel('Email address', { exact: true }).fill(actor + '@rank-loading.invalid'); await t.page.getByLabel('Password', {exact: true}).fill('Contained fixture only 123!'); await t.page.getByRole('button', {name: 'Sign in', exact: true}).click(); await t.page.locator('main').waitFor(); }
-    await t.open(); await (await t.link('Rank tracking')).click(); await t.loading();
+    await t.open(); await (await t.ranks()).click(); await t.loading();
     await signOut(); assert.equal(t.rankCalls().length, 0);
-    await signIn('b'); await (await t.link('Rank tracking')).click(); await t.loading();
-    await signOut(); await signIn('a'); await (await t.link('Rank tracking')).click(); await t.loading();
+    await signIn('b'); await (await t.ranks()).click(); await t.loading();
+    await signOut(); await signIn('a'); await (await t.ranks()).click(); await t.loading();
     assert.equal(t.rankCalls().length, 0); t.release(); await t.loaded();
     assert.deepEqual(t.rankCalls().map(call => call.actor), ['A']);
     assert.equal(await t.page.getByRole('button', {name: 'New tracker', exact: true}).count(), 0);
   });
   await run('missing chunk has local recovery, usable navigation, and only an explicit page reload retries', {code: 'fail'}, async t => {
-    await t.open(); await (await t.link('Rank tracking')).click();
+    await t.open(); await (await t.ranks()).click();
     await t.page.getByRole('alert').filter({hasText: 'Rankings couldn’t load'}).waitFor();
     assert.equal(t.rankCalls().length, 0); await wait(250);
     assert.equal(t.calls.filter(call => call.resource === 'document').length, 1, 'No automatic page reload');
-    await (await t.link('Recent events')).click(); await t.page.getByRole('heading', {name: 'Recent events', level: 1, exact: true}).waitFor();
-    await (await t.link('Rank tracking')).click(); await t.page.getByRole('alert').filter({hasText: 'Rankings couldn’t load'}).waitFor();
+    await (await t.events()).click(); await t.eventsShown();
+    await (await t.ranks()).click(); await t.page.getByRole('alert').filter({hasText: 'Rankings couldn’t load'}).waitFor();
     assert.equal(t.calls.filter(call => call.path === rankAsset).length, 1, 'No automatic failed-module retry');
     await t.page.getByRole('button', {name: 'Reload page', exact: true}).click(); await t.loaded();
     assert.equal(t.calls.filter(call => call.resource === 'document').length, 2);
     assert.equal(t.rankCalls().length, 1);
   });
   await run('loaded code still obeys the current API denial without exposing writer actions', {denied: true}, async t => {
-    await t.open(); await (await t.link('Rank tracking')).click();
+    await t.open(); await (await t.ranks()).click();
     await t.page.getByRole('alert').filter({hasText: 'Synthetic current access denied'}).waitFor();
     assert.equal(await t.page.getByRole('heading', {name: 'Saved trackers', exact: true}).count(), 0);
     assert.equal(await t.page.getByRole('button', {name: 'New tracker', exact: true}).count(), 0);
@@ -236,11 +244,11 @@ try {
     assert.equal(t.rankCalls().length, 2);
   });
   await run('360px keyboard navigation preserves the shell, focus and readable pending/loaded content', {code: 'hold', width: 360}, async t => {
-    await t.open(); const target = await t.link('Rank tracking'); await target.focus(); await target.press('Enter'); await t.loading();
+    await t.open(); const target = await t.ranks(); await target.focus(); await target.press('Enter'); await t.loading();
     await t.page.waitForFunction(() => document.activeElement?.tagName === 'MAIN');
     assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await t.page.screenshot({path: resolve(artifactDir, 'rank-loading-360.png'), fullPage: true});
-    await t.menu(); assert.equal(await (await t.link('Recent events')).isVisible(), true);
+    await t.menu(); assert.equal(await (await t.link('Overview')).isVisible(), true);
     const close = t.page.getByRole('button', {name: 'Close navigation', exact: true}); if (await close.isVisible()) await close.click();
     t.release(); await t.loaded();
     assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

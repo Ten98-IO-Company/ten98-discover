@@ -18,15 +18,18 @@ export const analyticsSummarySql={
         'customEvents',count(*) FILTER (WHERE event_name<>'page_view'))`,
  // Reads a `visits` CTE from analytics-visits.ts. v2 marks that definition's deliberate departure from pinned Umami 3.4.0's
  // filtered getWebsiteStats: a filtered population counts visits with a matching page view and measures each whole visit.
+ // Distinct visitor counts sort visitor_id under "C" to avoid strcoll. The count cannot change: event_identity_pair (migration 0012)
+ // admits only NULL or 64 lowercase hex characters, which are equal under any collation exactly when their bytes are.
  measurement:`json_build_object('version','umami-3.4-visit-scoped-v2',
         'identifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NOT NULL),
         'unidentifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NULL),
-        'visitors',(SELECT CASE WHEN count(*)>0 THEN count(DISTINCT visitor_id) END FROM visits),
+        'visitors',(SELECT CASE WHEN count(*)>0 THEN count(DISTINCT visitor_id COLLATE "C") END FROM visits),
         'visits',(SELECT CASE WHEN count(*)>0 THEN count(*) END FROM visits),
         'bounceRate',(SELECT 100.0*count(*) FILTER (WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) FROM visits),
         'averageVisitSeconds',(SELECT avg(duration) FROM visits))`,
 };
-const environmentLabelsSql=(source:string)=>`SELECT e.*,d.field,d.value FROM ${source} e CROSS JOIN LATERAL
+// Only the columns the visit and count aggregates read, so the three rows per event stay narrow.
+const environmentLabelsSql=(source:string)=>`SELECT e.event_name,e.received_at,e.visitor_id,e.visit_id,e.visit_has_custom,d.field,d.value FROM ${source} e CROSS JOIN LATERAL
         (VALUES ('browser',e.dimensions->>'browser'),('os',e.dimensions->>'os'),('device',e.dimensions->>'device')) d(field,value)`;
 export function hideAnalyticsSummary(summary:Pick<AnalyticsPeriodReport,'totals'|'measurement'>){
  summary.totals={pageViews:null,customEvents:null};summary.measurement.identifiedPageViews=null;summary.measurement.unidentifiedPageViews=null;
@@ -152,7 +155,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
     dimension_visits AS (${dimension&&visitScopeFields.includes(dimension)
       ?scopedVisitsSql('dimension_labeled',source=>`SELECT s.*,${analyticsDimensionValueSql('$16::text','s')} AS label FROM ${source} s`,['period','label'])
       :matchedVisitsSql('dimension_labeled','visit_metrics',['label'],['period','visitor_id','visit_id'])}),
-    dimension_measurement AS MATERIALIZED (SELECT period,label,count(DISTINCT visitor_id) AS visitors,count(*) AS visits,100.0*count(*) FILTER(WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce,avg(duration) AS duration FROM dimension_visits GROUP BY period,label),
+    dimension_measurement AS MATERIALIZED (SELECT period,label,count(DISTINCT visitor_id COLLATE "C") AS visitors,count(*) AS visits,100.0*count(*) FILTER(WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce,avg(duration) AS duration FROM dimension_visits GROUP BY period,label),
     dimension_counts AS (SELECT period,label,count(*) FILTER(WHERE event_name='page_view') AS pageviews,count(*) FILTER(WHERE event_name<>'page_view') AS custom,count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NOT NULL) AS identified
       FROM dimension_labeled GROUP BY period,label HAVING CASE WHEN $16='event' THEN count(*) FILTER(WHERE event_name<>'page_view')>0 ELSE count(*) FILTER(WHERE event_name='page_view')>0 END),
     dimension_groups AS MATERIALIZED (SELECT a.*,m.visitors,m.visits,m.bounce,m.duration FROM dimension_counts a LEFT JOIN dimension_measurement m ON a.period=m.period AND a.label IS NOT DISTINCT FROM m.label),
@@ -179,7 +182,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
       SELECT path,count(*) AS views FROM observations WHERE event_name='page_view'
       GROUP BY path ORDER BY views DESC,path ASC LIMIT 20
     ), referrers AS (
-      SELECT h.host,count(*) AS views,CASE WHEN count(o.visitor_id)>0 THEN count(DISTINCT o.visitor_id) END AS visitors
+      SELECT h.host,count(*) AS views,CASE WHEN count(o.visitor_id)>0 THEN count(DISTINCT o.visitor_id COLLATE "C") END AS visitors
       FROM observations o CROSS JOIN LATERAL (SELECT o.dimensions->>'referrerHost' AS host) h
       WHERE o.event_name='page_view' AND jsonb_typeof(o.dimensions->'referrerHost')='string' AND length(h.host) BETWEEN 1 AND 2048 AND NOT ${selfReferralSql('o')}
       GROUP BY h.host ORDER BY visitors DESC NULLS LAST,views DESC,h.host COLLATE "C" ASC LIMIT 20
@@ -189,7 +192,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
     ), environment_observations AS MATERIALIZED (${environmentLabelsSql('observations')}
     ), environment_visits AS (${scopedVisitsSql('environment_observations',environmentLabelsSql,['field','value'],'visit_scope')}
     ), environment_measurement AS MATERIALIZED (
-      SELECT field,value,count(DISTINCT visitor_id) AS visitors,count(*) AS visits,
+      SELECT field,value,count(DISTINCT visitor_id COLLATE "C") AS visitors,count(*) AS visits,
         100.0*count(*) FILTER (WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce_rate,avg(duration) AS duration
       FROM environment_visits GROUP BY field,value
     ), environment_counts AS (

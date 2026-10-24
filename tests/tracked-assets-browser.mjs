@@ -20,8 +20,9 @@ let server,browser,context,page,origin,state,override,held=[];
 const button=name=>page.getByRole('button',{name,exact:true}),heading=name=>page.getByRole('heading',{name,exact:true}),reportRegion=()=>page.getByRole('region',{name:'Tracked asset report',exact:true});
 // Links and tracking images are modes of the Conversions › Campaigns tab.
 const campaignTools=()=>page.getByRole('navigation',{name:'Campaigns views',exact:true});
-// From outside the section, the shell reaches them through the sidebar's Conversions section and its Campaigns tab.
-const openCampaignTool=async name=>{await page.locator('.t98-shell-sidebar').getByRole('link',{name:'Conversions',exact:true}).click();await page.getByRole('navigation',{name:'Conversions pages',exact:true}).getByRole('link',{name:'Campaigns',exact:true}).click();await campaignTools().getByRole('link',{name,exact:true}).click();};
+// From outside the section, the shell reaches them through the sidebar's Conversions section and its Campaigns tab,
+// even with no project selected (#413): the strips sit beside the unchanged create-project form.
+const openCampaignTool=async name=>{await page.locator('.t98-shell-sidebar').getByRole('link',{name:'Conversions',exact:true}).click();await heading('Add your website').waitFor();assert.equal(new URL(page.url()).searchParams.has('project'),false);await page.getByRole('navigation',{name:'Conversions pages',exact:true}).getByRole('link',{name:'Campaigns',exact:true}).click();await campaignTools().getByRole('link',{name,exact:true}).click();await wait(()=>new URL(page.url()).searchParams.get('view')===(name==='Tracked links'?'links':'pixels'));};
 const wait=async predicate=>{const end=Date.now()+8000;while(!await predicate()){assert.ok(Date.now()<end,'Bounded synthetic browser condition not reached');await new Promise(resolve=>setTimeout(resolve,15));}};
 const reply=async(route,body,status=200)=>{await route.fulfill({status,contentType:'application/json',headers:{'cache-control':'no-store'},body:JSON.stringify(body)});return true;};
 const selected=(id=assetA,tab='report',report=scope,kind='link')=>({workspace,view:kind==='link'?'links':'pixels',assetQuery:new URLSearchParams({asset:id,report,...tab!=='report'?{tab}:{}}).toString()});

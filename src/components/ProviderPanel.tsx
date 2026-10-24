@@ -45,6 +45,8 @@ interface ProvidersResponse {
 
 interface ProviderPanelProps {
   workspaceId: string
+  /** Add connection form default from a setup link such as "Set up DataForSEO". */
+  initialProvider?: ProviderName
   onUnauthorized: () => void
 }
 
@@ -52,13 +54,13 @@ function providerLabel(provider: ProviderName): string {
   return provider === 'openrouter' ? 'OpenRouter' : 'DataForSEO'
 }
 
-export function ProviderPanel({ workspaceId, onUnauthorized }: ProviderPanelProps) {
+export function ProviderPanel({ workspaceId, initialProvider, onUnauthorized }: ProviderPanelProps) {
   // Keyed remount synchronously discards all state (including typed credentials)
   // when the workspace changes, so stale data or secrets can never leak across.
-  return <ProviderPanelInner key={workspaceId} workspaceId={workspaceId} onUnauthorized={onUnauthorized} />
+  return <ProviderPanelInner key={workspaceId} workspaceId={workspaceId} initialProvider={initialProvider} onUnauthorized={onUnauthorized} />
 }
 
-function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps) {
+function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: ProviderPanelProps) {
   const [data, setData] = useState<ProvidersResponse | null>(null)
   const [confirm, confirmDialog] = useConfirmDialog({ danger: true })
   const [loading, setLoading] = useState(true)
@@ -72,7 +74,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   const controlsOff = busy || reloadRequired
 
   const [cName, setCName] = useState('')
-  const [cProvider, setCProvider] = useState<ProviderName>('openrouter')
+  const [cProvider, setCProvider] = useState<ProviderName>(initialProvider ?? 'openrouter')
   const [cApiKey, setCApiKey] = useState('')
   const [cLogin, setCLogin] = useState('')
   const [cPassword, setCPassword] = useState('')

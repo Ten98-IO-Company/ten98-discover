@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {randomBytes,randomUUID} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {hashPassword} from 'better-auth/crypto';
 import pg from 'pg';
 import {getConfig} from '../src/server/config.ts';
@@ -14,6 +14,7 @@ import {exploreAnalytics} from '../src/server/explorer.ts';
 import {explorerQuery} from '../src/server/explorer-input.ts';
 import {boardSummary} from '../src/server/board-activity.ts';
 import {serializeGeographyKey} from '../src/lib/analytics-geography.ts';
+import {geographyProjectionSql} from '../src/server/geography-sql.ts';
 
 export async function runComparisonChecks(){
  assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_COMPARISON_TEST,'1');const config=getConfig(),db=new URL(config.databaseUrl);assert.ok(['127.0.0.1','localhost','[::1]'].includes(db.hostname));const ci=process.env.GITHUB_ACTIONS==='true'&&process.env.TEN98_ISOLATED_CI_DATABASE==='1'&&db.pathname==='/ten98_analytics_comparison_ci';assert.equal(db.port,ci?'5432':'55501');if(!ci)assert.match(db.pathname,/^\/ten98_comparison_[a-f0-9]{12}$/);assert.equal(db.search,'');assert.equal(db.hash,'');for(const name of ['PGHOST','PGHOSTADDR','PGPORT','PGDATABASE','PGSERVICE','PGSERVICEFILE'])assert.equal(process.env[name],undefined);await assertSchema();const {pool}=getDatabase();assert.equal((await pool.query('SELECT count(*)::int AS n FROM workspace')).rows[0].n,0);
@@ -84,7 +85,7 @@ export async function runComparisonChecks(){
   try{assert.equal((await handleApi(new Request(endpoint,{headers:{authorization:'Bearer '+expiring.token}}))).status,401);assert.equal(aggregateCalls,1,'Both periods use one aggregation SQL statement, including fresh final key authority.');}finally{pg.Client.prototype.query=originalQuery;}
   const waiting=await createApiKey(workspace,owner,{name:'Dimension waiting clock',scopes:['analytics:read']}),blocker=await pool.connect();let held:Promise<Response>|undefined;await blocker.query('BEGIN');await blocker.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[workspace]);try{await pool.query("UPDATE api_key SET expires_at=clock_timestamp()+interval '300 milliseconds' WHERE id=$1",[waiting.key.id]);held=handleApi(new Request(endpoint+'&dimension=path',{headers:{authorization:'Bearer '+waiting.token}}));let waitingSeen=false;for(let n=0;n<30&&!waitingSeen;n++){waitingSeen=!!(await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM workspace%FOR SHARE'")).rowCount;if(!waitingSeen)await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(waitingSeen,true,'Report must really wait behind the publication gate.');await blocker.query('SELECT pg_sleep(0.4)');await blocker.query('COMMIT');assert.equal((await held).status,401,'Natural key expiry during authority wait is checked by the later raw DB clock.');}finally{await blocker.query('ROLLBACK').catch(()=>{});blocker.release();await held?.catch(()=>{});}console.log('PASS real workspace authority lock wait followed by natural key expiry refusal for dimension comparison');
   await runDimensionRegressionChecks(pool,workspace,owner);
-  await runVisitScopeChecks(pool,workspace,owner);
+  await runVisitScopeChecks(pool,workspace,owner);await runOverviewPlanChecks(pool,workspace,owner);
   await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspace,viewer]);await assert.rejects(read({compare:'prev'}),{status:404});console.log('PASS one-statement two-period snapshot and final database-clock key expiry/current-role refusal');return {project,workspace,owner,dimensionSnapshots,paths,onlyAlpha,eventDimension,ref,directional,ranked,partial,expired};
  }finally{globalThis.fetch=originalFetch;}
 }
@@ -285,5 +286,54 @@ async function runVisitScopeChecks(pool:pg.Pool,workspace:string,owner:string){
  const exploredPath=await exploreAnalytics(project,owner,explorerScope({fields:'["path"]'}));
  assert.deepEqual(group(exploredPath,'/pricing'),[byPath.measurement.visits,byPath.measurement.bounceRate,byPath.measurement.averageVisitSeconds],'An Explorer path group equals the dashboard path selection.');
  console.log('PASS board summaries and Explorer groups agree with the dashboard under the same selection');
+}
+// #414 made the overview statement cheaper without changing a byte of its output. The digests below were recorded from the
+// pre-#414 SQL on this fixture; a deliberate report change re-records them, a performance change must leave them as they are.
+async function runOverviewPlanChecks(pool:pg.Pool,workspace:string,owner:string){
+ const project=randomUUID();await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Overview plan','https://overview.test',$3,'infinity')",[project,workspace,randomUUID()]);
+ await pool.query("INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) SELECT $1,encode(sha256(convert_to('visitor'||n,'UTF8')),'hex'),'2024-02-23','2024-03-08' FROM generate_series(0,149)n",[project]);
+ // 420 visits over the two comparison weeks: 1-4 page views 30 s apart, a custom event on every fifth visit, a missing browser on every
+ // eleventh and an empty one on every nineteenth, no visitor or visit id on every seventeenth, landing referrers including self-referrals
+ // and empty hosts, and known, renamed, name-only, unknown, absent and invalid (short or 64-character non-hex digest) locations.
+ await pool.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,dimensions,source,collection_basis)
+  SELECT md5(v||'-'||n||'-'||kind)::uuid,$1,CASE kind WHEN 0 THEN 'page_view' ELSE 'signup' END,'/p'||((v+n)%9),timestamptz '2024-02-23T00:00:00Z'+v*interval '48 minutes'+n*interval '30 seconds'+kind*interval '5 seconds',
+   CASE WHEN v%17<>0 THEN encode(sha256(convert_to('visitor'||v%150,'UTF8')),'hex') END,CASE WHEN v%17<>0 THEN encode(sha256(convert_to('visit'||v,'UTF8')),'hex') END,
+   jsonb_strip_nulls(jsonb_build_object('environmentVersion',$2::text,'browser',CASE WHEN v%11=0 THEN NULL WHEN v%19=0 THEN '' ELSE (ARRAY['chrome','firefox','safari'])[v%3+1] END,'os',(ARRAY['Windows 10','Linux','macOS'])[v%3+1],'device','desktop','origin','https://overview.test',
+    'referrerHost',CASE WHEN n>0 THEN 'overview.test' WHEN v%23=0 THEN '' ELSE (ARRAY['news.example','search.example','overview.test','www.overview.test'])[v%4+1] END))
+   ||CASE WHEN v%7=5 THEN '{}'::jsonb ELSE jsonb_build_object('geography',jsonb_build_object('version','dbip-city-lite-v1','databaseBuild',1767225600+v%2,'databaseSha256',CASE WHEN v%7=6 THEN repeat('b',63) WHEN v%13=0 THEN repeat('g',64) ELSE repeat('a',64) END)||CASE v%7
+    WHEN 0 THEN jsonb_build_object('country','US','region',jsonb_build_object('code','US-CA','name',CASE WHEN v%2=0 THEN 'California' ELSE 'Calif.' END),'city','San Francisco')
+    WHEN 1 THEN '{"country":"US","region":{"code":"US-IL","name":"Illinois"},"city":"Springfield"}' WHEN 2 THEN '{"country":"DE","region":{"code":"DE-BE","name":"Berlin"},"city":"Berlin"}'
+    WHEN 3 THEN '{"country":"CA","region":{"code":null,"name":"Ontario"},"city":null}' ELSE '{"country":null,"region":null,"city":null}' END) END,'browser','consent'
+  FROM generate_series(0,419)v CROSS JOIN LATERAL generate_series(0,v%4)n CROSS JOIN LATERAL generate_series(0,CASE WHEN n=0 AND v%5=0 THEN 1 ELSE 0 END)kind`,[project,environmentVersion]);
+ const range={from:'2024-03-01',to:'2024-03-07'},news=new URLSearchParams({referrer:'news.example'}).toString(),us=JSON.stringify({state:'known',country:'US'});
+ const queries:Record<string,Record<string,string>>={
+  overview:{},previous:{compare:'prev'},browserDimension:{compare:'prev',dimension:'browser'},referrerDimension:{compare:'prev',dimension:'referrer'},
+  countryDimension:{compare:'prev',dimension:'country'},regionDimension:{compare:'prev',dimension:'region'},cityDimension:{compare:'prev',dimension:'city'},
+  pathDimension:{compare:'prev',dimension:'path'},eventDimension:{compare:'prev',dimension:'event'},selection:{selection:news,compare:'prev',dimension:'country'},
+  browserFilter:{browser:'firefox',compare:'prev'},countryFilter:{country:us,compare:'prev',dimension:'browser'},cityDetail:{geoDetail:'city',geoSearch:'spring'},
+  priorRegionDetail:{compare:'prev',geoDetail:'region',geoPeriod:'comparison'},
+ };
+ const expected:Record<string,string>={
+  overview:'1751b98e0dc4824dbbb52023466638eab704330afc4d07fb3cf1f4674fe41ce6',previous:'8fc94bcc79b61a27ba47274c2bf05a87302ab9d70953837de43f9142e5f952a1',
+  browserDimension:'f622d26f81fda7a5068acb421efc08c658dadef7908bc302f4f057424e3a7b40',referrerDimension:'18c1c5697004bd4fa51e3fddf795d5174b711d8f6473ae3c57fbd4cb888f12a9',
+  countryDimension:'ae96c96f755edd6a9492056c0d1225b1070b6ef0addbca8bc4b2264447e01300',regionDimension:'87df775655f8cbfba4e32997ac038473cb3b395382216161045332be7485c4d5',
+  cityDimension:'e6f7864583b4a123ba028fdf76280250280b7e695ee969bd8c973c430285214a',pathDimension:'d3b4e2f4020b91f42deeae694800fa8795f7cdb8d327cdd2e78b655120781490',
+  eventDimension:'cb6fbb64065f32a19452afb5bd04844c3c05c04394e9601ef6075d44fd2405b9',selection:'9a16ca842bf5724d0b29932fa7526f4573f2f0daa3d94ec7fb05d7596677de66',
+  browserFilter:'1bfc343cd2abf4f5c5189d743ffe905a9cb5a0edd8415b02f33ee68881bb326d',countryFilter:'4ee17b3fad7d2fe2186fd0fa601dc041485d0d0bd215eb8441ddad2267f5e6d4',
+  cityDetail:'ddeab307da9e33ddeeefcb65c2c654e144996d120cad645dbda7f845e9030fd7',priorRegionDetail:'569412c434ac24dc0dccb0387f904bc0712500a0ed661ecb54cf9d5192c794c7',
+ };
+ const actual:Record<string,string>={};
+ for(const [name,extra]of Object.entries(queries)){
+  const report=await projectAnalytics(project,owner,new URLSearchParams({...range,...extra}));
+  actual[name]=createHash('sha256').update(JSON.stringify(report,(key,value)=>key==='asOf'||key==='generatedAt'?undefined:value)).digest('hex');
+ }
+ assert.deepEqual(actual,expected,'The overview statement returns the pre-#414 bytes for every report shape.');
+ // A flattened projection subquery inlines the raw geography expression into each of its ~40 uses (#414). EXPLAIN VERBOSE deparses the
+ // fenced form's references back into that same text, so the guard reads the planner's per-row operator cost of the projection instead:
+ // 2.23 inlined, 0.48 evaluated once, at the default cpu_operator_cost.
+ const plan=(await pool.query(`EXPLAIN SELECT ${geographyProjectionSql('e')} FROM event e WHERE false`)).rows.map(row=>row['QUERY PLAN']).join('\n');
+ const perRow=Number(plan.match(/SubPlan 1\n\s*->\s+[^(]+\(cost=[\d.]+\.\.([\d.]+)/)?.[1]);
+ assert.ok(perRow>0&&perRow<1,`The geography projection evaluates the raw object once per row (per-row cost ${perRow}).`);
+ console.log('PASS the overview returns identical bytes across overview, Compare, dimension, selection, filter and location-detail shapes and projects geography once per row');
 }
 if(import.meta.main){try{await runComparisonChecks();}finally{await closeDatabase();}}

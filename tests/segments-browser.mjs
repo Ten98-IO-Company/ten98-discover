@@ -40,7 +40,7 @@ try{
   const page=await context.newPage();page.setDefaultTimeout(15000);let analyticsGets=0;
   page.on('request',request=>{if(request.method()==='GET'&&new URL(request.url()).pathname===explore)analyticsGets++;});
   await page.goto(config.appUrl);
-  async function nav(label){await closeExplore(page);const menu=page.getByRole('button',{name:'Menu',exact:true});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();const project=page.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true});if(await project.evaluate((select,name)=>[...select.options].some(option=>option.text===name),label)){await project.selectOption({label});return;}await (await closeExplore(page)).getByRole('link',{name:label,exact:true}).click();}
+  async function nav(label){await closeExplore(page);const menu=page.getByRole('button',{name:'Menu',exact:true});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();const project=page.locator('aside.t98-shell-sidebar').getByLabel('Website',{exact:true});if(await project.evaluate((select,name)=>[...select.options].some(option=>option.text===name),label)){await project.selectOption({label});return;}await (await closeExplore(page)).getByRole('link',{name:label,exact:true}).click();}
   async function open(summary){await editExplore(page);const target=page.getByText(summary,{exact:true});if(!await target.evaluate(el=>el.parentElement.open))await target.click();}
   const button=name=>page.getByRole('button',{name,exact:true});
   const saved=page.getByRole('region',{name:'Saved filters',exact:true}),name=page.getByLabel('Saved filter name',{exact:true});
