@@ -658,7 +658,7 @@ function App() {
   // Without a project, a section keeps its strips when a tab or mode in it is a workspace-wide tool, so Conversions › Campaigns still reaches tracked links and tracking images.
   const sectionReachesWorkspaceTool = workspace !== undefined && currentSection?.section.tabs.some(tab => [tab, ...subTabs[tab.view] ?? []].some(entry => workspaceTools.includes(entry.view))) === true
   // Page titles repeat the tab or settings label the user just chose; a few modes get a fuller name.
-  const pageTitle = ({ compare: 'Compare periods', realtime: 'Live visitors', 'new-project': 'Add a website', 'tracked-share': 'Shared report' } as Partial<Record<AppView, string>>)[view]
+  const pageTitle = ({ compare: 'Compare periods', realtime: 'Live visitors', 'new-project': 'Add a website', 'tracked-share': 'Shared report', keys: 'API keys and MCP' } as Partial<Record<AppView, string>>)[view]
     ?? settingsEntry(view)?.label ?? currentSection?.section.tabs.find(tab => tab.view === view)?.label ?? currentSection?.subTabs?.find(tab => tab.view === view)?.label ?? 'Discover'
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
@@ -688,7 +688,7 @@ function App() {
   const settingsSearchGroups: SidebarNavGroup[] = [{ id: 'settings', label: 'Settings', items: settingsItems.filter(item => item.allowed !== false).map(item => ({ id: item.id, label: item.label, icon: 'settings', href: item.id, current: view === item.id, keywords: [...settingsEntry(item.id as AppView)?.keywords ?? []] })) }]
   const sectionTabs = currentSection && (projectView && (project !== null || sectionReachesWorkspaceTool) || workspaceTool) ? currentSection.section.tabs.map(tab => ({ id: tab.view, label: tab.label, href: tab.view, current: tab.view === currentSection.tab })) : undefined
   const modeTabs = sectionTabs && currentSection?.subTabs?.map(tab => ({ id: tab.view, label: tab.label, href: tab.view, current: tab.view === view }))
-  const settingsIntro = view === 'keys' ? 'Keys let your own scripts and AI assistants read this workspace through the ten98 API. Search and AI service accounts are added under Connections.' : view === 'providers' ? 'Connect the search and AI services Discover uses, and pause paid requests at any time.' : view === 'workspace' ? 'Keep each team’s websites and access separate.' : undefined
+  const settingsIntro = view === 'keys' ? 'Keys let scripts and AI tools read this workspace. Treat them like passwords.' : view === 'providers' ? 'Connect the search and AI services Discover uses, and pause paid requests at any time.' : view === 'workspace' ? 'Keep each team’s websites and access separate.' : undefined
   const settingsFrame = (content: ReactNode) => <SettingsLayout title={view === 'workspace' ? 'Create workspace' : pageTitle} scope={pageScope} items={settingsItems} current={view} linkComponent={ShellLink} navigationLabel='Settings sections' groupLabels={settingsGroupLabels}>{content}</SettingsLayout>
   const navRoutes: NavRoutes = { search: key => key === 'boards' ? { workspace: workspaceId, view: 'boards' } : key === 'project' || key === 'compare' ? analyticsTarget(key) : key === 'explore' ? exploreTarget() : target(key as AppView),
     analyticsState: previous => ({ ...previous, analyticsReturn: explorerReturnState && me && project && readExplorerReturn(explorerReturnState, me.user.id, workspaceId, project.id) ? explorerReturnState : undefined }) }

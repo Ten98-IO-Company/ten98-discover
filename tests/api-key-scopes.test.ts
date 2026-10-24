@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {apiKeyScopes} from '../src/server/api-keys.ts';
+import {apiKeyScopeGroups} from '../src/lib/api-key-presets.ts';
 
 const read=(path:string)=>readFileSync(new URL(path,import.meta.url),'utf8');
 const count=(text:string,needle:string)=>text.split(needle).length-1;
@@ -18,11 +19,11 @@ test('the scope catalog is the exact sixteen-name ordered list with one family:v
  for(const scope of deferred)assert.equal((apiKeyScopes as readonly string[]).includes(scope),false,scope);
 });
 
-test('the key panel hand copy equals the catalog in catalog order',()=>{
- // node --test cannot import .tsx; pin the SCOPES array by its source text instead.
- const source=read('../src/components/ApiKeysPanel.tsx'),block=/const SCOPES[^=]*=\s*\[([\s\S]*?)\n\]/.exec(source);
- assert.ok(block,'SCOPES array present');
- assert.deepEqual([...block![1].matchAll(/value:\s*'([^']+)'/g)].map(match=>match[1]),[...apiKeyScopes]);
+test('the key panel hand copy names every catalog scope exactly once',()=>{
+ // The panel's Custom rows come from src/lib/api-key-presets.ts, grouped by area rather than in catalog order.
+ const listed=apiKeyScopeGroups.flatMap(group=>group.rows.flatMap(row=>[row.read,row.write].filter(scope=>scope!==undefined)));
+ assert.equal(listed.length,apiKeyScopes.length);
+ assert.deepEqual([...listed].sort(),[...apiKeyScopes].sort());
 });
 
 test('migration 0062 names each of its thirteen scopes exactly once and no later or deferred scope',()=>{
