@@ -584,7 +584,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
               </div>
             </div>
             {/* Keep partial visitor coverage in view: the tiles above otherwise read as covering all traffic. */}
-            {data.coverage.status !== 'unavailable' && data.measurement.identifiedPageViews < data.totals.pageViews && <p className="hint">Estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views.</p>}
+            {data.coverage.status !== 'unavailable' && data.measurement.identifiedPageViews !== null && data.totals.pageViews !== null && data.measurement.identifiedPageViews < data.totals.pageViews && <p className="hint">Estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views.</p>}
             <details className="analytics-details">
               <summary>How these numbers are measured</summary>
               {data.coverage.status !== 'unavailable' && <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views. Page views without a visitor estimate remain in traffic totals.</p>}
