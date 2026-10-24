@@ -1,4 +1,4 @@
-// Committed routing table for tests/browser-sweep.mjs: one entry per browser suite, so a new or renamed suite
+// Committed routing table for tests/browser-sweep.ts: one entry per browser suite, so a new or renamed suite
 // fails tests/browser-sweep-routes.test.ts until someone decides how it runs. Never loosen a suite's own guard here;
 // record what it needs instead.
 //   component       runs directly with its opt-in flag(s); owned loopback Vite and synthetic, intercepted API only.

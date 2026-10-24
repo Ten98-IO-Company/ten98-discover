@@ -40,7 +40,8 @@ test('routes are well formed and their flags are ones the suite reads', () => {
 
 test('discovery excludes fixtures, unit tests and harness helpers', () => {
   const discovered = discoverBrowserSuites(root);
-  for (const suite of discovered) assert.doesNotMatch(suite, /-fixture\.|\.test\.|\/(browser-sweep|fixtures?|guard|jobs|preload|provider)\.mjs$|research-ui\/browser\.mjs$/);
+  for (const suite of discovered) assert.doesNotMatch(suite, /-fixture\.|\.test\.|^tests\/browser-sweep\.ts$|\/(fixtures?|guard|jobs|preload|provider)\.mjs$|research-ui\/browser\.mjs$/);
+  assert.ok(!discovered.includes('tests/browser-sweep.ts'), 'the sweep entry point is not a suite');
   assert.ok(discovered.includes('tests/conversions-ui/browser.mjs'));
 });
 
