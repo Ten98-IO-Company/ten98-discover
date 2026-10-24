@@ -13,32 +13,28 @@ import {geographyFields} from '../lib/analytics-geography.ts';
 /** Fields whose values scope each measured visit rather than select visits. */
 export const visitScopeFields:readonly string[]=[...environmentFields,...geographyFields];
 
-// The group holds a page view that matches the selection; its rows carry `hit` (see `matched` below).
-const matchedPageViewSql="bool_or(event_name='page_view' AND hit)";
-/**
- * Per-visit page-view count, whole-window custom-event flag and page-view span over a scoped population carrying visit_has_custom.
- * `matched` reads the scope of a selection's visits, whose rows also carry `hit` (the row matches the selection), and keeps only the
- * groups holding a matching page view (#414). That is matchedVisitsSql's result when each `keys` group is both the match and the
- * measured visit, as for environment and location values, without its window over both inputs.
- */
-export function visitMetricsSql(source:string,keys:string[]=[],matched=false){
+/** Per-visit page-view count, whole-window custom-event flag and page-view span over a scoped population carrying visit_has_custom. */
+export function visitMetricsSql(source:string,keys:string[]=[]){
  const group=[...keys,'visitor_id','visit_id'].join(',');
  return `SELECT ${group},count(*) FILTER (WHERE event_name='page_view') AS pageviews,bool_or(visit_has_custom) AS custom,
   extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
-  FROM ${source} WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL GROUP BY ${group} HAVING count(*) FILTER (WHERE event_name='page_view')>0${matched?` AND ${matchedPageViewSql}`:''}`;
+  FROM ${source} WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL GROUP BY ${group} HAVING count(*) FILTER (WHERE event_name='page_view')>0`;
 }
 
 /**
  * Per-event values measured without one row per event and value (#414). `visitValuesSql` groups a scoped population carrying
  * visit_has_custom by visit and `columns`. Over those rows, `valueCountsSql` gives each `fields` entry's (field name to column) page
- * views, and `valueVisitsSql` re-aggregates each visit and value into visitMetricsSql's page views, custom flag and page-view span. Both
+ * views (and custom events), and `valueVisitsSql` re-aggregates each visit and value into visitMetricsSql's page views, custom flag and page-view span. Both
  * compose exactly: counts add, flags or, and the span keeps the outer page-view bounds. Rows carry `field` and the value as `as`.
- * With `matched`, as in visitMetricsSql, the rows also flag a matching page view and valueVisitsSql keeps the values holding one.
+ *
+ * `matched` reads the scope of a selection's visits, whose rows also carry `hit` (the row matches the selection): the rows flag a
+ * matching page view and valueVisitsSql keeps the visits and values holding one. Each such group is then both the match and the measured
+ * visit, so this is matchedVisitsSql's result for environment and location values without its window over both inputs.
  */
 export function visitValuesSql(source:string,columns:string[],matched=false){
  const group=['visitor_id','visit_id',...columns].join(',');
- return `SELECT ${group},count(*) FILTER (WHERE event_name='page_view') AS pageviews,bool_or(visit_has_custom) AS custom,
-  min(received_at) FILTER (WHERE event_name='page_view') AS first_view,max(received_at) FILTER (WHERE event_name='page_view') AS last_view${matched?`,${matchedPageViewSql} AS matched`:''}
+ return `SELECT ${group},count(*) FILTER (WHERE event_name='page_view') AS pageviews,count(*) FILTER (WHERE event_name<>'page_view') AS customs,bool_or(visit_has_custom) AS custom,
+  min(received_at) FILTER (WHERE event_name='page_view') AS first_view,max(received_at) FILTER (WHERE event_name='page_view') AS last_view${matched?",bool_or(event_name='page_view' AND hit) AS matched":''}
   FROM ${source} GROUP BY ${group}`;
 }
 // One grouping set per field; GROUPING() names the set, since a grouped value may itself be NULL.
@@ -47,7 +43,7 @@ const fieldValueSql=(fields:Record<string,string>,as:string)=>{
  return `CASE ${sets.map(([field,column])=>`WHEN GROUPING(${column})=0 THEN '${field}'`).join(' ')} END COLLATE "C" AS field,CASE ${sets.map(([,column])=>`WHEN GROUPING(${column})=0 THEN ${column}`).join(' ')} END AS ${as}`;
 };
 export function valueCountsSql(values:string,fields:Record<string,string>,as:string){
- return `SELECT ${fieldValueSql(fields,as)},sum(pageviews)::bigint AS pageviews,COALESCE(sum(pageviews) FILTER (WHERE visitor_id IS NOT NULL),0)::bigint AS identified
+ return `SELECT ${fieldValueSql(fields,as)},sum(pageviews)::bigint AS pageviews,sum(customs)::bigint AS customs,COALESCE(sum(pageviews) FILTER (WHERE visitor_id IS NOT NULL),0)::bigint AS identified
   FROM ${values} GROUP BY GROUPING SETS (${Object.values(fields).map(column=>`(${column})`).join(',')}) HAVING sum(pageviews)>0`;
 }
 /**
