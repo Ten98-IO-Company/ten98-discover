@@ -345,7 +345,8 @@ function App() {
   }
 
   useEffect(() => {
-    if (phase === 'app' && view === 'installation' && projectId) { void loadJobs(projectId); void loadEvents(projectId) }
+    if (phase === 'app' && view === 'installation' && projectId) void loadEvents(projectId)
+    if (phase === 'app' && view === 'diagnostics' && projectId) void loadJobs(projectId)
     // Opening Recent events reads current history; a read already started by project activation is current.
     if (phase === 'app' && view === 'events' && projectId && !eventsBusy) void loadEvents(projectId)
   }, [phase, view, projectId])
@@ -679,14 +680,14 @@ function App() {
   }
   const explorerReturnState=view==='explore'&&me&&project&&search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)?{userId:me.user.id,workspace:workspaceId,project:project.id,href:routeLocation.href}:undefined
   const verifiedExplorerReturn=me&&project?readExplorerReturn('analyticsReturn'in routeLocation.state?routeLocation.state.analyticsReturn:null,me.user.id,workspaceId,project.id):null
-  const pageScope = accountView || view === 'workspace' ? 'Your account' : view === 'google-app' ? 'Advanced settings' : projectSettingsView && project ? `Project · ${project.name}` : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
+  const pageScope = accountView || view === 'workspace' ? 'Your account' : settingsEntry(view)?.group === 'operator' ? 'Advanced settings' : projectSettingsView && project ? `Project · ${project.name}` : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
 
   const adminRole = workspace !== undefined && ['owner','admin'].includes(workspace.role)
   // One sidebar item per section; it opens the section's first tab and stays selected on every tab and mode within it.
   const sectionNavGroups: SidebarNavGroup[] = [{ id: 'sections', items: appSections.map((section): SidebarNavItem => ({ id: section.id, label: section.label, icon: section.icon, href: section.tabs[0].view,
     current: currentSection?.section.id === section.id, keywords: [...section.tabs.map(tab => tab.label), ...section.keywords] })) }]
   // Settings pages appear in the sidebar only as search results, so "Find a tool" still reaches them.
-  const settingsAllowed = (entry: AppView) => entry === 'google-app' ? me!.instanceOperator : entry === 'providers' ? workspace?.role === 'owner' : ['team','keys'].includes(entry) ? adminRole
+  const settingsAllowed = (entry: AppView) => entry === 'google-app' || entry === 'identity-providers' ? me!.instanceOperator : entry === 'diagnostics' ? project !== null : entry === 'providers' ? workspace?.role === 'owner' : ['team','keys'].includes(entry) ? adminRole
     : ['domains','destinations'].includes(entry) ? adminRole && project !== null : projectSettingsViews.includes(entry) ? project !== null : entry === 'retention' ? workspace !== undefined : true
   const settingsItems: SettingsNavItem[] = settingsEntries.map(entry => ({ id: entry.view, label: entry.label, group: entry.group, href: entry.view, allowed: settingsAllowed(entry.view) }))
   const settingsSearchGroups: SidebarNavGroup[] = [{ id: 'settings', label: 'Settings', items: settingsItems.filter(item => item.allowed !== false).map(item => ({ id: item.id, label: item.label, icon: 'settings', href: item.id, current: view === item.id, keywords: [...settingsEntry(item.id as AppView)?.keywords ?? []] })) }]
@@ -744,12 +745,39 @@ function App() {
         {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} onFactorChanged={factorChanged} /><AccountClosurePanel key={`closure:${me.user.id}`} userId={me.user.id} onClosed={accountClosed} onUnauthorized={unauthorized} onOpenTeam={id => go({ workspace: id, view: 'team' })} onOpenIdentity={() => go(target('identity'))} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
         {view === 'identity' && me && <>
           <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={unauthorized} onClosed={accountClosed} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
-          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
+          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }}  part='account' />
         </>}
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'identity-providers' && me?.instanceOperator && <OidcPanel key={`${me.user.id}:operator`} userId={me.user.id} instanceOperator proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} part='operator' />}
+        {view === 'diagnostics' && project && (
+            <section className='card diagnostics' aria-labelledby='wc-h' aria-busy={checkBusy || jobsBusy}>
+              <div className='row between'>
+                <h2 id='wc-h'>Worker check</h2>
+                <div className='row'>
+                  {canWrite && <button className='btn primary' disabled={checkBusy} onClick={() => void runCheck(project.id)}>{checkBusy ? 'Starting…' : 'Run worker check'}</button>}
+                  <button className='btn' disabled={jobsBusy} onClick={() => void loadJobs(project.id)}>{jobsBusy ? 'Refreshing…' : 'Refresh status'}</button>
+                </div>
+              </div>
+              <p className='dim'>Checks whether the background worker can receive and complete a job. Choose Refresh status to see its result.</p>
+              {jobError !== '' && <Alert tone='danger'>{jobError}</Alert>}
+              {jobs === null && jobError === '' && <p role='status' className='dim'>Loading checks…</p>}
+              {jobs !== null && jobs.length === 0 && <div className='empty'><p><strong>No checks yet.</strong> Run a check to verify that background processing is working.</p></div>}
+              {jobs !== null && jobs.length > 0 && (
+                <ul className='jobs'>
+                  {jobs.slice(0, 5).map((j) => (
+                    <li key={j.id}>
+                      <span className={pillClass(j.status)}>{j.status}</span>
+                      <span className='mono dim'>{fmt(j.createdAt)}</span>
+                      {j.error !== null && j.error !== '' && <span className='err-text'>{j.error}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+        )}
         </>)}
         {(view==='links'||view==='pixels')&&workspace&&me&&<TrackedAssetsPanel workspaceId={workspaceId} userId={me.user.id} role={workspace.role} kind={view==='links'?'link':'pixel'} appUrl={appUrl} query={search.assetInvalid?'unsupported=1':search.assetQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.view===view&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={(query,kind)=>go({workspace:workspaceId,view:kind==='pixel'?'pixels':kind==='link'?'links':view,...query?{assetQuery:query}:{}})} onUnauthorized={unauthorized}/>}
         {view === 'collection' && project && workspace && me && settingsFrame(<AnalyticsSettingsPanel projectId={project.id} userId={me.user.id} workspaceId={workspace.id} onDeleted={()=>{if(activeWorkspace.current!==workspace.id||activeProject.current!==project.id||currentMe.current?.user.id!==me.user.id)return;activateProject('');loadedProjects.current=(loadedProjects.current??[]).filter(item=>item.id!==project.id);setProjects(loadedProjects.current);go({workspace:workspace.id,view:'project'},true);void loadProjects(workspace.id);}} readOwner={(routeLocation.state.__TSR_key??routeLocation.href)+':'+workspace?.role} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===project.id&&search.view==='collection'&&canonicalNavigation(routeLocation.searchStr,search)} isCurrent={()=>sessionGeneration.current===renderedSession&&intent.current.generation===renderedIntent&&currentMe.current!==null&&currentMe.current.user.id===me.user.id&&activeWorkspace.current===workspaceId&&activeProject.current===project.id&&(router.state.location.state.__TSR_key??router.state.location.href)===(routeLocation.state.__TSR_key??routeLocation.href)&&navigationKey(parseNavigation(router.state.location.search))===navigationKey(search)&&currentMe.current.workspaces.some(w=>w.id===workspaceId&&w.role===workspace?.role)} onUnauthorized={unauthorized} />)}
@@ -862,32 +890,6 @@ function App() {
                 <Button style={{minHeight:44,whiteSpace:'normal'}} variant='ghost' href='events' component={ShellLink}>Inspect recent events</Button>
               </ResourceCard>
             </section>
-            <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>
-            <section aria-labelledby='wc-h'>
-              <div className='row between'>
-                <h2 id='wc-h'>Worker check</h2>
-                <div className='row'>
-                  {canWrite && <button className='btn primary' disabled={checkBusy} onClick={() => void runCheck(project.id)}>{checkBusy ? 'Starting…' : 'Run worker check'}</button>}
-                  <button className='btn' disabled={jobsBusy} onClick={() => void loadJobs(project.id)}>{jobsBusy ? 'Refreshing…' : 'Refresh status'}</button>
-                </div>
-              </div>
-              <p className='dim'>Checks whether the background worker can receive and complete a job. Choose Refresh status to see its result.</p>
-              {jobError !== '' && <Alert tone='danger'>{jobError}</Alert>}
-              {jobs === null && jobError === '' && <p role='status' className='dim'>Loading checks…</p>}
-              {jobs !== null && jobs.length === 0 && <div className='empty'><p><strong>No checks yet.</strong> Run a check to verify that background processing is working.</p></div>}
-              {jobs !== null && jobs.length > 0 && (
-                <ul className='jobs'>
-                  {jobs.slice(0, 5).map((j) => (
-                    <li key={j.id}>
-                      <span className={pillClass(j.status)}>{j.status}</span>
-                      <span className='mono dim'>{fmt(j.createdAt)}</span>
-                      {j.error !== null && j.error !== '' && <span className='err-text'>{j.error}</span>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-            </details>
           </>
         )}
         </>}

@@ -7,7 +7,7 @@ import {journeysLimits} from './journeys.ts'
 import {attributionLimits} from './attribution.ts'
 import {analyticsDimensions,type AnalyticsDimension} from './analytics-dimensions.ts'
 
-export const views = ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'boards', 'compare', 'campaigns', 'links', 'pixels', 'tracked-share', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
+export const views = ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'boards', 'compare', 'campaigns', 'links', 'pixels', 'tracked-share', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'google-app', 'identity-providers', 'diagnostics', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
 export type SessionNavigation = {from?:string;to?:string;timeZone?:string;visitorKey?:string;activity?:'identified';cohortId?:string;cohortRevision?:string;segmentId?:string;segmentRevision?:string;sessionInvalid?:'1'}
 export type RevenueNavigation={revenueQuery?:string;revenueKey?:string;revenueCalendar?:'months';revenueInvalid?:'1'};
@@ -254,11 +254,11 @@ export function canonicalNavigation(search: string, target: NavigationSearch): b
 }
 
 export function projectView(view: AppView): boolean {
-  return ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'compare', 'campaigns', 'visitor-retention', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'].includes(view)
+  return ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'compare', 'campaigns', 'visitor-retention', 'destinations', 'collection', 'domains', 'reports', 'installation', 'events', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'keywords', 'diagnostics', 'domain-seo', 'ranks', 'audits', 'conversions'].includes(view)
 }
 
 export function allowedView(view: AppView, role: string | undefined, operator: boolean): boolean {
-  if (view === 'google-app') return operator
+  if (view === 'google-app' || view === 'identity-providers') return operator
   if (['preferences', 'security', 'identity', 'workspace', 'project'].includes(view)) return true
   if (!role) return false
   if (view === 'providers') return role === 'owner'
