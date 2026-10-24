@@ -20,7 +20,7 @@ try{
   await page.getByRole('heading',{name:'Keyword research',exact:true}).last().waitFor();
   const panel=page.locator('section[aria-label="Keyword research"]');
   assert.deepEqual(await providerCounts(),initialCounts,'Opening the panel must cause no provider calls.');
-  assert.ok(await panel.getByRole('link',{name:'AI and search providers',exact:true}).isVisible());
+  assert.ok(await panel.getByRole('link',{name:'Connections',exact:true}).isVisible());
   const quote=async(text,marketKey='2840|en')=>{
     await openKeywordForm(panel);
     await panel.getByLabel('Keywords (one per line)',{exact:true}).fill(text);
@@ -114,7 +114,7 @@ try{
   stage='actual live-role downgrade removes writes';
   await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[group.workspace.id,group.owner.id]);
   await panel.getByRole('button',{name:'Reload access',exact:true}).click();await panel.getByText(/Ask a workspace owner/).waitFor();
-  assert.equal(await panel.getByRole('button',{name:'Prepare quote',exact:true}).count(),0);assert.equal(await panel.getByRole('link',{name:'AI and search providers',exact:true}).count(),0);
+  assert.equal(await panel.getByRole('button',{name:'Prepare quote',exact:true}).count(),0);assert.equal(await panel.getByRole('link',{name:'Connections',exact:true}).count(),0);
   assert.ok(await panel.getByRole('heading',{name:'Recent runs',exact:true}).isVisible());
   assert.deepEqual(session.errors,[]);assert.deepEqual(session.outbound,[]);
   console.log('PASS keyword expiry distinction, stale project response isolation and live viewer role gating.');

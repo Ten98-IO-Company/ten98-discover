@@ -258,9 +258,9 @@ try {
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);
   await snippetRegion().locator('code').selectText();
   assert.equal(await page.evaluate(() => getSelection().toString()), expectedSnippet);
-  const consent = main.getByText(/Collection and privacy.*controls consent and optional data\./);
+  const consent = main.getByText(/Privacy settings control consent and optional data\./);
   assert.equal(await consent.isVisible(), true);
-  assert.match(await consent.innerText(), /controls consent and optional data.*Browser privacy signals and explicit refusals stop collection.*public HTTPS address/);
+  assert.match(await consent.innerText(), /Privacy settings control consent and optional data.*Browser privacy signals and explicit refusals stop collection.*public HTTPS address/);
   assert.equal(await consent.locator('xpath=ancestor::details').count(), 0);
   const help = main.locator('details').filter({has:page.locator('summary', {hasText:/^Custom events and collection details$/})});
   assert.equal(await help.evaluate(element => element.open), false);
