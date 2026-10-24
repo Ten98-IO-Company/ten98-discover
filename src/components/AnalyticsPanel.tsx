@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AppliedFilters, BarList, DataTable, EvidenceSummary, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
+import { AppliedFilters, BarList, DataTable, EvidenceSummary, Text, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
+import { formatReportInstant } from '../lib/report-time';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
 import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, canonicalNavigation, navigationKey, parseNavigation, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
 import {Link,useLocation} from '@tanstack/react-router';
@@ -93,10 +94,6 @@ function fresh(projectId: string, intent: AnalyticsNavigation): View {
   return { key: projectId, queryKey:JSON.stringify(intent), range, draft: range, draftErr: null, data: null, error: null, loading: !intent.analyticsInvalid, nonce: 0 };
 }
 
-function fmtUtc(iso: string): string {
-  return `${new Date(iso).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
-}
-
 const fmtNum = (n: number | null) => n === null ? 'Unavailable' : n.toLocaleString('en-US');
 
 const environmentLabels = { browser: 'Browser', os: 'OS', device: 'Device' } as const;
@@ -147,7 +144,7 @@ function validComparison(data: Analytics, range: Range, filters: EnvironmentFilt
   const prior=value.report;
   function period(report:Analytics,days:number){
     const start=parseDay(report.range.from)!,end=parseDay(report.range.to)!+DAY_MS,retention=(from:number,to:number)=>retentionCoverage(new Date(from).toISOString(),new Date(to).toISOString(),report.coverage.retainedFrom).status;
-    if(!report.environment||!report.collection||report.measurement.version!=='umami-3.4-hour-cache-v1'||report.coverage.status!==retention(start,end)||report.daily.length!==days||report.daily.some((day,index)=>day.date!==shiftDays(report.range.from,index)||day.coverage!==retention(start+index*DAY_MS,start+(index+1)*DAY_MS)||(day.coverage==='unavailable'?[day.pageViews,day.customEvents].some(n=>n!==null):![day.pageViews,day.customEvents].every(count))))return false;
+    if(!report.environment||!report.collection||report.measurement.version!=='umami-3.4-visit-scoped-v2'||report.coverage.status!==retention(start,end)||report.daily.length!==days||report.daily.some((day,index)=>day.date!==shiftDays(report.range.from,index)||day.coverage!==retention(start+index*DAY_MS,start+(index+1)*DAY_MS)||(day.coverage==='unavailable'?[day.pageViews,day.customEvents].some(n=>n!==null):![day.pageViews,day.customEvents].every(count))))return false;
     const {measurement:m,totals:t,collection:c}=report, unavailable=report.coverage.status==='unavailable';
     if(!unavailable&&(report.daily.reduce((sum,day)=>sum+(day.pageViews??0),0)!==t.pageViews||report.daily.reduce((sum,day)=>sum+(day.customEvents??0),0)!==t.customEvents||m.identifiedPageViews!+m.unidentifiedPageViews! !== t.pageViews||c.pageViews.cookieless!+c.pageViews.consent!+c.pageViews.unknown! !== t.pageViews))return false;
     if(m.identifiedPageViews===0?[m.visitors,m.visits,m.bounceRate,m.averageVisitSeconds].some(n=>n!==null):!unavailable&&(m.visitors===null||m.visits===null||m.visitors<1||m.visits<1||m.visitors>m.identifiedPageViews!||m.visits>m.identifiedPageViews!||m.bounceRate===null||m.averageVisitSeconds===null))return false;
@@ -178,9 +175,9 @@ function ComparisonSummary({data}:{data:Analytics&{comparison:AnalyticsCompariso
     return `${provisional?'Provisional: ':''}${absolute>0?'Up':'Down'} by ${amount}${!row.unit&&row.previous===0?' from 0':!row.unit&&row.change.percent!==null?` (${absolute>0?'+':'−'}${Math.abs(row.change.percent).toFixed(1)}%)`:''}`;
   }
   return <section className="card analytics-comparison-overview" aria-label="Comparison overview"><h2>Comparison overview</h2>
-    <p className="hint">Report generated {fmtUtc(comparison.asOf)}. Each period uses its whole selected UTC dates; this is not a comparison of matching elapsed hours.</p>
+    <p className="hint">Report generated {formatReportInstant(comparison.asOf,'UTC')}. Each period uses its whole selected UTC dates; this is not a comparison of matching elapsed hours.</p>
     {(provisional||future)&&<p className="notice" role="status">{future?'A selected period has not started. Changes are unavailable.':'Period in progress — comparison is provisional. Today is unfinished.'}</p>}
-    {[['Current period',data],['Previous period',prior]] .map(([label,report])=>{const period=report as Analytics;return <p className={period.coverage.status==='complete'?'hint':'notice'} key={label as string}><strong>{label as string}:</strong> {period.coverage.status==='complete'?'Complete retained range':period.coverage.status==='partial'?'Partial retained range; values cover retained observations only':'History unavailable after retention'}. Visitor estimates cover {fmtNum(period.measurement.identifiedPageViews)} of {fmtNum(period.totals.pageViews)} retained pageviews. Recorded basis: {fmtNum(period.collection!.pageViews.cookieless)} cookieless, {fmtNum(period.collection!.pageViews.consent)} consent, {fmtNum(period.collection!.pageViews.unknown)} not recorded.{period.coverage.retainedFrom&&` Retained from ${fmtUtc(period.coverage.retainedFrom)}.`}</p>;})}
+    {[['Current period',data],['Previous period',prior]] .map(([label,report])=>{const period=report as Analytics;return <p className={period.coverage.status==='complete'?'hint':'notice'} key={label as string}><strong>{label as string}:</strong> {period.coverage.status==='complete'?'Complete retained range':period.coverage.status==='partial'?'Partial retained range; values cover retained observations only':'History unavailable after retention'}. Visitor estimates cover {fmtNum(period.measurement.identifiedPageViews)} of {fmtNum(period.totals.pageViews)} retained pageviews. Recorded basis: {fmtNum(period.collection!.pageViews.cookieless)} cookieless, {fmtNum(period.collection!.pageViews.consent)} consent, {fmtNum(period.collection!.pageViews.unknown)} not recorded.{period.coverage.retainedFrom&&` Retained from ${formatReportInstant(period.coverage.retainedFrom,'UTC')}.`}</p>;})}
     {(data.coverage.status!=='complete'||prior.coverage.status!=='complete')&&<p className="hint">Changes are unavailable because one or both periods lack complete retained history. Extending retention cannot restore deleted observations.</p>}
     <div className="analytics-comparison-stats">{values.map(row=><section className="analytics-comparison-stat" key={row.name} aria-label={row.name}><h3>{row.name}</h3><dl><div><dt>Current</dt><dd>{format(row.current,row.name)}</dd></div><div><dt>Previous</dt><dd>{format(row.previous,row.name)}</dd></div></dl><p className="analytics-change">{change(row)}</p></section>)}</div>
     <p className="hint">Current collection setting: {data.collection!.mode==='cookieless'?'cookieless basic analytics':'consent-first analytics'}. Traffic coverage is unknown; complete retention is not complete website capture. Refusals, privacy signals, blockers and failed requests can leave visits unrecorded.</p>
@@ -318,7 +315,7 @@ function EnvironmentCard({data,busy,field,onFieldChange,onFilter,periodLabel}:{d
       </div>
       <p className="hint">Environment recorded for {fmtNum(environment.coverage.recordedPageViews)} of {fmtNum(environment.coverage.pageViews)} retained pageviews. {fmtNum(environment.coverage.notRecordedPageViews)} not recorded.</p>
       <button type="button" className="btn ghost analytics-environment-more" disabled={busy||!rows.length} onClick={()=>{setSearch('');setNotice('');setOpen(true);}}>More <span className="sr-only">{environmentLabels[field]} details</span></button>
-      <details className="analytics-details"><summary>How environment is recorded</summary><p>Browser and OS families come from a bounded request User-Agent. Device uses that family and, when screen collection is enabled, the observed screen width. These are estimates; spoofed or reduced browser information can change the result. Raw User-Agent, separate version fields and device models are not stored.</p><p>Unknown means classification was attempted but unrecognized. Not recorded means historical or API observations lack this evidence.{environment.coverage.firstRecordedAt?` First environment observation in this filtered range: ${fmtUtc(environment.coverage.firstRecordedAt)}.`:''} Counts cover stored observations, not all website visits.</p><p>Bars compare category counts with the largest category shown. Bounce and duration in More use only pageviews with a visitor estimate and the existing visit method.</p></details>
+      <details className="analytics-details"><summary>How environment is recorded</summary><p>Browser and OS families come from a bounded request User-Agent. Device uses that family and, when screen collection is enabled, the observed screen width. These are estimates; spoofed or reduced browser information can change the result. Raw User-Agent, separate version fields and device models are not stored.</p><p>Unknown means classification was attempted but unrecognized. Not recorded means historical or API observations lack this evidence.{environment.coverage.firstRecordedAt?` First environment observation in this filtered range: ${formatReportInstant(environment.coverage.firstRecordedAt,'UTC')}.`:''} Counts cover stored observations, not all website visits.</p><p>Bars compare category counts with the largest category shown. Bounce and duration in More use only pageviews with a visitor estimate and the existing visit method.</p></details>
     </>}
     <dialog ref={dialog} className="analytics-environment-dialog" aria-labelledby={`${uid}-dialog-heading`} onKeyDownCapture={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();event.currentTarget.close();}}} onClose={()=>setOpen(false)}>
       <div className="row between analytics-environment-dialog-heading"><h2 id={`${uid}-dialog-heading`}>{periodLabel?`${periodLabel} · Environment details`:'Environment details'}</h2><button type="button" className="btn" autoFocus onClick={()=>dialog.current?.close()}>Close details</button></div>
@@ -555,10 +552,10 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                 {data.range.from} to {data.range.to} (UTC)
               </span>
             </div>
-            <EvidenceSummary variant="compact" title="Native analytics evidence" source="Native analytics" observedAt={data.lastReceivedAt?{label:`Last event received ${fmtUtc(data.lastReceivedAt)}.`,dateTime:data.lastReceivedAt}:undefined} availability={data.coverage.status==='unavailable'?'unavailable':hasData?'ready':'empty'} reason={data.coverage.status==='unavailable'?'This date range is unavailable after retention.':data.coverage.status==='partial'?'Counts and estimates cover only retained observations.':hasData?'The selected date range is retained.':'No events in this date range.'} coverage={{status:data.coverage.status,reason:'Retention describes stored history; traffic capture coverage is unknown.'}} basis="Last event received records ingestion, not report generation or provider observation. It does not establish collection freshness."/>
+            <EvidenceSummary variant="compact" title="Native analytics evidence" source="Native analytics" observedAt={data.lastReceivedAt?{label:`Last event received ${formatReportInstant(data.lastReceivedAt,'UTC')}.`,dateTime:data.lastReceivedAt}:undefined} availability={data.coverage.status==='unavailable'?'unavailable':hasData?'ready':'empty'} reason={data.coverage.status==='unavailable'?'This date range is unavailable after retention.':data.coverage.status==='partial'?'Counts and estimates cover only retained observations.':hasData?'The selected date range is retained.':'No events in this date range.'} coverage={{status:data.coverage.status,reason:'Retention describes stored history; traffic capture coverage is unknown.'}} basis="Last event received records ingestion, not report generation or provider observation. It does not establish collection freshness."/>
             {data.coverage.status !== 'complete' && <p className="alert" role="status">
               {data.coverage.status === 'unavailable' ? 'This date range is unavailable after retention.' : 'This date range is partial after retention. Counts and estimates cover only retained observations.'}
-              {data.coverage.retainedFrom && ` History is retained from ${fmtUtc(data.coverage.retainedFrom)}. Extending retention cannot restore deleted data.`}
+              {data.coverage.retainedFrom && ` History is retained from ${formatReportInstant(data.coverage.retainedFrom,'UTC')}. Extending retention cannot restore deleted data.`}
             </p>}
             <div className="analytics-stats">
               <div className="analytics-stat">
@@ -586,23 +583,25 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                 <p className={data.measurement.averageVisitSeconds === null ? 'analytics-unavailable' : 'big-num'}>{data.measurement.averageVisitSeconds === null ? 'Unavailable' : `${data.measurement.averageVisitSeconds.toFixed(1)} s`}</p>
               </div>
             </div>
-            {data.coverage.status !== 'unavailable' && <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views. Page views without a visitor estimate remain in traffic totals.</p>}
-            {data.collection && <p className="hint">
-              Current collection: {data.collection.mode==='cookieless'?'cookieless basic analytics':'consent-first analytics'}.
-              {' '}Recorded pageviews in this range: {fmtNum(data.collection.pageViews.cookieless)} cookieless,
-              {' '}{fmtNum(data.collection.pageViews.consent)} with consent,
-              {' '}{fmtNum(data.collection.pageViews.unknown)} with unrecorded basis (historical or API observations).
-            </p>}
-            <p className="hint">Traffic coverage is unknown. Refusals, browser privacy signals, blockers, excluded traffic and failed requests can leave visits unrecorded. Retention completeness describes stored history, not all visits to your website.</p>
+            {/* Keep partial visitor coverage in view: the tiles above otherwise read as covering all traffic. */}
+            {data.coverage.status !== 'unavailable' && data.measurement.identifiedPageViews !== null && data.totals.pageViews !== null && data.measurement.identifiedPageViews < data.totals.pageViews && <Text tone='muted'>Estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views.</Text>}
             <details className="analytics-details">
-              <summary>How these estimates work</summary>
+              <summary>How these numbers are measured</summary>
+              {data.coverage.status !== 'unavailable' && <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views. Page views without a visitor estimate remain in traffic totals.</p>}
+              {data.collection && <p className="hint">
+                Current collection: {data.collection.mode==='cookieless'?'cookieless basic analytics':'consent-first analytics'}.
+                {' '}Recorded pageviews in this range: {fmtNum(data.collection.pageViews.cookieless)} cookieless,
+                {' '}{fmtNum(data.collection.pageViews.consent)} with consent,
+                {' '}{fmtNum(data.collection.pageViews.unknown)} with unrecorded basis (historical or API observations).
+              </p>}
+              <p className="hint">Traffic coverage is unknown. Refusals, browser privacy signals, blockers, excluded traffic and failed requests can leave visits unrecorded. Retention completeness describes stored history, not all visits to your website.</p>
               <p>Visitors use a monthly, project-specific estimate. They are not a count of unique people. Network measurement must be configured by the installation operator; otherwise visitor and visit estimates are unavailable.</p>
               <p>Cookieless and consented events use separate estimates. Changing consent may split one person into two estimates; basic activity is not attached to a later identified profile.</p>
               <p>Visits use hourly keys, with an existing page context retained for up to 30 minutes. A bounce has one page view and no custom events within this date range. Duration runs from the first to the last page view; it does not measure active engagement or time after the last page view.</p>
             </details>
             <p className="footnote dim">
               {data.lastReceivedAt
-                ? `Last event received ${fmtUtc(data.lastReceivedAt)}.`
+                ? `Last event received ${formatReportInstant(data.lastReceivedAt,'UTC')}.`
                 : data.coverage.status === 'complete' ? 'No events in this date range.' : 'No events are available in the retained portion of this range.'}
             </p>
           </section>
@@ -658,7 +657,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
           <GeographyCard key={queryKey} period="current" detail={data.geographyDetail} onDetail={loadLocation} data={data.geography} range={data.range} busy={busy} environmentFilters={filters} field={geographyField} onFieldChange={setGeographyField} onFilter={applyLocation}/>
           {data.referrers&&<section className="card analytics-breakdown">
             <h2>Top referrers</h2>
-            <p className="hint">Up to 20 external referrer hosts in this date range. In-site navigation and page views without a recorded referrer are not listed; referrer capture is off by default and is turned on in Collection and privacy. Selecting a host filters every report by that referrer, including in-site navigation from it.</p>
+            <p className="hint">Up to 20 external referrer hosts in this date range. In-site navigation and page views without a recorded referrer are not listed. Referring website is on by default for new websites; older websites can turn it on in Settings › Privacy. Selecting a host filters every report to page views carrying that referrer; on every card, bounce rate and visit duration cover each whole visit that includes one.</p>
             {data.referrers.length === 0 ? (
               <><p className="dim">{data.coverage.status === 'complete' ? 'No referrer hosts are recorded in this range.' : 'No referrer hosts are recorded in the retained portion.'}</p>{data.coverage.status!=='unavailable'&&search?.workspace&&<><p className="hint">Referrer capture is optional. Collection changes apply to future events.</p><Link className="btn ghost" to="/" search={{workspace:search.workspace,project:projectId,view:'collection'}}>Review collection settings</Link></>}</>
             ) : (

@@ -24,13 +24,14 @@ export async function browserSession(user){
 }
 export const href=(group,view,project=group.main)=>appUrl+'/?'+new URLSearchParams({workspace:group.workspace.id,project:project.id,view});
 export async function sidebar(page){const button=page.getByRole('button',{name:/^(Menu|Close menu)$/});if(await button.isVisible()&&await button.getAttribute('aria-expanded')==='false')await button.click();}
-export async function projectSection(page,project,section){
-  await sidebar(page);await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:project.name,exact:true}).click();
+// Opens the top-bar account menu (idempotent) so its signed-in actions can be checked.
+export async function accountMenu(page){const trigger=page.getByRole('button',{name:'Account menu',exact:true});if(await trigger.getAttribute('aria-expanded')!=='true')await trigger.click();}
+// Choose the project in the sidebar's Website selector, then open the section and its tab.
+export async function projectSection(page,project,section,tab){
+  await sidebar(page);await page.locator('aside.t98-shell-sidebar').getByRole('combobox',{name:'Website',exact:true}).selectOption({label:project.name});
   await page.waitForFunction(id=>new URLSearchParams(location.search).get('project')===id,project.id);
-  await sidebar(page);const target=page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:section,exact:true,includeHidden:true});
-  await target.waitFor({state:'attached'});
-  for(const disclosure of await target.locator('xpath=ancestor::details').all())if(await disclosure.getAttribute('open')===null)await disclosure.locator(':scope > summary').click();
-  await target.click();
+  await sidebar(page);await page.locator('aside.t98-shell-sidebar').getByRole('navigation',{name:'Sections',exact:true}).getByRole('link',{name:section,exact:true}).click();
+  await page.getByRole('navigation',{name:`${section} pages`,exact:true}).getByRole('link',{name:tab,exact:true}).click();
 }
 export async function captureFailure(page,error,stage){
   const secrets=[process.env.AUTH_SECRET,process.env.DATABASE_URL,process.env.CREDENTIAL_KEYS];

@@ -93,13 +93,20 @@ try {
   dashboard.setDefaultTimeout(15000);
   dashboard.on('pageerror', (error: Error) => { pageErrors.push(error.name); });
   await dashboard.goto(config.appUrl, { waitUntil: 'networkidle' });
-  async function section(name: string) {
-    const toggle = dashboard.getByRole('button', { name: /^(Menu|Close menu)$/ });
-    if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
-    await dashboard.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click();
+  // Report pages are tabs in a section's strip and settings pages are Settings sections; either opens from the sidebar first.
+  async function section(name: string, tab: string) {
+    const main = dashboard.getByRole('main', { name: 'Main content', exact: true });
+    const tabs = main.getByRole('navigation', { name: name === 'Settings' ? 'Settings sections' : `${name} pages`, exact: true });
+    if (!await tabs.isVisible()) {
+      const toggle = dashboard.getByRole('button', { name: /^(Menu|Close menu)$/ });
+      if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+      const sidebar = dashboard.locator('aside.t98-shell-sidebar');
+      await (name === 'Settings' ? sidebar.getByRole('link', { name: 'Settings', exact: true }) : sidebar.getByRole('navigation', { name: 'Sections', exact: true }).getByRole('link', { name, exact: true })).click();
+    }
+    await tabs.getByRole('link', { name: tab, exact: true }).click();
   }
-  await dashboard.getByRole('heading', { name: 'Web analytics', exact: true }).waitFor();
-  await section('Traffic explorer');
+  await dashboard.getByRole('heading', { name: 'Overview', exact: true, level: 1 }).waitFor();
+  await section('Overview', 'Explore');
   const explore = dashboard.getByRole('region', { name: 'Explore', exact: true });
   // Explorer filters live in the Explore filters dialog; Apply filters closes it.
   const filters = dashboard.getByRole('dialog', { name: 'Explore filters', exact: true });
@@ -126,12 +133,12 @@ try {
     await mkdir(process.env.BROWSER_ARTIFACT_DIR, { recursive: true });
     await dashboard.screenshot({ path: join(process.env.BROWSER_ARTIFACT_DIR, 'serving-origin-mobile.png'), fullPage: true });
   }
-  await section('Recent events');
+  await section('Overview', 'Latest events');
   await dashboard.getByRole('columnheader', { name: 'Origin', exact: true }).waitFor();
   assert.equal(await dashboard.getByRole('cell', { name: serving, exact: true }).count(), 1);
   assert.equal(await dashboard.getByRole('cell', { name: canonical, exact: true }).count(), 1);
   stage = 'UI revocation and live consent reset';
-  await section('Domains');
+  await section('Settings', 'Domains');
   await dashboard.getByRole('heading', { name: 'Domains and aliases', exact: true }).waitFor();
   await dashboard.getByText(/Verified serving domains can use this project/).waitFor();
   const row = dashboard.getByRole('row').filter({ has: dashboard.getByText('serving.example.com', { exact: true }) });

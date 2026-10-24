@@ -4,6 +4,8 @@ See how people find your site, through search engines and AI answers, and what t
 
 Discover brings organic SEO, AEO and GEO research, AI prompt discovery and privacy-respecting web analytics together in one self-hosted application. It is for site owners, marketers and agencies who want their search, AI-visibility and visitor data in one place, on their own server. Discover is a development foundation, not a V1 release.
 
+![Discover web analytics overview](https://raw.githubusercontent.com/wiki/Ten98-IO-Company/ten98-discover/images/discover-overview.png)
+
 ## Why Discover
 
 - **Analytics you own.** A first-party tracker with consent-aware collection, sessions, journeys, funnels, retention, revenue and session replay, stored in your own database.

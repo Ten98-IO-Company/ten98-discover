@@ -6,7 +6,7 @@ import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fixtureGuard,evidenceDir} from '../research-ui/guard.mjs';
 import {createKeywordCase,readFixture} from '../research-ui/fixtures.mjs';
-import {browserSession,providerCounts,href,assertLayout,openKeywordForm,projectSection,holdNextGet,deferred,bounded,captureFailure} from '../research-ui/browser.mjs';
+import {browserSession,providerCounts,href,assertLayout,openKeywordForm,projectSection,holdNextGet,deferred,bounded,captureFailure,accountMenu} from '../research-ui/browser.mjs';
 import {runKeyword} from '../research-ui/jobs.mjs';
 import {getDatabase,closeDatabase} from '../../src/server/db.ts';
 import {stopJobs} from '../../src/server/jobs.ts';
@@ -72,7 +72,7 @@ try{
   stage='save real research rows and manual identities';{
     const {group,page,base}=await phase('core'),research=researchPanel(page),B='/api/projects/'+group.main.id+'/keyword-research';
     await openKeywordForm(research);await research.getByLabel('Keywords (one per line)',{exact:true}).fill('Saved source\nOmitted source');
-    await research.getByLabel('Country and language',{exact:true}).selectOption('2840|en');
+    await research.getByLabel('Country or territory and language',{exact:true}).selectOption('2840|en');
     await post(page,B+'/quote',()=>research.getByRole('button',{name:'Prepare quote',exact:true}).click());
     const run=(await post(page,B+'/runs',()=>research.getByRole('button',{name:'Run quoted research (paid)',exact:true}).click(),202)).run;
     await runKeyword(run.id);await research.getByRole('button',{name:'Check status',exact:true}).click();
@@ -192,11 +192,11 @@ try{
     stage='A to B to A stale response isolation';
     for(const status of [undefined,401]){
       const held=await holdList(page,base+'/list',status);await savedPanel(page).getByRole('button',{name:'Reload list',exact:true}).click();await bounded(held.entered);
-      await projectSection(page,group.other,'Keywords');await openSaved(page);await savedPanel(page).getByRole('heading',{name:'0 matching keywords',exact:true}).waitFor();
-      if(status){await projectSection(page,group.main,'Keywords');await openSaved(page);await table(page).locator('tbody tr').filter({hasText:'scope secret fixture'}).waitFor();}
+      await projectSection(page,group.other,'Search','Keywords');await openSaved(page);await savedPanel(page).getByRole('heading',{name:'0 matching keywords',exact:true}).waitFor();
+      if(status){await projectSection(page,group.main,'Search','Keywords');await openSaved(page);await table(page).locator('tbody tr').filter({hasText:'scope secret fixture'}).waitFor();}
       held.release();await held.dispose();await page.waitForTimeout(100);
-      assert.equal(await page.getByText('Synthetic stale saved list.',{exact:true}).count(),0);assert.ok(await page.getByRole('button',{name:'Sign out',exact:true}).isVisible());
-      if(!status){assert.equal(await table(page).count(),0);await projectSection(page,group.main,'Keywords');await openSaved(page);await table(page).waitFor();}
+      assert.equal(await page.getByText('Synthetic stale saved list.',{exact:true}).count(),0);await accountMenu(page);assert.ok(await page.getByRole('button',{name:'Sign out',exact:true}).isVisible());await page.keyboard.press('Escape');
+      if(!status){assert.equal(await table(page).count(),0);await projectSection(page,group.main,'Search','Keywords');await openSaved(page);await table(page).waitFor();}
     }
     stage='live viewer downgrade and cross-tab access removal';
     await changeRole(group.workspace.id,fixture.bootstrap.id,group.owner.id,{role:'viewer'});

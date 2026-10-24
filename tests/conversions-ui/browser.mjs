@@ -31,17 +31,26 @@ async function focused(locator){await locator.waitFor();await page.waitForFuncti
 async function idle(){await panel.getByRole('button',{name:'Apply filters',exact:true}).waitFor();await page.waitForFunction(element=>!element.disabled,await panel.getByRole('button',{name:'Apply filters',exact:true}).elementHandle());}
 async function period(){await idle();await panel.getByLabel('From',{exact:true}).fill('2026-01-31');await panel.getByLabel('To',{exact:true}).fill('2026-01-31');await panel.getByRole('button',{name:'Apply filters',exact:true}).click();await idle();}
 async function list(){await panel.getByRole('button',{name:'← Back to list',exact:true}).click();await panel.getByRole('heading',{name:/^Saved (funnels|goals)$/}).waitFor();}
+// The shared FunnelBreakdown renders one list item per step: its count, "Conversion: <rate> overall" and the
+// panel's "Drop-off: <n> · From previous: <rate>" detail. Read them as [count, drop-off, from previous, overall].
+async function funnelSteps(){
+  const results=panel.getByRole('region',{name:'Funnel conversion results',exact:true});await results.waitFor();
+  return results.locator('ol > li').evaluateAll(items=>items.map(item=>{
+    const text=selector=>item.querySelector(selector)?.textContent??'';
+    const detail=/^Drop-off: (.*) · From previous: (.*)$/.exec(text('.t98-funnel-detail > p'))??[];
+    return [text('.t98-funnel-count > span'),detail[1],detail[2],/^Conversion: (.*?)(?: overall)?$/.exec(text('.t98-funnel-conversion'))?.[1]];
+  }));
+}
 async function funnelCounts(counts){
-  const table=panel.getByRole('region',{name:'Funnel conversion results',exact:true});await table.waitFor();
-  const rows=table.locator('tbody tr');assert.equal(await rows.count(),counts.length);
-  assert.deepEqual(await rows.evaluateAll(items=>items.map(row=>row.cells[1].textContent)),counts.map(String));
+  const steps=await funnelSteps();assert.equal(steps.length,counts.length);
+  assert.deepEqual(steps.map(step=>step[0]),counts.map(String));
 }
 async function newFunnel(name){
   await panel.getByRole('button',{name:'New funnel',exact:true}).click();await panel.getByLabel('Name',{exact:true}).fill(name);
   await panel.getByLabel('Minutes between steps',{exact:true}).fill('5');await panel.getByRole('button',{name:'Add step',exact:true}).click();
   for(const [index,event]of ['A','B','C'].entries()){
     const step=panel.getByRole('group',{name:'Step '+(index+1),exact:true});
-    await step.getByLabel('Action',{exact:true}).selectOption('event');await step.getByLabel('Value',{exact:true}).fill(event);
+    await step.getByLabel('Action',{exact:true}).selectOption('event');await step.getByRole('combobox',{name:'Event name',exact:true}).fill(event);
   }
 }
 // Forward the real mutation and discard only its response. No mocked success DTO.
@@ -88,9 +97,13 @@ async function workspace(id){
 }
 async function conversionsFor(project){
   const menu=page.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();
-  await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:project.name,exact:true}).click();
+  await page.locator('aside.t98-shell-sidebar').getByRole('combobox',{name:'Website',exact:true}).selectOption({label:project.name});
+  await page.waitForFunction(id=>new URLSearchParams(location.search).get('project')===id,project.id);
   if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();
-  await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Conversions',exact:true}).click();
+  // Conversions is a sidebar section whose first tab, Goals, holds the panel's Goals/Funnels switch (Goals first).
+  await page.locator('aside.t98-shell-sidebar').getByRole('navigation',{name:'Sections',exact:true}).getByRole('link',{name:'Conversions',exact:true}).click();
+  await page.getByRole('navigation',{name:'Conversions pages',exact:true}).getByRole('link',{name:'Goals',exact:true}).click();
+  await panel.getByRole('button',{name:'Funnels',exact:true}).click();
   await panel.getByRole('heading',{name:'Saved funnels',exact:true}).waitFor();
 }
 async function assertGoal(){
@@ -100,7 +113,7 @@ async function assertGoal(){
 }
 try{
   await json('/api/auth/sign-in/email',{method:'POST',data:{email:fixture.owner.email,password:fixture.owner.password}});
-  await page.goto(href(fixture.chains));await panel.getByRole('button',{name:'New funnel',exact:true}).waitFor();
+  await page.goto(href(fixture.chains));await panel.getByRole('button',{name:'Funnels',exact:true}).click();await panel.getByRole('button',{name:'New funnel',exact:true}).waitFor();
   stage='create and exact immutable retry after accepted 503';
   await newFunnel('Three observed steps');const create=await loseAcknowledgement(apiPath(fixture.chains),'503');
   await panel.getByRole('button',{name:'Save funnel',exact:true}).click();await panel.getByRole('button',{name:'Retry same save',exact:true}).waitFor();
@@ -109,7 +122,7 @@ try{
   assert.equal(create.bodies.length,2);assert.equal(create.accepted[1].replayed,true);const funnelId=create.accepted[0].item.id;await create.dispose();
   assert.equal((await pool.query('SELECT count(*) n FROM analytics_definition WHERE project_id=$1',[fixture.chains.id])).rows[0].n,'1');
   await period();await funnelCounts([3,2,1]);
-  assert.deepEqual(await panel.getByRole('region',{name:'Funnel conversion results'}).locator('tbody tr').evaluateAll(rows=>rows.map(row=>[row.cells[2].textContent,row.cells[3].textContent,row.cells[4].textContent])),[['—','—','100%'],['1','66.7%','66.7%'],['1','50%','33.3%']]);
+  assert.deepEqual((await funnelSteps()).map(step=>step.slice(1)),[['—','—','100%'],['1','66.7%','66.7%'],['1','50%','33.3%']]);
   console.log('PASS real saved funnel, exact 3/2/1 visitor counts, drop-offs, rates and immutable accepted-503 retry');
 
   stage='witness chain and responsive keyboard evidence';
@@ -168,7 +181,7 @@ try{
 
   stage='stale success and 401 cannot cross workspace selection';
   for(const status of [undefined,401]){
-    await page.goto(href(fixture.chains));await panel.getByRole('button',{name:'View results',exact:true}).click();await idle();
+    await page.goto(href(fixture.chains));await panel.getByRole('button',{name:'Funnels',exact:true}).click();await panel.getByRole('button',{name:'View results',exact:true}).click();await idle();
     const held=await heldGet(appUrl+apiPath(fixture.chains,'funnels',funnelId)+'/result?*',{status});
     await panel.getByRole('button',{name:'Refresh results',exact:true}).click();await bounded(held.entered);
     await workspace(fixture.otherWorkspace.id);await conversionsFor(fixture.empty);await panel.getByText('No saved funnels yet.',{exact:true}).waitFor();
@@ -180,13 +193,13 @@ try{
 
   stage='goal page-view numerator and all-activity known-visitor denominator';
   await page.goto(href(fixture.goals));await panel.getByRole('button',{name:'Goals',exact:true}).click();await panel.getByRole('button',{name:'New goal',exact:true}).click();
-  await panel.getByLabel('Name',{exact:true}).fill('Thank-you page');await panel.getByLabel('Value',{exact:true}).fill('/thank-you');await panel.getByRole('button',{name:'Save goal',exact:true}).click();await period();await assertGoal();
+  await panel.getByLabel('Name',{exact:true}).fill('Thank-you page');await panel.getByRole('combobox',{name:'Page path',exact:true}).fill('/thank-you');await panel.getByRole('button',{name:'Save goal',exact:true}).click();await period();await assertGoal();
   const goal=(await json(apiPath(fixture.goals,'goals'))).items[0];
   await panel.getByRole('button',{name:'View matching activity',exact:true}).click();await focused(panel.getByRole('heading',{name:'Matching activity for this goal',exact:true}));
   assert.equal(await panel.locator('.conversion-witness').count(),1);assert.match(await panel.locator('.conversion-witness').textContent(),/page_view/);
   await panel.getByRole('button',{name:'← Back to results',exact:true}).click();await focused(panel.getByRole('button',{name:'View matching activity',exact:true}));await layout('goal-results');
   await panel.getByRole('button',{name:'Edit definition',exact:true}).click();await focused(panel.getByRole('heading',{name:'Edit goal',exact:true}));
-  await panel.getByLabel('Action',{exact:true}).selectOption('event');await panel.getByLabel('Value',{exact:true}).fill('purchase');await panel.getByLabel('Name',{exact:true}).fill('Purchase event');
+  await panel.getByLabel('Action',{exact:true}).selectOption('event');await panel.getByRole('combobox',{name:'Event name',exact:true}).fill('purchase');await panel.getByLabel('Name',{exact:true}).fill('Purchase event');
   await panel.getByRole('button',{name:'Save goal',exact:true}).click();await assertGoal();
   const realGoal=await json(apiPath(fixture.goals,'goals',goal.id)+'/result?revision=2&from=2026-01-31&to=2026-01-31&timeZone=UTC');
   assert.deepEqual(realGoal.goal,{visitors:1,totalVisitors:3,rate:1/3});

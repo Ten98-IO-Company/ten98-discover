@@ -1,6 +1,7 @@
 import type {PoolClient} from 'pg';
 import {FoundationError} from './auth.ts';
 import type { explorerQuery } from './explorer-input.ts';
+import {visitScopeFields} from './analytics-visits.ts';
 import {recordedDimensionSql} from './analytics-dimensions.ts';
 import {geographyProjectionSql,geographyFilterSql} from './geography-sql.ts';
 
@@ -32,6 +33,9 @@ function calendarSql(from:string,to:string){return `raw_days AS (
     )`;}
 export const analyticsCalendarSql=calendarSql('$3::date','$4::date');
 
+const environmentFilterSql=`(NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
+        AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
+        AND (NOT $7::jsonb ? 'device' OR CASE WHEN $7::jsonb->>'device'='not-recorded' THEN e.dimensions->>'device' IS NULL ELSE e.dimensions->>'device'=$7::jsonb->>'device' END)`;
 function scopeSql(calendar:string,from:string,to:string,shared=false){return `WITH RECURSIVE target AS MATERIALIZED (
       ${shared?boardShareProjectTargetSql:'SELECT p.id,p.origin,p.analytics_retained_from FROM project p JOIN membership m ON m.workspace_id=p.workspace_id AND m.user_id=$2 WHERE p.id=$1'}
     ), ${calendar}, geography_candidates AS MATERIALIZED (
@@ -47,9 +51,7 @@ function scopeSql(calendar:string,from:string,to:string,shared=false){return `WI
         AND (NOT $7::jsonb ? 'channel' OR ${recordedDimensionSql('channel','e')}=$7::jsonb->>'channel')
         AND (NOT $7::jsonb ? 'referrer' OR e.dimensions->>'referrerHost'=$7::jsonb->>'referrer')
         AND (NOT $7::jsonb ? 'language' OR e.dimensions->>'language'=$7::jsonb->>'language')
-        AND (NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
-        AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
-        AND (NOT $7::jsonb ? 'device' OR CASE WHEN $7::jsonb->>'device'='not-recorded' THEN e.dimensions->>'device' IS NULL ELSE e.dimensions->>'device'=$7::jsonb->>'device' END)
+        AND ${environmentFilterSql}
         AND (NOT $7::jsonb ? 'campaignSource' OR e.dimensions->'campaign'->>'source'=$7::jsonb->>'campaignSource')
         AND (NOT $7::jsonb ? 'campaignMedium' OR e.dimensions->'campaign'->>'medium'=$7::jsonb->>'campaignMedium')
         AND (NOT $7::jsonb ? 'campaignName' OR e.dimensions->'campaign'->>'campaign'=$7::jsonb->>'campaignName')
@@ -58,6 +60,22 @@ function scopeSql(calendar:string,from:string,to:string,shared=false){return `WI
         AND ($8::text IS NULL OR CASE WHEN $9='missing' THEN NOT e.properties ? $8 ELSE e.properties->$8=jsonb_build_object('type',$9::text,'value',$10::jsonb) END)
     ), scope AS MATERIALIZED (SELECT * FROM geography_candidates WHERE ${geographyFilterSql('$7::jsonb')})`;}
 export const analyticsScopeSql=scopeSql(analyticsCalendarSql,'$3::date','$4::date');
+/**
+ * Whole-visit page views for visitMetricsSql: every retained report-window page view of a visit with a page view in `population`.
+ * Environment and location filters keep scoping each visit, as on the dashboard; every other filter only selects visits.
+ */
+export function scopedVisitPagesSql(population:string,customVisits:string,query:ReturnType<typeof explorerQuery>){
+ // Without a visit-selecting filter, the population already holds every scoped page view of its visits.
+ const selects=!!query.property||!!query.predicates||Object.keys(query.filters).some(field=>!visitScopeFields.includes(field));
+ if(!selects)return `SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM ${population} s LEFT JOIN ${customVisits} c USING(visitor_id,visit_id) WHERE s.event_name='page_view'`;
+ return `SELECT v.*,c.visit_id IS NOT NULL AS visit_has_custom FROM (
+      SELECT e.*,g.geography,COALESCE(e.dimensions->>'origin',p.origin) AS origin FROM event e JOIN target p ON p.id=e.project_id CROSS JOIN bounds b CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
+      WHERE e.event_name='page_view' AND e.received_at>=b.start AND e.received_at<b.finish AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
+        AND (e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date
+        AND ${environmentFilterSql}
+        AND (e.visitor_id,e.visit_id) IN (SELECT visitor_id,visit_id FROM ${population} WHERE event_name='page_view')
+    ) v LEFT JOIN ${customVisits} c USING(visitor_id,visit_id) WHERE ${geographyFilterSql('$7::jsonb')}`;
+}
 // Closed Revenue-only expressions; no caller-controlled identifiers or date rebasing.
 export const analyticsRevenuePeriodScopeSql=scopeSql(calendarSql('revenue_period.from_day','revenue_period.to_day'),'revenue_period.from_day','revenue_period.to_day');
 

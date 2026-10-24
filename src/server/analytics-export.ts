@@ -5,6 +5,7 @@ import {FoundationError} from './auth.ts';
 import {csvCell,explorerQuery} from './explorer-input.ts';
 import {analyticsPopulation} from './analytics-population.ts';
 import {analyticsDimensionValueSql} from './analytics-dimensions.ts';
+import {serializeGeographyKey,type GeoCountryKey} from '../lib/analytics-geography.ts';
 
 export const analyticsExportFiles=['events.csv','pages.csv','referrers.csv','browsers.csv','os.csv','devices.csv','countries.csv'] as const;
 export const analyticsExportLimits={bytes:16*1024*1024,groupsPerFile:10000,groupsTotal:25000,bodyBytes:32768,totalMs:15000} as const;
@@ -30,13 +31,19 @@ export function analyticsExportZip(contents:readonly Buffer[],check:()=>void=()=
 }
 type ExportRow={dataset:number;value:unknown;observations:number;identified:number;visitors:number|null};
 const rowSchema=z.object({dataset:z.number().int().min(0).max(6),value:z.unknown(),observations:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),identified:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),visitors:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable()}).strict();
+/** Country groups are closed geography keys: absence reads Unavailable; a completed lookup is recorded, as the ISO code or Unknown (the on-screen label). */
+function exportValue(dataset:number,value:unknown):[state:string,value:unknown]{
+ if(dataset!==6)return[value===null?'not-recorded':'recorded',value];
+ if(serializeGeographyKey('country',value)===null)throw new FoundationError(503,'Analytics counts cannot be exported safely.');const key=value as GeoCountryKey;
+ return key.state==='known'?['recorded',key.country]:key.state==='unknown'?['recorded','Unknown']:['not-recorded',null];
+}
 type ExportWindow={asOf:string;retainedFrom:string;start:string;end:string;coverage:'complete'|'partial'|'unavailable'};
 export function analyticsExportCsv(rows:readonly ExportRow[],window:ExportWindow,scope:string,check:()=>void=()=>{}){
  if(rows.length>analyticsExportLimits.groupsTotal)throw capacity();const groups=Array.from({length:7},()=>[] as ExportRow[]);for(const raw of rows){check();const parsed=rowSchema.safeParse(raw);if(!parsed.success)throw new FoundationError(503,'Analytics counts cannot be exported safely.');const row=parsed.data;if(row.identified>row.observations||row.visitors!==null&&row.visitors>row.identified)throw new FoundationError(503,'Analytics counts cannot be exported safely.');groups[row.dataset].push(row);}
  let bytes=0;return groups.map((items,index)=>{if(items.length>analyticsExportLimits.groupsPerFile)throw capacity();const lines:Buffer[]=[];const line=(cells:unknown[])=>{check();const part=Buffer.from(cells.map(csvCell).join(',')+'\r\n');bytes+=part.length;if(bytes>analyticsExportLimits.bytes)throw capacity();lines.push(part);};
   line(['record_type','as_of','scope','start','end','retained_from','coverage','value_state','value',index===0?'custom_events':'pageviews','identified_pageviews','estimated_visitors']);
   line(['metadata',window.asOf,scope,window.start,window.end,window.retainedFrom,window.coverage,'','','','','']);
-  for(const row of items)line(['row',window.asOf,scope,window.start,window.end,window.retainedFrom,window.coverage,row.value===null?'not-recorded':'recorded',row.value,row.observations,index===0?null:row.identified,index===0?null:row.visitors]);return Buffer.concat(lines);
+  for(const row of items)line(['row',window.asOf,scope,window.start,window.end,window.retainedFrom,window.coverage,...exportValue(index,row.value),row.observations,index===0?null:row.identified,index===0?null:row.visitors]);return Buffer.concat(lines);
  });
 }
 export async function exportAnalytics(projectId:string,userId:string,raw:unknown,signal?:AbortSignal):Promise<Response>{

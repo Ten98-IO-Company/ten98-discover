@@ -1,6 +1,6 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
-import {ReportPanel, useConfirmDialog} from '@ten98/ui';
+import {DataTable,ReportPanel, useConfirmDialog} from '@ten98/ui';
 import {auditCoverages,auditIssueCodes,auditNavigation,type AuditNavigation,type NavigationSearch} from '../lib/navigation';
 import {normalizeAuditPageFields,type AuditPageFields} from '../lib/site-audit-pages';
 import {workspaceRoles,type WorkspaceRole} from '@ten98/runtime';
@@ -415,7 +415,13 @@ function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenR
       <section className="card"><div className="row between"><h2 id={uid+'history-heading'} ref={heading} tabIndex={-1}>Audit history</h2><button className="btn" disabled={writing||busy.history} onClick={()=>void loadHistory()}>Refresh history</button></div>{errorBox('history',()=>void loadHistory())}
         {busy.history&&<p role="status">Loading audit history…</p>}
         {history.loaded&&!history.rows.length&&<p className="empty">No audits yet. {managed?'Choose an eligible domain to start the first audit.':'Ask a workspace owner or admin to start an audit.'}</p>}
-        {!!history.rows.length&&<div className="table-wrap" tabIndex={0} role="region" aria-label="Audit history"><table><thead><tr><th>Started</th><th>Origin and start path</th><th>Outcome</th><th>Attempted / analyzed</th><th>Retained findings</th><th>Action</th></tr></thead><tbody>{history.rows.map(row=><tr key={row.id}><td>{row.startedAt?date(row.startedAt):'Not started'}<p className="hint">Queued {date(row.createdAt)}</p></td><td>{row.origin}<br/><span className="mono">{row.config.startPath}</span></td><td>{words(row.status)}{row.dataStatus==='expired'&&<p className="hint">Detailed data expired</p>}</td><td>{row.summary?number(row.summary.pagesObserved)+' / '+number(row.summary.pagesAnalyzed):'Summary not produced'}</td><td>{number(row.summary?.issuesRetained)}</td><td><button id={uid+'audit-'+row.id} className="btn" disabled={writing} onClick={()=>selectRun(row.id)}>View audit</button></td></tr>)}</tbody></table></div>}
+        {!!history.rows.length&&<DataTable ariaLabel="Audit history" searchable={false} sortable={false} pagination={false} responsive="stack" rows={history.rows} rowKey={row=>row.id} columns={[
+  {key:'started',header:'Started',render:row=><>{row.startedAt?date(row.startedAt):'Not started'}<p className="hint">Queued {date(row.createdAt)}</p></>},
+  {key:'origin',header:'Origin and start path',rowHeader:true,wrap:true,render:row=><>{row.origin}<br/><span className="mono">{row.config.startPath}</span></>},
+  {key:'outcome',header:'Outcome',wrap:true,render:row=><>{words(row.status)}{row.dataStatus==='expired'&&<p className="hint">Detailed data expired</p>}</>},
+  {key:'pages',header:'Attempted / analyzed',render:row=>row.summary?number(row.summary.pagesObserved)+' / '+number(row.summary.pagesAnalyzed):'Summary not produced'},
+  {key:'findings',header:'Retained findings',numeric:true,render:row=>number(row.summary?.issuesRetained)},
+  {key:'action',header:'Action',render:row=><button id={uid+'audit-'+row.id} className="btn" disabled={writing} onClick={()=>selectRun(row.id)}>View audit</button>}]}/>}
         {history.cursor&&<button className="btn" disabled={writing||busy.history} onClick={()=>void loadHistory(history.cursor!)}>Load more audits</button>}
       </section>
     </>:<>
@@ -516,7 +522,10 @@ function Panel({projectId,search,onNavigate,onUnauthorized,onOpenDomains,onOpenR
       </>}
         <h3>Recorded links</h3><div className="row"><button className="btn" aria-pressed={view.direction==='out'} disabled={writing} onClick={()=>directionChange('out')}>Outgoing</button><button className="btn" aria-pressed={view.direction==='in'} disabled={writing} onClick={()=>directionChange('in')}>Incoming</button><button className="btn" disabled={writing||busy.links} onClick={()=>void loadLinks()}>Refresh links</button></div>{errorBox('links',()=>void loadLinks())}{busy.links&&<p role="status">Loading recorded links…</p>}{!run.coverage.linksComplete&&<p className="hint">Link coverage is incomplete; an empty list does not prove no links exist.</p>}
         {links.loaded&&!links.rows.length&&<p className="empty">No links recorded in this direction.</p>}
-        {!!links.rows.length&&<div className="table-wrap" tabIndex={0} role="region" aria-label="Recorded page links"><table><thead><tr><th>Relation</th><th>{view.direction==='in'?'Source page':'Target URL'}</th><th>Anchor</th></tr></thead><tbody>{links.rows.map(edge=><tr key={edge.id}><td>{words(edge.kind)}{edge.nofollow?' · nofollow':''}</td><td>{view.direction==='in'?<button className="btn" disabled={writing} onClick={()=>selectPage(edge.sourcePageId)}>View source page</button>:<>{edge.targetUrl}{edge.targetPageId?<p><button className="btn" disabled={writing} onClick={()=>selectPage(edge.targetPageId!)}>View target page</button></p>:<p className="hint">No saved HTML target. This does not establish a broken link.</p>}</>}</td><td>{edge.anchorStatus==='available'?edge.anchor||'Observed empty anchor':words(edge.anchorStatus)}</td></tr>)}</tbody></table></div>}{links.cursor&&<button className="btn" disabled={writing||busy.links} onClick={()=>void loadLinks(links.cursor!)}>Load more links</button>}
+        {!!links.rows.length&&<DataTable ariaLabel="Recorded page links" searchable={false} sortable={false} pagination={false} responsive="stack" rows={links.rows} rowKey={edge=>edge.id} columns={[
+  {key:'relation',header:'Relation',render:edge=><>{words(edge.kind)}{edge.nofollow?' · nofollow':''}</>},
+  {key:'target',header:view.direction==='in'?'Source page':'Target URL',rowHeader:true,wrap:true,render:edge=>view.direction==='in'?<button className="btn" disabled={writing} onClick={()=>selectPage(edge.sourcePageId)}>View source page</button>:<>{edge.targetUrl}{edge.targetPageId?<p><button className="btn" disabled={writing} onClick={()=>selectPage(edge.targetPageId!)}>View target page</button></p>:<p className="hint">No saved HTML target. This does not establish a broken link.</p>}</>},
+  {key:'anchor',header:'Anchor',wrap:true,render:edge=>edge.anchorStatus==='available'?edge.anchor||'Observed empty anchor':words(edge.anchorStatus)}]}/>}{links.cursor&&<button className="btn" disabled={writing||busy.links} onClick={()=>void loadLinks(links.cursor!)}>Load more links</button>}
       </section>}
     </>}
     {confirmDialog}

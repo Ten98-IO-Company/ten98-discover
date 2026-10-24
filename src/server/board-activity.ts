@@ -1,4 +1,5 @@
-import type {BoardShareReadContext} from './analytics-scope.ts';
+import {scopedVisitPagesSql,type BoardShareReadContext} from './analytics-scope.ts';
+import {visitMetricsSql} from './analytics-visits.ts';
 import type {PoolClient} from 'pg';
 import type {BoardActivityResult,BoardDimensionResult,BoardSummaryResult} from '../lib/boards.ts';
 import {recordedDimensionSql,analyticsCustomVisitsSql} from './analytics-dimensions.ts';
@@ -100,14 +101,17 @@ export async function boardDimension(client:PoolClient,projectId:string,userId:s
  const pending:unknown[]=[result];while(pending.length){const value=pending.pop();if(typeof value==='number'&&(!Number.isSafeInteger(value)||value<0))throw new FoundationError(503,'The dimension result exceeds safe count limits.');if(value&&typeof value==='object')pending.push(...Object.values(value));}
  return result;
 }
-// Same selected-pageview arithmetic and whole-window custom-event suppression as Analytics.
+// Same visit definition as Analytics: filters select visits with a matching page view; environment and location filters
+// scope each measured visit; custom events suppress bounces across the whole window.
 export async function boardSummary(client:PoolClient,projectId:string,userId:string,scope:string,query:ReturnType<typeof explorerQuery>,share?:BoardShareReadContext):Promise<BoardSummaryResult>{
  if(query.cohort||query.predicates)throw new FoundationError(400,'Board summaries support exact field and typed event-property filters.');
  if(!(await client.query('SELECT 1 FROM pg_timezone_names WHERE name=$1',[query.timeZone])).rowCount)throw new FoundationError(400,'The database does not support this timezone.');
  const {ctes,values,population}=analyticsPopulation(projectId,userId,{...query,kind:'all'},null,false,undefined,undefined,share);
  const row=(await client.query<{allowed:boolean;retained_from:string|null;start:Date;finish:Date;summary:Pick<BoardSummaryResult,'totals'|'measurement'>}>(`${ctes},
   custom_visits AS MATERIALIZED(${analyticsCustomVisitsSql('(SELECT start FROM bounds)','(SELECT finish FROM bounds)',"(e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date")}),
-  observations AS MATERIALIZED(SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM ${population} s LEFT JOIN custom_visits c USING(visitor_id,visit_id)),${analyticsSummarySql.visits}
+  observations AS MATERIALIZED(SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM ${population} s LEFT JOIN custom_visits c USING(visitor_id,visit_id)),
+  visit_pages AS MATERIALIZED(${scopedVisitPagesSql(population,'custom_visits',query)}),
+  visits AS(${visitMetricsSql('visit_pages')})
   SELECT EXISTS(SELECT 1 FROM target)AS allowed,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target)AS retained_from,
    (SELECT start FROM bounds)AS start,(SELECT finish FROM bounds)AS finish,
    json_build_object('totals',${analyticsSummarySql.totals},'measurement',${analyticsSummarySql.measurement})AS summary FROM observations`,values)).rows[0];
@@ -118,5 +122,5 @@ export async function boardSummary(client:PoolClient,projectId:string,userId:str
  for(const value of [totals.pageViews,totals.customEvents,measurement.identifiedPageViews,measurement.unidentifiedPageViews,measurement.visitors,measurement.visits])if(value!==null&&(!Number.isSafeInteger(value)||value<0))throw new FoundationError(503,'The summary exceeds safe count limits. Narrow its dates or filters.');
  for(const value of [measurement.bounceRate,measurement.averageVisitSeconds])if(value!==null&&(!Number.isFinite(value)||value<0))throw new FoundationError(503,'The summary measurement cannot be reported safely.');
  return{version:'native-board-summary-v1',projectId,scope,range:{from:query.from,to:query.to,timeZone:query.timeZone,start,end},coverage,
-  method:{population:'selected-retained-observations',visits:'project-visitor-visit-pair',customSuppression:'whole-window-retained-custom-events',duration:'selected-pageview-span',historyComplete:false},totals,measurement};
+  method:{population:'selected-retained-observations',visits:'project-visitor-visit-pair',customSuppression:'whole-window-retained-custom-events',duration:'matching-visit-pageview-span',historyComplete:false},totals,measurement};
 }

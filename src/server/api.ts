@@ -39,7 +39,7 @@ import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from '
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
-import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
+import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, rotateInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
 import { AccountClosureBlocked } from './account-closure.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
@@ -113,8 +113,8 @@ async function limit(key: string, maximum: number, client?:PoolClient) {
 }
 
 /** Counts like limit, then refuses once the key's total over the last `minutes` minutes (at most 60, the expiry) exceeds the maximum. */
-async function limitWindow(key: string, maximum: number, minutes: number) {
-  const { rows } = await getDatabase().pool.query(
+async function limitWindow(key: string, maximum: number, minutes: number, client?: PoolClient) {
+  const { rows } = await (client ?? getDatabase().pool).query(
     `WITH expired AS (DELETE FROM request_limit WHERE minute < floor(extract(epoch FROM now()) / 60) - 60),
      current AS (INSERT INTO request_limit(key,minute,count) VALUES ($1,floor(extract(epoch FROM now()) / 60),1)
        ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING minute,count)
@@ -125,6 +125,11 @@ async function limitWindow(key: string, maximum: number, minutes: number) {
   if (Number(rows[0].total) > maximum) throw new FoundationError(429, `Too many attempts. Wait ${minutes === 1 ? 'a minute' : `${minutes} minutes`} and try again.`);
 }
 
+// Fixed text: workspace and inviter names are member-chosen, so they never reach the installation's sender (phishing surface).
+function sendInvitationEmail(to: string, role: string, inviteUrl: string) {
+  return sendTransactionalEmail({ to, subject: 'Your ten98 Discover workspace invitation', text: `You were invited to join a workspace on the ten98 Discover installation at ${getConfig().appUrl} with the ${role} role.\n\nOpen this link within 7 days to accept:\n${inviteUrl}\n\nOnly the newest invitation link sent to this address for a workspace works. If you did not expect this invitation, ignore this email.` });
+}
+
 /**
  * Per-minute public collection limits. A client is one resolved visitor address, counted only when the installation identifies
  * visitors by address (see visitorRateKey); its value leaves room for visitors behind a shared network address. Each site is keyed
@@ -132,7 +137,9 @@ async function limitWindow(key: string, maximum: number, minutes: number) {
  */
 export const collectorLimits = { client: 1200, site: { collector: 3000, heatmap: 3000, replay: 3000, 'tracking-config': 600 }, global: 60000 } as const;
 
-let collectorClientLimitNoticed = false;
+// Once per process: the Nitro entry (collector middleware) and the TanStack Start bundle each have a copy of this module.
+const collectorClientLimitNotice = Symbol.for('ten98-monitor.collector-client-limit-notice');
+const noticed = globalThis as typeof globalThis & { [collectorClientLimitNotice]?: true };
 
 /** The project a public site key names when the request origin is allowed for it, or null. */
 async function collectionProject(siteKey: string, origin: string): Promise<{ id: string } | null> {
@@ -289,8 +296,8 @@ export async function handleApi(request: Request): Promise<Response> {
       // Per client only where an address identifies one visitor; otherwise the per-site and global limits apply alone.
       const clientKey = visitorRateKey(request, 'collector');
       if (clientKey) await limit(clientKey, collectorLimits.client);
-      else if (!collectorClientLimitNoticed && !clientAddressesIdentifyVisitors()) {
-        collectorClientLimitNoticed = true;
+      else if (!noticed[collectorClientLimitNotice] && !clientAddressesIdentifyVisitors()) {
+        noticed[collectorClientLimitNotice] = true;
         console.warn('Per-client collection limiting is off until TRUSTED_PROXIES or ANALYTICS_TRUSTED_PROXIES names the reverse proxy (or ANALYTICS_NETWORK_MODE=direct when there is none).');
       }
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
@@ -1089,25 +1096,44 @@ export async function handleApi(request: Request): Promise<Response> {
         if (match[2] === 'invitations') {
           const result = await inviteMember(match[1], user.id, await readJson(request));
           const { email: to, role } = result.invitation, inviteUrl = `${config.appUrl}/#invite=${result.token}`;
-          // Committed above; no PoolClient is held, one attempt only, and no failure undoes the invitation. Fixed text:
-          // workspace and inviter names are member-chosen, so they never reach the installation's sender (phishing surface).
+          // Committed above; no PoolClient is held, one attempt only, and no failure undoes the invitation.
           // The installation-wide budget mirrors password recovery: plus-tag variants and self-made workspaces evade the address and actor keys.
           // It is checked after the address key, so re-inviting one address past its budget never spends the installation's.
           const email = !getEmailStatus().configured ? 'disabled' : await limit(emailLimitKey('invitation-email', to), 3)
             .then(() => limit('invitation-email:global', 20))
-            .then(() => sendTransactionalEmail({ to, subject: 'Your ten98 Discover workspace invitation', text: `You were invited to join a workspace on the ten98 Discover installation at ${config.appUrl} with the ${role} role.\n\nOpen this link within 7 days to accept:\n${inviteUrl}\n\nOnly the newest invitation link sent to this address for a workspace works. If you did not expect this invitation, ignore this email.` }))
+            .then(() => sendInvitationEmail(to, role, inviteUrl))
             .then(() => 'accepted' as const, () => 'failed' as const);
           return json({ invitation: result.invitation, inviteUrl, email }, 201);
         }
       }
     }
-    match = path.match(new RegExp(`^/api/workspaces/(${id})/(members|invitations)/(${id})/(role|remove|revoke)$`, 'i'));
+    match = path.match(new RegExp(`^/api/workspaces/(${id})/(members|invitations)/(${id})/(role|remove|revoke|resend|new-link)$`, 'i'));
     if (match && request.method === 'POST') {
       await limit(`team:${user.id}`, 60);
       const input = await readJson(request);
       if (match[2] === 'members' && match[4] === 'role') { await changeRole(match[1], user.id, match[3], input); return json({ ok: true }); }
       if (match[2] === 'members' && match[4] === 'remove') { z.object({}).strict().parse(input); await removeMember(match[1], user.id, match[3]); return json({ ok: true }); }
       if (match[2] === 'invitations' && match[4] === 'revoke') { z.object({}).strict().parse(input); await revokeInvitation(match[1], user.id, match[3]); return json({ ok: true }); }
+      if (match[2] === 'invitations' && (match[4] === 'resend' || match[4] === 'new-link')) {
+        z.object({}).strict().parse(input);
+        // Resend checks and spends its budgets inside the rotation transaction after authorization and the pending check, so any
+        // refusal (409 without a transport, 429 at any limit) rolls back every count it spent and leaves the current link working.
+        const [workspaceKey, invitationKey] = [match[1].toLowerCase(), match[3].toLowerCase()];
+        const admit = match[4] !== 'resend' ? undefined : async (client: PoolClient, invitation: { email: string }) => {
+          if (!getEmailStatus().configured) throw new FoundationError(409, 'Email is not set up on this installation, so nothing was sent and the current link still works. Use New link to get a link you can copy and share yourself.');
+          // Per invitation and per workspace, then the invitation route's address and installation budgets.
+          await limitWindow(`invitation-resend:${invitationKey}`, 3, 60, client);
+          await limitWindow(`invitation-resend:workspace:${workspaceKey}`, 20, 60, client);
+          await limit(emailLimitKey('invitation-email', invitation.email), 3, client);
+          await limit('invitation-email:global', 20, client);
+        };
+        const result = await rotateInvitation(match[1], user.id, match[3], admit);
+        const inviteUrl = `${config.appUrl}/#invite=${result.token}`;
+        if (match[4] === 'new-link') return json({ invitation: result.invitation, inviteUrl });
+        // After commit, one attempt as for a new invitation; on failure the rotated link is still returned for manual sharing.
+        const email = await sendInvitationEmail(result.invitation.email, result.invitation.role, inviteUrl).then(() => 'accepted' as const, () => 'failed' as const);
+        return json({ invitation: result.invitation, inviteUrl, email });
+      }
     }
     match = path.match(new RegExp(`^/api/workspaces/(${id})/projects$`, 'i'));
     if (match) {
@@ -1127,6 +1153,9 @@ export async function handleApi(request: Request): Promise<Response> {
           const access = await client.query('SELECT role FROM membership WHERE workspace_id=$1 AND user_id=$2', [match[1], user.id]);
           if (!['owner', 'admin', 'editor'].includes(access.rows[0]?.role)) throw new FoundationError(404, 'Workspace not found or unavailable.');
           const { rows } = await client.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5) RETURNING id,name,origin,public_key AS "publicKey"', [randomUUID(), match[1], input.name, input.origin, randomUUID()]);
+          // New websites show where visits come from out of the box: only the referrer hostname is kept, never its path or query.
+          // The column default stays off, so websites created before this change keep their stored choice.
+          await client.query(`UPDATE project SET analytics_settings=analytics_settings||'{"captureReferrer":true}'::jsonb WHERE id=$1`, [rows[0].id]);
           await client.query('COMMIT');
           return json({ project: rows[0] }, 201);
         } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }

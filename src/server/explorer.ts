@@ -1,4 +1,5 @@
-import {boardShareSqlBudget} from './analytics-scope.ts';
+import {boardShareSqlBudget,scopedVisitPagesSql} from './analytics-scope.ts';
+import {visitMetricsSql,matchedVisitsSql,visitScopeFields} from './analytics-visits.ts';
 import { getDatabase } from './db.ts';
 import { FoundationError } from './auth.ts';
 import { explorerQuery, explorerGroupingQuery, csvCell,type CompoundExplorerQuery,type ExplorerTupleAtom } from './explorer-input.ts';
@@ -69,19 +70,18 @@ async function readExplorer(projectId:string,userId:string,params:URLSearchParam
         WHEN d.dimension IS NULL THEN '{"type":"missing","value":null}'::jsonb
         ELSE jsonb_build_object('type',CASE WHEN $11 IN ('country','region','city') THEN 'string' ELSE jsonb_typeof(d.dimension) END,'value',d.dimension) END AS label
       FROM ${population} s CROSS JOIN LATERAL (SELECT ${analyticsDimensionValueSql('$11::text','s')} AS dimension) d`;
-    // Umami counts page views within each tuple/visitor/visit, but custom events
-    // suppress bounces across the authorized date range before report filters.
+    // Same visit definition as Analytics: a tuple's visits have a page view in it and are measured whole, scoped by the
+    // tuple's environment/location values; custom events suppress bounces across the authorized date range before report filters.
+    const scopeFields=fields?.filter(field=>visitScopeFields.includes(field))??[],scopeKeys=scopeFields.length?['scope']:[];
+    const scoped=(source:string,alias:string)=>scopeFields.length?`(SELECT ${alias}.*,jsonb_build_array(${scopeFields.map(field=>analyticsDimensionValueSql(`'${field}'`,alias)).join(',')})::text COLLATE "C" AS scope FROM ${source} ${alias}) ${alias}`:`${source} ${alias}`;
     const groupingSql=fields?`tuple_custom_visits AS MATERIALIZED (
       ${analyticsCustomVisitsSql('(SELECT start FROM bounds)','(SELECT finish FROM bounds)',"(e.received_at AT TIME ZONE $5)::date BETWEEN $3::date AND $4::date")}
-    ), tuple_visits AS (
-      SELECT label::text COLLATE "C" AS label,visitor_id,visit_id,count(*) AS pageviews,
-        extract(epoch FROM max(received_at)-min(received_at)) AS duration
-      FROM labeled WHERE event_name='page_view' AND visitor_id IS NOT NULL AND visit_id IS NOT NULL
-      GROUP BY label::text COLLATE "C",visitor_id,visit_id
+    ), tuple_visit_metrics AS MATERIALIZED (${visitMetricsSql(scoped(`(${scopedVisitPagesSql(population,'tuple_custom_visits',query)})`,'pages'),scopeKeys)}
+    ), tuple_visits AS (${matchedVisitsSql(scoped('labeled','l'),'tuple_visit_metrics',['label::text COLLATE "C" AS label'],[...scopeKeys,'visitor_id','visit_id'])}
     ), tuple_measurement AS (
-      SELECT v.label,count(DISTINCT v.visitor_id) AS estimated_visitors,count(*) AS visits,
-        100.0*count(*) FILTER(WHERE v.pageviews=1 AND c.visit_id IS NULL)/count(*) AS bounce,
-        avg(v.duration) AS duration FROM tuple_visits v LEFT JOIN tuple_custom_visits c ON c.visitor_id=v.visitor_id AND c.visit_id=v.visit_id GROUP BY v.label
+      SELECT label,count(DISTINCT visitor_id) AS estimated_visitors,count(*) AS visits,
+        100.0*count(*) FILTER(WHERE pageviews=1 AND NOT custom)/count(*) AS bounce,
+        avg(duration) AS duration FROM tuple_visits GROUP BY label
     ), tuple_counts AS (
       SELECT label::text COLLATE "C" AS label,count(*) AS events,count(visitor_id) AS identified,
         CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id) END AS visitors,

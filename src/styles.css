@@ -47,14 +47,9 @@
 .session-explorer input:not([type='checkbox']), .session-explorer select{ min-inline-size: 0; max-inline-size: 100%; inline-size: 100%; min-block-size: var(--control-touch); }
 .session-explorer :is(button,summary,a.btn){ min-block-size: var(--control-touch); }
 .session-explorer summary{ padding-block: var(--space-2); }
-.session-rows{ list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-4); }
-.session-rows > li{ min-inline-size: 0; border-block-end: 1px solid var(--line); padding-block-end: var(--space-4); }
-.session-rows > li > a{ display: inline-flex; align-items: center; min-block-size: var(--control-touch); }
 .session-metrics{ display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-6); }
 .session-metrics dt{ color: var(--color-text-muted); font-size: var(--text-sm); }
-.session-metrics dd, .session-properties dd{ margin-inline-start: 0; }
-.session-properties{ display: grid; gap: var(--space-3); }
-.session-properties code{ white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.session-metrics dd{ margin-inline-start: 0; }
 .banner, .alert, .notice{ margin: 12px 0 18px; padding: 12px 15px; border-radius: var(--radius-md); font-size: var(--text-sm); }
 .banner{ background: var(--amber-tint); border: 1px solid var(--color-warning); }
 .alert{ background: var(--red-tint); border: 1px solid var(--color-danger); color: var(--danger); }
@@ -207,13 +202,11 @@
 .domains-panel summary{ padding-block: 10px; cursor: pointer; font-weight: 500; }
 .domains-panel :is(p, bdi, td, dd){ overflow-wrap: anywhere; }
 .domains-panel :is(h3, .domain-origin){ margin-block: 0 10px; }
-.domain-facts{ margin-block: 12px; }
-.domain-facts > div{ display: flex; flex-wrap: wrap; gap: 6px 16px; margin-block: 8px; }
-.domain-facts dt{ color: var(--muted); min-inline-size: 150px; }
-.domain-facts dd{ margin: 0; }
 .domains-panel .domain-add{ margin-block: 12px; }
 .domains-panel .domain-table td{ vertical-align: top; }
 .domains-panel .domain-table .row{ align-items: flex-start; }
+/* @ten98/ui Disclosure has no width option. Cap the open redirect history and let it wrap inside the nowrap table so it never widens the Actions column; a percentage cap is cyclic in table sizing. */
+.domains-panel .domain-table .t98-disclosure{ max-inline-size: 460px; white-space: normal; }
 .domains-panel [tabindex='-1']:focus-visible{ outline: 2px solid var(--color-focus); outline-offset: 4px; }
 .prompt-table table{ min-width: 900px; }
 .prompt-table th:first-child, .prompt-table td:first-child{ min-width: 240px; width: 34%; }

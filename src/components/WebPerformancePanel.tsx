@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useEffect,useId,useMemo,useRef,useState,type FormEvent} from 'react';
 import {Inline,Stack,TimeSeriesChart,type ChartSeries} from '@ten98/ui';
 import {ApiError} from '../lib/api';
@@ -30,18 +31,21 @@ function verified(value:unknown,projectId:string,intent:PerformanceIntent):Perfo
 
 async function readReport(path:string,signal:AbortSignal,projectId:string,intent:PerformanceIntent){
   const combined=AbortSignal.any([signal,AbortSignal.timeout(15000)]);
-  let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
   try{
     const response=await fetch(path,{credentials:'same-origin',redirect:'error',cache:'no-store',signal:combined});
     if(!response.ok){await response.body?.cancel().catch(()=>{});const error=new ApiError(response.status===401?'Your session expired. Sign in again.':[403,404].includes(response.status)?'Project access changed. Performance results were cleared.':'The performance report could not be loaded. Try Reload report.');error.status=response.status;throw error;}
-    const length=response.headers.get('content-length'),identity=!response.headers.get('content-encoding')||response.headers.get('content-encoding')==='identity';
-    if(!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||length!==null&&(!/^(0|[1-9]\d*)$/.test(length)||Number(length)>2097152)||!response.body)throw new Error('This performance response could not be verified. Reload the report.');
-    reader=response.body.getReader();const decoder=new TextDecoder('utf-8',{fatal:true});let bytes=0,text='';
-    for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>2097152)throw new Error('This performance report is too large. Choose a shorter date range.');text+=decoder.decode(part.value,{stream:true});}
-    text+=decoder.decode();if(identity&&length!==null&&Number(length)!==bytes)throw new Error('This performance response was incomplete. Reload the report.');
+    if(!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')||!response.body)throw new Error('This performance response could not be verified. Reload the report.');
+    let text:string;
+    try{text=await readResponseText(response,{maxBytes:2097152,contentLength:'exact',signal:combined});}
+    catch(error){
+      const code=(error as {code?:unknown}).code;
+      if(error instanceof RangeError)throw new Error('This performance report is too large. Choose a shorter date range.');
+      if(code==='CONTENT_LENGTH_INVALID')throw new Error('This performance response could not be verified. Reload the report.');
+      if(code==='RESPONSE_INCOMPLETE')throw new Error('This performance response was incomplete. Reload the report.');
+      throw error;
+    }
     return verified(JSON.parse(text),projectId,intent);
   }catch(cause){if(signal.aborted)throw cause;if(cause instanceof ApiError||cause instanceof Error&&cause.message.startsWith('This performance')||cause instanceof Error&&cause.message.startsWith('The performance breakdown'))throw cause;throw new Error('The performance report was not received completely. Reload the report.');}
-  finally{await reader?.cancel().catch(()=>{});}
 }
 
 export function WebPerformancePanel({projectId,userId,query='',onNavigate,onUnauthorized,onSettings,readOwner='',readEnabled=true}:Props){

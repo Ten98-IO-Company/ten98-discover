@@ -25,6 +25,7 @@ import { runEmailSuppressionChecks } from './email-suppression-integration.ts';
 import { runCollectorAdmissionChecks } from './collector-admission-integration.ts';
 import { runAccountClosureChecks } from './account-closure-integration.ts';
 import { runClosedAccountRetentionChecks } from './closed-account-retention-integration.ts';
+import { runPaidWorkArchiveChecks } from './paid-work-archive-integration.ts';
 import { runContentSupportListChecks } from './content-support-list-integration.ts';
 import { runStartupMigrateChecks } from './startup-migrate-integration.ts';
 
@@ -473,6 +474,8 @@ try {
   await runAccountClosureChecks();
   stage = 'closed-account 7-year retention';
   await runClosedAccountRetentionChecks();
+  stage = 'paid-work archive on website and workspace deletion';
+  await runPaidWorkArchiveChecks();
   stage = 'startup migration lock, failure and timeout';
   await runStartupMigrateChecks();
   stage = 'browser destination revisions and isolation';

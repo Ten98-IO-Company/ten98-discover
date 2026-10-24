@@ -51,3 +51,18 @@ export function collectorAliasResponse(request: Request, script: string, handle:
   if (request.headers.get('if-none-match') === etag) return new Response(null, { status: 304, headers });
   return new Response(request.method === 'HEAD' ? null : script, { headers });
 }
+
+// The TanStack Start route src/routes/api/$.ts only calls the API handler. Clients routinely abandon API requests mid-flight
+// (a visitor's sendBeacon or tab close, a dashboard navigation, a timed-out health probe). Start then rethrows Node's
+// ECONNRESET "Error: aborted" or an AbortError and logs it inside its own h3 instance as an unhandled 500 with a stack trace,
+// before any outer middleware can see it. The API handler answers every outcome itself and logs only one concise line.
+function isApiPath(pathname: string): boolean {
+  const lower = pathname.toLowerCase(); // Start's router matches /api/$ case-insensitively
+  return lower === '/api' || lower.startsWith('/api/');
+}
+
+/** The middleware entry: every /api request goes straight to the API handler, then the optional aliases; any other request continues unchanged. */
+export function collectorResponse(request: Request, script: string, handle: (request: Request) => Promise<Response>, env: NodeJS.ProcessEnv = process.env): Promise<Response> | Response | undefined {
+  if (isApiPath(new URL(request.url).pathname)) return handle(request);
+  return collectorAliasResponse(request, script, handle, env);
+}

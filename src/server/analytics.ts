@@ -6,30 +6,42 @@ import {publicAnalyticsSettings} from './native-analytics.ts';
 import {environmentFields,environmentVersion,isEnvironmentFilter,type EnvironmentFilters,type AnalyticsEnvironment} from '../lib/analytics-environment.ts';
 import {deriveAnalyticsComparison,type AnalyticsComparisonMode,type AnalyticsComparison,type AnalyticsPeriodReport,type AnalyticsReport} from '../lib/analytics-comparison.ts';
 import {geographyFields,geographyFiltersValid,geographySearch,type GeographyFilters,type GeographyDetailIntent,type GeographyDetail,serializeGeographyKey,type GeoField} from '../lib/analytics-geography.ts';
-import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geographyReportSql,geographyDetailSql,geographyKeyOrderSql,applyGeographyCoverage} from './geography-sql.ts';
+import {geographyProjectionSql,geographyFilterSql,geographyKeySql,geographyAggregateCtes,geographyKeyColumnsSql,geographyKeyColumns,geographyValuesSql,geographyReportSql,geographyDetailSql,geographyKeyOrderSql,applyGeographyCoverage} from './geography-sql.ts';
 import {analyticsDimensions,analyticsSelectionFields,type AnalyticsDimension,type AnalyticsDimensionComparison,type AnalyticsDimensionMetrics,type AnalyticsDimensionRow} from '../lib/analytics-dimensions.ts';
 import {parseAdvancedPredicates,type AdvancedPredicates} from './advanced-predicate-input.ts';
 import {advancedPredicateSql} from './advanced-predicates.ts';
 import {analyticsDimensionValueSql,analyticsCustomVisitsSql,selfReferralSql} from './analytics-dimensions.ts';
+import {visitMetricsSql,matchedVisitsSql,visitScopeFields,visitValuesSql,valueCountsSql,valueVisitsSql,visitMeasurementSql} from './analytics-visits.ts';
 
 export const analyticsSummarySql={
- visits:`visits AS (
-      SELECT visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
-        bool_or(visit_has_custom) AS custom,
-        extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
-      FROM observations WHERE visit_id IS NOT NULL GROUP BY visitor_id,visit_id
-      HAVING count(*) FILTER (WHERE event_name='page_view')>0
-    )`,
  totals:`json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
         'customEvents',count(*) FILTER (WHERE event_name<>'page_view'))`,
- measurement:`json_build_object('version','umami-3.4-hour-cache-v1',
+ // Reads a `visits` CTE from analytics-visits.ts. v2 marks that definition's deliberate departure from pinned Umami 3.4.0's
+ // filtered getWebsiteStats: a filtered population counts visits with a matching page view and measures each whole visit.
+ // Distinct visitor counts sort visitor_id under "C" to avoid strcoll. The count cannot change: event_identity_pair (migration 0012)
+ // admits only NULL or 64 lowercase hex characters, which are equal under any collation exactly when their bytes are.
+ measurement:`json_build_object('version','umami-3.4-visit-scoped-v2',
         'identifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NOT NULL),
         'unidentifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NULL),
-        'visitors',(SELECT CASE WHEN count(*)>0 THEN count(DISTINCT visitor_id) END FROM visits),
+        'visitors',(SELECT CASE WHEN count(*)>0 THEN count(DISTINCT visitor_id COLLATE "C") END FROM visits),
         'visits',(SELECT CASE WHEN count(*)>0 THEN count(*) END FROM visits),
         'bounceRate',(SELECT 100.0*count(*) FILTER (WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) FROM visits),
         'averageVisitSeconds',(SELECT avg(duration) FROM visits))`,
 };
+const environmentColumns={browser:'browser',os:'os',device:'device'};
+const valueColumns=[...Object.values(environmentColumns),'geo_id'];
+// The report CTEs read the event's `dimensions` through these columns only (#414): carried through every materialized CTE, the
+// whole object made each scan and sort spill to disk. Only a selection predicate or dimension label still reads `dimensions`.
+// Grouped text is C-collated, so hashing or sorting it never calls the locale's strcoll: equality, and so every group, is unchanged
+// under a deterministic collation, and each ordering of these values names its collation.
+const eventColumnsSql=(e:string,selfReferral:string)=>`(${e}.dimensions->>'browser') COLLATE "C" AS browser,(${e}.dimensions->>'os') COLLATE "C" AS os,(${e}.dimensions->>'device') COLLATE "C" AS device,
+        ${e}.dimensions->>'environmentVersion' AS environment_version,
+        CASE WHEN ${e}.event_name='page_view' AND jsonb_typeof(${e}.dimensions->'referrerHost')='string' AND length(${e}.dimensions->>'referrerHost') BETWEEN 1 AND 2048 AND NOT ${selfReferral} THEN ${e}.dimensions->>'referrerHost' END COLLATE "C" AS referrer_host`;
+// visitValuesSql reads the visit columns from both `observations` and the selection's `selected_scope`; geo_id names the row of
+// geography_values. Only `observations` reads the others, so a selection keeps them for its matching rows only (`hit`).
+const observationColumnsSql=(s:string,label:string,hit?:string)=>`${s}.period,`
+  +['path','collection_basis','environment_version','referrer_host','id'].map(column=>hit?`CASE WHEN ${hit} THEN ${s}.${column} END AS ${column}`:`${s}.${column}`).join(',')
+  +`,${s}.visitor_id COLLATE "C" AS visitor_id,${s}.visit_id COLLATE "C" AS visit_id,`+['event_name','received_at','visit_has_custom',...valueColumns].map(column=>`${s}.${column}`).join(',')+`,${label} AS label`;
 export function hideAnalyticsSummary(summary:Pick<AnalyticsPeriodReport,'totals'|'measurement'>){
  summary.totals={pageViews:null,customEvents:null};summary.measurement.identifiedPageViews=null;summary.measurement.unidentifiedPageViews=null;
 }
@@ -101,6 +113,17 @@ export async function projectAnalytics(projectId: string, userId: string, params
   const client=await getDatabase().pool.connect();
   const values:unknown[]=[projectId,share?JSON.stringify(share):userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters),detail?JSON.stringify(detail):null,dimension??null];
   const predicate=advancedPredicateSql(selection,value=>{values.push(value);return '$'+values.length;},'UTC');
+  // A selection only picks visits; environment and location filters keep scoping each visit. Without one the selected rows are the scope.
+  // `selected_scope` holds every scoped row of the selected visits, each flagged `hit` when it matches the selection.
+  const visitScope=selection?'selected_scope':undefined;
+  // Environment and location rows measure each matching visit over its rows with the row's value, like the matching filter would. In
+  // the selected scope, each visit's rows with one value are both the match and the measured visit, so one aggregate gives both (#414).
+  const scopeDimension=!!dimension&&visitScopeFields.includes(dimension);
+  const valueScopedVisitsSql=(fields:Record<string,string>,as:string,from=(values:string)=>values)=>visitScope
+    ?valueVisitsSql(from('scope_values'),fields,as,true):valueVisitsSql(from('visit_values'),fields,as);
+  // A location label depends only on the stored geography, so geography_values computes it once per distinct value (#414).
+  const geographyDimension=geographyFields.find(field=>field===dimension);
+  const label=!dimension?'NULL::jsonb':geographyDimension?'s.geography_label':analyticsDimensionValueSql('$16::text','s');
   let epoch:string|undefined;
   try{
   if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");}
@@ -116,6 +139,11 @@ export async function projectAnalytics(projectId: string, userId: string, params
     // current key/membership checks run only after this possible authority wait.
     await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[hint]);
   }
+  // Set after the gate queries, which keep their index lookups. The statement's time goes to hashing, not expression evaluation, so
+  // JIT's ~0.2 s compile only adds to it (#414). Its CTE row estimates are often near 1, which may plan a nested loop over event rows
+  // against a lookup CTE: quadratic at volume. Nested loops stay where nothing else applies (cross, lateral and range joins); every
+  // equality join hashes or merges. Both return to their defaults straight after the statement.
+  if(client)await client.query('SET LOCAL jit=off; SET LOCAL enable_nestloop=off');
   // One statement gives totals, buckets and rankings the same database snapshot.
   // ponytail: aggregate the selected range directly; add rollups after measured volume requires them.
   const { rows } = await (client??getDatabase().pool).query(`
@@ -133,21 +161,48 @@ export async function projectAnalytics(projectId: string, userId: string, params
       UNION ALL SELECT 'comparison',$9::timestamptz,$10::timestamptz,$11::date,$12::date WHERE $9::timestamptz IS NOT NULL),
     custom_visits AS MATERIALIZED (
       SELECT q.period,v.* FROM periods q CROSS JOIN LATERAL (${analyticsCustomVisitsSql('q.start','q.finish')}) v
-    ), geography_candidates AS MATERIALIZED (
-      SELECT q.period,e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.dimensions,e.collection_basis,g.geography,COALESCE(e.dimensions->>'origin',p.origin) AS origin
-      FROM periods q CROSS JOIN event e CROSS JOIN target p CROSS JOIN LATERAL (SELECT ${geographyProjectionSql('e')} AS geography) g
+    ),
+    -- The geography projection and the self-referral test depend only on stored values, so each runs once per distinct value (#414):
+    -- the geography's jsonb text, and the referrer host with the recorded origin. One scan collects both sets. The text is the exact
+    -- key: jsonb equality would merge numerically equal but differently written numbers, whose text the projection measures.
+    stored_values AS MATERIALIZED (
+      SELECT raw,host,origin,GROUPING(raw)=1 AS referrer FROM (
+        SELECT COALESCE((e.dimensions->'geography')::text,'') COLLATE "C" AS raw,(e.dimensions->>'referrerHost') COLLATE "C" AS host,(e.dimensions->>'origin') COLLATE "C" AS origin
+        FROM periods q CROSS JOIN event e CROSS JOIN target p
+        WHERE e.project_id=$1 AND e.received_at >= q.start AND e.received_at < q.finish AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
+      ) e GROUP BY GROUPING SETS ((raw),(host,origin))
+    ), geography_values AS MATERIALIZED (
+      SELECT row_number() OVER () AS geo_id,raw,geography,${geographyKeyColumnsSql('geography')}${geographyDimension?`,${geographyKeySql(geographyDimension,'geography')} AS geography_label`:''} FROM (SELECT r.raw,${geographyProjectionSql('e')} AS geography
+        FROM stored_values r CROSS JOIN LATERAL (SELECT jsonb_build_object('geography',NULLIF(r.raw,'')::jsonb) AS dimensions) e WHERE NOT r.referrer OFFSET 0) g
+    ), referrer_values AS MATERIALIZED (
+      SELECT r.host,r.origin,${selfReferralSql('e')} AS self FROM stored_values r CROSS JOIN LATERAL (SELECT jsonb_build_object('referrerHost',r.host,'origin',r.origin) AS dimensions) e
+      WHERE r.referrer AND r.host IS NOT NULL AND r.origin IS NOT NULL
+    ), geography_candidates AS (
+      SELECT q.period,e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.collection_basis,g.geo_id,g.geography,${geographyDimension?'g.geography_label,':''}
+        ${eventColumnsSql('e','COALESCE(rv.self,false)')}${selection||dimension?`,e.dimensions,COALESCE(e.dimensions->>'origin',p.origin) AS origin`:''}
+      FROM periods q CROSS JOIN event e CROSS JOIN target p LEFT JOIN geography_values g ON g.raw=COALESCE((e.dimensions->'geography')::text,'') COLLATE "C"
+        LEFT JOIN referrer_values rv ON rv.host=(e.dimensions->>'referrerHost') COLLATE "C" AND rv.origin=(e.dimensions->>'origin') COLLATE "C"
       WHERE e.project_id=$1 AND e.received_at >= q.start AND e.received_at < q.finish
         AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
         AND (NOT $7::jsonb ? 'browser' OR CASE WHEN $7::jsonb->>'browser'='not-recorded' THEN e.dimensions->>'browser' IS NULL ELSE e.dimensions->>'browser'=$7::jsonb->>'browser' END)
         AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
         AND (NOT $7::jsonb ? 'device' OR CASE WHEN $7::jsonb->>'device'='not-recorded' THEN e.dimensions->>'device' IS NULL ELSE e.dimensions->>'device'=$7::jsonb->>'device' END)
-    ), all_observations AS MATERIALIZED (SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM geography_candidates s LEFT JOIN custom_visits c ON c.period=s.period AND c.visitor_id=s.visitor_id AND c.visit_id=s.visit_id WHERE ${geographyFilterSql('$14::jsonb')} AND (${predicate})),
-    dimension_labeled AS MATERIALIZED (SELECT s.*,d.value AS label FROM all_observations s CROSS JOIN LATERAL (SELECT ${analyticsDimensionValueSql('$16::text','s')} AS value) d
-      WHERE $16::text IS NOT NULL AND (CASE WHEN $16='event' THEN event_name<>'page_view' ELSE true END)),
-    dimension_visits AS (SELECT period,label,visitor_id,visit_id,count(*) FILTER(WHERE event_name='page_view') AS pageviews,bool_or(visit_has_custom) AS custom,
-      extract(epoch FROM max(received_at) FILTER(WHERE event_name='page_view')-min(received_at) FILTER(WHERE event_name='page_view')) AS duration
-      FROM dimension_labeled WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL GROUP BY period,label,visitor_id,visit_id HAVING count(*) FILTER(WHERE event_name='page_view')>0),
-    dimension_measurement AS (SELECT period,label,count(DISTINCT visitor_id) AS visitors,count(*) AS visits,100.0*count(*) FILTER(WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce,avg(duration) AS duration FROM dimension_visits GROUP BY period,label),
+    ), scoped_observations AS (SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM geography_candidates s LEFT JOIN custom_visits c ON c.period=s.period AND c.visitor_id=s.visitor_id AND c.visit_id=s.visit_id WHERE ${geographyFilterSql('$14::jsonb')}),
+    ${selection?`-- One pass over the scoped rows evaluates the predicate and the label once and keeps the narrow columns of the matching rows and
+    -- of every row of a selected visit (#414). A window, not a join, finds those visits; the fenced subqueries evaluate the predicate
+    -- and label below it, so its sort carries the narrow columns rather than the predicate's inputs. Only a location or environment
+    -- dimension reads the label of a row that does not match.
+    selection_rows AS MATERIALIZED (SELECT * FROM (SELECT s.*,CASE WHEN s.visit_id IS NOT NULL THEN bool_or(s.event_name='page_view' AND s.hit) OVER (PARTITION BY s.period,s.visitor_id,s.visit_id) END AS selected_visit
+      FROM (SELECT ${observationColumnsSql('s',scopeDimension?label:`CASE WHEN s.hit THEN ${label} END`,'s.hit')},s.hit FROM (SELECT s.*,(${predicate}) AS hit FROM scoped_observations s OFFSET 0) s OFFSET 0) s) s WHERE hit OR selected_visit),
+    all_observations AS (SELECT * FROM selection_rows WHERE hit),
+    selected_scope AS (SELECT * FROM selection_rows WHERE selected_visit),`
+    :`all_observations AS ${dimension?"MATERIALIZED":"NOT MATERIALIZED"} (SELECT ${observationColumnsSql('s',label)} FROM scoped_observations s WHERE (${predicate})),`}
+    visit_metrics AS MATERIALIZED (${visitMetricsSql(visitScope??'all_observations',['period'])}),
+    dimension_labeled AS MATERIALIZED (SELECT * FROM all_observations WHERE $16::text IS NOT NULL AND (CASE WHEN $16='event' THEN event_name<>'page_view' ELSE true END)),
+    dimension_visits AS (${scopeDimension
+      ?visitMetricsSql(visitScope??'dimension_labeled',['period','label'],!!visitScope)
+      :matchedVisitsSql('dimension_labeled','visit_metrics',['label'],['period','visitor_id','visit_id'])}),
+    dimension_measurement AS MATERIALIZED (SELECT period,label,count(DISTINCT visitor_id COLLATE "C") AS visitors,count(*) AS visits,100.0*count(*) FILTER(WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce,avg(duration) AS duration FROM dimension_visits GROUP BY period,label),
     dimension_counts AS (SELECT period,label,count(*) FILTER(WHERE event_name='page_view') AS pageviews,count(*) FILTER(WHERE event_name<>'page_view') AS custom,count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NOT NULL) AS identified
       FROM dimension_labeled GROUP BY period,label HAVING CASE WHEN $16='event' THEN count(*) FILTER(WHERE event_name<>'page_view')>0 ELSE count(*) FILTER(WHERE event_name='page_view')>0 END),
     dimension_groups AS MATERIALIZED (SELECT a.*,m.visitors,m.visits,m.bounce,m.duration FROM dimension_counts a LEFT JOIN dimension_measurement m ON a.period=m.period AND a.label IS NOT DISTINCT FROM m.label),
@@ -159,7 +214,10 @@ export async function projectAnalytics(projectId: string, userId: string, params
         'counterpart',CASE WHEN b.period IS NULL THEN NULL ELSE json_build_object('pageViews',b.pageviews,'customEvents',b.custom,'identifiedPageViews',b.identified,'visitors',b.visitors,'visits',b.visits,'bounceRate',b.bounce,'averageVisitSeconds',b.duration) END) ORDER BY a.rank)
         FROM dimension_ranked a LEFT JOIN dimension_groups b ON b.period<>a.period AND b.label IS NOT DISTINCT FROM a.label WHERE a.period=q.period AND a.rank<=20),'[]'::json) AS dimension_rows,r.*
     FROM periods q CROSS JOIN clock c CROSS JOIN LATERAL (
-    WITH observations AS MATERIALIZED (SELECT * FROM all_observations WHERE period=q.period), ${analyticsSummarySql.visits}, buckets AS (
+    WITH observations AS MATERIALIZED (SELECT * FROM all_observations WHERE period=q.period),${visitScope?`
+    scope_values AS MATERIALIZED (${visitValuesSql(`(SELECT * FROM ${visitScope} WHERE period=q.period) s`,valueColumns,true)}),`:''}
+    visit_values AS MATERIALIZED (${visitValuesSql('observations',valueColumns)}),
+    visits AS (${valueVisitsSql(visitScope?'scope_values':'visit_values')}), buckets AS (
       SELECT (received_at AT TIME ZONE 'UTC')::date AS day,
         count(*) FILTER (WHERE event_name='page_view') AS views,
         count(*) FILTER (WHERE event_name<>'page_view') AS custom
@@ -170,36 +228,21 @@ export async function projectAnalytics(projectId: string, userId: string, params
       SELECT path,count(*) AS views FROM observations WHERE event_name='page_view'
       GROUP BY path ORDER BY views DESC,path ASC LIMIT 20
     ), referrers AS (
-      SELECT h.host,count(*) AS views,CASE WHEN count(o.visitor_id)>0 THEN count(DISTINCT o.visitor_id) END AS visitors
-      FROM observations o CROSS JOIN LATERAL (SELECT o.dimensions->>'referrerHost' AS host) h
-      WHERE o.event_name='page_view' AND jsonb_typeof(o.dimensions->'referrerHost')='string' AND length(h.host) BETWEEN 1 AND 2048 AND NOT ${selfReferralSql('o')}
-      GROUP BY h.host ORDER BY visitors DESC NULLS LAST,views DESC,h.host COLLATE "C" ASC LIMIT 20
+      SELECT referrer_host AS host,count(*) AS views,CASE WHEN count(visitor_id)>0 THEN count(DISTINCT visitor_id COLLATE "C") END AS visitors
+      FROM observations WHERE referrer_host IS NOT NULL
+      GROUP BY referrer_host ORDER BY visitors DESC NULLS LAST,views DESC,referrer_host COLLATE "C" ASC LIMIT 20
     ), names AS (
       SELECT event_name,count(*) AS total FROM observations WHERE event_name<>'page_view'
       GROUP BY event_name ORDER BY total DESC,event_name ASC LIMIT 20
-    ), environment_observations AS MATERIALIZED (
-      SELECT e.*,d.field,d.value FROM observations e CROSS JOIN LATERAL
-        (VALUES ('browser',e.dimensions->>'browser'),('os',e.dimensions->>'os'),('device',e.dimensions->>'device')) d(field,value)
-    ), environment_visits AS (
-      SELECT field,value,visitor_id,visit_id,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
-        bool_or(visit_has_custom) AS custom,
-        extract(epoch FROM (max(received_at) FILTER (WHERE event_name='page_view')-min(received_at) FILTER (WHERE event_name='page_view'))) AS duration
-      FROM environment_observations WHERE visitor_id IS NOT NULL AND visit_id IS NOT NULL GROUP BY field,value,visitor_id,visit_id
-      HAVING count(*) FILTER (WHERE event_name='page_view')>0
-    ), environment_measurement AS (
-      SELECT field,value,count(DISTINCT visitor_id) AS visitors,count(*) AS visits,
-        100.0*count(*) FILTER (WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce_rate,avg(duration) AS duration
-      FROM environment_visits GROUP BY field,value
-    ), environment_counts AS (
-      SELECT field,value,count(*) FILTER (WHERE event_name='page_view') AS pageviews,
-        count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NOT NULL) AS identified
-      FROM environment_observations GROUP BY field,value HAVING count(*) FILTER (WHERE event_name='page_view')>0
+    ), environment_visits AS (${valueScopedVisitsSql(environmentColumns,'value')}
+    ), environment_measurement AS MATERIALIZED (${visitMeasurementSql('environment_visits',['field','value'])}
+    ), environment_counts AS (${valueCountsSql('visit_values',environmentColumns,'value')}
     ), environment_rows AS MATERIALIZED (
-      SELECT c.*,m.visitors,m.visits,m.bounce_rate,m.duration,
+      SELECT c.*,m.visitors,m.visits,m.bounce,m.duration,
         json_build_object('value',c.value,'pageViews',c.pageviews,'identifiedPageViews',c.identified,
-          'visitors',m.visitors,'visits',m.visits,'bounceRate',m.bounce_rate,'averageVisitSeconds',m.duration) AS row
+          'visitors',m.visitors,'visits',m.visits,'bounceRate',m.bounce,'averageVisitSeconds',m.duration) AS row
       FROM environment_counts c LEFT JOIN environment_measurement m ON c.field=m.field AND c.value IS NOT DISTINCT FROM m.value
-    )${geographyAggregateCtes}
+    )${geographyAggregateCtes('visit_values',valueScopedVisitsSql(geographyKeyColumns,'key',values=>geographyValuesSql(values,'geography_values')),'geography_values')}
     SELECT ${geographyDetailSql} AS geography_detail,(SELECT to_char(analytics_retained_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM target) AS retained_from,(SELECT analytics_settings FROM target) AS analytics_settings,
       EXISTS(SELECT 1 FROM target) AS allowed,json_build_object(
       'totals',${analyticsSummarySql.totals},
@@ -219,13 +262,14 @@ export async function projectAnalytics(projectId: string, userId: string, params
         'operatingSystems',COALESCE((SELECT json_agg(row ORDER BY visitors DESC NULLS LAST,pageviews DESC,value COLLATE "C" ASC NULLS LAST) FROM environment_rows WHERE field='os'),'[]'::json),
         'devices',COALESCE((SELECT json_agg(row ORDER BY visitors DESC NULLS LAST,pageviews DESC,value COLLATE "C" ASC NULLS LAST) FROM environment_rows WHERE field='device'),'[]'::json),
         'coverage',json_build_object('pageViews',count(*) FILTER (WHERE event_name='page_view'),
-          'recordedPageViews',count(*) FILTER (WHERE event_name='page_view' AND dimensions->>'environmentVersion'=$8::text),
-          'notRecordedPageViews',count(*) FILTER (WHERE event_name='page_view' AND dimensions->>'environmentVersion' IS DISTINCT FROM $8::text),
-          'firstRecordedAt',min(received_at) FILTER (WHERE event_name='page_view' AND dimensions->>'environmentVersion'=$8::text)),
+          'recordedPageViews',count(*) FILTER (WHERE event_name='page_view' AND environment_version=$8::text),
+          'notRecordedPageViews',count(*) FILTER (WHERE event_name='page_view' AND environment_version IS DISTINCT FROM $8::text),
+          'firstRecordedAt',min(received_at) FILTER (WHERE event_name='page_view' AND environment_version=$8::text)),
         'method',json_build_object('source','bounded-request-user-agent','device','ua-parser-v1-screen-if-enabled','rawUserAgentStored',false)),
       'geography',${geographyReportSql('$14::jsonb')},'lastReceivedAt',max(received_at)
     ) AS report FROM observations) r ORDER BY CASE q.period WHEN 'current' THEN 0 ELSE 1 END`,
     values);
+  if(client)await client.query('SET LOCAL jit TO DEFAULT; SET LOCAL enable_nestloop TO DEFAULT');
   if(apiKeyId&&!rows[0]?.key_valid)throw new FoundationError(401,'The API key is invalid, expired or unavailable.');
   if(!rows[0]?.allowed)throw new FoundationError(404,'Project not found or unavailable.');
   if(rows[0].dimension_invalid)throw new FoundationError(503,'Stored dimension data cannot be reported safely. Choose another dimension or more filters.');

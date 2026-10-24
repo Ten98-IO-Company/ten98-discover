@@ -32,8 +32,8 @@ export type ClosureInventoryEntry = {
  * Retention of kept rows that name a closed account (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#closed-account-retention).
  *
  * - `financial`: receipts, the paid-work ledger and the uncertain-charge ledger. Kept 7 years from `created_at`, then
- *   deleted by the daily closed-account retention job. They hold no personal data and must survive a future workspace
- *   deletion (#292), which therefore has to tombstone the workspace rather than cascade into them.
+ *   deleted by the daily closed-account retention job. They hold no personal data. Website and workspace deletion copy
+ *   them to the paid-work archive first (#292), which keeps them 7 years from `created_at`.
  * - `audit`: security events. Kept 7 years from `created_at` or until workspace deletion, whichever ends first.
  * - `workspace`: authored content, configuration, non-paid work records and mutation receipts. Kept with the workspace
  *   and never aged out by the job; while any of them names the account, its tombstone stays.
@@ -130,7 +130,7 @@ export const accountClosureInventory: readonly ClosureInventoryEntry[] = [
   { table: 'rateLimit', rule: 'keep', columns: [], reason: 'Unused: the library limiter is disabled and the table holds no account key.' },
   { table: 'user', rule: 'tombstone', columns: ['name', 'email', 'emailVerified', 'image', 'twoFactorEnabled', 'closed_at'],
     reason: 'The row stays so actor references remain valid: name "Closed account", email closed-<random uuid>@invalid with no hash of the old address, no image, unverified, no second factor, closed_at set. Triggers keep it final.' },
-  { table: 'instance_operator_audit', rule: 'keep', columns: ['user_id'], reason: 'Role audit names only the account id; no email, IP address or user agent is stored.', retention: audit(['user_id']) },
+  { table: 'instance_operator_audit', rule: 'keep', columns: ['user_id', 'scope'], reason: 'Role and paid-work export audit names only the account id and, for an export, the opaque workspace and website ids; no email, IP address or user agent is stored.', retention: audit(['user_id']) },
   { table: 'account_closure_audit', rule: 'keep', columns: ['user_id', 'actor_user_id', 'reason'], reason: 'The closure security event: account ids, kind and an operator reason only.', retention: audit(['user_id', 'actor_user_id']) },
 
   // Shares and authored workspace content stay with the workspace; the creator id shows as "Closed account".
@@ -169,6 +169,9 @@ export const accountClosureInventory: readonly ClosureInventoryEntry[] = [
   { table: 'domain_redirect_check', rule: 'keep', columns: ['user_id', 'hostname', 'expected_target_host', 'diagnostic', 'observation'], reason: keepContent, retention: nonPaidWork },
   { table: 'site_audit_run', rule: 'keep', columns: ['user_id', 'domain_hostname', 'origin', 'config', 'stop_reason', 'coverage', 'summary'], reason: keepContent, retention: nonPaidWork },
   { table: 'google_import', rule: 'keep', columns: ['user_id', 'source', 'quality', 'diagnostic'], reason: keepContent, retention: nonPaidWork },
+
+  { table: 'paid_work_archive', rule: 'keep', columns: ['account_ids', 'record'],
+    reason: 'Paid-work rows of deleted websites and workspaces (#292): ids, amounts, statuses, hashes and timestamps only, no credential, name or free text (src/server/paid-work-archive.ts). Its opaque account ids keep their tombstones; the daily retention job deletes each row 7 years after its created_at.' },
 
   // Workspace labels, hashes and website-visitor measurement: not dashboard account data.
   { table: 'workspace', rule: 'keep', columns: ['name'], reason: keepWorkspace },

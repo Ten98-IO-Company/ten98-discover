@@ -1,10 +1,11 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {FunnelBreakdown, useConfirmDialog} from '@ten98/ui';
+import {FunnelBreakdown, SelectableList, useConfirmDialog} from '@ten98/ui';
 import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {api,ApiError,errMsg} from '../lib/api';
 import {MatchFields,PropertyFields,type MatchDraft,type PropertyDraft} from './AnalysisCriteriaFields';
 import type {AnalysisDefinition,AnalysisStep,PropertyPredicate} from '../server/funnel-input';
 import type {AnalysisItem,AnalysisKind,AnalysisResult,AnalysisWitnessResult} from '../server/funnels';
+import {formatReportInstant} from '../lib/report-time';
 
 type Props={projectId:string;userId:string;onUnauthorized:()=>void};
 type StepDraft=MatchDraft&{pageViewsOnly:boolean;properties:PropertyDraft[]};
@@ -53,9 +54,26 @@ export function validItem(v:unknown,projectId:string,kind:AnalysisKind):v is Ana
 }
 export function matchLabel(m:MatchDraft,goal=false,pageViewsOnly=false){return `${m.type==='event'?'Custom event':goal||pageViewsOnly?'Viewed page':'Activity at path'} · ${m.match==='exact'?'equals':m.match==='prefix'?'starts with':m.match==='suffix'?'ends with':'contains'} ${m.value}`;}
 
+// Top pages and custom events of the last 30 days with their counts, read from the dashboard report only once an editor
+// opens for a role that can save. A successful read is kept for the panel's lifetime; a failed or abandoned read is
+// retried on the next open. Suggestions are optional: any failure leaves the fields as plain text inputs.
+type SeenValue={type:'path'|'event';value:string;count:number};
+function useSeenValues(projectId:string,wanted:boolean){
+  const [seen,setSeen]=useState<SeenValue[]|undefined>(),read=wanted&&seen===undefined;
+  useEffect(()=>{if(!read)return;const ctrl=new AbortController(),day=(offset:number)=>new Date(Date.now()-offset*864e5).toISOString().slice(0,10);
+    api<{pages?:unknown;events?:unknown}>('/api/projects/'+encodeURIComponent(projectId)+'/analytics?'+new URLSearchParams({from:day(29),to:day(0)}),{signal:ctrl.signal}).then(data=>{
+      const list=(rows:unknown,type:SeenValue['type'],key:'path'|'name',metric:'pageViews'|'count'):SeenValue[]=>Array.isArray(rows)?rows.flatMap(row=>{const r=row as Record<string,unknown>;return row&&typeof row==='object'&&typeof r[key]==='string'&&typeof r[metric]==='number'?[{type,value:r[key] as string,count:r[metric] as number}]:[];}).slice(0,50):[];
+      if(!ctrl.signal.aborted)setSeen([...list(data.pages,'path','path','pageViews'),...list(data.events,'event','name','count')]);
+    },()=>undefined);
+    return ()=>ctrl.abort();},[projectId,read]);
+  return seen;
+}
+const seenName=(item:SeenValue)=>item.type==='path'?'Visited '+item.value:item.value+' event';
+const seenCount=(item:SeenValue)=>item.count.toLocaleString()+' '+(item.type==='path'?(item.count===1?'view':'views'):(item.count===1?'time':'times'));
+
 export function ConversionsPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
 function Panel({projectId,onUnauthorized}:Props){
-  const uid=useId(),[kind,setKind]=useState<AnalysisKind>('funnel'),kindRef=useRef(kind);
+  const uid=useId(),[kind,setKind]=useState<AnalysisKind>('goal'),kindRef=useRef(kind),autoName=useRef('');
   const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [role,setRole]=useState<Role|null>(null),[items,setItems]=useState<AnalysisItem[]>([]),[nextCursor,setNextCursor]=useState<string|null>(null);
   const [view,setView]=useState<'list'|'editor'|'result'|'witnesses'>('list'),[selected,setSelected]=useState<AnalysisItem|null>(null);
@@ -148,10 +166,14 @@ function Panel({projectId,onUnauthorized}:Props){
   useEffect(()=>{alive.current=true;void loadList();return()=>{alive.current=false;epoch.current++;readRef.current?.abort();};},[]);
   useEffect(()=>{if(!pendingFocus.current)return;const element=document.getElementById(pendingFocus.current);if(element){element.focus();pendingFocus.current=null;}});
   const locked=writing||!!intent,managed=role!==null&&role!=='viewer',unapplied=scopeParams(scope)!==applied;
+  const seen=useSeenValues(projectId,managed&&view==='editor');
+  const suggestions=seen&&{path:seen.filter(item=>item.type==='path').map(item=>item.value),event:seen.filter(item=>item.type==='event').map(item=>item.value)};
+  // The fieldset lock does not reach the listbox options, so a pending or unconfirmed save also disables each option.
+  const fieldsLocked=locked||reading||!!opening;
   const patch=(value:Partial<DefinitionDraft>)=>{setDraft(d=>({...d,...value}));setDirty(true);};
   const selectedDefinition=selected?.definition;
   return <section className="research-panel conversions" aria-label="Conversions">
-    <div className="row conversion-tabs" role="group" aria-label="Conversion type">{(['funnel','goal']as const).map(k=><button key={k} className={'btn'+(kind===k?' primary':'')} aria-pressed={kind===k} disabled={locked} onClick={()=>changeKind(k)}>{k==='funnel'?'Funnels':'Goals'}</button>)}</div>
+    <div className="row conversion-tabs" role="group" aria-label="Conversion type">{(['goal','funnel']as const).map(k=><button key={k} className={'btn'+(kind===k?' primary':'')} aria-pressed={kind===k} disabled={locked} onClick={()=>changeKind(k)}>{k==='funnel'?'Funnels':'Goals'}</button>)}</div>
     {error&&<div className="alert" role="alert">{error} {denied&&<button className="btn" disabled={reading} onClick={()=>void loadList()}>Reload access</button>}</div>}
     {message&&<p className="notice" role="status">{message}</p>}
     {intent&&!writing&&<div className="banner"><p>The original request is kept unchanged until its outcome is confirmed.</p><button className="btn primary" onClick={()=>void mutate(intent)}>Retry same {intent.action}</button></div>}
@@ -168,13 +190,16 @@ function Panel({projectId,onUnauthorized}:Props){
       {opening&&<p role="status">{reading?'Loading saved definition…':<button className="btn" onClick={()=>void openItem(opening.id,opening.edit)}>Retry loading definition</button>}</p>}
       {view==='editor'?<form className="card stack" onSubmit={save}>
         <h2 tabIndex={-1} id={uid+'editor'}>{selected||opening?.edit?'Edit':'New'} {kind}</h2>
-        {!managed?<p className="notice">Your current role can inspect saved definitions.</p>:<fieldset disabled={locked||reading||!!opening} className="conversion-fields">
+        {!managed?<p className="notice">Your current role can inspect saved definitions.</p>:<fieldset disabled={fieldsLocked} className="conversion-fields">
+          {kind==='goal'&&!!seen?.length&&<SelectableList label="Pick what counts as a conversion" items={[...seen].sort((a,b)=>b.count-a.count).slice(0,12).map(item=>({id:item.type+':'+item.value,title:item.value,preview:item.type==='path'?'Page':'Event',meta:seenCount(item),disabled:fieldsLocked}))}
+            selectedId={draft.condition.match==='exact'?draft.condition.type+':'+draft.condition.value:null}
+            onSelect={id=>{if(fieldsLocked)return;const item=seen.find(entry=>entry.type+':'+entry.value===id);if(!item)return;const name=draft.name===''||draft.name===autoName.current?seenName(item):draft.name;autoName.current=seenName(item);patch({name,condition:{type:item.type,match:'exact',value:item.value}});}}/>}
           <div className="field"><label htmlFor={uid+'name'}>Name</label><input id={uid+'name'} required maxLength={200} value={draft.name} onChange={e=>patch({name:e.target.value})}/></div>
           <details><summary>Description</summary><label htmlFor={uid+'description'}>Description (optional)</label><textarea id={uid+'description'} maxLength={500} value={draft.description} onChange={e=>patch({description:e.target.value})}/></details>
-          {kind==='goal'?<MatchFields idPrefix={uid+'goal'} pathLabel="Viewed page" value={draft.condition} onChange={condition=>patch({condition})} disabled={locked}/>:<>
+          {kind==='goal'?<MatchFields idPrefix={uid+'goal'} pathLabel="Viewed page" suggestions={suggestions} value={draft.condition} onChange={condition=>patch({condition})} disabled={locked}/>:<>
             <div className="field"><label htmlFor={uid+'window'}>Minutes between steps</label><input id={uid+'window'} type="number" min={1} max={1440} step={1} required value={draft.windowMinutes} onChange={e=>patch({windowMinutes:e.target.value})}/><p className="hint">Each step must follow the previous step within this window, in strictly later receipt time.</p></div>
             {draft.steps.map((s,index)=><fieldset key={index} className="conversion-step"><legend>Step {index+1}</legend>
-              <MatchFields idPrefix={uid+'step-'+index} pathLabel="Activity at path" value={s} disabled={locked} onChange={value=>patch({steps:draft.steps.map((old,i)=>i===index?{...old,...value,pageViewsOnly:value.type==='event'?false:old.pageViewsOnly}:old)})}/>
+              <MatchFields idPrefix={uid+'step-'+index} pathLabel="Activity at path" suggestions={suggestions} value={s} disabled={locked} onChange={value=>patch({steps:draft.steps.map((old,i)=>i===index?{...old,...value,pageViewsOnly:value.type==='event'?false:old.pageViewsOnly}:old)})}/>
               {s.type==='path'&&<label className="row"><input type="checkbox" checked={s.pageViewsOnly} onChange={e=>patch({steps:draft.steps.map((old,i)=>i===index?{...old,pageViewsOnly:e.target.checked}:old)})}/>Page views only</label>}
               {(s.type==='event'||s.properties.length>0)&&<><PropertyFields idPrefix={uid+'properties-'+index} items={s.properties} disabled={locked} onChange={properties=>patch({steps:draft.steps.map((old,i)=>i===index?{...old,properties}:old)})}/>{s.type==='path'&&<p className="banner">Remove these property filters or choose Custom event before saving this step.</p>}</>}
               <div className="row"><button type="button" className="btn" aria-label={`Move step ${index+1} up`} disabled={index===0} onClick={()=>{const steps=[...draft.steps];[steps[index-1],steps[index]]=[steps[index],steps[index-1]];patch({steps});}}>Move up</button><button type="button" className="btn" aria-label={`Move step ${index+1} down`} disabled={index===draft.steps.length-1} onClick={()=>{const steps=[...draft.steps];[steps[index],steps[index+1]]=[steps[index+1],steps[index]];patch({steps});}}>Move down</button><button type="button" className="btn" aria-label={`Remove step ${index+1}`} disabled={draft.steps.length<=2} onClick={()=>patch({steps:draft.steps.filter((_,i)=>i!==index)})}>Remove step</button></div>
@@ -199,12 +224,12 @@ function Panel({projectId,onUnauthorized}:Props){
         </>}
         {reading&&<p role="status">Loading {view==='witnesses'?'matching activity':'conversion results'}…</p>}
         {result&&<>
-          <p className="hint">{result.range.from} through {result.range.to} · {result.range.timeZone} · Report generated {date(result.generatedAt)}</p>
+          <p className="hint" title={result.generatedAt}>{result.range.from} through {result.range.to} · {result.range.timeZone} · Report generated {formatReportInstant(result.generatedAt,result.range.timeZone)}</p>
           {result.coverage.status!=='complete'&&<p className="banner">{result.coverage.status==='partial'?'Part of this period has expired. Visitor counts are observed lower bounds; rates and drop-offs are unavailable.':'Event evidence for this period is unavailable.'}</p>}
           {result.identity.status==='unavailable'?<p className="notice">No retained visitor identities are available for this scope. Conversion counts cannot be established.</p>:<p className="hint">Estimated visitors use rotating monthly identities and can span visits. {number(result.identity.unidentifiedEvents)} observations without a visitor identity are excluded.</p>}
           {view==='result'&&(kind==='funnel'?<FunnelBreakdown label="Funnel conversion results" countLabel="Estimated visitors" context={<p>Saved revision {result.item.revision} · {result.range.from} through {result.range.to} · {result.range.timeZone} · {selectedDefinition?.kind==='funnel'&&selectedDefinition.windowMinutes} minutes between adjacent steps · Strictly later receipt time.</p>} steps={result.steps.map(s=>({id:String(s.step),label:`${s.step}. ${selectedDefinition?.kind==='funnel'?matchLabel(selectedDefinition.steps[s.step-1],false,selectedDefinition.steps[s.step-1].pageViewsOnly):''}`,count:s.visitors===null?null:number(s.visitors),reason:s.visitors===null?(result.coverage.status==='unavailable'?'Event evidence for this period is unavailable.':'No retained visitor identities are available for this scope.'):undefined,conversion:s.remainingRate===null?null:percent(s.remainingRate)+' overall',conversionReason:result.coverage.status!=='complete'?'Rates are unavailable because event history is incomplete.':result.identity.status==='unavailable'?'Rates are unavailable because retained visitor identities are unavailable.':'The first step has no estimated visitors, so the overall rate has no denominator.',detail:<><p>Drop-off: {s.step===1?'—':number(s.dropped)} · From previous: {s.step===1?'—':percent(s.conversionRate)}</p><button className="btn" id={uid+'evidence-'+s.step} disabled={locked||reading||s.visitors===null||s.visitors===0} onClick={()=>inspect(s.step)}>View matching activity</button></>}))}/>:result.goal&&<div className="card"><div className="metric-grid"><div><p className="metric-value">{number(result.goal.visitors)}</p><p className="metric-label">Visitors reaching the goal</p></div><div><p className="metric-value">{number(result.goal.totalVisitors)}</p><p className="metric-label">Visitors in the selected scope</p></div><div><p className="metric-value">{percent(result.goal.rate)}</p><p className="metric-label">Goal conversion rate</p></div></div><button className="btn" id={uid+'evidence-1'} disabled={locked||reading||result.goal.visitors===null||result.goal.visitors===0} onClick={()=>inspect(1)}>View matching activity</button></div>)}
         </>}
-        {view==='witnesses'&&<div className="card stack"><h2 id={uid+'witness'} tabIndex={-1}>Matching activity{witness?` for ${kind==='funnel'?'step '+witness.step:'this goal'}`:''}</h2><p className="hint">One observed chain per estimated visitor. These are fresh reads; new events or retention cleanup can change later pages.</p>{witness&&!witness.witnesses.length&&<p>No matching retained activity remains. Refresh the results.</p>}{witness?.witnesses.map((row,i)=><div className="conversion-witness" key={row.events.at(-1)!.id}><h3>Observed visitor {i+1}</h3><ol>{row.events.map((e,index)=><li key={e.id+":"+index}><p>{e.path}</p><p className="hint">{e.eventName} · <time dateTime={e.receivedAt}>{e.receivedAt}</time> · {e.origin}</p></li>)}</ol></div>)}{witness?.nextCursor&&<button className="btn" disabled={reading||locked} onClick={()=>inspect(witness.step,witness.nextCursor!)}>Load more matching activity</button>}</div>}
+        {view==='witnesses'&&<div className="card stack"><h2 id={uid+'witness'} tabIndex={-1}>Matching activity{witness?` for ${kind==='funnel'?'step '+witness.step:'this goal'}`:''}</h2><p className="hint">One observed chain per estimated visitor. These are fresh reads; new events or retention cleanup can change later pages.</p>{witness&&!witness.witnesses.length&&<p>No matching retained activity remains. Refresh the results.</p>}{witness?.witnesses.map((row,i)=><div className="conversion-witness" key={row.events.at(-1)!.id}><h3>Observed visitor {i+1}</h3><ol>{row.events.map((e,index)=><li key={e.id+":"+index}><p>{e.path}</p><p className="hint">{e.eventName} · <time dateTime={e.receivedAt} title={e.receivedAt}>{formatReportInstant(e.receivedAt,witness.range.timeZone)}</time> · {e.origin}</p></li>)}</ol></div>)}{witness?.nextCursor&&<button className="btn" disabled={reading||locked} onClick={()=>inspect(witness.step,witness.nextCursor!)}>Load more matching activity</button>}</div>}
       </>}
     </>}
     {confirmDialog}
