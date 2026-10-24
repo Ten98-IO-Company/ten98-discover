@@ -38,10 +38,10 @@ try{
   await enter(panel.getByRole('button',{name:'New funnel',exact:true}));await focused(panel.getByRole('heading',{name:'New funnel',exact:true}));
   assert.equal(await panel.getByLabel('Name',{exact:true}).inputValue(),'');await panel.getByLabel('Name',{exact:true}).fill('Keyboard-only step controls');
   stage='keyboard step bounds and ordering';assert.equal(await panel.locator('.conversion-step').count(),2);
-  for(const n of [1,2]){assert.equal(await panel.getByRole('button',{name:'Remove step '+n,exact:true}).isDisabled(),true);await step(n).getByLabel('Action',{exact:true}).selectOption('event');await step(n).getByLabel('Event name',{exact:true}).fill(n===1?'A':'B');}
-  await enter(panel.getByRole('button',{name:'Add step',exact:true}));await step(3).getByLabel('Action',{exact:true}).selectOption('event');await step(3).getByLabel('Event name',{exact:true}).fill('C');
-  await enter(panel.getByRole('button',{name:'Move step 3 up',exact:true}));assert.deepEqual(await panel.locator('.conversion-step input[id$="-value"]').evaluateAll(items=>items.map(el=>el.value)),['A','C','B']);
-  await enter(panel.getByRole('button',{name:'Remove step 2',exact:true}));assert.deepEqual(await panel.locator('.conversion-step input[id$="-value"]').evaluateAll(items=>items.map(el=>el.value)),['A','B']);
+  for(const n of [1,2]){assert.equal(await panel.getByRole('button',{name:'Remove step '+n,exact:true}).isDisabled(),true);await step(n).getByLabel('Action',{exact:true}).selectOption('event');await step(n).getByRole('combobox',{name:'Event name',exact:true}).fill(n===1?'A':'B');}
+  await enter(panel.getByRole('button',{name:'Add step',exact:true}));await step(3).getByLabel('Action',{exact:true}).selectOption('event');await step(3).getByRole('combobox',{name:'Event name',exact:true}).fill('C');
+  await enter(panel.getByRole('button',{name:'Move step 3 up',exact:true}));assert.deepEqual(await panel.locator('.conversion-step').getByRole('combobox',{name:'Event name',exact:true}).evaluateAll(items=>items.map(el=>el.value)),['A','C','B']);
+  await enter(panel.getByRole('button',{name:'Remove step 2',exact:true}));assert.deepEqual(await panel.locator('.conversion-step').getByRole('combobox',{name:'Event name',exact:true}).evaluateAll(items=>items.map(el=>el.value)),['A','B']);
   for(let n=2;n<8;n++)await enter(panel.getByRole('button',{name:'Add step',exact:true}));
   assert.equal(await panel.locator('.conversion-step').count(),8);assert.equal(await panel.getByRole('button',{name:'Add step',exact:true}).isDisabled(),true);
   assert.equal(await panel.getByRole('button',{name:'Move step 1 up',exact:true}).isDisabled(),true);assert.equal(await panel.getByRole('button',{name:'Move step 8 down',exact:true}).isDisabled(),true);

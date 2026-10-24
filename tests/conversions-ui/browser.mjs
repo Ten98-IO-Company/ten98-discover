@@ -41,7 +41,7 @@ async function newFunnel(name){
   await panel.getByLabel('Minutes between steps',{exact:true}).fill('5');await panel.getByRole('button',{name:'Add step',exact:true}).click();
   for(const [index,event]of ['A','B','C'].entries()){
     const step=panel.getByRole('group',{name:'Step '+(index+1),exact:true});
-    await step.getByLabel('Action',{exact:true}).selectOption('event');await step.getByLabel('Event name',{exact:true}).fill(event);
+    await step.getByLabel('Action',{exact:true}).selectOption('event');await step.getByRole('combobox',{name:'Event name',exact:true}).fill(event);
   }
 }
 // Forward the real mutation and discard only its response. No mocked success DTO.
@@ -182,13 +182,13 @@ try{
 
   stage='goal page-view numerator and all-activity known-visitor denominator';
   await page.goto(href(fixture.goals));await panel.getByRole('button',{name:'Goals',exact:true}).click();await panel.getByRole('button',{name:'New goal',exact:true}).click();
-  await panel.getByLabel('Name',{exact:true}).fill('Thank-you page');await panel.getByLabel('Page path',{exact:true}).fill('/thank-you');await panel.getByRole('button',{name:'Save goal',exact:true}).click();await period();await assertGoal();
+  await panel.getByLabel('Name',{exact:true}).fill('Thank-you page');await panel.getByRole('combobox',{name:'Page path',exact:true}).fill('/thank-you');await panel.getByRole('button',{name:'Save goal',exact:true}).click();await period();await assertGoal();
   const goal=(await json(apiPath(fixture.goals,'goals'))).items[0];
   await panel.getByRole('button',{name:'View matching activity',exact:true}).click();await focused(panel.getByRole('heading',{name:'Matching activity for this goal',exact:true}));
   assert.equal(await panel.locator('.conversion-witness').count(),1);assert.match(await panel.locator('.conversion-witness').textContent(),/page_view/);
   await panel.getByRole('button',{name:'← Back to results',exact:true}).click();await focused(panel.getByRole('button',{name:'View matching activity',exact:true}));await layout('goal-results');
   await panel.getByRole('button',{name:'Edit definition',exact:true}).click();await focused(panel.getByRole('heading',{name:'Edit goal',exact:true}));
-  await panel.getByLabel('Action',{exact:true}).selectOption('event');await panel.getByLabel('Event name',{exact:true}).fill('purchase');await panel.getByLabel('Name',{exact:true}).fill('Purchase event');
+  await panel.getByLabel('Action',{exact:true}).selectOption('event');await panel.getByRole('combobox',{name:'Event name',exact:true}).fill('purchase');await panel.getByLabel('Name',{exact:true}).fill('Purchase event');
   await panel.getByRole('button',{name:'Save goal',exact:true}).click();await assertGoal();
   const realGoal=await json(apiPath(fixture.goals,'goals',goal.id)+'/result?revision=2&from=2026-01-31&to=2026-01-31&timeZone=UTC');
   assert.deepEqual(realGoal.goal,{visitors:1,totalVisitors:3,rate:1/3});
