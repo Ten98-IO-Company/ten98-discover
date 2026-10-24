@@ -64,11 +64,11 @@ test('bounded reads refuse oversize, invalid and (on identity routes) encoded or
       await assert.rejects(dataforseoJson(url,credentials,'GET',undefined,reply('{}',{'content-length':url===ai&&length==='4194305'?'67108865':length})),safeError,url+' '+length);
   }
   // Identity routes keep Discover's encoding refusal (the runtime's exact mode skips encoded bodies) and the exact count.
-  for(const headers of [{'content-encoding':'gzip'},{'content-encoding':'br','content-length':'2'},{'content-length':'3'},{'content-length':'1'}])
+  for(const headers of [{'content-encoding':'gzip'},{'content-encoding':'br','content-length':'2'},{'content-length':'3'},{'content-length':'1'}] as Record<string,string>[])
     await assert.rejects(dataforseoJson(ai,credentials,'GET',undefined,reply('{}',headers)),safeError,JSON.stringify(headers));
   assert.deepEqual((await dataforseoJson(ai,credentials,'GET',undefined,reply('{}',{'content-length':'2','content-encoding':'Identity'}))).body,{});
   // Other routes only bound the declaration: fetch has already decoded a compressed body, so its count need not match.
-  for(const headers of [{'content-encoding':'gzip','content-length':'1'},{'content-length':'3'}])
+  for(const headers of [{'content-encoding':'gzip','content-length':'1'},{'content-length':'3'}] as Record<string,string>[])
     assert.deepEqual((await dataforseoJson(keywordAccountEndpoint,credentials,'GET',undefined,reply('{}',headers))).body,{},JSON.stringify(headers));
   let chunks=0;
   const exact=new ReadableStream<Uint8Array>({pull(c){if(++chunks===65_536){c.enqueue(Uint8Array.of(0x7d));c.close();}else c.enqueue(chunks===1?Uint8Array.of(0x7b):Uint8Array.of(32));}});
