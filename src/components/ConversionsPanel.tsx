@@ -54,17 +54,18 @@ export function validItem(v:unknown,projectId:string,kind:AnalysisKind):v is Ana
 }
 export function matchLabel(m:MatchDraft,goal=false,pageViewsOnly=false){return `${m.type==='event'?'Custom event':goal||pageViewsOnly?'Viewed page':'Activity at path'} · ${m.match==='exact'?'equals':m.match==='prefix'?'starts with':m.match==='suffix'?'ends with':'contains'} ${m.value}`;}
 
-// Top pages and custom events of the last 30 days with their counts, read once from the dashboard report. Suggestions
-// are optional: any failure leaves the fields as plain text inputs.
+// Top pages and custom events of the last 30 days with their counts, read from the dashboard report only once an editor
+// opens for a role that can save. A successful read is kept for the panel's lifetime; a failed or abandoned read is
+// retried on the next open. Suggestions are optional: any failure leaves the fields as plain text inputs.
 type SeenValue={type:'path'|'event';value:string;count:number};
-function useSeenValues(projectId:string){
-  const [seen,setSeen]=useState<SeenValue[]|undefined>();
-  useEffect(()=>{const ctrl=new AbortController(),day=(offset:number)=>new Date(Date.now()-offset*864e5).toISOString().slice(0,10);
+function useSeenValues(projectId:string,wanted:boolean){
+  const [seen,setSeen]=useState<SeenValue[]|undefined>(),read=wanted&&seen===undefined;
+  useEffect(()=>{if(!read)return;const ctrl=new AbortController(),day=(offset:number)=>new Date(Date.now()-offset*864e5).toISOString().slice(0,10);
     api<{pages?:unknown;events?:unknown}>('/api/projects/'+encodeURIComponent(projectId)+'/analytics?'+new URLSearchParams({from:day(29),to:day(0)}),{signal:ctrl.signal}).then(data=>{
       const list=(rows:unknown,type:SeenValue['type'],key:'path'|'name',metric:'pageViews'|'count'):SeenValue[]=>Array.isArray(rows)?rows.flatMap(row=>{const r=row as Record<string,unknown>;return row&&typeof row==='object'&&typeof r[key]==='string'&&typeof r[metric]==='number'?[{type,value:r[key] as string,count:r[metric] as number}]:[];}).slice(0,50):[];
       if(!ctrl.signal.aborted)setSeen([...list(data.pages,'path','path','pageViews'),...list(data.events,'event','name','count')]);
     },()=>undefined);
-    return ()=>ctrl.abort();},[projectId]);
+    return ()=>ctrl.abort();},[projectId,read]);
   return seen;
 }
 const seenName=(item:SeenValue)=>item.type==='path'?'Visited '+item.value:item.value+' event';
@@ -72,8 +73,7 @@ const seenCount=(item:SeenValue)=>item.count.toLocaleString()+' '+(item.type==='
 
 export function ConversionsPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
 function Panel({projectId,onUnauthorized}:Props){
-  const uid=useId(),[kind,setKind]=useState<AnalysisKind>('goal'),kindRef=useRef(kind),seen=useSeenValues(projectId),autoName=useRef('');
-  const suggestions=seen&&{path:seen.filter(item=>item.type==='path').map(item=>item.value),event:seen.filter(item=>item.type==='event').map(item=>item.value)};
+  const uid=useId(),[kind,setKind]=useState<AnalysisKind>('goal'),kindRef=useRef(kind),autoName=useRef('');
   const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [role,setRole]=useState<Role|null>(null),[items,setItems]=useState<AnalysisItem[]>([]),[nextCursor,setNextCursor]=useState<string|null>(null);
   const [view,setView]=useState<'list'|'editor'|'result'|'witnesses'>('list'),[selected,setSelected]=useState<AnalysisItem|null>(null);
@@ -166,6 +166,10 @@ function Panel({projectId,onUnauthorized}:Props){
   useEffect(()=>{alive.current=true;void loadList();return()=>{alive.current=false;epoch.current++;readRef.current?.abort();};},[]);
   useEffect(()=>{if(!pendingFocus.current)return;const element=document.getElementById(pendingFocus.current);if(element){element.focus();pendingFocus.current=null;}});
   const locked=writing||!!intent,managed=role!==null&&role!=='viewer',unapplied=scopeParams(scope)!==applied;
+  const seen=useSeenValues(projectId,managed&&view==='editor');
+  const suggestions=seen&&{path:seen.filter(item=>item.type==='path').map(item=>item.value),event:seen.filter(item=>item.type==='event').map(item=>item.value)};
+  // The fieldset lock does not reach the listbox options, so a pending or unconfirmed save also disables each option.
+  const fieldsLocked=locked||reading||!!opening;
   const patch=(value:Partial<DefinitionDraft>)=>{setDraft(d=>({...d,...value}));setDirty(true);};
   const selectedDefinition=selected?.definition;
   return <section className="research-panel conversions" aria-label="Conversions">
@@ -186,10 +190,10 @@ function Panel({projectId,onUnauthorized}:Props){
       {opening&&<p role="status">{reading?'Loading saved definition…':<button className="btn" onClick={()=>void openItem(opening.id,opening.edit)}>Retry loading definition</button>}</p>}
       {view==='editor'?<form className="card stack" onSubmit={save}>
         <h2 tabIndex={-1} id={uid+'editor'}>{selected||opening?.edit?'Edit':'New'} {kind}</h2>
-        {!managed?<p className="notice">Your current role can inspect saved definitions.</p>:<fieldset disabled={locked||reading||!!opening} className="conversion-fields">
-          {kind==='goal'&&!!seen?.length&&<SelectableList label="Pick what counts as a conversion" items={[...seen].sort((a,b)=>b.count-a.count).slice(0,12).map(item=>({id:item.type+':'+item.value,title:item.value,preview:item.type==='path'?'Page':'Event',meta:seenCount(item)}))}
+        {!managed?<p className="notice">Your current role can inspect saved definitions.</p>:<fieldset disabled={fieldsLocked} className="conversion-fields">
+          {kind==='goal'&&!!seen?.length&&<SelectableList label="Pick what counts as a conversion" items={[...seen].sort((a,b)=>b.count-a.count).slice(0,12).map(item=>({id:item.type+':'+item.value,title:item.value,preview:item.type==='path'?'Page':'Event',meta:seenCount(item),disabled:fieldsLocked}))}
             selectedId={draft.condition.match==='exact'?draft.condition.type+':'+draft.condition.value:null}
-            onSelect={id=>{const item=seen.find(entry=>entry.type+':'+entry.value===id);if(!item)return;const name=draft.name===''||draft.name===autoName.current?seenName(item):draft.name;autoName.current=seenName(item);patch({name,condition:{type:item.type,match:'exact',value:item.value}});}}/>}
+            onSelect={id=>{if(fieldsLocked)return;const item=seen.find(entry=>entry.type+':'+entry.value===id);if(!item)return;const name=draft.name===''||draft.name===autoName.current?seenName(item):draft.name;autoName.current=seenName(item);patch({name,condition:{type:item.type,match:'exact',value:item.value}});}}/>}
           <div className="field"><label htmlFor={uid+'name'}>Name</label><input id={uid+'name'} required maxLength={200} value={draft.name} onChange={e=>patch({name:e.target.value})}/></div>
           <details><summary>Description</summary><label htmlFor={uid+'description'}>Description (optional)</label><textarea id={uid+'description'} maxLength={500} value={draft.description} onChange={e=>patch({description:e.target.value})}/></details>
           {kind==='goal'?<MatchFields idPrefix={uid+'goal'} pathLabel="Viewed page" suggestions={suggestions} value={draft.condition} onChange={condition=>patch({condition})} disabled={locked}/>:<>
