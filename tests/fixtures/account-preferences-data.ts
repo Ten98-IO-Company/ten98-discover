@@ -23,7 +23,7 @@ export function buildAccountPreferencesCapture(){
  };
  const dto=(user:User,revision:number,p:{timeZone:string;locale:AccountPreferencesDto['preferences']['locale'];theme:AccountPreferencesDto['preferences']['theme']}):AccountPreferencesDto=>
   accountPreferencesDtoSchema.parse({version:'account-preferences-v1',user,preferences:{revision,...p,updatedAt:revision===0?null:new Date(Date.parse(stamp)+revision*60_000).toISOString()}});
- const status=add('/api/status','GET',200,{configured:true,appUrl:'http://127.0.0.1'},null);
+ const status=add('/api/session','GET',200,{setupRequired:false,appUrl:'http://127.0.0.1',user:null},null);
  const oidcProviders=add('/api/auth/oidc/providers','GET',200,{providers:[]},null);
  const workspaceId=id(100),workspaceName='Synthetic workspace',renamed='Synthetic workspace renamed';
  const actor=(role:Role,n:number,withWorkspace=true)=>{
@@ -48,6 +48,8 @@ export function buildAccountPreferencesCapture(){
  });
  const sessions=[{id:id(300),createdAt:'2026-10-14T09:30:00.000Z',expiresAt:'2026-11-14T09:30:00.000Z',userAgent:'Synthetic browser',current:true}];
  const security=add('/api/account/security','GET',200,{user:{...ownerUser,twoFactorEnabled:false},sessions,hasPassword:true},ownerUser.id);
+ // The Security view also reads the account closure blockers (AccountClosurePanel); none apply to this owner.
+ const closure=add('/api/account/closure','GET',200,{blockers:{workspaces:[],lastOperator:false},hasPassword:true,twoFactorEnabled:false},ownerUser.id);
  const teamBody=(name:string)=>({workspace:{id:workspaceId,name,twoFactorRequired:false},role:'owner',members:[{userId:ownerUser.id,name:ownerUser.name,email:ownerUser.email,role:'owner'}],invitations:[]});
  const teamPath=`/api/workspaces/${workspaceId}/team`;
  const teamBefore=add(teamPath,'GET',200,teamBody(workspaceName),ownerUser.id);
@@ -55,7 +57,7 @@ export function buildAccountPreferencesCapture(){
  const teamAfter=add(teamPath,'GET',200,teamBody(renamed),ownerUser.id);
  // A /api/me read that began after the rename but before the second save: renamed workspace, first-save user name.
  const staleMe=add('/api/me','GET',200,{user:{...ownerUser,name:themes[0].name},instanceOperator:false,workspaces:[{id:workspaceId,name:renamed,role:'owner'}]},ownerUser.id);
- const ownerActor={id:ownerUser.id,me:roles[0].me,projects:roles[0].projects,signOut:roles[0].signOut,security};
+ const ownerActor={id:ownerUser.id,me:roles[0].me,projects:roles[0].projects,signOut:roles[0].signOut,security,closure};
  // Concurrent-save conflict: the stored revision moved on another device.
  const conflictUser:User={id:id(5),name:'Synthetic conflict user',email:'conflict@preferences.example.test'};
  const conflictMe=add('/api/me','GET',200,{user:conflictUser,instanceOperator:false,workspaces:[]},conflictUser.id);
