@@ -16,7 +16,7 @@ const reply=(route:any,body:unknown,status=200)=>route.fulfill({status,contentTy
 const writes=()=>calls.filter(call=>call.method==='POST'&&call.path.startsWith(base));
 async function fresh({role='owner',width=1440}={}){
  await context?.close();state={mode:'ok'};calls=[];
- context=await browser.newContext({viewport:{width,height:900},serviceWorkers:'block'});context.setDefaultTimeout(7000);
+ context=await browser.newContext({viewport:{width,height:900},serviceWorkers:'block'});await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});context.setDefaultTimeout(7000);
  await context.route('**/*',async (route:any)=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){evidence.external.push(url.origin);return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();
   const path=url.pathname,method=request.method(),raw=request.postData(),body=raw?request.postDataJSON():null;calls.push({path,method,raw,body});
   if(path==='/api/status')return reply(route,{configured:true,appUrl:origin});
@@ -42,21 +42,23 @@ const shown=()=>dialog().getByRole('region',{name:'Share link'}).or(dialog().loc
 const unconfirmed='The shared-link request is unconfirmed. Retry the same request; its exact payload is kept in this tab.';
 // Every group runs from a fresh context, so one failure does not hide the others; the run still fails if any group does.
 async function group(name:string,body:()=>Promise<void>){try{await body();pass(name);}catch(error:any){evidence.failures.push({name,message:error.message});save();console.error('FAIL '+name+': '+error.message);}}
-async function createLink(){await btn('Share').click();await act('Create link').click();await shown().waitFor();}
+async function createLink(){await btn('Share').click();await act('Create and copy link').click();await shown().waitFor();}
 async function run(){
  server=await createServer({configFile:false,envDir:false,root,cacheDir:out+'/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/website-share-exit-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@tanstack/react-router','zod']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});
  server.middlewares.use((request:any,response:any,next:()=>void)=>{if(request.url?.split('?')[0]!=='/')return next();response.setHeader('content-type','text/html');response.end('<!doctype html><html lang="en"><meta charset="utf-8"><title>Quick share fixture</title><div id="root"></div><script type="module" src="/tests/website-share-exit-browser-fixture.tsx"></script></html>');});
  await server.listen();origin='http://127.0.0.1:'+server.httpServer.address().port;await server.environments.client.warmupRequest('/tests/website-share-exit-browser-fixture.tsx');await server.environments.client.waitForRequestsIdle();await server.environments.client.depsOptimizer?.scanProcessing;await Promise.all(Object.values(server.environments.client.depsOptimizer?.metadata.discovered??{}).map((value:any)=>value.processing));
  browser=await launchChromium();
 
- await group('Share → Create link makes one 30-day overview/events link; Copy and Revoke sit beside it',async()=>{
+ await group('Share → Create and copy link makes one 30-day overview/events link and copies it; Copy and Revoke sit beside it',async()=>{
   await fresh();await btn('Share').click();await dialog().waitFor();
   await dialog().getByText(/Anyone with this link can view this report/).waitFor();
   assert.equal(writes().length,0,'Opening Share creates nothing: the link needs an informed second click.');
-  await act('Create link').click();const link=shown();await link.waitFor();
+  await act('Create and copy link').click();const link=shown();await link.waitFor();
   const created=writes()[0].body;assert.deepEqual([...created.sections].sort(),['events','overview']);
   const days=(Date.parse(created.expiresAt)-Date.now())/864e5;assert.ok(days>29.9&&days<=30,'Links expire in 30 days.');
   const url=new URL((await link.innerText()).trim());assert.equal(url.pathname,'/share/websites/'+share);assert.equal(url.hash.slice(1),created.token);
+  await dialog().getByText('Link created and copied. It is shown only once.',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),url.href,'The creating click also copies the link.');
   await act('Copy link').waitFor();await act('Revoke link').click();await answer('Revoke this public link now?','Revoke link').click();
   await dialog().getByText('Link revoked. It stops working on its next read.',{exact:true}).waitFor();
   assert.equal(writes().length,2);assert.ok(writes()[1].path.endsWith('/'+share+'/revoke'));
@@ -70,7 +72,7 @@ async function run(){
  });
 
  await group('An unconfirmed create retries the identical request and never mints a second link',async()=>{
-  await fresh();await btn('Share').click();state.mode='unknown';await act('Create link').click();await act('Retry').waitFor();
+  await fresh();await btn('Share').click();state.mode='unknown';await act('Create and copy link').click();await act('Retry').waitFor();
   state.mode='ok';await act('Retry').click();await act('Revoke link').waitFor();
   assert.equal(writes().length,2);assert.equal(writes()[1].raw,writes()[0].raw,'Retry sends exactly the same request.');
  });
@@ -93,18 +95,18 @@ async function run(){
   await page.keyboard.press('Escape');await ask('Continue?').waitFor();await answer('Continue?','Cancel').click();await ask('Continue?').waitFor({state:'detached'});
   assert.equal(await shown().isVisible(),true,'Escape asks too.');
   await act('Done').click();await answer('Continue?','Continue').click();await dialog().waitFor({state:'hidden'});
-  await btn('Share').click();await act('Create link').waitFor();assert.equal(await shown().count(),0);
-  state.mode='unknown';await act('Create link').click();await act('Retry').waitFor();
+  await btn('Share').click();await act('Create and copy link').waitFor();assert.equal(await shown().count(),0);
+  state.mode='unknown';await act('Create and copy link').click();await act('Retry').waitFor();
   await act('Cancel').click();await ask('Continue?').getByText('The shared-link request may already be saved. Leaving loses its exact retry.',{exact:true}).waitFor();
   await answer('Continue?','Cancel').click();await ask('Continue?').waitFor({state:'detached'});await act('Retry').waitFor();
   assert.equal(writes().length,2,'Asking sends nothing.');
  });
 
  await group('Item 4: create shows the URL only for an active share whose ID matches the acknowledgement',async()=>{
-  await fresh();await btn('Share').click();state.mode='inactive';await act('Create link').click();
+  await fresh();await btn('Share').click();state.mode='inactive';await act('Create and copy link').click();
   await dialog().getByText('This link is no longer active, so it is not shown. Create a new link if you still need one.',{exact:true}).waitFor();
   assert.equal(await shown().count(),0);assert.equal(await act('Revoke link').count(),0);
-  await fresh();await btn('Share').click();state.mode='mismatch';await act('Create link').click();await act('Retry').waitFor();
+  await fresh();await btn('Share').click();state.mode='mismatch';await act('Create and copy link').click();await act('Retry').waitFor();
   assert.equal((await dialog().getByRole('alert').innerText()).trim(),unconfirmed);assert.equal(await shown().count(),0,'A mismatched item is not acknowledged.');
  });
 
