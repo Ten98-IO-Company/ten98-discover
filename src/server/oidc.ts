@@ -383,7 +383,9 @@ async function callback(request: Request): Promise<Response> {
         // Existing users first finish sign-in (including MFA), then accept normally.
         if (userId) throw new FoundationError(409, 'Sign in first, then accept the invitation.');
         if (!prepared.payload.invitation) throw new FoundationError(403, 'This provider cannot verify the invitation recipient.');
-        if (!provider.active?.trustVerifiedEmail || !claims.emailVerified || !claims.email) throw new OidcReturnError(403, 'This provider cannot verify the invitation recipient.', 'OIDC_EMAIL_UNVERIFIED');
+        // An installation that does not trust provider-verified emails is a configuration choice, not a provider fault.
+        if (!provider.active?.trustVerifiedEmail) throw new OidcReturnError(403, 'This provider cannot verify the invitation recipient.', 'OIDC_SIGN_IN_FAILED');
+        if (!claims.emailVerified || !claims.email) throw new OidcReturnError(403, 'This provider cannot verify the invitation recipient.', 'OIDC_EMAIL_UNVERIFIED');
         const created = await acceptVerifiedOidcInvitation(client, prepared.payload.invitation.token, { email: claims.email, name: prepared.payload.invitation.name ?? claims.name }, prepared.payload.invitation.passwordHash);
         userId = created.userId;
         await client.query('INSERT INTO oidc_identity(id,provider_id,user_id,issuer,subject) VALUES($1,$2,$3,$4,$5)', [randomUUID(), provider.id, userId, claims.issuer, claims.subject]);

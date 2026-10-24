@@ -401,6 +401,7 @@ function App() {
   // 'expired' marks a session the server no longer accepts, as opposed to an explicit sign-out or account switch.
   function resetSession(reason?: 'expired') {
     if (reason === 'expired') setAuthNotice(sessionEndedNotice)
+    setSsoError('')
     setMenuOpen(false); setToolSearch('')
     sessionGeneration.current += 1; bootGeneration.current += 1
     recoveryGeneration.current += 1; recoveryRef.current = null; setRecovery(null)
@@ -421,7 +422,7 @@ function App() {
     resetSession()
     recoveryRef.current = value; setRecovery({ value, generation: recoveryGeneration.current })
     if (email !== undefined) setSignInEmail(email)
-    setAuthNotice(null); setPhase('recovery')
+    setAuthNotice(null); setSsoError(''); setPhase('recovery')
   }
 
   function guardAuth(e: unknown): boolean {

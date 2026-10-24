@@ -23,6 +23,17 @@ test('SSO return failures use one closed code-to-message table with Campaign cop
   assert.match(route, /value\.kind === 'oidc-error'\) setSsoError\(oidcReturnMessage\(value\.code\)\)/, 'The SSO failure becomes the sign-in error, not a notice.')
 })
 
+test('A shown SSO failure never outlives the session or recovery that displayed it', () => {
+  assert.match(body('resetSession'), /setSsoError\(''\)/)
+  assert.match(body('beginRecovery'), /setSsoError\(''\)/)
+})
+
+test('An installation that does not trust provider emails gets the generic failure, not a blame on the provider', () => {
+  const oidc = readFileSync(new URL('../src/server/oidc.ts', import.meta.url), 'utf8')
+  assert.match(oidc, /if \(!provider\.active\?\.trustVerifiedEmail\) throw new OidcReturnError\([^)]*'OIDC_SIGN_IN_FAILED'\)/)
+  assert.match(oidc, /if \(!claims\.emailVerified \|\| !claims\.email\) throw new OidcReturnError\([^)]*'OIDC_EMAIL_UNVERIFIED'\)/)
+})
+
 test('An expired session warns on the sign-in screen; an explicit sign-out does not', () => {
   assert.deepEqual(sessionEndedNotice, { kind: 'warning', message: 'Your session ended. Sign in again.' })
   assert.equal(authNoticeTone('warning'), 'warning')

@@ -13,6 +13,7 @@ export class OidcReturnError extends FoundationError {
 /** Selects the return code for a failed callback. Unclassified failures, including upstream errors, stay generic. */
 export function oidcReturnCode(error: unknown): OidcReturnCode {
   if (error instanceof OidcReturnError) return error.code;
+  // Only the local request limiter raises 429 in the callback.
   if (error instanceof FoundationError && error.status === 429) return 'OIDC_RATE_LIMITED';
   return 'OIDC_SIGN_IN_FAILED';
 }
