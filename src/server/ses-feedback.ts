@@ -116,11 +116,23 @@ export async function handleSesFeedback(request: Request, env: NodeJS.ProcessEnv
   // #304: transient and undetermined bounces never block, so no history is kept and the repeat threshold is unreachable.
   const outcomes = classifyEmailFeedback(verified.message, { transient: { threshold: Number.MAX_SAFE_INTEGER, windowMs: 1 } });
   const store = adapters.store ?? { record: recordEmailSuppression };
+  // #310: a bounce's emailAddress is the DSN Final-Recipient, which a forwarder can rewrite. Discover sends to one address,
+  // so a hard bounce of a single-destination message also suppresses that original destination. Several destinations
+  // cannot be attributed to the bounced recipient, so none of them is added.
+  const mail = (verified.message as { mail?: { destination?: unknown } } | null)?.mail;
+  const destination = Array.isArray(mail?.destination) && mail.destination.length === 1 && typeof mail.destination[0] === 'string' ? mail.destination[0] : null;
+  const addresses = new Set<string>();
   let recorded = 0;
   for (const outcome of outcomes) {
     if (outcome.action !== 'suppress' || !blocking.has(outcome.reason)) continue;
-    await store.record(outcome.recipient, outcome.reason as EmailSuppressionReason);
-    recorded++;
+    const recipients = outcome.reason === 'permanent-bounce' && destination?.trim() ? [outcome.recipient, destination] : [outcome.recipient];
+    for (const recipient of recipients) {
+      const key = recipient.trim().toLowerCase();
+      if (addresses.has(key)) continue;
+      addresses.add(key);
+      await store.record(recipient, outcome.reason as EmailSuppressionReason);
+      recorded++;
+    }
   }
   remember(verified.messageId);
   return reply(200, { ok: true, recorded });
