@@ -56,6 +56,25 @@ test('byte and chunk ceilings cancel response streams, including false declared 
   await assert.rejects(dataforseoJson(rankSerpEndpoints.locations,credentials,'GET',undefined,async()=>new Response('{}',{headers:{'content-length':'67108865'}})),safeError);
 });
 
+test('bounded reads refuse oversize, invalid and (on identity routes) encoded or miscounted bodies',async()=>{
+  const ai='https://api.dataforseo.com/v3/ai_optimization/chat_gpt/llm_scraper/locations';
+  const reply=(body:string,headers:Record<string,string>)=>async()=>new Response(body,{headers});
+  for(const url of [keywordAccountEndpoint,ai]){
+    for(const length of ['abc','-1','1.5','12345678901234567','4194305'])
+      await assert.rejects(dataforseoJson(url,credentials,'GET',undefined,reply('{}',{'content-length':url===ai&&length==='4194305'?'67108865':length})),safeError,url+' '+length);
+  }
+  // Identity routes keep Discover's encoding refusal (the runtime's exact mode skips encoded bodies) and the exact count.
+  for(const headers of [{'content-encoding':'gzip'},{'content-encoding':'br','content-length':'2'},{'content-length':'3'},{'content-length':'1'}] as Record<string,string>[])
+    await assert.rejects(dataforseoJson(ai,credentials,'GET',undefined,reply('{}',headers)),safeError,JSON.stringify(headers));
+  assert.deepEqual((await dataforseoJson(ai,credentials,'GET',undefined,reply('{}',{'content-length':'2','content-encoding':'Identity'}))).body,{});
+  // Other routes only bound the declaration: fetch has already decoded a compressed body, so its count need not match.
+  for(const headers of [{'content-encoding':'gzip','content-length':'1'},{'content-length':'3'}] as Record<string,string>[])
+    assert.deepEqual((await dataforseoJson(keywordAccountEndpoint,credentials,'GET',undefined,reply('{}',headers))).body,{},JSON.stringify(headers));
+  let chunks=0;
+  const exact=new ReadableStream<Uint8Array>({pull(c){if(++chunks===65_536){c.enqueue(Uint8Array.of(0x7d));c.close();}else c.enqueue(chunks===1?Uint8Array.of(0x7b):Uint8Array.of(32));}});
+  assert.deepEqual((await dataforseoJson(keywordAccountEndpoint,credentials,'GET',undefined,async()=>new Response(exact))).body,{},'65,536 chunks are admitted; the 65,537th is refused');
+});
+
 test('large SERP results have an explicit32MiB ceiling and only Live receives150seconds',async()=>{
   const original=AbortSignal.timeout,deadlines:number[]=[];
   AbortSignal.timeout=(ms:number)=>{deadlines.push(ms);return original(ms);};
