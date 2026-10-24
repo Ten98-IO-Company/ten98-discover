@@ -256,7 +256,7 @@
   },
   "src/components/SessionExplorerPanel.tsx": {
     "element": 5,
-    "styling": 6
+    "styling": 5
   },
   "src/components/SessionReplayPanel.tsx": {
     "element": 109,
