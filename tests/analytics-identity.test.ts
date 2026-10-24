@@ -47,6 +47,22 @@ test('identify changes the visitor key without changing or merging an earlier an
   assert.notEqual(identity('2026-10-13T09:02:00Z', { distinctId: ' customer-a ' }).visitor, identified.visitor);
 });
 
+test('an identified browser event continues only the current anonymous visit (#371)', () => {
+  const anonymous = identity('2026-10-13T09:00:00Z'), explicit = identity('2026-10-13T09:01:00Z', { distinctId: 'customer-a' });
+  const continued = identity('2026-10-13T09:01:00Z', { distinctId: 'customer-a', context: anonymous.context, continueAnonymousVisit: true });
+  assert.equal(continued.visitor, anonymous.visitor); assert.equal(continued.visit, anonymous.visit); assert.equal(continued.context, anonymous.context);
+  assert.equal(continued.continuedAnonymous, true); assert.equal(explicit.continuedAnonymous, undefined);
+  // The original 30-minute issuance still bounds it; afterwards the explicit key applies.
+  assert.deepEqual(identity('2026-10-13T09:30:00.001Z', { distinctId: 'customer-a', context: anonymous.context, continueAnonymousVisit: true }), identity('2026-10-13T09:30:00.001Z', { distinctId: 'customer-a' }));
+  // Another explicit identity, a basic key, another device, another epoch or a pure-helper caller never continue it.
+  const other = identity('2026-10-13T09:00:00Z', { distinctId: 'customer-b' }), basic = identity('2026-10-13T09:00:00Z', { collectionBasis: 'cookieless' });
+  for (const extra of [{ context: other.context }, { context: basic.context }, { context: anonymous.context, ip: '192.0.2.9' }, { context: anonymous.context, epoch: randomUUID() }, { context: anonymous.context, continueAnonymousVisit: false }]) {
+    const value = identity('2026-10-13T09:02:00Z', { distinctId: 'customer-a', continueAnonymousVisit: true, ...extra });
+    assert.notEqual(value.visitor, anonymous.visitor); assert.equal(value.continuedAnonymous, undefined);
+  }
+  assert.equal(identity('2026-10-13T09:02:00Z', { distinctId: 'customer-a', context: other.context, continueAnonymousVisit: true }).visitor, explicit.visitor);
+});
+
 test('basic identity is separate from consented and explicit keys; contexts never cross collection bases',()=>{
   const basic=identity('2026-10-13T09:50:00Z',{collectionBasis:'cookieless'}),consented=identity('2026-10-13T09:50:00Z');
   assert.notEqual(basic.visitor,consented.visitor);assert.notEqual(basic.visit,consented.visit);

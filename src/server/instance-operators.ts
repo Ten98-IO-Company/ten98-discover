@@ -29,3 +29,23 @@ export async function setInstanceOperator(email: unknown, enabled: boolean): Pro
   } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
   finally { client.release(); }
 }
+
+/**
+ * Host CLI only: the named account must be an instance operator, and the paid-work export of `scope` is audited and
+ * committed before any archived row is read. An unknown or closed account gets the same refusal as a non-operator.
+ */
+export async function auditOperatorPaidWorkExport(email: unknown, scope: { workspaceId: string; projectId?: string }): Promise<void> {
+  const result = z.string().trim().toLowerCase().email().max(254).safeParse(email);
+  if (!result.success) throw new FoundationError(400, 'Supply the instance operator account email.');
+  const client = await getDatabase().pool.connect();
+  try {
+    await client.query('BEGIN');
+    const user = (await client.query<{ id: string }>('SELECT id FROM "user" WHERE lower(email)=$1 AND closed_at IS NULL', [result.data])).rows[0];
+    if (!user) throw new FoundationError(403, 'This action requires an instance operator.');
+    await requireInstanceOperator(client, user.id);
+    await client.query("INSERT INTO instance_operator_audit(user_id,action,scope) VALUES($1,'paid_work_export',$2)",
+      [user.id, `workspace:${scope.workspaceId}${scope.projectId === undefined ? '' : `/website:${scope.projectId}`}`]);
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
+  finally { client.release(); }
+}

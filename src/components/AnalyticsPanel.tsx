@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { AppliedFilters, BarList, DataTable, EvidenceSummary, TimeSeriesChart, type ChartPoint, type ChartSeries } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
+import { formatReportInstant } from '../lib/report-time';
 import { environmentCatalog, environmentFields, environmentVersion, isEnvironmentFilter, type AnalyticsEnvironment, type EnvironmentField, type EnvironmentFilters, type EnvironmentRow } from '../lib/analytics-environment';
 import { analyticsDay as parseDay, analyticsNavigation, analyticsNavigationNames, geographyNavigationNames, applyGeographyFilter, canonicalNavigation, navigationKey, parseNavigation, type AnalyticsNavigation, type NavigationSearch } from '../lib/navigation';
 import {Link,useLocation} from '@tanstack/react-router';
@@ -93,10 +94,6 @@ function fresh(projectId: string, intent: AnalyticsNavigation): View {
   return { key: projectId, queryKey:JSON.stringify(intent), range, draft: range, draftErr: null, data: null, error: null, loading: !intent.analyticsInvalid, nonce: 0 };
 }
 
-function fmtUtc(iso: string): string {
-  return `${new Date(iso).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
-}
-
 const fmtNum = (n: number | null) => n === null ? 'Unavailable' : n.toLocaleString('en-US');
 
 const environmentLabels = { browser: 'Browser', os: 'OS', device: 'Device' } as const;
@@ -178,9 +175,9 @@ function ComparisonSummary({data}:{data:Analytics&{comparison:AnalyticsCompariso
     return `${provisional?'Provisional: ':''}${absolute>0?'Up':'Down'} by ${amount}${!row.unit&&row.previous===0?' from 0':!row.unit&&row.change.percent!==null?` (${absolute>0?'+':'−'}${Math.abs(row.change.percent).toFixed(1)}%)`:''}`;
   }
   return <section className="card analytics-comparison-overview" aria-label="Comparison overview"><h2>Comparison overview</h2>
-    <p className="hint">Report generated {fmtUtc(comparison.asOf)}. Each period uses its whole selected UTC dates; this is not a comparison of matching elapsed hours.</p>
+    <p className="hint">Report generated {formatReportInstant(comparison.asOf,'UTC')}. Each period uses its whole selected UTC dates; this is not a comparison of matching elapsed hours.</p>
     {(provisional||future)&&<p className="notice" role="status">{future?'A selected period has not started. Changes are unavailable.':'Period in progress — comparison is provisional. Today is unfinished.'}</p>}
-    {[['Current period',data],['Previous period',prior]] .map(([label,report])=>{const period=report as Analytics;return <p className={period.coverage.status==='complete'?'hint':'notice'} key={label as string}><strong>{label as string}:</strong> {period.coverage.status==='complete'?'Complete retained range':period.coverage.status==='partial'?'Partial retained range; values cover retained observations only':'History unavailable after retention'}. Visitor estimates cover {fmtNum(period.measurement.identifiedPageViews)} of {fmtNum(period.totals.pageViews)} retained pageviews. Recorded basis: {fmtNum(period.collection!.pageViews.cookieless)} cookieless, {fmtNum(period.collection!.pageViews.consent)} consent, {fmtNum(period.collection!.pageViews.unknown)} not recorded.{period.coverage.retainedFrom&&` Retained from ${fmtUtc(period.coverage.retainedFrom)}.`}</p>;})}
+    {[['Current period',data],['Previous period',prior]] .map(([label,report])=>{const period=report as Analytics;return <p className={period.coverage.status==='complete'?'hint':'notice'} key={label as string}><strong>{label as string}:</strong> {period.coverage.status==='complete'?'Complete retained range':period.coverage.status==='partial'?'Partial retained range; values cover retained observations only':'History unavailable after retention'}. Visitor estimates cover {fmtNum(period.measurement.identifiedPageViews)} of {fmtNum(period.totals.pageViews)} retained pageviews. Recorded basis: {fmtNum(period.collection!.pageViews.cookieless)} cookieless, {fmtNum(period.collection!.pageViews.consent)} consent, {fmtNum(period.collection!.pageViews.unknown)} not recorded.{period.coverage.retainedFrom&&` Retained from ${formatReportInstant(period.coverage.retainedFrom,'UTC')}.`}</p>;})}
     {(data.coverage.status!=='complete'||prior.coverage.status!=='complete')&&<p className="hint">Changes are unavailable because one or both periods lack complete retained history. Extending retention cannot restore deleted observations.</p>}
     <div className="analytics-comparison-stats">{values.map(row=><section className="analytics-comparison-stat" key={row.name} aria-label={row.name}><h3>{row.name}</h3><dl><div><dt>Current</dt><dd>{format(row.current,row.name)}</dd></div><div><dt>Previous</dt><dd>{format(row.previous,row.name)}</dd></div></dl><p className="analytics-change">{change(row)}</p></section>)}</div>
     <p className="hint">Current collection setting: {data.collection!.mode==='cookieless'?'cookieless basic analytics':'consent-first analytics'}. Traffic coverage is unknown; complete retention is not complete website capture. Refusals, privacy signals, blockers and failed requests can leave visits unrecorded.</p>
@@ -318,7 +315,7 @@ function EnvironmentCard({data,busy,field,onFieldChange,onFilter,periodLabel}:{d
       </div>
       <p className="hint">Environment recorded for {fmtNum(environment.coverage.recordedPageViews)} of {fmtNum(environment.coverage.pageViews)} retained pageviews. {fmtNum(environment.coverage.notRecordedPageViews)} not recorded.</p>
       <button type="button" className="btn ghost analytics-environment-more" disabled={busy||!rows.length} onClick={()=>{setSearch('');setNotice('');setOpen(true);}}>More <span className="sr-only">{environmentLabels[field]} details</span></button>
-      <details className="analytics-details"><summary>How environment is recorded</summary><p>Browser and OS families come from a bounded request User-Agent. Device uses that family and, when screen collection is enabled, the observed screen width. These are estimates; spoofed or reduced browser information can change the result. Raw User-Agent, separate version fields and device models are not stored.</p><p>Unknown means classification was attempted but unrecognized. Not recorded means historical or API observations lack this evidence.{environment.coverage.firstRecordedAt?` First environment observation in this filtered range: ${fmtUtc(environment.coverage.firstRecordedAt)}.`:''} Counts cover stored observations, not all website visits.</p><p>Bars compare category counts with the largest category shown. Bounce and duration in More use only pageviews with a visitor estimate and the existing visit method.</p></details>
+      <details className="analytics-details"><summary>How environment is recorded</summary><p>Browser and OS families come from a bounded request User-Agent. Device uses that family and, when screen collection is enabled, the observed screen width. These are estimates; spoofed or reduced browser information can change the result. Raw User-Agent, separate version fields and device models are not stored.</p><p>Unknown means classification was attempted but unrecognized. Not recorded means historical or API observations lack this evidence.{environment.coverage.firstRecordedAt?` First environment observation in this filtered range: ${formatReportInstant(environment.coverage.firstRecordedAt,'UTC')}.`:''} Counts cover stored observations, not all website visits.</p><p>Bars compare category counts with the largest category shown. Bounce and duration in More use only pageviews with a visitor estimate and the existing visit method.</p></details>
     </>}
     <dialog ref={dialog} className="analytics-environment-dialog" aria-labelledby={`${uid}-dialog-heading`} onKeyDownCapture={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();event.currentTarget.close();}}} onClose={()=>setOpen(false)}>
       <div className="row between analytics-environment-dialog-heading"><h2 id={`${uid}-dialog-heading`}>{periodLabel?`${periodLabel} · Environment details`:'Environment details'}</h2><button type="button" className="btn" autoFocus onClick={()=>dialog.current?.close()}>Close details</button></div>
@@ -555,10 +552,10 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                 {data.range.from} to {data.range.to} (UTC)
               </span>
             </div>
-            <EvidenceSummary variant="compact" title="Native analytics evidence" source="Native analytics" observedAt={data.lastReceivedAt?{label:`Last event received ${fmtUtc(data.lastReceivedAt)}.`,dateTime:data.lastReceivedAt}:undefined} availability={data.coverage.status==='unavailable'?'unavailable':hasData?'ready':'empty'} reason={data.coverage.status==='unavailable'?'This date range is unavailable after retention.':data.coverage.status==='partial'?'Counts and estimates cover only retained observations.':hasData?'The selected date range is retained.':'No events in this date range.'} coverage={{status:data.coverage.status,reason:'Retention describes stored history; traffic capture coverage is unknown.'}} basis="Last event received records ingestion, not report generation or provider observation. It does not establish collection freshness."/>
+            <EvidenceSummary variant="compact" title="Native analytics evidence" source="Native analytics" observedAt={data.lastReceivedAt?{label:`Last event received ${formatReportInstant(data.lastReceivedAt,'UTC')}.`,dateTime:data.lastReceivedAt}:undefined} availability={data.coverage.status==='unavailable'?'unavailable':hasData?'ready':'empty'} reason={data.coverage.status==='unavailable'?'This date range is unavailable after retention.':data.coverage.status==='partial'?'Counts and estimates cover only retained observations.':hasData?'The selected date range is retained.':'No events in this date range.'} coverage={{status:data.coverage.status,reason:'Retention describes stored history; traffic capture coverage is unknown.'}} basis="Last event received records ingestion, not report generation or provider observation. It does not establish collection freshness."/>
             {data.coverage.status !== 'complete' && <p className="alert" role="status">
               {data.coverage.status === 'unavailable' ? 'This date range is unavailable after retention.' : 'This date range is partial after retention. Counts and estimates cover only retained observations.'}
-              {data.coverage.retainedFrom && ` History is retained from ${fmtUtc(data.coverage.retainedFrom)}. Extending retention cannot restore deleted data.`}
+              {data.coverage.retainedFrom && ` History is retained from ${formatReportInstant(data.coverage.retainedFrom,'UTC')}. Extending retention cannot restore deleted data.`}
             </p>}
             <div className="analytics-stats">
               <div className="analytics-stat">
@@ -602,7 +599,7 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
             </details>
             <p className="footnote dim">
               {data.lastReceivedAt
-                ? `Last event received ${fmtUtc(data.lastReceivedAt)}.`
+                ? `Last event received ${formatReportInstant(data.lastReceivedAt,'UTC')}.`
                 : data.coverage.status === 'complete' ? 'No events in this date range.' : 'No events are available in the retained portion of this range.'}
             </p>
           </section>

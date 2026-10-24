@@ -51,3 +51,13 @@ export function collectorAliasResponse(request: Request, script: string, handle:
   if (request.headers.get('if-none-match') === etag) return new Response(null, { status: 304, headers });
   return new Response(request.method === 'HEAD' ? null : script, { headers });
 }
+
+// Public collection endpoints. A visitor's browser routinely abandons these mid-request (sendBeacon, navigation, tab close);
+// TanStack Start rethrows that disconnect as an unhandled 500 with a stack trace, while the API handler answers every outcome itself.
+const collectorEndpoints = new Set([COLLECT_PATH, '/api/replay/begin', '/api/replay/chunks', '/api/heatmaps/begin', '/api/heatmaps/batches', '/api/heatmaps/backgrounds', '/api/tracking-config']);
+
+/** The middleware entry: native collector endpoints go straight to the API handler, then the optional aliases; any other request continues unchanged. */
+export function collectorResponse(request: Request, script: string, handle: (request: Request) => Promise<Response>, env: NodeJS.ProcessEnv = process.env): Promise<Response> | Response | undefined {
+  if (collectorEndpoints.has(new URL(request.url).pathname.replace(/\/$/, ''))) return handle(request);
+  return collectorAliasResponse(request, script, handle, env);
+}

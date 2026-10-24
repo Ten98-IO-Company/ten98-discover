@@ -1,3 +1,4 @@
+import { readResponseText } from '@ten98/runtime';
 import { useEffect, useRef, useState } from 'react';
 import { AppliedFilters, EvidenceSummary, TimeSeriesChart, type ChartPoint, useConfirmDialog, StatusLine } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
@@ -87,14 +88,14 @@ async function organicSnapshot(path: string, imp: ImportDto, conn: Connection, o
   const response = await fetch(path, { credentials: 'same-origin', redirect: 'error', signal: deadline });
   try {
     if (response.url !== new URL(path, window.location.origin).href || !response.body) { await response.body?.cancel(); throw Error(`The ${reportName} report response could not be verified.`); }
-    const reader = response.body.getReader(), parts: Uint8Array[] = []; let size = 0;
-    const abort = () => { void reader.cancel().catch(() => {}); }; deadline.addEventListener('abort', abort, { once: true });
-    try { for (;;) { deadline.throwIfAborted(); const part = await reader.read(); deadline.throwIfAborted(); if (part.done) break; size += part.value.byteLength; if (size > (response.ok ? 2097152 : 8192)) throw Error(`The complete ${reportName} report is too large. Choose a smaller date range.`); parts.push(part.value); } }
-    finally { deadline.removeEventListener('abort', abort); await reader.cancel().catch(() => {}); reader.releaseLock(); }
-    const length = response.headers.get('content-length'), encoding = response.headers.get('content-encoding');
-    if ((!encoding || encoding === 'identity') && length !== null && (!/^\d+$/.test(length) || Number(length) !== size)) throw Error(`The ${reportName} report response was incomplete.`);
-    const bytes = new Uint8Array(size); let at = 0; for (const part of parts) { bytes.set(part, at); at += part.length; }
-    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    let value;
+    try { value = JSON.parse(await readResponseText(response, { maxBytes: response.ok ? 2097152 : 8192, contentLength: 'exact', signal: deadline })); }
+    catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (error instanceof RangeError) throw Error(`The complete ${reportName} report is too large. Choose a smaller date range.`);
+      if (code === 'CONTENT_LENGTH_INVALID' || code === 'RESPONSE_INCOMPLETE') throw Error(`The ${reportName} report response was incomplete.`);
+      throw error;
+    }
     if (!response.ok) throw Error(typeof value?.error === 'string' ? value.error : `${sentenceName} report unavailable.`);
     if (response.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw Error(`The ${reportName} report response type could not be verified.`);
     const sameKeys = (v: unknown, keys: readonly string[]) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).sort().join(',') === [...keys].sort().join(',');

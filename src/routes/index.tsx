@@ -141,6 +141,7 @@ function App() {
   const [projectsError, setProjectsError] = useState('')
   const [projectId, setProjectId] = useState('')
   const [events, setEvents] = useState<EventsData | null>(null)
+  const [eventsReadAt, setEventsReadAt] = useState<string | null>(null)
   const [eventsBusy, setEventsBusy] = useState(false)
   const [firstEventSeen, setFirstEventSeen] = useState(false)
   const [eventsError, setEventsError] = useState('')
@@ -335,7 +336,7 @@ function App() {
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
-    setEvents(null); setEventsError(''); setEventsBusy(false); setFirstEventSeen(false)
+    setEvents(null); setEventsReadAt(null); setEventsError(''); setEventsBusy(false); setFirstEventSeen(false)
     setJobs(null); setJobError(''); setJobsBusy(false); setCheckBusy(false)
     setCopied('idle')
     if (id) void loadEvents(id)
@@ -343,6 +344,8 @@ function App() {
 
   useEffect(() => {
     if (phase === 'app' && view === 'installation' && projectId) { void loadJobs(projectId); void loadEvents(projectId) }
+    // Opening Recent events reads current history; a read already started by project activation is current.
+    if (phase === 'app' && view === 'events' && projectId && !eventsBusy) void loadEvents(projectId)
   }, [phase, view, projectId])
 
   // While Install shows an empty history, poll for the first event every 3 s for up to 10 minutes (PostHog onboarding pattern),
@@ -458,8 +461,8 @@ function App() {
     if (!background) { setEventsBusy(true); setEventsError('') }
     try {
       const d = await api<EventsData>(`/api/projects/${pid}/events`)
-      if (current()) { if (background && d.total > 0) setFirstEventSeen(true); setEvents(d); if (background) setEventsError('') }
-    } catch (e) { if (current() && !guardAuth(e) && !background) { if (e instanceof ApiError && [403,404].includes(e.status)) setEvents(null); setEventsError(errMsg(e)) } }
+      if (current()) { if (background && d.total > 0) setFirstEventSeen(true); setEvents(d); setEventsReadAt(new Date().toISOString()); if (background) setEventsError('') }
+    } catch (e) { if (current() && !guardAuth(e) && !background) { if (e instanceof ApiError && [403,404].includes(e.status)) { setEvents(null); setEventsReadAt(null) } setEventsError(errMsg(e)) } }
     finally { if (current() && !background) setEventsBusy(false) }
   }
 
@@ -796,6 +799,7 @@ function App() {
                 <div>
                   <h2 id='ev-h'>Retained events</h2>
                   <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
+                  {eventsReadAt !== null && <Text tone='muted'>Read {fmt(eventsReadAt)}</Text>}
                 </div>
                 <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
               </div>

@@ -273,7 +273,15 @@ try {
   await tab.getByRole('heading', {name:'Recent events', level:1, exact:true}).waitFor();
   assert.equal(page.url(), installUrl); assert.equal(new URL(tab.url()).search, destination.search); await tab.close();
   await capture('installation-1440');
-  await eventsLink.click(); await heading('Recent events').waitFor();
+  // In-app navigation to Recent events reads current history instead of keeping the snapshot loaded earlier (#381).
+  eventReply = {body:populated};
+  const readStarted = Date.now(), navigationRead = page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/events`);
+  await eventsLink.click(); await heading('Recent events').waitFor(); await navigationRead;
+  await eventRegion().waitFor(); await count(7);
+  const readText = await eventPanel().getByText(/^Read /).innerText();
+  const readAt = await page.evaluate(text => Date.parse(text.slice('Read '.length)), readText);
+  assert.ok(readAt >= readStarted - 2000 && readAt <= Date.now() + 1000, 'Recent events shows when the displayed history was read.');
+  eventReply = {body:empty};
   assert.equal(new URL(page.url()).search, destination.search);
   assert.equal(await main.evaluate(element => element === document.activeElement), true);
   assert.equal(calls.check, 0, 'Copy/help/navigation do not start worker jobs.');
