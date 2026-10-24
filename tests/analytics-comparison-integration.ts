@@ -420,20 +420,62 @@ async function runOverviewPlanChecks(pool:pg.Pool,workspace:string,owner:string)
   mixedActual[name]=createHash('sha256').update(JSON.stringify(report,(key,value)=>key==='asOf'||key==='generatedAt'?undefined:value)).digest('hex');
  }
  assert.deepEqual(mixedActual,mixedExpected,'Mixed environment and location visits keep their pre-#414 selection bytes.');
+ // Every Compare dimension without a selection, on both fixtures (#414): each period measures its own dimension rows, and an environment
+ // or location dimension reads that period's environment or location rows. Recorded on dev before the dimension rows moved into the periods.
+ const unfiltered:[string,string,Record<string,string>][]=[
+  ...analyticsDimensions.map(dimension=>[project,dimension,{compare:'prev',dimension}] as [string,string,Record<string,string>]),
+  ...['browser','os','country','region','city','path','event','channel'].map(dimension=>[mixed,'mixed-'+dimension,{compare:'prev',dimension}] as [string,string,Record<string,string>]),
+  [mixed,'mixed-chromeCountry',{browser:'chrome',compare:'prev',dimension:'country'}],[mixed,'mixed-usBrowser',{country:us,compare:'yoy',dimension:'browser'}],
+ ];
+ const unfilteredExpected:Record<string,string>={
+  path:'d3b4e2f4020b91f42deeae694800fa8795f7cdb8d327cdd2e78b655120781490',referrer:'18c1c5697004bd4fa51e3fddf795d5174b711d8f6473ae3c57fbd4cb888f12a9',
+  browser:'f622d26f81fda7a5068acb421efc08c658dadef7908bc302f4f057424e3a7b40',os:'b98c665d7bdf444df1c6d0ff0d0815e7f8b0f97bfb33cd6f24b2164527666367',
+  device:'7e6f1f2250fd4eec7fac004877d9fe52e53bc490e343700201dab5a79419d649',country:'ae96c96f755edd6a9492056c0d1225b1070b6ef0addbca8bc4b2264447e01300',
+  region:'87df775655f8cbfba4e32997ac038473cb3b395382216161045332be7485c4d5',city:'e6f7864583b4a123ba028fdf76280250280b7e695ee969bd8c973c430285214a',
+  language:'617c1ddd3f0b740a1611c8b259545addb938388cb4d6e99d03505deff0069003',event:'cb6fbb64065f32a19452afb5bd04844c3c05c04394e9601ef6075d44fd2405b9',
+  campaignSource:'6034409d4339d8893d82d704e570c6cc29440bbb23d6966685bb42c78a820054',campaignMedium:'01839afbabf522c847e0b9265f0b2ce3c6d4269caacce22d10a46733d4180d28',
+  campaignName:'6e44d6304ab1db8bbb6857a603875f881e7f8f21fa88160106dd3352c49f455e',campaignContent:'c090a5b5df2a8b03eb48c932632f10ed2ef80c3cc456de62768d4cb524605a5c',
+  campaignTerm:'fd5b87d265e3aa986e48cd74db090c59b34fbd915bbe06f591e0d74f4c1fb4f6',hostname:'10fae7bb0dd687a4f915098c26d685de2a01c536c0b5c3dcab23b232be838792',
+  screen:'49527156c6d8d87a54a32663576fe52c4a60c3849607e1460fa7380fc77245b8',channel:'0d813c6b6b3e117355e28a715489ec4681bbe29d6a1a2e4622cdb0d912f80338',
+  tag:'3cdb61917806ff33a7bfb4f0fa77af2e106bcbb12607ee468f640a86fd7dfa6b','mixed-browser':'4f14e89aaaeabda5e554c863fa26d49571f502a31e47b607c4ee24efe9c79e60',
+  'mixed-os':'e3761f230e3943df38ea4a5c95604fb4f1d1dc72bab64160b0a0c098cb8898fd','mixed-country':'81d333b2d9d8b36f90412ac60949f941e9c07dee260f7d58f82a616874a542e1',
+  'mixed-region':'1a596c11f50d9449a96f6fc598fb52415f41994022a986960f346622ac7b1856','mixed-city':'3bfb8eec9680e8a2c64d9a0e49f43c98ab6476387d2018e0558fec29982113ab',
+  'mixed-path':'275a30fe9c8e7643af8d10eedd1f727ce05eed1fbd8e3e9f4d8713df3660f0f5','mixed-event':'a40acba62ce78a777a4d35240db524bfc6dc8dca48724ce82ac59ee91eead401',
+  'mixed-channel':'cba67f3ed68ea9f34bdcd77e006b006b5900dd5d1b2e5a3ef4c67d69ece27039','mixed-chromeCountry':'bf2b15476bd6823a938a2585a1fcec55c47604dad6920d72dfeedf6532c862d6',
+  'mixed-usBrowser':'dc0542c14b93436c9ca52e72e6daf7f9f2e9f2fadd714db7f6ddcd1466f1f308',
+ };
+ const unfilteredActual:Record<string,string>={};
+ for(const [id,name,extra]of unfiltered){
+  const report=await projectAnalytics(id,owner,new URLSearchParams({...range,...extra}));
+  unfilteredActual[name]=createHash('sha256').update(JSON.stringify(report,(key,value)=>key==='asOf'||key==='generatedAt'?undefined:value)).digest('hex');
+ }
+ assert.deepEqual(unfilteredActual,unfilteredExpected,'Every Compare dimension keeps its pre-#414 bytes without a selection.');
  // Its plan (#414): one window finds the selected visits, and the overview, environment, location and location-dimension measurements
  // aggregate those visits without another; no materialized CTE carries the event's whole `dimensions` object. dev planned five such
  // windows, one sorting every period's scoped rows again, over a scoped CTE that did. Plan structure only, so the volume does not matter.
  // Both checks read PG18's EXPLAIN (VERBOSE) text: a WindowAgg's "Window: w1 AS (PARTITION BY ...)" line, and a CTE as its
  // "CTE name" line, its top node, then that node's "Output: col, ..." line. A changed format fails closed: no window line fails the
  // count of one, and a CTE listing that no longer parses fails the selection_rows check, instead of either passing.
- let statement:{text:string;values:unknown[]}|undefined;const originalQuery=pg.Client.prototype.query;
- pg.Client.prototype.query=function(this:pg.Client,...args:unknown[]){if(typeof args[0]==='string'&&args[0].includes('key_authority AS MATERIALIZED'))statement={text:args[0],values:args[1] as unknown[]};return (originalQuery as (...v:unknown[])=>unknown).apply(this,args);} as typeof originalQuery;
- try{await projectAnalytics(project,owner,new URLSearchParams({...range,...selections.country}));}finally{pg.Client.prototype.query=originalQuery;}
- const verbose=(await pool.query('EXPLAIN (VERBOSE) '+statement!.text,statement!.values)).rows.map(row=>row['QUERY PLAN']).join('\n');
- assert.equal(verbose.split('\n').filter(line=>/Window: \w+ AS \(PARTITION BY .*visitor_id/.test(line)).length,1,'One window over the scoped rows finds the selected visits.');
+ const overviewPlan=async(id:string,extra:Record<string,string>)=>{
+  let statement:{text:string;values:unknown[]}|undefined;const originalQuery=pg.Client.prototype.query;
+  pg.Client.prototype.query=function(this:pg.Client,...args:unknown[]){if(typeof args[0]==='string'&&args[0].includes('key_authority AS MATERIALIZED'))statement={text:args[0],values:args[1] as unknown[]};return (originalQuery as (...v:unknown[])=>unknown).apply(this,args);} as typeof originalQuery;
+  try{await projectAnalytics(id,owner,new URLSearchParams({...range,...extra}));}finally{pg.Client.prototype.query=originalQuery;}
+  return (await pool.query('EXPLAIN (VERBOSE) '+statement!.text,statement!.values)).rows.map(row=>row['QUERY PLAN']).join('\n');
+ };
+ const visitWindows=(plan:string)=>plan.split('\n').filter(line=>/Window: \w+ AS \(PARTITION BY .*visitor_id/.test(line)).length;
+ const verbose=await overviewPlan(project,selections.country);
+ assert.equal(visitWindows(verbose),1,'One window over the scoped rows finds the selected visits.');
  const cteOutputs=[...verbose.matchAll(/^\s*CTE (\w+)\n.*\n\s*Output: (.*)$/gm)];
  assert.ok(cteOutputs.some(([,name])=>name==='selection_rows'),'The plan lists each materialized CTE with its output columns.');
  assert.deepEqual(cteOutputs.filter(([,,output])=>/\.dimensions(,|$)/.test(output)).map(([,name])=>name),[],'No materialized CTE carries the whole dimensions object.');
+ // Without a selection (#414), a location or environment dimension aggregates no labeled rows: it reads its period's location or
+ // environment rows, so no "Group Key:"/"Hash Key:" line names a label. Any other dimension joins each label's matching visits to the
+ // period's visits instead of a window over both. dev grouped every row by label and matched visits in a window. The checks also
+ // require the lines they count to parse, so a changed format fails them.
+ const countryPlan=await overviewPlan(project,{compare:'prev',dimension:'country'}),keys=countryPlan.split('\n').filter(line=>/^\s*(Group|Hash) Key: /.test(line));
+ assert.ok(keys.length>0&&keys.every(line=>!/\blabel\b/.test(line)),'A location dimension groups no labeled rows.');
+ const pathPlan=await overviewPlan(project,{compare:'prev',dimension:'path'});
+ assert.ok(/Window: \w+ AS \(PARTITION BY /.test(pathPlan)&&visitWindows(pathPlan)===0,'A path dimension joins its matching visits rather than windowing them.');
  // The overview evaluates the geography projection once per distinct stored geography text and the self-referral test once per
  // referrer host and recorded origin (#414). Equal builds written differently (one past the 2,048-byte limit), absent and JSON-null
  // geographies, non-string hosts, missing origins and self, www and foreign referrers pin those keys to the bytes recorded on dev.
@@ -469,6 +511,6 @@ async function runOverviewPlanChecks(pool:pg.Pool,workspace:string,owner:string)
  const plan=(await pool.query(`EXPLAIN SELECT ${geographyProjectionSql('e')} FROM event e WHERE false`)).rows.map(row=>row['QUERY PLAN']).join('\n');
  const perRow=Number(plan.match(/SubPlan 1\n\s*->\s+[^(]+\(cost=[\d.]+\.\.([\d.]+)/)?.[1]);
  assert.ok(perRow>0&&perRow<1,`The geography projection evaluates the raw object once per row (per-row cost ${perRow}).`);
- console.log('PASS the overview returns identical bytes across overview, Compare, dimension, selection (with every Compare dimension), filter and location-detail shapes, finds a selection\'s visits with one window over narrow rows, keys its once-per-value geography and referrer evaluations exactly and projects geography once per row');
+ console.log('PASS the overview returns identical bytes across overview, Compare, dimension, selection (with every Compare dimension), filter and location-detail shapes, finds a selection\'s visits with one window over narrow rows, measures unfiltered dimensions without regrouping labeled rows, keys its once-per-value geography and referrer evaluations exactly and projects geography once per row');
 }
 if(import.meta.main){try{await runComparisonChecks();}finally{await closeDatabase();}}
