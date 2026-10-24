@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, CodeBlock, CopyButton, Dialog, Disclosure, EmptyState, Field, Fieldset, InlineCode, Input, RadioGroup, SecretField, Select, Stack, Tabs, Text, useConfirmDialog } from '@ten98/ui'
+import { Alert, Button, Card, CodeBlock, CopyButton, Dialog, Disclosure, EmptyState, Field, Fieldset, Heading, InlineCode, Input, RadioGroup, SecretField, Select, Stack, Tabs, Text, useConfirmDialog } from '@ten98/ui'
 import type { ReactNode } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { formatRelativeInstant } from '../lib/report-time'
@@ -26,12 +26,13 @@ interface CreatedKey {
 
 const expiryOptions = [{ value: '30', label: '30 days' }, { value: '90', label: '90 days' }, { value: '365', label: '365 days' }]
 
-export function ApiKeysPanel({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {
+/** `appUrl` is the installation's configured, trailing-slash-free public URL; the MCP endpoint is derived from it. */
+export function ApiKeysPanel({ workspaceId, appUrl, onUnauthorized }: { workspaceId: string; appUrl: string; onUnauthorized: () => void }) {
   // key discards previous workspace state and one-time secrets synchronously on switch
-  return <ApiKeysInner key={workspaceId} workspaceId={workspaceId} onUnauthorized={onUnauthorized} />
+  return <ApiKeysInner key={workspaceId} workspaceId={workspaceId} appUrl={appUrl} onUnauthorized={onUnauthorized} />
 }
 
-function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {
+function ApiKeysInner({ workspaceId, appUrl, onUnauthorized }: { workspaceId: string; appUrl: string; onUnauthorized: () => void }) {
   const [keys, setKeys] = useState<ApiKey[] | null>(null)
   const [confirm, confirmDialog] = useConfirmDialog({ danger: true })
   const [listError, setListError] = useState('')
@@ -53,6 +54,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
   const controllers = useRef<Set<AbortController>>(new Set())
   const mutLock = useRef(false) // synchronous lock: blocks duplicate mutations before React state lands
   const createdId = useRef<string | null>(null)
+  const revealHeading = useRef<HTMLHeadingElement>(null)
   const unauthorized = useRef(onUnauthorized)
   unauthorized.current = onUnauthorized
   const busy = loading || creating || revokingId !== null
@@ -124,6 +126,9 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // The create form is replaced by the reveal, so move focus to its warning rather than leave it on a removed control.
+  useEffect(() => { if (created) revealHeading.current?.focus() }, [created])
 
   function openCreate(initial: ApiKeyPresetId) {
     if (busy) return
@@ -274,7 +279,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
 
   const current = keys.filter((k) => !k.revokedAt)
   const revoked = keys.filter((k) => k.revokedAt)
-  const serverUrl = `${window.location.origin}/api/mcp`
+  const serverUrl = `${appUrl}/api/mcp`
   const snippets = mcpClientSnippets(serverUrl)
 
   const dialogFooter = created
@@ -337,7 +342,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
         {created
           ? (
             <Stack gap={3}>
-              <Alert tone="warning">Copy this key now. You won't see it again.</Alert>
+              <Alert tone="warning"><Heading level={3} size="sm" ref={revealHeading} tabIndex={-1}>Copy this key now. You won't see it again.</Heading></Alert>
               <SecretField label={`API key for ${created.key.name}`} value={created.token} />
               <CopyButton value={created.token} label="Copy" />
             </Stack>

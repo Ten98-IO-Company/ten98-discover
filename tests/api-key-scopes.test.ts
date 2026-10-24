@@ -22,8 +22,14 @@ test('the scope catalog is the exact sixteen-name ordered list with one family:v
 test('the key panel hand copy names every catalog scope exactly once',()=>{
  // The panel's Custom rows come from src/lib/api-key-presets.ts, grouped by area rather than in catalog order.
  const listed=apiKeyScopeGroups.flatMap(group=>group.rows.flatMap(row=>[row.read,row.write].filter(scope=>scope!==undefined)));
+ assert.deepEqual(listed,['projects:read','projects:write','analytics:read','events:write','segments:read','annotations:read','prompts:read','prompts:write','context:read','context:write','rank:read','keywords:read','google:read','domains:read','audits:read','team:read']);
  assert.equal(listed.length,apiKeyScopes.length);
  assert.deepEqual([...listed].sort(),[...apiKeyScopes].sort());
+ // node --test cannot import .tsx; pin the panel by its source text: it renders the shared rows and hand-copies no scope ids.
+ const source=read('../src/components/ApiKeysPanel.tsx');
+ assert.match(source,/import \{[^}]*\bapiKeyScopeGroups\b[^}]*\} from '\.\.\/lib\/api-key-presets'/);
+ assert.match(source,/apiKeyScopeGroups\.map\(/);
+ assert.doesNotMatch(source,/['"`][a-z]+:(read|write)['"`]/);
 });
 
 test('migration 0062 names each of its thirteen scopes exactly once and no later or deferred scope',()=>{
