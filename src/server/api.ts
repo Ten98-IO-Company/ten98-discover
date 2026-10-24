@@ -15,7 +15,7 @@ import {getProjectDeletion,deleteProject} from './project-delete.ts';
 import {identifyBodyLimit,parseIdentifyInput} from './identify-input.ts';
 import {collectIdentify,IdentifyRequestExpired} from './native-identify.ts';
 import { extractAnalyticsPeer } from './analytics-network.ts';
-import { clientAddressesIdentifyVisitors, clientRateKey, emailLimitKey, visitorRateKey } from './client-rate-limit.ts';
+import { clientAddressesIdentifyVisitors, clientRateKey, clientRateLimit, emailLimitKey, visitorRateKey } from './client-rate-limit.ts';
 import { collectionOriginAllowed } from './collection-origins.ts';
 import { projectAnalytics } from './analytics.ts';
 import {exportAnalytics,analyticsExportLimits} from './analytics-export.ts';
@@ -376,7 +376,8 @@ export async function handleApi(request: Request): Promise<Response> {
     // While unclaimed, the first sign-up becomes instance operator and workspace owner. POST /api/auth/setup is canonical and must
     // stay ahead of the /api/auth/ catch-all below; /api/setup is the retained alias. Both share one per-client bucket.
     if ((path === '/api/auth/setup' || path === '/api/setup') && request.method === 'POST') {
-      await limitWindow(clientRateKey(request, 'setup'), 10, 15);
+      const perClient = clientRateLimit(request, 'setup');
+      await limitWindow(perClient.key, perClient.maximum, 15);
       const body = await readJson(request) as Parameters<typeof claimInstallation>[0];
       await claimInstallation(body);
       const signIn = await getAuth().handler(new Request(`${config.appUrl}/api/auth/sign-in/email`, {

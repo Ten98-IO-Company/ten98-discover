@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { FoundationError } from '../src/server/auth.ts';
 import { handleAccountSecurity } from '../src/server/account-security.ts';
-import { clientLimitKey, clientRateKey, requestClientAddress, visitorRateKey } from '../src/server/client-rate-limit.ts';
+import { clientLimitKey, clientRateIdentity, clientRateKey, clientRateLimit, clientRateLimits, requestClientAddress, visitorRateKey } from '../src/server/client-rate-limit.ts';
 import { getConfig } from '../src/server/config.ts';
 
 const appUrl = 'http://localhost:3000';
@@ -139,11 +139,72 @@ test('sign-in limits count per client, and the same client is still limited', as
       assert.equal(await signIn(fromPeer, '198.51.100.8'), 'reached account limit', 'another client keeps its own budget');
       assert.equal(accountKeys.length, 61, 'per-account limits still apply after the client limit');
       const plain = (path: string, init?: RequestInit) => new Request(new URL(path, appUrl), init);
-      for (let index = 0; index < 60; index++) assert.equal(await signIn(plain), 'reached account limit');
-      assert.equal(await signIn(plain), 429, 'unknown clients share one conservative key');
+      for (let index = 0; index < 15; index++) assert.equal(await signIn(plain), 'reached account limit');
+      assert.equal(await signIn(plain), 429, 'unknown clients share one conservative key with a quarter of the resolved ceiling');
       assert.equal(await signIn(fromPeer, '198.51.100.9'), 'reached account limit', 'the unknown key does not limit resolved clients');
-      assert.equal(counts.get('signin:client:unresolved'), 61);
+      assert.equal(counts.get('signin:client:unresolved'), 16);
       assert.deepEqual([...counts.keys()].filter(key => key !== 'signin:client:unresolved').map(key => /^signin:client:[A-Za-z0-9_-]{43}$/.test(key)), [true, true, true]);
+    });
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
+    Object.assign(process.env, previous);
+  }
+});
+
+test('a request exposes whether its client resolved, and unresolved clients get a quarter of each resolved ceiling', async () => {
+  assert.deepEqual(clientRateLimits, {
+    signin: { resolved: 60, unresolved: 15 },
+    'two-factor': { resolved: 60, unresolved: 15 },
+    'oidc:start': { resolved: 60, unresolved: 15 },
+    'oidc:callback': { resolved: 120, unresolved: 30 },
+    setup: { resolved: 10, unresolved: 2 },
+  }, 'resolved ceilings are unchanged');
+  for (const { resolved, unresolved } of Object.values(clientRateLimits)) assert.equal(unresolved, Math.max(1, Math.floor(resolved / 4)));
+  await withTransport(async fromPeer => {
+    const trusted = { ...baseEnv, TRUSTED_PROXIES: '127.0.0.1' };
+    for (const scope of Object.keys(clientRateLimits) as (keyof typeof clientRateLimits)[]) {
+      const viaProxy = fromPeer('/', { headers: { 'x-forwarded-for': '198.51.100.7' } });
+      const real = clientLimitKey(scope, '198.51.100.7', baseEnv.AUTH_SECRET), unresolved = `${scope}:client:unresolved`;
+      assert.deepEqual(clientRateIdentity(viaProxy, scope, trusted), { key: real, resolved: true });
+      assert.equal(clientRateKey(viaProxy, scope, trusted), real, 'the key is the identity key');
+      assert.deepEqual(clientRateLimit(viaProxy, scope, trusted), { key: real, maximum: clientRateLimits[scope].resolved }, `${scope}: a resolved client keeps its ceiling`);
+      assert.deepEqual(clientRateLimit(fromPeer('/'), scope, trusted), { key: unresolved, maximum: clientRateLimits[scope].unresolved }, `${scope}: a trusted peer without a chain is unresolved`);
+      assert.deepEqual(clientRateLimit(fromPeer('/', { headers: { 'x-forwarded-for': 'malformed' } }), scope, trusted), { key: unresolved, maximum: clientRateLimits[scope].unresolved });
+      // An untrusted peer's forwarding header can neither choose its key nor make it unresolved.
+      for (const forwarded of ['203.0.113.9', 'malformed', '']) {
+        assert.deepEqual(clientRateLimit(fromPeer('/', { headers: { 'x-forwarded-for': forwarded } }), scope, { ...baseEnv, TRUSTED_PROXIES: '10.0.0.0/8' }), { key: clientLimitKey(scope, '127.0.0.1', baseEnv.AUTH_SECRET), maximum: clientRateLimits[scope].resolved }, `${scope}: ${forwarded || 'empty'}`);
+        assert.deepEqual(clientRateLimit(fromPeer('/', { headers: { 'x-forwarded-for': forwarded } }), scope, baseEnv), { key: clientLimitKey(scope, '127.0.0.1', baseEnv.AUTH_SECRET), maximum: clientRateLimits[scope].resolved });
+      }
+    }
+  });
+  assert.deepEqual(clientRateIdentity(new Request(`${appUrl}/`, { headers: { 'x-forwarded-for': '198.51.100.7' } }), 'signin', baseEnv), { key: 'signin:client:unresolved', resolved: false }, 'headers never stand in for a missing transport');
+});
+
+test('two-factor limits keep 60 per resolved client and a quarter for unresolved clients', async () => {
+  const previous = { ...process.env };
+  Object.assign(process.env, baseEnv, { TRUSTED_PROXIES: '127.0.0.1' });
+  const counts = new Map<string, number>();
+  // The per-challenge key ends the request before the database transaction.
+  const limit = async (key: string, maximum: number) => {
+    if (!key.includes(':client:')) throw new Error('reached challenge limit');
+    const count = (counts.get(key) ?? 0) + 1;
+    counts.set(key, count);
+    if (count > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
+  };
+  const verify = (make: (path: string, init?: RequestInit) => Request, client?: string) => handleAccountSecurity(make('/api/auth/two-factor/verify-totp', {
+    method: 'POST',
+    headers: { origin: appUrl, 'content-type': 'application/json', ...(client ? { 'x-forwarded-for': client } : {}) },
+    body: JSON.stringify({ code: '123456' }),
+  }), limit).then(() => 'completed', (error: unknown) => error instanceof FoundationError ? error.status : (error as Error).message);
+  try {
+    await withTransport(async fromPeer => {
+      for (let index = 0; index < 60; index++) assert.equal(await verify(fromPeer, '198.51.100.7'), 'reached challenge limit');
+      assert.equal(await verify(fromPeer, '198.51.100.7'), 429, 'a resolved client keeps 60 per minute');
+      const plain = (path: string, init?: RequestInit) => new Request(new URL(path, appUrl), init);
+      for (let index = 0; index < 15; index++) assert.equal(await verify(plain), 'reached challenge limit');
+      assert.equal(await verify(plain), 429, 'unresolved clients share 15 per minute');
+      assert.equal(await verify(fromPeer, '198.51.100.8'), 'reached challenge limit', 'the unresolved key does not limit resolved clients');
+      assert.equal(counts.get('two-factor:client:unresolved'), 16);
     });
   } finally {
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];

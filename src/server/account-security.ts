@@ -5,7 +5,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { FoundationError, getAuth } from './auth.ts';
 import { getConfig } from './config.ts';
-import { clientRateKey, emailLimitKey } from './client-rate-limit.ts';
+import { clientRateKey, clientRateLimit, emailLimitKey } from './client-rate-limit.ts';
 import { getDatabase } from './db.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
 import { readJson } from './validation.ts';
@@ -271,7 +271,8 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
 
   if (signIn) {
     const details = parsed(signInInput, input);
-    await limit(clientRateKey(request, 'signin'), 60);
+    const perClient = clientRateLimit(request, 'signin');
+    await limit(perClient.key, perClient.maximum);
     await limit(emailLimitKey('signin', details.email), 5);
     return transaction(async (client, auth) => {
       await client.query('SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE', [details.email]);
@@ -285,7 +286,8 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
   if (challenge) {
     const totp = path.endsWith('/verify-totp');
     const details = parsed(totp ? codeInput : backupInput, input);
-    await limit(clientRateKey(request, 'two-factor'), 60);
+    const perClient = clientRateLimit(request, 'two-factor');
+    await limit(perClient.key, perClient.maximum);
     const cookie = getSessionCookie(request, { cookieName: 'two_factor' }) ?? '';
     await limit(`two-factor:${createHash('sha256').update(cookie).digest('hex')}`, 10);
     return transaction(async (client, auth) => {
