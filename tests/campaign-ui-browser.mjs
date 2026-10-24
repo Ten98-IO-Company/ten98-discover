@@ -148,7 +148,8 @@ async function shellGeometry(label){
    finally{await header.evaluate((e,original)=>{if(original.value)e.style.setProperty('height',original.value,original.priority);else e.style.removeProperty('height');},original);}
    assert.equal(await headerContentContained(),true,label+' header context recovers after restoring inline height');
   }
-  if(width>760)assert.equal(side.width,width>=1500?245:width<=1200?210:232,label+' Campaign sidebar width');
+  // Discover no longer overrides the shell width, so the sidebar must match the library token exactly (#457).
+  if(width>760){const token=await sidebar.evaluate(e=>{const probe=document.createElement('div');probe.style.cssText='position:absolute;visibility:hidden;width:var(--t98-sidebar-width)';e.append(probe);const px=probe.getBoundingClientRect().width;probe.remove();return px;});assert.ok(token>0,label+' library sidebar token resolves');assert.equal(Math.round(side.width),Math.round(token),label+' library sidebar width');}
   else{
    const menu=page.getByRole('button',{name:'Menu',exact:true});await menu.click();await page.locator('.t98-shell-sidebar[data-sidebar-state="open"]').waitFor();assert.equal((await style(sidebar)).width,Math.min(320,width-32));assert.equal(await page.locator('.t98-shell-workspace').evaluate(e=>e.inert),true,'Background becomes inert');
    const focusables=page.locator('.t98-shell-sidebar a[href]:visible,.t98-shell-sidebar button:not(:disabled):visible,.t98-shell-sidebar select:not(:disabled):visible');const first=focusables.first(),last=focusables.last();await last.focus();await page.keyboard.press('Tab');assert.equal(await first.evaluate(e=>document.activeElement===e),true,'Drawer Tab wraps to first');await page.keyboard.press('Shift+Tab');assert.equal(await last.evaluate(e=>document.activeElement===e),true,'Drawer Shift+Tab wraps to last');
