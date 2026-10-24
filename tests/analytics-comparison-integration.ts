@@ -358,15 +358,82 @@ async function runOverviewPlanChecks(pool:pg.Pool,workspace:string,owner:string)
   selectionActual[name]=createHash('sha256').update(JSON.stringify(report,(key,value)=>key==='asOf'||key==='generatedAt'?undefined:value)).digest('hex');
  }
  assert.deepEqual(selectionActual,selectionExpected,'A selection measures its visits and dimension rows with the pre-#414 bytes.');
+ // In that fixture each visit keeps one browser and location. Here a selected visit's matching page view has one browser, OS and
+ // location and its later rows another, beside visits matched only by a custom event, id-less rows, a visit id shared by two visitors,
+ // a visit across the period boundary and empty or unrecorded values, so environment and location rows must scope each visit (#384).
+ const mixed=randomUUID();await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Overview mixed visits','https://adv.test',$3,'infinity')",[mixed,workspace,randomUUID()]);
+ await pool.query(`WITH r(vis,vid,t,name,path,br,os,geo,ref) AS (VALUES
+   ('u1','v1','03-03 10:00','page_view','/a','chrome','Linux','{"country":"US","region":{"code":"US-CA","name":"California"},"city":"San Francisco"}'::jsonb,'news.example'),
+   ('u1','v1','03-03 10:01','page_view','/b','firefox','Windows 10','{"country":"DE","region":{"code":"DE-BE","name":"Berlin"},"city":"Berlin"}','adv.test'),
+   ('u1','v1','03-03 10:02','signup','/b','safari','Windows 10',NULL,NULL),
+   ('u1','v1','03-03 10:05','page_view','/c','firefox','Windows 10','{"country":"DE","region":{"code":"DE-BE","name":"Berlin"},"city":"Berlin"}','adv.test'),
+   ('u2','v2','03-04 09:00','page_view','/a','firefox','Linux','{"country":"DE","region":{"code":"DE-BE","name":"Berlin"},"city":"Berlin"}','search.example'),
+   ('u2','v2','03-04 09:03','page_view','/a','chrome','Linux','{"country":"US","region":{"code":"US-CA","name":"California"},"city":"Los Angeles"}','news.example'),
+   ('u2','v2','03-04 09:09','page_view','/d','chrome','macOS','{"country":"US","region":{"code":"US-CA","name":"California"},"city":"San Francisco"}','adv.test'),
+   ('u3','v3','03-05 08:00','page_view','/a',NULL,'Linux',NULL,'news.example'),
+   ('u3','v3','03-05 08:02','page_view','/e','chrome','Linux','{"country":"US","region":{"code":"US-IL","name":"Illinois"},"city":"Springfield"}','adv.test'),
+   ('u4','v4','03-05 12:00','page_view','/z','firefox','Linux','{"country":"FR","region":null,"city":null}','other.example'),
+   ('u4','v4','03-05 12:01','signup','/a','chrome','Linux','{"country":"US","region":null,"city":null}',NULL),
+   ('u5','v5','03-06 07:00','page_view','/a','chrome','Linux','{"country":"US","region":null,"city":null}','news.example'),
+   ('u5','v5','03-06 07:01','page_view','/b','firefox','Linux','{"country":"DE","region":null,"city":null}','adv.test'),
+   (NULL,NULL,'03-06 08:00','page_view','/a','chrome','Linux','{"country":"US","region":null,"city":null}','news.example'),
+   (NULL,NULL,'03-06 08:01','page_view','/b','safari','Linux','{"country":"GB","region":null,"city":null}','adv.test'),
+   ('u7a','v7','03-06 09:00','page_view','/a','chrome','Linux','{"country":"US","region":null,"city":null}','news.example'),
+   ('u7a','v7','03-06 09:02','page_view','/q','safari','macOS','{"country":"GB","region":null,"city":null}','adv.test'),
+   ('u7b','v7','03-06 09:01','page_view','/q','firefox','Linux','{"country":"DE","region":null,"city":null}','adv.test'),
+   ('u8','v8','02-29 23:59','page_view','/b','safari','macOS','{"country":"GB","region":null,"city":null}','other.example'),
+   ('u8','v8','03-01 00:01','page_view','/a','chrome','macOS','{"country":"US","region":null,"city":null}','news.example'),
+   ('u8','v8','03-01 00:03','page_view','/b','safari','macOS','{"country":"GB","region":null,"city":null}','adv.test'),
+   ('u9','v9','02-25 10:00','page_view','/a','chrome','Linux','{"country":"US","region":{"code":"US-CA","name":"California"},"city":"San Francisco"}','news.example'),
+   ('u9','v9','02-25 10:04','page_view','/f','','Linux','{"country":null,"region":null,"city":null}','adv.test'),
+   ('u9','v9','02-25 10:05','signup','/f','firefox','Linux','{"country":"DE","region":null,"city":null}',NULL),
+   ('u1','v10','03-07 10:00','page_view','/a','firefox','Linux','{"country":"DE","region":null,"city":null}','news.example'),
+   ('u1','v11','03-07 11:00','page_view','/a','chrome','Linux','{"country":"US","region":null,"city":null}','search.example'),
+   ('u12','v12','03-02 10:00','page_view','/a','chrome','Linux','{"country":"US","region":{"code":"US-CA","name":"California"},"city":"Springfield"}','news.example'),
+   ('u12','v12','03-02 10:01','page_view','/a','firefox','Linux','{"country":"US","region":{"code":"US-IL","name":"Illinois"},"city":"Springfield"}','news.example'),
+   ('u12','v12','03-02 10:07','page_view','/g','safari','Linux','{"country":"US","region":{"code":"US-IL","name":"Illinois"},"city":"Springfield"}','adv.test'),
+   ('u12','v12','03-02 10:08','signup','/g','chrome','Linux','{"country":"US","region":{"code":"US-CA","name":"California"},"city":"Springfield"}',NULL)
+  ), visitors AS (INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) SELECT DISTINCT $1::uuid,md5(vis)||md5(vis),timestamptz '2024-02-23',timestamptz '2024-03-08' FROM r WHERE vis IS NOT NULL)
+  INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,dimensions,source,collection_basis)
+  SELECT md5('mixed-'||t||name)::uuid,$1,name,path,('2024-'||t||'Z')::timestamptz,CASE WHEN vis IS NOT NULL AND vid IS NOT NULL THEN md5(vis)||md5(vis) END,CASE WHEN vis IS NOT NULL AND vid IS NOT NULL THEN md5(vid)||md5(vid) END,
+   jsonb_strip_nulls(jsonb_build_object('environmentVersion',$2::text,'browser',br,'os',os,'device','desktop','origin','https://adv.test','referrerHost',ref,'language',CASE WHEN path='/a' THEN 'en' ELSE 'de' END))
+   ||CASE WHEN geo IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('geography',jsonb_build_object('version','dbip-city-lite-v1','databaseBuild',1767225600,'databaseSha256',repeat('a',64))||geo) END,'browser','consent'
+  FROM r`,[mixed,environmentVersion]);
+ const mixedQueries:Record<string,Record<string,string>>={
+  overview:{selection:news,compare:'prev'},browser:{selection:news,compare:'prev',dimension:'browser'},os:{selection:news,compare:'prev',dimension:'os'},
+  country:{selection:news,compare:'prev',dimension:'country'},region:{selection:news,compare:'prev',dimension:'region'},city:{selection:news,compare:'prev',dimension:'city'},
+  path:{selection:news,compare:'prev',dimension:'path'},language:{selection:news,compare:'prev',dimension:'language'},
+  chromeCity:{selection:news,browser:'chrome',compare:'prev',dimension:'city'},usBrowser:{selection:news,country:us,compare:'prev',dimension:'browser'},
+  signupBrowser:{selection:new URLSearchParams({eventName:'signup'}).toString(),compare:'prev',dimension:'browser'},
+ };
+ const mixedExpected:Record<string,string>={
+  overview:'73da9dddb076e20ea111f163bd4063375a6f7ea983e71ca46173f86a12c633e3',browser:'48e1cce9661a88a154eb23e41c3ed8cc16533b94ac0d5397351870d23de57d29',
+  os:'3df9a8845c45a5e9763bdb00a8b9511d3314c28b82ba94ff2cdbaf5ea6f2bc97',country:'7de4652d47a35c497e12392032eafc67cede833e781f43bf90d7d1da8e33d827',
+  region:'cd5fc8df0e0ed312529062504d57d9f5adcf7266eddd015af6bf764ab849cdcf',city:'f008335504ab466289750e633acaabb55aa626bfa7576fafb10d15796617cd88',
+  path:'63db2458addce1c25139bf68b4245d62c78eb3b2257d01419adad9384c9c275f',language:'92337f0dd3a512c62862f072204bd1ab83ce745a35129ca5dd308d9083fc3ce5',
+  chromeCity:'fb591002e6266b6b20f3e97f32fb5c8c7257920b9aad3c78e34ab1ba2476a84c',usBrowser:'4ca69a90e77755802c87cd5a5bf35174c1ea4c3f6e9ee534528dd2840ea406d1',
+  signupBrowser:'5c9f4a8f992079a3475eba6266643337511508fa91c78c237fcb92b0f8270122',
+ };
+ const mixedActual:Record<string,string>={};
+ for(const [name,extra]of Object.entries(mixedQueries)){
+  const report=await projectAnalytics(mixed,owner,new URLSearchParams({...range,...extra}));
+  mixedActual[name]=createHash('sha256').update(JSON.stringify(report,(key,value)=>key==='asOf'||key==='generatedAt'?undefined:value)).digest('hex');
+ }
+ assert.deepEqual(mixedActual,mixedExpected,'Mixed environment and location visits keep their pre-#414 selection bytes.');
  // Its plan (#414): one window finds the selected visits, and the overview, environment, location and location-dimension measurements
  // aggregate those visits without another; no materialized CTE carries the event's whole `dimensions` object. dev planned five such
  // windows, one sorting every period's scoped rows again, over a scoped CTE that did. Plan structure only, so the volume does not matter.
+ // Both checks read PG18's EXPLAIN (VERBOSE) text: a WindowAgg's "Window: w1 AS (PARTITION BY ...)" line, and a CTE as its
+ // "CTE name" line, its top node, then that node's "Output: col, ..." line. A changed format fails closed: no window line fails the
+ // count of one, and a CTE listing that no longer parses fails the selection_rows check, instead of either passing.
  let statement:{text:string;values:unknown[]}|undefined;const originalQuery=pg.Client.prototype.query;
  pg.Client.prototype.query=function(this:pg.Client,...args:unknown[]){if(typeof args[0]==='string'&&args[0].includes('key_authority AS MATERIALIZED'))statement={text:args[0],values:args[1] as unknown[]};return (originalQuery as (...v:unknown[])=>unknown).apply(this,args);} as typeof originalQuery;
  try{await projectAnalytics(project,owner,new URLSearchParams({...range,...selections.country}));}finally{pg.Client.prototype.query=originalQuery;}
  const verbose=(await pool.query('EXPLAIN (VERBOSE) '+statement!.text,statement!.values)).rows.map(row=>row['QUERY PLAN']).join('\n');
  assert.equal(verbose.split('\n').filter(line=>/Window: \w+ AS \(PARTITION BY .*visitor_id/.test(line)).length,1,'One window over the scoped rows finds the selected visits.');
- assert.deepEqual([...verbose.matchAll(/^\s*CTE (\w+)\n.*\n\s*Output: (.*)$/gm)].filter(([,,output])=>/\.dimensions(,|$)/.test(output)).map(([,name])=>name),[],'No materialized CTE carries the whole dimensions object.');
+ const cteOutputs=[...verbose.matchAll(/^\s*CTE (\w+)\n.*\n\s*Output: (.*)$/gm)];
+ assert.ok(cteOutputs.some(([,name])=>name==='selection_rows'),'The plan lists each materialized CTE with its output columns.');
+ assert.deepEqual(cteOutputs.filter(([,,output])=>/\.dimensions(,|$)/.test(output)).map(([,name])=>name),[],'No materialized CTE carries the whole dimensions object.');
  // The overview evaluates the geography projection once per distinct stored geography text and the self-referral test once per
  // referrer host and recorded origin (#414). Equal builds written differently (one past the 2,048-byte limit), absent and JSON-null
  // geographies, non-string hosts, missing origins and self, www and foreign referrers pin those keys to the bytes recorded on dev.
