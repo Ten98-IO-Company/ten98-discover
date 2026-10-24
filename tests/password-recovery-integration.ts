@@ -265,7 +265,8 @@ test('password recovery transaction and public-boundary checks', { timeout: 120_
       ['request', 20, '/api/auth/request-password-reset', { email: `${randomUUID()}@password-recovery.integration.test` }],
       ['reset', 60, '/api/auth/reset-password', { token: 'S'.repeat(24), newPassword: 'Synthetic password 123' }],
     ] as const) {
-      await pool.query('INSERT INTO request_limit(key,minute,count) VALUES($1,floor(extract(epoch FROM now())/60),$2) ON CONFLICT(key,minute) DO UPDATE SET count=$2', [`password-recovery:${kind}:client:unknown`, maximum]);
+      // Saturate the current and next minute so a probe that crosses a minute boundary still sees the limit.
+      await pool.query('INSERT INTO request_limit(key,minute,count) SELECT $1,floor(extract(epoch FROM now())/60)+n,$2::integer FROM generate_series(0,1) n ON CONFLICT(key,minute) DO UPDATE SET count=excluded.count', [`password-recovery:${kind}:client:unknown`, maximum]);
       assert.equal((await call(path, body)).status, 429);
     }
   });
