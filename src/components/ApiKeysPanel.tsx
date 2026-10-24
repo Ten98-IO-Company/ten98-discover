@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { EmptyState, InlineCode, Text, useConfirmDialog } from '@ten98/ui'
-import type { FormEvent } from 'react'
+import { Alert, Button, Card, CodeBlock, CopyButton, Dialog, Disclosure, EmptyState, Field, Fieldset, Heading, InlineCode, Input, RadioGroup, SecretField, Select, Stack, Tabs, Text, useConfirmDialog } from '@ten98/ui'
+import type { ReactNode } from 'react'
 import { api, ApiError, errMsg } from '../lib/api'
 import { formatRelativeInstant } from '../lib/report-time'
+import { accessLabel, apiKeyPresets, apiKeyScopeGroups, customLevelOptions, levelsFromScopes, mcpClientSnippets, scopesFromLevels } from '../lib/api-key-presets'
+import type { AccessLevel, ApiKeyPresetId } from '../lib/api-key-presets'
 
 interface ApiKey {
   id: string
@@ -22,44 +24,29 @@ interface CreatedKey {
   token: string
 }
 
-const SCOPES: { value: string; label: string }[] = [
-  { value: 'projects:read', label: 'Read projects' },
-  { value: 'projects:write', label: 'Create and edit projects' },
-  { value: 'analytics:read', label: 'Read analytics' },
-  { value: 'events:write', label: 'Send events' },
-  { value: 'team:read', label: 'Read team members' },
-  { value: 'prompts:read', label: 'Read authored prompts' },
-  { value: 'prompts:write', label: 'Create and edit authored prompts' },
-  { value: 'context:read', label: 'Read project context' },
-  { value: 'context:write', label: 'Edit project context' },
-  { value: 'segments:read', label: 'Read saved filters and cohorts' },
-  { value: 'annotations:read', label: 'Read annotations' },
-  { value: 'rank:read', label: 'Read rank trackers and rank reports' },
-  { value: 'keywords:read', label: 'Read saved keywords' },
-  { value: 'google:read', label: 'Read Google sources and saved report snapshots' },
-  { value: 'domains:read', label: 'Read domains and redirect checks' },
-  { value: 'audits:read', label: 'Read site audit history and issues' },
-]
+const expiryOptions = [{ value: '30', label: '30 days' }, { value: '90', label: '90 days' }, { value: '365', label: '365 days' }]
 
-export function ApiKeysPanel({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {
+/** `appUrl` is the installation's configured, trailing-slash-free public URL; the MCP endpoint is derived from it. */
+export function ApiKeysPanel({ workspaceId, appUrl, onUnauthorized }: { workspaceId: string; appUrl: string; onUnauthorized: () => void }) {
   // key discards previous workspace state and one-time secrets synchronously on switch
-  return <ApiKeysInner key={workspaceId} workspaceId={workspaceId} onUnauthorized={onUnauthorized} />
+  return <ApiKeysInner key={workspaceId} workspaceId={workspaceId} appUrl={appUrl} onUnauthorized={onUnauthorized} />
 }
 
-function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; onUnauthorized: () => void }) {
+function ApiKeysInner({ workspaceId, appUrl, onUnauthorized }: { workspaceId: string; appUrl: string; onUnauthorized: () => void }) {
   const [keys, setKeys] = useState<ApiKey[] | null>(null)
   const [confirm, confirmDialog] = useConfirmDialog({ danger: true })
   const [listError, setListError] = useState('')
   const [created, setCreated] = useState<CreatedKey | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [name, setName] = useState('')
-  const [scopes, setScopes] = useState<string[]>([])
+  const [preset, setPreset] = useState<ApiKeyPresetId>('reports-read')
+  const [levels, setLevels] = useState<Record<string, AccessLevel>>(() => levelsFromScopes([]))
   const [days, setDays] = useState('90')
   const [formError, setFormError] = useState('')
   const [creating, setCreating] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [copyError, setCopyError] = useState('')
   const [revokingId, setRevokingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [client, setClient] = useState('claude-code')
 
   const alive = useRef(true)
   const reqSeq = useRef(0)
@@ -67,6 +54,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
   const controllers = useRef<Set<AbortController>>(new Set())
   const mutLock = useRef(false) // synchronous lock: blocks duplicate mutations before React state lands
   const createdId = useRef<string | null>(null)
+  const revealHeading = useRef<HTMLHeadingElement>(null)
   const unauthorized = useRef(onUnauthorized)
   unauthorized.current = onUnauthorized
   const busy = loading || creating || revokingId !== null
@@ -74,7 +62,6 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
   function applyCreated(c: CreatedKey | null) {
     createdId.current = c ? c.key.id : null
     setCreated(c)
-    if (!c) { setCopied(false); setCopyError('') }
   }
 
   function track(ac: AbortController) {
@@ -108,6 +95,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
   function handleHttpError(e: unknown, context: 'load' | 'mutation') {
     if (e instanceof ApiError && e.status === 401) {
       applyCreated(null)
+      setDialogOpen(false)
       setKeys(null)
       unauthorized.current()
       return
@@ -115,6 +103,7 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
     if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
       setKeys(null)
       applyCreated(null)
+      setDialogOpen(false)
       ++reqSeq.current
       getAbort.current?.abort()
       setLoading(false)
@@ -138,8 +127,38 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function createKey(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
+  // The create form is replaced by the reveal, so move focus to its warning rather than leave it on a removed control.
+  useEffect(() => { if (created) revealHeading.current?.focus() }, [created])
+
+  function openCreate(initial: ApiKeyPresetId) {
+    if (busy) return
+    applyCreated(null)
+    setName('')
+    setPreset(initial)
+    setLevels(levelsFromScopes(apiKeyPresets.find((p) => p.id === initial)?.scopes ?? []))
+    setDays('90')
+    setFormError('')
+    setDialogOpen(true)
+  }
+
+  // Closing by Done, Escape, the backdrop or the close button discards the one-time secret for good.
+  function closeDialog() {
+    if (creating) return
+    applyCreated(null)
+    setDialogOpen(false)
+  }
+
+  function choosePreset(value: string) {
+    const next = apiKeyPresets.find((p) => p.id === value)
+    if (!next) return
+    // Custom starts from the access of the preset it replaces, so switching keeps what was already chosen.
+    if (next.scopes === null) setLevels(levelsFromScopes(apiKeyPresets.find((p) => p.id === preset)?.scopes ?? []))
+    setPreset(next.id)
+  }
+
+  const chosenScopes = apiKeyPresets.find((p) => p.id === preset)?.scopes ?? scopesFromLevels(levels)
+
+  async function createKey() {
     if (mutLock.current || loading || !keys) return
     const trimmed = name.trim()
     const d = Number(days)
@@ -147,12 +166,12 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
       setFormError('Give the key a name between 1 and 80 characters.')
       return
     }
-    if (scopes.length === 0) {
-      setFormError('Select at least one scope so the key can do something.')
+    if (chosenScopes.length === 0) {
+      setFormError('Choose read or write access for at least one area so the key can do something.')
       return
     }
-    if (!Number.isInteger(d) || d < 1 || d > 365) {
-      setFormError('Expiration must be a whole number of days between 1 and 365.')
+    if (![30, 90, 365].includes(d)) {
+      setFormError('Choose when the key expires.')
       return
     }
     mutLock.current = true
@@ -166,14 +185,11 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
     try {
       const data = await api<CreatedKey>(`/api/workspaces/${workspaceId}/api-keys`, {
         method: 'POST',
-        body: { name: trimmed, scopes, expiresInDays: d },
+        body: { name: trimmed, scopes: [...chosenScopes], expiresInDays: d },
         signal: ac.signal,
       })
       if (!alive.current || ac.signal.aborted) return
       applyCreated(data)
-      setName('')
-      setScopes([])
-      setDays('90')
       await load()
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return
@@ -214,223 +230,160 @@ function ApiKeysInner({ workspaceId, onUnauthorized }: { workspaceId: string; on
     }
   }
 
-  async function copyToken() {
-    if (!created) return
-    const { token, key } = created
-    setCopied(false)
-    setCopyError('')
-    try {
-      await navigator.clipboard.writeText(token)
-      // async guard: only report success if this exact token is still the one on screen
-      if (!alive.current || createdId.current !== key.id) return
-      setCopied(true)
-    } catch {
-      if (!alive.current || createdId.current !== key.id) return
-      setCopyError('Automatic copy failed. Select the text in the box above and copy it yourself.')
-    }
-  }
-
-  function toggleScope(value: string, checked: boolean) {
-    setScopes((prev) => (checked ? [...prev, value] : prev.filter((s) => s !== value)))
-  }
-
-  function statusPill(k: ApiKey) {
-    if (k.revokedAt) return <span className="pill bad">Revoked</span>
-    if (new Date(k.expiresAt).getTime() <= Date.now()) return <span className="pill bad">Expired</span>
-    return <span className="pill">Not revoked</span>
-  }
-
-  const fmt = (iso: string) => new Date(iso).toLocaleDateString()
+  const relativeTime = (iso: string) => <Text as="time" dateTime={iso} title={new Date(iso).toLocaleString()}>{formatRelativeInstant(iso)}</Text>
+  const keyCells = (k: ApiKey) => <>
+    <td style={{ minWidth: '8rem', maxWidth: '18rem', overflowWrap: 'anywhere' }}>{k.name}</td>
+    <td>
+      {k.displayPrefix
+        ? <InlineCode>{k.displayPrefix}…</InlineCode>
+        : <Text as="span" size="sm" tone="muted">Created before prefixes were recorded</Text>}
+    </td>
+    <td>{accessLabel(k.scopes)}</td>
+    <td>{k.lastUsedAt ? relativeTime(k.lastUsedAt) : <Text as="span" tone="muted">Never used</Text>}</td>
+  </>
+  const keyTable = (rows: ApiKey[], last: { label: string; cell: (k: ApiKey) => ReactNode }, actions: boolean) => (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Key</th>
+            <th>Access</th>
+            <th>Last used</th>
+            <th>{last.label}</th>
+            {actions && <th aria-label="Actions" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((k) => (
+            <tr key={k.id}>
+              {keyCells(k)}
+              <td>{last.cell(k)}</td>
+              {actions && (
+                <td>
+                  <Button variant="ghost" disabled={busy} loading={revokingId === k.id} onClick={() => void revokeKey(k)}>
+                    {revokingId === k.id ? 'Revoking…' : 'Revoke'}
+                  </Button>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 
   if (keys === null) return loading
     ? <p className="dim" role="status">Loading API keys…</p>
     : <div className="alert" role="alert"><p>{listError || 'API keys are unavailable. Try again.'}</p><button type="button" className="btn" disabled={busy} onClick={() => void load()}>Retry</button></div>
 
+  const current = keys.filter((k) => !k.revokedAt)
+  const revoked = keys.filter((k) => k.revokedAt)
+  const serverUrl = `${appUrl}/api/mcp`
+  const snippets = mcpClientSnippets(serverUrl)
+
+  const dialogFooter = created
+    ? <Button variant="primary" onClick={closeDialog}>Done</Button>
+    : <>
+      <Button variant="secondary" disabled={creating} onClick={closeDialog}>Cancel</Button>
+      <Button variant="primary" type="submit" disabled={busy} loading={creating}>{creating ? 'Creating key…' : 'Create key'}</Button>
+    </>
+
   return (
-    <>
-      <div className="banner">
-        API keys grant access to <strong>this workspace only</strong>, limited to the scopes you select.
-        Every request checks its expiry, scopes, current workspace access and two-factor requirement.
+    <Stack gap={4}>
+      <div>
+        <Button variant="primary" disabled={busy} onClick={() => openCreate('reports-read')}>Create key</Button>
       </div>
 
-      <p className="hint"><a href="/api/openapi.json" target="_blank" rel="noopener noreferrer">Open native API specification (JSON)</a></p>
-
-      <div className="card">
-        <h2>Create API key</h2>
-        <form onSubmit={createKey}>
-          <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-          <div className="field">
-            <label htmlFor="ak-name">Key name</label>
-            <input
-              id="ak-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={80}
-              required
-              placeholder="e.g. CI deploy pipeline"
-              autoComplete="off"
-            />
-            <p className="hint">A name so you remember what uses this key. 1–80 characters.</p>
-          </div>
-          <fieldset className="field" style={{ border: 0, margin: 0, padding: 0 }}>
-            <legend style={{ marginBottom: 5, fontSize: 13, fontWeight: 600, padding: 0 }}>Scopes</legend>
-            {SCOPES.map((s) => (
-              <label key={s.value} style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 400, marginBottom: 6 }}>
-                <input
-                  type="checkbox"
-                  style={{ width: 'auto', margin: 0 }}
-                  checked={scopes.includes(s.value)}
-                  onChange={(e) => toggleScope(s.value, e.target.checked)}
-                />
-                <span>
-                  {s.label} <span className="dim mono">{s.value}</span>
-                </span>
-              </label>
-            ))}
-            <p className="hint">The key can only do what you tick here. Prompt write access does not include reading prompts or running paid work.</p>
-          </fieldset>
-          <div className="field">
-            <label htmlFor="ak-days">Expires after (days)</label>
-            <input
-              id="ak-days"
-              type="number"
-              min={1}
-              max={365}
-              step={1}
-              value={days}
-              onChange={(e) => setDays(e.target.value)}
-            />
-            <p className="hint">Whole days, 1–365. Default is 90.</p>
-          </div>
-          {formError !== '' && (
-            <div className="alert" role="alert">
-              {formError}
-            </div>
-          )}
-          <button className="btn primary" type="submit" disabled={busy} aria-busy={creating}>
-            {creating ? 'Creating key…' : 'Create API key'}
-          </button>
-          </fieldset>
-        </form>
-      </div>
-
-      {created !== null && (
-        <div className="card">
-          <h2>Save your new token now</h2>
-          <div className="alert" style={{ background: 'var(--amber-tint)', borderColor: '#E9DDBB', borderLeftColor: 'var(--caution)' }}>
-            This is the only time the token for <strong>{created.key.name}</strong> is shown. Store it somewhere safe now —
-            after you dismiss this, it cannot be recovered.
-          </div>
-          <textarea
-            className="snippet"
-            style={{ width: '100%' }}
-            readOnly
-            rows={3}
-            value={created.token}
-            aria-label="New API token (shown once)"
-            onFocus={(e) => e.target.select()}
-          />
-          <div className="row" style={{ marginTop: 10 }}>
-            <button type="button" className="btn" onClick={copyToken}>
-              Copy token
-            </button>
-            <button type="button" className="btn ghost" onClick={() => applyCreated(null)}>
-              I saved it — dismiss
-            </button>
-            {copied && (
-              <span className="pill good" role="status">
-                Copied
-              </span>
-            )}
-          </div>
-          {copyError !== '' && (
-            <p className="err-text" role="alert" style={{ margin: '8px 0 0' }}>
-              {copyError}
-            </p>
-          )}
-        </div>
+      {listError !== '' && (
+        <Alert tone="danger" actions={<Button variant="secondary" disabled={busy} onClick={() => void load()}>Retry</Button>}>{listError}</Alert>
       )}
 
-      <div className="card">
-        <h2>Keys for this workspace</h2>
-        {listError !== '' && (
-          <div className="alert" role="alert">
-            {listError}{' '}
-            <button type="button" className="btn ghost" disabled={busy} onClick={() => void load()}>
-              Retry
-            </button>
+      {current.length === 0 && revoked.length === 0
+        ? <EmptyState title="No API keys yet. Create one to use the API or connect an AI tool." />
+        : current.length === 0
+          ? <Text tone="muted">No usable keys. Create one to use the API or connect an AI tool.</Text>
+          : keyTable(current, { label: 'Expires', cell: (k) => new Date(k.expiresAt).getTime() <= Date.now() ? <Text as="span" tone="muted">Expired</Text> : <Text as="span" title={new Date(k.expiresAt).toLocaleString()}>{formatRelativeInstant(k.expiresAt)}</Text> }, true)}
+
+      {revoked.length > 0 && (
+        <Disclosure summary={`Revoked (${revoked.length})`}>
+          {keyTable(revoked, { label: 'Revoked', cell: (k) => <Text as="span" tone="muted" title={new Date(k.revokedAt!).toLocaleString()}>{formatRelativeInstant(k.revokedAt!)}</Text> }, false)}
+        </Disclosure>
+      )}
+
+      <Card title="Connect an AI tool with MCP" headingLevel={2} description="Point an MCP client at this server and send a key in the Authorization header.">
+        <Stack gap={3}>
+          <CodeBlock code={serverUrl} label="MCP server URL" copy />
+          <div>
+            <Button variant="secondary" disabled={busy} onClick={() => openCreate('mcp-read')}>Create MCP key</Button>
           </div>
-        )}
-        {keys === null && listError === '' && (
-          <p className="dim" role="status">
-            Loading keys…
-          </p>
-        )}
-        {keys !== null && keys.length === 0 && (
-          <EmptyState title="No API keys yet." description="Create one above to let scripts or CI talk to this workspace." />
-        )}
-        {keys !== null && keys.length > 0 && (
-          <div className="table-wrap">
-            <table style={{ minWidth: '60rem' }}>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Key</th>
-                  <th>Last used</th>
-                  <th>Scopes</th>
-                  <th>Created</th>
-                  <th>Expires</th>
-                  <th>Status</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {keys.map((k) => (
-                  <tr key={k.id}>
-                    <td style={{ minWidth: '10rem', maxWidth: '18rem', overflowWrap: 'anywhere' }}>{k.name}</td>
-                    <td>
-                      {k.displayPrefix
-                        ? <InlineCode>{k.displayPrefix}…</InlineCode>
-                        : <Text as="span" size="sm" tone="muted">Created before prefixes were recorded</Text>}
-                    </td>
-                    <td>
-                      {k.lastUsedAt
-                        ? <Text as="time" dateTime={k.lastUsedAt} title={new Date(k.lastUsedAt).toLocaleString()}>{formatRelativeInstant(k.lastUsedAt)}</Text>
-                        : <Text as="span" tone="muted">Never</Text>}
-                    </td>
-                    <td className="dim" style={{ minWidth: '12rem' }}>{k.scopes.join(', ')}</td>
-                    <td className="dim">{fmt(k.createdAt)}</td>
-                    <td className="dim">{fmt(k.expiresAt)}</td>
-                    <td>
-                      {statusPill(k)}
-                      {k.revokedAt && (
-                        <div className="dim" style={{ fontSize: 12, marginTop: 3 }}>
-                          revoked {fmt(k.revokedAt)}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      {!k.revokedAt && (
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          disabled={busy}
-                          aria-busy={revokingId === k.id}
-                          onClick={() => void revokeKey(k)}
-                        >
-                          {revokingId === k.id ? 'Revoking…' : 'Revoke'}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="footnote dim">Revoked keys stay listed here as history. Existing keys can never be re-read — only created, revoked, or replaced.</p>
-      </div>
+          <Tabs label="MCP client" value={client} onValueChange={setClient} items={snippets.map((s) => ({
+            value: s.id,
+            label: s.label,
+            content: <Stack gap={2}><Text tone="muted">{s.hint} Replace {'<your-key>'} with a key you created; keys cannot be shown again.</Text><CodeBlock code={s.code} language={s.language} label={`${s.label} setup`} copy /></Stack>,
+          }))} />
+          <Alert tone="warning">AI tools act with this key's scopes. Prefer read-only.</Alert>
+        </Stack>
+      </Card>
+
+      <Stack gap={1}>
+        <Text size="sm" tone="muted">Keys work in this workspace only. Every request checks its expiry, scopes, current workspace access and two-factor requirement. Existing keys can never be re-read — only created, revoked or replaced.</Text>
+        <Text size="sm"><a href="/api/openapi.json" target="_blank" rel="noopener noreferrer">Open native API specification (JSON)</a></Text>
+      </Stack>
+
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(next) => { if (!next) closeDialog() }}
+        closeDisabled={creating}
+        title={created ? 'Copy your new key' : 'Create key'}
+        footer={dialogFooter}
+        onSubmit={created ? undefined : () => createKey()}
+      >
+        {created
+          ? (
+            <Stack gap={3}>
+              <Alert tone="warning"><Heading level={3} size="sm" ref={revealHeading} tabIndex={-1}>Copy this key now. You won't see it again.</Heading></Alert>
+              <SecretField label={`API key for ${created.key.name}`} value={created.token} />
+              <CopyButton value={created.token} label="Copy" />
+            </Stack>
+          )
+          : (
+            <Stack gap={3}>
+              <Field label="Name" htmlFor="ak-name" description="So you remember what uses this key. 1–80 characters.">
+                <Input id="ak-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required placeholder="Weekly report script" autoComplete="off" />
+              </Field>
+              <RadioGroup
+                legend="Access"
+                name="ak-preset"
+                value={preset}
+                onValueChange={choosePreset}
+                disabled={creating}
+                options={apiKeyPresets.map((p) => ({ value: p.id, label: p.label, description: p.description }))}
+              />
+              {preset === 'custom' && apiKeyScopeGroups.map((group) => (
+                <Fieldset key={group.label} legend={group.label} disabled={creating}>
+                  {group.rows.map((row) => (
+                    <RadioGroup
+                      key={row.id}
+                      legend={row.label}
+                      name={`ak-level-${row.id}`}
+                      orientation="horizontal"
+                      value={levels[row.id] ?? 'none'}
+                      onValueChange={(value) => setLevels((prev) => ({ ...prev, [row.id]: value as AccessLevel }))}
+                      options={customLevelOptions(row)}
+                    />
+                  ))}
+                </Fieldset>
+              ))}
+              {preset === 'custom' && <Text size="sm" tone="muted">Write includes read for the same area.</Text>}
+              <Field label="Expires" htmlFor="ak-days">
+                <Select id="ak-days" value={days} onChange={(e) => setDays(e.target.value)} options={expiryOptions} disabled={creating} />
+              </Field>
+              {formError !== '' && <Alert tone="danger">{formError}</Alert>}
+            </Stack>
+          )}
+      </Dialog>
       {confirmDialog}
-    </>
+    </Stack>
   )
 }

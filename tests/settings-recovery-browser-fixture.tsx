@@ -22,7 +22,7 @@ function Fixture(){
  :view==='providers'?<ProviderPanel workspaceId={workspace} onUnauthorized={unauthorized}/>
  :view==='domains'?<DomainsPanel projectId={project} userId={user} onUnauthorized={unauthorized} onInstallTracker={()=>{}}/>
  :view==='google'?<GoogleReportsPanel projectId={project} userId={user} onUnauthorized={unauthorized}/>
- :view==='keys'?<ApiKeysPanel workspaceId={workspace} onUnauthorized={unauthorized}/>
+ :view==='keys'?<ApiKeysPanel workspaceId={workspace} appUrl={location.origin} onUnauthorized={unauthorized}/>
  :view==='team'?<TeamPanel workspaceId={workspace} userId={user} onChanged={async()=>{}} onUnauthorized={unauthorized}/>
  :<h1>Fixture away</h1>}</>;
 }
