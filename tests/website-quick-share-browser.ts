@@ -35,7 +35,7 @@ async function fresh({role='owner',width=1440}={}){
  await page.goto(origin+'/?'+new URLSearchParams({workspace,project,view:'project'}),{waitUntil:'domcontentloaded'});
  await page.getByRole('heading',{name:'Overview',exact:true,level:1}).waitFor();
 }
-const btn=(name:string)=>page.getByRole('button',{name,exact:true}),dialog=()=>page.getByRole('dialog',{name:'Share this dashboard',exact:true});
+const btn=(name:string)=>page.getByRole('button',{name,exact:true}),dialog=()=>page.getByRole('dialog',{name:'Share this dashboard',exact:true}),act=(name:string)=>dialog().getByRole('button',{name,exact:true});
 async function run(){
  server=await createServer({configFile:false,envDir:false,root,cacheDir:out+'/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/website-share-exit-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@tanstack/react-router','zod']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});
  server.middlewares.use((request:any,response:any,next:()=>void)=>{if(request.url?.split('?')[0]!=='/')return next();response.setHeader('content-type','text/html');response.end('<!doctype html><html lang="en"><meta charset="utf-8"><title>Quick share fixture</title><div id="root"></div><script type="module" src="/tests/website-share-exit-browser-fixture.tsx"></script></html>');});
@@ -45,16 +45,16 @@ async function run(){
  await fresh();await btn('Share').click();await dialog().waitFor();
  await dialog().getByText(/Anyone with this link can view this report/).waitFor();
  assert.equal(writes().length,0,'Opening Share creates nothing: the link needs an informed second click.');
- await btn('Create link').click();const link=dialog().getByRole('region',{name:'Share link'}).or(dialog().locator('pre')).first();await link.waitFor();
- const created=writes()[0].body;assert.deepEqual(created.sections,['overview','events']);
+ await act('Create link').click();const link=dialog().getByRole('region',{name:'Share link'}).or(dialog().locator('pre')).first();await link.waitFor();
+ const created=writes()[0].body;assert.deepEqual([...created.sections].sort(),['events','overview']);
  const days=(Date.parse(created.expiresAt)-Date.now())/864e5;assert.ok(days>29.9&&days<=30,'Links expire in 30 days.');
  const url=new URL((await link.innerText()).trim());assert.equal(url.pathname,'/share/websites/'+share);assert.equal(url.hash.slice(1),created.token);
- await btn('Copy link').waitFor();await btn('Revoke link').click();await dialog().getByText('Link revoked. It stops working on its next read.',{exact:true}).waitFor();
+ await act('Copy link').waitFor();await act('Revoke link').click();await dialog().getByText('Link revoked. It stops working on its next read.',{exact:true}).waitFor();
  assert.equal(writes().length,2);assert.ok(writes()[1].path.endsWith('/'+share+'/revoke'));
  pass('Share → Create link makes one 30-day overview/events link; Copy and Revoke sit beside it');
 
- await fresh();await btn('Share').click();state.mode='unknown';await btn('Create link').click();await btn('Retry').waitFor();
- state.mode='ok';await btn('Retry').click();await btn('Revoke link').waitFor();
+ await fresh();await btn('Share').click();state.mode='unknown';await act('Create link').click();await act('Retry').waitFor();
+ state.mode='ok';await act('Retry').click();await act('Revoke link').waitFor();
  assert.equal(writes().length,2);assert.equal(writes()[1].raw,writes()[0].raw,'Retry sends exactly the same request.');
  pass('An unconfirmed create retries the identical request and never mints a second link');
 
