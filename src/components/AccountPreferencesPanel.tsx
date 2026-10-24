@@ -1,5 +1,5 @@
 import {AccountProfileFlow,Alert,Button,DescriptionList,Stack,StatusLine,Text,type AccountProfileValues,type AuthNotice,type SelectOption} from '@ten98/ui';
-import {useCallback,useEffect,useRef,useState} from 'react';
+import {useCallback,useEffect,useId,useRef,useState} from 'react';
 import {useBlocker} from '@tanstack/react-router';
 import {ApiError,errMsg} from '../lib/api';
 import {accountLocaleInventory,accountLocaleMapping,accountLocales,accountPreferencesDefaults,accountPreferencesWireInputSchema,canonicalAccountTimeZone,type AccountLocale,type AccountPreferencesInput,type AccountPreferencesDto} from '../lib/account-preferences';
@@ -17,7 +17,7 @@ const detectTimeZone=()=>canonicalAccountTimeZone(Intl.DateTimeFormat().resolved
 export function AccountPreferencesPanel({expectedUserId,onUnauthorized}:{expectedUserId:string;onUnauthorized:()=>void}){
   const account=useAccountPresentation(),[draft,setDraft]=useState<Draft|null>(null),[staged,setStaged]=useState<Draft|null>(null),[generation,setGeneration]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState<AuthNotice|undefined>(),[reloadRequired,setReloadRequired]=useState(false);
   const operation=useRef(0),request=useRef<AbortController|null>(null),mounted=useRef(true),locked=useRef(false);
-  const acknowledged=useRef<AccountPreferencesDto|null>(null);
+  const acknowledged=useRef<AccountPreferencesDto|null>(null),root=useRef<HTMLElement>(null),formatHelp=useId();
   const data=account?.data?.user.id===expectedUserId?account.data:null;
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;operation.current++;request.current?.abort();};},[]);
   // Every verified read or save remounts the flow from the saved values, discarding any local draft.
@@ -52,15 +52,18 @@ export function AccountPreferencesPanel({expectedUserId,onUnauthorized}:{expecte
   }
   function restoreDefaults(){if(!draft)return;setStaged({...draft,...accountPreferencesDefaults});setGeneration(value=>value+1);acknowledged.current=null;setError('');setNotice({tone:'info',text:'Defaults are staged. Save to apply them.'});}
   const zone=draft?canonicalAccountTimeZone(draft.timeZone):null,mapping=draft?accountLocaleMapping(draft.locale):null;
+  // AccountProfileFlow has no per-field description prop, so the regional-format help is linked to the locale and
+  // time zone controls here. It runs after every render because the flow may rewrite aria-describedby for its own errors.
+  useEffect(()=>{for(const control of root.current?.querySelectorAll<HTMLElement>('select[name="locale"], input[role="combobox"]')??[]){const ids=(control.getAttribute('aria-describedby')??'').split(/\s+/).filter(Boolean);if(!ids.includes(formatHelp))control.setAttribute('aria-describedby',[...ids,formatHelp].join(' '));}});
   const preview=<Stack gap={2} role="group" aria-label="Draft format preview">
-    <Text tone="muted" size="sm">Interface text is currently English. Regional format changes dates and numbers in account settings; report formats and applied report time zones stay unchanged.</Text>
+    <Text id={formatHelp} tone="muted" size="sm">Interface text is currently English. Regional format changes dates and numbers in account settings; report formats and applied report time zones stay unchanged.</Text>
     <Text tone="muted" size="sm">Preview only · your draft</Text>
     {mapping&&zone?<DescriptionList items={[
       {term:'Number',description:<span lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.NumberFormat(mapping.formatLocale).format(1234567.89)}</span>},
       {term:'Date and time',description:<span lang={mapping.formatLocale} dir={mapping.direction}>{new Intl.DateTimeFormat(mapping.formatLocale,{timeZone:zone,dateStyle:'medium',timeStyle:'short'}).format(new Date())}</span>},
     ]}/>:<Text size="sm">This browser cannot preview that time zone. Choose a recognized named time zone to change it.</Text>}
   </Stack>;
-  return <Stack as="section" gap={4} className="account-preferences">
+  return <Stack as="section" ref={root} gap={4} className="account-preferences">
     {account?.loading&&<StatusLine busy>Loading saved preferences…</StatusLine>}
     {account?.error&&<Alert tone="danger" title={account.error}/>}
     <AccountProfileFlow key={generation} title="Your account" description="Personal settings follow your account across workspaces. Changes apply after Save changes. Email and sign-in security are managed separately."
