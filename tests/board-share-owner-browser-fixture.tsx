@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {ToastProvider} from '@ten98/ui';
 import {createRoot} from 'react-dom/client';
 import {createRootRoute,createRouter,RouterProvider} from '@tanstack/react-router';
 import {BoardsPanel,BoardShareManager} from '../src/components/BoardsPanel';
@@ -29,4 +30,4 @@ function Fixture(){
 }
 declare global{interface Window{boardShareOwnerFixture:{set:(patch:Partial<{id:string;user:string;role:BoardRole;enabled:boolean;revision:number}>)=>void;holdAck:(releaseOnUnauthorized?:boolean)=>void;heldAck:()=>boolean;releaseAck:()=>void}}}
 const parentRouter=createRouter({routeTree:createRootRoute({component:Fixture})});
-createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('parent')?<RouterProvider router={parentRouter}/>:<Fixture/>);
+createRoot(document.getElementById('root')!).render(<ToastProvider>{new URLSearchParams(location.search).has('parent')?<RouterProvider router={parentRouter}/>:<Fixture/>}</ToastProvider>);

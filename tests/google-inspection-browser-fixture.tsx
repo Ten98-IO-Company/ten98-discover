@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {ToastProvider} from '@ten98/ui';
 import {createRoot} from 'react-dom/client';
 import {GoogleReportsPanel} from '../src/components/GoogleReportsPanel';
 import '../src/styles.css';
@@ -10,4 +11,4 @@ function Fixture(){
  window.__inspectionProject=setProjectId;
  return <main style={{maxWidth:1000,margin:'20px auto',padding:'0 16px',minWidth:0}}><h1>Google reports</h1>{unauthorized?<p role="alert">Fixture signed out</p>:<GoogleReportsPanel projectId={projectId} userId={userId} onUnauthorized={()=>setUnauthorized(true)}/>}</main>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture/>);
+createRoot(document.getElementById('root')!).render(<ToastProvider>{<Fixture/>}</ToastProvider>);
