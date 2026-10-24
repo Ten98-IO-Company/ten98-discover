@@ -76,8 +76,9 @@ export function resolveAnalyticsNetwork(request: Request, peerAddress?: string, 
   return resolveClientAddress(peer, request.headers.get('x-forwarded-for'), trusted);
 }
 
-/** Umami IGNORE_IP equivalent over the trust-mode address only: headers never trigger it, and an unknown address is never excluded,
- * so behind an edge that appends to a client-supplied X-Forwarded-For a malformed or over-long chain opts that client back in. */
+/** Umami IGNORE_IP equivalent over the trust-mode address only: headers never trigger it, and an unknown address is never excluded.
+ * Entries a client puts before its own hop are never read, but behind an edge that appends to a client-supplied X-Forwarded-For an
+ * over-long chain still leaves the client unknown and so opts it back in. */
 export function analyticsAddressExcluded(request: Request, peerAddress = extractAnalyticsPeer(request), env: NodeJS.ProcessEnv = process.env): boolean {
   const address = resolveAnalyticsNetwork(request, peerAddress, env);
   return address !== null && readConfig(env).excluded.check(address, isIP(address) === 4 ? 'ipv4' : 'ipv6');
