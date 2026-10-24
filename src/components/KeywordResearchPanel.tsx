@@ -333,7 +333,7 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   if(quoteExpired)startBlockers.push('the quote expired — prepare a new one');
 
   return <section className="research-panel keyword-research stack" style={{display:'grid',gap:16,minWidth:0}} aria-busy={busy} aria-label="Keyword research">
-    <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>{st.connections.length===0?'Set up DataForSEO':'Connections'}</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
+    <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers',provider:'dataforseo'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>{st.connections.length===0?'Set up DataForSEO':'Connections'}</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
     {!isOwner&&<p className="hint">Ask a workspace owner to manage Connections or the paid-work pause. Your current role can still view saved results.</p>}
     {st.spendingPaused&&<div className="alert" role="alert">Spending is paused for this workspace. Saved history and results below remain available; new paid research is disabled.</div>}
     {msg&&<p role="status">{msg}</p>}
