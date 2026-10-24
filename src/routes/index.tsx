@@ -8,6 +8,7 @@ import type { HistoryState } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
+import { formatReportInstant } from '../lib/report-time'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
 import { WebPerformancePanel } from '../components/WebPerformancePanel'
@@ -799,12 +800,12 @@ function App() {
                 <div>
                   <h2 id='ev-h'>Retained events</h2>
                   <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
-                  {eventsReadAt !== null && <Text tone='muted'>Read {fmt(eventsReadAt)}</Text>}
+                  {eventsReadAt !== null && <Text tone='muted' title={eventsReadAt}>Read {formatReportInstant(eventsReadAt,'UTC')}</Text>}
                 </div>
                 <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
               </div>
-              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint'>History before {fmt((events?.retainedFrom ?? project.retainedFrom)!)} is unavailable after retention. This is not a lifetime total.</p>}
-              {lastReceived !== null && <p className='dim'>Last retained event received {fmt(lastReceived)}</p>}
+              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint' title={(events?.retainedFrom ?? project.retainedFrom)!}>History before {formatReportInstant((events?.retainedFrom ?? project.retainedFrom)!,'UTC')} is unavailable after retention. This is not a lifetime total.</p>}
+              {lastReceived !== null && <p className='dim' title={lastReceived}>Last retained event received {formatReportInstant(lastReceived,'UTC')}</p>}
               {eventsError !== '' && <Alert tone='danger'>{eventsError}</Alert>}
               {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
               {events !== null && events.events.length === 0 && (
@@ -817,7 +818,7 @@ function App() {
                 <>
                   <DataTable caption='Retained event rows' captionHidden responsive='stack' searchable={false} sortable={false} pagination={false} rows={events.events} rowKey={ev => ev.id}
                     columns={[{ key: 'event', header: 'Event', rowHeader: true, wrap: true, render: ev => ev.eventName }, { key: 'origin', header: 'Origin', wrap: true, render: ev => <bdi dir='ltr'>{ev.origin}</bdi> },
-                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt}>{fmt(ev.receivedAt)}</time> }]} />
+                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt} title={ev.receivedAt}>{formatReportInstant(ev.receivedAt,'UTC')}</time> }]} />
                   <p className='dim footnote'>Showing the latest {events.events.length} of {events.total} persisted events.</p>
                 </>
               )}
