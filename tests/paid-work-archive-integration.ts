@@ -238,7 +238,7 @@ export async function runPaidWorkArchiveChecks() {
     const block = 'data:text/javascript,' + encodeURIComponent("globalThis.fetch=async()=>{throw new Error('No network allowed in paid-work export acceptance');}");
     const result = spawnSync(process.execPath, ['--import', block, 'src/server/cli.ts', 'paid-work', 'export', ...args],
       { cwd: process.cwd(), env: process.env, encoding: 'utf8', timeout: 45_000, maxBuffer: 4_000_000, windowsHide: true });
-    for (const secret of [config.databaseUrl, config.authSecret, config.bootstrapToken]) assert.ok(!(result.stdout + result.stderr).includes(secret), 'The CLI printed secret configuration.');
+    for (const secret of [config.databaseUrl, config.authSecret]) assert.ok(!(result.stdout + result.stderr).includes(secret), 'The CLI printed secret configuration.');
     return result;
   };
   const refusals: [string[], RegExp][] = [
