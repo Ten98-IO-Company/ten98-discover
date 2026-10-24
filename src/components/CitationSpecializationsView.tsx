@@ -409,7 +409,7 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
             </div>
           )}
 
-          <Disclosure summary="Source filters" variant="plain">
+          <div style={{ minWidth: 0 }}><Disclosure summary="Source filters" variant="plain">
             <div style={{ ...filterGrid, marginTop: 8 }}>
               <div className="field" style={fieldFlush}>
                 <label htmlFor={`${prefix}-f-grouping`}>Grouping</label>
@@ -480,7 +480,7 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
             {rep.dirty && <p className="hint">Filters changed. Apply to update results.</p>}
             {rep.filterError !== null && <p role="alert" style={wrapAnywhere}>{rep.filterError}</p>}
             <p className="hint">Dates/base scope are changed by returning to Insights.</p>
-          </Disclosure>
+          </Disclosure></div>
 
           <div className="row" style={{ flexWrap: 'wrap', gap: 12, alignItems: 'flex-start' }}>
             {rep.periods.map((p) => (
@@ -525,7 +525,7 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
           </div>
 
           {rep.unresolved.length > 0 && (
-            <Disclosure summary="Other retained annotations" variant="plain">
+            <div style={{ minWidth: 0 }}><Disclosure summary="Other retained annotations" variant="plain">
               <ul className="stack">
                 {rep.unresolved.map((u) => (
                   <li key={u.id} className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center', minWidth: 0 }}>
@@ -547,7 +547,7 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
                   </li>
                 ))}
               </ul>
-            </Disclosure>
+            </Disclosure></div>
           )}
 
           <div className="row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -562,14 +562,14 @@ export function CitationSpecializationsView(props: CitationSpecializationsViewPr
             </button>
           </div>
 
-          <Disclosure summary="Selection details" variant="plain">
+          <div style={{ minWidth: 0 }}><Disclosure summary="Selection details" variant="plain">
             <div className="stack" style={{ minWidth: 0 }}>
               <span className="hint" style={wrapAnywhere}>{rep.snapshotLabel}</span>
               <span className="hint" style={wrapAnywhere}>{rep.groupingLabel}</span>
               <span className="hint" style={wrapAnywhere}>{rep.appliedFiltersLabel}</span>
               <span className="hint" style={wrapAnywhere}>{rep.measurementLabel}</span>
             </div>
-          </Disclosure>
+          </Disclosure></div>
         </>
       )}
     </section>

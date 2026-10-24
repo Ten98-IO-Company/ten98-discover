@@ -791,7 +791,7 @@ function ExplorerInner({projectId,userId,onUnauthorized,search,onNavigate,onAppl
         </details>
         <Disclosure summary={<>Daily data ({result.daily.length} {result.daily.length===1?'day':'days'})</>} variant="boxed">
           <DataTable ariaLabel="Daily data" {...plainTable} responsive="stack" emptyTitle="No local dates in this range." emptyDescription={null} rows={result.daily} rowKey={d=>d.date}
-            columns={[{key:'date',header:'Date',rowHeader:true,render:d=><>{d.date}{d.skipped?<div className="hint dim">This calendar date did not occur in {result.range.timeZone}.</div>:<Disclosure summary="UTC boundaries" variant="plain"><div className="hint dim">{d.start} – {d.end}</div></Disclosure>}</>},
+            columns={[{key:'date',header:'Date',rowHeader:true,render:d=><>{d.date}{d.skipped?<div className="hint dim">This calendar date did not occur in {result.range.timeZone}.</div>:<Disclosure summary={<><span className="hint dim">UTC boundaries</span></>} variant="plain"><div className="hint dim">{d.start} – {d.end}</div></Disclosure>}</>},
               {key:'events',header:'Events',numeric:true,render:d=>d.skipped?'—':num(d.events)},{key:'pageViews',header:'Page views',numeric:true,render:d=>d.skipped?'—':num(d.pageViews)},{key:'customEvents',header:'Custom events',numeric:true,render:d=>d.skipped?'—':num(d.customEvents)},
               {key:'coverage',header:'Coverage',render:d=>d.coverage},{key:'notes',header:'Notes',render:d=>annotations.dayButton(d.date)}]}/>
         </Disclosure>
