@@ -39,7 +39,7 @@ import {listAnalyses,getAnalysis,saveAnalysis,deleteAnalysis,runAnalysis} from '
 import { getRetention, previewRetention, saveRetention } from './retention.ts';
 import {getProjectContext,getContextResearch,updateProjectContext} from './project-context.ts';
 import {getPrompt,listPrompts,createPrompts,updatePrompt,setPromptArchived,promptVersions} from './prompts.ts';
-import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
+import { acceptInvitation, changeRole, createWorkspace, getTeam, inspectInvitation, inviteMember, removeMember, renameWorkspace, requireWorkspaceFactor, revokeInvitation, rotateInvitation, setTwoFactorRequirement, transferOwnership } from './teams.ts';
 import { handleAccountSecurity } from './account-security.ts';
 import { AccountClosureBlocked } from './account-closure.ts';
 import { getEmailStatus, sendTransactionalEmail } from './email.ts';
@@ -113,8 +113,8 @@ async function limit(key: string, maximum: number, client?:PoolClient) {
 }
 
 /** Counts like limit, then refuses once the key's total over the last `minutes` minutes (at most 60, the expiry) exceeds the maximum. */
-async function limitWindow(key: string, maximum: number, minutes: number) {
-  const { rows } = await getDatabase().pool.query(
+async function limitWindow(key: string, maximum: number, minutes: number, client?: PoolClient) {
+  const { rows } = await (client ?? getDatabase().pool).query(
     `WITH expired AS (DELETE FROM request_limit WHERE minute < floor(extract(epoch FROM now()) / 60) - 60),
      current AS (INSERT INTO request_limit(key,minute,count) VALUES ($1,floor(extract(epoch FROM now()) / 60),1)
        ON CONFLICT(key,minute) DO UPDATE SET count=LEAST(request_limit.count+1,$2::integer+1) RETURNING minute,count)
@@ -123,6 +123,11 @@ async function limitWindow(key: string, maximum: number, minutes: number) {
     [key, maximum, minutes],
   );
   if (Number(rows[0].total) > maximum) throw new FoundationError(429, 'Too many requests. Wait a minute and try again.');
+}
+
+// Fixed text: workspace and inviter names are member-chosen, so they never reach the installation's sender (phishing surface).
+function sendInvitationEmail(to: string, role: string, inviteUrl: string) {
+  return sendTransactionalEmail({ to, subject: 'Your ten98 Discover workspace invitation', text: `You were invited to join a workspace on the ten98 Discover installation at ${getConfig().appUrl} with the ${role} role.\n\nOpen this link within 7 days to accept:\n${inviteUrl}\n\nOnly the newest invitation link sent to this address for a workspace works. If you did not expect this invitation, ignore this email.` });
 }
 
 /**
@@ -1084,25 +1089,44 @@ export async function handleApi(request: Request): Promise<Response> {
         if (match[2] === 'invitations') {
           const result = await inviteMember(match[1], user.id, await readJson(request));
           const { email: to, role } = result.invitation, inviteUrl = `${config.appUrl}/#invite=${result.token}`;
-          // Committed above; no PoolClient is held, one attempt only, and no failure undoes the invitation. Fixed text:
-          // workspace and inviter names are member-chosen, so they never reach the installation's sender (phishing surface).
+          // Committed above; no PoolClient is held, one attempt only, and no failure undoes the invitation.
           // The installation-wide budget mirrors password recovery: plus-tag variants and self-made workspaces evade the address and actor keys.
           // It is checked after the address key, so re-inviting one address past its budget never spends the installation's.
           const email = !getEmailStatus().configured ? 'disabled' : await limit(emailLimitKey('invitation-email', to), 3)
             .then(() => limit('invitation-email:global', 20))
-            .then(() => sendTransactionalEmail({ to, subject: 'Your ten98 Discover workspace invitation', text: `You were invited to join a workspace on the ten98 Discover installation at ${config.appUrl} with the ${role} role.\n\nOpen this link within 7 days to accept:\n${inviteUrl}\n\nOnly the newest invitation link sent to this address for a workspace works. If you did not expect this invitation, ignore this email.` }))
+            .then(() => sendInvitationEmail(to, role, inviteUrl))
             .then(() => 'accepted' as const, () => 'failed' as const);
           return json({ invitation: result.invitation, inviteUrl, email }, 201);
         }
       }
     }
-    match = path.match(new RegExp(`^/api/workspaces/(${id})/(members|invitations)/(${id})/(role|remove|revoke)$`, 'i'));
+    match = path.match(new RegExp(`^/api/workspaces/(${id})/(members|invitations)/(${id})/(role|remove|revoke|resend|new-link)$`, 'i'));
     if (match && request.method === 'POST') {
       await limit(`team:${user.id}`, 60);
       const input = await readJson(request);
       if (match[2] === 'members' && match[4] === 'role') { await changeRole(match[1], user.id, match[3], input); return json({ ok: true }); }
       if (match[2] === 'members' && match[4] === 'remove') { z.object({}).strict().parse(input); await removeMember(match[1], user.id, match[3]); return json({ ok: true }); }
       if (match[2] === 'invitations' && match[4] === 'revoke') { z.object({}).strict().parse(input); await revokeInvitation(match[1], user.id, match[3]); return json({ ok: true }); }
+      if (match[2] === 'invitations' && (match[4] === 'resend' || match[4] === 'new-link')) {
+        z.object({}).strict().parse(input);
+        // Resend checks and spends its budgets inside the rotation transaction after authorization and the pending check, so any
+        // refusal (409 without a transport, 429 at any limit) rolls back every count it spent and leaves the current link working.
+        const [workspaceKey, invitationKey] = [match[1].toLowerCase(), match[3].toLowerCase()];
+        const admit = match[4] !== 'resend' ? undefined : async (client: PoolClient, invitation: { email: string }) => {
+          if (!getEmailStatus().configured) throw new FoundationError(409, 'Email is not set up on this installation, so nothing was sent and the current link still works. Use New link to get a link you can copy and share yourself.');
+          // Per invitation and per workspace, then the invitation route's address and installation budgets.
+          await limitWindow(`invitation-resend:${invitationKey}`, 3, 60, client);
+          await limitWindow(`invitation-resend:workspace:${workspaceKey}`, 20, 60, client);
+          await limit(emailLimitKey('invitation-email', invitation.email), 3, client);
+          await limit('invitation-email:global', 20, client);
+        };
+        const result = await rotateInvitation(match[1], user.id, match[3], admit);
+        const inviteUrl = `${config.appUrl}/#invite=${result.token}`;
+        if (match[4] === 'new-link') return json({ invitation: result.invitation, inviteUrl });
+        // After commit, one attempt as for a new invitation; on failure the rotated link is still returned for manual sharing.
+        const email = await sendInvitationEmail(result.invitation.email, result.invitation.role, inviteUrl).then(() => 'accepted' as const, () => 'failed' as const);
+        return json({ invitation: result.invitation, inviteUrl, email });
+      }
     }
     match = path.match(new RegExp(`^/api/workspaces/(${id})/projects$`, 'i'));
     if (match) {
