@@ -42,7 +42,8 @@ export async function runNativePromptApiChecks(){
    await migration.query('BEGIN');
    for(const source of sources.filter(source=>source.version>'0041')){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}
    await migration.query('COMMIT');
-   assert.deepEqual((await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0],before);
+   // 0074 adds the display prefix and last use; a key issued before it has neither and none is derived.
+   assert.deepEqual((await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0],{...before,display_prefix:null,last_used_at:null});
    assert.deepEqual((await authenticateApiKey(oldToken)).scopes,['projects:read','analytics:read']);await assertSchema();
    console.log('PASS actual 40-to-41 migration preserves every prior key field and exact grants without retrogrant');
   }finally{await migration.query('ROLLBACK').catch(()=>{});migration.release();}
