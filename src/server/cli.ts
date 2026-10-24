@@ -10,7 +10,7 @@ import { assertCredentialKeys, rotateCredentialEncryption } from './providers.ts
 import { assertOidcCredentialsReadable, rotateOidcCredentials } from './oidc.ts';
 import { assertGoogleCredentialsReadable, rotateGoogleCredentials } from './google.ts';
 import {assertProviderAccountIdentityReadable,rotateProviderAccountIdentityEncryption} from './provider-account-identity.ts';
-import { auditOperatorPaidWorkExport, setInstanceOperator } from './instance-operators.ts';
+import { auditOperatorPaidWorkExport, clearEmailSuppressionAsOperator, setInstanceOperator } from './instance-operators.ts';
 import { closeAccountFromHost } from './account-security.ts';
 import { quarantineRestoredSpending } from './restore-quarantine.ts';
 import { exportPaidWorkArchive } from './paid-work-archive.ts';
@@ -146,13 +146,14 @@ async function startWeb() {
 
 try {
   const [command, option, ...extra] = process.argv.slice(2);
-  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | start-web | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (reason: 1-500 characters, no personal data; operator secret JSON on standard input) | paid-work export --workspace <workspace-id> [--website <website-id>] --operator <operator-email>';
+  const usage = 'Usage: cli.ts setup | migrate | rekey | restore-quarantine | start-web | worker | diagnose [worker] | operator grant|revoke <existing-account-email> | account close <account-email> --operator <operator-email> --reason <text> (reason: 1-500 characters, no personal data; operator secret JSON on standard input) | paid-work export --workspace <workspace-id> [--website <website-id>] --operator <operator-email> | email-suppression clear <suppressed-email> --operator <operator-email>';
   const closing = command === 'account' && option === 'close' && extra.length === 5 && extra[1] === '--operator' && extra[3] === '--reason';
+  const clearing = command === 'email-suppression' && option === 'clear' && extra.length === 3 && extra[1] === '--operator';
   // Each flag once, in any order: --workspace and --operator are required, --website is optional.
   const exportFlags = new Map(extra.flatMap((value, i) => i % 2 ? [] : [[value, extra[i + 1]] as const]));
   const exporting = command === 'paid-work' && option === 'export' && extra.length % 2 === 0 && exportFlags.size === extra.length / 2
     && [...exportFlags.keys()].every(flag => ['--workspace', '--website', '--operator'].includes(flag)) && exportFlags.has('--workspace') && exportFlags.has('--operator');
-  if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : command === 'account' ? !closing : command === 'paid-work' ? !exporting : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
+  if (command === 'operator' ? !['grant', 'revoke'].includes(option) || extra.length !== 1 : command === 'account' ? !closing : command === 'paid-work' ? !exporting : command === 'email-suppression' ? !clearing : extra.length || (option && !(command === 'diagnose' && option === 'worker'))) {
     throw new CliError(usage);
   }
   switch (command) {
@@ -187,6 +188,15 @@ try {
       break;
     }
     case 'paid-work': await exportArchive(exportFlags.get('--operator')!, exportFlags.get('--workspace')!, exportFlags.get('--website')); break;
+    case 'email-suppression': {
+      // #310: the address is never printed; refusals (format, non-operator) are user-safe messages.
+      await assertSchema();
+      let cleared: boolean;
+      try { cleared = await clearEmailSuppressionAsOperator(extra[2], extra[0]); }
+      catch (error) { if (error instanceof FoundationError) throw new CliError(error.message); throw error; }
+      console.log(cleared ? 'Email suppression cleared and audited.' : 'No email suppression was recorded for that address. The clear was audited.');
+      break;
+    }
     case 'start-web': await startWeb(); break;
     case 'worker': await worker(); break;
     case 'diagnose': await diagnose(option === 'worker'); break;
