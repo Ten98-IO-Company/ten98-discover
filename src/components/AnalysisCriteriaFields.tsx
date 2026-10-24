@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import { Combobox } from '@ten98/ui';
 
 export type MatchDraft = {
   type: 'path' | 'event';
@@ -21,12 +22,12 @@ export function MatchFields(props: {
   disabled: boolean;
   idPrefix: string;
   pathLabel: string;
+  /** Pages and events already seen, offered so people pick instead of recalling exact names. */
+  suggestions?: { path: string[]; event: string[] };
 }): React.JSX.Element {
-  const { value, onChange, disabled, idPrefix, pathLabel } = props;
+  const { value, onChange, disabled, idPrefix, pathLabel, suggestions } = props;
   const actionId = `${idPrefix}-action`;
   const matchId = `${idPrefix}-match`;
-  const valueId = `${idPrefix}-value`;
-  const valueHintId = `${idPrefix}-value-hint`;
   return (
     <fieldset className="field conversion-match" disabled={disabled}>
       <legend>Match criteria</legend>
@@ -60,22 +61,17 @@ export function MatchFields(props: {
           <option value="contains">Contains</option>
         </select>
       </div>
-      <div className="row">
-        <label htmlFor={valueId}>Value</label>
-        <input
-          id={valueId}
-          type="text"
-          value={value.value}
-          required
-          maxLength={value.type === 'path' ? 2048 : 64}
-          disabled={disabled}
-          aria-describedby={valueHintId}
-          onChange={(event) => onChange({ ...value, value: event.target.value })}
-        />
-      </div>
-      <p className="hint" id={valueHintId}>
-        Match text is literal. Wildcards are not expanded.
-      </p>
+      <Combobox
+        label={value.type === 'path' ? 'Page path' : 'Event name'}
+        options={suggestions?.[value.type] ?? []}
+        value={value.value}
+        onValueChange={(next) => onChange({ ...value, value: next.slice(0, value.type === 'path' ? 2048 : 64) })}
+        allowCustom
+        required
+        disabled={disabled}
+        description={suggestions ? 'Pick one seen in the last 30 days, or type your own. Text is matched literally.' : 'Text is matched literally; wildcards are not expanded.'}
+        emptyMessage="Nothing like this seen yet. You can still use what you typed."
+      />
     </fieldset>
   );
 }

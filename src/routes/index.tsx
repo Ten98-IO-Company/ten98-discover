@@ -8,7 +8,9 @@ import type { HistoryState } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
+import { parseWebsiteAddress } from '../lib/website-address'
 import { appSections, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels } from '../lib/app-sections'
+import { formatReportInstant } from '../lib/report-time'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
 import { WebsiteQuickShare } from '../components/WebsiteSharePanel'
@@ -92,17 +94,6 @@ function fmt(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-function parseOrigin(raw: string): { origin?: string; error?: string } {
-  const input = raw.trim()
-  if (input === '') return { error: 'Enter the website address, for example https://example.com.' }
-  let u: URL
-  try { u = new URL(input) } catch { return { error: 'Enter a valid website address, for example https://example.com.' } }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { error: 'The website address must start with http:// or https://.' }
-  if (u.username !== '' || u.password !== '') return { error: 'The website address must not include a username or password.' }
-  if (u.pathname !== '/' || u.search !== '' || u.hash !== '') return { error: 'Enter only the website address, without a page path, query or #fragment.' }
-  return { origin: u.origin }
-}
-
 function pillClass(status: string): string {
   const s = status.toLowerCase()
   if (s.includes('fail') || s.includes('error') || s.includes('denied')) return 'pill bad'
@@ -145,7 +136,6 @@ function App() {
   const [events, setEvents] = useState<EventsData | null>(null)
   const [eventsReadAt, setEventsReadAt] = useState<string | null>(null)
   const [eventsBusy, setEventsBusy] = useState(false)
-  const [firstEventSeen, setFirstEventSeen] = useState(false)
   const [eventsError, setEventsError] = useState('')
   const [jobs, setJobs] = useState<Job[] | null>(null)
   const [jobsBusy, setJobsBusy] = useState(false)
@@ -198,7 +188,7 @@ function App() {
     if (pending.value.kind === 'proof') { go({ ...intent.current.search, view: 'identity' }, true); return true }
     if (pending.value.kind === 'google') {
       const value = pending.value
-      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: value.kind }, true); return true }
+      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: 'imports' }, true); return true }
       else setAuthNotice({ kind: 'error', message: 'Authorization returned, but that workspace is no longer available. Choose a current workspace.' })
     }
   }
@@ -338,14 +328,15 @@ function App() {
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
-    setEvents(null); setEventsReadAt(null); setEventsError(''); setEventsBusy(false); setFirstEventSeen(false)
+    setEvents(null); setEventsReadAt(null); setEventsError(''); setEventsBusy(false)
     setJobs(null); setJobError(''); setJobsBusy(false); setCheckBusy(false)
     setCopied('idle')
     if (id) void loadEvents(id)
   }
 
   useEffect(() => {
-    if (phase === 'app' && view === 'installation' && projectId) { void loadJobs(projectId); void loadEvents(projectId) }
+    if (phase === 'app' && view === 'installation' && projectId) void loadEvents(projectId)
+    if (phase === 'app' && view === 'diagnostics' && projectId) void loadJobs(projectId)
     // Opening Recent events reads current history; a read already started by project activation is current.
     if (phase === 'app' && view === 'events' && projectId && !eventsBusy) void loadEvents(projectId)
   }, [phase, view, projectId])
@@ -463,7 +454,7 @@ function App() {
     if (!background) { setEventsBusy(true); setEventsError('') }
     try {
       const d = await api<EventsData>(`/api/projects/${pid}/events`)
-      if (current()) { if (background && d.total > 0) setFirstEventSeen(true); setEvents(d); setEventsReadAt(new Date().toISOString()); if (background) setEventsError('') }
+      if (current()) { setEvents(d); setEventsReadAt(new Date().toISOString()); if (background) setEventsError('') }
     } catch (e) { if (current() && !guardAuth(e) && !background) { if (e instanceof ApiError && [403,404].includes(e.status)) { setEvents(null); setEventsReadAt(null) } setEventsError(errMsg(e)) } }
     finally { if (current() && !background) setEventsBusy(false) }
   }
@@ -679,14 +670,14 @@ function App() {
   }
   const explorerReturnState=view==='explore'&&me&&project&&search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)?{userId:me.user.id,workspace:workspaceId,project:project.id,href:routeLocation.href}:undefined
   const verifiedExplorerReturn=me&&project?readExplorerReturn('analyticsReturn'in routeLocation.state?routeLocation.state.analyticsReturn:null,me.user.id,workspaceId,project.id):null
-  const pageScope = accountView || view === 'workspace' ? 'Your account' : view === 'google-app' ? 'Advanced settings' : projectSettingsView && project ? `Project · ${project.name}` : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
+  const pageScope = accountView || view === 'workspace' ? 'Your account' : settingsEntry(view)?.group === 'operator' ? 'Advanced settings' : projectSettingsView && project ? `Project · ${project.name}` : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
 
   const adminRole = workspace !== undefined && ['owner','admin'].includes(workspace.role)
   // One sidebar item per section; it opens the section's first tab and stays selected on every tab and mode within it.
   const sectionNavGroups: SidebarNavGroup[] = [{ id: 'sections', items: appSections.map((section): SidebarNavItem => ({ id: section.id, label: section.label, icon: section.icon, href: section.tabs[0].view,
     current: currentSection?.section.id === section.id, keywords: [...section.tabs.map(tab => tab.label), ...section.keywords] })) }]
   // Settings pages appear in the sidebar only as search results, so "Find a tool" still reaches them.
-  const settingsAllowed = (entry: AppView) => entry === 'google-app' ? me!.instanceOperator : entry === 'providers' ? workspace?.role === 'owner' : ['team','keys'].includes(entry) ? adminRole
+  const settingsAllowed = (entry: AppView) => entry === 'google-app' || entry === 'identity-providers' ? me!.instanceOperator : entry === 'diagnostics' ? project !== null : entry === 'providers' ? workspace?.role === 'owner' : ['team','keys'].includes(entry) ? adminRole
     : ['domains','destinations'].includes(entry) ? adminRole && project !== null : projectSettingsViews.includes(entry) ? project !== null : entry === 'retention' ? workspace !== undefined : true
   const settingsItems: SettingsNavItem[] = settingsEntries.map(entry => ({ id: entry.view, label: entry.label, group: entry.group, href: entry.view, allowed: settingsAllowed(entry.view) }))
   const settingsSearchGroups: SidebarNavGroup[] = [{ id: 'settings', label: 'Settings', items: settingsItems.filter(item => item.allowed !== false).map(item => ({ id: item.id, label: item.label, icon: 'settings', href: item.id, current: view === item.id, keywords: [...settingsEntry(item.id as AppView)?.keywords ?? []] })) }]
@@ -744,12 +735,39 @@ function App() {
         {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} onFactorChanged={factorChanged} /><AccountClosurePanel key={`closure:${me.user.id}`} userId={me.user.id} onClosed={accountClosed} onUnauthorized={unauthorized} onOpenTeam={id => go({ workspace: id, view: 'team' })} onOpenIdentity={() => go(target('identity'))} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
         {view === 'identity' && me && <>
           <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={unauthorized} onClosed={accountClosed} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
-          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
+          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }}  part='account' />
         </>}
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'identity-providers' && me?.instanceOperator && <OidcPanel key={`${me.user.id}:operator`} userId={me.user.id} instanceOperator proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} part='operator' />}
+        {view === 'diagnostics' && project && (
+            <section className='card diagnostics' aria-labelledby='wc-h' aria-busy={checkBusy || jobsBusy}>
+              <div className='row between'>
+                <h2 id='wc-h'>Worker check</h2>
+                <div className='row'>
+                  {canWrite && <button className='btn primary' disabled={checkBusy} onClick={() => void runCheck(project.id)}>{checkBusy ? 'Starting…' : 'Run worker check'}</button>}
+                  <button className='btn' disabled={jobsBusy} onClick={() => void loadJobs(project.id)}>{jobsBusy ? 'Refreshing…' : 'Refresh status'}</button>
+                </div>
+              </div>
+              <p className='dim'>Checks whether the background worker can receive and complete a job. Choose Refresh status to see its result.</p>
+              {jobError !== '' && <Alert tone='danger'>{jobError}</Alert>}
+              {jobs === null && jobError === '' && <p role='status' className='dim'>Loading checks…</p>}
+              {jobs !== null && jobs.length === 0 && <div className='empty'><p><strong>No checks yet.</strong> Run a check to verify that background processing is working.</p></div>}
+              {jobs !== null && jobs.length > 0 && (
+                <ul className='jobs'>
+                  {jobs.slice(0, 5).map((j) => (
+                    <li key={j.id}>
+                      <span className={pillClass(j.status)}>{j.status}</span>
+                      <span className='mono dim'>{fmt(j.createdAt)}</span>
+                      {j.error !== null && j.error !== '' && <span className='err-text'>{j.error}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+        )}
         </>)}
         {(view==='links'||view==='pixels')&&workspace&&me&&<TrackedAssetsPanel workspaceId={workspaceId} userId={me.user.id} role={workspace.role} kind={view==='links'?'link':'pixel'} appUrl={appUrl} query={search.assetInvalid?'unsupported=1':search.assetQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.view===view&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={(query,kind)=>go({workspace:workspaceId,view:kind==='pixel'?'pixels':kind==='link'?'links':view,...query?{assetQuery:query}:{}})} onUnauthorized={unauthorized}/>}
         {view === 'collection' && project && workspace && me && settingsFrame(<AnalyticsSettingsPanel projectId={project.id} userId={me.user.id} workspaceId={workspace.id} onDeleted={()=>{if(activeWorkspace.current!==workspace.id||activeProject.current!==project.id||currentMe.current?.user.id!==me.user.id)return;activateProject('');loadedProjects.current=(loadedProjects.current??[]).filter(item=>item.id!==project.id);setProjects(loadedProjects.current);go({workspace:workspace.id,view:'project'},true);void loadProjects(workspace.id);}} readOwner={(routeLocation.state.__TSR_key??routeLocation.href)+':'+workspace?.role} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===project.id&&search.view==='collection'&&canonicalNavigation(routeLocation.searchStr,search)} isCurrent={()=>sessionGeneration.current===renderedSession&&intent.current.generation===renderedIntent&&currentMe.current!==null&&currentMe.current.user.id===me.user.id&&activeWorkspace.current===workspaceId&&activeProject.current===project.id&&(router.state.location.state.__TSR_key??router.state.location.href)===(routeLocation.state.__TSR_key??routeLocation.href)&&navigationKey(parseNavigation(router.state.location.search))===navigationKey(search)&&currentMe.current.workspaces.some(w=>w.id===workspaceId&&w.role===workspace?.role)} onUnauthorized={unauthorized} />)}
@@ -771,13 +789,14 @@ function App() {
         {view === 'ranks' && project && me && <Suspense fallback={<p role="status">Loading rank tracking…</p>}><RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} /></Suspense>}
         {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} />}
+        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='reports' onManage={() => go(target('imports'))} />}
+        {view === 'imports' && project && me && settingsFrame(<GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='setup' />)}
         {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />)}
         {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
         </>)}
         {(view === 'new-project' || (projectView && projects !== null && project === null)) && workspace && canWrite && (
-          <><PageHeader eyebrow='Website setup' title={projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'} description='Enter a project name and website address.' />
+          <><PageHeader title={projects !== null && projects.length > 0 ? 'Add a website' : 'Add your website'} description='Next you add one line of tracking code to your site.' />
           <ProjectCreateSection key={workspaceId} onCreate={createProject} /></>
         )}
         {projectView && workspace && projects !== null && project === null && !canWrite && (
@@ -803,12 +822,12 @@ function App() {
                 <div>
                   <h2 id='ev-h'>Retained events</h2>
                   <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
-                  {eventsReadAt !== null && <Text tone='muted'>Read {fmt(eventsReadAt)}</Text>}
+                  {eventsReadAt !== null && <Text tone='muted' title={eventsReadAt}>Read {formatReportInstant(eventsReadAt,'UTC')}</Text>}
                 </div>
                 <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
               </div>
-              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint'>History before {fmt((events?.retainedFrom ?? project.retainedFrom)!)} is unavailable after retention. This is not a lifetime total.</p>}
-              {lastReceived !== null && <p className='dim'>Last retained event received {fmt(lastReceived)}</p>}
+              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint' title={(events?.retainedFrom ?? project.retainedFrom)!}>History before {formatReportInstant((events?.retainedFrom ?? project.retainedFrom)!,'UTC')} is unavailable after retention. This is not a lifetime total.</p>}
+              {lastReceived !== null && <p className='dim' title={lastReceived}>Last retained event received {formatReportInstant(lastReceived,'UTC')}</p>}
               {eventsError !== '' && <Alert tone='danger'>{eventsError}</Alert>}
               {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
               {events !== null && events.events.length === 0 && (
@@ -821,7 +840,7 @@ function App() {
                 <>
                   <DataTable caption='Retained event rows' captionHidden responsive='stack' searchable={false} sortable={false} pagination={false} rows={events.events} rowKey={ev => ev.id}
                     columns={[{ key: 'event', header: 'Event', rowHeader: true, wrap: true, render: ev => ev.eventName }, { key: 'origin', header: 'Origin', wrap: true, render: ev => <bdi dir='ltr'>{ev.origin}</bdi> },
-                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt}>{fmt(ev.receivedAt)}</time> }]} />
+                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt} title={ev.receivedAt}>{formatReportInstant(ev.receivedAt,'UTC')}</time> }]} />
                   <p className='dim footnote'>Showing the latest {events.events.length} of {events.total} persisted events.</p>
                 </>
               )}
@@ -854,40 +873,13 @@ function App() {
                   installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
                 {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
-                {firstEventSeen && (events?.total ?? 0) > 0 && <StatusLine tone='success'>First event received. Your tracker is sending events to this project.</StatusLine>}
-                {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt}>{fmt(events.events[0].receivedAt)}</time>.</p>}
-                {events !== null && events.total === 0 && <p>No events in retained history yet. This page checks automatically for 10 minutes. Confirm the tag is published and visit your website. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
+                {(events?.total ?? 0) > 0 && <><StatusLine tone='success'>Tracking works: visits are arriving from {project.origin}.</StatusLine><Button style={{minHeight:44,whiteSpace:'normal'}} href='project' component={ShellLink}>Go to dashboard</Button></>}
+                {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt} title={events.events[0].receivedAt}>{formatReportInstant(events.events[0].receivedAt,'UTC')}</time>.</p>}
+                {events !== null && events.total === 0 && <StatusLine>Waiting for the first visit. Open your website in another tab; this page checks again for 10 minutes. If your site asks visitors for consent, accept analytics first.</StatusLine>}
                 {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
-                <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
                 <Button style={{minHeight:44,whiteSpace:'normal'}} variant='ghost' href='events' component={ShellLink}>Inspect recent events</Button>
               </ResourceCard>
             </section>
-            <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>
-            <section aria-labelledby='wc-h'>
-              <div className='row between'>
-                <h2 id='wc-h'>Worker check</h2>
-                <div className='row'>
-                  {canWrite && <button className='btn primary' disabled={checkBusy} onClick={() => void runCheck(project.id)}>{checkBusy ? 'Starting…' : 'Run worker check'}</button>}
-                  <button className='btn' disabled={jobsBusy} onClick={() => void loadJobs(project.id)}>{jobsBusy ? 'Refreshing…' : 'Refresh status'}</button>
-                </div>
-              </div>
-              <p className='dim'>Checks whether the background worker can receive and complete a job. Choose Refresh status to see its result.</p>
-              {jobError !== '' && <Alert tone='danger'>{jobError}</Alert>}
-              {jobs === null && jobError === '' && <p role='status' className='dim'>Loading checks…</p>}
-              {jobs !== null && jobs.length === 0 && <div className='empty'><p><strong>No checks yet.</strong> Run a check to verify that background processing is working.</p></div>}
-              {jobs !== null && jobs.length > 0 && (
-                <ul className='jobs'>
-                  {jobs.slice(0, 5).map((j) => (
-                    <li key={j.id}>
-                      <span className={pillClass(j.status)}>{j.status}</span>
-                      <span className='mono dim'>{fmt(j.createdAt)}</span>
-                      {j.error !== null && j.error !== '' && <span className='err-text'>{j.error}</span>}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-            </details>
           </>
         )}
         </>}
@@ -898,7 +890,7 @@ function App() {
 }
 
 function AIInsightsSection(props:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void;onBack:()=>void}) {
-  return <AIInsightsPanel {...props} backLabel='Back to saved prompts' />
+  return <AIInsightsPanel {...props} backLabel='Back to prompts' />
 }
 
 // A status-0 ApiError means the request may or may not have completed; every other failure is a definite error.
@@ -978,8 +970,8 @@ function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: s
 
   async function submit(v: { name: string; origin?: string }) {
     const name = v.name.trim()
-    if (name === '') { setState(s => ({ ...s, error: '', fieldErrors: { name: 'Enter a project name.' } })); return }
-    const parsed = parseOrigin(v.origin ?? '')
+    if (name === '') { setState(s => ({ ...s, error: '', fieldErrors: { name: 'Enter a name for this website.' } })); return }
+    const parsed = parseWebsiteAddress(v.origin ?? '')
     if (!parsed.origin) { setState(s => ({ ...s, error: '', fieldErrors: { origin: parsed.error ?? 'Enter a valid website address.' } })); return }
     setBusy(true); setState(s => ({ ...s, error: '', fieldErrors: undefined }))
     try { await onCreate(name, parsed.origin); setState(s => ({ generation: s.generation + 1, error: '' })) }
@@ -987,9 +979,9 @@ function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: s
     finally { setBusy(false) }
   }
 
-  return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Create project' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Creating…'
+  return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Add website' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Adding…'
     error={state.error || undefined} fieldErrors={state.fieldErrors} onSubmit={submit}
-    messages={{ nameLabel: 'Project name', originLabel: 'Website address', originHint: 'Use your website address, for example https://example.com, without a page path.', create: 'Create project' }} />
+    messages={{ nameLabel: 'Website name', originLabel: 'Website address', originHint: 'For example https://example.com. You can paste any page of your site.', create: 'Add website' }} />
 }
 
 // Shared by the onboarding screen and the New workspace settings tab.
