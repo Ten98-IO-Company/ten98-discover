@@ -18,7 +18,8 @@ export const analyticsSummarySql={
         'customEvents',count(*) FILTER (WHERE event_name<>'page_view'))`,
  // Reads a `visits` CTE from analytics-visits.ts. v2 marks that definition's deliberate departure from pinned Umami 3.4.0's
  // filtered getWebsiteStats: a filtered population counts visits with a matching page view and measures each whole visit.
- // Distinct visitor counts sort visitor_id under "C": the default collation is deterministic, so the count is the same without strcoll.
+ // Distinct visitor counts sort visitor_id under "C" to avoid strcoll. The count cannot change: event_identity_pair (migration 0012)
+ // admits only NULL or 64 lowercase hex characters, which are equal under any collation exactly when their bytes are.
  measurement:`json_build_object('version','umami-3.4-visit-scoped-v2',
         'identifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NOT NULL),
         'unidentifiedPageViews',count(*) FILTER (WHERE event_name='page_view' AND visitor_id IS NULL),
