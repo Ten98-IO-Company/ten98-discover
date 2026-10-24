@@ -11,6 +11,7 @@ import { api, ApiError, errMsg } from '../lib/api'
 import { appSections, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels } from '../lib/app-sections'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
+import { WebsiteQuickShare } from '../components/WebsiteSharePanel'
 import { WebPerformancePanel } from '../components/WebPerformancePanel'
 import { SessionReplayPanel } from '../components/SessionReplayPanel'
 import {TrackedAssetsPanel,SharedTrackedAssetPanel} from '../components/TrackedAssetsPanel'
@@ -730,7 +731,8 @@ function App() {
         {projectsError !== '' && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
         {/* First-strong isolates keep a right-to-left project name from reordering the origin (same isolation as <bdi> without adding raw elements). */}
-        {project && workspace && projectView && !settingsView && <PageHeader title={currentSection?.section.label ?? pageTitle} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
+        {project && workspace && projectView && !settingsView && <PageHeader title={currentSection?.section.label ?? pageTitle} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`}
+          actions={view === 'project' && adminRole ? <WebsiteQuickShare key={project.id} projectId={project.id} onUnauthorized={unauthorized} /> : undefined} />}
         {!projectView && !settingsView && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={currentSection?.section.label ?? pageTitle} />}
         {sectionTabs && <SectionNav label={`${currentSection!.section.label} pages`} items={sectionTabs} linkComponent={ShellLink} />}
         {modeTabs && <SectionNav label={`${currentSection!.section.tabs.find(tab => tab.view === currentSection!.tab)!.label} views`} items={modeTabs} linkComponent={ShellLink} />}

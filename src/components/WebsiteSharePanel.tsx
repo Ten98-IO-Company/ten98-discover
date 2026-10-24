@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
-import { useConfirmDialog } from '@ten98/ui'
+import { Alert, Button, CodeBlock, CopyButton, Dialog, Stack, StatusLine, Text, useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api,ApiError} from '../lib/api';
@@ -83,4 +83,45 @@ export function WebsiteSharePanel({projectId,isCurrent,onUnauthorized}:Props){
    <div className="row" style={{flexWrap:'wrap'}}><button className="btn" type="button" style={touch} disabled={busy||!back.current.length} onClick={()=>void load(back.current.pop()||null)}>Previous public links</button><button className="btn" type="button" style={touch} disabled={busy||!rows.nextCursor} onClick={()=>{back.current.push(cursor.current??'');void load(rows.nextCursor);}}>Next 20 public links</button></div></>}
  {confirmDialog}
  </section>;
+}
+
+type QuickAttempt={operation:'create'|'revoke';shareId:string|null;body:string};
+/** Two-click public link from the dashboard header: Share, read what the link exposes, then Create link.
+ * Same contract and exact-retry rule as WebsiteSharePanel; every link stays listed there for later review. */
+export function WebsiteQuickShare({projectId,onUnauthorized}:{projectId:string;onUnauthorized:()=>void}){
+ const [open,setOpen]=useState(false),[attempt,setAttempt]=useState<QuickAttempt|null>(null),[link,setLink]=useState<{shareId:string;url:string}|null>(null);
+ const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const base='/api/projects/'+encodeURIComponent(projectId)+'/website-shares',lock=useRef(false);
+ function reset(){setAttempt(null);setLink(null);setError('');setNotice('');}
+ async function send(next:QuickAttempt){
+  if(lock.current)return;lock.current=true;setBusy(true);setError('');setAttempt(next);
+  try{const body=JSON.parse(next.body),result=websiteShareWriteSchema.parse(await api<unknown>(base+(next.operation==='revoke'?'/'+next.shareId+'/revoke':''),{method:'POST',body}));
+   if(result.projectId!==projectId||result.ack.requestId!==body.requestId||result.ack.operation!==next.operation)throw new InvalidReply();
+   setAttempt(null);
+   if(next.operation==='create'){const href=new URL('/share/websites/'+result.ack.shareId,window.location.origin);href.hash=body.token;setLink({shareId:result.ack.shareId,url:href.href});setNotice('Link created. Copy it now: it is shown only once.');}
+   else{setLink(null);setNotice('Link revoked. It stops working on its next read.');}
+  }catch(cause){
+   if(cause instanceof ApiError&&cause.status===401){setOpen(false);onUnauthorized();}
+   else if(cause instanceof ApiError&&[403,404].includes(cause.status)){setAttempt(null);setError('Only owners and admins can share this website.');}
+   else if(cause instanceof ApiError&&[400,409].includes(cause.status)){setAttempt(null);setError('The link could not be created. Close this window and try again.');}
+   else setError('We could not confirm this request. Retry sends exactly the same request, so it cannot create a second link.');
+  }finally{lock.current=false;setBusy(false);}
+ }
+ function create(){const expiresAt=new Date(Date.now()+30*864e5).toISOString();
+  void send({operation:'create',shareId:null,body:JSON.stringify(websiteShareCreate.parse({requestId:crypto.randomUUID(),label:'Dashboard link · '+new Date().toISOString().slice(0,10),sections:['overview','events'],expiresAt,token:newShareToken()}))});}
+ function revoke(){if(link)void send({operation:'revoke',shareId:link.shareId,body:JSON.stringify(websiteShareRevoke.parse({requestId:crypto.randomUUID()}))});}
+ const footer=link?<><Button variant="danger" disabled={busy} onClick={revoke}>Revoke link</Button><Button variant="secondary" disabled={busy} onClick={()=>setOpen(false)}>Done</Button></>
+  :<><Button variant="secondary" disabled={busy} onClick={()=>setOpen(false)}>Cancel</Button><Button disabled={busy} onClick={()=>attempt?void send(attempt):create()}>{attempt?'Retry':busy?'Creating…':'Create link'}</Button></>;
+ return <>
+  <Button variant="secondary" onClick={()=>{reset();setOpen(true);}}>Share</Button>
+  <Dialog open={open} onOpenChange={next=>{if(!busy)setOpen(next);}} closeDisabled={busy} title="Share this dashboard" footer={footer}
+   description="Anyone with this link can view this report: the traffic overview and events, for any dates they choose. Individual visits are never shown.">
+   <Stack gap={3}>
+    {!link&&<Text tone="muted">The link expires in 30 days. You can revoke it here or later in Settings › Privacy.</Text>}
+    {link&&<><CodeBlock code={link.url} label="Share link" wrap copy={false}/><CopyButton value={link.url} label="Copy link"/></>}
+    {notice&&<StatusLine tone={link?'success':'neutral'}>{notice}</StatusLine>}
+    {error&&<Alert tone="danger">{error}</Alert>}
+   </Stack>
+  </Dialog>
+ </>;
 }
