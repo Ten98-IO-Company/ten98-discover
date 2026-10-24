@@ -276,7 +276,7 @@ export async function handleAccountSecurity(request: Request, limit: Limit): Pro
     return transaction(async (client, auth) => {
       await client.query('SELECT id FROM "user" WHERE lower(email)=$1 FOR UPDATE', [details.email]);
       const response = await invoke(auth, request, '/sign-in/email', details);
-      if (!response.ok) return rejected(response, 'Email or password not accepted.');
+      if (!response.ok) return rejected(response, 'Email or password is incorrect.');
       const data = await response.json();
       return json(data.twoFactorRedirect === true ? { twoFactorRedirect: true } : { ok: true }, 200, response);
     });
