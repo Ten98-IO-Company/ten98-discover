@@ -77,6 +77,11 @@ test('Recent events shows UTC report times with the exact instant (#401)',()=>{
   assert.match(view,new RegExp(`<p className='hint' title=\\{${retained}\\}>History before \\{formatReportInstant\\(${retained},'UTC'\\)\\}`));
   assert.match(view,/<p className='dim' title=\{lastReceived\}>Last retained event received \{formatReportInstant\(lastReceived,'UTC'\)\}<\/p>/);
   assert.match(view,/<time dateTime=\{ev\.receivedAt\} title=\{ev\.receivedAt\}>\{formatReportInstant\(ev\.receivedAt,'UTC'\)\}<\/time>/);
+  // The Install tracker view shows the same latest retained event, so it uses the same UTC time.
+  const latest=source.slice(source.indexOf('Latest retained event:'),source.indexOf('</p>',source.indexOf('Latest retained event:')));
+  assert.ok(latest.length>0,'Install tracker latest event line not found');
+  assert.doesNotMatch(latest,/\{fmt\(/);
+  assert.match(latest,/<time dateTime=\{events\.events\[0\]\.receivedAt\} title=\{events\.events\[0\]\.receivedAt\}>\{formatReportInstant\(events\.events\[0\]\.receivedAt,'UTC'\)\}<\/time>/);
 });
 
 test('Revenue labels keep a space before their values (#401)',()=>{
