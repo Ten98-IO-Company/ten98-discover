@@ -22,11 +22,12 @@ export const appSections: readonly AppSection[] = [
     keywords: ['boards', 'dashboards', 'share', 'templates'] },
 ]
 
-// Campaign tools share the Campaigns tab: a second strip under it switches between them.
-export const campaignTools: readonly SectionTab[] = [{ view: 'campaigns', label: 'Campaign tags' }, { view: 'links', label: 'Tracked links' }, { view: 'pixels', label: 'Tracking images' }]
-
-// Views that are a mode of another tab rather than a tab of their own.
-const tabOf: Partial<Record<AppView, AppView>> = { compare: 'project', links: 'campaigns', pixels: 'campaigns' }
+// Some tabs hold a second strip of modes or tools: the Dashboard's period comparison and the campaign tools.
+export const subTabs: Partial<Record<AppView, readonly SectionTab[]>> = {
+  project: [{ view: 'project', label: 'Summary' }, { view: 'compare', label: 'Compare periods' }],
+  campaigns: [{ view: 'campaigns', label: 'Campaign tags' }, { view: 'links', label: 'Tracked links' }, { view: 'pixels', label: 'Tracking images' }],
+}
+const tabOf: Partial<Record<AppView, AppView>> = Object.fromEntries(Object.entries(subTabs).flatMap(([tab, entries]) => entries!.map(entry => [entry.view, tab])))
 
 export interface SettingsEntry { view: AppView; label: string; group: SettingsGroupId }
 // The library's Account, Workspace and Project labels stay; only the operator group is renamed, as in Campaign.
@@ -47,10 +48,10 @@ export const projectSettingsViews: readonly AppView[] = settingsEntries.filter(e
 // Views reached from elsewhere: project creation from the project switcher, public shares by their link.
 export const standaloneViews: readonly AppView[] = ['new-project', 'tracked-share']
 
-export function sectionOf(view: AppView): { section: AppSection; tab: AppView } | undefined {
+export function sectionOf(view: AppView): { section: AppSection; tab: AppView; subTabs?: readonly SectionTab[] } | undefined {
   const tab = tabOf[view] ?? view
   const section = appSections.find(item => item.tabs.some(entry => entry.view === tab))
-  return section && { section, tab }
+  return section && { section, tab, subTabs: subTabs[tab] }
 }
 
 export function settingsEntry(view: AppView): SettingsEntry | undefined {

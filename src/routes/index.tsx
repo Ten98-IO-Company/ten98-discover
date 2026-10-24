@@ -8,7 +8,7 @@ import type { HistoryState } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
-import { appSections, campaignTools, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels } from '../lib/app-sections'
+import { appSections, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels } from '../lib/app-sections'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
 import { WebPerformancePanel } from '../components/WebPerformancePanel'
@@ -662,7 +662,7 @@ function App() {
   const currentSection = sectionOf(view)
   // Page titles repeat the tab or settings label the user just chose; a few modes get a fuller name.
   const pageTitle = ({ compare: 'Compare periods', realtime: 'Live visitors', 'new-project': 'New project', 'tracked-share': 'Shared report' } as Partial<Record<AppView, string>>)[view]
-    ?? settingsEntry(view)?.label ?? campaignTools.find(tool => tool.view === view)?.label ?? currentSection?.section.tabs.find(tab => tab.view === view)?.label ?? 'Discover'
+    ?? settingsEntry(view)?.label ?? currentSection?.section.tabs.find(tab => tab.view === view)?.label ?? currentSection?.subTabs?.find(tab => tab.view === view)?.label ?? 'Discover'
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
     if(next==='project'&&view==='explore'&&search.workspace===workspaceId&&search.project===project?.id)return {...target(next),...explorerAnalyticsNavigation(search,analyticsApplied!==null&&analyticsApplied.userId===me?.user.id&&analyticsApplied.projectId===project?.id&&analyticsApplied.explorerEntry===routeLocation.state.__TSR_key?analyticsApplied:undefined)};
@@ -690,7 +690,7 @@ function App() {
   const settingsItems: SettingsNavItem[] = settingsEntries.map(entry => ({ id: entry.view, label: entry.label, group: entry.group, href: entry.view, allowed: settingsAllowed(entry.view) }))
   const settingsSearchGroups: SidebarNavGroup[] = [{ id: 'settings', label: 'Settings', items: settingsItems.filter(item => item.allowed !== false).map(item => ({ id: item.id, label: item.label, icon: 'settings', href: item.id, current: view === item.id })) }]
   const sectionTabs = currentSection && (projectView && project !== null || workspaceTool) ? currentSection.section.tabs.map(tab => ({ id: tab.view, label: tab.label, href: tab.view, current: tab.view === currentSection.tab })) : undefined
-  const campaignTabs = currentSection?.tab === 'campaigns' ? campaignTools.map(tool => ({ id: tool.view, label: tool.label, href: tool.view, current: tool.view === view })) : undefined
+  const modeTabs = sectionTabs && currentSection?.subTabs?.map(tab => ({ id: tab.view, label: tab.label, href: tab.view, current: tab.view === view }))
   const settingsIntro = view === 'keys' ? 'Keys let your own scripts and AI assistants read this workspace through the ten98 API. Search and AI service accounts are added under Connections.' : view === 'providers' ? 'Connect the search and AI services Discover uses, and pause paid requests at any time.' : view === 'workspace' ? 'Keep each team’s websites and access separate.' : undefined
   const settingsFrame = (content: ReactNode) => <SettingsLayout title={view === 'workspace' ? 'Create workspace' : pageTitle} scope={pageScope} items={settingsItems} current={view} linkComponent={ShellLink} navigationLabel='Settings sections' groupLabels={settingsGroupLabels}>{content}</SettingsLayout>
   const navRoutes: NavRoutes = { search: key => key === 'boards' ? { workspace: workspaceId, view: 'boards' } : key === 'project' || key === 'compare' ? analyticsTarget(key) : key === 'explore' ? exploreTarget() : target(key as AppView),
@@ -733,7 +733,7 @@ function App() {
         {project && workspace && projectView && !settingsView && <PageHeader title={currentSection?.section.label ?? pageTitle} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
         {!projectView && !settingsView && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={currentSection?.section.label ?? pageTitle} />}
         {sectionTabs && <SectionNav label={`${currentSection!.section.label} pages`} items={sectionTabs} linkComponent={ShellLink} />}
-        {campaignTabs && <SectionNav label='Campaign tools' items={campaignTabs} linkComponent={ShellLink} />}
+        {modeTabs && <SectionNav label={`${currentSection!.section.tabs.find(tab => tab.view === currentSection!.tab)!.label} views`} items={modeTabs} linkComponent={ShellLink} />}
         {settingsView && !projectSettingsView && settingsFrame(<>
         {settingsIntro && <Text tone='muted'>{settingsIntro}</Text>}
         {view === 'workspace' && <WorkspaceCreateSection onCreate={createWorkspace} />}

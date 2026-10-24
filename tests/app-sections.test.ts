@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {views} from '../src/lib/navigation.ts';
-import {appSections,campaignTools,projectSettingsViews,sectionOf,settingsEntries,settingsEntry,standaloneViews} from '../src/lib/app-sections.ts';
+import {appSections,subTabs,projectSettingsViews,sectionOf,settingsEntries,settingsEntry,standaloneViews} from '../src/lib/app-sections.ts';
 
 test('every view keeps exactly one home, so each existing URL still opens a page',()=>{
   for(const view of views){
@@ -18,10 +18,10 @@ test('the sidebar stays short and each section page has five tabs at most',()=>{
   for(const section of appSections)assert.ok(section.tabs.length>=2&&section.tabs.length<=5,section.id);
 });
 
-test('modes and campaign tools select their parent tab',()=>{
+test('modes and campaign tools select their parent tab and list it first',()=>{
   assert.deepEqual([sectionOf('compare')?.section.id,sectionOf('compare')?.tab],['overview','project']);
-  for(const tool of campaignTools)assert.deepEqual([sectionOf(tool.view)?.section.id,sectionOf(tool.view)?.tab],['conversions','campaigns']);
-  assert.equal(campaignTools[0].view,'campaigns');
+  for(const view of ['campaigns','links','pixels'] as const)assert.deepEqual([sectionOf(view)?.section.id,sectionOf(view)?.tab],['conversions','campaigns']);
+  for(const [tab,entries] of Object.entries(subTabs))assert.equal(entries![0].view,tab,'The first sub-tab is the parent tab itself.');
 });
 
 test('website setup lives in settings, not in the report sections',()=>{
