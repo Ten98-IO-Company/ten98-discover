@@ -1,13 +1,14 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, DataTable, ProjectCreateFlow, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
-import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SettingsGroupId, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
+import { Alert, AppStateScreen, DataTable, ProjectCreateFlow, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, NavLinkComponent, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import type { HistoryState } from '@tanstack/react-router'
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, lazy, Suspense, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
+import { appSections, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels } from '../lib/app-sections'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
 import { WebPerformancePanel } from '../components/WebPerformancePanel'
@@ -640,10 +641,10 @@ function App() {
     onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
 
-  const settingsViews: AppView[] = ['preferences','security','identity','team','workspace','keys','providers','retention','google-app']
-  const settingsView = settingsViews.includes(view)
+  const projectSettingsView = projectSettingsViews.includes(view)
+  const settingsView = settingsEntry(view) !== undefined
   // An account without a workspace gets the onboarding screen; account and workspace settings keep the shell.
-  if (me && me.workspaces.length === 0 && !settingsView) return <WorkspaceSetup email={me.user.email} onCreate={createWorkspace} onRefresh={() => { refreshMemberships().catch(e => { setPageError(errMsg(e)); setPhase('error') }) }}
+  if (me && me.workspaces.length === 0 && (!settingsView || projectSettingsView)) return <WorkspaceSetup email={me.user.email} onCreate={createWorkspace} onRefresh={() => { refreshMemberships().catch(e => { setPageError(errMsg(e)); setPhase('error') }) }}
     signOutBusy={signOutBusy} onSignOut={signOut} onAccount={() => go(target('preferences'))} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
@@ -658,7 +659,10 @@ function App() {
   const toolQuery = toolSearch.trim().toLowerCase()
   const accountView = ['preferences','security','identity'].includes(view)
   const workspaceTool = ['boards','links','pixels'].includes(view)
-  const pageTitles: Record<AppView, string> = {links:'Links',pixels:'Tracking images','tracked-share':'Shared report',heatmaps:'Heatmaps',boards:'Boards',replays:'Recordings',performance:'Web performance',revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare periods', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Saved prompts', 'ai-search': 'ChatGPT answers', 'ai-insights': 'Answer analysis', sessions: 'Visitor activity', explore: 'Traffic explorer', google: 'Google reports', 'google-app': 'Google app setup', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const currentSection = sectionOf(view)
+  // Page titles repeat the tab or settings label the user just chose; a few modes get a fuller name.
+  const pageTitle = ({ compare: 'Compare periods', realtime: 'Live visitors', 'new-project': 'New project', 'tracked-share': 'Shared report' } as Partial<Record<AppView, string>>)[view]
+    ?? settingsEntry(view)?.label ?? currentSection?.section.tabs.find(tab => tab.view === view)?.label ?? currentSection?.subTabs?.find(tab => tab.view === view)?.label ?? 'Discover'
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
     if(next==='project'&&view==='explore'&&search.workspace===workspaceId&&search.project===project?.id)return {...target(next),...explorerAnalyticsNavigation(search,analyticsApplied!==null&&analyticsApplied.userId===me?.user.id&&analyticsApplied.projectId===project?.id&&analyticsApplied.explorerEntry===routeLocation.state.__TSR_key?analyticsApplied:undefined)};
@@ -674,24 +678,21 @@ function App() {
   }
   const explorerReturnState=view==='explore'&&me&&project&&search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)?{userId:me.user.id,workspace:workspaceId,project:project.id,href:routeLocation.href}:undefined
   const verifiedExplorerReturn=me&&project?readExplorerReturn('analyticsReturn'in routeLocation.state?routeLocation.state.analyticsReturn:null,me.user.id,workspaceId,project.id):null
-  const pageScope = view === 'preferences' || view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
+  const pageScope = accountView || view === 'workspace' ? 'Your account' : view === 'google-app' ? 'Advanced settings' : projectSettingsView && project ? `Project · ${project.name}` : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
 
   const adminRole = workspace !== undefined && ['owner','admin'].includes(workspace.role)
-  const navItem = (id: AppView, label: string, icon: IconName, keywords?: string): SidebarNavItem => ({ id, label, icon, href: id, current: view === id, ...keywords ? { keywords: [keywords] } : {} })
-  const workspaceNavGroups: SidebarNavGroup[] = [{ id: 'workspace', label: 'Workspace', items: [navItem('boards','Boards','grid'), navItem('links','Links','external'), navItem('pixels','Tracking images','box','tracking images pixels')] }]
-  const projectNavGroups: SidebarNavGroup[] = [
-    { id: 'traffic', label: 'Traffic', items: [navItem('project','Analytics','trending-up'), navItem('realtime','Realtime','activity'), navItem('performance','Performance','activity'), navItem('explore','Traffic explorer','search','explore analytics traffic explorer'), navItem('compare','Compare periods','layers','compare periods analytics'), navItem('events','Recent events','inbox','recent events')] },
-    { id: 'behaviour', label: 'Behaviour', items: [navItem('replays','Recordings','monitor','session replay recordings'), navItem('heatmaps','Heatmaps','compass'), navItem('sessions','Visitor activity','users','sessions visitor activity observed visitor keys'), navItem('journeys','Journeys','workflow'), navItem('visitor-retention','Retention','clock','retention')] },
-    { id: 'campaigns-reporting', label: 'Campaigns & reporting', items: [navItem('campaigns','UTM campaigns','megaphone','utm campaigns'), navItem('attribution','Attribution','layers'), navItem('conversions','Conversions','filter'), navItem('revenue','Revenue','trending-up'), navItem('reports','Reports','folder'), navItem('google','Google reports','trending-up','google reports search console ga4'), navItem('audits','Site audits','shield','site audits')] },
-    { id: 'research', label: 'Research', items: [navItem('context','Project context','folder','project context business brief'), navItem('prompts','Saved prompts','terminal','prompts saved prompts prompt library'), navItem('ai-insights','Answer analysis','activity','ai insights answer analysis retained answers brand visibility'), navItem('ai-search','ChatGPT answers','search','ai search chatgpt answers query analysis'), navItem('keywords','Keywords','search'), navItem('domain-seo','Domain SEO','globe','domain seo backlinks'), navItem('ranks','Rank tracking','trending-up','rank tracking')] },
-    { id: 'connect', label: 'Connect', items: [navItem('installation','Install tracker','code','install tracker'), { ...navItem('destinations','Destinations','external'), hidden: !adminRole }, navItem('collection','Collection and privacy','shield','collection and privacy'), { ...navItem('domains','Domains','globe'), hidden: !adminRole }] },
-  ]
-  // Group order (account, workspace, operator) keeps the established tab order; New workspace closes the workspace group.
-  const settingsItem = (id: AppView, label: string, group: SettingsGroupId, allowed = true): SettingsNavItem => ({ id, label, group, href: id, allowed })
-  const settingsItems: SettingsNavItem[] = [settingsItem('preferences','Your account','account'), settingsItem('security','Security','account'), settingsItem('identity','Identity & SSO','account'),
-    settingsItem('team','Workspace & access','workspace',adminRole), settingsItem('keys','API access','workspace',adminRole), settingsItem('providers','Integrations','workspace',workspace?.role === 'owner'),
-    settingsItem('retention','Retention','workspace',workspace !== undefined), settingsItem('workspace','New workspace','workspace'), settingsItem('google-app','Google setup','operator',me!.instanceOperator)]
-  const settingsIntro = view === 'keys' ? 'Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.' : view === 'providers' ? 'Manage provider credentials and pause paid requests.' : view === 'workspace' ? 'Keep each team’s projects and access separate.' : undefined
+  // One sidebar item per section; it opens the section's first tab and stays selected on every tab and mode within it.
+  const sectionNavGroups: SidebarNavGroup[] = [{ id: 'sections', items: appSections.map((section): SidebarNavItem => ({ id: section.id, label: section.label, icon: section.icon, href: section.tabs[0].view,
+    current: currentSection?.section.id === section.id, keywords: [...section.tabs.map(tab => tab.label), ...section.keywords] })) }]
+  // Settings pages appear in the sidebar only as search results, so "Find a tool" still reaches them.
+  const settingsAllowed = (entry: AppView) => entry === 'google-app' ? me!.instanceOperator : entry === 'providers' ? workspace?.role === 'owner' : ['team','keys'].includes(entry) ? adminRole
+    : ['domains','destinations'].includes(entry) ? adminRole && project !== null : projectSettingsViews.includes(entry) ? project !== null : entry === 'retention' ? workspace !== undefined : true
+  const settingsItems: SettingsNavItem[] = settingsEntries.map(entry => ({ id: entry.view, label: entry.label, group: entry.group, href: entry.view, allowed: settingsAllowed(entry.view) }))
+  const settingsSearchGroups: SidebarNavGroup[] = [{ id: 'settings', label: 'Settings', items: settingsItems.filter(item => item.allowed !== false).map(item => ({ id: item.id, label: item.label, icon: 'settings', href: item.id, current: view === item.id, keywords: [...settingsEntry(item.id as AppView)?.keywords ?? []] })) }]
+  const sectionTabs = currentSection && (projectView && project !== null || workspaceTool) ? currentSection.section.tabs.map(tab => ({ id: tab.view, label: tab.label, href: tab.view, current: tab.view === currentSection.tab })) : undefined
+  const modeTabs = sectionTabs && currentSection?.subTabs?.map(tab => ({ id: tab.view, label: tab.label, href: tab.view, current: tab.view === view }))
+  const settingsIntro = view === 'keys' ? 'Keys let your own scripts and AI assistants read this workspace through the ten98 API. Search and AI service accounts are added under Connections.' : view === 'providers' ? 'Connect the search and AI services Discover uses, and pause paid requests at any time.' : view === 'workspace' ? 'Keep each team’s websites and access separate.' : undefined
+  const settingsFrame = (content: ReactNode) => <SettingsLayout title={view === 'workspace' ? 'Create workspace' : pageTitle} scope={pageScope} items={settingsItems} current={view} linkComponent={ShellLink} navigationLabel='Settings sections' groupLabels={settingsGroupLabels}>{content}</SettingsLayout>
   const navRoutes: NavRoutes = { search: key => key === 'boards' ? { workspace: workspaceId, view: 'boards' } : key === 'project' || key === 'compare' ? analyticsTarget(key) : key === 'explore' ? exploreTarget() : target(key as AppView),
     analyticsState: previous => ({ ...previous, analyticsReturn: explorerReturnState && me && project && readExplorerReturn(explorerReturnState, me.user.id, workspaceId, project.id) ? explorerReturnState : undefined }) }
 
@@ -712,27 +713,28 @@ function App() {
         <div className='side-body sidebar-nav'><Stack gap={5}>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
           onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Create project',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.'}} />
-        {workspace&&<SidebarNav label='Workspace measurement' linkComponent={ShellLink} filter={toolSearch} groups={workspaceNavGroups} />}
-        {project&&workspace&&<SidebarNav label='Project sections' linkComponent={ShellLink} filter={toolSearch} groups={projectNavGroups} />}
+        {workspace&&<SidebarNav label='Sections' linkComponent={ShellLink} filter={toolSearch} groups={toolQuery?[...sectionNavGroups,...settingsSearchGroups]:sectionNavGroups} />}
         </Stack></div>
         <SidebarFooter version={appVersion}>
-          {project&&<SidebarStatus tone={lastReceived&&!eventsError?'connected':'idle'} label={eventsError?'Event history unavailable':lastReceived?'Retained events received':'No retained events yet'}/>}
-          <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target('preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
+          {project&&<SidebarStatus tone={lastReceived&&!eventsError?'connected':'idle'} label={eventsError?'Visit history unavailable':lastReceived?'Receiving visits':'Waiting for the first visit'}/>}
+          <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target(project?'installation':'preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
-      topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
+      topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitle}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile</Link><Link to='/' search={target('security')}>Security</Link><Link to='/' search={target('identity')}>Sign-in methods</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
         <div className='page-content content'><Stack gap={6}>
 
-        {!projectView&&!settingsView&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>{workspaceTool?'Workspace tools include all projects.':'Selected project'}</Banner>}
-        {workspace?.twoFactorLocked&&<Banner tone='warning' icon='shield' title='Two-factor authentication required' linkComponent={ShellLink} action={{label:'Open account security',href:'security'}}>This workspace requires two-factor authentication. Turn it on in Account security to open its projects and reports.</Banner>}
+        {!projectView&&!settingsView&&!workspaceTool&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>Selected project</Banner>}
+        {workspace?.twoFactorLocked&&<Banner tone='warning' icon='shield' title='Two-factor authentication required' linkComponent={ShellLink} action={{label:'Open security settings',href:'security'}}>This workspace requires two-factor authentication. Turn it on in Security settings to open its websites and reports.</Banner>}
         {authNotice && <Alert tone={authNotice.kind === 'error' ? 'danger' : 'info'} onDismiss={() => setAuthNotice(null)}>{authNotice.message}</Alert>}
         {appError !== '' && <Alert tone='danger'>{appError}</Alert>}
         {projectsError !== '' && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
         {/* First-strong isolates keep a right-to-left project name from reordering the origin (same isolation as <bdi> without adding raw elements). */}
-        {project && workspace && projectView && <PageHeader title={pageTitles[view]} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
-        {!projectView && !settingsView && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={pageTitles[view]} />}
-        {settingsView && <SettingsLayout title={view === 'workspace' ? 'Create workspace' : pageTitles[view]} scope={pageScope} items={settingsItems} current={view} linkComponent={ShellLink} navigationLabel='Settings sections'>
+        {project && workspace && projectView && !settingsView && <PageHeader title={currentSection?.section.label ?? pageTitle} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
+        {!projectView && !settingsView && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={currentSection?.section.label ?? pageTitle} />}
+        {sectionTabs && <SectionNav label={`${currentSection!.section.label} pages`} items={sectionTabs} linkComponent={ShellLink} />}
+        {modeTabs && <SectionNav label={`${currentSection!.section.tabs.find(tab => tab.view === currentSection!.tab)!.label} views`} items={modeTabs} linkComponent={ShellLink} />}
+        {settingsView && !projectSettingsView && settingsFrame(<>
         {settingsIntro && <Text tone='muted'>{settingsIntro}</Text>}
         {view === 'workspace' && <WorkspaceCreateSection onCreate={createWorkspace} />}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
@@ -746,9 +748,9 @@ function App() {
         {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
-        </SettingsLayout>}
+        </>)}
         {(view==='links'||view==='pixels')&&workspace&&me&&<TrackedAssetsPanel workspaceId={workspaceId} userId={me.user.id} role={workspace.role} kind={view==='links'?'link':'pixel'} appUrl={appUrl} query={search.assetInvalid?'unsupported=1':search.assetQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.view===view&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={(query,kind)=>go({workspace:workspaceId,view:kind==='pixel'?'pixels':kind==='link'?'links':view,...query?{assetQuery:query}:{}})} onUnauthorized={unauthorized}/>}
-        {view === 'collection' && project && workspace && me && <AnalyticsSettingsPanel projectId={project.id} userId={me.user.id} workspaceId={workspace.id} onDeleted={()=>{if(activeWorkspace.current!==workspace.id||activeProject.current!==project.id||currentMe.current?.user.id!==me.user.id)return;activateProject('');loadedProjects.current=(loadedProjects.current??[]).filter(item=>item.id!==project.id);setProjects(loadedProjects.current);go({workspace:workspace.id,view:'project'},true);void loadProjects(workspace.id);}} readOwner={(routeLocation.state.__TSR_key??routeLocation.href)+':'+workspace?.role} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===project.id&&search.view==='collection'&&canonicalNavigation(routeLocation.searchStr,search)} isCurrent={()=>sessionGeneration.current===renderedSession&&intent.current.generation===renderedIntent&&currentMe.current!==null&&currentMe.current.user.id===me.user.id&&activeWorkspace.current===workspaceId&&activeProject.current===project.id&&(router.state.location.state.__TSR_key??router.state.location.href)===(routeLocation.state.__TSR_key??routeLocation.href)&&navigationKey(parseNavigation(router.state.location.search))===navigationKey(search)&&currentMe.current.workspaces.some(w=>w.id===workspaceId&&w.role===workspace?.role)} onUnauthorized={unauthorized} />}
+        {view === 'collection' && project && workspace && me && settingsFrame(<AnalyticsSettingsPanel projectId={project.id} userId={me.user.id} workspaceId={workspace.id} onDeleted={()=>{if(activeWorkspace.current!==workspace.id||activeProject.current!==project.id||currentMe.current?.user.id!==me.user.id)return;activateProject('');loadedProjects.current=(loadedProjects.current??[]).filter(item=>item.id!==project.id);setProjects(loadedProjects.current);go({workspace:workspace.id,view:'project'},true);void loadProjects(workspace.id);}} readOwner={(routeLocation.state.__TSR_key??routeLocation.href)+':'+workspace?.role} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===project.id&&search.view==='collection'&&canonicalNavigation(routeLocation.searchStr,search)} isCurrent={()=>sessionGeneration.current===renderedSession&&intent.current.generation===renderedIntent&&currentMe.current!==null&&currentMe.current.user.id===me.user.id&&activeWorkspace.current===workspaceId&&activeProject.current===project.id&&(router.state.location.state.__TSR_key??router.state.location.href)===(routeLocation.state.__TSR_key??routeLocation.href)&&navigationKey(parseNavigation(router.state.location.search))===navigationKey(search)&&currentMe.current.workspaces.some(w=>w.id===workspaceId&&w.role===workspace?.role)} onUnauthorized={unauthorized} />)}
         {view === 'campaigns' && project && me && <UtmPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} search={search} onAppliedRange={rememberAnalyticsRange} onNavigate={value=>go({...target('explore'),...value})} onUnauthorized={unauthorized} />}
         {view === 'compare' && project && me && <AnalyticsPanel projectId={project.id} userId={me.user.id} compareView onAppliedRange={rememberAnalyticsRange} search={{...target('compare'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('compare'),...value})} onUnauthorized={unauthorized} />}
@@ -758,7 +760,7 @@ function App() {
         {view === 'heatmaps' && project && me && <HeatmapsPanel projectId={project.id} userId={me.user.id} query={search.heatmapInvalid?'unsupported=1':search.heatmapQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({...target('heatmaps'),...(query?{heatmapQuery:query}:{})})} onUnauthorized={unauthorized} onSettings={()=>go(target('collection'))}/>}
         {view === 'realtime' && project && me && <RealtimePanel projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenSession={value=>go({...target('sessions'),...value})}/>}
         {view === 'conversions' && project && me && <ConversionsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'context' && project && me && <ContextPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'context' && project && me && settingsFrame(<ContextPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />)}
         {view === 'prompts' && project && me && <PromptsPanel key={`${me.user.id}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onAISearch={(promptId,versionId,capture)=>{const intent=readAISearchIntent()!;go({...target('ai-search'),aiSearchQuery:aiSearchIntentQuery({...intent,section:capture?'captures':'analysis',create:capture,filters:{...intent.filters,promptId,versionId}})});}} />}
         {view === 'ai-search' && project && me && <AISearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} search={search} onNavigate={value=>go({...target('ai-search'),...value})} onUnauthorized={unauthorized} onPrompts={()=>go(target('prompts'))} onProviders={()=>go(target('providers'))}/>}
         {view === 'ai-insights' && project && me && <AIInsightsSection key={`${me.user.id}:${workspaceId}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onBack={() => go(target('prompts'))} />}
@@ -768,10 +770,10 @@ function App() {
         {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
         {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} />}
-        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />}
-        {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
+        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />)}
+        {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<>
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
-        </>}
+        </>)}
         {(view === 'new-project' || (projectView && projects !== null && project === null)) && workspace && canWrite && (
           <><PageHeader eyebrow='Website setup' title={projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'} description='Enter a project name and website address.' />
           <ProjectCreateSection key={workspaceId} onCreate={createProject} /></>
@@ -823,7 +825,7 @@ function App() {
               )}
             </section>
         )}
-        {view === 'installation' && workspace && project !== null && (
+        {view === 'installation' && workspace && project !== null && settingsFrame(
           <>
             <section className='card installation-panel' aria-labelledby='snip-h'>
               <div className='row between installation-toolbar'>

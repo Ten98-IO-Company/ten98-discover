@@ -115,7 +115,7 @@ try{
     assert.equal(await ap.getByRole('button',{name:'Cancel audit',exact:true}).isEnabled(),true);await ap.getByRole('button',{name:'Cancel audit',exact:true}).click();await pg.getByRole('dialog',{name:'Cancel this audit?',exact:true}).getByRole('button',{name:'Cancel audit',exact:true}).click();
     await ap.getByText('Audit cancellation confirmed.',{exact:true}).waitFor();held.release();await held.dispose();assert.deepEqual((await runAudit(run.id)).requests,[]);
     const stale=await holdNextGet(pg,'**'+base+'/'+run.id,{status:401});cleanups.push(stale.dispose);await ap.getByRole('button',{name:'Refresh status',exact:true}).click();await bounded(stale.entered);
-    await projectSection(pg,g.other,'Site audits');await panel(pg).getByText(/No audits yet/).waitFor();await projectSection(pg,g.main,'Site audits');await panel(pg).getByRole('region',{name:'Audit history',exact:true}).waitFor();stale.release();await stale.dispose();await pg.waitForTimeout(150);
+    await projectSection(pg,g.other,'Search','Site health');await panel(pg).getByText(/No audits yet/).waitFor();await projectSection(pg,g.main,'Search','Site health');await panel(pg).getByRole('region',{name:'Audit history',exact:true}).waitFor();stale.release();await stale.dispose();await pg.waitForTimeout(150);
     const account=pg.locator('details.account-menu');if(await account.getAttribute('open')===null)await account.locator(':scope > summary').click();
     assert.ok(await pg.getByRole('button',{name:'Sign out',exact:true}).isVisible());
     await panel(pg).getByRole('button',{name:'View audit',exact:true}).click();await panel(pg).getByRole('button',{name:'Delete audit',exact:true}).waitFor();

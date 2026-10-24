@@ -90,7 +90,9 @@ async function conversionsFor(project){
   const menu=page.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();
   await page.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:project.name,exact:true}).click();
   if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();
-  await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Conversions',exact:true}).click();
+  // Conversions is a sidebar section whose first tab, Goals, holds the funnels.
+  await page.locator('aside.t98-shell-sidebar').getByRole('navigation',{name:'Sections',exact:true}).getByRole('link',{name:'Conversions',exact:true}).click();
+  await page.getByRole('navigation',{name:'Conversions pages',exact:true}).getByRole('link',{name:'Goals',exact:true}).click();
   await panel.getByRole('heading',{name:'Saved funnels',exact:true}).waitFor();
 }
 async function assertGoal(){
