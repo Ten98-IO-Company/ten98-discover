@@ -60,7 +60,7 @@ async function fresh(search,{single=false,role='owner',onboarding=null}={}){
     const wid=path.split('/')[3],aid=path.split('/')[5],kind=aid?(aid===LINK?'link':aid===PIXEL?'pixel':null):url.searchParams.get('kind');assert.ok(Object.hasOwn(projects,wid));assert.ok(['link','pixel'].includes(kind));const item=asset(kind,wid);
     body=!aid?{workspaceId:wid,role,kind,items:[item],nextCursor:null}:path.endsWith('/report')?{workspaceId:wid,role,report:report(item,url.searchParams)}:{workspaceId:wid,role,item};
    }
-   else if(/^\/api\/projects\/[^/]+\/(analytics|annotations|annotations\/timeline|ai-search|ai-search\/analysis|funnels|sessions|prompts|prompt-insights)$/.test(path)){status=503;body={error:'Explicit synthetic unavailable report.'};}
+   else if(/^\/api\/projects\/[^/]+\/(analytics|annotations|annotations\/timeline|ai-search|ai-search\/analysis|funnels|goals|sessions|prompts|prompt-insights)$/.test(path)){status=503;body={error:'Explicit synthetic unavailable report.'};}
    else{unexpected.push(req.method()+' '+path);return route.abort();}
    return route.fulfill({status,contentType:'application/json',headers:{'cache-control':'no-store'},body:JSON.stringify(body)});
   }catch(error){errors.push('Fixture boundary: '+error.message);return route.abort();}
