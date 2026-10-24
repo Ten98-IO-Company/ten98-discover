@@ -108,7 +108,7 @@ export function WebsiteQuickShare({projectId,onUnauthorized}:{projectId:string;o
   }finally{lock.current=false;setBusy(false);}
  }
  function create(){const expiresAt=new Date(Date.now()+30*864e5).toISOString();
-  void send({operation:'create',shareId:null,body:JSON.stringify(websiteShareCreate.parse({requestId:crypto.randomUUID(),label:'Dashboard link · '+expiresAt.slice(0,10),sections:['overview','events'],expiresAt,token:newShareToken()}))});}
+  void send({operation:'create',shareId:null,body:JSON.stringify(websiteShareCreate.parse({requestId:crypto.randomUUID(),label:'Dashboard link · '+new Date().toISOString().slice(0,10),sections:['overview','events'],expiresAt,token:newShareToken()}))});}
  function revoke(){if(link)void send({operation:'revoke',shareId:link.shareId,body:JSON.stringify(websiteShareRevoke.parse({requestId:crypto.randomUUID()}))});}
  const footer=link?<><Button variant="danger" disabled={busy} onClick={revoke}>Revoke link</Button><Button variant="secondary" disabled={busy} onClick={()=>setOpen(false)}>Done</Button></>
   :<><Button variant="secondary" disabled={busy} onClick={()=>setOpen(false)}>Cancel</Button><Button disabled={busy} onClick={()=>attempt?void send(attempt):create()}>{attempt?'Retry':busy?'Creating…':'Create link'}</Button></>;
