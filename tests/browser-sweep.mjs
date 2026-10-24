@@ -4,6 +4,7 @@
 //   node tests/browser-sweep.mjs --list                  routing table only; runs nothing
 //   node tests/browser-sweep.mjs --only rank,journeys    suites whose path contains any of these substrings
 //   node tests/browser-sweep.mjs --class component       one class: component | native | evidence-gated
+//   node tests/browser-sweep.mjs --require-run           exit 1 when every selected suite was skipped
 // Prerequisites stay with the suites and harnesses; the sweep never loosens a guard, seeds, migrates or fabricates evidence:
 // - native-browser suites need a built .output (pnpm build) and a local throwaway PostgreSQL (NATIVE_BROWSER_POSTGRES, default
 //   postgres://ten98@127.0.0.1:5432); tests/helpers/native-browser.mjs creates and drops one database per suite. They run one at a time
@@ -11,21 +12,22 @@
 // - research-ui / conversions-ui suites run only when TEN98_SWEEP_RESEARCH_UI_ENV / TEN98_SWEEP_CONVERSIONS_UI_ENV name the operator's
 //   env file and that harness's seeded fixture and preload web process are already running (see each harness README).
 // - evidence-gated suites run only when every evidence variable names an existing file.
-// Any FAIL exits 1. Full output per suite is kept under private/browser-sweep/<run>/.
+// Any FAIL exits 1; SIGINT/SIGTERM stops running suites (native runners still drop their databases) and exits 130/143. Full output per suite is kept under private/browser-sweep/<run>/.
 import {spawn} from 'node:child_process';
-import {createWriteStream, existsSync, mkdirSync, readFileSync} from 'node:fs';
+import {createWriteStream, existsSync, mkdirSync} from 'node:fs';
 import {connect} from 'node:net';
 import {resolve} from 'node:path';
-import {browserSuiteRoutes, discoverBrowserSuites} from './helpers/browser-sweep-routes.ts';
+import {browserSuiteRoutes, discoverBrowserSuites, signalExitCode, stopSequence} from './helpers/browser-sweep-routes.ts';
 
-const usage = 'Usage: node tests/browser-sweep.mjs [--list] [--jobs 1|2] [--only a,b] [--class component|native|evidence-gated]';
-const args = process.argv.slice(2), options = {list: false, jobs: 2, only: [], class: null};
+const usage = 'Usage: node tests/browser-sweep.mjs [--list] [--jobs 1|2] [--only a,b] [--class component|native|evidence-gated] [--require-run]';
+const args = process.argv.slice(2), options = {list: false, jobs: 2, only: [], class: null, requireRun: false};
 while (args.length) {
   const arg = args.shift(), value = () => { const next = args.shift(); if (next === undefined) throw new Error(usage); return next; };
   if (arg === '--list') options.list = true;
   else if (arg === '--jobs') options.jobs = Number(value());
   else if (arg === '--only') options.only = value().split(',').filter(Boolean);
   else if (arg === '--class') options.class = value();
+  else if (arg === '--require-run') options.requireRun = true;
   else throw new Error(usage);
 }
 // The shared Docker lease allows at most two concurrent browser suites.
@@ -101,27 +103,25 @@ const firstError = text => {
   const hit = own.find(line => /^(\w*Error\b|Error \[)/.test(line)) ?? own.find(line => /\b\w*Error\b|ERR_|✖|not ok|\bfailed\b/i.test(line)) ?? own.at(-1) ?? lines.at(-1) ?? 'no output';
   return hit.length > 200 ? hit.slice(0, 197) + '...' : hit;
 };
-// /proc lookup so a timed-out native suite is stopped on its own and native-browser.mjs still drops its throwaway database.
-const childrenOf = pid => { try { return readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim().split(/\s+/).filter(Boolean).map(Number); } catch { return []; } };
-const commandOf = pid => { try { return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0'); } catch { return []; } };
 const killGroup = (child, signal) => { try { process.platform === 'win32' ? child.kill(signal) : process.kill(-child.pid, signal); } catch {} };
+const live = new Map();
+// SIGTERM first so native-browser.mjs reaches its `finally` and drops its database, then SIGKILL whatever is left of the group.
+const stop = (child, route) => { for (const {signal, afterMs} of stopSequence(route)) live.get(child)?.timers.push(setTimeout(() => killGroup(child, signal), afterMs)); };
 
 function execute(route, {argv, env}) {
   return new Promise(done => {
     const started = Date.now(), log = createWriteStream(resolve(logDir, route.suite.replace(/^tests\//, '').replaceAll('/', '__') + '.log'));
     let output = '', timedOut = false;
     const child = spawn(process.execPath, argv, {cwd: root, env: {...process.env, ...env}, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32'});
+    live.set(child, {route, timers: []});
+    // Both pipes stay drained until the child closes, so a full or broken pipe never stops the runner before its cleanup.
     const collect = chunk => { log.write(chunk); if (output.length < 4_000_000) output += chunk; };
     child.stdout.on('data', collect); child.stderr.on('data', collect);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      const suite = argv[0] === 'tests/helpers/native-browser.mjs' ? childrenOf(child.pid).find(pid => commandOf(pid).includes(route.suite)) : undefined;
-      if (suite) { try { process.kill(suite, 'SIGKILL'); } catch {} setTimeout(() => killGroup(child, 'SIGKILL'), 60_000).unref(); }
-      else killGroup(child, 'SIGKILL');
-    }, timeoutOf(route));
+    const timer = setTimeout(() => { timedOut = true; stop(child, route); }, timeoutOf(route));
     child.on('close', code => {
-      clearTimeout(timer); log.end();
+      clearTimeout(timer); for (const pending of live.get(child).timers) clearTimeout(pending); live.delete(child); log.end();
       const seconds = Math.round((Date.now() - started) / 1000);
+      if (stopping) return done({result: 'FAIL', detail: `stopped by ${stopping}: ${firstError(output)}`, seconds});
       if (timedOut) return done({result: 'FAIL', detail: `timed out after ${timeoutOf(route) / 1000}s: ${firstError(output)}`, seconds});
       done(code === 0 ? {result: 'PASS', detail: '', seconds} : {result: 'FAIL', detail: `exit ${code}: ${firstError(output)}`, seconds});
     });
@@ -130,8 +130,16 @@ function execute(route, {argv, env}) {
 
 const results = new Map(), queue = routes.map(route => ({route, plan: plan(route)})), busy = new Set();
 for (const {route, plan: {skip}} of queue) if (skip) results.set(route.suite, {result: 'SKIPPED', detail: skip, seconds: 0});
-const pending = queue.filter(item => !item.plan.skip);
-console.log(`Browser sweep ${run}: ${routes.length} suites, ${pending.length} to run, --jobs ${options.jobs}. Logs: ${logDir}`);
+const pending = queue.filter(item => !item.plan.skip), ran = pending.length;
+let stopping = null;
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+  if (stopping) return;
+  stopping = signal; console.error(`\n${signal}: stopping ${live.size} running suite(s); native runners get time to drop their databases.`);
+  for (const {route} of pending.splice(0)) results.set(route.suite, {result: 'SKIPPED', detail: `not run: sweep stopped by ${signal}`, seconds: 0});
+  for (const [child, {route}] of live) stop(child, route);
+});
+console.log(`Browser sweep ${run}: ${routes.length} suites, ${ran} to run, --jobs ${options.jobs}. Logs: ${logDir}`);
+if (!ran) console.warn('WARNING: every selected suite was skipped; nothing ran.');
 await new Promise(finish => {
   let running = 0;
   const next = () => {
@@ -154,4 +162,4 @@ await new Promise(finish => {
 const rows = routes.map(route => { const {result, detail, seconds} = results.get(route.suite); return [route.suite.replace(/^tests\//, ''), route.class, result, result === 'SKIPPED' ? '' : seconds + 's', detail]; });
 console.log('\n' + table(['Suite', 'Class', 'Result', 'Time', 'Detail'], rows));
 console.log(`\n${counts(rows.map(row => row[2]))}.`);
-process.exitCode = rows.some(row => row[2] === 'FAIL') ? 1 : 0;
+process.exitCode = stopping ? signalExitCode(stopping) : rows.some(row => row[2] === 'FAIL') || options.requireRun && !ran ? 1 : 0;

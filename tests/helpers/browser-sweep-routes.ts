@@ -179,3 +179,11 @@ export function discoverBrowserSuites(root: string): string[] {
   }).map(name => `tests/${dir}/${name}`));
   return [...top, ...harness].sort();
 }
+
+/** How the sweep stops a suite on timeout or shutdown: SIGTERM the process group, then SIGKILL it after a grace period long enough
+ *  for tests/helpers/native-browser.mjs to stop its server and DROP its throwaway database in `finally`. */
+export function stopSequence(route: Pick<SuiteRoute, 'harness'>): {signal: 'SIGTERM' | 'SIGKILL'; afterMs: number}[] {
+  return [{signal: 'SIGTERM', afterMs: 0}, {signal: 'SIGKILL', afterMs: route.harness === 'native-browser' ? 20_000 : 5_000}];
+}
+
+export const signalExitCode = (signal: 'SIGINT' | 'SIGTERM') => signal === 'SIGINT' ? 130 : 143;
