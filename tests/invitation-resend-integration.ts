@@ -99,6 +99,18 @@ test('invitation resend and new link: managers only, pending only, rotate the li
   const spentOn = async (key: string) => Number((await pool.query('SELECT coalesce(sum(count),0)::int AS total FROM request_limit WHERE key=$1', [key])).rows[0].total);
   const stored = async (id: string) => (await pool.query('SELECT token_hash, expires_at FROM workspace_invitation WHERE id=$1', [id])).rows[0];
 
+  await t.test('(a0) the team read says whether email is set up, so the UI offers Resend email only when it can send', async () => {
+    const team = async () => {
+      const headers = new Headers({ origin: config.appUrl, cookie: [...owner.jar].map(([key, value]) => `${key}=${value}`).join('; ') });
+      const response = await handleApi(new Request(new URL(`/api/workspaces/${workspaceId}/team`, config.appUrl), { headers }));
+      assert.equal(response.status, 200);
+      return await response.json() as Record<string, unknown>;
+    };
+    assert.equal((await team()).emailConfigured, false);
+    configured = true;
+    try { assert.equal((await team()).emailConfigured, true); } finally { configured = false; }
+  });
+
   await t.test('(a) without a transport, resend answers 409, sends nothing and keeps the link', async () => {
     const inv = await invite();
     const before = await stored(inv.id);

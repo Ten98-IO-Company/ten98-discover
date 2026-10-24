@@ -1086,7 +1086,8 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'GET' && match[2] === 'team') {
         const result = await getTeam(match[1], user.id);
         if (apiToken) await authorizeApiKey(apiToken, match[1], 'team:read');
-        return json(result);
+        // Lets managers see whether Resend email can work; it never exposes the transport or its settings.
+        return json({ ...result, emailConfigured: getEmailStatus().configured });
       }
       if (request.method === 'POST') {
         await limit(`team:${user.id}`, 60);
