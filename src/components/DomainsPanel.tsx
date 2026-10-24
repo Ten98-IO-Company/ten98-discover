@@ -414,7 +414,7 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
             ]} />
             <p className="hint">This allows the exact project origin. Collection settings, privacy choices and browser privacy signals still determine what is recorded.</p>
             <div className="row">
-              <button type="button" className="btn primary" disabled={controlsOff} onClick={onInstallTracker}>Install tracker</button>
+              <button type="button" className="btn primary" disabled={controlsOff} onClick={onInstallTracker}>Get tracking code</button>
               {canonical && canonicalOk && canonical.status !== 'verified' && canonical.status !== 'pending' && <button type="button" className="btn" disabled={controlsOff} onClick={() => void onChallenge(canonical)}>Verify DNS ownership</button>}
               {canonical && canonical.status === 'pending' && <button type="button" className="btn" disabled={controlsOff || !canonical.challengeExpiresAt || Date.parse(canonical.challengeExpiresAt) <= Date.now()} onClick={() => onVerify(canonical)}>Check DNS proof</button>}
             </div>

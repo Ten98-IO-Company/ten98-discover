@@ -73,7 +73,7 @@ try {
   stage = 'canonical origin and optional ownership'; await fresh();
   assert.match(await website().innerText(), /https:\/\/ten98\.example:8443/); assert.match(await website().innerText(), /Collection origin\s+Origin allowed/); assert.match(await website().innerText(), /Not verified — optional for the canonical origin/);
   assert.equal(await page.getByRole('form', {name: 'Add a domain'}).isVisible(), false); assert.equal(writes.length, 0);
-  await website().getByRole('button', {name: 'Install tracker', exact: true}).click(); await page.getByRole('heading', {name: 'Tracker installation', exact: true}).waitFor();
+  await website().getByRole('button', {name: 'Get tracking code', exact: true}).click(); await page.getByRole('heading', {name: 'Tracker installation', exact: true}).waitFor();
   assert.equal(new URL(page.url()).searchParams.get('workspace'), workspace); assert.equal(new URL(page.url()).searchParams.get('project'), first); assert.equal(new URL(page.url()).searchParams.get('view'), 'installation'); groups++;
   console.log('PASS canonical unverified is an allowed exact origin, privacy caveat, optional setup and native-router installation scope.');
 
@@ -100,8 +100,8 @@ try {
   console.log('PASS verified aliases never enable collection or auto-check; local project origin remains allowed without DNS proof.');
 
   stage = 'stale refresh and unknown mutation'; reset(); await fresh(); await website().getByRole('button', {name: 'Verify DNS ownership', exact: true}).click(); await proof().waitFor(); failReads = true;
-  await page.getByRole('button', {name: 'Refresh', exact: true}).click(); await page.getByText('These are the last loaded settings.', {exact: false}).waitFor(); assert.equal(await proof().count(), 0); assert.equal(await website().getByRole('button', {name: 'Install tracker', exact: true}).isDisabled(), true); assert.equal(await page.getByRole('button', {name: 'Refresh', exact: true}).isEnabled(), true);
-  failReads = false; await page.getByRole('button', {name: 'Refresh', exact: true}).click(); await website().getByRole('button', {name: 'Install tracker', exact: true}).waitFor(); await page.getByText('These are the last loaded settings.', {exact: false}).waitFor({state: 'hidden'});
+  await page.getByRole('button', {name: 'Refresh', exact: true}).click(); await page.getByText('These are the last loaded settings.', {exact: false}).waitFor(); assert.equal(await proof().count(), 0); assert.equal(await website().getByRole('button', {name: 'Get tracking code', exact: true}).isDisabled(), true); assert.equal(await page.getByRole('button', {name: 'Refresh', exact: true}).isEnabled(), true);
+  failReads = false; await page.getByRole('button', {name: 'Refresh', exact: true}).click(); await website().getByRole('button', {name: 'Get tracking code', exact: true}).waitFor(); await page.getByText('These are the last loaded settings.', {exact: false}).waitFor({state: 'hidden'});
   await website().getByText('Manage DNS ownership', {exact: true}).click(); ambiguous = true; await website().getByRole('button', {name: 'Replace DNS proof', exact: true}).click(); await page.getByRole('dialog', {name: 'Replace the DNS proof for ten98.example?', exact: true}).getByRole('button', {name: 'Replace DNS proof', exact: true}).click(); await page.getByText('These are the last loaded settings.', {exact: false}).waitFor(); assert.equal(await proof().count(), 0); assert.equal(await website().getByRole('button', {name: 'Replace DNS proof', exact: true}).isDisabled(), true); groups++;
   console.log('PASS failed refresh and ambiguous writes disable stale actions and purge one-time proof while Refresh remains available.');
 

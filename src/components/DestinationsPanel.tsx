@@ -985,7 +985,7 @@ function DestinationsInner({
         <p className="dim">
           Example usage only — replace <code className="mono">your-public-site-key</code> with the site's
           public key; it is not exposed here. Native analytics use the same analytics-consent choice;
-          configure native collection and optional metadata in Collection and privacy. This panel manages vendor tags.
+          configure native collection and optional metadata in Privacy settings. This panel manages vendor tags.
         </p>
         <p className="hint">
           This preferences button becomes available after the loader validates the site configuration.
