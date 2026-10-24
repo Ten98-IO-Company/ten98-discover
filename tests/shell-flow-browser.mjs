@@ -239,10 +239,10 @@ try {
   await open('installation'); await snippetRegion().waitFor();
   // With an empty history, Install polls for the first event on its own and announces it; a manual empty check clears the announcement.
   eventReply = {body:populated};
-  await main.getByRole('status').filter({hasText:'First event received.'}).waitFor({timeout:10_000});
+  await main.getByRole('status').filter({hasText:'Tracking works: visits are arriving'}).waitFor({timeout:10_000});
   eventReply = {body:empty}; await button('Check for events').click();
-  await main.getByText('No events in retained history yet.', {exact:false}).waitFor();
-  assert.equal(await main.getByText('First event received.', {exact:false}).count(), 0);
+  await main.getByText('Waiting for the first visit.', {exact:false}).waitFor();
+  assert.equal(await main.getByText('Tracking works: visits are arriving', {exact:false}).count(), 0);
   const expectedSnippet = `<script defer src="${origin}/tracker.js" data-site-key="${publicKey}" referrerpolicy="no-referrer"></script>`;
   assert.equal(await snippetRegion().getAttribute('tabindex'), '0');
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);

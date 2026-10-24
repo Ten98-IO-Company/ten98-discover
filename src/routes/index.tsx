@@ -8,6 +8,7 @@ import type { HistoryState } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
+import { parseWebsiteAddress } from '../lib/website-address'
 import { appSections, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels } from '../lib/app-sections'
 import { formatReportInstant } from '../lib/report-time'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
@@ -93,17 +94,6 @@ function fmt(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-function parseOrigin(raw: string): { origin?: string; error?: string } {
-  const input = raw.trim()
-  if (input === '') return { error: 'Enter the website address, for example https://example.com.' }
-  let u: URL
-  try { u = new URL(input) } catch { return { error: 'Enter a valid website address, for example https://example.com.' } }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { error: 'The website address must start with http:// or https://.' }
-  if (u.username !== '' || u.password !== '') return { error: 'The website address must not include a username or password.' }
-  if (u.pathname !== '/' || u.search !== '' || u.hash !== '') return { error: 'Enter only the website address, without a page path, query or #fragment.' }
-  return { origin: u.origin }
-}
-
 function pillClass(status: string): string {
   const s = status.toLowerCase()
   if (s.includes('fail') || s.includes('error') || s.includes('denied')) return 'pill bad'
@@ -146,7 +136,6 @@ function App() {
   const [events, setEvents] = useState<EventsData | null>(null)
   const [eventsReadAt, setEventsReadAt] = useState<string | null>(null)
   const [eventsBusy, setEventsBusy] = useState(false)
-  const [firstEventSeen, setFirstEventSeen] = useState(false)
   const [eventsError, setEventsError] = useState('')
   const [jobs, setJobs] = useState<Job[] | null>(null)
   const [jobsBusy, setJobsBusy] = useState(false)
@@ -339,7 +328,7 @@ function App() {
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
-    setEvents(null); setEventsReadAt(null); setEventsError(''); setEventsBusy(false); setFirstEventSeen(false)
+    setEvents(null); setEventsReadAt(null); setEventsError(''); setEventsBusy(false)
     setJobs(null); setJobError(''); setJobsBusy(false); setCheckBusy(false)
     setCopied('idle')
     if (id) void loadEvents(id)
@@ -464,7 +453,7 @@ function App() {
     if (!background) { setEventsBusy(true); setEventsError('') }
     try {
       const d = await api<EventsData>(`/api/projects/${pid}/events`)
-      if (current()) { if (background && d.total > 0) setFirstEventSeen(true); setEvents(d); setEventsReadAt(new Date().toISOString()); if (background) setEventsError('') }
+      if (current()) { setEvents(d); setEventsReadAt(new Date().toISOString()); if (background) setEventsError('') }
     } catch (e) { if (current() && !guardAuth(e) && !background) { if (e instanceof ApiError && [403,404].includes(e.status)) { setEvents(null); setEventsReadAt(null) } setEventsError(errMsg(e)) } }
     finally { if (current() && !background) setEventsBusy(false) }
   }
@@ -778,7 +767,7 @@ function App() {
           <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
         </>)}
         {(view === 'new-project' || (projectView && projects !== null && project === null)) && workspace && canWrite && (
-          <><PageHeader eyebrow='Website setup' title={projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'} description='Enter a project name and website address.' />
+          <><PageHeader title={projects !== null && projects.length > 0 ? 'Add a website' : 'Add your website'} description='Next you add one line of tracking code to your site.' />
           <ProjectCreateSection key={workspaceId} onCreate={createProject} /></>
         )}
         {projectView && workspace && projects !== null && project === null && !canWrite && (
@@ -855,11 +844,10 @@ function App() {
                   installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
                   receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
                 {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
-                {firstEventSeen && (events?.total ?? 0) > 0 && <StatusLine tone='success'>First event received. Your tracker is sending events to this project.</StatusLine>}
+                {(events?.total ?? 0) > 0 && <><StatusLine tone='success'>Tracking works: visits are arriving from {project.origin}.</StatusLine><Button href='project' component={ShellLink}>Go to dashboard</Button></>}
                 {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt} title={events.events[0].receivedAt}>{formatReportInstant(events.events[0].receivedAt,'UTC')}</time>.</p>}
-                {events !== null && events.total === 0 && <p>No events in retained history yet. This page checks automatically for 10 minutes. Confirm the tag is published and visit your website. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
+                {events !== null && events.total === 0 && <StatusLine>Waiting for the first visit. Open your website in another tab; this page checks again for 10 minutes. If your site asks visitors for consent, accept analytics first.</StatusLine>}
                 {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
-                <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
                 <Button style={{minHeight:44,whiteSpace:'normal'}} variant='ghost' href='events' component={ShellLink}>Inspect recent events</Button>
               </ResourceCard>
             </section>
@@ -979,8 +967,8 @@ function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: s
 
   async function submit(v: { name: string; origin?: string }) {
     const name = v.name.trim()
-    if (name === '') { setState(s => ({ ...s, error: '', fieldErrors: { name: 'Enter a project name.' } })); return }
-    const parsed = parseOrigin(v.origin ?? '')
+    if (name === '') { setState(s => ({ ...s, error: '', fieldErrors: { name: 'Enter a name for this website.' } })); return }
+    const parsed = parseWebsiteAddress(v.origin ?? '')
     if (!parsed.origin) { setState(s => ({ ...s, error: '', fieldErrors: { origin: parsed.error ?? 'Enter a valid website address.' } })); return }
     setBusy(true); setState(s => ({ ...s, error: '', fieldErrors: undefined }))
     try { await onCreate(name, parsed.origin); setState(s => ({ generation: s.generation + 1, error: '' })) }
@@ -988,9 +976,9 @@ function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: s
     finally { setBusy(false) }
   }
 
-  return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Create project' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Creating…'
+  return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Add website' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Adding…'
     error={state.error || undefined} fieldErrors={state.fieldErrors} onSubmit={submit}
-    messages={{ nameLabel: 'Project name', originLabel: 'Website address', originHint: 'Use your website address, for example https://example.com, without a page path.', create: 'Create project' }} />
+    messages={{ nameLabel: 'Website name', originLabel: 'Website address', originHint: 'For example example.com. You can paste any page of your site.', create: 'Add website' }} />
 }
 
 // Shared by the onboarding screen and the New workspace settings tab.
