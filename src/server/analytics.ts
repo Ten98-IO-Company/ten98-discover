@@ -123,10 +123,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
     :valueVisitsSql(from('visit_values'),fields,as);
   let epoch:string|undefined;
   try{
-  // The statement's time goes to hashing, not expression evaluation, so JIT's ~0.2 s compile only adds to it (#414). Its CTE row
-  // estimates are often near 1, which may plan a nested loop over event rows against a lookup CTE: quadratic at volume. Nested loops stay
-  // where nothing else applies (cross, lateral and range joins); every equality join hashes or merges.
-  if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'; SET LOCAL jit=off; SET LOCAL enable_nestloop=off");}
+  if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");}
   if(client&&share){
     // Public website share: no workspace gate, grant lock or project row lock, so no writer ever waits for (or starves behind) a public
     // reader. The epoch read here and rechecked before COMMIT refuses a read that a reset, settings save or restore committed during.
@@ -139,6 +136,11 @@ export async function projectAnalytics(projectId: string, userId: string, params
     // current key/membership checks run only after this possible authority wait.
     await client.query('SELECT id FROM workspace WHERE id=$1 FOR SHARE',[hint]);
   }
+  // Set after the gate queries, which keep their index lookups. The statement's time goes to hashing, not expression evaluation, so
+  // JIT's ~0.2 s compile only adds to it (#414). Its CTE row estimates are often near 1, which may plan a nested loop over event rows
+  // against a lookup CTE: quadratic at volume. Nested loops stay where nothing else applies (cross, lateral and range joins); every
+  // equality join hashes or merges. Both return to their defaults straight after the statement.
+  if(client)await client.query('SET LOCAL jit=off; SET LOCAL enable_nestloop=off');
   // One statement gives totals, buckets and rankings the same database snapshot.
   // ponytail: aggregate the selected range directly; add rollups after measured volume requires them.
   const { rows } = await (client??getDatabase().pool).query(`
@@ -260,6 +262,7 @@ export async function projectAnalytics(projectId: string, userId: string, params
       'geography',${geographyReportSql('$14::jsonb')},'lastReceivedAt',max(received_at)
     ) AS report FROM observations) r ORDER BY CASE q.period WHEN 'current' THEN 0 ELSE 1 END`,
     values);
+  if(client)await client.query('SET LOCAL jit TO DEFAULT; SET LOCAL enable_nestloop TO DEFAULT');
   if(apiKeyId&&!rows[0]?.key_valid)throw new FoundationError(401,'The API key is invalid, expired or unavailable.');
   if(!rows[0]?.allowed)throw new FoundationError(404,'Project not found or unavailable.');
   if(rows[0].dimension_invalid)throw new FoundationError(503,'Stored dimension data cannot be reported safely. Choose another dimension or more filters.');
