@@ -24,6 +24,8 @@ function DeleteInner({workspaceId,projectId,disabled=false,authorityOwner,isCurr
    else setError(value instanceof MutationError&&(value.status===403||value.status===404)?'Deletion is unavailable for your current access. Reload deletion access.':value instanceof MutationError&&value.status===409?'The website revision or provider work changed. Finish pending work or reload access. A submitted request keeps its original confirmation and request ID.':value instanceof MutationError&&value.status===429?'Too many requests. Wait a minute, then retry the same request.':'The reply could not be verified. Deletion may already have committed. Reload deletion access and retry only the same request.');}}
   finally{clearTimeout(timer);if(mounted.current&&generation.current===gen&&operation.current===ctrl){operation.current=null;setBusy(false);if(live.current.authorityOwner===owner&&isCurrent())callbacks.current.onBusy?.(false);}}
  };
+ // Confirming closes the dialog at once; the write then runs inline with busy, error and exact-retry state, so a held request never traps the page behind a modal.
+ const confirm=()=>{void run(true);};
  // The closed state reads nothing; opening it reads the current deletion access before any action is offered.
  if(!open)return <Button variant="danger" type="button" disabled={disabled||!currentAccess()} onClick={()=>{if(currentAccess()){setOpen(true);void run(false);}}}>{attempt?'Resolve submitted deletion':'Delete website'}</Button>;
  return <section className="stack" aria-label="Delete website" aria-busy={busy} style={{minWidth:0,overflowWrap:'anywhere'}}>
@@ -32,7 +34,7 @@ function DeleteInner({workspaceId,projectId,disabled=false,authorityOwner,isCurr
    disabled={disabled||!verified||!attempt&&!verified.item} messages={{retry:'Retry the same deletion'}}
    unconfirmed={attempt?'An outcome is unverified. Retry sends exactly the same website, revision, DELETE confirmation and request ID. Reloading access does not acknowledge the deletion.':undefined}
    actions={[{id:'delete-website',title:'Delete website',description:'This permanently deletes this website, its tracking key, native analytics, recordings, heatmaps, website settings and website-specific saved reports and configurations. It cannot be undone.',confirmLabel:'Delete website',confirmationText:'DELETE',retryOnly:true}]}
-   onConfirm={()=>run(true)}/>
+   onConfirm={confirm}/>
   <div className="row" style={{flexWrap:'wrap'}}><Button variant="secondary" type="button" disabled={busy||!currentAccess()} onClick={()=>void run(false)}>Reload deletion access</Button><Button variant="ghost" type="button" disabled={busy} onClick={()=>setOpen(false)}>Close deletion</Button></div>
  </section>;
 }

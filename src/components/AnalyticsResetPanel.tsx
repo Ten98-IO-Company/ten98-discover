@@ -36,6 +36,8 @@ function ResetInner({projectId,disabled=false,authorityOwner='',isCurrent,pendin
   }catch(value){if(sameOwner()){if(ctrl.signal.aborted){setState(null);setError(input?'The request timed out. Reset may already have committed. Reload access, then retry the same reset.':'Reset access took too long. Reload access to continue.');}else failure(value);}}
   finally{clearTimeout(timer);if(mounted.current&&gen===generation.current&&operation.current===ctrl){operation.current=null;setBusy(false);if(live.current.authorityOwner===owner&&allowed())callbacks.current.onBusy?.(false);}}
  };
+ // Confirming closes the dialog at once; the write then runs inline with busy, error and exact-retry state, so a held request never traps the page behind a modal.
+ const confirm=()=>{void run(true);};
  // The closed state reads nothing; opening it reads the current reset access before any action is offered.
  if(!open)return <Button variant="ghost" type="button" disabled={disabled||!allowed()} onClick={()=>{if(allowed()){setOpen(true);void run(false);}}}>Reset analytics</Button>;
  return <section className="stack" aria-label="Reset project analytics" aria-busy={busy} style={{minWidth:0,overflowWrap:'anywhere'}}>
@@ -45,7 +47,7 @@ function ResetInner({projectId,disabled=false,authorityOwner='',isCurrent,pendin
    disabled={disabled||!verified} messages={{retry:'Retry the same reset'}}
    unconfirmed={attempt?'A reset was submitted. Retry uses the same confirmation, project revision and request ID. Reloading access does not acknowledge or repeat it.':undefined}
    actions={[{id:'reset-analytics',title:'Reset analytics',description:'This permanently removes earlier native analytics for this website: events, visitor activity, session properties, identity links, performance, recordings and heatmaps. It cannot be undone.',confirmLabel:'Permanently reset analytics',confirmationText:'RESET',retryOnly:true}]}
-   onConfirm={()=>run(true)}/>}
+   onConfirm={confirm}/>}
   {result&&error&&<Alert tone="danger" variant="inline">{error}</Alert>}
   <div className="row" style={{flexWrap:'wrap'}}><Button variant="secondary" type="button" disabled={busy||!allowed()} onClick={()=>void run(false)}>Reload reset access</Button><Button variant="ghost" type="button" disabled={busy} onClick={()=>setOpen(false)}>Close reset</Button></div>
  </section>;

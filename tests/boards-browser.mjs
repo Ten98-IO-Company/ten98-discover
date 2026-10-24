@@ -88,7 +88,7 @@ try{
 
  for(const operation of['clone','delete']){
   let loseAck=true;await fresh({all:false,custom:async(route,call)=>{if(call.method==='POST'&&loseAck){loseAck=false;mutate(call);return route.abort();}return normal(route,call);}});await ready();
-  if(operation==='clone'){await panel().getByLabel('New clone name',{exact:true}).fill('Uncertain clone');await btn('Clone board').click();}else await btn('Delete board').click();await page.getByRole('dialog').getByRole('button',{name:'Delete board',exact:true}).click();
+  if(operation==='clone'){await panel().getByLabel('New clone name',{exact:true}).fill('Uncertain clone');await btn('Clone board').click();}else{await btn('Delete board').click();await page.getByRole('dialog').getByRole('button',{name:'Delete board',exact:true}).click();}
   await ready();await btn('Retry same board request').waitFor();const original=posts().at(-1);dialogChoice='dismiss';dialogMessages=[];
   await page.getByRole('link',{name:'Leave boards fixture',exact:true}).click();assert.deepEqual(dialogMessages,['This change may already be saved. Leave and lose the option to retry it? Select Cancel to stay.']);assert.equal(await btn('Retry same board request').count(),1);assert.equal(posts().length,1);
   await page.evaluate(()=>{setTimeout(()=>location.reload(),0);});await wait(()=>dialogMessages.length===2);assert.equal(await btn('Retry same board request').count(),1);assert.equal(posts().length,1);
