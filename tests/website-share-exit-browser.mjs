@@ -48,7 +48,7 @@ async function draft(label='Unsaved public link'){await btn('New public link').c
 async function inPage(title,confirmLabel,choice){const confirmation=page.getByRole('dialog',{name:title,exact:true});dialogs.push({type:'in-page',message:title+' '+await confirmation.innerText()});await confirmation.getByRole('button',{name:choice?confirmLabel:'Cancel',exact:true}).click();await confirmation.waitFor({state:'hidden'});}
 async function navigate(view){await page.evaluate(search=>{void window.websiteShareExitFixture.navigate(search);},{workspace,project,view});}
 async function sameDraft(label){assert.equal(await name().inputValue(),label);assert.equal(new URL(page.url()).searchParams.get('view'),'collection');}
-async function away(){await page.getByRole('region',{name:'Profile and appearance',exact:true}).waitFor();}
+async function away(){await page.getByRole('region',{name:'Profile',exact:true}).waitFor();}
 async function run(){
  const baseline=control?execFileSync('git',['show','0d07f10:src/components/WebsiteSharePanel.tsx'],{cwd:root,encoding:'utf8'}):null;
  server=await createServer({plugins:baseline?[{name:'original-website-share-control',enforce:'pre',transform(code,id){return id.replaceAll('\\','/').endsWith('/src/components/WebsiteSharePanel.tsx')?baseline:null;}}]:[],configFile:false,envDir:false,root,cacheDir:out+'/vite-cache',appType:'custom',resolve:{dedupe:['react','react-dom']},optimizeDeps:{entries:['tests/website-share-exit-browser-fixture.tsx'],include:['react','react-dom','react-dom/client','react/jsx-dev-runtime','@tanstack/react-router','zod']},server:{host:'127.0.0.1',port:0,strictPort:true,hmr:false},logLevel:'error'});

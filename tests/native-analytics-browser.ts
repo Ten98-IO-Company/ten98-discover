@@ -145,14 +145,14 @@ try {
   async function selectProject(target:any,name:string) {
     await navigation(target);await target.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name,exact:true}).click();
   }
+  // Project settings such as Privacy are Settings sections, opened from the sidebar Settings link.
   async function section(target:any,name:string) {
-    await navigation(target);
-    const link=target.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name,exact:true,includeHidden:true});
-    for(const disclosure of await link.locator('xpath=ancestor::details').all())if(await disclosure.getAttribute('open')===null)await disclosure.locator(':scope > summary').click();
-    await link.click();
+    const tabs=target.getByRole('navigation',{name:'Settings sections',exact:true});
+    if(!await tabs.isVisible()){await navigation(target);await target.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true}).click();}
+    await tabs.getByRole('link',{name,exact:true}).click();
   }
   await dashboard.goto(config.appUrl, {waitUntil: 'networkidle'});
-  await dashboard.getByRole('heading',{name:'Web analytics',level:1,exact:true}).waitFor();
+  await dashboard.getByRole('heading',{name:'Overview',level:1,exact:true}).waitFor();
   assert.equal(await dashboard.getByRole('navigation',{name:'Projects',exact:true}).getByRole('link',{name:'Unmeasured native sandbox',exact:true}).getAttribute('aria-current'),'page','Initial loading must open the first listed project when no newer navigation was requested.');
   await selectProject(dashboard,'Native consent sandbox');
   const metric = (name: string) => dashboard.locator('.analytics-stat').filter({has: dashboard.getByText(name, {exact: true})}).locator('p');
@@ -178,7 +178,7 @@ try {
   await dashboard.setViewportSize({width:320,height:740});await capture('native-metrics-unavailable-320.png');
   await dashboard.setViewportSize({width:360,height:740});
   await selectProject(dashboard,'Native consent sandbox');
-  await section(dashboard,'Collection and privacy');
+  await section(dashboard,'Privacy');
   const settingsPanel = dashboard.locator('section.card').filter({has: dashboard.getByRole('heading', {name: 'Collection and privacy', exact: true})});
   const paths = settingsPanel.getByRole('textbox', {name: 'Excluded path prefixes'}), save = settingsPanel.getByRole('button', {name: 'Save changes', exact: true});
   await paths.waitFor(); assert.equal(await save.isDisabled(), true); assert.equal(await paths.inputValue(), '/private');
@@ -215,7 +215,7 @@ try {
   const viewerContext = await browser.newContext(); await viewerContext.route('**/*', blockExternal);
   assert.equal((await viewerContext.request.post(`${config.appUrl}/api/auth/sign-in/email`, {headers: {origin: config.appUrl}, data: {email: viewerEmail, password: viewerPassword}})).status(), 200);
   const viewer = await viewerContext.newPage(); await viewer.goto(config.appUrl, {waitUntil: 'networkidle'});
-  await selectProject(viewer,'Native consent sandbox');await section(viewer,'Collection and privacy');
+  await selectProject(viewer,'Native consent sandbox');await section(viewer,'Privacy');
   await viewer.getByText('You can view these settings; only owners and admins can change them.', {exact: true}).waitFor();
   assert.equal(await viewer.getByRole('checkbox', {name: 'Enable native analytics', exact: true}).isDisabled(), true);
   assert.equal(await viewer.getByRole('button', {name: 'Save changes', exact: true}).isDisabled(), true);

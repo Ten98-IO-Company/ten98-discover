@@ -92,8 +92,8 @@ try{
 
   stage='SPA project race and live viewer purge';const held=await holdNextGet(page,'**'+B+'/comparisons/'+comparison.id,{status:401});cleanup.push(held.dispose);
   await execution(page).getByRole('button',{name:'Refresh status',exact:true}).click();await bounded(held.entered);
-  await projectSection(page,group.other,'Prompts');await library(page).getByRole('button',{name:'Recent runs',exact:true}).click();await execution(page).getByText(/No prompt runs yet/).waitFor();
-  await projectSection(page,group.main,'Prompts');await library(page).getByRole('button',{name:'Recent runs',exact:true}).click();await execution(page).getByRole('region',{name:'Recent prompt runs',exact:true}).waitFor();held.release();await held.dispose();
+  await projectSection(page,group.other,'AI visibility','Prompts');await library(page).getByRole('button',{name:'Recent runs',exact:true}).click();await execution(page).getByText(/No prompt runs yet/).waitFor();
+  await projectSection(page,group.main,'AI visibility','Prompts');await library(page).getByRole('button',{name:'Recent runs',exact:true}).click();await execution(page).getByRole('region',{name:'Recent prompt runs',exact:true}).waitFor();held.release();await held.dispose();
   assert.ok(await page.getByRole('button',{name:'Sign out',exact:true}).isVisible());
   await pool.query("UPDATE membership SET role='viewer' WHERE workspace_id=$1 AND user_id=$2",[group.workspace.id,group.owner.id]);
   await execution(page).getByRole('button',{name:'Refresh',exact:true}).click();await back(page);
