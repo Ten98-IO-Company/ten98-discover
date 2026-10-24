@@ -583,16 +583,16 @@ function AnalyticsInner({ projectId, userId, onUnauthorized, search, onNavigate,
                 <p className={data.measurement.averageVisitSeconds === null ? 'analytics-unavailable' : 'big-num'}>{data.measurement.averageVisitSeconds === null ? 'Unavailable' : `${data.measurement.averageVisitSeconds.toFixed(1)} s`}</p>
               </div>
             </div>
-            {data.coverage.status !== 'unavailable' && <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views. Page views without a visitor estimate remain in traffic totals.</p>}
-            {data.collection && <p className="hint">
-              Current collection: {data.collection.mode==='cookieless'?'cookieless basic analytics':'consent-first analytics'}.
-              {' '}Recorded pageviews in this range: {fmtNum(data.collection.pageViews.cookieless)} cookieless,
-              {' '}{fmtNum(data.collection.pageViews.consent)} with consent,
-              {' '}{fmtNum(data.collection.pageViews.unknown)} with unrecorded basis (historical or API observations).
-            </p>}
-            <p className="hint">Traffic coverage is unknown. Refusals, browser privacy signals, blockers, excluded traffic and failed requests can leave visits unrecorded. Retention completeness describes stored history, not all visits to your website.</p>
             <details className="analytics-details">
-              <summary>How these estimates work</summary>
+              <summary>How these numbers are measured</summary>
+              {data.coverage.status !== 'unavailable' && <p className="hint">Visitor and visit estimates cover {fmtNum(data.measurement.identifiedPageViews)} of {fmtNum(data.totals.pageViews)} retained page views. Page views without a visitor estimate remain in traffic totals.</p>}
+              {data.collection && <p className="hint">
+                Current collection: {data.collection.mode==='cookieless'?'cookieless basic analytics':'consent-first analytics'}.
+                {' '}Recorded pageviews in this range: {fmtNum(data.collection.pageViews.cookieless)} cookieless,
+                {' '}{fmtNum(data.collection.pageViews.consent)} with consent,
+                {' '}{fmtNum(data.collection.pageViews.unknown)} with unrecorded basis (historical or API observations).
+              </p>}
+              <p className="hint">Traffic coverage is unknown. Refusals, browser privacy signals, blockers, excluded traffic and failed requests can leave visits unrecorded. Retention completeness describes stored history, not all visits to your website.</p>
               <p>Visitors use a monthly, project-specific estimate. They are not a count of unique people. Network measurement must be configured by the installation operator; otherwise visitor and visit estimates are unavailable.</p>
               <p>Cookieless and consented events use separate estimates. Changing consent may split one person into two estimates; basic activity is not attached to a later identified profile.</p>
               <p>Visits use hourly keys, with an existing page context retained for up to 30 minutes. A bounce has one page view and no custom events within this date range. Duration runs from the first to the last page view; it does not measure active engagement or time after the last page view.</p>
