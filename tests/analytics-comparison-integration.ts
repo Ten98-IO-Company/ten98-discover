@@ -11,6 +11,8 @@ import {analyticsIdentity} from '../src/server/native-analytics.ts';
 import {environmentVersion} from '../src/lib/analytics-environment.ts';
 import {runAnalyticsChecks} from './analytics-integration.ts';
 import {exploreAnalytics} from '../src/server/explorer.ts';
+import {explorerQuery} from '../src/server/explorer-input.ts';
+import {boardSummary} from '../src/server/board-activity.ts';
 import {serializeGeographyKey} from '../src/lib/analytics-geography.ts';
 
 export async function runComparisonChecks(){
@@ -82,6 +84,7 @@ export async function runComparisonChecks(){
   try{assert.equal((await handleApi(new Request(endpoint,{headers:{authorization:'Bearer '+expiring.token}}))).status,401);assert.equal(aggregateCalls,1,'Both periods use one aggregation SQL statement, including fresh final key authority.');}finally{pg.Client.prototype.query=originalQuery;}
   const waiting=await createApiKey(workspace,owner,{name:'Dimension waiting clock',scopes:['analytics:read']}),blocker=await pool.connect();let held:Promise<Response>|undefined;await blocker.query('BEGIN');await blocker.query('SELECT id FROM workspace WHERE id=$1 FOR UPDATE',[workspace]);try{await pool.query("UPDATE api_key SET expires_at=clock_timestamp()+interval '300 milliseconds' WHERE id=$1",[waiting.key.id]);held=handleApi(new Request(endpoint+'&dimension=path',{headers:{authorization:'Bearer '+waiting.token}}));let waitingSeen=false;for(let n=0;n<30&&!waitingSeen;n++){waitingSeen=!!(await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM workspace%FOR SHARE'")).rowCount;if(!waitingSeen)await new Promise(resolve=>setTimeout(resolve,10));}assert.equal(waitingSeen,true,'Report must really wait behind the publication gate.');await blocker.query('SELECT pg_sleep(0.4)');await blocker.query('COMMIT');assert.equal((await held).status,401,'Natural key expiry during authority wait is checked by the later raw DB clock.');}finally{await blocker.query('ROLLBACK').catch(()=>{});blocker.release();await held?.catch(()=>{});}console.log('PASS real workspace authority lock wait followed by natural key expiry refusal for dimension comparison');
   await runDimensionRegressionChecks(pool,workspace,owner);
+  await runVisitScopeChecks(pool,workspace,owner);
   await pool.query('DELETE FROM membership WHERE workspace_id=$1 AND user_id=$2',[workspace,viewer]);await assert.rejects(read({compare:'prev'}),{status:404});console.log('PASS one-statement two-period snapshot and final database-clock key expiry/current-role refusal');return {project,workspace,owner,dimensionSnapshots,paths,onlyAlpha,eventDimension,ref,directional,ranked,partial,expired};
  }finally{globalThis.fetch=originalFetch;}
 }
@@ -199,5 +202,88 @@ async function runDimensionRegressionChecks(pool:pg.Pool,workspace:string,owner:
  assert.equal(bySource.measurement.averageVisitSeconds,30,'Visit duration spans each matching visit, not only its landing view.');
  const allSources=await projectAnalytics(sourced,owner,new URLSearchParams({from:'2024-03-01',to:'2024-03-02'}));assert.equal(allSources.measurement.visits,3);assert.ok(Math.abs(allSources.measurement.bounceRate!-100/3)<1e-9);assert.equal(allSources.measurement.averageVisitSeconds,(60+0+40)/3);
  console.log('PASS a referrer selection measures bounce rate and visit duration over the whole matching visits, as unfiltered reports do');
+}
+// Under a selection, every card, row, board summary and Explorer group counts visits with a matching page view and measures each whole visit.
+async function runVisitScopeChecks(pool:pg.Pool,workspace:string,owner:string){
+ const project=randomUUID(),origin='https://visit-scope.test';await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Visit scope',$3,$4,'infinity')",[project,workspace,origin,randomUUID()]);
+ const geo=(country:'US'|'DE')=>({version:'dbip-city-lite-v1',databaseBuild:1767225600,databaseSha256:'a'.repeat(64),country,region:country==='US'?{code:'US-IL',name:'Illinois'}:{code:'DE-BE',name:'Berlin'},city:country==='US'?'Springfield':'Berlin'});
+ const env=(browser:'chrome'|'firefox',country:'US'|'DE',referrerHost:string)=>({environmentVersion,browser,os:browser==='chrome'?'Windows 10':'Linux',device:'desktop',origin,referrerHost,geography:geo(country)});
+ const keys=new Map(['v1','v2','v3','v4','v5','v6','p1','p2'].map(name=>[name,Buffer.from(name).toString('hex').padEnd(64,'0')]));for(const key of keys.values())await pool.query("INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) VALUES($1,$2,'2024-02-28','2024-03-02')",[project,key]);
+ // v1 lands from news and browses on; v2 bounces; v3 lands from news, fires a custom event and browses on; v4 reaches /pricing on its second page;
+ // v5 lands on /pricing from news; v6 lands from other.example in Firefox with one Chrome view between, so environment values visibly scope a visit.
+ const rows:[string,string,string,string,ReturnType<typeof env>][]=[
+  ['v1','page_view','/','2024-03-01T12:00:00Z',env('chrome','US','news.example')],['v1','page_view','/pricing','2024-03-01T12:00:30Z',env('chrome','US','visit-scope.test')],['v1','page_view','/docs','2024-03-01T12:01:30Z',env('chrome','US','visit-scope.test')],
+  ['v2','page_view','/','2024-03-01T13:00:00Z',env('chrome','US','news.example')],
+  ['v3','page_view','/','2024-03-01T14:00:00Z',env('firefox','DE','news.example')],['v3','signup','/','2024-03-01T14:00:05Z',env('firefox','DE','visit-scope.test')],['v3','page_view','/thanks','2024-03-01T14:00:40Z',env('firefox','DE','visit-scope.test')],
+  ['v4','page_view','/','2024-03-01T15:00:00Z',env('chrome','US','other.example')],['v4','page_view','/pricing','2024-03-01T15:00:20Z',env('chrome','US','visit-scope.test')],
+  ['v5','page_view','/pricing','2024-03-02T16:00:00Z',env('firefox','DE','news.example')],['v5','page_view','/pricing-2','2024-03-02T16:00:50Z',env('firefox','DE','visit-scope.test')],
+  ['v6','page_view','/','2024-03-02T17:00:00Z',env('firefox','DE','other.example')],['v6','page_view','/x','2024-03-02T17:00:50Z',env('chrome','DE','visit-scope.test')],['v6','page_view','/y','2024-03-02T17:01:20Z',env('firefox','DE','visit-scope.test')],
+  ['p1','page_view','/','2024-02-28T12:00:00Z',env('chrome','US','news.example')],['p1','page_view','/about','2024-02-28T12:01:00Z',env('chrome','US','visit-scope.test')],
+  ['p2','page_view','/','2024-02-29T12:00:00Z',env('chrome','US','news.example')],
+ ];
+ for(const [name,event,path,time,dimensions]of rows)await pool.query("INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,dimensions,source,collection_basis) VALUES($1,$2,$3,$4,$5,$6,$6,$7,'browser','consent')",[randomUUID(),project,event,path,time,keys.get(name),dimensions]);
+ const range={from:'2024-03-01',to:'2024-03-02'},news=new URLSearchParams({referrer:'news.example'}).toString(),pricing=new URLSearchParams({path:'/pricing'}).toString(),germany=JSON.stringify({state:'known',country:'DE'});
+ const read=(extra:Record<string,string>)=>projectAnalytics(project,owner,new URLSearchParams({...range,...extra}));
+ type Measured={visits:number|null;bounceRate:number|null;averageVisitSeconds:number|null};
+ const metrics=(row:Measured|undefined)=>row&&[row.visits,row.bounceRate,row.averageVisitSeconds];
+ const browser=(report:Awaited<ReturnType<typeof read>>,value:string)=>metrics(report.environment.browsers.find(row=>row.value===value));
+ const country=(report:Awaited<ReturnType<typeof read>>,value:string)=>metrics(report.geography.countries.rows.find(row=>row.key.state==='known'&&row.key.country===value));
+ const near=(actual:number|null,expected:number,message:string)=>{assert.ok(actual!==null&&Math.abs(actual-expected)<1e-9,`${message}: ${actual} != ${expected}`);};
+
+ // A referrer selection: only the landing view matches; later in-site pages and the custom event still belong to each visit.
+ const byNews=await read({selection:news,compare:'prev',dimension:'browser'});
+ assert.deepEqual(byNews.totals,{pageViews:4,customEvents:0},'Event counts keep only page views carrying the selected referrer.');
+ assert.deepEqual([byNews.measurement.version,byNews.measurement.visitors,byNews.measurement.visits,byNews.measurement.bounceRate,byNews.measurement.averageVisitSeconds],['umami-3.4-visit-scoped-v2',4,4,25,45]);
+ assert.deepEqual(browser(byNews,'chrome'),[2,50,45],'Chrome rows measure v1 and v2 as whole visits.');
+ assert.deepEqual(browser(byNews,'firefox'),[2,0,45],'The custom-event visit v3 and the browsing visit v5 are not bounces.');
+ assert.deepEqual(country(byNews,'US'),[2,50,45]);assert.deepEqual(country(byNews,'DE'),[2,0,45],'Location rows use the same whole visits.');
+ for(const list of [byNews.environment.browsers,byNews.geography.countries.rows]as Measured[][]){
+  const visits=list.reduce((sum,row)=>sum+row.visits!,0);assert.equal(visits,byNews.measurement.visits);
+  near(list.reduce((sum,row)=>sum+row.visits!*row.bounceRate!,0)/visits,byNews.measurement.bounceRate!,'Row bounce rates recombine to the overview');
+  near(list.reduce((sum,row)=>sum+row.visits!*row.averageVisitSeconds!,0)/visits,byNews.measurement.averageVisitSeconds!,'Row durations recombine to the overview');
+ }
+ // compare=prev measures the previous period's matching visits the same way.
+ const before=byNews.comparison!.report.measurement;assert.deepEqual([before.visits,before.bounceRate,before.averageVisitSeconds],[2,50,30]);
+ assert.equal(byNews.comparison!.change.bounceRate.percentagePoints,-25);assert.equal(byNews.comparison!.change.averageVisitSeconds.absolute,15);
+ const compareRow=(period:'current'|'previous',value:string)=>metrics(byNews.dimensionComparison![period].rows.find(row=>row.key.value===value));
+ assert.deepEqual(compareRow('current','chrome'),[2,50,45],'Compare rows measure whole visits.');assert.deepEqual(compareRow('current','firefox'),[2,0,45]);
+ assert.deepEqual(compareRow('previous','chrome'),[2,50,30],'Compare rows measure whole previous-period visits.');
+ console.log('PASS a referrer selection measures the overview, browser, location and Compare rows over whole matching visits, with custom-event suppression and compare=prev');
+
+ // A match on a later page: v1 and v4 reach /pricing after landing elsewhere.
+ const byPath=await read({selection:pricing});
+ assert.deepEqual(byPath.totals,{pageViews:3,customEvents:0});assert.equal(byPath.measurement.visits,3);assert.equal(byPath.measurement.bounceRate,0);near(byPath.measurement.averageVisitSeconds,(90+20+50)/3,'Later-page match duration');
+ assert.deepEqual(browser(byPath,'chrome'),[2,0,55],'A later-page match still measures the visit from its landing view.');assert.deepEqual(browser(byPath,'firefox'),[1,0,50]);
+ console.log('PASS a match on a later page selects the visit and measures it from landing to its last page view');
+
+ // Environment and location values scope each visit: v6's Chrome view counts only towards Chrome, and each row equals the report filtered by it.
+ const other=new URLSearchParams({referrer:'other.example'}).toString(),byOther=await read({selection:other});
+ assert.deepEqual([byOther.measurement.visits,byOther.measurement.bounceRate,byOther.measurement.averageVisitSeconds],[2,0,50],'v4 and the whole of v6.');
+ assert.deepEqual(browser(byOther,'chrome'),[1,0,20],'Only v4 matched in Chrome.');assert.deepEqual(browser(byOther,'firefox'),[1,0,80],'v6 is measured over its Firefox views.');
+ const scoped=await read({selection:other,browser:'firefox',country:germany});
+ assert.deepEqual(scoped.totals,{pageViews:1,customEvents:0});assert.deepEqual([scoped.measurement.visits,scoped.measurement.bounceRate,scoped.measurement.averageVisitSeconds],[1,0,80],'Filters scope the visit; the selection does not.');
+ assert.deepEqual(browser(scoped,'firefox'),browser(byOther,'firefox'),'An environment row equals the report filtered by it.');assert.deepEqual(country(scoped,'DE'),[1,0,80],'Location rows keep the location filter inside each visit.');
+ const germanyRows=await read({selection:other,country:germany,compare:'prev',dimension:'browser'});assert.deepEqual(browser(germanyRows,'firefox'),[1,0,80]);
+ assert.deepEqual(metrics(germanyRows.dimensionComparison!.current.rows.find(row=>row.key.value==='firefox')),[1,0,80],'Compare environment rows are scoped like environment rows.');
+ console.log('PASS a selection with browser and location filters keeps those filters, and environment rows, scoped inside each measured visit');
+
+ // Boards and Explorer report the same population with the same definition.
+ const explorerScope=(extra:Record<string,string>)=>new URLSearchParams({...range,timeZone:'UTC',...extra});
+ const client=await pool.connect();
+ try{
+  for(const [filters,overview]of [[{referrer:'news.example'},byNews],[{path:'/pricing'},byPath],[{referrer:'other.example'},byOther],[{referrer:'other.example',browser:'firefox',country:germany},scoped]]as const){
+   const params=explorerScope(filters),summary=await boardSummary(client,project,owner,params.toString(),explorerQuery(params));
+   assert.equal(summary.method.duration,'matching-visit-pageview-span');
+   assert.deepEqual(summary.totals,overview.totals,'Board totals equal the overview.');assert.deepEqual(summary.measurement,overview.measurement,'Board measurement equals the overview for the same filter.');
+  }
+ }finally{client.release();}
+ const group=(report:Awaited<ReturnType<typeof exploreAnalytics>>,value:string)=>metrics(report.breakdown.groups.find(row=>JSON.stringify(row.value)===JSON.stringify([{type:'string',value}])) as Measured|undefined);
+ const explored=await exploreAnalytics(project,owner,explorerScope({referrer:'news.example',fields:'["browser"]'}));
+ assert.deepEqual(group(explored,'chrome'),browser(byNews,'chrome'),'Explorer groups equal the dashboard rows.');assert.deepEqual(group(explored,'firefox'),browser(byNews,'firefox'));
+ const exploredOther=await exploreAnalytics(project,owner,explorerScope({referrer:'other.example',fields:'["browser"]'}));
+ assert.deepEqual(group(exploredOther,'chrome'),browser(byOther,'chrome'));assert.deepEqual(group(exploredOther,'firefox'),browser(byOther,'firefox'),'Explorer environment groups are scoped like dashboard rows.');
+ const exploredPath=await exploreAnalytics(project,owner,explorerScope({fields:'["path"]'}));
+ assert.deepEqual(group(exploredPath,'/pricing'),[byPath.measurement.visits,byPath.measurement.bounceRate,byPath.measurement.averageVisitSeconds],'An Explorer path group equals the dashboard path selection.');
+ console.log('PASS board summaries and Explorer groups agree with the dashboard under the same selection');
 }
 if(import.meta.main){try{await runComparisonChecks();}finally{await closeDatabase();}}
