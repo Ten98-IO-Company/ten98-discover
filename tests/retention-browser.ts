@@ -46,12 +46,15 @@ try {
     const toggle=page.getByRole('button',{name:/^(Menu|Close menu)$/});
     if(await toggle.isVisible()&&await toggle.getAttribute('aria-expanded')==='false')await toggle.click();
   }
-  async function section(name:string) {
-    await navigation();await page.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name,exact:true}).click();
+  async function sectionTab(section:string,tab:string) {
+    // Report pages are tabs in their section's strip; the page h1 names the section.
+    const tabs=page.getByRole('navigation',{name:`${section} pages`,exact:true});
+    await tabs.getByRole('link',{name:tab,exact:true}).click();
+    await page.getByRole('heading',{name:section,exact:true,level:1}).waitFor();
+    assert.equal(await tabs.getByRole('link',{name:tab,exact:true}).getAttribute('aria-current'),'page',`${tab} is the current ${section} tab.`);
   }
-  async function settings(name:string) {
+  async function settings(tab:string) {
     // The shell opens Settings from the sidebar; each area is a tab in "Settings sections".
-    const tab=({'Account security':'Security','Data retention':'Retention'} as Record<string,string>)[name]??name;
     const tabs=page.getByRole('navigation',{name:'Settings sections',exact:true});
     if(!await tabs.isVisible()){await navigation();await page.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true}).click();}
     await tabs.getByRole('link',{name:tab,exact:true}).click();
@@ -66,7 +69,7 @@ try {
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile analytics must not overflow.');
   const artifacts=process.env.BROWSER_ARTIFACT_DIR;
   if(artifacts){await mkdir(artifacts,{recursive:true});await page.screenshot({path:join(artifacts,'retention-coverage-mobile.png'),fullPage:true});}
-  await section('Recent events');
+  await sectionTab('Overview','Latest events');
   await page.getByRole('heading',{name:'Retained events',exact:true}).waitFor();
   await page.getByText('This is not a lifetime total.',{exact:false}).waitFor();
   assert.equal(await page.getByText('All received events, across all dates',{exact:true}).count(),0);
@@ -104,7 +107,7 @@ try {
   const hold=async(route:any)=>{const response=await route.fetch();intercepted();await held;await route.fulfill({response}).catch(()=>{});};
   await page.route(`**/api/workspaces/${workspace.id}/retention/preview`,hold);
   await preview().click();await interceptedPromise;
-  await settings('Account security');
+  await settings('Security');
   releasePreview!();releasePreview=undefined;
   await page.unroute(`**/api/workspaces/${workspace.id}/retention/preview`,hold);
   await settings('Data retention');await raw().waitFor();

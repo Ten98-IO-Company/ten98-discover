@@ -66,16 +66,16 @@ try{
 
   stage='delayed prior project cannot overwrite new scope';held=await holdNextGet(page,'**'+B);
   await panel.getByRole('button',{name:'Reload access',exact:true}).click();await bounded(held.entered);
-  await projectSection(page,group.other,'Keywords');await page.getByText('No research runs have been saved for this project.',{exact:true}).waitFor();held.release();await held.dispose();held=null;
+  await projectSection(page,group.other,'Search','Keywords');await page.getByText('No research runs have been saved for this project.',{exact:true}).waitFor();held.release();await held.dispose();held=null;
   assert.equal(await page.getByText(/saved result for this run was purged/).count(),0);
   assert.equal(await page.getByRole('region',{name:'Keyword data table',exact:true}).count(),0);
 
-  stage='A to B to A ignores old session/error responses';await projectSection(page,group.main,'Keywords');
+  stage='A to B to A ignores old session/error responses';await projectSection(page,group.main,'Search','Keywords');
   for(const status of [401,503]){
     await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();held=await holdNextGet(page,'**'+B,{status});
     await panel.getByRole('button',{name:'Reload access',exact:true}).click();await bounded(held.entered);
-    await projectSection(page,group.other,'Keywords');await page.getByText('No research runs have been saved for this project.',{exact:true}).waitFor();
-    await projectSection(page,group.main,'Keywords');await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
+    await projectSection(page,group.other,'Search','Keywords');await page.getByText('No research runs have been saved for this project.',{exact:true}).waitFor();
+    await projectSection(page,group.main,'Search','Keywords');await panel.getByRole('heading',{name:'Recent runs',exact:true}).waitFor();
     held.release();await held.dispose();held=null;await page.waitForTimeout(150);
     const menu=page.getByRole('button',{name:/^(Menu|Close menu)$/});
     if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();

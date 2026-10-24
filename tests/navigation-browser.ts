@@ -167,12 +167,13 @@ try {
   const families = ['Measure', 'Research', 'Connect']
   const commonSections = ['Analytics', 'Realtime', 'Compare', 'UTM campaigns', 'Explore', 'Sessions', 'Attribution', 'Journeys', 'Retention', 'Revenue', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'AI search', 'Keywords', 'Domain SEO', 'Rank tracking', 'Install tracker', 'Collection and privacy']
   for (const [workspace, projectId, isOwner] of [[a.id, a1, true], [b.id, b1, false]] as const) {
-    await page.goto(href(workspace, projectId, 'events')); await heading('Recent events'); await menu()
-    const sections = page.getByRole('navigation', { name: 'Project sections', exact: true })
+    await page.goto(href(workspace, projectId, 'events')); await heading('Overview'); await menu()
+    const sections = page.getByRole('navigation', { name: 'Sections', exact: true })
     assert.deepEqual(await sections.locator(':scope > .side-label').allTextContents(), families)
     const expected = isOwner ? [...commonSections.slice(0, commonSections.indexOf('Collection and privacy')), 'Destinations', 'Collection and privacy', 'Domains'] : commonSections
     assert.deepEqual(await sections.getByRole('link', { includeHidden: true }).allTextContents(), expected)
-    assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Recent events'])
+    assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Overview'])
+    assert.deepEqual(await page.getByRole('navigation', { name: 'Overview pages', exact: true }).locator('a[aria-current="page"]').allTextContents(), ['Latest events'])
     assert.deepEqual(await page.getByRole('navigation', { name: 'Workspace settings', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), isOwner ? ['Manage team', 'ten98 API access', 'AI and search providers', 'Data retention', 'Create workspace'] : ['Data retention', 'Create workspace'])
     assert.deepEqual(await page.getByRole('navigation', { name: 'Account', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), ['Profile and appearance', 'Account security', 'Identity sign-in'])
     assert.equal(await page.getByRole('navigation', { name: 'Instance settings', includeHidden: true }).count(), 0)
@@ -204,10 +205,10 @@ try {
   await mkdir('private/navigation-browser', { recursive: true })
   for (const width of [320, 360, 1440]) {
     await page.setViewportSize({ width, height: 900 })
-    await page.goto(href(a.id, a1, 'events')); await heading('Recent events')
+    await page.goto(href(a.id, a1, 'events')); await heading('Overview')
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Closed navigation must fit ${width}px.`)
     await menu()
-    const sections = page.getByRole('navigation', { name: 'Project sections', exact: true })
+    const sections = page.getByRole('navigation', { name: 'Sections', exact: true })
     assert.equal(await sections.locator(':scope > details').count(), 0)
     assert.deepEqual(await sections.locator(':scope > .side-label').allTextContents(), families)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Expanded navigation must fit ${width}px.`)
