@@ -20,11 +20,12 @@ test('the sidebar stays short and each section page has five tabs at most',()=>{
 
 test('modes and campaign tools select their parent tab and list it first',()=>{
   assert.deepEqual([sectionOf('compare')?.section.id,sectionOf('compare')?.tab],['overview','project']);
+  assert.deepEqual([sectionOf('ai-search')?.section.id,sectionOf('ai-search')?.tab],['ai','ai-insights']);
   for(const view of ['campaigns','links','pixels'] as const)assert.deepEqual([sectionOf(view)?.section.id,sectionOf(view)?.tab],['conversions','campaigns']);
   for(const [tab,entries] of Object.entries(subTabs))assert.equal(entries![0].view,tab,'The first sub-tab is the parent tab itself.');
 });
 
 test('website setup lives in settings, not in the report sections',()=>{
-  assert.deepEqual(projectSettingsViews,['installation','domains','collection','destinations','context']);
+  assert.deepEqual(projectSettingsViews,['installation','domains','collection','destinations','context','imports']);
   for(const view of projectSettingsViews)assert.equal(sectionOf(view),undefined);
 });

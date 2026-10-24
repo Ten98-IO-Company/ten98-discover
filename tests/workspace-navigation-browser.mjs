@@ -88,7 +88,8 @@ try{
  browser=await launchChromium();
  await fresh(query('project',W,P2));await shell(P2);
  await settledFrame();const workerReads=()=>requests.filter(r=>r.path.endsWith('/jobs')).length;assert.equal(workerReads(),0,'Analytics does not reconcile worker checks in the background');
- const workerRead=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/jobs'));await click('Settings','installation');await workerRead;await page.locator('details.diagnostics > summary').click();await page.getByText('No checks yet.',{exact:true}).waitFor();assert.equal(workerReads(),1,'Install tracker loads its own worker history');
+ await click('Settings','installation');await page.getByRole('heading',{name:'Tracking code',exact:true}).waitFor();await settledFrame();assert.equal(workerReads(),0,'Tracking code does not load worker history');
+ const workerRead=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/jobs'));await page.getByRole('navigation',{name:'Settings sections',exact:true}).getByRole('link',{name:'Diagnostics',exact:true}).click();await at('diagnostics');await workerRead;await page.getByText('No checks yet.',{exact:true}).waitFor();assert.equal(workerReads(),1,'Diagnostics loads its own worker history');
  await analytics(P2);await settledFrame();assert.equal(workerReads(),1,'Returning to analytics does not reload worker history');pass('Worker history is loaded only where its diagnostics are available.');
  for(const view of ['boards','links','pixels']){await tool(view);await shell(P2);workspaceUrl();await analytics(P2);}
  await page.getByRole('link',{name:/^Create project in /}).click();await at('new-project');await page.getByRole('heading',{name:'Add a website',exact:true}).waitFor();await shell(P2);await analytics(P2);

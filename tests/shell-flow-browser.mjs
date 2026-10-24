@@ -144,7 +144,7 @@ try {
   const eventPanel = () => main.locator('section[aria-labelledby="ev-h"]');
   const eventRegion = () => main.getByRole('region', {name:'Retained event rows table', exact:true});
   const snippetRegion = () => main.locator('pre[role="region"][aria-label="Tracking snippet"][tabindex="0"]');
-  const diagnostics = () => main.locator('details').filter({has:page.locator('summary', {hasText:/^Background worker diagnostics$/})});
+  const diagnostics = () => main.locator('section.diagnostics');
   const count = async expected => assert.equal((await eventPanel().locator('.big-num').innerText()).trim(), String(expected), 'Retained count stays exact.');
   const fmt = value => page.evaluate(value => new Date(value).toLocaleString(), value);
   const fit = async label => {
@@ -293,11 +293,10 @@ try {
   console.log('PASS shell: exact snippet/copy fallback, visible consent/localhost limits and scoped normal/new-tab events links.');
 
   stage = 'worker diagnostics roles, busy state and errors';
-  await open('installation'); await snippetRegion().waitFor();
-  assert.equal(await diagnostics().evaluate(element => element.open), false);
-  const beforeDiagnostics = {...calls}; await diagnostics().locator('summary').click();
+  // Diagnostics live in Settings > Advanced; opening the page reads job status but never starts a check.
+  const beforeDiagnostics = calls.check; await open('diagnostics');
   await main.getByText('Synthetic worker diagnostic failure.', {exact:true}).waitFor();
-  assert.deepEqual(calls, beforeDiagnostics, 'Opening diagnostics starts no work.');
+  assert.equal(calls.check, beforeDiagnostics, 'Opening diagnostics starts no worker check.');
   assert.equal(await button('Run worker check').count(), 0);
   assert.equal(await main.locator('.jobs li').count(), 2);
   const jobRequestStarted = new Promise(resolve => { jobHeldResolve = resolve; });
@@ -309,8 +308,8 @@ try {
   jobReply = {status:503, body:{error:'Synthetic worker status unavailable.'}};
   await button('Refresh status').click(); await main.getByRole('alert').filter({hasText:'Synthetic worker status unavailable.'}).waitFor();
   assert.equal(await main.locator('.jobs li').count(), 2);
-  jobReply = {body:{jobs:jobRows}}; role = 'owner'; await open('installation');
-  await diagnostics().locator('summary').click(); await button('Run worker check').waitFor();
+  jobReply = {body:{jobs:jobRows}}; role = 'owner'; await open('diagnostics');
+  await button('Run worker check').waitFor();
   const checkRequestStarted = new Promise(resolve => { checkHeldResolve = resolve; });
   holdCheck = true; const checksBefore = calls.check; await button('Run worker check').click(); await checkRequestStarted;
   assert.equal(await button('Starting…').isDisabled(), true);
