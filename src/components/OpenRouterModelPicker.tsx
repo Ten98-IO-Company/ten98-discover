@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useId,useState} from 'react';
 import {ApiError} from '../lib/api';
 import {openRouterModelId,openRouterProviderName,openRouterProviderTag,openRouterTextProfile,legacyOpenRouterModels,openRouterMetadataBytes,type OpenRouterCatalog} from '../lib/openrouter-models';
@@ -43,10 +44,7 @@ export async function modelApi<T=unknown>(path:string,opts:{method?:string;body?
  try{response=await fetch(path,{method:opts.method??'GET',body:opts.body===undefined?undefined:JSON.stringify(opts.body),headers:opts.body===undefined?undefined:{'content-type':'application/json'},credentials:'same-origin',redirect:'error',signal});}catch(error){if(signal.aborted)throw error;throw new ApiError('Network error. Inspect saved requests before retrying an unconfirmed action.');}
  try{
   if(response.url!==new URL(path,window.location.origin).href||!response.body){await response.body?.cancel();throw Error('The model response could not be verified.');}
-  const reader=response.body.getReader(),parts:Uint8Array[]=[],limit=response.ok?openRouterMetadataBytes:8192;let size=0;const abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});
-  try{for(;;){signal.throwIfAborted();const p=await reader.read();signal.throwIfAborted();if(p.done)break;size+=p.value.byteLength;if(size>limit)throw Error('The complete model response exceeds its size limit.');parts.push(p.value);}}finally{signal.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
-  const length=response.headers.get('content-length'),encoding=response.headers.get('content-encoding');if((!encoding||encoding==='identity')&&length!==null&&(!/^\d+$/.test(length)||Number(length)!==size))throw Error('The model response was incomplete.');
-  const bytes=new Uint8Array(size);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  let value:unknown;try{value=JSON.parse(await readResponseText(response,{maxBytes:response.ok?openRouterMetadataBytes:8192,contentLength:'exact',signal}));}catch(error){const code=(error as {code?:unknown}).code;if(error instanceof RangeError)throw Error('The complete model response exceeds its size limit.');if(code==='CONTENT_LENGTH_INVALID'||code==='RESPONSE_INCOMPLETE')throw Error('The model response was incomplete.');throw error;}
   if(!response.ok)throw Error(object(value)&&typeof value.error==='string'?value.error:'The model request is unavailable.');
   if(response.headers.get('content-type')?.split(';')[0].trim()!=='application/json')throw Error('The model response type could not be verified.');return value as T;
  }catch(error){if(!response.ok)throw Object.assign(new ApiError(error instanceof Error?error.message:'The model request failed.'),{status:response.status});if(signal.aborted)throw error;throw new ModelResponseError(error instanceof Error?error.message:'The model response could not be verified.',(opts.method??'GET')==='GET');}

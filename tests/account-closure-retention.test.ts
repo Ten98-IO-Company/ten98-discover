@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { accountClosureInventory } from '../src/server/account-closure-inventory.ts';
+import { accountClosureInventory, closedAccountLedgerDependents } from '../src/server/account-closure-inventory.ts';
+import { archivedColumn, paidWorkArchiveTables } from '../src/server/paid-work-archive.ts';
 import { parseMigrations, readMigrationSchema, type MigrationSchema } from './helpers/migration-schema.ts';
 
 /**
  * Retention promise (https://github.com/Ten98-IO-Company/ten98-discover/wiki/Accounts-and-Data#account-closure, ten98-code-system#39): rows a closed account leaves behind are kept as long
  * as their workspace exists and go when it is deleted. Workspace deletion relies on ON DELETE CASCADE, so every kept table
  * that is workspace-scoped (a workspace_id or project_id column, or a parent that has one) must reach `workspace` through
- * cascading foreign keys, or be a listed exception.
+ * cascading foreign keys, or be a listed exception. Paid-work rows are copied to the paid-work archive before website or
+ * workspace deletion removes them (#292), and the archive outlives both.
  */
+
+/** Kept tables that hold a workspace or website id but deliberately outlive the workspace. */
+const outlivesWorkspace = new Set(['paid_work_archive']);
 
 // TODO(#292): workspace deletion must delete these explicitly, as project deletion does, or a reviewed migration must
 // make their links cascade. https://github.com/Ten98-IO-Company/ten98-discover/issues/292
@@ -48,7 +53,7 @@ function workspaceScoped(schema: MigrationSchema, table: string, seen = new Set<
 
 function workspaceScopedKeptTables(schema: MigrationSchema): string[] {
   return accountClosureInventory
-    .filter(entry => entry.rule === 'keep' && entry.table !== 'workspace' && workspaceScoped(schema, entry.table))
+    .filter(entry => entry.rule === 'keep' && entry.table !== 'workspace' && !outlivesWorkspace.has(entry.table) && workspaceScoped(schema, entry.table))
     .map(entry => entry.table)
     .sort();
 }
@@ -72,33 +77,66 @@ test('kept tables without a workspace or project column are the reviewed instanc
   const schema = readMigrationSchema();
   const scoped = workspaceScopedKeptTables(schema);
   const unscoped = accountClosureInventory
-    .filter(entry => entry.rule === 'keep' && entry.table !== 'workspace' && !scoped.includes(entry.table))
+    .filter(entry => entry.rule === 'keep' && entry.table !== 'workspace' && !outlivesWorkspace.has(entry.table) && !scoped.includes(entry.table))
     .map(entry => entry.table).sort();
   // Instance configuration, instance rate limits and account-id audits; they are not removed with a workspace (#291).
   assert.deepEqual(unscoped, ['account_closure_audit', 'google_app', 'instance_operator_audit', 'oidc_provider', 'rateLimit']);
 });
 
 /**
- * Owner decision (ten98-code-system#39, "Financial: full 7 years"): financial rows must survive workspace deletion.
- * Today they reach `workspace` through ON DELETE CASCADE, or are deleted explicitly with their website, which is
- * harmless only because workspace deletion does not exist yet. When #292 builds it, workspace deletion must tombstone
- * the workspace (keep its id, scrub its name and other personal fields) so these rows survive. This list records that
- * requirement and fails when it changes.
+ * Owner decision (ten98-code-system#39, "Financial: full 7 years", and the #292 manager decision): financial rows survive
+ * website and workspace deletion for 7 years. Deletion copies them to the paid-work archive in the deleting transaction,
+ * then removes them with the website or workspace as before.
  */
-test('financial tables that a workspace tombstone must preserve when #292 is built', () => {
+test('every financial table and ledger dependent is archived, with its own or its parent ledger entry age', () => {
   const schema = readMigrationSchema();
-  const financial = accountClosureInventory.filter(entry => entry.retention?.survivesWorkspaceDeletion).map(entry => entry.table);
+  const financial = accountClosureInventory.filter(entry => entry.retention?.class === 'financial').map(entry => entry.table);
   assert.ok(accountClosureInventory.every(entry => entry.retention?.class !== 'financial' || entry.retention.survivesWorkspaceDeletion));
-  const cascading = financial.filter(table => cascadePath(schema, table)).sort();
-  const explicit = financial.filter(table => exceptions.has(table)).sort();
-  assert.deepEqual(cascading, [
-    'ai_content_support_quote', 'ai_content_support_run', 'ai_search_quote', 'ai_search_run', 'ai_suggestion_quote',
-    'domain_research_quote', 'domain_research_run', 'keyword_quote', 'keyword_research_run', 'prompt_execution_quote',
-    'provider_request', 'saved_keyword_refresh_plan',
-  ], 'Must be preserved by a workspace tombstone when #292 is built: workspace deletion must not delete the workspace row under them.');
-  assert.deepEqual(explicit, ['ai_suggestion_run', 'prompt_comparison', 'prompt_occurrence', 'rank_run'],
-    'Deleted explicitly with their website today; workspace deletion (#292) must keep them instead.');
-  assert.deepEqual([...cascading, ...explicit].sort(), [...financial].sort(), 'Every financial table needs a recorded workspace-deletion requirement.');
+  assert.deepEqual([...paidWorkArchiveTables].sort(), [...financial, ...closedAccountLedgerDependents.map(dependent => dependent.table)].sort());
+  for (const table of paidWorkArchiveTables) {
+    const columns = schema.get(table)!;
+    assert.equal(columns.get('id')?.type, 'uuid', `${table} needs a uuid id to key its archive row.`);
+    assert.ok(columns.has('workspace_id'), `${table} needs a workspace_id to scope its archive row.`);
+    if (columns.has('created_at')) continue;
+    const parent = closedAccountLedgerDependents.find(dependent => dependent.table === table)?.parent;
+    assert.ok(parent && schema.get(parent)!.has('created_at') && [...foreignKeys(schema, table)].some(key => key.table === parent), `${table} has no created_at and no parent to age with.`);
+  }
+});
+
+// The closure inventory's personal-data heuristic, plus provider-account fingerprints.
+const personalOrSecret = /email|(^|_)ip(_|$)|ip_?address|user_?agent|name|token|user_?id|_by$|actor|inviter|image|subject|issuer|password|credential|claims|^value$|secret|fingerprint/i;
+/** Opaque ids the archive keeps on purpose: the account ids the row names and its own scope. */
+const opaqueIds = new Set(['user_id', 'requested_by', 'workspace_id', 'project_id']);
+const enumeratedText = /^(status|operation|method|trigger|phase|purpose|provider_reference|generation_id|provider_task_id|result_status|price_mode|price_source|price_version)$/;
+
+test('archive records hold no credential, personal or free-text column', () => {
+  const schema = readMigrationSchema();
+  for (const table of paidWorkArchiveTables) {
+    const kept = [...schema.get(table)!.values()].filter(column => archivedColumn(column.name, column.type));
+    assert.ok(kept.some(column => column.name === 'id'), `${table} archives no id.`);
+    for (const column of kept) {
+      assert.ok(!personalOrSecret.test(column.name) || opaqueIds.has(column.name), `${table}.${column.name} can hold a credential or personal data.`);
+      assert.notEqual(column.type, 'jsonb', `${table}.${column.name} is JSON content.`);
+      if (column.type === 'text') assert.ok(opaqueIds.has(column.name) || column.name.endsWith('_hash') || enumeratedText.test(column.name), `${table}.${column.name} is free text.`);
+    }
+    // Money is what the archive is for: every amount column is kept.
+    for (const column of schema.get(table)!.values()) if (column.name.endsWith('_micros')) assert.ok(kept.includes(column), `${table}.${column.name} is not archived.`);
+  }
+  for (const [name, type] of [['encrypted_credentials', 'jsonb'], ['key_fingerprint', 'text'], ['account_fingerprint', 'text'], ['request_actor', 'text'], ['connection_name', 'text'],
+    ['diagnostic', 'text'], ['input', 'jsonb'], ['keyword', 'text'], ['ranking_url', 'text'], ['token_hash', 'text'], ['client_ip', 'text']] as const)
+    assert.equal(archivedColumn(name, type), false, `${name} must never be archived.`);
+});
+
+test('website deletion archives paid work before its first delete, and no other path deletes a website or workspace', () => {
+  const source = readFileSync(join(process.cwd(), 'src/server/project-delete.ts'), 'utf8');
+  const archive = source.indexOf('await archivePaidWork(client,{workspaceId,projectId})'), firstDelete = source.search(/DELETE FROM|for\s*\(\s*const table of \[/);
+  assert.ok(archive > 0 && archive < firstDelete, 'Website deletion must archive paid work before deleting anything.');
+  const sources = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry =>
+    entry.isDirectory() ? sources(join(dir, entry.name)) : entry.name.endsWith('.ts') ? [join(dir, entry.name)] : []);
+  for (const file of sources(join(process.cwd(), 'src'))) {
+    const text = readFileSync(file, 'utf8');
+    if (/DELETE FROM (workspace|project)\b(?!_)/.test(text)) assert.ok(text.includes('archivePaidWork('), `${file} deletes a website or workspace without archiving its paid work.`);
+  }
 });
 
 test('the parser records ON DELETE actions for inline, table and ALTER foreign keys', () => {

@@ -247,5 +247,12 @@ try {
   for (let index = 0; index < 49; index++) await addDomain(project, owner, { hostname: `limit-${index}.example.com`, role: 'serving' });
   assert.equal((await getDomains(project, owner)).domains.length, 50);
   await assert.rejects(addDomain(project, owner, { hostname: 'over-limit.example.com', role: 'serving' }), fail(409));
-  console.log('Domain integration passed: canonical/IDN registry, role/tenant isolation, hash-only exact TXT proof, expiry/reissue/revoke races, cookie API boundaries, unchanged canonical origin, excluded redirect aliases and 50-domain limit. DNS was mocked; no external DNS checks ran.');
+
+  // New websites record the referrer hostname by default (J2); websites that already exist keep their stored choice.
+  const referrer = async (id: string) => (await pool.query("SELECT analytics_settings->'captureReferrer' AS value FROM project WHERE id=$1", [id])).rows[0].value
+  const website = await request(`/api/workspaces/${workspace}/projects`, 'POST', { name: 'Referrer default', origin: `https://${randomUUID()}.example.com` })
+  assert.equal(website.status, 201)
+  assert.equal(await referrer((await website.json()).project.id), true)
+  assert.equal(await referrer(project), false, 'An existing website keeps referrer capture off until its owner turns it on.')
+  console.log('Domain integration passed: canonical/IDN registry, role/tenant isolation, hash-only exact TXT proof, expiry/reissue/revoke races, cookie API boundaries, unchanged canonical origin, excluded redirect aliases, new-website referrer default and 50-domain limit. DNS was mocked; no external DNS checks ran.');
 } finally { await closeDatabase(); }

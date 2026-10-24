@@ -1,15 +1,19 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, DataTable, ProjectCreateFlow, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
-import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, IconName, NavLinkComponent, SettingsGroupId, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
+import { Alert, AppStateScreen, DataTable, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar, Field, Form, Input, FormActions } from '@ten98/ui'
+import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, NavLinkComponent, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
 import { createFileRoute, Link, useRouter, useLocation } from '@tanstack/react-router'
 import type { HistoryState } from '@tanstack/react-router'
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, lazy, Suspense, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
+import { parseWebsiteAddress, websiteNameFromOrigin } from '../lib/website-address'
+import { appSections, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels, subTabs } from '../lib/app-sections'
+import { formatReportInstant } from '../lib/report-time'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
 import { RealtimePanel } from '../components/RealtimePanel'
+import { WebsiteQuickShare } from '../components/WebsiteSharePanel'
 import { WebPerformancePanel } from '../components/WebPerformancePanel'
 import { SessionReplayPanel } from '../components/SessionReplayPanel'
 import {TrackedAssetsPanel,SharedTrackedAssetPanel} from '../components/TrackedAssetsPanel'
@@ -58,7 +62,7 @@ const RankTrackingPanel = lazy(() =>
 function RankTrackingLoadFailed() {
   return (
     <div role="alert">
-      <p>Rank tracking couldn’t load. Reload this page to try again.</p>
+      <p>Rankings couldn’t load. Reload this page to try again.</p>
       <button className="btn" type="button" style={{ minHeight: 44 }} onClick={() => window.location.reload()}>Reload page</button>
     </div>
   )
@@ -88,17 +92,6 @@ type SetupValues = { token: string; name: string; email: string; password: strin
 function fmt(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
-}
-
-function parseOrigin(raw: string): { origin?: string; error?: string } {
-  const input = raw.trim()
-  if (input === '') return { error: 'Enter the website address, for example https://example.com.' }
-  let u: URL
-  try { u = new URL(input) } catch { return { error: 'Enter a valid website address, for example https://example.com.' } }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { error: 'The website address must start with http:// or https://.' }
-  if (u.username !== '' || u.password !== '') return { error: 'The website address must not include a username or password.' }
-  if (u.pathname !== '/' || u.search !== '' || u.hash !== '') return { error: 'Enter only the website address, without a page path, query or #fragment.' }
-  return { origin: u.origin }
 }
 
 function pillClass(status: string): string {
@@ -141,8 +134,8 @@ function App() {
   const [projectsError, setProjectsError] = useState('')
   const [projectId, setProjectId] = useState('')
   const [events, setEvents] = useState<EventsData | null>(null)
+  const [eventsReadAt, setEventsReadAt] = useState<string | null>(null)
   const [eventsBusy, setEventsBusy] = useState(false)
-  const [firstEventSeen, setFirstEventSeen] = useState(false)
   const [eventsError, setEventsError] = useState('')
   const [jobs, setJobs] = useState<Job[] | null>(null)
   const [jobsBusy, setJobsBusy] = useState(false)
@@ -195,7 +188,7 @@ function App() {
     if (pending.value.kind === 'proof') { go({ ...intent.current.search, view: 'identity' }, true); return true }
     if (pending.value.kind === 'google') {
       const value = pending.value
-      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: value.kind }, true); return true }
+      if (m.workspaces.some(workspace => workspace.id === value.workspace)) { go({ workspace: value.workspace, project: value.project, view: 'imports' }, true); return true }
       else setAuthNotice({ kind: 'error', message: 'Authorization returned, but that workspace is no longer available. Choose a current workspace.' })
     }
   }
@@ -335,14 +328,17 @@ function App() {
     activeProject.current = id
     projGen.current += 1
     setProjectId(id)
-    setEvents(null); setEventsError(''); setEventsBusy(false); setFirstEventSeen(false)
+    setEvents(null); setEventsReadAt(null); setEventsError(''); setEventsBusy(false)
     setJobs(null); setJobError(''); setJobsBusy(false); setCheckBusy(false)
     setCopied('idle')
     if (id) void loadEvents(id)
   }
 
   useEffect(() => {
-    if (phase === 'app' && view === 'installation' && projectId) { void loadJobs(projectId); void loadEvents(projectId) }
+    if (phase === 'app' && view === 'installation' && projectId) void loadEvents(projectId)
+    if (phase === 'app' && view === 'diagnostics' && projectId) void loadJobs(projectId)
+    // Opening Recent events reads current history; a read already started by project activation is current.
+    if (phase === 'app' && view === 'events' && projectId && !eventsBusy) void loadEvents(projectId)
   }, [phase, view, projectId])
 
   // While Install shows an empty history, poll for the first event every 3 s for up to 10 minutes (PostHog onboarding pattern),
@@ -458,8 +454,8 @@ function App() {
     if (!background) { setEventsBusy(true); setEventsError('') }
     try {
       const d = await api<EventsData>(`/api/projects/${pid}/events`)
-      if (current()) { if (background && d.total > 0) setFirstEventSeen(true); setEvents(d); if (background) setEventsError('') }
-    } catch (e) { if (current() && !guardAuth(e) && !background) { if (e instanceof ApiError && [403,404].includes(e.status)) setEvents(null); setEventsError(errMsg(e)) } }
+      if (current()) { setEvents(d); setEventsReadAt(new Date().toISOString()); if (background) setEventsError('') }
+    } catch (e) { if (current() && !guardAuth(e) && !background) { if (e instanceof ApiError && [403,404].includes(e.status)) { setEvents(null); setEventsReadAt(null) } setEventsError(errMsg(e)) } }
     finally { if (current() && !background) setEventsBusy(false) }
   }
 
@@ -493,8 +489,10 @@ function App() {
     try {
       const d = await api<{ project: Project }>(`/api/workspaces/${wsId}/projects`, { method: 'POST', body: { name, origin } })
       if (!current()) return
+      // Record Tracking code as the destination before the project list reloads: the reload resolves navigation, and
+      // the first website would otherwise settle on the dashboard of the now-selected project. A newer user choice wins.
+      if (intent.current.generation === navigation) rememberIntent({ workspace: wsId, project: d.project.id, view: 'installation' })
       await loadProjects(wsId)
-      if (current() && intent.current.generation === navigation) go({ workspace: wsId, project: d.project.id, view: 'installation' })
     } catch (e) {
       if (!current() || guardAuth(e) || intent.current.generation !== navigation) return
       throw e
@@ -637,10 +635,10 @@ function App() {
     onForgot={email => beginRecovery({ kind: 'request' }, email)}
     onCancel={inviteToken ? () => { sessionGeneration.current += 1; bootGeneration.current += 1; setInviteSigningIn(false) } : undefined} />
 
-  const settingsViews: AppView[] = ['preferences','security','identity','team','workspace','keys','providers','retention','google-app']
-  const settingsView = settingsViews.includes(view)
+  const projectSettingsView = projectSettingsViews.includes(view)
+  const settingsView = settingsEntry(view) !== undefined
   // An account without a workspace gets the onboarding screen; account and workspace settings keep the shell.
-  if (me && me.workspaces.length === 0 && !settingsView) return <WorkspaceSetup email={me.user.email} onCreate={createWorkspace} onRefresh={() => { refreshMemberships().catch(e => { setPageError(errMsg(e)); setPhase('error') }) }}
+  if (me && me.workspaces.length === 0 && (!settingsView || projectSettingsView)) return <WorkspaceSetup email={me.user.email} onCreate={createWorkspace} onRefresh={() => { refreshMemberships().catch(e => { setPageError(errMsg(e)); setPhase('error') }) }}
     signOutBusy={signOutBusy} onSignOut={signOut} onAccount={() => go(target('preferences'))} />
 
   const workspace = me?.workspaces.find((w) => w.id === workspaceId)
@@ -654,8 +652,14 @@ function App() {
   const projectView = isProjectView(view)
   const toolQuery = toolSearch.trim().toLowerCase()
   const accountView = ['preferences','security','identity'].includes(view)
-  const workspaceTool = ['boards','links','pixels'].includes(view)
-  const pageTitles: Record<AppView, string> = {links:'Links',pixels:'Tracking images','tracked-share':'Shared report',heatmaps:'Heatmaps',boards:'Boards',replays:'Recordings',performance:'Web performance',revenue:'Revenue',attribution: 'Attribution', journeys: 'Journeys', project: 'Web analytics', campaigns: 'UTM campaigns', realtime: 'Realtime', compare: 'Compare periods', 'new-project': 'New project', reports: 'Reports', collection: 'Collection and privacy', destinations: 'Destinations', domains: 'Domains', installation: 'Install tracker', events: 'Recent events', team: 'Team', workspace: 'New workspace', security: 'Account security', preferences: 'Profile and appearance', identity: 'Identity sign-in', keys: 'ten98 API access', providers: 'AI and search providers', retention: 'Data retention', 'visitor-retention': 'Retention', context: 'Project context', prompts: 'Saved prompts', 'ai-search': 'ChatGPT answers', 'ai-insights': 'Answer analysis', sessions: 'Visitor activity', explore: 'Traffic explorer', google: 'Google reports', 'google-app': 'Google app setup', keywords: 'Keyword research', 'domain-seo':'Domain SEO', ranks: 'Rank tracking', audits: 'Site audits', conversions: 'Conversions'}
+  const workspaceTools: readonly AppView[] = ['boards','links','pixels']
+  const workspaceTool = workspaceTools.includes(view)
+  const currentSection = sectionOf(view)
+  // Without a project, a section keeps its strips when a tab or mode in it is a workspace-wide tool, so Conversions › Campaigns still reaches tracked links and tracking images.
+  const sectionReachesWorkspaceTool = workspace !== undefined && currentSection?.section.tabs.some(tab => [tab, ...subTabs[tab.view] ?? []].some(entry => workspaceTools.includes(entry.view))) === true
+  // Page titles repeat the tab or settings label the user just chose; a few modes get a fuller name.
+  const pageTitle = ({ compare: 'Compare periods', realtime: 'Live visitors', 'new-project': 'Add a website', 'tracked-share': 'Shared report' } as Partial<Record<AppView, string>>)[view]
+    ?? settingsEntry(view)?.label ?? currentSection?.section.tabs.find(tab => tab.view === view)?.label ?? currentSection?.subTabs?.find(tab => tab.view === view)?.label ?? 'Discover'
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
     if(next==='project'&&view==='explore'&&search.workspace===workspaceId&&search.project===project?.id)return {...target(next),...explorerAnalyticsNavigation(search,analyticsApplied!==null&&analyticsApplied.userId===me?.user.id&&analyticsApplied.projectId===project?.id&&analyticsApplied.explorerEntry===routeLocation.state.__TSR_key?analyticsApplied:undefined)};
@@ -671,24 +675,21 @@ function App() {
   }
   const explorerReturnState=view==='explore'&&me&&project&&search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)?{userId:me.user.id,workspace:workspaceId,project:project.id,href:routeLocation.href}:undefined
   const verifiedExplorerReturn=me&&project?readExplorerReturn('analyticsReturn'in routeLocation.state?routeLocation.state.analyticsReturn:null,me.user.id,workspaceId,project.id):null
-  const pageScope = view === 'preferences' || view === 'security' || view === 'identity' || view === 'workspace' ? 'Your account' : view === 'google-app' ? 'Installation settings' : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
+  const pageScope = accountView || view === 'workspace' ? 'Your account' : settingsEntry(view)?.group === 'operator' ? 'Advanced settings' : projectSettingsView && project ? `Website · ${project.name}` : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
 
   const adminRole = workspace !== undefined && ['owner','admin'].includes(workspace.role)
-  const navItem = (id: AppView, label: string, icon: IconName, keywords?: string): SidebarNavItem => ({ id, label, icon, href: id, current: view === id, ...keywords ? { keywords: [keywords] } : {} })
-  const workspaceNavGroups: SidebarNavGroup[] = [{ id: 'workspace', label: 'Workspace', items: [navItem('boards','Boards','grid'), navItem('links','Links','external'), navItem('pixels','Tracking images','box','tracking images pixels')] }]
-  const projectNavGroups: SidebarNavGroup[] = [
-    { id: 'traffic', label: 'Traffic', items: [navItem('project','Analytics','trending-up'), navItem('realtime','Realtime','activity'), navItem('performance','Performance','activity'), navItem('explore','Traffic explorer','search','explore analytics traffic explorer'), navItem('compare','Compare periods','layers','compare periods analytics'), navItem('events','Recent events','inbox','recent events')] },
-    { id: 'behaviour', label: 'Behaviour', items: [navItem('replays','Recordings','monitor','session replay recordings'), navItem('heatmaps','Heatmaps','compass'), navItem('sessions','Visitor activity','users','sessions visitor activity observed visitor keys'), navItem('journeys','Journeys','workflow'), navItem('visitor-retention','Retention','clock','retention')] },
-    { id: 'campaigns-reporting', label: 'Campaigns & reporting', items: [navItem('campaigns','UTM campaigns','megaphone','utm campaigns'), navItem('attribution','Attribution','layers'), navItem('conversions','Conversions','filter'), navItem('revenue','Revenue','trending-up'), navItem('reports','Reports','folder'), navItem('google','Google reports','trending-up','google reports search console ga4'), navItem('audits','Site audits','shield','site audits')] },
-    { id: 'research', label: 'Research', items: [navItem('context','Project context','folder','project context business brief'), navItem('prompts','Saved prompts','terminal','prompts saved prompts prompt library'), navItem('ai-insights','Answer analysis','activity','ai insights answer analysis retained answers brand visibility'), navItem('ai-search','ChatGPT answers','search','ai search chatgpt answers query analysis'), navItem('keywords','Keywords','search'), navItem('domain-seo','Domain SEO','globe','domain seo backlinks'), navItem('ranks','Rank tracking','trending-up','rank tracking')] },
-    { id: 'connect', label: 'Connect', items: [navItem('installation','Install tracker','code','install tracker'), { ...navItem('destinations','Destinations','external'), hidden: !adminRole }, navItem('collection','Collection and privacy','shield','collection and privacy'), { ...navItem('domains','Domains','globe'), hidden: !adminRole }] },
-  ]
-  // Group order (account, workspace, operator) keeps the established tab order; New workspace closes the workspace group.
-  const settingsItem = (id: AppView, label: string, group: SettingsGroupId, allowed = true): SettingsNavItem => ({ id, label, group, href: id, allowed })
-  const settingsItems: SettingsNavItem[] = [settingsItem('preferences','Your account','account'), settingsItem('security','Security','account'), settingsItem('identity','Identity & SSO','account'),
-    settingsItem('team','Workspace & access','workspace',adminRole), settingsItem('keys','API access','workspace',adminRole), settingsItem('providers','Integrations','workspace',workspace?.role === 'owner'),
-    settingsItem('retention','Retention','workspace',workspace !== undefined), settingsItem('workspace','New workspace','workspace'), settingsItem('google-app','Google setup','operator',me!.instanceOperator)]
-  const settingsIntro = view === 'keys' ? 'Create access keys for the ten98 API. AI and search provider credentials are managed separately by a workspace owner.' : view === 'providers' ? 'Manage provider credentials and pause paid requests.' : view === 'workspace' ? 'Keep each team’s projects and access separate.' : undefined
+  // One sidebar item per section; it opens the section's first tab and stays selected on every tab and mode within it.
+  const sectionNavGroups: SidebarNavGroup[] = [{ id: 'sections', items: appSections.map((section): SidebarNavItem => ({ id: section.id, label: section.label, icon: section.icon, href: section.tabs[0].view,
+    current: currentSection?.section.id === section.id, keywords: [...section.tabs.map(tab => tab.label), ...section.keywords] })) }]
+  // Settings pages appear in the sidebar only as search results, so "Find a tool" still reaches them.
+  const settingsAllowed = (entry: AppView) => entry === 'google-app' || entry === 'identity-providers' ? me!.instanceOperator : entry === 'diagnostics' ? project !== null : entry === 'providers' ? workspace?.role === 'owner' : ['team','keys'].includes(entry) ? adminRole
+    : ['domains','destinations'].includes(entry) ? adminRole && project !== null : projectSettingsViews.includes(entry) ? project !== null : entry === 'retention' ? workspace !== undefined : true
+  const settingsItems: SettingsNavItem[] = settingsEntries.map(entry => ({ id: entry.view, label: entry.label, group: entry.group, href: entry.view, allowed: settingsAllowed(entry.view) }))
+  const settingsSearchGroups: SidebarNavGroup[] = [{ id: 'settings', label: 'Settings', items: settingsItems.filter(item => item.allowed !== false).map(item => ({ id: item.id, label: item.label, icon: 'settings', href: item.id, current: view === item.id, keywords: [...settingsEntry(item.id as AppView)?.keywords ?? []] })) }]
+  const sectionTabs = currentSection && (projectView && (project !== null || sectionReachesWorkspaceTool) || workspaceTool) ? currentSection.section.tabs.map(tab => ({ id: tab.view, label: tab.label, href: tab.view, current: tab.view === currentSection.tab })) : undefined
+  const modeTabs = sectionTabs && currentSection?.subTabs?.map(tab => ({ id: tab.view, label: tab.label, href: tab.view, current: tab.view === view }))
+  const settingsIntro = view === 'keys' ? 'Keys let your own scripts and AI assistants read this workspace through the ten98 API. Search and AI service accounts are added under Connections.' : view === 'providers' ? 'Connect the search and AI services Discover uses, and pause paid requests at any time.' : view === 'workspace' ? 'Keep each team’s websites and access separate.' : undefined
+  const settingsFrame = (content: ReactNode) => <SettingsLayout title={view === 'workspace' ? 'Create workspace' : pageTitle} scope={pageScope} items={settingsItems} current={view} linkComponent={ShellLink} navigationLabel='Settings sections' groupLabels={settingsGroupLabels}>{content}</SettingsLayout>
   const navRoutes: NavRoutes = { search: key => key === 'boards' ? { workspace: workspaceId, view: 'boards' } : key === 'project' || key === 'compare' ? analyticsTarget(key) : key === 'explore' ? exploreTarget() : target(key as AppView),
     analyticsState: previous => ({ ...previous, analyticsReturn: explorerReturnState && me && project && readExplorerReturn(explorerReturnState, me.user.id, workspaceId, project.id) ? explorerReturnState : undefined }) }
 
@@ -708,28 +709,30 @@ function App() {
         <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><AppBrand product='Discover' /></Link>
         <div className='side-body sidebar-nav'><Stack gap={5}>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
-          onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Create project',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.'}} />
-        {workspace&&<SidebarNav label='Workspace measurement' linkComponent={ShellLink} filter={toolSearch} groups={workspaceNavGroups} />}
-        {project&&workspace&&<SidebarNav label='Project sections' linkComponent={ShellLink} filter={toolSearch} groups={projectNavGroups} />}
+          onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Add website',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.',project:'Website',noProjects:'No websites yet',choose:'Choose a website',loading:'Loading websites…'}} />
+        {workspace&&<SidebarNav label='Sections' linkComponent={ShellLink} filter={toolSearch} groups={toolQuery?[...sectionNavGroups,...settingsSearchGroups]:sectionNavGroups} />}
         </Stack></div>
         <SidebarFooter version={appVersion}>
-          {project&&<SidebarStatus tone={lastReceived&&!eventsError?'connected':'idle'} label={eventsError?'Event history unavailable':lastReceived?'Retained events received':'No retained events yet'}/>}
-          <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target('preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
+          {project&&<SidebarStatus tone={lastReceived&&!eventsError?'connected':'idle'} label={eventsError?'Visit history unavailable':lastReceived?'Receiving visits':'Waiting for the first visit'}/>}
+          <Link className={`nav-item${settingsView?' selected':''}`} to='/' search={target(project?'installation':'preferences')}><AppIcon name='settings'/><span>Settings</span></Link>
         </SidebarFooter>
       </>}
-      topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitles[view]}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile and appearance</Link><Link to='/' search={target('security')}>Account security</Link><Link to='/' search={target('identity')}>Identity sign-in</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
+      topbar={<AppTopbar wrap menuToggle menuLabel='Menu' breadcrumb={{icon:accountView?'users':'folder',scope:accountView?'Your account':projectView?project?.name??workspace?.name??'Your workspace':workspace?.name??'Your workspace',current:pageTitle}} search={<SearchField variant='topbar' label='Find a tool' hideLabel placeholder='Find a tool…' value={toolSearch} onValueChange={setToolSearch} onClear={()=>setToolSearch('')} clearLabel='Show all tools' status={toolQuery?`Tools matching “${toolSearch.trim()}”`:undefined} />} badge={{label:'Development preview',hideOnMobile:true}} actions={<AccountMenu name={me!.user.name||'Account'} email={me!.user.email} avatar={<span className='avatar'>{me!.user.name.trim().split(/\s+/).map(part=>part[0]).slice(0,2).join('').toUpperCase()||'98'}</span>}><Link to='/' search={target('preferences')}>Profile</Link><Link to='/' search={target('security')}>Security</Link><Link to='/' search={target('identity')}>Sign-in methods</Link><button type='button' disabled={signOutBusy} aria-busy={signOutBusy||undefined} onClick={()=>void signOut()}>{signOutBusy?'Signing out…':'Sign out'}</button></AccountMenu>} />}>
         <div className='page-content content'><Stack gap={6}>
 
-        {!projectView&&!settingsView&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>{workspaceTool?'Workspace tools include all projects.':'Selected project'}</Banner>}
-        {workspace?.twoFactorLocked&&<Banner tone='warning' icon='shield' title='Two-factor authentication required' linkComponent={ShellLink} action={{label:'Open account security',href:'security'}}>This workspace requires two-factor authentication. Turn it on in Account security to open its projects and reports.</Banner>}
+        {!projectView&&!settingsView&&!workspaceTool&&project&&<Banner tone='info' linkComponent={ShellLink} action={{label:`Return to ${project.name}`,icon:'arrow-right',href:'project'}}>Selected project</Banner>}
+        {workspace?.twoFactorLocked&&<Banner tone='warning' icon='shield' title='Two-factor authentication required' linkComponent={ShellLink} action={{label:'Open security settings',href:'security'}}>This workspace requires two-factor authentication. Turn it on in Security settings to open its websites and reports.</Banner>}
         {authNotice && <Alert tone={authNotice.kind === 'error' ? 'danger' : 'info'} onDismiss={() => setAuthNotice(null)}>{authNotice.message}</Alert>}
         {appError !== '' && <Alert tone='danger'>{appError}</Alert>}
         {projectsError !== '' && <Alert tone='danger' actions={<Button variant='secondary' onClick={() => void loadProjects(activeWorkspace.current)}>Retry projects</Button>}>{projectsError}</Alert>}
         {navigationPending ? <p role='status'>Loading the selected project…</p> : <>
         {/* First-strong isolates keep a right-to-left project name from reordering the origin (same isolation as <bdi> without adding raw elements). */}
-        {project && workspace && projectView && <PageHeader title={pageTitles[view]} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`} />}
-        {!projectView && !settingsView && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={pageTitles[view]} />}
-        {settingsView && <SettingsLayout title={view === 'workspace' ? 'Create workspace' : pageTitles[view]} scope={pageScope} items={settingsItems} current={view} linkComponent={ShellLink} navigationLabel='Settings sections'>
+        {project && workspace && projectView && !settingsView && <PageHeader title={currentSection?.section.label ?? pageTitle} description={`⁨${project.name}⁩ · ⁨${project.origin}⁩`}
+          actions={view === 'project' && adminRole ? <WebsiteQuickShare key={project.id} projectId={project.id} onUnauthorized={unauthorized} /> : undefined} />}
+        {!projectView && !settingsView && view !== 'new-project' && <PageHeader eyebrow={pageScope} title={currentSection?.section.label ?? pageTitle} />}
+        {sectionTabs && <SectionNav label={`${currentSection!.section.label} pages`} items={sectionTabs} linkComponent={ShellLink} />}
+        {modeTabs && <SectionNav label={`${currentSection!.section.tabs.find(tab => tab.view === currentSection!.tab)!.label} views`} items={modeTabs} linkComponent={ShellLink} />}
+        {settingsView && !projectSettingsView && settingsFrame(<>
         {settingsIntro && <Text tone='muted'>{settingsIntro}</Text>}
         {view === 'workspace' && <WorkspaceCreateSection onCreate={createWorkspace} />}
         {view === 'team' && workspace && me && ['owner','admin'].includes(workspace.role) && <TeamPanel key={workspaceId} workspaceId={workspaceId} userId={me.user.id} onChanged={refreshMemberships} onUnauthorized={unauthorized} />}
@@ -737,125 +740,15 @@ function App() {
         {view === 'security' && me && <><AccountSecurityPanel key={me.user.id} expectedUserId={me.user.id} onUnauthorized={unauthorized} onFactorChanged={factorChanged} /><AccountClosurePanel key={`closure:${me.user.id}`} userId={me.user.id} onClosed={accountClosed} onUnauthorized={unauthorized} onOpenTeam={id => go({ workspace: id, view: 'team' })} onOpenIdentity={() => go(target('identity'))} /><Link className='btn' to='/' search={target('identity')}>Manage identity sign-in and recovery</Link></>}
         {view === 'identity' && me && <>
           <OidcRecoveryPanel key={me.user.id} userId={me.user.id} proofId={oidcProofId} onUnauthorized={unauthorized} onClosed={accountClosed} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
-          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} />
+          <OidcPanel key={`${me.user.id}:${me.instanceOperator}`} userId={me.user.id} instanceOperator={me.instanceOperator} proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }}  part='account' />
         </>}
         {view === 'keys' && workspace && me && ['owner','admin'].includes(workspace.role) && <ApiKeysPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
-        {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} onUnauthorized={unauthorized} />}
+        {view === 'providers' && workspace?.role === 'owner' && me && <ProviderPanel key={`${me.user.id}:${workspaceId}`} workspaceId={workspaceId} initialProvider={search.provider} onUnauthorized={unauthorized} />}
         {view === 'retention' && workspace && me && <RetentionPanel workspaceId={workspaceId} userId={me.user.id} onUnauthorized={unauthorized} />}
         {view === 'google-app' && me?.instanceOperator && <GoogleAppPanel userId={me.user.id} onUnauthorized={unauthorized} />}
-        </SettingsLayout>}
-        {(view==='links'||view==='pixels')&&workspace&&me&&<TrackedAssetsPanel workspaceId={workspaceId} userId={me.user.id} role={workspace.role} kind={view==='links'?'link':'pixel'} appUrl={appUrl} query={search.assetInvalid?'unsupported=1':search.assetQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.view===view&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={(query,kind)=>go({workspace:workspaceId,view:kind==='pixel'?'pixels':kind==='link'?'links':view,...query?{assetQuery:query}:{}})} onUnauthorized={unauthorized}/>}
-        {view === 'collection' && project && workspace && me && <AnalyticsSettingsPanel projectId={project.id} userId={me.user.id} workspaceId={workspace.id} onDeleted={()=>{if(activeWorkspace.current!==workspace.id||activeProject.current!==project.id||currentMe.current?.user.id!==me.user.id)return;activateProject('');loadedProjects.current=(loadedProjects.current??[]).filter(item=>item.id!==project.id);setProjects(loadedProjects.current);go({workspace:workspace.id,view:'project'},true);void loadProjects(workspace.id);}} readOwner={(routeLocation.state.__TSR_key??routeLocation.href)+':'+workspace?.role} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===project.id&&search.view==='collection'&&canonicalNavigation(routeLocation.searchStr,search)} isCurrent={()=>sessionGeneration.current===renderedSession&&intent.current.generation===renderedIntent&&currentMe.current!==null&&currentMe.current.user.id===me.user.id&&activeWorkspace.current===workspaceId&&activeProject.current===project.id&&(router.state.location.state.__TSR_key??router.state.location.href)===(routeLocation.state.__TSR_key??routeLocation.href)&&navigationKey(parseNavigation(router.state.location.search))===navigationKey(search)&&currentMe.current.workspaces.some(w=>w.id===workspaceId&&w.role===workspace?.role)} onUnauthorized={unauthorized} />}
-        {view === 'campaigns' && project && me && <UtmPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} search={search} onAppliedRange={rememberAnalyticsRange} onNavigate={value=>go({...target('explore'),...value})} onUnauthorized={unauthorized} />}
-        {view === 'compare' && project && me && <AnalyticsPanel projectId={project.id} userId={me.user.id} compareView onAppliedRange={rememberAnalyticsRange} search={{...target('compare'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('compare'),...value})} onUnauthorized={unauthorized} />}
-        {view === 'performance' && project && me && <WebPerformancePanel projectId={project.id} userId={me.user.id} query={search.performanceInvalid?'unsupported=1':search.performanceQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({...target('performance'),performanceQuery:query})} onUnauthorized={unauthorized} onSettings={()=>go(target('collection'))}/>}
-        {view === 'boards' && workspace && me && <BoardsPanel workspaceId={workspaceId} userId={me.user.id} projects={projects??[]} query={search.boardInvalid?'unsupported=1':search.boardQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===undefined&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({workspace:workspaceId,view:'boards',...(query?{boardQuery:query}:{})})} onUnauthorized={unauthorized}/>}
-        {view === 'replays' && project && me && <SessionReplayPanel projectId={project.id} userId={me.user.id} query={search.replayInvalid?'unsupported=1':search.replayQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({...target('replays'),...(query?{replayQuery:query}:{})})} onUnauthorized={unauthorized} onSettings={()=>go(target('collection'))}/>}
-        {view === 'heatmaps' && project && me && <HeatmapsPanel projectId={project.id} userId={me.user.id} query={search.heatmapInvalid?'unsupported=1':search.heatmapQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({...target('heatmaps'),...(query?{heatmapQuery:query}:{})})} onUnauthorized={unauthorized} onSettings={()=>go(target('collection'))}/>}
-        {view === 'realtime' && project && me && <RealtimePanel projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenSession={value=>go({...target('sessions'),...value})}/>}
-        {view === 'conversions' && project && me && <ConversionsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'context' && project && me && <ContextPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'prompts' && project && me && <PromptsPanel key={`${me.user.id}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onAISearch={(promptId,versionId,capture)=>{const intent=readAISearchIntent()!;go({...target('ai-search'),aiSearchQuery:aiSearchIntentQuery({...intent,section:capture?'captures':'analysis',create:capture,filters:{...intent.filters,promptId,versionId}})});}} />}
-        {view === 'ai-search' && project && me && <AISearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} search={search} onNavigate={value=>go({...target('ai-search'),...value})} onUnauthorized={unauthorized} onPrompts={()=>go(target('prompts'))} onProviders={()=>go(target('providers'))}/>}
-        {view === 'ai-insights' && project && me && <AIInsightsSection key={`${me.user.id}:${workspaceId}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onBack={() => go(target('prompts'))} />}
-        {view === 'keywords' && project && me && <KeywordResearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'domain-seo' && project && me && <DomainResearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'ranks' && project && me && <Suspense fallback={<p role="status">Loading rank tracking…</p>}><RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} /></Suspense>}
-        {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
-        {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
-        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} />}
-        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />}
-        {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && <>
-          <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
-        </>}
-        {(view === 'new-project' || (projectView && projects !== null && project === null)) && workspace && canWrite && (
-          <><PageHeader eyebrow='Website setup' title={projects !== null && projects.length > 0 ? 'Create a new project' : 'Connect your first website'} description='Enter a project name and website address.' />
-          <ProjectCreateSection key={workspaceId} onCreate={createProject} /></>
-        )}
-        {projectView && workspace && projects !== null && project === null && !canWrite && (
-          <section className='card'>
-            <h1>{projects.length ? 'Choose a project' : 'No project to show'}</h1>
-            <p>{projects.length ? 'Select a project from the sidebar to view its analytics.' : 'Your role in this workspace is view-only. Ask a workspace admin to create a project or give you access to one.'}</p>
-          </section>
-        )}
-        {view === 'project' && workspace && project !== null && (
-          <>
-            {events?.total === 0 && <section className='connection-callout'><div><strong>No retained events available.</strong><p>Add the tracking snippet, then review Collection and privacy to choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Install tracker</Link></section>}
-            <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onAppliedRange={rememberAnalyticsRange} onReturnToExplorer={verifiedExplorerReturn?()=>router.history.push(verifiedExplorerReturn):undefined} search={{...target('project'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('project'),...value})} onUnauthorized={unauthorized} />
-          </>
-        )}
-        {view === 'sessions' && workspace && project !== null && <SessionExplorerPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('sessions'),...value})} onUnauthorized={unauthorized}/> }
-        {view === 'revenue' && workspace && project !== null && <RevenuePanel projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('revenue'),...value})} onOpenActivity={(visitorKey,from,to,timeZone)=>go({...target('sessions'),visitorKey,from,to,timeZone})} onUnauthorized={unauthorized}/> }
-        {view === 'attribution' && workspace && project !== null && <AttributionPanel projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('attribution'),...value})} onUnauthorized={unauthorized}/> }
-        {view === 'journeys' && workspace && project !== null && <JourneysPanel projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('journeys'),...value})} onUnauthorized={unauthorized}/> }
-        {view === 'visitor-retention' && workspace && project !== null && <RetentionReportPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} search={{...target('visitor-retention'),...retentionNavigation(search)}} onNavigate={(value,replace)=>go({...target('visitor-retention'),...value},replace)} onUnauthorized={unauthorized} onOpenExplore={()=>go(target('explore'))}/>}
-        {view === 'events' && workspace && project !== null && (
-            <section className='card events-panel' aria-labelledby='ev-h' aria-busy={eventsBusy}>
-              <div className='row between events-toolbar'>
-                <div>
-                  <h2 id='ev-h'>Retained events</h2>
-                  <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
-                </div>
-                <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
-              </div>
-              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint'>History before {fmt((events?.retainedFrom ?? project.retainedFrom)!)} is unavailable after retention. This is not a lifetime total.</p>}
-              {lastReceived !== null && <p className='dim'>Last retained event received {fmt(lastReceived)}</p>}
-              {eventsError !== '' && <Alert tone='danger'>{eventsError}</Alert>}
-              {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
-              {events !== null && events.events.length === 0 && (
-                <div className='empty'>
-                  <p><strong>No retained events available.</strong></p>
-                  <p>Install your tracker, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><Link className='btn' to='/' search={target('installation')}>Install tracker</Link>
-                </div>
-              )}
-              {events !== null && events.events.length > 0 && (
-                <>
-                  <DataTable caption='Retained event rows' captionHidden responsive='stack' searchable={false} sortable={false} pagination={false} rows={events.events} rowKey={ev => ev.id}
-                    columns={[{ key: 'event', header: 'Event', rowHeader: true, wrap: true, render: ev => ev.eventName }, { key: 'origin', header: 'Origin', wrap: true, render: ev => <bdi dir='ltr'>{ev.origin}</bdi> },
-                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt}>{fmt(ev.receivedAt)}</time> }]} />
-                  <p className='dim footnote'>Showing the latest {events.events.length} of {events.total} persisted events.</p>
-                </>
-              )}
-            </section>
-        )}
-        {view === 'installation' && workspace && project !== null && (
-          <>
-            <section className='card installation-panel' aria-labelledby='snip-h'>
-              <div className='row between installation-toolbar'>
-                <h2 id='snip-h'>Tracking snippet</h2>
-                <Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' || (events?.total ?? 0) > 0 ? 'secondary' : 'primary'} onClick={() => void copySnippet(snippet)}>Copy snippet</Button>
-              </div>
-              <p>Add this tag inside the <code>&lt;head&gt;</code> of every page you want to measure on <strong>{project.origin}</strong>.</p>
-              <pre className='snippet' role='region' aria-label='Tracking snippet' tabIndex={0}><code>{snippet}</code></pre>
-              {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
-              {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
-              <p className='dim footnote'>Use <Link to='/' search={target('domains')}>Domains</Link> for other serving domains. <Link to='/' search={target('collection')}>Collection and privacy</Link> controls consent and optional data. Browser privacy signals and explicit refusals stop collection.{isLocal ? ' External websites cannot reach this localhost collector; deploy it at a public HTTPS address first.' : ''}</p>
-              <details className='installation-help'>
-                <summary>Custom events and collection details</summary>
-                <p className='dim footnote'>When collection is allowed, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Collection and privacy settings. Advertising pixels and visitor identification still need explicit consent.</p>
-                <p>For buttons and links, you can also declare an event in your HTML:</p>
-                <pre className='snippet' tabIndex={0} aria-label='HTML custom event example'><code>{'<button type="button" data-ten98-event="signup" data-ten98-event-plan="starter">Sign up</button>'}</code></pre>
-                <p className='dim footnote'>Only the nearest element with a declared event is tracked. Attribute properties are passed as strings; use the JavaScript call for numbers, arrays, nested properties or advertising conversion fields. Use fixed, non-personal values. Click tracking does not delay navigation, and delivery during navigation is best effort.</p>
-              </details>
-            </section>
-            <section aria-label='Check website events' aria-busy={eventsBusy} style={{minWidth:0,overflowWrap:'anywhere'}}>
-              <ResourceCard title='Check that events arrive' description='Open your website, visit a page, then check for an event received by this project.' icon='chart'
-                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<AppIcon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Button style={{minHeight:44,whiteSpace:'normal'}} variant={events !== null && events.total > 0 ? 'primary' : 'secondary'} href='project' component={ShellLink}>View analytics</Button></>}>
-                <TrackerStatus resource={project.origin}
-                  installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
-                  receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
-                {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
-                {firstEventSeen && (events?.total ?? 0) > 0 && <StatusLine tone='success'>First event received. Your tracker is sending events to this project.</StatusLine>}
-                {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt}>{fmt(events.events[0].receivedAt)}</time>.</p>}
-                {events !== null && events.total === 0 && <p>No events in retained history yet. This page checks automatically for 10 minutes. Confirm the tag is published and visit your website. If you use consent-first collection, allow analytics in your website’s Tracking preferences.</p>}
-                {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
-                <p className='hint'>This is retained event history. After visiting your website, check for a new timestamp.</p>
-                <Button style={{minHeight:44,whiteSpace:'normal'}} variant='ghost' href='events' component={ShellLink}>Inspect recent events</Button>
-              </ResourceCard>
-            </section>
-            <details className='card diagnostics' aria-busy={checkBusy || jobsBusy}><summary>Background worker diagnostics</summary>
-            <section aria-labelledby='wc-h'>
+        {view === 'identity-providers' && me?.instanceOperator && <OidcPanel key={`${me.user.id}:operator`} userId={me.user.id} instanceOperator proofId={oidcProofId} onUnauthorized={unauthorized} onProofHandled={() => { oidcProof.current = undefined; setOidcProofId(undefined) }} part='operator' />}
+        {view === 'diagnostics' && project && (
+            <section className='card diagnostics' aria-labelledby='wc-h' aria-busy={checkBusy || jobsBusy}>
               <div className='row between'>
                 <h2 id='wc-h'>Worker check</h2>
                 <div className='row'>
@@ -879,7 +772,119 @@ function App() {
                 </ul>
               )}
             </section>
-            </details>
+        )}
+        </>)}
+        {(view==='links'||view==='pixels')&&workspace&&me&&<TrackedAssetsPanel workspaceId={workspaceId} userId={me.user.id} role={workspace.role} kind={view==='links'?'link':'pixel'} appUrl={appUrl} query={search.assetInvalid?'unsupported=1':search.assetQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.view===view&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={(query,kind)=>go({workspace:workspaceId,view:kind==='pixel'?'pixels':kind==='link'?'links':view,...query?{assetQuery:query}:{}})} onUnauthorized={unauthorized}/>}
+        {view === 'collection' && project && workspace && me && settingsFrame(<AnalyticsSettingsPanel projectId={project.id} userId={me.user.id} workspaceId={workspace.id} onDeleted={()=>{if(activeWorkspace.current!==workspace.id||activeProject.current!==project.id||currentMe.current?.user.id!==me.user.id)return;activateProject('');loadedProjects.current=(loadedProjects.current??[]).filter(item=>item.id!==project.id);setProjects(loadedProjects.current);go({workspace:workspace.id,view:'project'},true);void loadProjects(workspace.id);}} readOwner={(routeLocation.state.__TSR_key??routeLocation.href)+':'+workspace?.role} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===project.id&&search.view==='collection'&&canonicalNavigation(routeLocation.searchStr,search)} isCurrent={()=>sessionGeneration.current===renderedSession&&intent.current.generation===renderedIntent&&currentMe.current!==null&&currentMe.current.user.id===me.user.id&&activeWorkspace.current===workspaceId&&activeProject.current===project.id&&(router.state.location.state.__TSR_key??router.state.location.href)===(routeLocation.state.__TSR_key??routeLocation.href)&&navigationKey(parseNavigation(router.state.location.search))===navigationKey(search)&&currentMe.current.workspaces.some(w=>w.id===workspaceId&&w.role===workspace?.role)} onUnauthorized={unauthorized} />)}
+        {view === 'campaigns' && project && me && <UtmPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'explore' && project && me && <ExplorerPanel projectId={project.id} userId={me.user.id} search={search} onAppliedRange={rememberAnalyticsRange} onNavigate={value=>go({...target('explore'),...value})} onUnauthorized={unauthorized} />}
+        {view === 'compare' && project && me && <AnalyticsPanel projectId={project.id} userId={me.user.id} compareView onAppliedRange={rememberAnalyticsRange} search={{...target('compare'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('compare'),...value})} onUnauthorized={unauthorized} />}
+        {view === 'performance' && project && me && <WebPerformancePanel projectId={project.id} userId={me.user.id} query={search.performanceInvalid?'unsupported=1':search.performanceQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({...target('performance'),performanceQuery:query})} onUnauthorized={unauthorized} onSettings={()=>go(target('collection'))}/>}
+        {view === 'boards' && workspace && me && <BoardsPanel workspaceId={workspaceId} userId={me.user.id} projects={projects??[]} query={search.boardInvalid?'unsupported=1':search.boardQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={!navigationPending&&search.workspace===workspaceId&&search.project===undefined&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({workspace:workspaceId,view:'boards',...(query?{boardQuery:query}:{})})} onUnauthorized={unauthorized}/>}
+        {view === 'replays' && project && me && <SessionReplayPanel projectId={project.id} userId={me.user.id} query={search.replayInvalid?'unsupported=1':search.replayQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({...target('replays'),...(query?{replayQuery:query}:{})})} onUnauthorized={unauthorized} onSettings={()=>go(target('collection'))}/>}
+        {view === 'heatmaps' && project && me && <HeatmapsPanel projectId={project.id} userId={me.user.id} query={search.heatmapInvalid?'unsupported=1':search.heatmapQuery} readOwner={routeLocation.state.__TSR_key??routeLocation.href} readEnabled={search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)} onNavigate={query=>go({...target('heatmaps'),...(query?{heatmapQuery:query}:{})})} onUnauthorized={unauthorized} onSettings={()=>go(target('collection'))}/>}
+        {view === 'realtime' && project && me && <RealtimePanel projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenSession={value=>go({...target('sessions'),...value})}/>}
+        {view === 'conversions' && project && me && <ConversionsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'context' && project && me && settingsFrame(<ContextPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />)}
+        {view === 'prompts' && project && me && <PromptsPanel key={`${me.user.id}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onAISearch={(promptId,versionId,capture)=>{const intent=readAISearchIntent()!;go({...target('ai-search'),aiSearchQuery:aiSearchIntentQuery({...intent,section:capture?'captures':'analysis',create:capture,filters:{...intent.filters,promptId,versionId}})});}} />}
+        {view === 'ai-search' && project && me && <AISearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} search={search} onNavigate={value=>go({...target('ai-search'),...value})} onUnauthorized={unauthorized} onPrompts={()=>go(target('prompts'))} onProviders={()=>go(target('providers'))}/>}
+        {view === 'ai-insights' && project && me && <AIInsightsSection key={`${me.user.id}:${workspaceId}:${project.id}`} workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onBack={() => go(target('prompts'))} />}
+        {view === 'keywords' && project && me && <KeywordResearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'domain-seo' && project && me && <DomainResearchPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'ranks' && project && me && <Suspense fallback={<p role="status">Loading rank tracking…</p>}><RankTrackingPanel workspaceId={workspaceId} projectId={project.id} userId={me.user.id} origin={project.origin} onUnauthorized={unauthorized} onOpenProviders={() => go(target('providers'))} /></Suspense>}
+        {view === 'audits' && project && me && <SiteAuditPanel projectId={project.id} userId={me.user.id} search={{...target('audits'),...(search.workspace===workspaceId&&search.project===project.id?auditNavigation(search):{})}} onNavigate={(value,replace) => go({...target('audits'),...value},replace)} onUnauthorized={unauthorized} onOpenDomains={() => go(target('domains'))} onOpenRetention={() => go(target('retention'))} />}
+        {view === 'reports' && project && me && <ReportsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />}
+        {view === 'google' && project && me && <GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='reports' onManage={() => go(target('imports'))} />}
+        {view === 'imports' && project && me && settingsFrame(<GoogleReportsPanel projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onOpenSetup={me.instanceOperator ? () => go(target('google-app')) : undefined} part='setup' />)}
+        {view === 'domains' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<DomainsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} onInstallTracker={() => go(target('installation'))} />)}
+        {view === 'destinations' && project && workspace && me && ['owner','admin'].includes(workspace.role) && settingsFrame(<>
+          <DestinationsPanel key={`${me.user.id}:${project.id}`} projectId={project.id} userId={me.user.id} onUnauthorized={unauthorized} />
+        </>)}
+        {(view === 'new-project' || (projectView && projects !== null && project === null)) && workspace && canWrite && (
+          <><PageHeader title={projects !== null && projects.length > 0 ? 'Add a website' : 'Add your website'} description='Next you add one line of tracking code to your site.' />
+          <ProjectCreateSection key={workspaceId} onCreate={createProject} /></>
+        )}
+        {projectView && workspace && projects !== null && project === null && !canWrite && (
+          <section className='card'>
+            <h1>{projects.length ? 'Choose a project' : 'No project to show'}</h1>
+            <p>{projects.length ? 'Select a project from the sidebar to view its analytics.' : 'Your role in this workspace is view-only. Ask a workspace admin to create a project or give you access to one.'}</p>
+          </section>
+        )}
+        {view === 'project' && workspace && project !== null && (
+          <>
+            {events?.total === 0 && <section className='connection-callout'><div><strong>Waiting for the first visit.</strong><p>Add the tracking code to your site. Privacy settings choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Get tracking code</Link></section>}
+            <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onAppliedRange={rememberAnalyticsRange} onReturnToExplorer={verifiedExplorerReturn?()=>router.history.push(verifiedExplorerReturn):undefined} search={{...target('project'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('project'),...value})} onUnauthorized={unauthorized} />
+          </>
+        )}
+        {view === 'sessions' && workspace && project !== null && <SessionExplorerPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('sessions'),...value})} onUnauthorized={unauthorized}/> }
+        {view === 'revenue' && workspace && project !== null && <RevenuePanel projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('revenue'),...value})} onOpenActivity={(visitorKey,from,to,timeZone)=>go({...target('sessions'),visitorKey,from,to,timeZone})} onUnauthorized={unauthorized}/> }
+        {view === 'attribution' && workspace && project !== null && <AttributionPanel projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('attribution'),...value})} onUnauthorized={unauthorized}/> }
+        {view === 'journeys' && workspace && project !== null && <JourneysPanel projectId={project.id} userId={me!.user.id} search={search} onNavigate={value=>go({...target('journeys'),...value})} onUnauthorized={unauthorized}/> }
+        {view === 'visitor-retention' && workspace && project !== null && <RetentionReportPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} search={{...target('visitor-retention'),...retentionNavigation(search)}} onNavigate={(value,replace)=>go({...target('visitor-retention'),...value},replace)} onUnauthorized={unauthorized} onOpenExplore={()=>go(target('explore'))}/>}
+        {view === 'events' && workspace && project !== null && (
+            <section className='card events-panel' aria-labelledby='ev-h' aria-busy={eventsBusy}>
+              <div className='row between events-toolbar'>
+                <div>
+                  <h2 id='ev-h'>Retained events</h2>
+                  <p className='big-num'>{events !== null ? events.total : project.eventCount}</p>
+                  {eventsReadAt !== null && <Text tone='muted' title={eventsReadAt}>Read {formatReportInstant(eventsReadAt,'UTC')}</Text>}
+                </div>
+                <button className='btn' disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Refreshing…' : 'Refresh events'}</button>
+              </div>
+              {(events?.retainedFrom ?? project.retainedFrom) && <p className='hint' title={(events?.retainedFrom ?? project.retainedFrom)!}>History before {formatReportInstant((events?.retainedFrom ?? project.retainedFrom)!,'UTC')} is unavailable after retention. This is not a lifetime total.</p>}
+              {lastReceived !== null && <p className='dim' title={lastReceived}>Last retained event received {formatReportInstant(lastReceived,'UTC')}</p>}
+              {eventsError !== '' && <Alert tone='danger'>{eventsError}</Alert>}
+              {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
+              {events !== null && events.events.length === 0 && (
+                <div className='empty'>
+                  <p><strong>No visits yet.</strong></p>
+                  <p>Install your tracker, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><Link className='btn' to='/' search={target('installation')}>Get tracking code</Link>
+                </div>
+              )}
+              {events !== null && events.events.length > 0 && (
+                <>
+                  <DataTable caption='Retained event rows' captionHidden responsive='stack' searchable={false} sortable={false} pagination={false} rows={events.events} rowKey={ev => ev.id}
+                    columns={[{ key: 'event', header: 'Event', rowHeader: true, wrap: true, render: ev => ev.eventName }, { key: 'origin', header: 'Origin', wrap: true, render: ev => <bdi dir='ltr'>{ev.origin}</bdi> },
+                      { key: 'path', header: 'Path', wrap: true, render: ev => <bdi dir='ltr'>{ev.path}</bdi> }, { key: 'received', header: 'Received', render: ev => <time dateTime={ev.receivedAt} title={ev.receivedAt}>{formatReportInstant(ev.receivedAt,'UTC')}</time> }]} />
+                  <p className='dim footnote'>Showing the latest {events.events.length} of {events.total} persisted events.</p>
+                </>
+              )}
+            </section>
+        )}
+        {view === 'installation' && workspace && project !== null && settingsFrame(
+          <>
+            <section className='card installation-panel' aria-labelledby='snip-h'>
+              <div className='row between installation-toolbar'>
+                <h2 id='snip-h'>Your tracking code</h2>
+                <Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' || (events?.total ?? 0) > 0 ? 'secondary' : 'primary'} onClick={() => void copySnippet(snippet)}>Copy code</Button>
+              </div>
+              <p>Add this tag inside the <code>&lt;head&gt;</code> of every page you want to measure on <strong>{project.origin}</strong>.</p>
+              <pre className='snippet' role='region' aria-label='Tracking code' tabIndex={0}><code>{snippet}</code></pre>
+              {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
+              {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
+              <p className='dim footnote'>Use <Link to='/' search={target('domains')}>Domains</Link> for other serving domains. <Link to='/' search={target('collection')}>Privacy settings</Link> control consent and optional data. Browser privacy signals and explicit refusals stop collection.{isLocal ? ' External websites cannot reach this localhost collector; deploy it at a public HTTPS address first.' : ''}</p>
+              <details className='installation-help'>
+                <summary>Custom events and collection details</summary>
+                <p className='dim footnote'>When collection is allowed, page loads and SPA path changes are observed automatically. Call <code>window.ten98.track('signup', {'{'}plan: 'starter'{'}'})</code> for a custom event with optional properties. Use fixed event names and avoid personal data. Native page URLs omit queries and fragments; optional metadata follows Privacy settings. Advertising pixels and visitor identification still need explicit consent.</p>
+                <p>For buttons and links, you can also declare an event in your HTML:</p>
+                <pre className='snippet' tabIndex={0} aria-label='HTML custom event example'><code>{'<button type="button" data-ten98-event="signup" data-ten98-event-plan="starter">Sign up</button>'}</code></pre>
+                <p className='dim footnote'>Only the nearest element with a declared event is tracked. Attribute properties are passed as strings; use the JavaScript call for numbers, arrays, nested properties or advertising conversion fields. Use fixed, non-personal values. Click tracking does not delay navigation, and delivery during navigation is best effort.</p>
+              </details>
+            </section>
+            <section aria-label='Check website events' aria-busy={eventsBusy} style={{minWidth:0,overflowWrap:'anywhere'}}>
+              <ResourceCard title='Check that events arrive' description='Open your website, visit a page, then check for an event received by this project.' icon='chart'
+                actions={<><a className='btn' style={{minHeight:44,whiteSpace:'normal',maxWidth:'100%'}} href={project.origin} target='_blank' rel='noopener noreferrer'>Open website<AppIcon name='arrow' size={15}/><span className='sr-only'> (opens in a new tab)</span></a><Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' && (events?.total ?? 0) === 0 ? 'primary' : 'secondary'} disabled={eventsBusy} onClick={() => void loadEvents(project.id)}>{eventsBusy ? 'Checking…' : 'Check for events'}</Button><Button style={{minHeight:44,whiteSpace:'normal'}} variant={events !== null && events.total > 0 ? 'primary' : 'secondary'} href='project' component={ShellLink}>View analytics</Button></>}>
+                <TrackerStatus resource={project.origin}
+                  installation={{state:'not-checked',reason:'This view does not inspect website installation. Manage serving domains in Domains.'}}
+                  receipt={{state:eventsError ? 'unavailable' : events === null ? 'not-checked' : events.total > 0 ? 'received' : 'waiting',reason:eventsError ? 'Event history could not be checked. Any receipt below is from the previous successful check.' : eventsBusy ? 'Checking retained event history again. Any receipt below is from the previous successful check.' : events === null ? 'Check for events to read retained event history.' : 'Retained event history does not confirm the tracker is installed or currently collecting.'}}/>
+                {eventsError && <Alert title='Could not check events' tone='danger'><p>{eventsError} Try checking again.{events !== null && ' Results below are from the previous successful check.'}</p></Alert>}
+                {(events?.total ?? 0) > 0 && <><StatusLine tone='success'>Tracking works: visits are arriving from {project.origin}.</StatusLine><Button style={{minHeight:44,whiteSpace:'normal'}} href='project' component={ShellLink}>Go to dashboard</Button></>}
+                {events !== null && events.events.length > 0 && <p>Latest retained event: <strong>{events.events[0].eventName}</strong> on <bdi>{events.events[0].path}</bdi>, received <time dateTime={events.events[0].receivedAt} title={events.events[0].receivedAt}>{formatReportInstant(events.events[0].receivedAt,'UTC')}</time>.</p>}
+                {events !== null && events.total === 0 && <StatusLine>Waiting for the first visit. Open your website in another tab; this page checks again for 10 minutes. If your site asks visitors for consent, accept analytics first.</StatusLine>}
+                {events === null && !eventsBusy && !eventsError && <p>Check for events to see whether the collector has received website activity.</p>}
+                <Button style={{minHeight:44,whiteSpace:'normal'}} variant='ghost' href='events' component={ShellLink}>Inspect recent events</Button>
+              </ResourceCard>
+            </section>
           </>
         )}
         </>}
@@ -890,7 +895,7 @@ function App() {
 }
 
 function AIInsightsSection(props:{workspaceId:string;projectId:string;userId:string;onUnauthorized:()=>void;onBack:()=>void}) {
-  return <AIInsightsPanel {...props} backLabel='Back to saved prompts' />
+  return <AIInsightsPanel {...props} backLabel='Back to prompts' />
 }
 
 // A status-0 ApiError means the request may or may not have completed; every other failure is a definite error.
@@ -922,8 +927,8 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   }
 
   return <FirstUserSetupFlow key={form.generation} brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Create owner account'
-    description='Create the owner account and its default workspace. The setup token comes from your server configuration.'
-    workspaceName passwordPolicy={{ minLength: 12, maxLength: 128, hint: 'At least 12 characters.' }}
+    description='Create the owner account. You can rename your workspace later. The setup token comes from your server configuration.'
+    passwordPolicy={{ minLength: 12, maxLength: 128, hint: 'At least 12 characters.' }}
     defaultValues={{ name: form.name, email: form.email, workspaceName: form.workspaceName }}
     busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
     signInInstead={ownerExists ? { onClick: email => onSignInInstead(email.trim()) } : undefined} onSubmit={submit} />
@@ -963,25 +968,36 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
     cancel={{ label: 'Back to sign in', onClick: onCancel }} onSubmit={submit} />
 }
 
-// Values stay in the uncontrolled fields after an error; a successful create remounts the form empty.
+// Both fields are controlled: values stay after an error, and a successful create clears them through state.
+// The address comes first and is the only required answer; the name follows the domain until someone edits it.
 function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {
   const [busy, setBusy] = useState(false)
-  const [state, setState] = useState<{ generation: number; error: string; fieldErrors?: { name?: string; origin?: string } }>({ generation: 0, error: '' })
+  const [address, setAddress] = useState('')
+  const [editedName, setEditedName] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ origin?: string; name?: string }>({})
+  const parsed = parseWebsiteAddress(address), suggestedName = parsed.origin ? websiteNameFromOrigin(parsed.origin) : ''
+  const name = editedName ?? suggestedName
 
-  async function submit(v: { name: string; origin?: string }) {
-    const name = v.name.trim()
-    if (name === '') { setState(s => ({ ...s, error: '', fieldErrors: { name: 'Enter a project name.' } })); return }
-    const parsed = parseOrigin(v.origin ?? '')
-    if (!parsed.origin) { setState(s => ({ ...s, error: '', fieldErrors: { origin: parsed.error ?? 'Enter a valid website address.' } })); return }
-    setBusy(true); setState(s => ({ ...s, error: '', fieldErrors: undefined }))
-    try { await onCreate(name, parsed.origin); setState(s => ({ generation: s.generation + 1, error: '' })) }
-    catch (err) { setState(s => ({ ...s, error: errMsg(err) })) }
+  async function submit() {
+    if (!parsed.origin) { setFieldErrors({ origin: parsed.error ?? 'Enter a valid website address.' }); return }
+    const finalName = name.trim() || suggestedName
+    setBusy(true); setError(''); setFieldErrors({})
+    try { await onCreate(finalName, parsed.origin); setAddress(''); setEditedName(null) }
+    catch (err) { setError(errMsg(err)) }
     finally { setBusy(false) }
   }
 
-  return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Create project' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Creating…'
-    error={state.error || undefined} fieldErrors={state.fieldErrors} onSubmit={submit}
-    messages={{ nameLabel: 'Project name', originLabel: 'Website address', originHint: 'Use your website address, for example https://example.com, without a page path.', create: 'Create project' }} />
+  return <Form onSubmit={submit} busy={busy} fieldErrors={fieldErrors} gap={4}>
+    <Field label='Website address' description='For example example.com. You can paste any page of your site.' error={fieldErrors.origin}>
+      <Input name='origin' type='text' inputMode='url' autoComplete='url' spellCheck={false} required maxLength={2048} value={address} onChange={event => setAddress(event.target.value)} />
+    </Field>
+    <Field label='Website name' description='Filled in from the address. Change it if you like.' error={fieldErrors.name}>
+      <Input name='name' maxLength={120} value={name} placeholder='example.com' onChange={event => setEditedName(event.target.value)} />
+    </Field>
+    {error && <Alert tone='danger'>{error}</Alert>}
+    <FormActions><Button type='submit' disabled={busy}>{busy ? 'Adding…' : 'Add website'}</Button></FormActions>
+  </Form>
 }
 
 // Shared by the onboarding screen and the New workspace settings tab.

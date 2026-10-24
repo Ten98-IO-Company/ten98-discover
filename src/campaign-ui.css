@@ -128,10 +128,6 @@ th { font-size:12px; }
 .board-panel-intro p { margin:0; }
 @media(max-width:760px) { .board-empty-state,.tracked-empty { padding:20px; } .board-toolbar,.tracked-toolbar { align-items:stretch; } }
 
-/* The page already names these embedded tools; keep the panel header for its action and purpose. */
-.t98-page-header + section[aria-label="Session replay"] > header > h2,
-.t98-page-header + .ai-search > header > div > h2 { display:none; }
-
 :is(section[aria-label="Session replay"] [aria-label="Recording list"],.ai-search [aria-label="AI search sections"]) .btn[aria-pressed="true"] { color:var(--color-accent); background:var(--color-accent-subtle); border-color:var(--color-accent); }
 
 .ai-search > section[aria-label="Capture a ChatGPT answer with web search"] { inline-size:100%; max-inline-size:var(--form-max); }

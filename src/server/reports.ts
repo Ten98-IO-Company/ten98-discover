@@ -1,5 +1,6 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {AuthLayout} from '@ten98/ui';
@@ -89,9 +90,10 @@ export function reportDocument(source:string,status=200) {
 }
 
 // Only this fixed application document bypasses the authored-report sanitizer.
+// createRequire, not import.meta.resolve: Vite's dev module runner does not implement the latter.
 const missingReportHtml = '<!DOCTYPE html><html lang="en" data-theme="system"><head><meta charset="utf-8">'
   + '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Report unavailable</title>'
-  + `<style>${readFileSync(new URL(import.meta.resolve('@ten98/ui/styles.css')),'utf8')}</style></head><body style="margin:0">`
+  + `<style>${readFileSync(createRequire(import.meta.url).resolve('@ten98/ui/styles.css'),'utf8')}</style></head><body style="margin:0">`
   + renderToStaticMarkup(createElement('main',{'aria-label':'Report unavailable'},createElement(AuthLayout,{
     brand:createElement(AppBrand,{product:'Discover'}),title:'Report unavailable',
     description:'This link is unavailable or expired.',children:null,

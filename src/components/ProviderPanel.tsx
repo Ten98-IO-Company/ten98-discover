@@ -45,6 +45,8 @@ interface ProvidersResponse {
 
 interface ProviderPanelProps {
   workspaceId: string
+  /** Add connection form default from a setup link such as "Set up DataForSEO". */
+  initialProvider?: ProviderName
   onUnauthorized: () => void
 }
 
@@ -52,13 +54,13 @@ function providerLabel(provider: ProviderName): string {
   return provider === 'openrouter' ? 'OpenRouter' : 'DataForSEO'
 }
 
-export function ProviderPanel({ workspaceId, onUnauthorized }: ProviderPanelProps) {
+export function ProviderPanel({ workspaceId, initialProvider, onUnauthorized }: ProviderPanelProps) {
   // Keyed remount synchronously discards all state (including typed credentials)
   // when the workspace changes, so stale data or secrets can never leak across.
-  return <ProviderPanelInner key={workspaceId} workspaceId={workspaceId} onUnauthorized={onUnauthorized} />
+  return <ProviderPanelInner key={workspaceId} workspaceId={workspaceId} initialProvider={initialProvider} onUnauthorized={onUnauthorized} />
 }
 
-function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps) {
+function ProviderPanelInner({ workspaceId, initialProvider, onUnauthorized }: ProviderPanelProps) {
   const [data, setData] = useState<ProvidersResponse | null>(null)
   const [confirm, confirmDialog] = useConfirmDialog({ danger: true })
   const [loading, setLoading] = useState(true)
@@ -72,7 +74,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
   const controlsOff = busy || reloadRequired
 
   const [cName, setCName] = useState('')
-  const [cProvider, setCProvider] = useState<ProviderName>('openrouter')
+  const [cProvider, setCProvider] = useState<ProviderName>(initialProvider ?? 'openrouter')
   const [cApiKey, setCApiKey] = useState('')
   const [cLogin, setCLogin] = useState('')
   const [cPassword, setCPassword] = useState('')
@@ -364,7 +366,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
           <div className="card">
             <h2>Connections</h2>
             <p className="hint">ten98 Discover is free and MIT licensed. These controls only manage charges from your external API providers.</p>
-            <p className="hint">OpenRouter supplies AI model answers. DataForSEO supplies keyword research and search rankings. These credentials are separate from ten98 API access keys.</p>
+            <p className="hint">OpenRouter supplies AI model answers. DataForSEO supplies keyword research and search rankings. These credentials are separate from API keys.</p>
             <p className="hint">Run check contacts the provider's read-only account endpoint. It does not start paid work and never runs automatically.</p>
             <p>Paid provider work is {data.budget.paused ? 'paused' : 'not paused'}. <button type="button" className="btn ghost" onClick={() => document.getElementById('provider-budget')?.focus()}>Review spending</button></p>
             <p className="hint">A passed check does not start paid work; each paid run needs its own quote and Start. ten98 sets no spending limit; set budgets and add credits at OpenRouter or DataForSEO.</p>

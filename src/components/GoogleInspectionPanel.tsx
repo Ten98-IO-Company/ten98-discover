@@ -1,23 +1,25 @@
+import {readResponseText} from '@ten98/runtime';
 import {useId,useState} from 'react';
 import {AppField} from '@ten98/ui/app';
 import {ApiError,errMsg} from '../lib/api';
 import {googleInspectionBatch,googleInspectionInput,type GoogleInspectionBatch} from '../server/google-inspection-input';
 import type {GoogleReportOps} from './GoogleReportsPanel';
 
-// Same bounded, fatal UTF-8 response pattern as the model picker; no provider requests from this component.
+// Bounded, fatal UTF-8 response read through the shared runtime reader; no provider requests from this component.
 async function inspect(path:string,body:unknown,signal:AbortSignal):Promise<unknown>{
  const deadline=AbortSignal.any([signal,AbortSignal.timeout(45_000)]);
  const response=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),credentials:'same-origin',redirect:'error',signal:deadline});
  try{
   if(response.url!==new URL(path,window.location.origin).href||!response.body){await response.body?.cancel();throw Error('The inspection response could not be verified.');}
-  const reader=response.body.getReader(),parts:Uint8Array[]=[],limit=response.ok?2_097_152:8192;let size=0;
-  const abort=()=>{void reader.cancel().catch(()=>{});};deadline.addEventListener('abort',abort,{once:true});
-  try{for(;;){deadline.throwIfAborted();const next=await reader.read();deadline.throwIfAborted();if(next.done)break;size+=next.value.byteLength;if(size>limit)throw Error('The complete inspection exceeds its size limit. Inspect fewer URLs.');parts.push(next.value);}}
-  finally{deadline.removeEventListener('abort',abort);await reader.cancel().catch(()=>{});reader.releaseLock();}
-  const length=response.headers.get('content-length'),encoding=response.headers.get('content-encoding');
-  if((!encoding||encoding==='identity')&&length!==null&&(!/^\d+$/.test(length)||Number(length)!==size))throw Error('The inspection response was incomplete.');
-  const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
-  let value:unknown;try{value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw Error('The inspection response could not be decoded.');}
+  let value:unknown;
+  try{value=JSON.parse(await readResponseText(response,{maxBytes:response.ok?2_097_152:8192,contentLength:'exact',signal:deadline}));}
+  catch(error){
+   const code=(error as {code?:unknown}).code;
+   if(error instanceof RangeError)throw Error('The complete inspection exceeds its size limit. Inspect fewer URLs.');
+   if(code==='CONTENT_LENGTH_INVALID'||code==='RESPONSE_INCOMPLETE')throw Error('The inspection response was incomplete.');
+   if(error instanceof SyntaxError||code==='RESPONSE_DECODE_INVALID')throw Error('The inspection response could not be decoded.');
+   throw error;
+  }
   if(!response.ok)throw Error(value&&typeof value==='object'&&'error'in value&&typeof value.error==='string'?value.error:'URL inspection is unavailable.');
   if(response.headers.get('content-type')?.split(';')[0].trim()!=='application/json')throw Error('The inspection response type could not be verified.');
   return value;

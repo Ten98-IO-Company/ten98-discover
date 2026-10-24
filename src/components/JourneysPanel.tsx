@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type FormEvent} from 'react';
 import {z} from 'zod';
 import {AppliedFilters} from '@ten98/ui';
@@ -82,8 +83,7 @@ async function fetchResult(path:string,signal:AbortSignal):Promise<unknown>{
  let response:Response;try{response=await fetch(path,{credentials:'same-origin',signal,redirect:'error'});}catch(error){if(signal.aborted)throw error;throw new ApiError('Network error. Check your connection, then refresh the applied report.');}
  try{
   const limit=response.ok?journeysLimits.responseBytes:8192;if(!response.body)throw Error('The journey response was empty.');
-  const reader=response.body.getReader(),parts:Uint8Array[]=[];let total=0;try{while(true){const part=await reader.read();if(part.done)break;total+=part.value.byteLength;if(total>limit)throw Error('The journey response exceeded its safe size. Narrow the filters.');parts.push(part.value);}}catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
-  const bytes=new Uint8Array(total);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}let data:unknown;try{data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw Error('The journey response was incomplete or malformed.');}
+  let data:unknown;try{data=JSON.parse(await readResponseText(response,{maxBytes:limit}));}catch(error){if(error instanceof RangeError)throw Error('The journey response exceeded its safe size. Narrow the filters.');if(error instanceof SyntaxError||(error as {code?:unknown}).code==='RESPONSE_DECODE_INVALID')throw Error('The journey response was incomplete or malformed.');throw error;}
   if(!response.ok)throw Error(record(data)&&typeof data.error==='string'?data.error:'Journeys could not load. Try again.');if(response.headers.get('content-type')?.split(';')[0].trim()!=='application/json')throw Error('The journey response type could not be verified.');return data;
  }catch(error){if(!response.ok){const failure=new ApiError(error instanceof Error?error.message:'Journeys could not load. Try again.');failure.status=response.status;throw failure;}throw error;}
 }

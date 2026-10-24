@@ -1,5 +1,6 @@
+import { readResponseText } from '@ten98/runtime';
 import { useEffect, useRef, useState } from 'react';
-import { AppliedFilters, EvidenceSummary, TimeSeriesChart, type ChartPoint, useConfirmDialog, StatusLine } from '@ten98/ui';
+import { AppliedFilters, Button, EvidenceSummary, TimeSeriesChart, type ChartPoint, useConfirmDialog, StatusLine } from '@ten98/ui';
 import { api, ApiError, errMsg } from '../lib/api';
 import { googleGa4ColumnLabel, googleGa4MetricValue, googleGa4MetricInRange, googleDecimalPlain, googleLastCompletedDay, googleOrganicCalendar, googleOrganicChange, googleOrganicChangeValue, organicOverviewMetrics, readOrganicOverview, ga4CommerceReports, isGa4CommerceReport, type Ga4CommerceReport, type OrganicOverview } from '../lib/google-report-display';
 import { comparePropertyDecimals, propertyDecimalScale } from '../lib/property-visuals';
@@ -87,14 +88,14 @@ async function organicSnapshot(path: string, imp: ImportDto, conn: Connection, o
   const response = await fetch(path, { credentials: 'same-origin', redirect: 'error', signal: deadline });
   try {
     if (response.url !== new URL(path, window.location.origin).href || !response.body) { await response.body?.cancel(); throw Error(`The ${reportName} report response could not be verified.`); }
-    const reader = response.body.getReader(), parts: Uint8Array[] = []; let size = 0;
-    const abort = () => { void reader.cancel().catch(() => {}); }; deadline.addEventListener('abort', abort, { once: true });
-    try { for (;;) { deadline.throwIfAborted(); const part = await reader.read(); deadline.throwIfAborted(); if (part.done) break; size += part.value.byteLength; if (size > (response.ok ? 2097152 : 8192)) throw Error(`The complete ${reportName} report is too large. Choose a smaller date range.`); parts.push(part.value); } }
-    finally { deadline.removeEventListener('abort', abort); await reader.cancel().catch(() => {}); reader.releaseLock(); }
-    const length = response.headers.get('content-length'), encoding = response.headers.get('content-encoding');
-    if ((!encoding || encoding === 'identity') && length !== null && (!/^\d+$/.test(length) || Number(length) !== size)) throw Error(`The ${reportName} report response was incomplete.`);
-    const bytes = new Uint8Array(size); let at = 0; for (const part of parts) { bytes.set(part, at); at += part.length; }
-    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    let value;
+    try { value = JSON.parse(await readResponseText(response, { maxBytes: response.ok ? 2097152 : 8192, contentLength: 'exact', signal: deadline })); }
+    catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (error instanceof RangeError) throw Error(`The complete ${reportName} report is too large. Choose a smaller date range.`);
+      if (code === 'CONTENT_LENGTH_INVALID' || code === 'RESPONSE_INCOMPLETE') throw Error(`The ${reportName} report response was incomplete.`);
+      throw error;
+    }
     if (!response.ok) throw Error(typeof value?.error === 'string' ? value.error : `${sentenceName} report unavailable.`);
     if (response.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') throw Error(`The ${reportName} report response type could not be verified.`);
     const sameKeys = (v: unknown, keys: readonly string[]) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).sort().join(',') === [...keys].sort().join(',');
@@ -188,11 +189,14 @@ export interface GoogleReportOps {
   refresh(serial: number, c: AbortController): Promise<void>;
 }
 
-export function GoogleReportsPanel({ projectId, userId, onUnauthorized, onOpenSetup }: { projectId: string; userId: string; onUnauthorized: () => void; onOpenSetup?: () => void }) {
-  return <ReportsInner key={`${projectId}:${userId}`} projectId={projectId} onUnauthorized={onUnauthorized} onOpenSetup={onOpenSetup} />;
+// Search › Google shows imported reports; Settings › Imports connects sources, chooses properties and queues imports.
+// 'all' renders both together on one page.
+type GooglePart = 'all' | 'reports' | 'setup';
+export function GoogleReportsPanel({ projectId, userId, onUnauthorized, onOpenSetup, part = 'all', onManage }: { projectId: string; userId: string; onUnauthorized: () => void; onOpenSetup?: () => void; part?: GooglePart; onManage?: () => void }) {
+  return <ReportsInner key={`${projectId}:${userId}`} projectId={projectId} onUnauthorized={onUnauthorized} onOpenSetup={onOpenSetup} part={part} onManage={onManage} />;
 }
 
-function ReportsInner({ projectId, onUnauthorized, onOpenSetup }: { projectId: string; onUnauthorized: () => void; onOpenSetup?: () => void }) {
+function ReportsInner({ projectId, onUnauthorized, onOpenSetup, part, onManage }: { projectId: string; onUnauthorized: () => void; onOpenSetup?: () => void; part: GooglePart; onManage?: () => void }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
@@ -325,6 +329,7 @@ function ReportsInner({ projectId, onUnauthorized, onOpenSetup }: { projectId: s
           </select>
         </div>}
         <button type="button" className="btn ghost" style={BTN} aria-disabled={pending} onClick={manualRefresh}>Refresh status</button>
+        {part === 'reports' && onManage && <Button variant="ghost" onClick={onManage}>Manage connections and imports</Button>}
       </div>
       {notice && <p role="status" className="hint">{notice}</p>}
       {err !== '' && <p role="alert" className="alert">{err}</p>}
@@ -339,11 +344,12 @@ function ReportsInner({ projectId, onUnauthorized, onOpenSetup }: { projectId: s
           appOn={appOn}
           ops={ops}
           onReconnect={conn => void connect(conn.provider, conn.name, conn.id)}
+          part={part}
         />
         </div>
       ))}
 
-      {owner && appOn && (
+      {part !== 'reports' && owner && appOn && (
         <details className="card google-connect" open={overview.connections.length === 0}>
           <summary>Add a Google connection</summary>
           <div className="stack">
@@ -365,15 +371,16 @@ function ReportsInner({ projectId, onUnauthorized, onOpenSetup }: { projectId: s
       )}
 
       {overview.connections.length === 0 && (
-        <p className="dim">No Google connections yet{owner && appOn ? '; connect a source above to get started.' : '.'}</p>
+        <p className="dim">No Google connections yet{owner && appOn ? (part !== 'reports' ? '; connect a source above to get started.' : '. Connect Search Console or Google Analytics in Settings › Imports.') : '.'}</p>
       )}
 
     </div>
   );
 }
 
-function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: {
+function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect, part }: {
   projectId: string;
+  part: GooglePart;
   conn: Connection;
   owner: boolean;
   appOn: boolean;
@@ -596,11 +603,11 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
       </div>
       {note !== '' && <p role="status" className="hint">{note}</p>}
       {err !== '' && <p role="alert" className="alert">{err}</p>}
-      {unsuccessful > 0 && <p className="hint">{unsuccessful} unsuccessful {unsuccessful === 1 ? 'import' : 'imports'}. Open Import history for details.</p>}
+      {part !== 'reports' && unsuccessful > 0 && <p className="hint">{unsuccessful} unsuccessful {unsuccessful === 1 ? 'import' : 'imports'}. Open Import history for details.</p>}
       {conn.imports.filter(imp => ['queued', 'running'].includes(imp.status)).map(imp => (
         <p key={imp.id} role="status" className="hint">{reportLabel(imp.report)} · {imp.from} to {imp.to}: {impStatus(imp.status)}. {imp.diagnostic ?? 'Use Refresh status to follow progress.'}</p>
       ))}
-      {conn.imports.length > 0 ? (
+      {part !== 'setup' && (conn.imports.length > 0 ? (
         <div className="stack google-snapshot-choice">
           <div className="row">
             <div className="field">
@@ -614,8 +621,8 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
           {conn.imports.filter(imp => imp.id === snapshotChoice).map(imp => <p key={imp.id} className="hint">Selected: {reportLabel(imp.report)} · {imp.from} to {imp.to} · {impStatus(imp.status)}{(imp.status === 'completed' || imp.status === 'partial') ? ' · ' + imp.rowCount + ' recorded rows' : ''}{imp.dataStatus === 'expired' ? ' · Report data expired' : ''}</p>)}
           {!snap && <p className="dim">Choose View snapshot to load this saved report.</p>}
         </div>
-      ) : <p className="dim">No imports yet{owner && conn.status === 'ready' ? '; open Import a snapshot below to get started.' : '.'}</p>}
-      {snap && (
+      ) : <p className="dim">No imports yet{owner && conn.status === 'ready' ? (part === 'reports' ? '. Import a report in Settings › Imports.' : '; open Import a snapshot below to get started.') : '.'}</p>)}
+      {part !== 'setup' && snap && (
         <div className="stack google-snapshot" role="region" aria-labelledby={'snapshot-heading-' + conn.id}>
           <h3 id={'snapshot-heading-' + conn.id} ref={resultHeading} tabIndex={-1}>Snapshot: {reportLabel(snap.imp.report)} · {snap.imp.from} to {snap.imp.to}</h3>
           {snap.source.provider === 'gsc' ? <>
@@ -681,7 +688,8 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
           )}
         </div>
       )}
-      {conn.status === 'select_property' && (
+      {part === 'reports' && conn.status === 'select_property' && <StatusLine>Choose a property in Settings › Imports to start importing.</StatusLine>}
+      {part !== 'reports' && conn.status === 'select_property' && (
         owner && appOn ? (
           <div className="stack">
             <p className="hint">Choose the property this connection reports on. The choice is permanent; add another connection for a different property.</p>
@@ -713,7 +721,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
         )
       )}
 
-      {owner && appOn && conn.status === 'ready' && (
+      {part !== 'reports' && owner && appOn && conn.status === 'ready' && (
         <details className="google-tools">
           <summary>Import a snapshot</summary>
         <div className="stack">
@@ -742,14 +750,14 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
         </details>
       )}
 
-      {conn.imports.length > 0 && (
+      {part !== 'reports' && conn.imports.length > 0 && (
         <details className="google-tools"><summary>Import history</summary>
         <ul className="google-imports">
           {conn.imports.map(imp => (
             <li key={imp.id} className="stack">
               <div className="row">
                 <span>{reportLabel(imp.report)} · {imp.from} to {imp.to} · {impStatus(imp.status)}{(imp.status === 'completed' || imp.status === 'partial') ? ` · ${imp.rowCount} recorded rows` : ''}{imp.dataStatus === 'expired' ? ' · Report data expired' : ''}</span>
-                <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => { setSnapshotChoice(imp.id); void openSnap(imp); }}>View snapshot</button>
+                {part === 'all' && <button type="button" className="btn ghost" style={BTN} disabled={busy} onClick={() => { setSnapshotChoice(imp.id); void openSnap(imp); }}>View snapshot</button>}
               </div>
               {(imp.status === 'queued' || imp.status === 'running') && (
                 <p className="dim">{imp.status === 'queued' ? 'Queued.' : 'Running.'} Use Refresh status to follow progress.</p>
@@ -760,16 +768,16 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
         </ul>
         </details>
       )}
-      {owner && appOn && conn.provider === 'gsc' && conn.status === 'ready' && conn.propertyId && <GoogleInspectionPanel key={`${conn.id}:${conn.revision}:${conn.propertyId}`} projectId={projectId} connection={{id:conn.id,revision:conn.revision,propertyId:conn.propertyId}} ops={ops} />}
+      {part !== 'setup' && owner && appOn && conn.provider === 'gsc' && conn.status === 'ready' && conn.propertyId && <GoogleInspectionPanel key={`${conn.id}:${conn.revision}:${conn.propertyId}`} projectId={projectId} connection={{id:conn.id,revision:conn.revision,propertyId:conn.propertyId}} ops={ops} />}
 
-      {(conn.status === 'reconnect' || conn.status === 'disconnected') && owner && appOn && (
+      {part !== 'reports' && (conn.status === 'reconnect' || conn.status === 'disconnected') && owner && appOn && (
         <div className="row">
           <p className="hint">{conn.status === 'disconnected' ? 'Reconnect to import new reports. Existing snapshots remain available until they expire.' : 'Google access needs renewal for this connection.'}</p>
           <button type="button" className="btn primary" style={BTN} disabled={busy} onClick={() => onReconnect(conn)}>Reconnect to Google</button>
         </div>
       )}
 
-      <details className="google-tools"><summary>Connection details</summary>
+      {part !== 'reports' && <details className="google-tools"><summary>Connection details</summary>
         <div className="stack">
       <p className="dim">
         Property: {conn.propertyName ?? 'Not selected'}{conn.propertyId ? ` (${conn.propertyId})` : ''} · Time zone: {conn.timeZone ?? 'Not set'} · Currency: {conn.currencyCode ?? 'Not set'}
@@ -783,7 +791,7 @@ function ConnectionSection({ projectId, conn, owner, appOn, ops, onReconnect }: 
       )}
 
         </div>
-      </details>
+      </details>}
       {confirmDialog}
     </section>
   );

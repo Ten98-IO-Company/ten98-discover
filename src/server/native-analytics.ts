@@ -59,17 +59,22 @@ function readContext(value: unknown, secret: string): Context | null {
 // Pinned Umami overview semantics: monthly visitor rotation, hourly-derived visits,
 // with a browser-held signed context whose original issuance lasts at most 30 minutes.
 // This is deliberately not described as sliding inactivity sessions or unique people.
-export function analyticsIdentity(input: { projectId: string; ip: string | null; userAgent: string; distinctId?: string; context?: string; now?: Date; secret?: string; epoch?:string; collectionBasis?:'consent'|'cookieless' }) {
+// continueAnonymousVisit (browser events only): an identified event whose signed context still holds this device's consented
+// anonymous key keeps that key and visit, so the visit where identify() happens stays one visitor for funnels, revenue and
+// attribution. Only that context's remaining lifetime carries over; earlier anonymous visits stay separate and are never
+// linked to the identity.
+export function analyticsIdentity(input: { projectId: string; ip: string | null; userAgent: string; distinctId?: string; context?: string; now?: Date; secret?: string; epoch?:string; collectionBasis?:'consent'|'cookieless'; continueAnonymousVisit?: boolean }) {
   if(input.collectionBasis==='cookieless'&&input.distinctId!==undefined)throw new InputError(400,'Basic analytics cannot include an explicit identifier.');
   if (!input.ip || !input.userAgent || input.userAgent.length > 1024) return null;
-  const now = input.now ?? new Date(), secret = input.secret ?? getConfig().authSecret;
+  const now = input.now ?? new Date(), secret = input.secret ?? getConfig().authSecret, month = now.toISOString().slice(0, 7);
   const visitor = digest(input.collectionBasis==='cookieless'
-    ?['ten98.analytics.basic.visitor.v1',input.projectId,now.toISOString().slice(0,7),input.ip,input.userAgent]
-    :['ten98.analytics.visitor.v1', input.projectId, now.toISOString().slice(0, 7), input.ip, input.userAgent, input.distinctId ?? null], secret);
+    ?['ten98.analytics.basic.visitor.v1',input.projectId,month,input.ip,input.userAgent]
+    :['ten98.analytics.visitor.v1', input.projectId, month, input.ip, input.userAgent, input.distinctId ?? null], secret);
+  const anonymous = input.continueAnonymousVisit && input.distinctId !== undefined ? digest(['ten98.analytics.visitor.v1', input.projectId, month, input.ip, input.userAgent, null], secret) : null;
   const prior = readContext(input.context, secret);
-  const cached = prior && prior.project === input.projectId && prior.visitor === visitor && prior.epoch===input.epoch && prior.issued <= now.getTime() && now.getTime() - prior.issued <= 1_800_000 ? prior : null;
+  const cached = prior && prior.project === input.projectId && (prior.visitor === visitor || prior.visitor === anonymous) && prior.epoch===input.epoch && prior.issued <= now.getTime() && now.getTime() - prior.issued <= 1_800_000 ? prior : null;
   const value: Context = cached ?? { version: 1, project: input.projectId, visitor, visit: digest(['ten98.analytics.visit.v1', visitor, now.toISOString().slice(0, 13)], secret), issued: now.getTime(),...input.epoch===undefined?{}:{epoch:input.epoch} };
-  return { visitor: value.visitor, visit: value.visit, context: signContext(value, secret), metricVersion: 'umami-3.4-hour-cache-v1' };
+  return { visitor: value.visitor, visit: value.visit, context: signContext(value, secret), metricVersion: 'umami-3.4-hour-cache-v1', ...value.visitor === visitor ? {} : { continuedAnonymous: true as const } };
 }
 
 export async function analyticsSettings(projectId: string, userId: string) {
@@ -161,8 +166,9 @@ export async function collectNative(request: Request, siteKey: string, input: Ob
     // Preserve one database acceptance instant through the event/link fence;
     // Date is used only for monthly key/context derivation, never the fence.
     const now:string=(await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS accepted_at`)).rows[0].accepted_at;
-    const address=resolveAnalyticsNetwork(request,peerAddress),identity = analyticsIdentity({ projectId: project.id, ip: address, userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now:new Date(now),epoch:project.analytics_epoch,collectionBasis:basis! });
-    const eligible=basis==='consent'&&identity!==null&&dimensions.distinctId!==undefined&&project.analytics_settings.linkIdentities===true;
+    const address=resolveAnalyticsNetwork(request,peerAddress),identity = analyticsIdentity({ projectId: project.id, ip: address, userAgent: ua, distinctId: dimensions.distinctId, context: input.context, now:new Date(now),epoch:project.analytics_epoch,collectionBasis:basis!,continueAnonymousVisit:true });
+    // A continued anonymous key is shared by this device's other anonymous visits in the month, so it never becomes link evidence.
+    const eligible=basis==='consent'&&identity!==null&&!identity.continuedAnonymous&&dimensions.distinctId!==undefined&&project.analytics_settings.linkIdentities===true;
     const environment=analyticsEnvironment(ua, project.analytics_settings.captureScreen ? dimensions.screenWidth : undefined);
     const response = await writeObservation(client, project, input, 'browser', identity, now,eligible?1:null,basis,environment,project.analytics_settings.captureGeography===true?collectGeography(address):null);
     if(!response.duplicate&&eligible){

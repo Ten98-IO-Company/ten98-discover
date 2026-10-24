@@ -153,11 +153,11 @@ try{
   const readsBeforeDraft=allReadTimes.length;await (await editExplore(page)).getByLabel('Show',{exact:true}).selectOption('custom');await settle();assert.equal(allReadTimes.length,readsBeforeDraft);
   const applied=await uiRead<SessionList>(()=>button('Apply filters').click());assert.equal(applied.totalKeys,55);assert.equal(applied.rows!.length,25);assert.equal(applied.query.filters.path,'/list-filter');assert.equal(page.url().includes('list-filter'),false);
   const second=await uiRead<SessionList>(()=>button('Next').click());assert.equal(second.rows!.length,25);assert.equal(second.paging.eventBefore,applied.paging.eventBefore);
-  const selected=second.rows![0].visitorKey,cta=page.getByRole('link',{name:'View all activity in selected dates for '+selected,exact:true});
+  const selected=second.rows![0].visitorKey,cta=page.getByRole('link',{name:'View activity in selected dates for '+selected,exact:true});
   await cta.focus();const detail=await uiRead<SessionDetail>(()=>page.keyboard.press('Enter'),true);assert.equal(detail.summary.events,2);assert.equal(detail.range.from,reportDay);assert.equal(detail.range.timeZone,'America/New_York');assert.deepEqual(new Set(detail.activity!.map(row=>row.path)),new Set(['/list-filter','/other']));
   assert.match(await page.locator('body').innerText(),/List filters selected this key; they do not filter this timeline/);
   const returned=await uiRead<SessionList>(()=>page.getByRole('link',{name:'Back to sessions',exact:true}).click());assert.deepEqual(returned.rows,second.rows);assert.equal(returned.query.filters.path,'/list-filter');
-  assert.match(await (await editExplore(page)).getByLabel('Session pagination').innerText(),/Page 2/);assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'View all activity in selected dates for '+selected);
+  assert.match(await (await editExplore(page)).getByLabel('Session pagination').innerText(),/Page 2/);assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'View activity in selected dates for '+selected);
   const third=await uiRead<SessionList>(()=>button('Next').click());assert.equal(third.rows!.length,5);assert.equal(third.paging.nextCursor,null);
   assert.equal(new Set([...applied.rows!,...second.rows!,...third.rows!].map(row=>row.visitorKey)).size,55);
   mark('Draft filters wait for Apply; three list pages retain 55 keys, explicit detail shows all same-date activity, and Back restores filters, page and keyboard focus.');
@@ -214,7 +214,7 @@ try{
   stage='mobile, RTL and keyboard detail return';await uiRead<SessionList>(()=>page.goto(link()));await list().waitFor();
   for(const width of [320,360,768,1440])for(const dir of ['ltr','rtl']){
     await page.setViewportSize({width,height:1000});await page.evaluate((value:string)=>document.documentElement.dir=value,dir);await shot(`sessions-${width}-${dir}.png`);
-    const firstLink=list().getByRole('link',{name:/^View all activity in selected dates for /}).first(),name=await firstLink.getAttribute('aria-label');assert.ok(name);
+    const firstLink=list().getByRole('link',{name:/^View activity in selected dates for /}).first(),name=await firstLink.getAttribute('aria-label');assert.ok(name);
     await firstLink.focus();await uiRead<SessionDetail>(()=>page.keyboard.press('Enter'),true);await activity().waitFor();await shot(`activity-${width}-${dir}.png`);
     await uiRead<SessionList>(()=>page.getByRole('link',{name:'Back to sessions',exact:true}).click());assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),name);
     const displayed=list().locator('strong').first();assert.match(await displayed.innerText(),/^[a-f0-9]{64}$/);assert.notEqual(await displayed.evaluate((node:HTMLElement)=>getComputedStyle(node).userSelect),'none');
