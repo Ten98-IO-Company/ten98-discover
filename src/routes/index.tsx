@@ -914,7 +914,7 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   const [form, setForm] = useState({ generation: 0, name: '', email: '', workspaceName: '' })
 
   async function submit(v: FirstUserSetupValues) {
-    const values = { token: v.token.trim(), name: v.name.trim(), email: v.email.trim(), password: v.password, workspaceName: (v.workspaceName ?? '').trim() }
+    const values = { token: (v.token ?? '').trim(), name: v.name.trim(), email: v.email.trim(), password: v.password, workspaceName: (v.workspaceName ?? '').trim() }
     setBusy(true); setOutcome(noOutcome); setOwnerExists(false)
     setForm(f => ({ ...f, name: values.name, email: values.email, workspaceName: values.workspaceName }))
     try {
