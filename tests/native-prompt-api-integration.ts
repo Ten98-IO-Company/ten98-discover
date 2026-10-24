@@ -42,7 +42,8 @@ export async function runNativePromptApiChecks(){
    await migration.query('BEGIN');
    for(const source of sources.filter(source=>source.version>'0041')){await migration.query(source.sql);await migration.query('INSERT INTO schema_version VALUES($1,$2)',[source.version,source.checksum]);}
    await migration.query('COMMIT');
-   assert.deepEqual((await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0],before);
+   // 0074 adds the display prefix and last use; a key issued before it has neither and none is derived.
+   assert.deepEqual((await migration.query('SELECT * FROM api_key WHERE id=$1',[oldKey])).rows[0],{...before,display_prefix:null,last_used_at:null});
    assert.deepEqual((await authenticateApiKey(oldToken)).scopes,['projects:read','analytics:read']);await assertSchema();
    console.log('PASS actual 40-to-41 migration preserves every prior key field and exact grants without retrogrant');
   }finally{await migration.query('ROLLBACK').catch(()=>{});migration.release();}
@@ -65,7 +66,7 @@ export async function runNativePromptApiChecks(){
   });
   await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(3111,'127.0.0.1',resolve);});
   try{
-    const setup=await http('/api/setup',{}, {token:config.bootstrapToken,name:'Synthetic key reader',email:randomUUID()+'@key-reads.test',password:randomBytes(32).toString('hex'),workspaceName:'Delayed key reads'});
+    const setup=await http('/api/setup',{}, {name:'Synthetic key reader',email:randomUUID()+'@key-reads.test',password:randomBytes(32).toString('hex'),workspaceName:'Delayed key reads'});
     assert.equal(setup.status,200);const cookie=setup.cookies.map(value=>value.split(';')[0]).join('; ');assert.ok(cookie);
     const owner=(await pool.query("SELECT user_id,workspace_id FROM membership WHERE role='owner' AND workspace_id<>$1",[oldWorkspace])).rows[0],workspace=owner.workspace_id as string,ownerId=owner.user_id as string;
     const project=randomUUID();await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Prompt fixture','https://prompt-api.test',gen_random_uuid(),'infinity')",[project,workspace]);

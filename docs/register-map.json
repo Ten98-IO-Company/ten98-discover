@@ -18,7 +18,9 @@
    ],
    "routes": [
     "GET /api/projects/{projectId}/website-shares",
-    "POST /api/workspaces/{workspaceId}/invitations"
+    "POST /api/workspaces/{workspaceId}/invitations",
+    "POST /api/workspaces/{workspaceId}/invitations/{invitationId}/new-link",
+    "POST /api/workspaces/{workspaceId}/invitations/{invitationId}/resend"
    ],
    "migrations": [
     "0001_foundation",
@@ -117,7 +119,8 @@
     "0041_api_prompt_scopes",
     "0062_api_content_scopes",
     "0066_google_domains_scopes",
-    "0067_audits_read_scope"
+    "0067_audits_read_scope",
+    "0074_api_key_prefix_last_used"
    ]
   },
   "P06": {
