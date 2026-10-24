@@ -190,6 +190,24 @@ test('the route is bounded and credential-free: POST only, no query, no Authoriz
   assert.deepEqual(recorded, []); assert.deepEqual(requests, []);
 });
 
+test('the Content-Length precheck uses the runtime limit mode: oversize 413, invalid 400, both before reading', async () => {
+  const { adapters, recorded, requests } = harness();
+  const body = notification(bounce('Permanent', 'General', [{ emailAddress: 'gone@example.com' }]));
+  for (const [length, status, error] of [
+    ['262145', 413, 'Body too large.'], ['9999999999', 413, 'Body too large.'], ['9007199254740993', 413, 'Body too large.'],
+    ['abc', 400, 'Unreadable body.'], ['-1', 400, 'Unreadable body.'], ['1.5', 400, 'Unreadable body.'], ['0262145', 400, 'Unreadable body.'], ['12345678901234567', 400, 'Unreadable body.'],
+  ] as const) {
+    let pulled = false;
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { pulled = true; c.enqueue(new TextEncoder().encode(body)); c.close(); } }, { highWaterMark: 0 });
+    const request = new Request('https://discover.example' + sesFeedbackPath, { method: 'POST', body: stream, duplex: 'half', headers: { 'content-type': 'text/plain; charset=UTF-8', 'x-amz-sns-message-type': 'Notification', 'content-length': length } } as RequestInit);
+    const response = await handleSesFeedback(request, feedbackEnv, adapters);
+    assert.equal(response.status, status, length);
+    assert.deepEqual(await response.json(), { error }, length);
+    assert.equal(pulled, false, `Content-Length ${length} is refused before the body is read`);
+  }
+  assert.deepEqual(recorded, []); assert.deepEqual(requests, []);
+});
+
 test('a verified subscription confirmation is confirmed only on the constant SNS origin; a failed confirmation asks SNS to retry', async () => {
   const { adapters, requests, recorded } = harness();
   const subscribeUrl = `https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription&TopicArn=${encodeURIComponent(topic)}&Token=synthetic-token`;
