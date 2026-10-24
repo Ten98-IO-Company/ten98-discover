@@ -328,12 +328,41 @@ async function runOverviewPlanChecks(pool:pg.Pool,workspace:string,owner:string)
   actual[name]=createHash('sha256').update(JSON.stringify(report,(key,value)=>key==='asOf'||key==='generatedAt'?undefined:value)).digest('hex');
  }
  assert.deepEqual(actual,expected,'The overview statement returns the pre-#414 bytes for every report shape.');
+ // The overview evaluates the geography projection once per distinct stored geography text and the self-referral test once per
+ // referrer host and recorded origin (#414). Equal builds written differently (one past the 2,048-byte limit), absent and JSON-null
+ // geographies, non-string hosts, missing origins and self, www and foreign referrers pin those keys to the bytes recorded on dev.
+ const memo=randomUUID();await pool.query("INSERT INTO project(id,workspace_id,name,origin,public_key,retention_next_run_at) VALUES($1,$2,'Overview memo keys','https://memo.test',$3,'infinity')",[memo,workspace,randomUUID()]);
+ await pool.query("INSERT INTO analytics_visitor(project_id,id,first_seen_at,last_seen_at) SELECT $1,encode(sha256(convert_to('memo-visitor'||n,'UTF8')),'hex'),'2024-02-23','2024-03-08' FROM generate_series(0,39)n",[memo]);
+ await pool.query(`INSERT INTO event(id,project_id,event_name,path,received_at,visitor_id,visit_id,dimensions,source,collection_basis)
+  SELECT md5('memo-'||v||'-'||n)::uuid,$1,'page_view','/m'||n,timestamptz '2024-02-23T00:00:00Z'+v*interval '40 minutes'+n*interval '20 seconds',
+   encode(sha256(convert_to('memo-visitor'||v%40,'UTF8')),'hex'),encode(sha256(convert_to('memo-visit'||v,'UTF8')),'hex'),
+   jsonb_strip_nulls(jsonb_build_object('environmentVersion',$2::text,'browser',(ARRAY['chrome','firefox'])[v%2+1],
+    'origin',CASE WHEN v%5<>4 THEN (ARRAY['https://memo.test','https://www.memo.test:8443','https://other.test'])[v%3+1] END,
+    'referrerHost',CASE WHEN n>0 THEN to_jsonb('memo.test'::text) WHEN v%7=0 THEN '42'::jsonb ELSE to_jsonb((ARRAY['memo.test','www.memo.test','ref.example','other.test'])[v%4+1]) END))
+   ||CASE v%6 WHEN 0 THEN '{}'::jsonb WHEN 1 THEN '{"geography":null}'::jsonb ELSE jsonb_build_object('geography',jsonb_build_object('version','dbip-city-lite-v1','databaseSha256',repeat('a',64),
+    'country','US','region',jsonb_build_object('code','US-CA','name','California'),'city','San Francisco','databaseBuild',
+    CASE v%6 WHEN 2 THEN 1767225600::numeric WHEN 3 THEN 1767225600.0 WHEN 4 THEN ('1767225600.'||repeat('0',2100))::numeric ELSE 1767225600.5 END)) END,
+   'browser','consent'
+  FROM generate_series(0,299)v CROSS JOIN LATERAL generate_series(0,v%3)n`,[memo,environmentVersion]);
+ const memoQueries:Record<string,Record<string,string>>={overview:{},city:{compare:'prev',dimension:'city'},selection:{selection:new URLSearchParams({referrer:'ref.example'}).toString(),compare:'prev',dimension:'country'},channel:{browser:'chrome',compare:'prev',dimension:'channel'}};
+ const memoExpected:Record<string,string>={
+  overview:'4ca7f32020c94b2df87e9282b3b1edf53817d711c4548e39f164fa2b30c8a93b',city:'b1662a68808fd217f6a947b7ea871a29883fde99e923f3a191546b5fd6e70e4a',
+  selection:'e3f6d05cb47f18c9c10718ca20afb13c3caec70160739426ce7c3afed38049de',channel:'e770472255a381427b227c25de802e37e879d8498b6da29635af9f0c6bc66782',
+ };
+ const memoActual:Record<string,string>={};
+ for(const [name,extra]of Object.entries(memoQueries)){
+  const report=await projectAnalytics(memo,owner,new URLSearchParams({...range,...extra}));
+  memoActual[name]=createHash('sha256').update(JSON.stringify(report,(key,value)=>key==='asOf'||key==='generatedAt'?undefined:value)).digest('hex');
+ }
+ assert.deepEqual(memoActual,memoExpected,'The once-per-value geography and referrer evaluations return the pre-#414 bytes.');
+ const builds=(await pool.query("SELECT count(*) FILTER (WHERE dimensions->'geography'->>'databaseBuild' IN ('1767225600','1767225600.0'))::int AS recorded,count(*) FILTER (WHERE octet_length(dimensions->'geography'->>'databaseBuild')>2048)::int AS long FROM event WHERE project_id=$1 AND received_at>='2024-03-01' AND received_at<'2024-03-08'",[memo])).rows[0];
+ assert.ok(builds.long>0);assert.equal((await projectAnalytics(memo,owner,new URLSearchParams(range))).geography.coverage.recordedPageViews,builds.recorded,'Only the builds written within the limit are recorded.');
  // A flattened projection subquery inlines the raw geography expression into each of its ~40 uses (#414). EXPLAIN VERBOSE deparses the
  // fenced form's references back into that same text, so the guard reads the planner's per-row operator cost of the projection instead:
  // 2.23 inlined, 0.48 evaluated once, at the default cpu_operator_cost.
  const plan=(await pool.query(`EXPLAIN SELECT ${geographyProjectionSql('e')} FROM event e WHERE false`)).rows.map(row=>row['QUERY PLAN']).join('\n');
  const perRow=Number(plan.match(/SubPlan 1\n\s*->\s+[^(]+\(cost=[\d.]+\.\.([\d.]+)/)?.[1]);
  assert.ok(perRow>0&&perRow<1,`The geography projection evaluates the raw object once per row (per-row cost ${perRow}).`);
- console.log('PASS the overview returns identical bytes across overview, Compare, dimension, selection, filter and location-detail shapes and projects geography once per row');
+ console.log('PASS the overview returns identical bytes across overview, Compare, dimension, selection, filter and location-detail shapes, keys its once-per-value geography and referrer evaluations exactly and projects geography once per row');
 }
 if(import.meta.main){try{await runComparisonChecks();}finally{await closeDatabase();}}
