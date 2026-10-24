@@ -171,7 +171,7 @@ function SessionExplorerInner({projectId,search,onNavigate,onUnauthorized}:Props
 type ActivityEvent=NonNullable<SessionDetail['activity']>[number]|NonNullable<LinkedActivity['activity']>[number];
 function Summary({label,items}:{label:string;items:readonly (readonly [string,string])[]}){const id=useId();return <Stack gap={2}><Heading level={3} size="sm" id={id}>{label}</Heading><Inline as="dl" gap={8} aria-labelledby={id}>{items.map(([term,value])=><Stack key={term} gap={1}><Text as="dt" size="sm" tone="muted">{term}</Text><Text as="dd" size="lg" weight="semibold" numeric>{value}</Text></Stack>)}</Inline></Stack>;}
 const compact=(value:string,zone:string)=>new Intl.DateTimeFormat(undefined,{timeZone:zone,year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(value));
-// @ten98/ui 0.25.0 still does not export formatDuration from its entry point, so spans use this compact "1h 3m 20s" form.
+// @ten98/ui 0.26.0 still does not export formatDuration from its entry point, so spans use this compact "1h 3m 20s" form.
 const duration=(value:string)=>{const total=Math.round(Number(value)),h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;return [h&&`${h}h`,(h||m)&&`${m}m`,`${s}s`].filter(Boolean).join(' ');};
 const clock=(value:string,zone:string)=>new Intl.DateTimeFormat(undefined,{timeZone:zone,timeStyle:'long'}).format(new Date(value));
 // The key is shortened in the middle so rows stay on one line; the full key stays in the row header text (assistive technology, find and selection) and in the link name.
