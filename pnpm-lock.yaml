@@ -535,8 +535,8 @@ packages:
 
   '@ten98/runtime@file:vendor/ten98-runtime-0.4.2.tgz':
     resolution: {integrity: sha512-6HOiMs7VhKnbAyKbC0D0AmS6IwLLlmI1dXtMnTdCJYhBr6xacZER7vFodDLRZp/VwK52RUy/NiKZirQKmwnM+Q==, tarball: file:vendor/ten98-runtime-0.4.2.tgz}
-    version: 0.4.1
-    engines: {node: '>=24.0.0 <25'}
+    version: 0.4.2
+    engines: {node: '>=24.22.1 <25'}
 
   '@ten98/ui@file:vendor/ten98-ui-0.24.0.tgz':
     resolution: {integrity: sha512-xgAGRgW7V8PL/cAnYMhYeecpw5m4BTuShxSNbSgyysaXI61H3TgLfZdXmCQ3MqMEfGKce7rv7sapLS8/ADzBGA==, tarball: file:vendor/ten98-ui-0.24.0.tgz}
