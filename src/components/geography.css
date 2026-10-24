@@ -10,5 +10,7 @@
 .geography-value label { display: block; }
 .geography-value input, .geography-value select { min-width: 0; max-width: 100%; width: 100%; min-block-size: var(--control-touch); }
 .geography-dialog .table-wrap { max-width: 100%; }
+/* #422: the shared map table lists every country with data; keep it a bounded, keyboard-scrollable region. */
+.geography-map .t98-map-details { max-block-size: 24rem; overflow-y: auto; }
 .geography-attribution a { color: var(--blue); text-decoration: underline; }
 @media(max-width: 768px) { .geography-layout { grid-template-columns: minmax(0,1fr); } }
