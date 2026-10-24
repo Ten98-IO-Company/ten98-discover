@@ -88,8 +88,8 @@ export function AccountClosurePanel({ userId, onClosed, onUnauthorized, onOpenTe
       </Stack>
     </Alert>}
     {data && !blocked && !data.hasPassword && <Stack gap={2}>
-      <Text>Your account signs in through an identity provider. Open Identity sign-in, verify with your provider and choose Close account as the security change.</Text>
-      <Button variant='danger' onClick={onOpenIdentity}>Open Identity sign-in</Button>
+      <Text>Your account signs in through an identity provider. Open Sign-in methods, verify with your provider and choose Close account as the security change.</Text>
+      <Button variant='danger' onClick={onOpenIdentity}>Open Sign-in methods</Button>
     </Stack>}
     {data && !blocked && data.hasPassword && !reviewing && <Button variant='danger' onClick={() => { setError(''); setReviewing(true) }}>Review account closure</Button>}
     {data && !blocked && data.hasPassword && reviewing && <ReviewConfirm title='Close this account' tone='danger' reviewKey={userId} autoFocus busy={busy}

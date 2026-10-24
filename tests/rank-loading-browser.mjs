@@ -216,11 +216,11 @@ try {
   });
   await run('missing chunk has local recovery, usable navigation, and only an explicit page reload retries', {code: 'fail'}, async t => {
     await t.open(); await (await t.link('Rank tracking')).click();
-    await t.page.getByRole('alert').filter({hasText: 'Rank tracking'}).waitFor();
+    await t.page.getByRole('alert').filter({hasText: 'Rankings couldn’t load'}).waitFor();
     assert.equal(t.rankCalls().length, 0); await wait(250);
     assert.equal(t.calls.filter(call => call.resource === 'document').length, 1, 'No automatic page reload');
     await (await t.link('Recent events')).click(); await t.page.getByRole('heading', {name: 'Recent events', level: 1, exact: true}).waitFor();
-    await (await t.link('Rank tracking')).click(); await t.page.getByRole('alert').filter({hasText: 'Rank tracking'}).waitFor();
+    await (await t.link('Rank tracking')).click(); await t.page.getByRole('alert').filter({hasText: 'Rankings couldn’t load'}).waitFor();
     assert.equal(t.calls.filter(call => call.path === rankAsset).length, 1, 'No automatic failed-module retry');
     await t.page.getByRole('button', {name: 'Reload page', exact: true}).click(); await t.loaded();
     assert.equal(t.calls.filter(call => call.resource === 'document').length, 2);
