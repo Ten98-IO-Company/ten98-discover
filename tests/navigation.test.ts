@@ -8,6 +8,14 @@ import {readAISearchIntent,aiSearchIntentQuery} from '../src/lib/navigation.ts'
 
 const workspace = 'a0000000-0000-4000-8000-000000000001', project = 'b0000000-0000-4000-8000-000000000002'
 
+test('provider setup links preselect only a known provider on Settings › Connections',()=>{
+ const target={workspace,project,view:'providers',provider:'dataforseo'} as const;
+ assert.deepEqual(parseNavigation(defaultParseSearch(defaultStringifySearch(target))),target);
+ assert.equal(parseNavigation({...target,provider:'openrouter'}).provider,'openrouter');
+ for(const provider of ['ahrefs','DataForSEO','',['dataforseo'],1])assert.deepEqual(parseNavigation({...target,provider}),{workspace,project,view:'providers'});
+ assert.equal(parseNavigation({...target,view:'keywords'}).provider,undefined);
+});
+
 test('performance routes retain their exact applied scope across copies and reject unrelated or duplicate capabilities',()=>{
  const target={workspace,project,view:'performance',performanceQuery:'from=2026-10-01&to=2026-10-07&metric=cls&percentile=95&breakdown=path&path=%2Fcheckout'} as const;
  const wire=defaultStringifySearch(target);assert.deepEqual(parseNavigation(defaultParseSearch(wire)),target);assert.equal(canonicalNavigation(wire,target),true);assert.equal(projectView('performance'),true);
