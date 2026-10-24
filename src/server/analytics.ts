@@ -6,7 +6,7 @@ import {publicAnalyticsSettings} from './native-analytics.ts';
 import {environmentFields,environmentVersion,isEnvironmentFilter,type EnvironmentFilters,type AnalyticsEnvironment} from '../lib/analytics-environment.ts';
 import {deriveAnalyticsComparison,type AnalyticsComparisonMode,type AnalyticsComparison,type AnalyticsPeriodReport,type AnalyticsReport} from '../lib/analytics-comparison.ts';
 import {geographyFields,geographyFiltersValid,geographySearch,type GeographyFilters,type GeographyDetailIntent,type GeographyDetail,serializeGeographyKey,type GeoField} from '../lib/analytics-geography.ts';
-import {geographyProjectionSql,geographyFilterSql,geographyAggregateCtes,geographyKeyColumnsSql,geographyKeyColumns,geographyValuesSql,geographyReportSql,geographyDetailSql,geographyKeyOrderSql,applyGeographyCoverage} from './geography-sql.ts';
+import {geographyProjectionSql,geographyFilterSql,geographyKeySql,geographyAggregateCtes,geographyKeyColumnsSql,geographyKeyColumns,geographyValuesSql,geographyReportSql,geographyDetailSql,geographyKeyOrderSql,applyGeographyCoverage} from './geography-sql.ts';
 import {analyticsDimensions,analyticsSelectionFields,type AnalyticsDimension,type AnalyticsDimensionComparison,type AnalyticsDimensionMetrics,type AnalyticsDimensionRow} from '../lib/analytics-dimensions.ts';
 import {parseAdvancedPredicates,type AdvancedPredicates} from './advanced-predicate-input.ts';
 import {advancedPredicateSql} from './advanced-predicates.ts';
@@ -37,9 +37,11 @@ const valueColumns=[...Object.values(environmentColumns),'geo_id'];
 const eventColumnsSql=(e:string,selfReferral:string)=>`(${e}.dimensions->>'browser') COLLATE "C" AS browser,(${e}.dimensions->>'os') COLLATE "C" AS os,(${e}.dimensions->>'device') COLLATE "C" AS device,
         ${e}.dimensions->>'environmentVersion' AS environment_version,
         CASE WHEN ${e}.event_name='page_view' AND jsonb_typeof(${e}.dimensions->'referrerHost')='string' AND length(${e}.dimensions->>'referrerHost') BETWEEN 1 AND 2048 AND NOT ${selfReferral} THEN ${e}.dimensions->>'referrerHost' END COLLATE "C" AS referrer_host`;
-// visitValuesSql reads these from both `observations` and the selection's `visit_scope`; geo_id names the row of geography_values.
-const visitScopeColumnsSql=(s:string)=>`${s}.visitor_id COLLATE "C" AS visitor_id,${s}.visit_id COLLATE "C" AS visit_id,`+['id','event_name','received_at','visit_has_custom',...valueColumns].map(column=>`${s}.${column}`).join(',');
-const observationColumnsSql=(s:string,label:string)=>`${s}.period,${s}.path,${s}.collection_basis,${s}.environment_version,${s}.referrer_host,${visitScopeColumnsSql(s)},${label} AS label`;
+// visitValuesSql reads the visit columns from both `observations` and the selection's `selected_scope`; geo_id names the row of
+// geography_values. Only `observations` reads the others, so a selection keeps them for its matching rows only (`hit`).
+const observationColumnsSql=(s:string,label:string,hit?:string)=>`${s}.period,`
+  +['path','collection_basis','environment_version','referrer_host','id'].map(column=>hit?`CASE WHEN ${hit} THEN ${s}.${column} END AS ${column}`:`${s}.${column}`).join(',')
+  +`,${s}.visitor_id COLLATE "C" AS visitor_id,${s}.visit_id COLLATE "C" AS visit_id,`+['event_name','received_at','visit_has_custom',...valueColumns].map(column=>`${s}.${column}`).join(',')+`,${label} AS label`;
 export function hideAnalyticsSummary(summary:Pick<AnalyticsPeriodReport,'totals'|'measurement'>){
  summary.totals={pageViews:null,customEvents:null};summary.measurement.identifiedPageViews=null;summary.measurement.unidentifiedPageViews=null;
 }
@@ -112,15 +114,16 @@ export async function projectAnalytics(projectId: string, userId: string, params
   const values:unknown[]=[projectId,share?JSON.stringify(share):userId,range.start,range.end,range.from,range.to,JSON.stringify(filters),environmentVersion,derived?.range.start??null,derived?.range.end??null,derived?.range.from??null,derived?.range.to??null,apiKeyId??null,JSON.stringify(geographyFilters),detail?JSON.stringify(detail):null,dimension??null];
   const predicate=advancedPredicateSql(selection,value=>{values.push(value);return '$'+values.length;},'UTC');
   // A selection only picks visits; environment and location filters keep scoping each visit. Without one the selected rows are the scope.
-  const visitScope=selection?'scoped_observations':undefined;
-  // Environment and location rows measure each matching visit over its rows with the row's value, like the matching filter would.
-  const scopedVisitsSql=(matches:string,labels:(source:string)=>string,keys:string[])=>visitScope
-    ?matchedVisitsSql(matches,`(${visitMetricsSql(`(${labels(visitScope)}) scope`,keys)})`,[],[...keys,'visitor_id','visit_id']):visitMetricsSql(matches,keys);
-  // The same for the overview's environment and location rows, from visitValuesSql rows of `observations` and the selected `visit_scope`.
+  // `selected_scope` holds every scoped row of the selected visits, each flagged `hit` when it matches the selection.
+  const visitScope=selection?'selected_scope':undefined;
+  // Environment and location rows measure each matching visit over its rows with the row's value, like the matching filter would. In
+  // the selected scope, each visit's rows with one value are both the match and the measured visit, so one aggregate gives both (#414).
+  const scopeDimension=!!dimension&&visitScopeFields.includes(dimension);
   const valueScopedVisitsSql=(fields:Record<string,string>,as:string,from=(values:string)=>values)=>visitScope
-    ?matchedVisitsSql(`(SELECT *,'page_view' AS event_name FROM (${valueVisitsSql(from('visit_values'),fields,as)}) v) matches`,
-      `(${valueVisitsSql(from('scope_values'),fields,as)})`,[],['field',as,'visitor_id','visit_id'])
-    :valueVisitsSql(from('visit_values'),fields,as);
+    ?valueVisitsSql(from('scope_values'),fields,as,true):valueVisitsSql(from('visit_values'),fields,as);
+  // A location label depends only on the stored geography, so geography_values computes it once per distinct value (#414).
+  const geographyDimension=geographyFields.find(field=>field===dimension);
+  const label=!dimension?'NULL::jsonb':geographyDimension?'s.geography_label':analyticsDimensionValueSql('$16::text','s');
   let epoch:string|undefined;
   try{
   if(client){await client.query('BEGIN');await client.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='5s'");}
@@ -169,13 +172,13 @@ export async function projectAnalytics(projectId: string, userId: string, params
         WHERE e.project_id=$1 AND e.received_at >= q.start AND e.received_at < q.finish AND (p.analytics_retained_from IS NULL OR e.received_at>=p.analytics_retained_from)
       ) e GROUP BY GROUPING SETS ((raw),(host,origin))
     ), geography_values AS MATERIALIZED (
-      SELECT row_number() OVER () AS geo_id,raw,geography,${geographyKeyColumnsSql('geography')} FROM (SELECT r.raw,${geographyProjectionSql('e')} AS geography
+      SELECT row_number() OVER () AS geo_id,raw,geography,${geographyKeyColumnsSql('geography')}${geographyDimension?`,${geographyKeySql(geographyDimension,'geography')} AS geography_label`:''} FROM (SELECT r.raw,${geographyProjectionSql('e')} AS geography
         FROM stored_values r CROSS JOIN LATERAL (SELECT jsonb_build_object('geography',NULLIF(r.raw,'')::jsonb) AS dimensions) e WHERE NOT r.referrer OFFSET 0) g
     ), referrer_values AS MATERIALIZED (
       SELECT r.host,r.origin,${selfReferralSql('e')} AS self FROM stored_values r CROSS JOIN LATERAL (SELECT jsonb_build_object('referrerHost',r.host,'origin',r.origin) AS dimensions) e
       WHERE r.referrer AND r.host IS NOT NULL AND r.origin IS NOT NULL
     ), geography_candidates AS (
-      SELECT q.period,e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.collection_basis,g.geo_id,g.geography,
+      SELECT q.period,e.id,e.event_name,e.path,e.received_at,e.visitor_id,e.visit_id,e.collection_basis,g.geo_id,g.geography,${geographyDimension?'g.geography_label,':''}
         ${eventColumnsSql('e','COALESCE(rv.self,false)')}${selection||dimension?`,e.dimensions,COALESCE(e.dimensions->>'origin',p.origin) AS origin`:''}
       FROM periods q CROSS JOIN event e CROSS JOIN target p LEFT JOIN geography_values g ON g.raw=COALESCE((e.dimensions->'geography')::text,'') COLLATE "C"
         LEFT JOIN referrer_values rv ON rv.host=(e.dimensions->>'referrerHost') COLLATE "C" AND rv.origin=(e.dimensions->>'origin') COLLATE "C"
@@ -185,11 +188,19 @@ export async function projectAnalytics(projectId: string, userId: string, params
         AND (NOT $7::jsonb ? 'os' OR CASE WHEN $7::jsonb->>'os'='not-recorded' THEN e.dimensions->>'os' IS NULL ELSE e.dimensions->>'os'=$7::jsonb->>'os' END)
         AND (NOT $7::jsonb ? 'device' OR CASE WHEN $7::jsonb->>'device'='not-recorded' THEN e.dimensions->>'device' IS NULL ELSE e.dimensions->>'device'=$7::jsonb->>'device' END)
     ), scoped_observations AS (SELECT s.*,c.visit_id IS NOT NULL AS visit_has_custom FROM geography_candidates s LEFT JOIN custom_visits c ON c.period=s.period AND c.visitor_id=s.visitor_id AND c.visit_id=s.visit_id WHERE ${geographyFilterSql('$14::jsonb')}),
-    all_observations AS ${selection||dimension?"MATERIALIZED":"NOT MATERIALIZED"} (SELECT ${observationColumnsSql('s',dimension?analyticsDimensionValueSql('$16::text','s'):'NULL::jsonb')} FROM scoped_observations s WHERE (${predicate})),
+    ${selection?`-- One pass over the scoped rows evaluates the predicate and the label once and keeps the narrow columns of the matching rows and
+    -- of every row of a selected visit (#414). A window, not a join, finds those visits; the fenced subqueries evaluate the predicate
+    -- and label below it, so its sort carries the narrow columns rather than the predicate's inputs. Only a location or environment
+    -- dimension reads the label of a row that does not match.
+    selection_rows AS MATERIALIZED (SELECT * FROM (SELECT s.*,CASE WHEN s.visit_id IS NOT NULL THEN bool_or(s.event_name='page_view' AND s.hit) OVER (PARTITION BY s.period,s.visitor_id,s.visit_id) END AS selected_visit
+      FROM (SELECT ${observationColumnsSql('s',scopeDimension?label:`CASE WHEN s.hit THEN ${label} END`,'s.hit')},s.hit FROM (SELECT s.*,(${predicate}) AS hit FROM scoped_observations s OFFSET 0) s OFFSET 0) s) s WHERE hit OR selected_visit),
+    all_observations AS (SELECT * FROM selection_rows WHERE hit),
+    selected_scope AS (SELECT * FROM selection_rows WHERE selected_visit),`
+    :`all_observations AS ${dimension?"MATERIALIZED":"NOT MATERIALIZED"} (SELECT ${observationColumnsSql('s',label)} FROM scoped_observations s WHERE (${predicate})),`}
     visit_metrics AS MATERIALIZED (${visitMetricsSql(visitScope??'all_observations',['period'])}),
     dimension_labeled AS MATERIALIZED (SELECT * FROM all_observations WHERE $16::text IS NOT NULL AND (CASE WHEN $16='event' THEN event_name<>'page_view' ELSE true END)),
-    dimension_visits AS (${dimension&&visitScopeFields.includes(dimension)
-      ?scopedVisitsSql('dimension_labeled',source=>`SELECT s.*,${analyticsDimensionValueSql('$16::text','s')} AS label FROM ${source} s`,['period','label'])
+    dimension_visits AS (${scopeDimension
+      ?visitMetricsSql(visitScope??'dimension_labeled',['period','label'],!!visitScope)
       :matchedVisitsSql('dimension_labeled','visit_metrics',['label'],['period','visitor_id','visit_id'])}),
     dimension_measurement AS MATERIALIZED (SELECT period,label,count(DISTINCT visitor_id COLLATE "C") AS visitors,count(*) AS visits,100.0*count(*) FILTER(WHERE pageviews=1 AND NOT custom)/NULLIF(count(*),0) AS bounce,avg(duration) AS duration FROM dimension_visits GROUP BY period,label),
     dimension_counts AS (SELECT period,label,count(*) FILTER(WHERE event_name='page_view') AS pageviews,count(*) FILTER(WHERE event_name<>'page_view') AS custom,count(*) FILTER(WHERE event_name='page_view' AND visitor_id IS NOT NULL) AS identified
@@ -204,13 +215,9 @@ export async function projectAnalytics(projectId: string, userId: string, params
         FROM dimension_ranked a LEFT JOIN dimension_groups b ON b.period<>a.period AND b.label IS NOT DISTINCT FROM a.label WHERE a.period=q.period AND a.rank<=20),'[]'::json) AS dimension_rows,r.*
     FROM periods q CROSS JOIN clock c CROSS JOIN LATERAL (
     WITH observations AS MATERIALIZED (SELECT * FROM all_observations WHERE period=q.period),${visitScope?`
-    -- The scoped rows of the selected visits only; a window, not a join, finds them. The fenced subquery evaluates the predicate
-    -- below the window so its sort carries the narrow columns, not the predicate's inputs.
-    visit_scope AS MATERIALIZED (SELECT * FROM (SELECT s.*,bool_or(s.hit) OVER (PARTITION BY s.visitor_id COLLATE "C",s.visit_id COLLATE "C") AS selected_visit
-      FROM (SELECT ${visitScopeColumnsSql('s')},s.event_name='page_view' AND (${predicate}) AS hit FROM ${visitScope} s WHERE s.period=q.period AND s.visit_id IS NOT NULL OFFSET 0) s) v WHERE selected_visit),
-    scope_values AS MATERIALIZED (${visitValuesSql('visit_scope',valueColumns)}),`:''}
+    scope_values AS MATERIALIZED (${visitValuesSql(`(SELECT * FROM ${visitScope} WHERE period=q.period) s`,valueColumns,true)}),`:''}
     visit_values AS MATERIALIZED (${visitValuesSql('observations',valueColumns)}),
-    visits AS (${visitScope?matchedVisitsSql('observations','(SELECT * FROM visit_metrics WHERE period=q.period)'):valueVisitsSql('visit_values')}), buckets AS (
+    visits AS (${valueVisitsSql(visitScope?'scope_values':'visit_values')}), buckets AS (
       SELECT (received_at AT TIME ZONE 'UTC')::date AS day,
         count(*) FILTER (WHERE event_name='page_view') AS views,
         count(*) FILTER (WHERE event_name<>'page_view') AS custom
