@@ -43,7 +43,7 @@ export const settingsEntries: readonly SettingsEntry[] = [
   { view: 'workspace', label: 'New workspace', group: 'workspace' },
   { view: 'preferences', label: 'Profile', group: 'account' }, { view: 'security', label: 'Security', group: 'account' },
   { view: 'identity', label: 'Sign-in methods', group: 'account', keywords: ['identity sign-in', 'sso'] },
-  { view: 'google-app', label: 'Google app', group: 'operator' },
+  { view: 'identity-providers', label: 'Sign-in', group: 'operator', keywords: ['identity providers', 'oidc', 'single sign-on'] }, { view: 'google-app', label: 'Google app', group: 'operator' }, { view: 'diagnostics', label: 'Diagnostics', group: 'operator', keywords: ['worker check', 'background worker'] },
 ]
 export const projectSettingsViews: readonly AppView[] = settingsEntries.filter(entry => entry.group === 'project').map(entry => entry.view)
 
