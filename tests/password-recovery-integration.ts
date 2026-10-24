@@ -242,11 +242,19 @@ test('password recovery transaction and public-boundary checks', { timeout: 120_
   await t.test('per-client and hashed identity budgets bound requests without storing raw email/token', async () => {
     // These are only this isolated suite's existing recovery budget rows.
     await pool.query("DELETE FROM request_limit WHERE key LIKE 'password-recovery:%'");
+    // The budgets count in fixed one-minute buckets (database clock). Start each counted burst at least
+    // 15 s before a boundary so every request in it lands in the same bucket.
+    const sameMinuteBurst = async () => {
+      const second = Number((await pool.query('SELECT extract(second FROM now()) AS s')).rows[0].s);
+      if (second > 45) await new Promise(resolve => setTimeout(resolve, (60.5 - second) * 1000));
+    };
     const user = await fixture();
+    await sameMinuteBurst();
     for (let index = 0; index < 3; index++) assert.equal((await call('/api/auth/request-password-reset', { email: user.email.toUpperCase() })).status, 200);
     assert.equal((await call('/api/auth/request-password-reset', { email: user.email })).status, 429);
     await flushMail();
     const token = 'R'.repeat(24);
+    await sameMinuteBurst();
     for (let index = 0; index < 5; index++) assert.equal((await reset(token)).status, 400);
     assert.equal((await reset(token)).status, 429);
     const keys = (await pool.query("SELECT key FROM request_limit WHERE key LIKE 'password-recovery:%'")).rows.map(row => row.key as string);
