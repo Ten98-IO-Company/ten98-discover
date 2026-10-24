@@ -64,3 +64,29 @@ test('report status lines carry the exact instant for repeated fall-back hours',
   assert.match(source('AttributionPanel'),/<p role="status" title=\{!busy&&shown\?shown\.asOf:undefined\}>/);
   assert.match(source('ConversionsPanel'),/<p className="hint" title=\{result\.generatedAt\}>/);
 });
+
+test('Recent events shows UTC report times with the exact instant (#401)',()=>{
+  const source=readFileSync(new URL('../src/routes/index.tsx',import.meta.url),'utf8');
+  const start=source.indexOf("<h2 id='ev-h'>Retained events</h2>"),end=source.indexOf('persisted events.</p>',start);
+  assert.ok(start>=0&&end>start,'Recent events view not found');
+  const view=source.slice(start,end);
+  assert.doesNotMatch(view,/\{fmt\(/,'Recent events must not use browser-local fmt');
+  // Each shown time is UTC and carries its exact ISO instant as a title (the row also as <time dateTime>).
+  const retained='\\(events\\?\\.retainedFrom \\?\\? project\\.retainedFrom\\)!';
+  assert.match(view,/<Text tone='muted' title=\{eventsReadAt\}>Read \{formatReportInstant\(eventsReadAt,'UTC'\)\}<\/Text>/);
+  assert.match(view,new RegExp(`<p className='hint' title=\\{${retained}\\}>History before \\{formatReportInstant\\(${retained},'UTC'\\)\\}`));
+  assert.match(view,/<p className='dim' title=\{lastReceived\}>Last retained event received \{formatReportInstant\(lastReceived,'UTC'\)\}<\/p>/);
+  assert.match(view,/<time dateTime=\{ev\.receivedAt\} title=\{ev\.receivedAt\}>\{formatReportInstant\(ev\.receivedAt,'UTC'\)\}<\/time>/);
+  // The Install tracker view shows the same latest retained event, so it uses the same UTC time.
+  const latest=source.slice(source.indexOf('Latest retained event:'),source.indexOf('</p>',source.indexOf('Latest retained event:')));
+  assert.ok(latest.length>0,'Install tracker latest event line not found');
+  assert.doesNotMatch(latest,/\{fmt\(/);
+  assert.match(latest,/<time dateTime=\{events\.events\[0\]\.receivedAt\} title=\{events\.events\[0\]\.receivedAt\}>\{formatReportInstant\(events\.events\[0\]\.receivedAt,'UTC'\)\}<\/time>/);
+});
+
+test('Revenue labels keep a space before their values (#401)',()=>{
+  const source=readFileSync(new URL('../src/components/RevenuePanel.tsx',import.meta.url),'utf8');
+  for(const label of[/ of\{table\./,/Sales\{display\(/,/Refunds\{display\(/])assert.doesNotMatch(source,label,String(label));
+  assert.match(source,/ matching of \{table\.sessions\.totalRevenueKeys/);
+  assert.match(source,/<p>Sales \{display\(detail\.detail\.summary\?\.sales,currency\)\} · Refunds \{display\(/);
+});
