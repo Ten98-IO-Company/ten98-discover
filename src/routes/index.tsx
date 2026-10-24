@@ -1,5 +1,5 @@
 import { AppBrand, AppIcon } from '@ten98/ui/app'
-import { Alert, AppStateScreen, DataTable, ProjectCreateFlow, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar } from '@ten98/ui'
+import { Alert, AppStateScreen, DataTable, WorkspaceCreateFlow, WorkspaceOnboarding, AuthErrorBoundary, Banner, Button, PageHeader, SettingsLayout, SidebarStatus, Text, Stack, FirstUserSetupFlow, SignInFlow, TwoFactorChallengeFlow, ResourceCard, SearchField, SidebarNav, SectionNav, StatusLine, TrackerStatus, WorkspaceProjectSwitcher, AccountMenu, SidebarFooter, AppShell, AppTopbar, Field, Form, Input, FormActions } from '@ten98/ui'
 import type { FirstUserSetupValues, WorkspaceCreateValues, SignInValues, TwoFactorMode, TwoFactorValues, NavLinkComponent, SettingsNavItem, SidebarNavGroup, SidebarNavItem } from '@ten98/ui'
 import { authStory } from '../components/AuthLayout'
 import { version as appVersion } from '../../package.json'
@@ -8,7 +8,7 @@ import type { HistoryState } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { api, ApiError, errMsg } from '../lib/api'
-import { parseWebsiteAddress } from '../lib/website-address'
+import { parseWebsiteAddress, websiteNameFromOrigin } from '../lib/website-address'
 import { appSections, projectSettingsViews, sectionOf, settingsEntries, settingsEntry, settingsGroupLabels, subTabs } from '../lib/app-sections'
 import { formatReportInstant } from '../lib/report-time'
 import { AnalyticsPanel, analyticsExplorerQuery } from '../components/AnalyticsPanel'
@@ -489,8 +489,10 @@ function App() {
     try {
       const d = await api<{ project: Project }>(`/api/workspaces/${wsId}/projects`, { method: 'POST', body: { name, origin } })
       if (!current()) return
+      // Record Tracking code as the destination before the project list reloads: the reload resolves navigation, and
+      // the first website would otherwise settle on the dashboard of the now-selected project. A newer user choice wins.
+      if (intent.current.generation === navigation) rememberIntent({ workspace: wsId, project: d.project.id, view: 'installation' })
       await loadProjects(wsId)
-      if (current() && intent.current.generation === navigation) go({ workspace: wsId, project: d.project.id, view: 'installation' })
     } catch (e) {
       if (!current() || guardAuth(e) || intent.current.generation !== navigation) return
       throw e
@@ -656,7 +658,7 @@ function App() {
   // Without a project, a section keeps its strips when a tab or mode in it is a workspace-wide tool, so Conversions › Campaigns still reaches tracked links and tracking images.
   const sectionReachesWorkspaceTool = workspace !== undefined && currentSection?.section.tabs.some(tab => [tab, ...subTabs[tab.view] ?? []].some(entry => workspaceTools.includes(entry.view))) === true
   // Page titles repeat the tab or settings label the user just chose; a few modes get a fuller name.
-  const pageTitle = ({ compare: 'Compare periods', realtime: 'Live visitors', 'new-project': 'New project', 'tracked-share': 'Shared report' } as Partial<Record<AppView, string>>)[view]
+  const pageTitle = ({ compare: 'Compare periods', realtime: 'Live visitors', 'new-project': 'Add a website', 'tracked-share': 'Shared report' } as Partial<Record<AppView, string>>)[view]
     ?? settingsEntry(view)?.label ?? currentSection?.section.tabs.find(tab => tab.view === view)?.label ?? currentSection?.subTabs?.find(tab => tab.view === view)?.label ?? 'Discover'
   // Carry only applied report intent between these two views of this same project.
   const analyticsTarget=(next:'project'|'compare'):NavigationSearch=>{
@@ -673,7 +675,7 @@ function App() {
   }
   const explorerReturnState=view==='explore'&&me&&project&&search.workspace===workspaceId&&search.project===project.id&&navigationKey(parseNavigation(routeLocation.search))===navigationKey(search)&&canonicalNavigation(routeLocation.searchStr,search)?{userId:me.user.id,workspace:workspaceId,project:project.id,href:routeLocation.href}:undefined
   const verifiedExplorerReturn=me&&project?readExplorerReturn('analyticsReturn'in routeLocation.state?routeLocation.state.analyticsReturn:null,me.user.id,workspaceId,project.id):null
-  const pageScope = accountView || view === 'workspace' ? 'Your account' : settingsEntry(view)?.group === 'operator' ? 'Advanced settings' : projectSettingsView && project ? `Project · ${project.name}` : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
+  const pageScope = accountView || view === 'workspace' ? 'Your account' : settingsEntry(view)?.group === 'operator' ? 'Advanced settings' : projectSettingsView && project ? `Website · ${project.name}` : workspace ? `Workspace · ${workspace.name}` : 'Your workspace'
 
   const adminRole = workspace !== undefined && ['owner','admin'].includes(workspace.role)
   // One sidebar item per section; it opens the section's first tab and stays selected on every tab and mode within it.
@@ -707,7 +709,7 @@ function App() {
         <Link to='/' search={target('project')} className='brand-link' aria-label='ten98 Discover home'><AppBrand product='Discover' /></Link>
         <div className='side-body sidebar-nav'><Stack gap={5}>
         <WorkspaceProjectSwitcher workspaces={me!.workspaces.map(item=>({id:item.id,name:item.name,initials:item.name.slice(0,2).toUpperCase(),roleLabel:`${item.role} workspace`}))} projects={workspace?projects:[]} workspaceId={workspaceId||null} projectId={projectId||null}
-          onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Create project',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.'}} />
+          onWorkspaceChange={changeWorkspace} onProjectChange={id=>{setMenuOpen(false);go(target('project',id))}} create={canWrite?{label:'Add website',href:'new-project'}:undefined} linkComponent={ShellLink} labels={{noWorkspaces:'No workspaces yet.',project:'Website',noProjects:'No websites yet',choose:'Choose a website',loading:'Loading websites…'}} />
         {workspace&&<SidebarNav label='Sections' linkComponent={ShellLink} filter={toolSearch} groups={toolQuery?[...sectionNavGroups,...settingsSearchGroups]:sectionNavGroups} />}
         </Stack></div>
         <SidebarFooter version={appVersion}>
@@ -810,7 +812,7 @@ function App() {
         )}
         {view === 'project' && workspace && project !== null && (
           <>
-            {events?.total === 0 && <section className='connection-callout'><div><strong>No retained events available.</strong><p>Add the tracking code to your site. Privacy settings choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Get tracking code</Link></section>}
+            {events?.total === 0 && <section className='connection-callout'><div><strong>Waiting for the first visit.</strong><p>Add the tracking code to your site. Privacy settings choose when analytics starts.</p></div><Link className='btn primary' to='/' search={target('installation')}>Get tracking code</Link></section>}
             <AnalyticsPanel key={`${me!.user.id}:${project.id}`} projectId={project.id} userId={me!.user.id} onAppliedRange={rememberAnalyticsRange} onReturnToExplorer={verifiedExplorerReturn?()=>router.history.push(verifiedExplorerReturn):undefined} search={{...target('project'),...(search.workspace===workspaceId&&search.project===project.id?analyticsNavigation(search):{})}} onNavigate={value=>go({...target('project'),...value})} onUnauthorized={unauthorized} />
           </>
         )}
@@ -835,7 +837,7 @@ function App() {
               {events === null && eventsError === '' && <p role='status' className='dim'>Loading events…</p>}
               {events !== null && events.events.length === 0 && (
                 <div className='empty'>
-                  <p><strong>No retained events available.</strong></p>
+                  <p><strong>No visits yet.</strong></p>
                   <p>Install your tracker, allow analytics in Tracking preferences, then refresh this list. Counts include only retained events the collector has persisted.</p><Link className='btn' to='/' search={target('installation')}>Get tracking code</Link>
                 </div>
               )}
@@ -853,11 +855,11 @@ function App() {
           <>
             <section className='card installation-panel' aria-labelledby='snip-h'>
               <div className='row between installation-toolbar'>
-                <h2 id='snip-h'>Tracking snippet</h2>
-                <Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' || (events?.total ?? 0) > 0 ? 'secondary' : 'primary'} onClick={() => void copySnippet(snippet)}>Copy snippet</Button>
+                <h2 id='snip-h'>Your tracking code</h2>
+                <Button style={{minHeight:44,whiteSpace:'normal'}} variant={copied === 'copied' || (events?.total ?? 0) > 0 ? 'secondary' : 'primary'} onClick={() => void copySnippet(snippet)}>Copy code</Button>
               </div>
               <p>Add this tag inside the <code>&lt;head&gt;</code> of every page you want to measure on <strong>{project.origin}</strong>.</p>
-              <pre className='snippet' role='region' aria-label='Tracking snippet' tabIndex={0}><code>{snippet}</code></pre>
+              <pre className='snippet' role='region' aria-label='Tracking code' tabIndex={0}><code>{snippet}</code></pre>
               {copied === 'copied' && <p role='status' className='dim'>Copied to clipboard.</p>}
               {copied === 'failed' && <p role='alert' className='dim'>Copy failed — select the snippet text above and copy it manually.</p>}
               <p className='dim footnote'>Use <Link to='/' search={target('domains')}>Domains</Link> for other serving domains. <Link to='/' search={target('collection')}>Privacy settings</Link> control consent and optional data. Browser privacy signals and explicit refusals stop collection.{isLocal ? ' External websites cannot reach this localhost collector; deploy it at a public HTTPS address first.' : ''}</p>
@@ -925,8 +927,8 @@ function OwnerForm({ onSetup, onSignInInstead }: { onSetup: (v: SetupValues) => 
   }
 
   return <FirstUserSetupFlow key={form.generation} brand={<AppBrand product='Discover' />} aside={authStory} label='Account access' title='Create owner account'
-    description='Create the owner account and its default workspace. The setup token comes from your server configuration.'
-    workspaceName passwordPolicy={{ minLength: 12, maxLength: 128, hint: 'At least 12 characters.' }}
+    description='Create the owner account. You can rename your workspace later. The setup token comes from your server configuration.'
+    passwordPolicy={{ minLength: 12, maxLength: 128, hint: 'At least 12 characters.' }}
     defaultValues={{ name: form.name, email: form.email, workspaceName: form.workspaceName }}
     busy={busy} error={outcome.error || undefined} unconfirmed={outcome.unconfirmed || undefined}
     signInInstead={ownerExists ? { onClick: email => onSignInInstead(email.trim()) } : undefined} onSubmit={submit} />
@@ -967,24 +969,35 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
 }
 
 // Values stay in the uncontrolled fields after an error; a successful create remounts the form empty.
+// The address comes first and is the only required answer; the name follows the domain until someone edits it.
 function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {
   const [busy, setBusy] = useState(false)
-  const [state, setState] = useState<{ generation: number; error: string; fieldErrors?: { name?: string; origin?: string } }>({ generation: 0, error: '' })
+  const [address, setAddress] = useState('')
+  const [editedName, setEditedName] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ origin?: string; name?: string }>({})
+  const parsed = parseWebsiteAddress(address), suggestedName = parsed.origin ? websiteNameFromOrigin(parsed.origin) : ''
+  const name = editedName ?? suggestedName
 
-  async function submit(v: { name: string; origin?: string }) {
-    const name = v.name.trim()
-    if (name === '') { setState(s => ({ ...s, error: '', fieldErrors: { name: 'Enter a name for this website.' } })); return }
-    const parsed = parseWebsiteAddress(v.origin ?? '')
-    if (!parsed.origin) { setState(s => ({ ...s, error: '', fieldErrors: { origin: parsed.error ?? 'Enter a valid website address.' } })); return }
-    setBusy(true); setState(s => ({ ...s, error: '', fieldErrors: undefined }))
-    try { await onCreate(name, parsed.origin); setState(s => ({ generation: s.generation + 1, error: '' })) }
-    catch (err) { setState(s => ({ ...s, error: errMsg(err) })) }
+  async function submit() {
+    if (!parsed.origin) { setFieldErrors({ origin: parsed.error ?? 'Enter a valid website address.' }); return }
+    const finalName = name.trim() || suggestedName
+    setBusy(true); setError(''); setFieldErrors({})
+    try { await onCreate(finalName, parsed.origin); setAddress(''); setEditedName(null) }
+    catch (err) { setError(errMsg(err)) }
     finally { setBusy(false) }
   }
 
-  return <ProjectCreateFlow key={state.generation} mode='create' hideTitle title='Add website' defaultValues={{ name: '', origin: '' }} busy={busy} busyLabel='Adding…'
-    error={state.error || undefined} fieldErrors={state.fieldErrors} onSubmit={submit}
-    messages={{ nameLabel: 'Website name', originLabel: 'Website address', originHint: 'For example https://example.com. You can paste any page of your site.', create: 'Add website' }} />
+  return <Form onSubmit={submit} busy={busy} fieldErrors={fieldErrors} gap={4}>
+    <Field label='Website address' description='For example example.com. You can paste any page of your site.' error={fieldErrors.origin}>
+      <Input name='origin' type='text' inputMode='url' autoComplete='url' spellCheck={false} required maxLength={2048} value={address} onChange={event => setAddress(event.target.value)} />
+    </Field>
+    <Field label='Website name' description='Filled in from the address. Change it if you like.' error={fieldErrors.name}>
+      <Input name='name' maxLength={120} value={name} placeholder='example.com' onChange={event => setEditedName(event.target.value)} />
+    </Field>
+    {error && <Alert tone='danger'>{error}</Alert>}
+    <FormActions><Button type='submit' disabled={busy}>{busy ? 'Adding…' : 'Add website'}</Button></FormActions>
+  </Form>
 }
 
 // Shared by the onboarding screen and the New workspace settings tab.

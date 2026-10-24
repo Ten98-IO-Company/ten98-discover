@@ -153,7 +153,7 @@ try {
   await (await navigationLink('Overview')).click({ modifiers: ['Control'] })
   const tab = await opened; await tab.getByRole('heading', { name: 'Overview', exact: true, level: 1 }).waitFor()
   assert.equal(page.url(), original); assert.equal(new URL(tab.url()).searchParams.get('project'), a2); await tab.close()
-  await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in / }).click(); await heading('Add a website'); await selected(a.id, null, 'new-project')
+  await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Add website in / }).click(); await heading('Add a website'); await selected(a.id, null, 'new-project')
   await page.reload(); await heading('Add a website'); await selected(a.id, null, 'new-project')
   console.log('PASS navigation: native new-tab links and explicit New project survive reload.')
 
@@ -189,7 +189,7 @@ try {
     assert.deepEqual(await sections.getByRole('link', { includeHidden: true }).allTextContents(), sectionNames, 'Every role sees the same six sections.')
     assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Overview'])
     assert.deepEqual(await page.getByRole('navigation', { name: 'Overview pages', exact: true }).locator('a[aria-current="page"]').allTextContents(), ['Latest events'])
-    assert.equal(await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in /, includeHidden: true }).count(), isOwner ? 1 : 0)
+    assert.equal(await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Add website in /, includeHidden: true }).count(), isOwner ? 1 : 0)
     assert.equal(await sections.locator(':scope details').count(), 0, 'Sections are flat and always exposed.')
     for (const target of await sections.getByRole('link').all()) assert.equal(await target.isVisible(), true)
     const searchLink = sections.getByRole('link', { name: 'Search', exact: true })
@@ -293,7 +293,7 @@ try {
   await page.getByLabel('Website name', { exact: true }).fill('Earlier identical navigation')
   await page.getByLabel('Website address', { exact: true }).fill('https://round-trip.navigation.test')
   await page.getByRole('button', { name: 'Add website', exact: true }).click(); await roundTrip.began
-  await link('Account security'); await heading('Account security'); await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in / }).click(); await heading('Add a website')
+  await link('Account security'); await heading('Account security'); await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Add website in / }).click(); await heading('Add a website')
   roundTrip.release(); await roundTrip.remove(); await delay(150)
   await heading('Add a website'); await selected(a.id, null, 'new-project')
   console.log('PASS navigation: returning to the same URL does not revive an earlier mutation intent.')

@@ -20,7 +20,7 @@ try{
  evidence.csp=landing.headers()['content-security-policy']??null;const headerNonce=evidence.csp?.match(/'nonce-([^']+)'/)?.[1];assert.ok(headerNonce,'The compiled document must carry a nonce policy.');
  assert.equal(await page.evaluate(()=>document.querySelector('script[type="module"]').nonce),headerNonce,'The module entry script must carry the header nonce.');step('document policy nonce matches the module entry script');
  await page.getByRole('heading',{name:'Create owner account'}).waitFor();
- await page.getByLabel('Setup token',{exact:true}).fill(token);await page.getByLabel('Your name',{exact:true}).fill('Compiled owner');await page.getByLabel('Email address',{exact:true}).fill('owner@compiled-delete.test');await page.getByLabel('Password',{exact:true}).fill('synthetic-password-12345');await page.getByLabel('Workspace name',{exact:true}).fill('Compiled workspace');
+ await page.getByLabel('Setup token',{exact:true}).fill(token);await page.getByLabel('Your name',{exact:true}).fill('Compiled owner');await page.getByLabel('Email address',{exact:true}).fill('owner@compiled-delete.test');await page.getByLabel('Password',{exact:true}).fill('synthetic-password-12345');
  await page.getByRole('button',{name:'Create owner account'}).click();
  await projectSelect().waitFor({state:'attached'});step('owner claimed and signed in');
  // Mirrors the ReplayPreview player document in src/components/SessionReplayPanel.tsx: a data: frame inherits the page policy, mints its own
@@ -32,7 +32,7 @@ try{
  await replayFrame.waitForFunction(()=>document.head.querySelector('style')!==null,null,{timeout:10000});
  await page.evaluate(()=>document.querySelector('iframe[title="csp replay probe"]').remove());step('replay data: frame executed /replay.js under the inherited document policy');
  const workspaceId=await page.getByRole('combobox',{name:'Workspace',exact:true}).inputValue();assert.match(workspaceId,/^[0-9a-f-]{36}$/);
- async function create(name,origin){await page.goto(base+'/?workspace='+workspaceId+'&view=new-project',{waitUntil:'domcontentloaded'});await page.getByLabel('Project name',{exact:true}).fill(name);await page.getByLabel('Website address',{exact:true}).fill(origin);await page.getByRole('button',{name:'Create project'}).click();await projectOption(name).waitFor({state:'attached'});}
+ async function create(name,origin){await page.goto(base+'/?workspace='+workspaceId+'&view=new-project',{waitUntil:'domcontentloaded'});await page.getByLabel('Website address',{exact:true}).fill(origin);await page.getByLabel('Website name',{exact:true}).fill(name);await page.getByRole('button',{name:'Add website'}).click();await projectOption(name).waitFor({state:'attached'});}
  await create('Doomed website','https://doomed.compiled-delete.test');await create('Surviving website','https://surviving.compiled-delete.test');step('two projects created');
  const doomedId=await projectOption('Doomed website').getAttribute('value');assert.match(doomedId,/^[0-9a-f-]{36}$/);
  await page.goto(base+'/?workspace='+workspaceId+'&project='+doomedId+'&view=collection',{waitUntil:'domcontentloaded'});

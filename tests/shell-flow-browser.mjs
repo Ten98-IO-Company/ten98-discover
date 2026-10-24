@@ -143,7 +143,7 @@ try {
   };
   const eventPanel = () => main.locator('section[aria-labelledby="ev-h"]');
   const eventRegion = () => main.getByRole('region', {name:'Retained event rows table', exact:true});
-  const snippetRegion = () => main.locator('pre[role="region"][aria-label="Tracking snippet"][tabindex="0"]');
+  const snippetRegion = () => main.locator('pre[role="region"][aria-label="Tracking code"][tabindex="0"]');
   const diagnostics = () => main.locator('section.diagnostics');
   const count = async expected => assert.equal((await eventPanel().locator('.big-num').innerText()).trim(), String(expected), 'Retained count stays exact.');
   // Retained event times are shown as report instants in UTC (YYYY-MM-DD HH:mm UTC), independent of the browser locale.
@@ -177,7 +177,7 @@ try {
   const release = async held => { assert.ok(held, 'Expected a held synthetic request.'); await json(held.route, held.reply); };
 
   stage = 'skip link, compact header and empty state';
-  await open('events'); await main.getByText('No retained events available.', {exact:true}).waitFor();
+  await open('events'); await main.getByText('No visits yet.', {exact:true}).waitFor();
   await page.keyboard.press('Tab');
   const skip = page.getByRole('link', {name:'Skip to main content', exact:true});
   assert.equal(await skip.evaluate(element => element === document.activeElement), true, 'First Tab reaches skip link.');
@@ -196,7 +196,7 @@ try {
   assert.equal(await main.getByRole('alert').count(), 0);
   assert.equal(await main.locator('h1').count(), 1);
   assert.equal(await main.getByRole('heading', {name:'Retained events', level:2, exact:true}).count(), 1);
-  assert.equal(await main.getByText('No retained events available.', {exact:true}).count(), 1);
+  assert.equal(await main.getByText('No visits yet.', {exact:true}).count(), 1);
   assert.equal(await main.getByText('Events currently retained', {exact:true}).count(), 0);
   assert.equal(await main.locator('.t98-page-header p.dim').count(), 0);
   assert.equal(await main.locator('.t98-page-header .t98-page-description').innerText(), '⁨Shell fixture project⁩ · ⁨' + website + '⁩');
@@ -211,7 +211,7 @@ try {
   await open('events'); await main.getByText('Loading events…', {exact:true}).waitFor();
   await eventRequestStarted;
   await count(41);
-  assert.equal(await main.getByText('No retained events available.', {exact:true}).count(), 0);
+  assert.equal(await main.getByText('No visits yet.', {exact:true}).count(), 0);
   assert.equal(await eventPanel().getAttribute('aria-busy'), 'true');
   assert.equal(await button('Refreshing…').isDisabled(), true);
   await capture('events-loading');
@@ -230,10 +230,10 @@ try {
   await count(7); assert.equal(await eventRegion().locator('tbody tr').count(), 2);
   await open('events'); await main.getByRole('alert').filter({hasText:'Synthetic event read unavailable.'}).waitFor();
   await count(41); assert.equal(await eventRegion().count(), 0);
-  assert.equal(await main.getByText('No retained events available.', {exact:true}).count(), 0);
+  assert.equal(await main.getByText('No visits yet.', {exact:true}).count(), 0);
   await capture('events-error');
   eventReply = {body:empty}; await button('Refresh events').click();
-  await main.getByText('No retained events available.', {exact:true}).waitFor(); await count(0);
+  await main.getByText('No visits yet.', {exact:true}).waitFor(); await count(0);
   assert.equal(await main.getByRole('alert').count(), 0);
   console.log('PASS shell: loading is distinct from empty/error; retained counts, rows, timestamps and refresh recovery survive.');
 
@@ -248,12 +248,12 @@ try {
   const expectedSnippet = `<script defer src="${origin}/tracker.js" data-site-key="${publicKey}" referrerpolicy="no-referrer"></script>`;
   assert.equal(await snippetRegion().getAttribute('tabindex'), '0');
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);
-  assert.equal(await main.getByRole('heading', {name:'Tracking snippet', level:2, exact:true}).count(), 1);
+  assert.equal(await main.getByRole('heading', {name:'Your tracking code', level:2, exact:true}).count(), 1);
   assert.equal(await main.locator('.t98-page-header p.dim').count(), 0);
-  await button('Copy snippet').click(); await main.getByText('Copied to clipboard.', {exact:true}).waitFor();
+  await button('Copy code').click(); await main.getByText('Copied to clipboard.', {exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(() => window.__shellClipboardWrites), [expectedSnippet]);
   await page.evaluate(() => { window.__shellClipboardFailure = true; });
-  await button('Copy snippet').click();
+  await button('Copy code').click();
   await main.getByRole('alert').filter({hasText:'Copy failed — select the snippet text above and copy it manually.'}).waitFor();
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);
   await snippetRegion().locator('code').selectText();
@@ -358,7 +358,7 @@ try {
           assert.deepEqual([...new Set(await region.locator('tbody tr').first().locator('th, td').evaluateAll(cells => cells.map(cell => cell.dataset.label)))], ['Event','Origin','Path','Received'], `events ${width}: every value keeps its column label.`);
         } else {
           await region.focus(); await page.keyboard.press('ArrowRight');
-          await page.waitForFunction(name => document.querySelector(`[role="region"][aria-label="${name}"]`).scrollLeft > 0, 'Tracking snippet');
+          await page.waitForFunction(name => document.querySelector(`[role="region"][aria-label="${name}"]`).scrollLeft > 0, 'Tracking code');
         }
       }
       await capture(view + '-' + width);
@@ -374,7 +374,7 @@ try {
   longNames = false; await page.setViewportSize({width:1440,height:900}); await open('installation'); await snippetRegion().waitFor();
   // CSS layout zoom exercises 200% reflow; this is not a browser-chrome zoom claim.
   await page.evaluate(() => { document.documentElement.style.zoom = '2'; }); await fit('200% CSS layout zoom');
-  assert.equal(await button('Copy snippet').isVisible(), true); await capture('installation-layout-zoom-200');
+  assert.equal(await button('Copy code').isVisible(), true); await capture('installation-layout-zoom-200');
   await page.evaluate(() => { document.documentElement.style.zoom = ''; });
   await page.emulateMedia({forcedColors:'active', reducedMotion:'reduce'});
   await skip.focus(); assert.notEqual(await skip.evaluate(element => getComputedStyle(element).outlineStyle), 'none');
@@ -391,8 +391,8 @@ try {
   // The shared shell presents the rail as a complementary landmark, or as a modal dialog while the narrow drawer is open.
   const side = page.locator('aside[aria-label="Application navigation"]');
   const workspaceSelect = side.getByRole('combobox', {name:'Workspace', exact:true});
-  const projectSelect = side.getByRole('combobox', {name:'Project', exact:true});
-  const createProject = side.getByRole('link', {name:'Create project in Shell fixture workspace', exact:true});
+  const projectSelect = side.getByRole('combobox', {name:'Website', exact:true});
+  const createProject = side.getByRole('link', {name:'Add website in Shell fixture workspace', exact:true});
   const settingsLink = side.getByRole('link', {name:'Settings', exact:true});
   const projectSections = side.getByRole('navigation', {name:'Sections', exact:true});
   const accountTrigger = page.getByRole('button', {name:'Account menu', exact:true});
