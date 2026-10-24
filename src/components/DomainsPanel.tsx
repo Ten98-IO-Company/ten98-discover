@@ -425,7 +425,7 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
                 You can still add public domain entries below.
               </p>
             )}
-            <details><summary>Technical details</summary><p className="hint">The project origin is fixed. DNS ownership is a point-in-time proof and is not required to use the tracker at that exact origin. Verifying it does not change DNS, discover backlinks or confirm that the tracker is installed.</p></details>
+            <Disclosure summary="Technical details" variant="plain"><p className="hint">The project origin is fixed. DNS ownership is a point-in-time proof and is not required to use the tracker at that exact origin. Verifying it does not change DNS, discover backlinks or confirm that the tracker is installed.</p></Disclosure>
           </section>
 
           {proof && (
@@ -603,11 +603,11 @@ function DomainsPanelInner({projectId, onUnauthorized, onInstallTracker}: Props)
                 ]} />
             </div>
           )}
-          <details><summary>About ownership and redirect checks</summary><p className="footnote">
+          <Disclosure summary="About ownership and redirect checks" variant="plain"><p className="footnote">
             Expected targets are intended configuration. A manual HTTP check observes only that moment’s redirect chain,
             never visitor counts, backlinks or JavaScript/meta-refresh navigation. “Control verified” records when a DNS
             proof matched. Serving eligibility changes require visitors to renew consent.
-          </p></details>
+          </p></Disclosure>
 
           {edit && editingDomain && (
             <form className="field" onSubmit={onSaveEdit} aria-label={`Edit ${editingDomain.hostname}`}>

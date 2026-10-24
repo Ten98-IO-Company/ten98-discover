@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import {Disclosure} from '@ten98/ui';
 
 export type ScheduleForm = { interval:'daily'|'weekly'|'monthly'; timezone:string; hour:string; minute:string; weekday:string; consent:boolean };
 export type ScheduleInfo = { enabled:boolean; approvalStale:boolean; interval:'manual'|'daily'|'weekly'|'monthly'; timezone:string|null; hour:number|null; minute:number|null; weekday:number|null; nextDueAt:string|null; approval:null|{id:string;approvedAt:string|null;approvedByUserId:string;connectionId:string;connectionName?:string}; staleReasons:string[] };
@@ -65,8 +66,7 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
       <p style={{margin:0}}><strong>{schedule.enabled ? (schedule.approvalStale ? 'Approval needs review' : 'Approved schedule') : 'Schedule disabled'}</strong></p>
       <p style={{margin:0}}>Next due: {schedule.nextDueAt !== null ? schedule.nextDueAt + ' UTC' : 'Not scheduled'}</p>
      </div>
-     <details>
-      <summary>Current grant details</summary>
+     <Disclosure summary="Current grant details" variant="plain">
       <dl>
       <dt>Interval</dt>
       <dd>{INTERVAL_LABELS[schedule.interval]}</dd>
@@ -89,7 +89,7 @@ export function RankScheduleView(props:RankScheduleViewProps): React.JSX.Element
        </>
       )}
       </dl>
-     </details>
+     </Disclosure>
      {schedule.approvalStale && schedule.staleReasons.length > 0 && (
       <ul>
        {schedule.staleReasons.map((reason) => <li key={reason}>{STALE_REASONS[reason] ?? 'Approval needs a fresh review.'}</li>)}

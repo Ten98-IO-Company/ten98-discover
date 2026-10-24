@@ -1,5 +1,5 @@
 import {AppIcon} from '@ten98/ui/app';
-import { useConfirmDialog } from '@ten98/ui'
+import { Disclosure, useConfirmDialog } from '@ten98/ui'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError, errMsg } from '../lib/api';
 import { httpUrl } from './OidcSignIn';
@@ -304,7 +304,7 @@ function AccountSection({providers, identities, hasPassword, busy, mutate, reloa
             <section className="panel integration-settings-card identity-provider-card" key={i.id}>
               <div className="provider-settings-heading"><span className="provider-initial">{Array.from(i.providerName.trim())[0]?.toUpperCase() || 'I'}</span><div><h3>{i.providerName}</h3><p>Linked sign-in method</p></div>{i.enabled ? <span className="pill badge good configured">Enabled</span> : <span className="pill badge bad not-connected">Disabled</span>}</div>
               <dl className="identity-details"><dt>Issuer</dt><dd className="mono">{i.issuer}</dd><dt>Subject</dt><dd className="mono">{i.subject}</dd></dl>
-              {hasPassword && <details><summary>Remove…</summary><p className="hint field-help">Confirm with your password to remove this sign-in method.</p><ProofFields busy={busy} submit="Remove identity" onProof={remove(i.id)} /></details>}
+              {hasPassword && <Disclosure summary="Remove…" variant="plain"><p className="hint field-help">Confirm with your password to remove this sign-in method.</p><ProofFields busy={busy} submit="Remove identity" onProof={remove(i.id)} /></Disclosure>}
             </section>
           ))}
         </div>
@@ -455,11 +455,10 @@ function OperatorSection({data, busy, mutate, reload}: {
               <div className="provider-settings-heading"><span className="provider-initial">{Array.from(p.settings.name.trim())[0]?.toUpperCase() || 'I'}</span><div><h3>{p.settings.name}</h3><p>{p.settings.issuer}</p></div>{p.enabled ? <span className="pill badge good configured">Enabled</span> : <span className="pill badge bad not-connected">Disabled</span>}</div>
               <p className="provider-source">Draft revision {p.revision} · Live revision {p.activeRevision ?? 'none'}{p.testedRevision != null && ` · Tested revision ${p.testedRevision}`}{p.testedAt && ` (${new Date(p.testedAt).toLocaleString()})`}</p>
               <div className="button-wrap"><button type="button" className="btn button ghost" disabled={busy} onClick={() => edit(p)}>Edit draft</button>{p.enabled && <button type="button" className="btn button ghost" disabled={busy} onClick={() => void disable(p)}>Disable</button>}</div>
-              <details>
-                <summary>Test sign-in</summary>
+              <Disclosure summary="Test sign-in" variant="plain">
                 <p className="hint field-help">Confirm with your password to start a test sign-in at the provider.</p>
                 <ProofFields busy={busy || vaultMissing} submit="Start test sign-in" onProof={test(p.id)} />
-              </details>
+              </Disclosure>
             </div>
           ))}
         </>
@@ -491,8 +490,7 @@ function OperatorSection({data, busy, mutate, reload}: {
             <option value="post">Form body / public client</option>
           </select>
         </div>
-        <details>
-          <summary>Advanced network options</summary>
+        <Disclosure summary="Advanced network options" variant="plain">
           <div className="field">
             <label htmlFor={fid + '-o'}>Additional allowed origins — HTTPS, one per line, max 8</label>
             <textarea id={fid + '-o'} rows={3} value={origins} onChange={e => setOrigins(e.target.value)} />
@@ -508,7 +506,7 @@ function OperatorSection({data, busy, mutate, reload}: {
             </label>
             <p className="hint field-help">Uses the provider's verified email to confirm invited users only. It never merges existing accounts.</p>
           </div>
-        </details>
+        </Disclosure>
         {saved && <p role="status" className="hint field-help">Draft saved. It does not change the live provider until it is enabled after a successful test sign-in.</p>}
         <div className="row button-wrap">
           <button type="submit" className="btn button primary" disabled={busy || vaultMissing}>{editingId ? 'Save draft' : 'Create draft'}</button>

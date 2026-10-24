@@ -1,4 +1,5 @@
 import {readResponseText} from '@ten98/runtime';
+import {Disclosure} from '@ten98/ui';
 import {useId,useState} from 'react';
 import {AppField} from '@ten98/ui/app';
 import {ApiError,errMsg} from '../lib/api';
@@ -62,7 +63,7 @@ export function GoogleInspectionPanel({projectId,connection,ops}:{projectId:stri
     <p>Google verdict: {row.result.indexStatusResult?.verdict??'Unavailable'} · Coverage: {row.result.indexStatusResult?.coverageState??'Unavailable'}</p>
     <p>Google canonical: <bdi dir="ltr">{row.result.indexStatusResult?.googleCanonical??'Unavailable'}</bdi></p><p>Last crawl: <bdi dir="ltr">{row.result.indexStatusResult?.lastCrawlTime??'Unavailable'}</bdi></p>
     {row.result.inspectionResultLink&&<a href={row.result.inspectionResultLink} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',minHeight:44}}>Open this inspection in Search Console</a>}
-    <details><summary style={{minHeight:44,cursor:'pointer'}}>Full Google inspection details</summary>{([['Index and crawl','indexStatusResult'],['AMP','ampResult'],['Mobile usability (deprecated by Google)','mobileUsabilityResult'],['Rich results','richResultsResult']] as const).map(([label,key])=><section key={key}><h5>{label}</h5>{row.result?.[key]?<Fields value={row.result[key]}/>:<p>Not provided by Google. This does not establish a pass or failure.</p>}</section>)}</details>
+    <Disclosure summary="Full Google inspection details" variant="plain">{([['Index and crawl','indexStatusResult'],['AMP','ampResult'],['Mobile usability (deprecated by Google)','mobileUsabilityResult'],['Rich results','richResultsResult']] as const).map(([label,key])=><section key={key}><h5>{label}</h5>{row.result?.[key]?<Fields value={row.result[key]}/>:<p>Not provided by Google. This does not establish a pass or failure.</p>}</section>)}</Disclosure>
    </>}</article>)}
   </section>}
  </div></details>;
