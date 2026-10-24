@@ -132,7 +132,9 @@ async function limitWindow(key: string, maximum: number, minutes: number) {
  */
 export const collectorLimits = { client: 1200, site: { collector: 3000, heatmap: 3000, replay: 3000, 'tracking-config': 600 }, global: 60000 } as const;
 
-let collectorClientLimitNoticed = false;
+// Once per process: the Nitro entry (collector middleware) and the TanStack Start bundle each have a copy of this module.
+const collectorClientLimitNotice = Symbol.for('ten98-monitor.collector-client-limit-notice');
+const noticed = globalThis as typeof globalThis & { [collectorClientLimitNotice]?: true };
 
 /** The project a public site key names when the request origin is allowed for it, or null. */
 async function collectionProject(siteKey: string, origin: string): Promise<{ id: string } | null> {
@@ -284,8 +286,8 @@ export async function handleApi(request: Request): Promise<Response> {
       // Per client only where an address identifies one visitor; otherwise the per-site and global limits apply alone.
       const clientKey = visitorRateKey(request, 'collector');
       if (clientKey) await limit(clientKey, collectorLimits.client);
-      else if (!collectorClientLimitNoticed && !clientAddressesIdentifyVisitors()) {
-        collectorClientLimitNoticed = true;
+      else if (!noticed[collectorClientLimitNotice] && !clientAddressesIdentifyVisitors()) {
+        noticed[collectorClientLimitNotice] = true;
         console.warn('Per-client collection limiting is off until TRUSTED_PROXIES or ANALYTICS_TRUSTED_PROXIES names the reverse proxy (or ANALYTICS_NETWORK_MODE=direct when there is none).');
       }
       cors = { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Content-Type', 'access-control-max-age': '300' };
