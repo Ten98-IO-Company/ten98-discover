@@ -24,3 +24,11 @@ test('navigable http URLs keep the loopback-only plain-http rule and now refuse 
   for(const url of ['https://id.example.test/authorize','http://localhost:3000/a','http://127.0.0.1/a','http://[::1]/a'])assert.equal(navigableHttpUrl(url),new URL(url).href,url);
   for(const url of ['http://id.example.test/a','http://127.0.0.2/a','ftp://id.example.test/a','https://u:p@id.example.test/a','https://id.example.test/a#x','https://id.example.test/a#',''])assert.equal(navigableHttpUrl(url),null,url);
 });
+
+test('the OIDC recovery panel navigates only through the shared navigable-URL check',async()=>{
+  const {readFile}=await import('node:fs/promises');
+  const source=await readFile(new URL('../src/components/OidcRecoveryPanel.tsx',import.meta.url),'utf8');
+  assert.match(source,/import\s*\{[^}]*\bnavigableHttpUrl\b[^}]*\}\s*from\s*'\.\.\/lib\/oidc-authorization(\.ts)?'/);
+  assert.doesNotMatch(source,/protocol\s*!==\s*'https:'/,'no hand-copied protocol check that skips the fragment rule');
+  assert.equal(navigableHttpUrl('https://id.example.test/authorize?state=s#'),null);
+});
