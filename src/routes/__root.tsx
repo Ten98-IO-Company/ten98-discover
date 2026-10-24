@@ -1,4 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router';
+import {ToastProvider} from '@ten98/ui';
 import { getConfig } from '../server/config.ts';
 import stylesheet from '../styles.css?url';
 
@@ -19,5 +20,5 @@ export const Route = createRootRoute({
     // ponytail: no includeSubDomains/preload because setup admits apex APP_URLs that may own plain-HTTP subdomains; adding them is an owner decision.
     ...(getConfig().appUrl.startsWith('https:') ? { 'strict-transport-security': 'max-age=31536000' } : {}),
   } : {},
-  component: () => <html lang="en"><head><HeadContent /></head><body><Outlet /><Scripts /></body></html>,
+  component: () => <html lang="en"><head><HeadContent /></head><body><ToastProvider><Outlet /></ToastProvider><Scripts /></body></html>,
 });

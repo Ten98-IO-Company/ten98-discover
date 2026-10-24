@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import {Disclosure} from '@ten98/ui';
 import type {WorkspaceRole} from '@ten98/runtime';
 
 export type RankObservationFilters={device:'both'|'desktop'|'mobile';search:string;pinned:'all'|'true'|'false'};
@@ -62,7 +63,7 @@ export function RankHistoryView(p:RankHistoryViewProps):React.JSX.Element{
       <Scope target={p.target} devices={p.enabledDevices} asOf={p.asOf}/>
       <p className="dim">{p.appliedFilters}</p>
       {p.filterDirty&&<p className="hint">Apply filters to update these observations.</p>}
-      <details key="latest-filters"><summary>Observation filters</summary>
+      <Disclosure key="latest-filters" summary="Observation filters" variant="plain">
         <form className="stack" onSubmit={submit}>
           <div className="row" style={{flexWrap:'wrap'}}>
             <DeviceField id={p.prefix+'device'} value={p.filters.device} onChange={v=>p.onFilters({...p.filters,device:v})}/>
@@ -77,7 +78,7 @@ export function RankHistoryView(p:RankHistoryViewProps):React.JSX.Element{
             <button type="submit" className="btn primary">Apply filters</button>
           </div>
         </form>
-      </details>
+      </Disclosure>
       <div className="table-wrap" role="region" aria-label="Latest rank observations" tabIndex={0}>
         <table style={{minWidth:1410,tableLayout:'fixed'}}>
           <colgroup>{[180,90,200,220,180,180,180,180].map((width,i)=><col key={i} style={{width}}/>)}</colgroup>
@@ -103,14 +104,14 @@ export function RankHistoryView(p:RankHistoryViewProps):React.JSX.Element{
       <Scope target={p.target} devices={p.enabledDevices}/>
       <p className="dim">{p.appliedFilters}</p>
       {p.filterDirty&&<p className="hint">Apply filters to update these observations.</p>}
-      <details key="history-filters"><summary>History filters</summary>
+      <Disclosure key="history-filters" summary="History filters" variant="plain">
         <form className="stack" onSubmit={submit}>
           <div className="row" style={{flexWrap:'wrap'}}>
             <DeviceField id={p.prefix+'device'} value={p.filters.device} onChange={v=>p.onFilters({...p.filters,device:v})}/>
           </div>
           <div className="row"><button type="submit" className="btn primary">Apply device filter</button></div>
         </form>
-      </details>
+      </Disclosure>
       <p className="hint">History includes failed and incompatible attempts. Opening a check does not run it again.</p>
       <div className="table-wrap" role="region" aria-label="Keyword rank history" tabIndex={0}>
         <table style={{minWidth:1430,tableLayout:'fixed'}}>

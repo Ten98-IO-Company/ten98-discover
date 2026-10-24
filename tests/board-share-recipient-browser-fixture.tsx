@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {ToastProvider} from '@ten98/ui';
 import {createRoot} from 'react-dom/client';
 import {createRootRoute,createRoute,createRouter,RouterProvider,Outlet,useLocation} from '@tanstack/react-router';
 import {SharedBoardRoute} from '../src/routes/share/boards/$slug';
@@ -29,4 +30,4 @@ record('after-create-router');
 router.history.subscribe(({location,action})=>record('history-'+action.type,undefined,{pathname:location.pathname,searchStr:location.search,hash:location.hash,state:location.state}));
 declare global{interface Window{boardShareInitial?:{atMs:number;hashLength:number;hashCategory:string;hasEntry:boolean};boardShareFixture:{navigate:(href:string)=>Promise<void>;diagnostics:()=>{initial:Window['boardShareInitial'];events:EntryDiagnostic[];readyState:string;loadingShell:boolean;alerts:number;cards:number}}}}
 window.boardShareFixture={navigate:async href=>{await router.navigate({href});},diagnostics:()=>{record('snapshot');return{initial:window.boardShareInitial,events:[...events],readyState:document.readyState,loadingShell:document.body.textContent?.includes('Loading shared board…')??false,alerts:document.querySelectorAll('[role="alert"]').length,cards:document.querySelectorAll('.board-result').length};}};
-createRoot(document.getElementById('root')!).render(<RouterProvider router={router}/>);
+createRoot(document.getElementById('root')!).render(<ToastProvider>{<RouterProvider router={router}/>}</ToastProvider>);

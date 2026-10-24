@@ -1,4 +1,5 @@
 import {createRoot} from 'react-dom/client';
+import {ToastProvider} from '@ten98/ui';
 import {createRootRoute,createRouter,Outlet,RouterProvider} from '@tanstack/react-router';
 import {Route as applicationRoute} from '../src/routes/index';
 import '../src/styles.css';
@@ -8,4 +9,4 @@ import '../src/styles.css';
 const root=createRootRoute({component:()=> <Outlet/>});
 const index=applicationRoute.update({id:'/',path:'/',getParentRoute:()=>root} as any);
 const router=createRouter({routeTree:root.addChildren([index])});
-createRoot(document.getElementById('root')!).render(<RouterProvider router={router}/>);
+createRoot(document.getElementById('root')!).render(<ToastProvider><RouterProvider router={router}/></ToastProvider>);

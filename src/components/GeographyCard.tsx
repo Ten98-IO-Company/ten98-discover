@@ -1,6 +1,6 @@
 import {useEffect,useId,useRef,useState} from 'react';
 import {geographyFields,geographyName,geographySearch,geographyKey,parseGeographyKey,serializeGeographyKey,type GeographyObservation,type GeoField,type GeoCountryKey,type GeographyFilters,type GeographyKey,type GeographyReport,type GeographyRow,type GeographyDetail,type GeographyDetailIntent} from '../lib/analytics-geography';
-import {CountryMap as SharedCountryMap,Text} from '@ten98/ui';
+import {CountryMap as SharedCountryMap,Text,Disclosure} from '@ten98/ui';
 import shapes from '../lib/country-paths.json';
 import {GeographyAttribution} from './GeographyAttribution';
 import type {EnvironmentFilters} from '../lib/analytics-environment';
@@ -22,7 +22,7 @@ export function geographyLabel(key:GeographyKey,regionName:string|null=null):str
   return 'city'in key?`${key.city} · ${region} · ${country}`:'region'in key?`${region} · ${country}`:country;
 }
 export function GeographyObservationDetails({value}:{value:GeographyObservation|null}){
-  return <div className="geography-observation">{geographyFields.map(field=><p key={field}>{geographyLabels[field]}: <bdi>{geographyLabel(geographyKey(field,value),value?.region?.name??null)}</bdi></p>)}{value&&<><p className="hint">Approximate · DB-IP City Lite build {new Date(value.databaseBuild*1000).toISOString().slice(0,10)}. Raw address and coordinates are not stored.</p><details><summary>Location evidence</summary><p>Version: {value.version}</p><p>Database SHA-256: <bdi dir="ltr" className="mono">{value.databaseSha256}</bdi></p></details></>}</div>;
+  return <div className="geography-observation">{geographyFields.map(field=><p key={field}>{geographyLabels[field]}: <bdi>{geographyLabel(geographyKey(field,value),value?.region?.name??null)}</bdi></p>)}{value&&<><p className="hint">Approximate · DB-IP City Lite build {new Date(value.databaseBuild*1000).toISOString().slice(0,10)}. Raw address and coordinates are not stored.</p><Disclosure summary="Location evidence" variant="plain"><p>Version: {value.version}</p><p>Database SHA-256: <bdi dir="ltr" className="mono">{value.databaseSha256}</bdi></p></Disclosure></>}</div>;
 }
 
 function geographyRowCounts(rows:unknown[],field:GeoField){

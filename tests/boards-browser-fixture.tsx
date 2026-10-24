@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {ToastProvider} from '@ten98/ui';
 import {createRoot} from 'react-dom/client';
 import {BoardsPanel} from '../src/components/BoardsPanel';
 import {RevenuePanel} from '../src/components/RevenuePanel';
@@ -37,4 +38,4 @@ const boardRoot=createRootRoute({component:()=> <Outlet/>});
 const boardIndex=createRoute({getParentRoute:()=>boardRoot,path:'/',component:Fixture});
 const boardAway=createRoute({getParentRoute:()=>boardRoot,path:'/away',component:()=> <h1>Outside boards fixture</h1>});
 const boardRouter=createRouter({routeTree:boardRoot.addChildren([boardIndex,boardAway])});
-createRoot(document.getElementById('root')!).render(<RouterProvider router={window.boardsScope?.mode==='revenue'?revenueRouter:boardRouter}/>);
+createRoot(document.getElementById('root')!).render(<ToastProvider>{<RouterProvider router={window.boardsScope?.mode==='revenue'?revenueRouter:boardRouter}/>}</ToastProvider>);
