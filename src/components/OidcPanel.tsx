@@ -18,12 +18,13 @@ function lines(s: string): string[] {
   return s.split('\n').map(x => x.trim()).filter(Boolean);
 }
 
-export function OidcPanel(props: {userId: string; instanceOperator: boolean; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void}) {
+// 'account' shows the signed-in user's own sign-in methods; 'operator' shows the installation's identity providers.
+export function OidcPanel(props: {userId: string; instanceOperator: boolean; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void; part?: 'all' | 'account' | 'operator'}) {
   // Remount wipes all inner state (including any typed secrets) when the account or role changes.
   return <PanelInner key={props.userId + '|' + String(props.instanceOperator)} {...props} />;
 }
 
-function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofHandled}: {userId: string; instanceOperator: boolean; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void}) {
+function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofHandled, part = 'all'}: {userId: string; instanceOperator: boolean; proofId?: string; onUnauthorized: () => void; onProofHandled: () => void; part?: 'all' | 'account' | 'operator'}) {
   const cb = useRef({onUnauthorized, onProofHandled});
   cb.current = {onUnauthorized, onProofHandled};
 
@@ -184,8 +185,8 @@ function PanelInner({userId, instanceOperator, proofId, onUnauthorized, onProofH
           onExpire={() => setProofState('expired')}
         />
       )}
-      <AccountSection providers={publicProviders} identities={identities} hasPassword={hasPassword} busy={busy} mutate={mutate} reload={reload} />
-      {instanceOperator && (opData
+      {part !== 'operator' && <AccountSection providers={publicProviders} identities={identities} hasPassword={hasPassword} busy={busy} mutate={mutate} reload={reload} />}
+      {part !== 'account' && instanceOperator && (opData
         ? <OperatorSection data={opData} busy={busy} mutate={mutate} reload={reload} />
         : (
           <section className="panel settings-panel integration-settings-card">

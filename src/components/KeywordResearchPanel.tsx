@@ -333,16 +333,16 @@ function Panel({workspaceId,projectId,onUnauthorized,active,onLockChange,onSaveR
   if(quoteExpired)startBlockers.push('the quote expired — prepare a new one');
 
   return <section className="research-panel keyword-research stack" style={{display:'grid',gap:16,minWidth:0}} aria-busy={busy} aria-label="Keyword research">
-    <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>{st.connections.length===0?'Set up DataForSEO':'AI and search providers'}</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
-    {!isOwner&&<p className="hint">Ask a workspace owner to manage AI and search providers or the paid-work pause. Your current role can still view saved results.</p>}
+    <div className="row between"><h2>Keyword research</h2><div className="row">{isOwner&&<Link className="btn ghost" to="/" search={{workspace:workspaceId,project:projectId,view:'providers'}} aria-disabled={writing||undefined} onClick={event=>{if(activeRef.current?.write)event.preventDefault();}}>{st.connections.length===0?'Set up DataForSEO':'Connections'}</Link>}<button type="button" className="btn ghost" onClick={()=>void reloadAccess()} disabled={writing}>Reload access</button></div></div>
+    {!isOwner&&<p className="hint">Ask a workspace owner to manage Connections or the paid-work pause. Your current role can still view saved results.</p>}
     {st.spendingPaused&&<div className="alert" role="alert">Spending is paused for this workspace. Saved history and results below remain available; new paid research is disabled.</div>}
     {msg&&<p role="status">{msg}</p>}
     {(err||loadErr)&&<div className="alert" role="alert">{err||loadErr}</div>}
 
     {canResearch&&(!st.vaultConfigured?
-      <div className="alert" role="alert">Credential storage is not configured. Ask the installation operator to enable it, then ask a workspace owner to add a DataForSEO connection in AI and search providers. Adding a connection cannot fix missing credential storage.</div>
+      <div className="alert" role="alert">Credential storage is not configured. Ask the installation operator to enable it, then ask a workspace owner to add a DataForSEO connection in Settings › Connections. Adding a connection cannot fix missing credential storage.</div>
     :st.connections.length===0?
-      <div className="alert" role="alert">No DataForSEO connection is saved yet. {isOwner ? 'Choose Set up DataForSEO to add one, then return here.' : 'Ask a workspace owner to add one in AI and search providers, then reload access.'}</div>
+      <div className="alert" role="alert">No DataForSEO connection is saved yet. {isOwner ? 'Choose Set up DataForSEO to add one, then return here.' : 'Ask a workspace owner to add one in Settings › Connections, then reload access.'}</div>
     :
       <details className="card" open={formOpen} onToggle={event=>setFormOpen(event.currentTarget.open)}><summary>New keyword research</summary><form className="stack" onSubmit={prepareQuote}><fieldset disabled={writing||lostStart} style={{border:0,padding:0,minWidth:0,display:'grid',gridTemplateColumns:'minmax(0,1fr)',gap:14}}><legend>Research inputs</legend>
         <div>

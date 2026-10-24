@@ -192,11 +192,11 @@ try{
     stage='A to B to A stale response isolation';
     for(const status of [undefined,401]){
       const held=await holdList(page,base+'/list',status);await savedPanel(page).getByRole('button',{name:'Reload list',exact:true}).click();await bounded(held.entered);
-      await projectSection(page,group.other,'Keywords');await openSaved(page);await savedPanel(page).getByRole('heading',{name:'0 matching keywords',exact:true}).waitFor();
-      if(status){await projectSection(page,group.main,'Keywords');await openSaved(page);await table(page).locator('tbody tr').filter({hasText:'scope secret fixture'}).waitFor();}
+      await projectSection(page,group.other,'Search','Keywords');await openSaved(page);await savedPanel(page).getByRole('heading',{name:'0 matching keywords',exact:true}).waitFor();
+      if(status){await projectSection(page,group.main,'Search','Keywords');await openSaved(page);await table(page).locator('tbody tr').filter({hasText:'scope secret fixture'}).waitFor();}
       held.release();await held.dispose();await page.waitForTimeout(100);
       assert.equal(await page.getByText('Synthetic stale saved list.',{exact:true}).count(),0);assert.ok(await page.getByRole('button',{name:'Sign out',exact:true}).isVisible());
-      if(!status){assert.equal(await table(page).count(),0);await projectSection(page,group.main,'Keywords');await openSaved(page);await table(page).waitFor();}
+      if(!status){assert.equal(await table(page).count(),0);await projectSection(page,group.main,'Search','Keywords');await openSaved(page);await table(page).waitFor();}
     }
     stage='live viewer downgrade and cross-tab access removal';
     await changeRole(group.workspace.id,fixture.bootstrap.id,group.owner.id,{role:'viewer'});

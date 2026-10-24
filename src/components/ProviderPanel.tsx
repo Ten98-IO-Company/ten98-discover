@@ -364,7 +364,7 @@ function ProviderPanelInner({ workspaceId, onUnauthorized }: ProviderPanelProps)
           <div className="card">
             <h2>Connections</h2>
             <p className="hint">ten98 Discover is free and MIT licensed. These controls only manage charges from your external API providers.</p>
-            <p className="hint">OpenRouter supplies AI model answers. DataForSEO supplies keyword research and search rankings. These credentials are separate from ten98 API access keys.</p>
+            <p className="hint">OpenRouter supplies AI model answers. DataForSEO supplies keyword research and search rankings. These credentials are separate from API keys.</p>
             <p className="hint">Run check contacts the provider's read-only account endpoint. It does not start paid work and never runs automatically.</p>
             <p>Paid provider work is {data.budget.paused ? 'paused' : 'not paused'}. <button type="button" className="btn ghost" onClick={() => document.getElementById('provider-budget')?.focus()}>Review spending</button></p>
             <p className="hint">A passed check does not start paid work; each paid run needs its own quote and Start. ten98 sets no spending limit; set budgets and add credits at OpenRouter or DataForSEO.</p>

@@ -80,7 +80,7 @@ export type BoardDimensionResult={version:'native-board-dimension-v1';projectId:
 };
 export type BoardSummaryResult={version:'native-board-summary-v1';projectId:string;scope:string;
  range:BoardActivityResult['range'];coverage:BoardCoverage;
- method:{population:'selected-retained-observations';visits:'project-visitor-visit-pair';customSuppression:'whole-window-retained-custom-events';duration:'selected-pageview-span';historyComplete:false};
+ method:{population:'selected-retained-observations';visits:'project-visitor-visit-pair';customSuppression:'whole-window-retained-custom-events';duration:'matching-visit-pageview-span';historyComplete:false};
  totals:AnalyticsPeriodReport['totals'];measurement:AnalyticsPeriodReport['measurement'];
 };
 

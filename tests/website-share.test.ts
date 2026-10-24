@@ -13,7 +13,7 @@ function report():AnalyticsReport{
  const berlin={kind:'code' as const,value:'DE-BE'};
  return {range:{...range,timeZone:'UTC'},totals:{pageViews:5,customEvents:2},coverage:{status:'partial',retainedFrom:'2026-01-01T12:00:00.123456Z'},
   collection:{mode:'consent-first',captureCoverage:'unknown',pageViews:{cookieless:1,consent:4,unknown:0}},
-  measurement:{version:'umami-3.4-hour-cache-v1',identifiedPageViews:4,unidentifiedPageViews:1,visitors:2,visits:3,bounceRate:33.333,averageVisitSeconds:12.5},
+  measurement:{version:'umami-3.4-visit-scoped-v2',identifiedPageViews:4,unidentifiedPageViews:1,visitors:2,visits:3,bounceRate:33.333,averageVisitSeconds:12.5},
   daily:[{date:'2026-01-01',pageViews:3,customEvents:1,coverage:'partial'},{date:'2026-01-02',pageViews:2,customEvents:1,coverage:'complete'}],
   pages:[{path:'/pricing',pageViews:3}],referrers:[{host:'search.example',pageViews:2,visitors:1}],events:[{name:'signup',count:2}],lastReceivedAt:'2026-01-02T10:00:00.000Z',
   environment:{version:'server-ua-environment-v1',filters:{},browsers:[environmentRow('chrome',4),environmentRow(null,1)],operatingSystems:[environmentRow('Linux',5)],devices:[environmentRow('desktop',5)],

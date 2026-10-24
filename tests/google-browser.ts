@@ -64,23 +64,26 @@ try {
       await page.getByLabel('Password', { exact: true }).fill(fixture.password);
       await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       await page.locator('aside.t98-shell-sidebar').getByRole('combobox', { name: 'Workspace', exact: true }).selectOption(fixture.workspaceId);
-      await page.getByRole('heading', { name: 'Web analytics', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Overview', exact: true, level: 1 }).waitFor();
       async function navigation() { const toggle = page.getByRole('button', { name: /^(Menu|Close menu)$/ }); if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click(); }
-      async function section(name: string) { await navigation(); await page.getByRole('navigation', { name: 'Project sections', exact: true }).getByRole('link', { name, exact: true }).click(); }
+      // Google reports is the Google tab of the Search section: open the section from the sidebar, then its tab.
+      async function section(name: string, tab: string) { await navigation(); await page.locator('aside.t98-shell-sidebar').getByRole('navigation', { name: 'Sections', exact: true }).getByRole('link', { name, exact: true }).click(); await page.getByRole('navigation', { name: `${name} pages`, exact: true }).getByRole('link', { name: tab, exact: true }).click(); }
+      const googleTab = () => page.getByRole('navigation', { name: 'Search pages', exact: true }).getByRole('link', { name: 'Google', exact: true });
       async function settings(name: string) {
         await navigation();
         await page.locator('aside.t98-shell-sidebar').getByRole('link', { name: 'Settings', exact: true }).click();
         await page.getByRole('navigation', { name: 'Settings sections', exact: true }).getByRole('link', { name, exact: true }).click();
       }
-      await settings('Google setup');
+      await settings('Google app');
       assert.equal(await page.getByLabel('Client secret', { exact: true }).inputValue(), '');
       assert.equal(await page.getByLabel(/Callback URI/).inputValue(), `${config.appUrl}/api/google/callback`);
-      await section('Google reports');
+      await section('Search', 'Google');
       assert.equal(await page.getByLabel('Connection name', { exact: true }).isVisible(), false, 'Existing reports take priority over adding another connection.');
       await page.getByText('Add a Google connection', { exact: true }).click();
       await page.getByLabel('Connection name', { exact: true }).fill('Browser Search Console');
       await page.getByRole('button', { name: 'Connect to Google', exact: true }).click();
-      await page.getByRole('heading', { name: 'Google reports', exact: true }).waitFor();
+      await page.getByRole('heading', { name: 'Search', exact: true, level: 1 }).waitFor();
+      assert.equal(await googleTab().getAttribute('aria-current'), 'page', 'The callback returns to the Google tab.');
       await page.getByText('Browser Search Console', { exact: true }).waitFor();
       await page.getByRole('status').filter({ hasText: 'Google authorization returned.' }).waitFor();
       assert.equal(await page.getByRole('alert').filter({ hasText: 'Google authorization returned.' }).count(), 0, 'A successful return must not be announced as an error.');
@@ -237,8 +240,8 @@ try {
       await page.getByRole('heading', { name: 'Account', exact: true }).waitFor();
       await context.unroute(targetPath, holdTarget);
       await delay(150);
-      assert.equal(await page.getByRole('heading', { name: 'Google reports', exact: true }).count(), 0, 'Delayed callback project loading must not override newer account navigation.');
-      await settings('Retention');
+      assert.equal(await page.getByRole('heading', { name: 'Search', exact: true, level: 1 }).count() + await googleTab().count(), 0, 'Delayed callback project loading must not override newer account navigation.');
+      await settings('Data retention');
       await page.getByRole('button',{name:'Preview cleanup',exact:true}).click();
       for(const name of ['Analytics and identities','Imported reports and research','AI answers and other evidence'])await page.getByRole('heading',{name,exact:true}).waitFor();
       const expiryDetails=page.getByText('What stays and how expiry works',{exact:true});
@@ -268,8 +271,8 @@ try {
         const gaContext=await browser.newContext({viewport:{width:1280,height:900}});let gaExternal=0,gaErrors=0;
         try{
           await gaContext.route('**/*',(route:any)=>{if(new URL(route.request().url()).origin!==config.appUrl){gaExternal++;return route.abort();}return route.continue();});
-          const gaPage=await gaContext.newPage();gaPage.setDefaultTimeout(15000);gaPage.on('pageerror',()=>gaErrors++);await gaPage.goto(config.appUrl);await gaPage.getByLabel('Email address', { exact: true }).fill(ga4.email);await gaPage.getByLabel('Password',{exact:true}).fill(ga4.password);await gaPage.getByRole('button',{name:'Sign in',exact:true}).click();await gaPage.getByRole('heading',{name:'Web analytics',exact:true}).waitFor();
-          assert.equal(await gaPage.locator('aside.t98-shell-sidebar').getByRole('combobox',{name:'Workspace',exact:true}).inputValue(),ga4.workspaceId);const menu=gaPage.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await gaPage.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Google reports',exact:true}).click();
+          const gaPage=await gaContext.newPage();gaPage.setDefaultTimeout(15000);gaPage.on('pageerror',()=>gaErrors++);await gaPage.goto(config.appUrl);await gaPage.getByLabel('Email address', { exact: true }).fill(ga4.email);await gaPage.getByLabel('Password',{exact:true}).fill(ga4.password);await gaPage.getByRole('button',{name:'Sign in',exact:true}).click();await gaPage.getByRole('heading',{name:'Overview',exact:true,level:1}).waitFor();
+          assert.equal(await gaPage.locator('aside.t98-shell-sidebar').getByRole('combobox',{name:'Workspace',exact:true}).inputValue(),ga4.workspaceId);const menu=gaPage.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await gaPage.locator('aside.t98-shell-sidebar').getByRole('navigation',{name:'Sections',exact:true}).getByRole('link',{name:'Search',exact:true}).click();await gaPage.getByRole('navigation',{name:'Search pages',exact:true}).getByRole('link',{name:'Google',exact:true}).click();
           const source=gaPage.locator('section.google-connection').filter({has:gaPage.getByRole('heading',{name:'GA4 report inventory',exact:true})});await gaPage.getByLabel('Google source',{exact:true}).selectOption(ga4.connectionId);await source.getByText('Import a snapshot',{exact:true}).click();await source.getByLabel('Report',{exact:true}).waitFor();
           for(const [report,label,column]of [['ga4_pages','Pages and screens','Page path and screen class'],['ga4_acquisition','Traffic acquisition','Session campaign'],['ga4_key_events','Key events','Is key event']]){
             await source.getByLabel('Report',{exact:true}).selectOption(report);await source.getByLabel('Start date',{exact:true}).fill('2024-03-01');await source.getByLabel('End date',{exact:true}).fill('2024-03-01');
@@ -285,8 +288,8 @@ try {
         const organicContext=await browser.newContext({viewport:{width:1280,height:900}});let organicExternal=0,organicErrors=0;
         try{
           await organicContext.route('**/*',(route:any)=>{if(new URL(route.request().url()).origin!==config.appUrl){organicExternal++;return route.abort();}return route.continue();});
-          const op=await organicContext.newPage();op.setDefaultTimeout(15000);op.on('pageerror',()=>organicErrors++);await op.goto(config.appUrl);await op.getByLabel('Email address', { exact: true }).fill(organic.email);await op.getByLabel('Password',{exact:true}).fill(organic.password);await op.getByRole('button',{name:'Sign in',exact:true}).click();await op.getByRole('heading',{name:'Web analytics',exact:true}).waitFor();
-          const menu=op.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await op.getByRole('navigation',{name:'Project sections',exact:true}).getByRole('link',{name:'Google reports',exact:true}).click();await op.getByLabel('Google source',{exact:true}).selectOption(organic.connectionId);
+          const op=await organicContext.newPage();op.setDefaultTimeout(15000);op.on('pageerror',()=>organicErrors++);await op.goto(config.appUrl);await op.getByLabel('Email address', { exact: true }).fill(organic.email);await op.getByLabel('Password',{exact:true}).fill(organic.password);await op.getByRole('button',{name:'Sign in',exact:true}).click();await op.getByRole('heading',{name:'Overview',exact:true,level:1}).waitFor();
+          const menu=op.getByRole('button',{name:/^(Menu|Close menu)$/});if(await menu.isVisible()&&await menu.getAttribute('aria-expanded')==='false')await menu.click();await op.locator('aside.t98-shell-sidebar').getByRole('navigation',{name:'Sections',exact:true}).getByRole('link',{name:'Search',exact:true}).click();await op.getByRole('navigation',{name:'Search pages',exact:true}).getByRole('link',{name:'Google',exact:true}).click();await op.getByLabel('Google source',{exact:true}).selectOption(organic.connectionId);
           const source=op.locator('section.google-connection').filter({has:op.getByRole('heading',{name:'GA4 report inventory',exact:true})});await source.getByText('Import a snapshot',{exact:true}).click();
           for(const [report,label]of [['ga4_organic_landing','Organic landing pages'],['ga4_organic_daily','Organic overview by day'],['ga4_organic_weekly','Organic overview by week']]){
             await source.getByLabel('Report',{exact:true}).selectOption(report);await source.getByLabel('Start date',{exact:true}).fill('2024-03-01');await source.getByLabel('End date',{exact:true}).fill('2024-03-02');

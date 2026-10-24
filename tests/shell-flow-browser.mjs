@@ -136,12 +136,18 @@ try {
   const main = page.getByRole('main', {name:'Main content', exact:true});
   const button = name => main.getByRole('button', {name, exact:true});
   const heading = name => main.getByRole('heading', {name, exact:true, level:1});
+  // A report page's h1 names its section; the current tab in the section strip names the view.
+  const sectionTab = async (section, tab, scope = page.getByRole('main', {name:'Main content', exact:true})) => {
+    await scope.getByRole('heading', {name:section, exact:true, level:1}).waitFor();
+    assert.equal(await scope.getByRole('navigation', {name:section + ' pages', exact:true}).getByRole('link', {name:tab, exact:true}).getAttribute('aria-current'), 'page', tab + ' is the current ' + section + ' tab.');
+  };
   const eventPanel = () => main.locator('section[aria-labelledby="ev-h"]');
   const eventRegion = () => main.getByRole('region', {name:'Retained event rows table', exact:true});
   const snippetRegion = () => main.locator('pre[role="region"][aria-label="Tracking snippet"][tabindex="0"]');
-  const diagnostics = () => main.locator('details').filter({has:page.locator('summary', {hasText:/^Background worker diagnostics$/})});
+  const diagnostics = () => main.locator('section.diagnostics');
   const count = async expected => assert.equal((await eventPanel().locator('.big-num').innerText()).trim(), String(expected), 'Retained count stays exact.');
-  const fmt = value => page.evaluate(value => new Date(value).toLocaleString(), value);
+  // Retained event times are shown as report instants in UTC (YYYY-MM-DD HH:mm UTC), independent of the browser locale.
+  const fmt = value => { const iso = new Date(value).toISOString(); return `${iso.slice(0,10)} ${iso.slice(11,16)} UTC`; };
   const fit = async label => {
     const sizes = await page.evaluate(() => ({document:document.documentElement.scrollWidth, viewport:innerWidth}));
     if (sizes.document > sizes.viewport + 1) responsiveFindings.push(`${label}: document ${sizes.document}px exceeds viewport ${sizes.viewport}px.`);
@@ -162,10 +168,11 @@ try {
   };
   const capture = async name => { await mkdir(evidence, {recursive:true}); await page.screenshot({path:resolve(evidence, name + '.png'), fullPage:true}); };
   const open = async view => {
-    const reads = view === 'installation' ? [page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/jobs`)] : [];
+    // Worker job status is read only on Settings > Advanced > Diagnostics.
+    const reads = view === 'diagnostics' ? [page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/jobs`)] : [];
     if (!holdEvents) reads.push(page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/events`));
     await Promise.all([page.goto(href(view)), ...reads]);
-    await heading(view === 'events' ? 'Recent events' : 'Install tracker').waitFor();
+    if (view === 'events') await sectionTab('Overview', 'Latest events'); else await heading(view === 'diagnostics' ? 'Diagnostics' : 'Tracking code').waitFor();
   };
   const release = async held => { assert.ok(held, 'Expected a held synthetic request.'); await json(held.route, held.reply); };
 
@@ -234,10 +241,10 @@ try {
   await open('installation'); await snippetRegion().waitFor();
   // With an empty history, Install polls for the first event on its own and announces it; a manual empty check clears the announcement.
   eventReply = {body:populated};
-  await main.getByRole('status').filter({hasText:'First event received.'}).waitFor({timeout:10_000});
+  await main.getByRole('status').filter({hasText:'Tracking works: visits are arriving'}).waitFor({timeout:10_000});
   eventReply = {body:empty}; await button('Check for events').click();
-  await main.getByText('No events in retained history yet.', {exact:false}).waitFor();
-  assert.equal(await main.getByText('First event received.', {exact:false}).count(), 0);
+  await main.getByText('Waiting for the first visit.', {exact:false}).waitFor();
+  assert.equal(await main.getByText('Tracking works: visits are arriving', {exact:false}).count(), 0);
   const expectedSnippet = `<script defer src="${origin}/tracker.js" data-site-key="${publicKey}" referrerpolicy="no-referrer"></script>`;
   assert.equal(await snippetRegion().getAttribute('tabindex'), '0');
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);
@@ -251,9 +258,9 @@ try {
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);
   await snippetRegion().locator('code').selectText();
   assert.equal(await page.evaluate(() => getSelection().toString()), expectedSnippet);
-  const consent = main.getByText(/Collection and privacy.*controls consent and optional data\./);
+  const consent = main.getByText(/Privacy settings control consent and optional data\./);
   assert.equal(await consent.isVisible(), true);
-  assert.match(await consent.innerText(), /controls consent and optional data.*Browser privacy signals and explicit refusals stop collection.*public HTTPS address/);
+  assert.match(await consent.innerText(), /Privacy settings control consent and optional data.*Browser privacy signals and explicit refusals stop collection.*public HTTPS address/);
   assert.equal(await consent.locator('xpath=ancestor::details').count(), 0);
   const help = main.locator('details').filter({has:page.locator('summary', {hasText:/^Custom events and collection details$/})});
   assert.equal(await help.evaluate(element => element.open), false);
@@ -270,16 +277,18 @@ try {
   const installUrl = page.url(), opened = context.waitForEvent('page');
   await eventsLink.click({modifiers:['Control']});
   const tab = await opened; tab.setDefaultTimeout(12000);
-  await tab.getByRole('heading', {name:'Recent events', level:1, exact:true}).waitFor();
+  await sectionTab('Overview', 'Latest events', tab.getByRole('main', {name:'Main content', exact:true}));
   assert.equal(page.url(), installUrl); assert.equal(new URL(tab.url()).search, destination.search); await tab.close();
   await capture('installation-1440');
   // In-app navigation to Recent events reads current history instead of keeping the snapshot loaded earlier (#381).
   eventReply = {body:populated};
   const readStarted = Date.now(), navigationRead = page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/events`);
-  await eventsLink.click(); await heading('Recent events').waitFor(); await navigationRead;
+  await eventsLink.click(); await sectionTab('Overview', 'Latest events'); await navigationRead;
   await eventRegion().waitFor(); await count(7);
-  const readText = await eventPanel().getByText(/^Read /).innerText();
-  const readAt = await page.evaluate(text => Date.parse(text.slice('Read '.length)), readText);
+  // The visible read time is a minute-precision UTC report instant; its title keeps the exact read instant.
+  const readStamp = eventPanel().getByText(/^Read /), readIso = await readStamp.getAttribute('title');
+  assert.equal(await readStamp.innerText(), `Read ${fmt(readIso)}`);
+  const readAt = Date.parse(readIso);
   assert.ok(readAt >= readStarted - 2000 && readAt <= Date.now() + 1000, 'Recent events shows when the displayed history was read.');
   eventReply = {body:empty};
   assert.equal(new URL(page.url()).search, destination.search);
@@ -288,11 +297,10 @@ try {
   console.log('PASS shell: exact snippet/copy fallback, visible consent/localhost limits and scoped normal/new-tab events links.');
 
   stage = 'worker diagnostics roles, busy state and errors';
-  await open('installation'); await snippetRegion().waitFor();
-  assert.equal(await diagnostics().evaluate(element => element.open), false);
-  const beforeDiagnostics = {...calls}; await diagnostics().locator('summary').click();
+  // Diagnostics live in Settings > Advanced; opening the page reads job status but never starts a check.
+  const beforeDiagnostics = calls.check; await open('diagnostics');
   await main.getByText('Synthetic worker diagnostic failure.', {exact:true}).waitFor();
-  assert.deepEqual(calls, beforeDiagnostics, 'Opening diagnostics starts no work.');
+  assert.equal(calls.check, beforeDiagnostics, 'Opening diagnostics starts no worker check.');
   assert.equal(await button('Run worker check').count(), 0);
   assert.equal(await main.locator('.jobs li').count(), 2);
   const jobRequestStarted = new Promise(resolve => { jobHeldResolve = resolve; });
@@ -304,8 +312,8 @@ try {
   jobReply = {status:503, body:{error:'Synthetic worker status unavailable.'}};
   await button('Refresh status').click(); await main.getByRole('alert').filter({hasText:'Synthetic worker status unavailable.'}).waitFor();
   assert.equal(await main.locator('.jobs li').count(), 2);
-  jobReply = {body:{jobs:jobRows}}; role = 'owner'; await open('installation');
-  await diagnostics().locator('summary').click(); await button('Run worker check').waitFor();
+  jobReply = {body:{jobs:jobRows}}; role = 'owner'; await open('diagnostics');
+  await button('Run worker check').waitFor();
   const checkRequestStarted = new Promise(resolve => { checkHeldResolve = resolve; });
   holdCheck = true; const checksBefore = calls.check; await button('Run worker check').click(); await checkRequestStarted;
   assert.equal(await button('Starting…').isDisabled(), true);
@@ -386,7 +394,7 @@ try {
   const projectSelect = side.getByRole('combobox', {name:'Project', exact:true});
   const createProject = side.getByRole('link', {name:'Create project in Shell fixture workspace', exact:true});
   const settingsLink = side.getByRole('link', {name:'Settings', exact:true});
-  const projectSections = side.getByRole('navigation', {name:'Project sections', exact:true});
+  const projectSections = side.getByRole('navigation', {name:'Sections', exact:true});
   const accountTrigger = page.getByRole('button', {name:'Account menu', exact:true});
   const accountPanel = async () => page.locator('[id="' + await accountTrigger.getAttribute('aria-controls') + '"]');
   const accountOpen = async () => (await accountTrigger.getAttribute('aria-expanded')) === 'true';
@@ -402,9 +410,11 @@ try {
   const hideMenu = async () => { if (await menuToggle.isVisible() && await menuToggle.getAttribute('aria-expanded') === 'true') { await page.keyboard.press('Escape'); assert.equal(await menuToggle.getAttribute('aria-expanded'), 'false', 'Escape closes the navigation drawer.'); } };
   const inViewport = element => element.evaluate(node => { const box = node.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1 && box.left >= -1 && box.right <= innerWidth + 1; });
   const precedes = async (first, second) => page.evaluate(([a, b]) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING), [await first.elementHandle(), await second.elementHandle()]);
-  const tabsFor = (current, operatorTabs = false) => ['Your account', 'Security', 'Identity & SSO',
-    ...(current === 'owner' || current === 'admin' ? ['Workspace & access', 'API access'] : []), ...(current === 'owner' ? ['Integrations'] : []),
-    'Retention', 'New workspace', ...(operatorTabs ? ['Google setup'] : [])];
+  const tabsFor = (current, operatorTabs = false) => ['Profile', 'Security', 'Sign-in methods',
+    ...(current === 'owner' || current === 'admin' ? ['Members', 'API keys'] : []), ...(current === 'owner' ? ['Connections'] : []),
+    'Data retention', 'New workspace', 'Tracking code', ...(current === 'owner' || current === 'admin' ? ['Domains'] : []), 'Privacy',
+    ...(current === 'owner' || current === 'admin' ? ['Forwarding'] : []), 'Brand and competitors', 'Imports',
+    ...(operatorTabs ? ['Sign-in', 'Google app'] : []), 'Diagnostics'];
   for (role of ['owner','admin','editor','viewer']) {
     await open('events');
     // Was the workspace-settings details links: workspace authority now appears as Settings section tabs.
@@ -424,9 +434,9 @@ try {
     const panel = await accountPanel();
     assert.equal(await panel.getByText('Shell Fixture User', {exact:true}).isVisible(), true, 'Account name is shown in the menu.');
     assert.equal(await panel.getByText('shell-user@fixture.example.test', {exact:true}).isVisible(), true, 'Account email is shown in the menu.');
-    assert.deepEqual(await panel.getByRole('link').allTextContents(), ['Profile and appearance','Account security','Identity sign-in']);
+    assert.deepEqual(await panel.getByRole('link').allTextContents(), ['Profile','Security','Sign-in methods']);
     assert.equal(await panel.getByRole('button', {name:'Sign out', exact:true}).count(), 1);
-    assert.equal(await panel.getByRole('link', {name:'Google setup', exact:true}).count(), 0);
+    assert.equal(await panel.getByRole('link', {name:'Google app', exact:true}).count(), 0);
     await page.keyboard.press('Escape');
     assert.equal(await accountOpen(), false); assert.equal(await isActive(accountTrigger), true, 'Escape returns focus to the account trigger.');
     // Was: workspace controls precede projects, account follows project navigation.
@@ -436,16 +446,16 @@ try {
     await workspaceSelect.focus(); await page.keyboard.press('Tab');
     assert.equal(await isActive(projectSelect), true, 'Tab moves from Workspace to Project.');
     await page.keyboard.press('Tab');
-    if (role === 'viewer') assert.equal(await page.evaluate(() => !!document.activeElement.closest('nav[aria-label="Workspace measurement"]')), true, 'Viewers tab straight to navigation.');
+    if (role === 'viewer') assert.equal(await page.evaluate(() => !!document.activeElement.closest('nav[aria-label="Sections"]')), true, 'Viewers tab straight to navigation.');
     else assert.equal(await isActive(createProject), true, 'Create project follows Project in tab order.');
   }
   assert.equal(await side.evaluate(element => {
     const bounds = element.getBoundingClientRect();
     return getComputedStyle(element).overflowY === 'auto' && bounds.top >= 0 && bounds.bottom <= innerHeight + 1 && document.documentElement.scrollHeight <= innerHeight + 1;
   }), true, 'Flat navigation scrolls inside one bounded rail without adding page overflow.');
-  for (const target of [side.getByRole('link', {name:'Collection and privacy',exact:true}), settingsLink, accountTrigger]) {
+  for (const target of [projectSections.getByRole('link', {name:'Reports',exact:true}), settingsLink, accountTrigger]) {
     await target.focus();
-    assert.equal(await isActive(target) && await inViewport(target), true, 'Late project sections, Settings and the account menu remain reachable by keyboard.');
+    assert.equal(await isActive(target) && await inViewport(target), true, 'The last section, Settings and the account menu remain reachable by keyboard.');
   }
   await side.evaluate(element => element.scrollTo(0, 0));
   await capture('navigation-account-927x1270');
@@ -467,10 +477,10 @@ try {
   assert.equal(page.url(), toggleUrl); assert.equal(apiRequests.length, requestsBeforeToggles, 'Account menu toggles do not issue requests.');
   // Was the Instance settings navigation inside the account details: Google setup is now a Settings tab for operators only.
   operator = true; await open('events'); await openAccount();
-  assert.equal(await (await accountPanel()).getByRole('link', {name:'Google setup', exact:true}).count(), 0, 'Instance settings are not account-menu items.');
+  assert.equal(await (await accountPanel()).getByRole('link', {name:'Google app', exact:true}).count(), 0, 'Instance settings are not account-menu items.');
   await page.keyboard.press('Escape');
   await openSettings();
-  assert.deepEqual(await settingsTabs(), tabsFor('viewer', true), 'Operator authority adds Google setup but does not upgrade a workspace viewer.');
+  assert.deepEqual(await settingsTabs(), tabsFor('viewer', true), 'Operator authority adds Sign-in and Google app but does not upgrade a workspace viewer.');
   // Was "None yet." in the Projects navigation: the Project selector reports an empty list.
   projectListCount = 0; operator = false; role = 'owner';
   await page.goto(href('events')); await projectSelect.waitFor();
@@ -482,9 +492,9 @@ try {
   await page.goto(origin + '/?view=workspace'); await side.getByText('No workspaces yet.', {exact:true}).waitFor();
   assert.equal(await workspaceSelect.count(), 0); assert.equal(await projectSelect.count(), 0);
   await heading('Create workspace').waitFor();
-  assert.deepEqual(await settingsTabs(), ['Your account', 'Security', 'Identity & SSO', 'New workspace']);
+  assert.deepEqual(await settingsTabs(), ['Profile', 'Security', 'Sign-in methods', 'New workspace']);
   await openAccount();
-  assert.equal(await (await accountPanel()).getByRole('link', {name:'Account security', exact:true}).isVisible(), true);
+  assert.equal(await (await accountPanel()).getByRole('link', {name:'Security', exact:true}).isVisible(), true);
   assert.equal(await (await accountPanel()).getByRole('button', {name:'Sign out', exact:true}).isEnabled(), true);
   await page.keyboard.press('Escape');
   // Without a workspace, project pages become the shared workspace onboarding screen; account settings stay one step away.
@@ -504,7 +514,7 @@ try {
   await page.getByRole('alert').filter({hasText:'Could not sign out: Synthetic sign-out unavailable.'}).waitFor();
   assert.equal(await page.getByRole('heading', {name:'Workspace access', exact:true, level:1}).count(), 1, 'The failed sign-out keeps the onboarding screen.');
   calls.signOut = signOutsBefore; // The later sign-out scenario counts only its own requests.
-  await page.getByText('Account settings', {exact:true}).click(); await heading('Profile and appearance').waitFor();
+  await page.getByText('Account settings', {exact:true}).click(); await heading('Profile').waitFor();
   noWorkspaces = false; projectListCount = 2; role = 'viewer';
   console.log('PASS shell: account identity in the top bar menu, workspace/project switcher, Settings role sections, owner/admin/editor/viewer/operator and empty scope, native keyboard and request-free menu.');
 
