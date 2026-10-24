@@ -25,10 +25,14 @@ test('navigable http URLs keep the loopback-only plain-http rule and now refuse 
   for(const url of ['http://id.example.test/a','http://127.0.0.2/a','ftp://id.example.test/a','https://u:p@id.example.test/a','https://id.example.test/a#x','https://id.example.test/a#',''])assert.equal(navigableHttpUrl(url),null,url);
 });
 
-test('the OIDC recovery panel navigates only through the shared navigable-URL check',async()=>{
+test('the OIDC recovery panel navigates only to an origin-pinned authorization redirect',async()=>{
   const {readFile}=await import('node:fs/promises');
   const source=await readFile(new URL('../src/components/OidcRecoveryPanel.tsx',import.meta.url),'utf8');
-  assert.match(source,/import\s*\{[^}]*\bnavigableHttpUrl\b[^}]*\}\s*from\s*'\.\.\/lib\/oidc-authorization(\.ts)?'/);
-  assert.doesNotMatch(source,/protocol\s*!==\s*'https:'/,'no hand-copied protocol check that skips the fragment rule');
-  assert.equal(navigableHttpUrl('https://id.example.test/authorize?state=s#'),null);
+  const start=source.slice(source.indexOf('function start('),source.indexOf('function confirm('));
+  assert.ok(start.length>0,'start() exists before confirm()');
+  assert.match(start,/const href = authorizationRedirect\(result\.authorizationUrl, result\.authorizationOrigin\)/);
+  assert.match(start,/if \(href === null\) throw/);
+  assert.match(start,/window\.location\.assign\(href\)/);
+  assert.doesNotMatch(start,/new URL\(|\.protocol\b/,'no hand-copied URL check');
+  assert.equal((source.match(/window\.location\.assign\(/g)??[]).length,1,'the panel navigates in one place');
 });
