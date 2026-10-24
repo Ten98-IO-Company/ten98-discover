@@ -968,7 +968,7 @@ function FactorForm({ onSubmit, onCancel }: { onSubmit: (code: string, recovery:
     cancel={{ label: 'Back to sign in', onClick: onCancel }} onSubmit={submit} />
 }
 
-// Values stay in the uncontrolled fields after an error; a successful create remounts the form empty.
+// Both fields are controlled: values stay after an error, and a successful create clears them through state.
 // The address comes first and is the only required answer; the name follows the domain until someone edits it.
 function ProjectCreateSection({ onCreate }: { onCreate: (name: string, origin: string) => Promise<void> }) {
   const [busy, setBusy] = useState(false)

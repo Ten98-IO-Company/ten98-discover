@@ -425,7 +425,7 @@ try {
     assert.equal(await workspaceSelect.count(), 1); assert.equal(await projectSelect.count(), 1);
     assert.equal(await side.getByText(role + ' workspace', {exact:true}).isVisible(), true, 'Workspace role is presented beside the switcher.');
     assert.equal(await createProject.count(), role === 'viewer' ? 0 : 1);
-    assert.equal(await side.getByRole('link', {name:/^Create project/, includeHidden:true}).count(), role === 'viewer' ? 0 : 1, 'Viewers have no create action.');
+    assert.equal(await side.getByRole('link', {name:/^Add website/, includeHidden:true}).count(), role === 'viewer' ? 0 : 1, 'Viewers have no create action.');
     // Was details.account-menu, .account-summary-text and the sidebar sign-out: the account now lives in the top bar.
     assert.equal(await accountTrigger.count(), 1);
     assert.equal(await side.getByRole('button', {name:/Account menu|Sign out/, includeHidden:true}).count(), 0, 'Account controls no longer live in the sidebar.');
@@ -447,7 +447,7 @@ try {
     assert.equal(await isActive(projectSelect), true, 'Tab moves from Workspace to Project.');
     await page.keyboard.press('Tab');
     if (role === 'viewer') assert.equal(await page.evaluate(() => !!document.activeElement.closest('nav[aria-label="Sections"]')), true, 'Viewers tab straight to navigation.');
-    else assert.equal(await isActive(createProject), true, 'Create project follows Project in tab order.');
+    else assert.equal(await isActive(createProject), true, 'Add website follows Website in tab order.');
   }
   assert.equal(await side.evaluate(element => {
     const bounds = element.getBoundingClientRect();
@@ -484,7 +484,7 @@ try {
   // Was "None yet." in the Projects navigation: the Project selector reports an empty list.
   projectListCount = 0; operator = false; role = 'owner';
   await page.goto(href('events')); await projectSelect.waitFor();
-  assert.equal(await projectSelect.isDisabled(), true); assert.equal(await projectSelect.locator('option:checked').innerText(), 'No projects yet');
+  assert.equal(await projectSelect.isDisabled(), true); assert.equal(await projectSelect.locator('option:checked').innerText(), 'No websites yet');
   assert.equal(await createProject.isVisible(), true, 'Owners can create the first project.');
   assert.equal(await settingsLink.isVisible(), true); assert.equal(await accountTrigger.isVisible(), true);
   // Was the open workspace-settings details offering only Create workspace.

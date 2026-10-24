@@ -151,7 +151,7 @@ async function run(name, options, check) {
     return target;
   }
   // Projects are chosen in the shared Workspace/Project switcher (a native select), not as sidebar links.
-  async function selectProject(name) { await menu(); await page.locator('aside.t98-shell-sidebar').getByLabel('Project', {exact: true}).selectOption({label: name}); }
+  async function selectProject(name) { await menu(); await page.locator('aside.t98-shell-sidebar').getByLabel('Website', {exact: true}).selectOption({label: name}); }
   async function open() { await page.goto(url()); await page.locator('main').waitFor(); await page.waitForURL(/analyticsTo=/, {timeout: 3000}).catch(() => {}); /* the app may normalize the URL once, closing a drawer opened earlier */ await (await link('Overview')).waitFor(); }
   // Pages are tabs within a sidebar section (src/lib/app-sections.ts); open the section first when its tab strip is absent.
   const pages = section => page.locator('main').getByRole('navigation', {name: section + ' pages', exact: true});

@@ -593,6 +593,21 @@ try {
   await link('Recent events'); await heading('Recent events')
   assert.equal(external, 0); assert.equal(errors, 0)
   console.log('PASS navigation: factor cancellation/local sign-in preserve the requested page; OIDC proof stays out of search/history state.')
+
+  // #421: the first website in an empty workspace lands on Tracking code; its name follows the address until edited.
+  const firstWorkspace = (await createWorkspace(owner.id, { name: 'Navigation first website' })).workspace
+  await page.goto(href(firstWorkspace.id, '', 'project')); await heading('Add your website')
+  const firstAddress = page.getByLabel('Website address', { exact: true }), firstName = page.getByLabel('Website name', { exact: true })
+  await firstAddress.fill('https://www.first-site.navigation.test/pricing?plan=pro')
+  assert.equal(await firstName.inputValue(), 'first-site.navigation.test', 'The website name is filled in from the address.')
+  await firstName.fill('Edited first website'); await firstAddress.fill('https://first-site.navigation.test')
+  assert.equal(await firstName.inputValue(), 'Edited first website', 'An edited website name is kept when the address changes.')
+  await page.getByRole('button', { name: 'Add website', exact: true }).click(); await heading('Tracking code')
+  const firstCreated = (await pool.query('SELECT id,name,origin FROM project WHERE workspace_id=$1', [firstWorkspace.id])).rows
+  assert.deepEqual(firstCreated.map((row: any) => [row.name, row.origin]), [['Edited first website', 'https://first-site.navigation.test']])
+  await selected(firstWorkspace.id, firstCreated[0].id, 'installation')
+  assert.equal(external, 0); assert.equal(errors, 0)
+  console.log('PASS navigation: the first website lands on Tracking code with an address-derived name that keeps an edit.')
 } catch (error) {
   console.error('Navigation failure:', error)
   if (page && !page.isClosed()) {

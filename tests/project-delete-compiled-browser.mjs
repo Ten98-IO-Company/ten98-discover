@@ -15,7 +15,7 @@ const page=await context.newPage();page.setDefaultTimeout(10000);
 page.on('pageerror',e=>evidence.errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&!m.text().startsWith('Failed to load resource:'))evidence.errors.push(m.text());});page.on('response',r=>{if(r.url().includes('/api/'))evidence.api.push(r.request().method()+' '+r.status()+' '+new URL(r.url()).pathname);});
 const step=(name)=>{evidence.steps.push(name);console.log('STEP '+name);};
 try{
- const projectSelect=()=>page.locator('aside.t98-shell-sidebar').getByLabel('Project',{exact:true}),projectOption=name=>projectSelect().locator('option').filter({hasText:new RegExp('^'+name+'$')});
+ const projectSelect=()=>page.locator('aside.t98-shell-sidebar').getByLabel('Website',{exact:true}),projectOption=name=>projectSelect().locator('option').filter({hasText:new RegExp('^'+name+'$')});
  const landing=await page.goto(base+'/',{waitUntil:'domcontentloaded'});
  evidence.csp=landing.headers()['content-security-policy']??null;const headerNonce=evidence.csp?.match(/'nonce-([^']+)'/)?.[1];assert.ok(headerNonce,'The compiled document must carry a nonce policy.');
  assert.equal(await page.evaluate(()=>document.querySelector('script[type="module"]').nonce),headerNonce,'The module entry script must carry the header nonce.');step('document policy nonce matches the module entry script');
