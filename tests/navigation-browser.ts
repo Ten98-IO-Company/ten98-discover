@@ -9,6 +9,8 @@ import { createWorkspace } from '../src/server/teams.ts'
 import { createPrompts } from '../src/server/prompts.ts'
 import { updateProjectContext } from '../src/server/project-context.ts'
 import {launchChromium} from './helpers/playwright.mjs';
+import {openView} from './helpers/app-navigation.ts';
+import type {AppView} from '../src/lib/navigation.ts';
 
 // Optional real production-client/API check, using only an isolated local database.
 assert.equal(process.env.TEN98_INTEGRATION_TEST, '1')
@@ -55,7 +57,9 @@ try {
     const response = await context.request.post(`${config.appUrl}/api/auth/sign-in/email`, { headers: { origin: config.appUrl }, data: { email, password } })
     assert.equal(response.status(), 200)
   }
-  async function heading(name: string) { await page.getByRole('heading', { name: name === 'Account security' ? 'Account' : name, exact: true }).first().waitFor() }
+  // Pages renamed by the six-section navigation: report pages show their section as h1, settings pages their item.
+  const renamedHeadings: Record<string, string> = { 'Recent events': 'Overview', 'Web analytics': 'Overview', Retention: 'Behaviour', 'Project context': 'Brand and competitors', 'Account security': 'Security', 'Google app setup': 'Google app', 'AI insights': 'AI visibility', 'Google reports': 'Search', 'Site audits': 'Search', 'Rank tracking': 'Search', 'Keyword research': 'Search', 'Domain SEO': 'Search', 'Traffic explorer': 'Overview', 'Compare periods': 'Overview', 'Saved prompts': 'AI visibility', 'Answer analysis': 'AI visibility', 'ChatGPT answers': 'AI visibility', 'Visitor activity': 'Behaviour', 'UTM campaigns': 'Conversions', Attribution: 'Conversions', 'Install tracker': 'Tracking code', 'Collection and privacy': 'Privacy', Destinations: 'Forwarding' }
+  async function heading(name: string) { await page.getByRole('heading', { name: renamedHeadings[name] ?? name, exact: true }).first().waitFor() }
   async function sourceFilters() {
     const disclosure = page.locator('details').filter({ has: page.locator('summary', { hasText: /^Source filters$/ }) })
     await disclosure.waitFor()
@@ -67,7 +71,7 @@ try {
   }
   async function navigationLink(name: string) {
     await menu()
-    const target = page.locator('#app-navigation').getByRole('link', { name, exact: true, includeHidden: true })
+    const target = page.locator('.t98-shell-sidebar').getByRole('link', { name, exact: true, includeHidden: true })
     await target.waitFor({ state: 'attached' })
     // Exercise native disclosures, including outer ancestors, rather than changing open in JavaScript.
     for (const disclosure of await target.locator('xpath=ancestor::details').all()) {
@@ -75,7 +79,13 @@ try {
     }
     return target
   }
-  async function link(name: string) { await (await navigationLink(name)).click() }
+  // Destinations that left the sidebar are opened through their section tab or Settings item.
+  const movedViews: Record<string, AppView> = { Context: 'context', 'Data retention': 'retention', 'Google app setup': 'google-app', 'AI insights': 'ai-insights', 'Recent events': 'events' }
+  async function link(name: string) {
+    // Account pages are one click away in the account menu.
+    if (name === 'Account security') { await menu(); await page.locator('.t98-account-menu__trigger').click(); await page.locator('.t98-account-menu__panel').getByRole('link', { name: 'Security', exact: true }).click(); return }
+    if (movedViews[name]) { await menu(); await openView(page, movedViews[name]) } else await (await navigationLink(name)).click()
+  }
   async function selected(workspace: string, project: string | null, view: string) {
     await page.waitForFunction(({ workspace, project, view }: any) => {
       const p = new URLSearchParams(location.search)
@@ -133,16 +143,17 @@ try {
   await link('Context'); await heading('Project context')
   await link('Account security'); await heading('Account security')
   await page.goBack(); await heading('Project context'); await selected(a.id, a2, 'context')
-  await page.goBack(); await heading('Recent events')
-  await page.goForward(); await heading('Project context')
+  // Settings items are two clicks from a report page (Settings, then the item), so history holds the Settings landing page too.
+  await page.goBack(); await heading('Tracking code'); await page.goBack(); await heading('Recent events')
+  await page.goForward(); await heading('Tracking code'); await page.goForward(); await heading('Project context')
   console.log('PASS navigation: authenticated deep link, reload and Back/Forward preserve context.')
 
   const original = page.url()
   const opened = context.waitForEvent('page')
-  await (await navigationLink('Recent events')).click({ modifiers: ['Control'] })
-  const tab = await opened; await tab.getByRole('heading', { name: 'Recent events', exact: true, level: 1 }).waitFor()
+  await (await navigationLink('Overview')).click({ modifiers: ['Control'] })
+  const tab = await opened; await tab.getByRole('heading', { name: 'Overview', exact: true, level: 1 }).waitFor()
   assert.equal(page.url(), original); assert.equal(new URL(tab.url()).searchParams.get('project'), a2); await tab.close()
-  await link('+ New project'); await heading('Add a website'); await selected(a.id, null, 'new-project')
+  await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in / }).click(); await heading('Add a website'); await selected(a.id, null, 'new-project')
   await page.reload(); await heading('Add a website'); await selected(a.id, null, 'new-project')
   console.log('PASS navigation: native new-tab links and explicit New project survive reload.')
 
@@ -164,43 +175,62 @@ try {
   assert.equal(new URL(page.url()).searchParams.getAll('workspace').length, 1)
   console.log('PASS navigation: malformed, foreign and forbidden targets canonicalize before protected panels mount.')
 
-  const families = ['Measure', 'Research', 'Connect']
-  const commonSections = ['Analytics', 'Realtime', 'Compare', 'UTM campaigns', 'Explore', 'Sessions', 'Attribution', 'Journeys', 'Retention', 'Revenue', 'Conversions', 'Recent events', 'Reports', 'Google reports', 'Site audits', 'Context', 'Prompts', 'AI insights', 'AI search', 'Keywords', 'Domain SEO', 'Rank tracking', 'Install tracker', 'Collection and privacy']
+  const sectionNames = ['Overview', 'Behaviour', 'Conversions', 'Search', 'AI visibility', 'Reports']
+  const sectionTabs: Record<string, string[]> = {
+    Overview: ['Dashboard', 'Live', 'Explore', 'Latest events', 'Page speed'], Behaviour: ['Visitors', 'Journeys', 'Returning visitors', 'Recordings', 'Heatmaps'],
+    Conversions: ['Goals', 'Revenue', 'Channels', 'Campaigns'], Search: ['Keywords', 'Rankings', 'Domain overview', 'Site health', 'Google'],
+    'AI visibility': ['Prompts', 'Answers'], Reports: ['Boards', 'Saved reports'],
+  }
+  const modeStrips = [['Overview', 'Dashboard', ['Summary', 'Compare periods']], ['Conversions', 'Campaigns', ['Campaign tags', 'Tracked links', 'Tracking images']], ['AI visibility', 'Answers', ['API models', 'ChatGPT app']]] as const
+  const settingsGroup = (name: string) => page.getByRole('navigation', { name: 'Settings sections', exact: true }).first().getByRole('list', { name, exact: true })
   for (const [workspace, projectId, isOwner] of [[a.id, a1, true], [b.id, b1, false]] as const) {
     await page.goto(href(workspace, projectId, 'events')); await heading('Overview'); await menu()
     const sections = page.getByRole('navigation', { name: 'Sections', exact: true })
-    assert.deepEqual(await sections.locator(':scope > .side-label').allTextContents(), families)
-    const expected = isOwner ? [...commonSections.slice(0, commonSections.indexOf('Collection and privacy')), 'Destinations', 'Collection and privacy', 'Domains'] : commonSections
-    assert.deepEqual(await sections.getByRole('link', { includeHidden: true }).allTextContents(), expected)
+    assert.deepEqual(await sections.getByRole('link', { includeHidden: true }).allTextContents(), sectionNames, 'Every role sees the same six sections.')
     assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Overview'])
     assert.deepEqual(await page.getByRole('navigation', { name: 'Overview pages', exact: true }).locator('a[aria-current="page"]').allTextContents(), ['Latest events'])
-    assert.deepEqual(await page.getByRole('navigation', { name: 'Workspace settings', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), isOwner ? ['Manage team', 'ten98 API access', 'AI and search providers', 'Data retention', 'Create workspace'] : ['Data retention', 'Create workspace'])
-    assert.deepEqual(await page.getByRole('navigation', { name: 'Account', exact: true, includeHidden: true }).getByRole('link', { includeHidden: true }).allTextContents(), ['Profile and appearance', 'Account security', 'Identity sign-in'])
-    assert.equal(await page.getByRole('navigation', { name: 'Instance settings', includeHidden: true }).count(), 0)
-    assert.equal(await page.getByRole('link', { name: '+ New project', exact: true, includeHidden: true }).count(), isOwner ? 1 : 0)
-    assert.equal(await sections.locator(':scope > details').count(), 0, 'Project sections are flat and always exposed.')
+    assert.equal(await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in /, includeHidden: true }).count(), isOwner ? 1 : 0)
+    assert.equal(await sections.locator(':scope details').count(), 0, 'Sections are flat and always exposed.')
     for (const target of await sections.getByRole('link').all()) assert.equal(await target.isVisible(), true)
-    const contextLink = sections.getByRole('link', { name: 'Context', exact: true })
-    await contextLink.focus(); await page.keyboard.press('Enter'); await heading('Project context')
-    await selected(workspace, projectId, 'context')
-    assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Context'])
-    await link('Data retention'); await page.getByRole('heading', { name: /retention/i }).first().waitFor()
+    const searchLink = sections.getByRole('link', { name: 'Search', exact: true })
+    await searchLink.focus(); await page.keyboard.press('Enter'); await heading('Search')
+    await selected(workspace, projectId, 'keywords')
+    assert.deepEqual(await sections.locator('a[aria-current="page"]').allTextContents(), ['Search'])
+    if (isOwner) {
+      // Every section's tab strip and the second strips of modes and tools, as a person reaches them.
+      const strip = (name: string) => page.locator('main').getByRole('navigation', { name, exact: true })
+      for (const [section, tabs] of Object.entries(sectionTabs)) {
+        await sections.getByRole('link', { name: section, exact: true }).click(); await strip(`${section} pages`).waitFor()
+        assert.deepEqual(await strip(`${section} pages`).getByRole('link').allTextContents(), tabs, `${section} tab strip`)
+        assert.deepEqual(await strip(`${section} pages`).locator('a[aria-current="page"]').allTextContents(), [tabs[0]])
+      }
+      for (const [section, tab, views] of modeStrips) {
+        await sections.getByRole('link', { name: section, exact: true }).click(); await strip(`${section} pages`).getByRole('link', { name: tab, exact: true }).click()
+        await strip(`${tab} views`).waitFor()
+        assert.deepEqual(await strip(`${tab} views`).getByRole('link').allTextContents(), views, `${tab} views strip`)
+        assert.deepEqual(await strip(`${tab} views`).locator('a[aria-current="page"]').allTextContents(), [views[0]])
+      }
+    }
+    await link('Data retention'); await heading('Data retention')
     assert.equal(await sections.locator('a[aria-current="page"]').count(), 0)
-    assert.deepEqual(await page.getByRole('navigation', { name: 'Workspace settings', exact: true }).locator('a[aria-current="page"]').allTextContents(), ['Data retention'])
+    assert.deepEqual(await settingsGroup('Account').getByRole('link').allTextContents(), ['Profile', 'Security', 'Sign-in methods'])
+    assert.deepEqual(await settingsGroup('Workspace').getByRole('link').allTextContents(), isOwner ? ['Members', 'API keys', 'Connections', 'Data retention', 'New workspace'] : ['Data retention', 'New workspace'])
+    assert.deepEqual(await settingsGroup('Project').getByRole('link').allTextContents(), isOwner ? ['Tracking code', 'Domains', 'Privacy', 'Forwarding', 'Brand and competitors', 'Imports'] : ['Tracking code', 'Privacy', 'Brand and competitors', 'Imports'])
+    assert.deepEqual(await settingsGroup('Advanced').getByRole('link').allTextContents(), ['Diagnostics'], 'Non-operators see only per-project Diagnostics under Advanced; Sign-in and Google app are for instance operators.')
+    assert.deepEqual(await settingsGroup('Workspace').locator('a[aria-current="page"]').allTextContents(), ['Data retention'])
   }
   await pool.query("INSERT INTO instance_operator(user_id,source) VALUES($1,'host')", [owner.id])
   try {
-    await page.reload(); await page.getByRole('heading', { name: /retention/i }).first().waitFor(); await menu()
-    const instance = page.getByRole('navigation', { name: 'Instance settings', exact: true, includeHidden: true })
-    assert.deepEqual(await instance.getByRole('link', { includeHidden: true }).allTextContents(), ['Google app setup'])
-    assert.equal(await page.getByRole('link', { name: 'AI and search providers', exact: true, includeHidden: true }).count(), 0, 'Instance authority does not upgrade a workspace viewer.')
+    await page.reload(); await heading('Data retention'); await menu()
+    assert.deepEqual(await settingsGroup('Advanced').getByRole('link').allTextContents(), ['Sign-in', 'Google app', 'Diagnostics'])
+    assert.equal(await page.getByRole('link', { name: 'Connections', exact: true, includeHidden: true }).count(), 0, 'Instance authority does not upgrade a workspace viewer.')
     await link('Google app setup'); await heading('Google app setup'); await selected(b.id, b1, 'google-app')
-    assert.notEqual(await page.locator('details.account-menu').getAttribute('open'), null, 'Current operator destination opens the account footer.')
-    assert.deepEqual(await instance.locator('a[aria-current="page"]').allTextContents(), ['Google app setup'])
+    assert.deepEqual(await settingsGroup('Advanced').locator('a[aria-current="page"]').allTextContents(), ['Google app'])
   } finally { await pool.query('DELETE FROM instance_operator WHERE user_id=$1', [owner.id]) }
   await page.reload(); await heading('Web analytics'); await selected(b.id, b1, 'project')
-  assert.equal(await page.getByRole('navigation', { name: 'Instance settings', includeHidden: true }).count(), 0)
-  console.log('PASS navigation: three flat ordered groups, owner/viewer/operator permissions, native keyboard links and scoped current-page markers.')
+  await link('Data retention'); await heading('Data retention')
+  assert.deepEqual(await settingsGroup('Advanced').getByRole('link').allTextContents(), ['Diagnostics'], 'Removing instance authority removes the operator-only Advanced items.')
+  console.log('PASS navigation: six flat sections and grouped settings, owner/viewer/operator permissions, native keyboard links and scoped current-page markers.')
 
   await mkdir('private/navigation-browser', { recursive: true })
   for (const width of [320, 360, 1440]) {
@@ -210,14 +240,14 @@ try {
     await menu()
     const sections = page.getByRole('navigation', { name: 'Sections', exact: true })
     assert.equal(await sections.locator(':scope > details').count(), 0)
-    assert.deepEqual(await sections.locator(':scope > .side-label').allTextContents(), families)
+    assert.deepEqual(await sections.getByRole('link', { includeHidden: true }).allTextContents(), sectionNames)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Expanded navigation must fit ${width}px.`)
     if (width <= 360) {
       for (const target of await sections.locator('summary, a').all()) {
         const bounds = await target.boundingBox(); assert.ok(bounds && bounds.height >= 44 && bounds.width >= 44, 'Mobile navigation targets remain at least 44px.')
       }
     }
-    await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.side')?.scrollTo(0, 0) })
+    await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.t98-shell-sidebar')?.scrollTo(0, 0) })
     await page.screenshot({ path: `private/navigation-browser/families-${width}.png`, fullPage: true })
     await link('Context'); await heading('Project context'); await selected(a.id, a1, 'context')
     if (width <= 360) assert.equal(await page.getByRole('button', { name: 'Menu', exact: true }).getAttribute('aria-expanded'), 'false')
@@ -231,20 +261,20 @@ try {
   const unavailable = (route: any) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Synthetic project list unavailable.' }) })
   await context.route(failedProjects, unavailable)
   await page.goto(href(a.id, '', 'project')); await page.getByRole('button', { name: 'Retry projects', exact: true }).waitFor()
-  assert.equal(await page.getByRole('button', { name: 'Create project', exact: true }).count(), 0, 'A failed list is not evidence of an empty workspace.')
+  assert.equal(await page.getByRole('button', { name: 'Add website', exact: true }).count(), 0, 'A failed list is not evidence of an empty workspace.')
   assert.equal(await page.getByRole('heading', { name: 'Add your website', exact: true }).count(), 0)
   await context.unroute(failedProjects, unavailable); await page.getByRole('button', { name: 'Retry projects', exact: true }).click(); await heading('Web analytics')
   console.log('PASS navigation: failed project discovery preserves its retry state without inventing an empty workspace.')
 
   await page.goto(href(a.id, a1, 'events')); await heading('Recent events')
-  const identityBeforeWorkspaceSwitch = await page.locator('.account-summary-text').textContent()
+  const identityBeforeWorkspaceSwitch = await page.locator('.t98-account-menu__identity').textContent()
   const slowWorkspace = await hold(`**/api/workspaces/${b.id}/projects`)
   await page.getByLabel('Workspace', { exact: true }).selectOption(b.id); await slowWorkspace.began
-  assert.equal(await page.locator('.account-summary-text').textContent(), identityBeforeWorkspaceSwitch, 'Workspace changes must not change account identity.')
+  assert.equal(await page.locator('.t98-account-menu__identity').textContent(), identityBeforeWorkspaceSwitch, 'Workspace changes must not change account identity.')
   await link('Account security'); await heading('Account security')
   slowWorkspace.release(); await slowWorkspace.remove(); await delay(150)
   await heading('Account security'); assert.equal(new URL(page.url()).searchParams.get('view'), 'security')
-  assert.notEqual(await page.locator('details.account-menu').getAttribute('open'), null, 'Current account destination stays exposed.')
+  assert.deepEqual(await settingsGroup('Account').locator('a[aria-current="page"]').allTextContents(), ['Security'], 'Current account destination stays marked.')
   await page.goBack(); await heading('Web analytics'); await selected(b.id, b1, 'project')
   console.log('PASS navigation: a delayed workspace load cannot replace newer Account navigation.')
 
@@ -252,7 +282,7 @@ try {
   const create = await hold(`**/api/workspaces/${a.id}/projects`)
   await page.getByLabel('Website name', { exact: true }).fill('Created while navigating')
   await page.getByLabel('Website address', { exact: true }).fill('https://created.navigation.test')
-  await page.getByRole('button', { name: 'Create project', exact: true }).click(); await create.began
+  await page.getByRole('button', { name: 'Add website', exact: true }).click(); await create.began
   await link('Account security'); await heading('Account security'); create.release(); await create.remove(); await delay(200)
   await heading('Account security'); assert.equal(new URL(page.url()).searchParams.get('view'), 'security')
   assert.equal((await pool.query('SELECT count(*) FROM project WHERE workspace_id=$1 AND name=$2', [a.id, 'Created while navigating'])).rows[0].count, '1')
@@ -262,8 +292,8 @@ try {
   const roundTrip = await hold(`**/api/workspaces/${a.id}/projects`)
   await page.getByLabel('Website name', { exact: true }).fill('Earlier identical navigation')
   await page.getByLabel('Website address', { exact: true }).fill('https://round-trip.navigation.test')
-  await page.getByRole('button', { name: 'Create project', exact: true }).click(); await roundTrip.began
-  await link('Account security'); await heading('Account security'); await link('+ New project'); await heading('Add a website')
+  await page.getByRole('button', { name: 'Add website', exact: true }).click(); await roundTrip.began
+  await link('Account security'); await heading('Account security'); await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in / }).click(); await heading('Add a website')
   roundTrip.release(); await roundTrip.remove(); await delay(150)
   await heading('Add a website'); await selected(a.id, null, 'new-project')
   console.log('PASS navigation: returning to the same URL does not revive an earlier mutation intent.')
@@ -284,7 +314,8 @@ try {
     await link('Account security'); await heading('Account security'); callback.release(); await callback.remove(); await delay(150)
     await heading('Account security'); assert.equal(new URL(page.url()).hash, '')
     await page.goto(href(b.id, b1, 'events')+fragment)
-    await heading('Google reports'); await selected(a.id, a2, family); assert.equal(new URL(page.url()).hash, '')
+    // The Google callback lands on the project's Imports settings, where its reports are connected.
+    await heading('Imports'); await selected(a.id, a2, 'imports'); assert.equal(new URL(page.url()).hash, '')
     await page.goto(href(a.id, a1, 'events')+fragment+'&oidc-factor=1')
     await heading('Recent events'); await page.getByRole('alert').filter({ hasText: 'invalid or ambiguous' }).waitFor()
     assert.equal(new URL(page.url()).hash, '')
@@ -299,7 +330,7 @@ try {
     await page.goto(href(workspace,project,'ai-insights'));await heading('AI insights');await selected(workspace,project,'ai-insights')
     await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
     await page.reload();await heading('AI insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
-    await page.getByRole('button',{name:'Back to prompts',exact:true}).click();await heading('Prompt library');await selected(workspace,project,'prompts')
+    await page.getByRole('button',{name:/^Back to (saved )?prompts$/}).click();await heading('AI visibility');await selected(workspace,project,'prompts')
     await page.goBack();await heading('AI insights');await selected(workspace,project,'ai-insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
     await link('Context');await heading('Project context');await link('AI insights');await heading('AI insights');await page.getByText('No executions match this drilldown.',{exact:true}).waitFor()
   }
@@ -345,10 +376,10 @@ try {
     await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click()
     await page.getByRole('region',{name:'Answer from GPT-4o-mini',exact:true}).getByText(insightAnswer,{exact:true}).waitFor()
     assert.ok(requests.slice(readsBefore).includes(`/api/projects/${b1}/prompt-executions`))
-    assert.ok(requests.slice(readsBefore).includes(`/api/projects/${b1}/prompt-executions/comparisons/${insightComparison}`))
+    assert.ok(requests.slice(readsBefore).includes(`/api/projects/${b1}/prompt-executions/comparisons/${insightComparison}/summary`))
     assert.equal(new URL(page.url()).searchParams.get('view'),'ai-insights');assert.equal(page.url().includes(insightComparison),false)
     await page.getByText('Copied prompt and system input',{exact:true}).click();await page.getByText(insightInput.systemText,{exact:true}).waitFor()
-    await page.getByRole('button',{name:'Back to AI insights',exact:true}).click();await metrics.getByText('1 / 1 (100%)',{exact:true}).first().waitFor()
+    await page.getByRole('button',{name:'Back to answer analysis',exact:true}).click();await metrics.getByText('1 / 1 (100%)',{exact:true}).first().waitFor()
   }
   // A second immutable receipt in the adjacent closed day makes the real
   // comparison path measurable. Shared messages/settings mean exactly one cell.
@@ -390,7 +421,7 @@ try {
     assert.ok(cellName);assert.equal(await currentCell.count(),1);await currentCell.click()
     await page.getByLabel('Evidence',{exact:true}).selectOption('mentioned');await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).waitFor()
     const beforeReceipt=requests.length;await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click()
-    await page.getByText(insightAnswer,{exact:true}).waitFor();assert.ok(requests.slice(beforeReceipt).includes(`/api/projects/${b1}/prompt-executions/comparisons/${insightComparison}`))
+    await page.getByText(insightAnswer,{exact:true}).waitFor();assert.ok(requests.slice(beforeReceipt).includes(`/api/projects/${b1}/prompt-executions/comparisons/${insightComparison}/summary`))
     const beforeReturn=requests.length;await page.getByRole('button',{name:'Back to comparison',exact:true}).click();await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).waitFor()
     assert.ok(requests.slice(beforeReturn).includes(`/api/projects/${b1}/prompt-insights/comparison`));assert.equal(await page.getByLabel('Prompt cohort',{exact:true}).inputValue(),'all');assert.equal(await page.getByLabel('Evidence',{exact:true}).inputValue(),'mentioned')
     await page.getByText(/Current executions.*Selected cell/).waitFor();await page.getByRole('button',{name:'Show comparison cells',exact:true}).click()
@@ -495,9 +526,12 @@ try {
   // Back must recompute current context, rather than restore cached denominators.
   await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click();await page.getByText(insightAnswer,{exact:true}).waitFor()
   await updateProjectContext(b1,other.id,{requestId:randomUUID(),revision:1,updates:[{kind:'profile',name:'Renamed insight brand',aliases:[]}]})
-  await page.getByRole('button',{name:'Back to AI insights',exact:true}).click()
+  await page.getByRole('button',{name:'Back to answer analysis',exact:true}).click()
   const freshMetrics=page.getByRole('region',{name:'Entity metrics',exact:true})
-  await freshMetrics.getByText('Renamed insight brand',{exact:true}).waitFor();assert.equal(await freshMetrics.getByText('0 / 2 (0%)',{exact:true}).count(),1)
+  await freshMetrics.getByText('Renamed insight brand',{exact:true}).waitFor()
+  // The receipt return keeps the applied filters (one current-day tagged answer), so the renamed brand scores 0 of 1.
+  for(const [label,value]of [['From',currentDay],['To',currentDay],['Timezone','UTC'],['Model','openai/gpt-4o-mini'],['Prompt',insightPrompt.id],['Current tag','navigation-comparison']])assert.equal(await page.getByLabel(label,{exact:true}).inputValue(),value)
+  assert.equal(await freshMetrics.getByText('0 / 1 (0%)',{exact:true}).count(),1)
   await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click();await page.getByText(insightAnswer,{exact:true}).waitFor()
   await pool.query('UPDATE workspace SET raw_provider_evidence_days=1 WHERE id=$1',[b.id])
   await page.getByRole('button',{name:'Refresh status',exact:true}).click()
@@ -506,7 +540,7 @@ try {
   assert.equal(await page.getByText(insightAnswer,{exact:true}).count(),0);assert.equal(await page.getByText(insightInput.systemText,{exact:true}).count(),0)
   // Physical payloads still exist: this verifies fresh read policy, not cleanup.
   assert.equal((await pool.query('SELECT result IS NOT NULL AS retained,result_purged_at FROM prompt_execution WHERE id=$1',[insightRun])).rows[0].retained,true)
-  await page.getByRole('button',{name:'Back to AI insights',exact:true}).click();await page.getByText('No eligible retained answers in this range.',{exact:true}).waitFor()
+  await page.getByRole('button',{name:'Back to answer analysis',exact:true}).click();await page.getByText('No eligible retained answers in this range.',{exact:true}).waitFor()
   assert.equal(await freshMetrics.getByText('Unavailable',{exact:true}).count(),3)
   await page.getByRole('button',{name:'Open comparison for execution '+insightRun,exact:true}).click();await page.getByText('Answer and citations expired under workspace retention.',{exact:true}).waitFor()
   assert.deepEqual((await pool.query('SELECT * FROM provider_request WHERE id=$1',[insightRun])).rows[0],financialBefore)
@@ -518,24 +552,27 @@ try {
   const oldSession = await hold(`**/api/workspaces/${a.id}/projects`, 401)
   await page.getByLabel('Website name', { exact: true }).fill('Old session response')
   await page.getByLabel('Website address', { exact: true }).fill('https://old-session.navigation.test')
-  await page.getByRole('button', { name: 'Create project', exact: true }).click(); await oldSession.began
-  await navigationLink('Account security') // Open account actions without leaving the pending project request.
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await page.getByRole('button', { name: 'Add website', exact: true }).click(); await oldSession.began
+  await page.locator('.t98-account-menu__trigger').click() // Open account actions without leaving the pending project request.
+  await page.locator('.t98-account-menu__panel').getByRole('button', { name: 'Sign out', exact: true }).click()
   await page.getByLabel('Email address', { exact: true }).fill(other.email); await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await heading('Web analytics')
   oldSession.release(); await oldSession.remove(); await delay(150); await heading('Web analytics')
   assert.equal(await page.getByRole('link', { name: 'Alpha one', exact: true }).count(), 0)
   console.log('PASS navigation: late 401 from an earlier session cannot sign out the new account.')
 
-  await page.setViewportSize({ width: 360, height: 800 }); await link('Recent events'); await heading('Recent events')
+  // The Overview section link opens its first tab, the current page here.
+  await page.setViewportSize({ width: 360, height: 800 }); await (await navigationLink('Overview')).click(); await heading('Overview')
+  assert.equal(new URL(page.url()).searchParams.get('view'), 'project')
   assert.equal(await page.getByRole('button', { name: 'Menu', exact: true }).getAttribute('aria-expanded'), 'false')
   await menu()
+  const mobileOverview = page.locator('.t98-shell-sidebar').getByRole('link', { name: 'Overview', exact: true })
   const mobileOpened = context.waitForEvent('page')
-  await page.getByRole('link', { name: 'Recent events', exact: true }).click({ modifiers: ['Control'] })
-  const mobileTab = await mobileOpened; await mobileTab.getByRole('heading', { name: 'Recent events', exact: true, level: 1 }).waitFor()
-  assert.equal(await page.getByRole('button', { name: 'Close menu', exact: true }).getAttribute('aria-expanded'), 'true', 'Opening another tab must not navigate or close this tab menu.')
+  await mobileOverview.click({ modifiers: ['Control'] })
+  const mobileTab = await mobileOpened; await mobileTab.getByRole('heading', { name: 'Overview', exact: true, level: 1 }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Menu', exact: true }).getAttribute('aria-expanded'), 'true', 'Opening another tab must not navigate or close this tab menu.')
   await mobileTab.close()
-  await page.getByRole('link', { name: 'Recent events', exact: true }).click()
+  await mobileOverview.click()
   assert.equal(await page.getByRole('button', { name: 'Menu', exact: true }).getAttribute('aria-expanded'), 'false', 'Choosing the current URL still closes mobile navigation.')
   await page.waitForFunction(() => document.activeElement?.tagName === 'MAIN')
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
@@ -557,6 +594,7 @@ try {
   assert.equal(external, 0); assert.equal(errors, 0)
   console.log('PASS navigation: factor cancellation/local sign-in preserve the requested page; OIDC proof stays out of search/history state.')
 } catch (error) {
+  console.error('Navigation failure:', error)
   if (page && !page.isClosed()) {
     await mkdir('private/navigation-browser', { recursive: true })
     await page.screenshot({ path: 'private/navigation-browser/failure.png', fullPage: true })
