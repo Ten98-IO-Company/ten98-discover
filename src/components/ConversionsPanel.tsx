@@ -1,5 +1,5 @@
 import {useEffect,useId,useRef,useState,type FormEvent} from 'react';
-import {FunnelBreakdown, useConfirmDialog} from '@ten98/ui';
+import {FunnelBreakdown, SelectableList, useConfirmDialog} from '@ten98/ui';
 import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
 import {api,ApiError,errMsg} from '../lib/api';
 import {MatchFields,PropertyFields,type MatchDraft,type PropertyDraft} from './AnalysisCriteriaFields';
@@ -54,22 +54,26 @@ export function validItem(v:unknown,projectId:string,kind:AnalysisKind):v is Ana
 }
 export function matchLabel(m:MatchDraft,goal=false,pageViewsOnly=false){return `${m.type==='event'?'Custom event':goal||pageViewsOnly?'Viewed page':'Activity at path'} · ${m.match==='exact'?'equals':m.match==='prefix'?'starts with':m.match==='suffix'?'ends with':'contains'} ${m.value}`;}
 
-// Top pages and custom events of the last 30 days, read once from the dashboard report. Suggestions are optional:
-// any failure leaves the fields as plain text inputs.
+// Top pages and custom events of the last 30 days with their counts, read once from the dashboard report. Suggestions
+// are optional: any failure leaves the fields as plain text inputs.
+type SeenValue={type:'path'|'event';value:string;count:number};
 function useSeenValues(projectId:string){
-  const [seen,setSeen]=useState<{path:string[];event:string[]}|undefined>();
+  const [seen,setSeen]=useState<SeenValue[]|undefined>();
   useEffect(()=>{const ctrl=new AbortController(),day=(offset:number)=>new Date(Date.now()-offset*864e5).toISOString().slice(0,10);
     api<{pages?:unknown;events?:unknown}>('/api/projects/'+encodeURIComponent(projectId)+'/analytics?'+new URLSearchParams({from:day(29),to:day(0)}),{signal:ctrl.signal}).then(data=>{
-      const list=(rows:unknown,key:'path'|'name')=>Array.isArray(rows)?rows.flatMap(row=>row&&typeof row==='object'&&typeof (row as Record<string,unknown>)[key]==='string'?[(row as Record<string,string>)[key]]:[]).slice(0,50):[];
-      if(!ctrl.signal.aborted)setSeen({path:list(data.pages,'path'),event:list(data.events,'name')});
+      const list=(rows:unknown,type:SeenValue['type'],key:'path'|'name',metric:'pageViews'|'count'):SeenValue[]=>Array.isArray(rows)?rows.flatMap(row=>{const r=row as Record<string,unknown>;return row&&typeof row==='object'&&typeof r[key]==='string'&&typeof r[metric]==='number'?[{type,value:r[key] as string,count:r[metric] as number}]:[];}).slice(0,50):[];
+      if(!ctrl.signal.aborted)setSeen([...list(data.pages,'path','path','pageViews'),...list(data.events,'event','name','count')]);
     },()=>undefined);
     return ()=>ctrl.abort();},[projectId]);
   return seen;
 }
+const seenName=(item:SeenValue)=>item.type==='path'?'Visited '+item.value:item.value+' event';
+const seenCount=(item:SeenValue)=>item.count.toLocaleString()+' '+(item.type==='path'?(item.count===1?'view':'views'):(item.count===1?'time':'times'));
 
 export function ConversionsPanel(props:Props){return <Panel key={props.userId+':'+props.projectId} {...props}/>;}
 function Panel({projectId,onUnauthorized}:Props){
-  const uid=useId(),[kind,setKind]=useState<AnalysisKind>('goal'),kindRef=useRef(kind),seen=useSeenValues(projectId);
+  const uid=useId(),[kind,setKind]=useState<AnalysisKind>('goal'),kindRef=useRef(kind),seen=useSeenValues(projectId),autoName=useRef('');
+  const suggestions=seen&&{path:seen.filter(item=>item.type==='path').map(item=>item.value),event:seen.filter(item=>item.type==='event').map(item=>item.value)};
   const [confirm,confirmDialog]=useConfirmDialog({ danger: true });
   const [role,setRole]=useState<Role|null>(null),[items,setItems]=useState<AnalysisItem[]>([]),[nextCursor,setNextCursor]=useState<string|null>(null);
   const [view,setView]=useState<'list'|'editor'|'result'|'witnesses'>('list'),[selected,setSelected]=useState<AnalysisItem|null>(null);
@@ -183,12 +187,15 @@ function Panel({projectId,onUnauthorized}:Props){
       {view==='editor'?<form className="card stack" onSubmit={save}>
         <h2 tabIndex={-1} id={uid+'editor'}>{selected||opening?.edit?'Edit':'New'} {kind}</h2>
         {!managed?<p className="notice">Your current role can inspect saved definitions.</p>:<fieldset disabled={locked||reading||!!opening} className="conversion-fields">
+          {kind==='goal'&&!!seen?.length&&<SelectableList label="Pick what counts as a conversion" items={[...seen].sort((a,b)=>b.count-a.count).slice(0,12).map(item=>({id:item.type+':'+item.value,title:item.value,preview:item.type==='path'?'Page':'Event',meta:seenCount(item)}))}
+            selectedId={draft.condition.match==='exact'?draft.condition.type+':'+draft.condition.value:null}
+            onSelect={id=>{const item=seen.find(entry=>entry.type+':'+entry.value===id);if(!item)return;const name=draft.name===''||draft.name===autoName.current?seenName(item):draft.name;autoName.current=seenName(item);patch({name,condition:{type:item.type,match:'exact',value:item.value}});}}/>}
           <div className="field"><label htmlFor={uid+'name'}>Name</label><input id={uid+'name'} required maxLength={200} value={draft.name} onChange={e=>patch({name:e.target.value})}/></div>
           <details><summary>Description</summary><label htmlFor={uid+'description'}>Description (optional)</label><textarea id={uid+'description'} maxLength={500} value={draft.description} onChange={e=>patch({description:e.target.value})}/></details>
-          {kind==='goal'?<MatchFields idPrefix={uid+'goal'} pathLabel="Viewed page" suggestions={seen} value={draft.condition} onChange={condition=>patch({condition})} disabled={locked}/>:<>
+          {kind==='goal'?<MatchFields idPrefix={uid+'goal'} pathLabel="Viewed page" suggestions={suggestions} value={draft.condition} onChange={condition=>patch({condition})} disabled={locked}/>:<>
             <div className="field"><label htmlFor={uid+'window'}>Minutes between steps</label><input id={uid+'window'} type="number" min={1} max={1440} step={1} required value={draft.windowMinutes} onChange={e=>patch({windowMinutes:e.target.value})}/><p className="hint">Each step must follow the previous step within this window, in strictly later receipt time.</p></div>
             {draft.steps.map((s,index)=><fieldset key={index} className="conversion-step"><legend>Step {index+1}</legend>
-              <MatchFields idPrefix={uid+'step-'+index} pathLabel="Activity at path" suggestions={seen} value={s} disabled={locked} onChange={value=>patch({steps:draft.steps.map((old,i)=>i===index?{...old,...value,pageViewsOnly:value.type==='event'?false:old.pageViewsOnly}:old)})}/>
+              <MatchFields idPrefix={uid+'step-'+index} pathLabel="Activity at path" suggestions={suggestions} value={s} disabled={locked} onChange={value=>patch({steps:draft.steps.map((old,i)=>i===index?{...old,...value,pageViewsOnly:value.type==='event'?false:old.pageViewsOnly}:old)})}/>
               {s.type==='path'&&<label className="row"><input type="checkbox" checked={s.pageViewsOnly} onChange={e=>patch({steps:draft.steps.map((old,i)=>i===index?{...old,pageViewsOnly:e.target.checked}:old)})}/>Page views only</label>}
               {(s.type==='event'||s.properties.length>0)&&<><PropertyFields idPrefix={uid+'properties-'+index} items={s.properties} disabled={locked} onChange={properties=>patch({steps:draft.steps.map((old,i)=>i===index?{...old,properties}:old)})}/>{s.type==='path'&&<p className="banner">Remove these property filters or choose Custom event before saving this step.</p>}</>}
               <div className="row"><button type="button" className="btn" aria-label={`Move step ${index+1} up`} disabled={index===0} onClick={()=>{const steps=[...draft.steps];[steps[index-1],steps[index]]=[steps[index],steps[index-1]];patch({steps});}}>Move up</button><button type="button" className="btn" aria-label={`Move step ${index+1} down`} disabled={index===draft.steps.length-1} onClick={()=>{const steps=[...draft.steps];[steps[index],steps[index+1]]=[steps[index+1],steps[index]];patch({steps});}}>Move down</button><button type="button" className="btn" aria-label={`Remove step ${index+1}`} disabled={draft.steps.length<=2} onClick={()=>patch({steps:draft.steps.filter((_,i)=>i!==index)})}>Remove step</button></div>
