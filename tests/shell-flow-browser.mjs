@@ -146,7 +146,8 @@ try {
   const snippetRegion = () => main.locator('pre[role="region"][aria-label="Tracking snippet"][tabindex="0"]');
   const diagnostics = () => main.locator('section.diagnostics');
   const count = async expected => assert.equal((await eventPanel().locator('.big-num').innerText()).trim(), String(expected), 'Retained count stays exact.');
-  const fmt = value => page.evaluate(value => new Date(value).toLocaleString(), value);
+  // Retained event times are shown as report instants in UTC (YYYY-MM-DD HH:mm UTC), independent of the browser locale.
+  const fmt = value => { const iso = new Date(value).toISOString(); return `${iso.slice(0,10)} ${iso.slice(11,16)} UTC`; };
   const fit = async label => {
     const sizes = await page.evaluate(() => ({document:document.documentElement.scrollWidth, viewport:innerWidth}));
     if (sizes.document > sizes.viewport + 1) responsiveFindings.push(`${label}: document ${sizes.document}px exceeds viewport ${sizes.viewport}px.`);
@@ -167,10 +168,11 @@ try {
   };
   const capture = async name => { await mkdir(evidence, {recursive:true}); await page.screenshot({path:resolve(evidence, name + '.png'), fullPage:true}); };
   const open = async view => {
-    const reads = view === 'installation' ? [page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/jobs`)] : [];
+    // Worker job status is read only on Settings > Advanced > Diagnostics.
+    const reads = view === 'diagnostics' ? [page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/jobs`)] : [];
     if (!holdEvents) reads.push(page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/events`));
     await Promise.all([page.goto(href(view)), ...reads]);
-    if (view === 'events') await sectionTab('Overview', 'Latest events'); else await heading('Tracking code').waitFor();
+    if (view === 'events') await sectionTab('Overview', 'Latest events'); else await heading(view === 'diagnostics' ? 'Diagnostics' : 'Tracking code').waitFor();
   };
   const release = async held => { assert.ok(held, 'Expected a held synthetic request.'); await json(held.route, held.reply); };
 
@@ -239,10 +241,10 @@ try {
   await open('installation'); await snippetRegion().waitFor();
   // With an empty history, Install polls for the first event on its own and announces it; a manual empty check clears the announcement.
   eventReply = {body:populated};
-  await main.getByRole('status').filter({hasText:'First event received.'}).waitFor({timeout:10_000});
+  await main.getByRole('status').filter({hasText:'Tracking works: visits are arriving'}).waitFor({timeout:10_000});
   eventReply = {body:empty}; await button('Check for events').click();
-  await main.getByText('No events in retained history yet.', {exact:false}).waitFor();
-  assert.equal(await main.getByText('First event received.', {exact:false}).count(), 0);
+  await main.getByText('Waiting for the first visit.', {exact:false}).waitFor();
+  assert.equal(await main.getByText('Tracking works: visits are arriving', {exact:false}).count(), 0);
   const expectedSnippet = `<script defer src="${origin}/tracker.js" data-site-key="${publicKey}" referrerpolicy="no-referrer"></script>`;
   assert.equal(await snippetRegion().getAttribute('tabindex'), '0');
   assert.equal(await snippetRegion().locator('code').textContent(), expectedSnippet);
@@ -283,8 +285,10 @@ try {
   const readStarted = Date.now(), navigationRead = page.waitForResponse(response => new URL(response.url()).pathname === `/api/projects/${project}/events`);
   await eventsLink.click(); await sectionTab('Overview', 'Latest events'); await navigationRead;
   await eventRegion().waitFor(); await count(7);
-  const readText = await eventPanel().getByText(/^Read /).innerText();
-  const readAt = await page.evaluate(text => Date.parse(text.slice('Read '.length)), readText);
+  // The visible read time is a minute-precision UTC report instant; its title keeps the exact read instant.
+  const readStamp = eventPanel().getByText(/^Read /), readIso = await readStamp.getAttribute('title');
+  assert.equal(await readStamp.innerText(), `Read ${fmt(readIso)}`);
+  const readAt = Date.parse(readIso);
   assert.ok(readAt >= readStarted - 2000 && readAt <= Date.now() + 1000, 'Recent events shows when the displayed history was read.');
   eventReply = {body:empty};
   assert.equal(new URL(page.url()).search, destination.search);
@@ -409,7 +413,8 @@ try {
   const tabsFor = (current, operatorTabs = false) => ['Profile', 'Security', 'Sign-in methods',
     ...(current === 'owner' || current === 'admin' ? ['Members', 'API keys'] : []), ...(current === 'owner' ? ['Connections'] : []),
     'Data retention', 'New workspace', 'Tracking code', ...(current === 'owner' || current === 'admin' ? ['Domains'] : []), 'Privacy',
-    ...(current === 'owner' || current === 'admin' ? ['Forwarding'] : []), 'Brand and competitors', ...(operatorTabs ? ['Google app'] : [])];
+    ...(current === 'owner' || current === 'admin' ? ['Forwarding'] : []), 'Brand and competitors', 'Imports',
+    ...(operatorTabs ? ['Sign-in', 'Google app'] : []), 'Diagnostics'];
   for (role of ['owner','admin','editor','viewer']) {
     await open('events');
     // Was the workspace-settings details links: workspace authority now appears as Settings section tabs.
@@ -475,7 +480,7 @@ try {
   assert.equal(await (await accountPanel()).getByRole('link', {name:'Google app', exact:true}).count(), 0, 'Instance settings are not account-menu items.');
   await page.keyboard.press('Escape');
   await openSettings();
-  assert.deepEqual(await settingsTabs(), tabsFor('viewer', true), 'Operator authority adds Google app but does not upgrade a workspace viewer.');
+  assert.deepEqual(await settingsTabs(), tabsFor('viewer', true), 'Operator authority adds Sign-in and Google app but does not upgrade a workspace viewer.');
   // Was "None yet." in the Projects navigation: the Project selector reports an empty list.
   projectListCount = 0; operator = false; role = 'owner';
   await page.goto(href('events')); await projectSelect.waitFor();

@@ -153,8 +153,8 @@ try {
   await (await navigationLink('Overview')).click({ modifiers: ['Control'] })
   const tab = await opened; await tab.getByRole('heading', { name: 'Overview', exact: true, level: 1 }).waitFor()
   assert.equal(page.url(), original); assert.equal(new URL(tab.url()).searchParams.get('project'), a2); await tab.close()
-  await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in / }).click(); await heading('Create a new project'); await selected(a.id, null, 'new-project')
-  await page.reload(); await heading('Create a new project'); await selected(a.id, null, 'new-project')
+  await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in / }).click(); await heading('Add a website'); await selected(a.id, null, 'new-project')
+  await page.reload(); await heading('Add a website'); await selected(a.id, null, 'new-project')
   console.log('PASS navigation: native new-tab links and explicit New project survive reload.')
 
   requests.length = 0
@@ -262,7 +262,7 @@ try {
   await context.route(failedProjects, unavailable)
   await page.goto(href(a.id, '', 'project')); await page.getByRole('button', { name: 'Retry projects', exact: true }).waitFor()
   assert.equal(await page.getByRole('button', { name: 'Create project', exact: true }).count(), 0, 'A failed list is not evidence of an empty workspace.')
-  assert.equal(await page.getByRole('heading', { name: 'Connect your first website', exact: true }).count(), 0)
+  assert.equal(await page.getByRole('heading', { name: 'Add your website', exact: true }).count(), 0)
   await context.unroute(failedProjects, unavailable); await page.getByRole('button', { name: 'Retry projects', exact: true }).click(); await heading('Web analytics')
   console.log('PASS navigation: failed project discovery preserves its retry state without inventing an empty workspace.')
 
@@ -278,9 +278,9 @@ try {
   await page.goBack(); await heading('Web analytics'); await selected(b.id, b1, 'project')
   console.log('PASS navigation: a delayed workspace load cannot replace newer Account navigation.')
 
-  await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
+  await page.goto(href(a.id, '', 'new-project')); await heading('Add a website')
   const create = await hold(`**/api/workspaces/${a.id}/projects`)
-  await page.getByLabel('Project name', { exact: true }).fill('Created while navigating')
+  await page.getByLabel('Website name', { exact: true }).fill('Created while navigating')
   await page.getByLabel('Website address', { exact: true }).fill('https://created.navigation.test')
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await create.began
   await link('Account security'); await heading('Account security'); create.release(); await create.remove(); await delay(200)
@@ -288,14 +288,14 @@ try {
   assert.equal((await pool.query('SELECT count(*) FROM project WHERE workspace_id=$1 AND name=$2', [a.id, 'Created while navigating'])).rows[0].count, '1')
   console.log('PASS navigation: committed project creation remains saved without stealing a newer page.')
 
-  await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
+  await page.goto(href(a.id, '', 'new-project')); await heading('Add a website')
   const roundTrip = await hold(`**/api/workspaces/${a.id}/projects`)
-  await page.getByLabel('Project name', { exact: true }).fill('Earlier identical navigation')
+  await page.getByLabel('Website name', { exact: true }).fill('Earlier identical navigation')
   await page.getByLabel('Website address', { exact: true }).fill('https://round-trip.navigation.test')
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await roundTrip.began
-  await link('Account security'); await heading('Account security'); await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in / }).click(); await heading('Create a new project')
+  await link('Account security'); await heading('Account security'); await page.locator('.t98-shell-sidebar').getByRole('link', { name: /^Create project in / }).click(); await heading('Add a website')
   roundTrip.release(); await roundTrip.remove(); await delay(150)
-  await heading('Create a new project'); await selected(a.id, null, 'new-project')
+  await heading('Add a website'); await selected(a.id, null, 'new-project')
   console.log('PASS navigation: returning to the same URL does not revive an earlier mutation intent.')
 
   await page.goto(href(b.id, b1, 'workspace')); await heading('Create workspace')
@@ -548,9 +548,9 @@ try {
   assert.deepEqual(aiWrites,[`/api/projects/${b1}/prompt-insights/export`,`/api/projects/${b1}/prompt-insights/export`,`/api/projects/${b1}/prompt-insights/comparison/export`,`/api/projects/${b1}/prompt-insights/citations/export`,`/api/projects/${b1}/prompt-insights/comparison/export`,`/api/projects/${b1}/prompt-insights/citations/export`])
   console.log('PASS navigation: real owner/viewer insight denominators and CSV, exact saved receipt, fresh-context Back and immediate policy-expiry masking; no provider writes or financial changes.')
 
-  await page.goto(href(a.id, '', 'new-project')); await heading('Create a new project')
+  await page.goto(href(a.id, '', 'new-project')); await heading('Add a website')
   const oldSession = await hold(`**/api/workspaces/${a.id}/projects`, 401)
-  await page.getByLabel('Project name', { exact: true }).fill('Old session response')
+  await page.getByLabel('Website name', { exact: true }).fill('Old session response')
   await page.getByLabel('Website address', { exact: true }).fill('https://old-session.navigation.test')
   await page.getByRole('button', { name: 'Create project', exact: true }).click(); await oldSession.began
   await page.locator('.t98-account-menu__trigger').click() // Open account actions without leaving the pending project request.
