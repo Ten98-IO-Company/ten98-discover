@@ -134,7 +134,3 @@ th { font-size:12px; }
 
 /* ponytail: @ten98/ui 0.17.0 still wraps only chart summaries and notes; captions and legends cannot break long words (time zones, series names); at 320px and 200% zoom they overflow the card. */
 .t98-chart { overflow-wrap: anywhere; }
-
-
-/* ponytail: @ten98/ui 0.24.0 dropped the legacy 600px table min-width, but .t98-template-main is still a grid whose children keep min-width:auto, so a panel holding a scrolling nowrap table (team members) still widens settings past 320px. Remove once the package gives its track minmax(0,1fr) or shrinkable children. */
-.t98-template-main > * { min-inline-size:0; }
