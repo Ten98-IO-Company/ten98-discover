@@ -176,6 +176,43 @@ export async function revokeInvitation(workspaceId: string, userId: string, invi
   });
 }
 
+// Same visibility as getTeam: an expired row, or one whose inviter can no longer grant its role, is not pending.
+async function lockPendingInvitation(client: PoolClient, workspaceId: string, userId: string, invitationId: string) {
+  await lockWorkspace(client, workspaceId);
+  const actor = await managerRole(client, workspaceId, userId);
+  const result = await client.query<Invitation & { pending: boolean }>(
+    `SELECT i.id,i.email,i.role,i.expires_at AS "expiresAt",
+       (i.expires_at>clock_timestamp() AND (m.role='owner' OR (m.role='admin' AND i.role IN ('editor','viewer')))) AS pending
+     FROM workspace_invitation i LEFT JOIN membership m ON m.workspace_id=i.workspace_id AND m.user_id=i.inviter_id
+     WHERE i.workspace_id=$1 AND i.id=$2 FOR UPDATE OF i`, [workspaceId, invitationId],
+  );
+  const invitation = result.rows[0];
+  if (invitation) requireGrant(actor, invitation.role);
+  // Accepted and revoked invitations are deleted, so a missing row is answered like an expired one.
+  if (!invitation?.pending) throw new FoundationError(409, 'This invitation is no longer pending. It was accepted, revoked or has expired. Refresh the team.');
+  return { id: invitation.id, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt };
+}
+
+/**
+ * Owner/admin: replaces a pending invitation's token and restarts its seven days, keeping its id, email, role and inviter.
+ * Only the token hash is stored, so this is also how a resend gets a link to email; the previous link stops working.
+ * `admit` runs in the same transaction after authorization and the pending check; a refusal there rolls back everything it spent.
+ */
+export async function rotateInvitation(workspaceId: string, userId: string, invitationId: string, admit?: (client: PoolClient, invitation: Invitation) => Promise<void>) {
+  parse(idInput, workspaceId); parse(idInput, userId); parse(idInput, invitationId);
+  return transaction(async (client) => {
+    const pending = await lockPendingInvitation(client, workspaceId, userId, invitationId);
+    await admit?.(client, pending);
+    const token = randomBytes(32).toString('base64url');
+    const result = await client.query<Invitation>(
+      `UPDATE workspace_invitation SET token_hash=$3,expires_at=clock_timestamp()+interval '7 days'
+       WHERE workspace_id=$1 AND id=$2 RETURNING id,email,role,expires_at AS "expiresAt"`,
+      [workspaceId, invitationId, tokenDigest(token)],
+    );
+    return { invitation: result.rows[0], token };
+  });
+}
+
 export async function changeRole(workspaceId: string, userId: string, targetUserId: string, input: unknown): Promise<void> {
   parse(idInput, workspaceId); parse(idInput, userId); parse(idInput, targetUserId);
   const { role } = parse(z.object({ role: roleInput }).strict(), input);
