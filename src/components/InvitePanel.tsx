@@ -5,7 +5,7 @@ import { authStory } from './AuthLayout';
 import { AppBrand } from '@ten98/ui/app';
 import { api, ApiError, errMsg } from '../lib/api';
 
-type InspectInfo = { workspaceName: string; email: string; role: string; expiresAt: string };
+type InspectInfo = { workspaceName: string; email: string; role: string; expiresAt: string; accountExists: boolean };
 type AcceptResult = { workspaceId: string; created: boolean; email: string };
 
 function is401(error: unknown): boolean {
@@ -22,7 +22,8 @@ type InvitePanelProps = {
   token: string;
   signedInEmail: string | null;
   onAccepted: (email: string, created: boolean, workspaceId: string) => Promise<void>;
-  onSignIn: () => void;
+  /** Receives the invited email so sign-in can start with it. */
+  onSignIn: (email: string) => void;
   onCancel: () => void;
   onUnauthorized: () => void;
   /** Sign-on providers shown while nobody is signed in (the flow places them in its own layout). */
@@ -127,7 +128,7 @@ function InvitePanelContent(props: InvitePanelProps) {
     aside: authStory,
     busy,
     cancel: { label: 'Cancel', onClick: () => onCancel() },
-    passwordPolicy: { minLength: 12, maxLength: 128, hint: '12–128 characters.' },
+    passwordPolicy: { minLength: 12, maxLength: 128 },
     formatDate,
   };
 
@@ -157,10 +158,11 @@ function InvitePanelContent(props: InvitePanelProps) {
       title={`You’re invited to join ${info.workspaceName}`}
       invitation={info}
       signedInEmail={signedInEmail ?? undefined}
+      accountExists={info.accountExists === true}
       error={error ?? undefined}
       providers={signedInEmail ? undefined : props.providers}
-      onSignIn={onSignIn}
-      onSwitchAccount={onSignIn}
+      onSignIn={() => onSignIn(info.email)}
+      onSwitchAccount={() => onSignIn(info.email)}
       onSubmit={submitAccept}
     />
   );

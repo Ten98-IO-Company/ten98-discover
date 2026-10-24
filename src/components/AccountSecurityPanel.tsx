@@ -287,9 +287,9 @@ export function AccountSecurityPanel({ expectedUserId, onUnauthorized, onFactorC
       </section>
 
       <PasswordChangeFlow key={passwordForm} hasPassword={data.hasPassword} description='Changing your password signs out all other sessions.'
-        policy={{ minLength: 12, maxLength: 128, hint: 'Use 12 to 128 characters.' }} busy={busy === 'password'} disabled={blocked && busy !== 'password'}
+        policy={{ minLength: 12, maxLength: 128 }} busy={busy === 'password'} disabled={blocked && busy !== 'password'}
         error={errs.password} notice={pwOk ? { tone: 'success', text: pwOk } : undefined} fieldErrors={fieldErrs}
-        messages={{ confirmation: 'Repeat new password', mismatch: 'The new passwords do not match. Re-enter them.', noPassword: 'This account has no local password, so password and two-factor settings are unavailable here.' }}
+        messages={{ noPassword: 'This account has no local password, so password and two-factor settings are unavailable here.' }}
         onSubmit={submitPassword} />
 
       <section className="panel settings-panel" aria-busy={busy === 'enable' || busy === 'verify' || busy === 'disable' || busy === 'recovery'} aria-label="Two-factor authentication">
