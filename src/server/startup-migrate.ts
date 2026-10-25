@@ -63,6 +63,9 @@ export async function migrateDatabase({ pool = getDatabase().pool, ledger = migr
   // Closing the dedicated connection aborts the in-flight statement's transaction; it can never reach COMMIT.
   const timer = setTimeout(() => { timedOut = true; release(new Error('Migration deadline reached.')); }, Math.max(0, deadline - Date.now()));
   try {
+    // The pool's per-statement timeout would cancel a long migration statement (#467); the deadline above bounds the
+    // whole run instead. The ledger opens its own transaction, so this is session-level and reset before release.
+    await client.query('SET statement_timeout = 0');
     // Identity guards inspect every financial-reference table, so key capture runs after all pending tables exist
     // and inside the same migration transaction.
     return await ledger.migrate(client, {
@@ -79,7 +82,7 @@ export async function migrateDatabase({ pool = getDatabase().pool, ledger = migr
   } finally {
     clearTimeout(timer);
     if (!released) {
-      try { await client.query('SELECT pg_advisory_unlock($1, $2)', [...migrationLockKey]); release(); }
+      try { await client.query('RESET statement_timeout'); await client.query('SELECT pg_advisory_unlock($1, $2)', [...migrationLockKey]); release(); }
       catch { release(new Error('Migration lock release failed.')); } // Discarding the session also releases its lock.
     }
   }

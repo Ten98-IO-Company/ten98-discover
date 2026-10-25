@@ -1,4 +1,4 @@
-import {createHash,createHmac,randomInt,randomUUID,timingSafeEqual} from 'node:crypto';
+import {createHash,randomInt,randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {z} from 'zod';
 import {getDatabase} from './db.ts';
@@ -9,16 +9,17 @@ import {contentCursor,readContentCursor} from './project-context.ts';
 import {eventPath} from './validation.ts';
 import type {ReplayEventLocator} from '../lib/replay-heatmaps.ts';
 import {replayBegin,replayUpload,defaultReplaySettings,replayLimits,replaySummary,replayChunkDto,readReplayChunk,readStoredReplayChunk,reassembleReplay,type ReplayBegin,type ReplayPart,type ReplaySettings} from '../lib/session-replay.ts';
-import type {WorkspaceRole} from '@ten98/runtime';
+import {readCapability,signCapability,type WorkspaceRole} from '@ten98/runtime';
 
 const invalid=()=>new FoundationError(400,'Check the replay request and bounded chunk bytes.');
 const absent=()=>new FoundationError(404,'Recording not found or unavailable.');
 const changed=()=>new FoundationError(409,'The recording capability, sequence or current policy changed.');
 const digest=(value:Uint8Array|string)=>createHash('sha256').update(value).digest('hex');
 const epochToken=z.object({version:z.literal(1),id:z.uuid(),projectId:z.uuid(),origin:z.string().max(2048),epoch:z.uuid(),settingsHash:z.string().regex(/^[a-f0-9]{64}$/),until:z.number().int().nonnegative()}).strict();
-function sign(body:string){return createHmac('sha256',getConfig().authSecret).update('ten98.replay-upload.v1:'+body).digest('hex');}
-function token(row:Row){const body=Buffer.from(JSON.stringify({version:1,id:row.id,projectId:row.project_id,origin:row.origin,epoch:row.epoch,settingsHash:row.settings_hash,until:row.upload_until.getTime()})).toString('base64url');return body+'.'+sign(body);}
-export function readToken(value:string){try{if(!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(value))throw changed();const[body,signature]=value.split('.');if(!timingSafeEqual(Buffer.from(signature,'hex'),Buffer.from(sign(body),'hex')))throw changed();const raw=Buffer.from(body,'base64url');if(raw.toString('base64url')!==body)throw changed();return epochToken.parse(JSON.parse(raw.toString('utf8')));}catch{throw changed();}}
+// Hex signatures keep tokens issued before the shared helper valid; the framing is unchanged.
+const purpose='ten98.replay-upload.v1';
+function token(row:Row){return signCapability(purpose,{version:1,id:row.id,projectId:row.project_id,origin:row.origin,epoch:row.epoch,settingsHash:row.settings_hash,until:row.upload_until.getTime()},getConfig().authSecret,{encoding:'hex'});}
+export function readToken(value:string){const payload=readCapability(purpose,value,getConfig().authSecret,{encoding:'hex'});const parsed=epochToken.safeParse(payload);if(payload===null||!parsed.success)throw changed();return parsed.data;}
 type Row={id:string;project_id:string;request_id:string;request_hash:string;origin:string;entry_path:string|null;epoch:string;settings:ReplaySettings;settings_hash:string;sampled:boolean;created_at:Date;deadline_at:Date;upload_until:Date;chunk_count:number;byte_count:number;last_sequence:number|null;first_event_timestamp:string|null;last_event_timestamp:string|null;complete:boolean;missing_fragments:number|null};
 type Scope={role:WorkspaceRole;cutoff:string;heatmapCutoff:string;at:string};
 export function summary(row:Row,expired=false){return replaySummary.parse({id:row.id,createdAt:row.created_at.toISOString(),deadlineAt:row.deadline_at.toISOString(),origin:row.origin,entryPath:expired?null:row.entry_path,settings:row.settings,chunkCount:expired?0:row.chunk_count,bytes:expired?0:row.byte_count,lastSequence:expired?null:row.last_sequence,complete:!expired&&row.complete,missingChunks:expired||row.last_sequence===null?null:row.last_sequence+1-row.chunk_count,missingFragments:expired?null:row.missing_fragments,resultExpired:expired});}
