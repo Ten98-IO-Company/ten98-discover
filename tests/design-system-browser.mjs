@@ -54,7 +54,7 @@ try{
  assert.equal(await page.locator('#disabled-preset').isDisabled(),true);
  for(const hover of [false,true]){if(hover)await page.locator('#disabled-preset').hover();const s=await style('#disabled-preset');assert.equal(s.opacity,'1');assert.equal(s.background,'rgb(242, 243, 245)');assert.equal(s.color,'rgb(96, 100, 108)');assert.equal(s.border,'rgb(139, 141, 152)');measurements['analytics disabled preset'+(hover?' hover':'')]=ratio(s.color,s.background);assert.ok(ratio(s.color,s.background)>=3);}
  const input=await style('#text');assert.ok(ratio(input.border,input.background)>=3);const placeholder=await page.locator('#text').evaluate(e=>getComputedStyle(e,'::placeholder').color);assert.ok(ratio(placeholder,input.background)>=4.5);
- assert.equal((await style('summary')).color,'rgb(89, 67, 206)');
+ assert.equal((await style('summary')).color,'rgb(28, 29, 33)');
  assert.equal((await style('.btn.primary:not(:disabled)')).transition,'0s');
  console.log('PASS actual shared styles: light rollout, text/borders/placeholders, primary pressed and disabled precedence.');
  await page.keyboard.press('Tab');

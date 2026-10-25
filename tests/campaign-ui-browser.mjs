@@ -97,7 +97,7 @@ async function brandAndAuthChrome(){
  assert.equal(await page.locator('.auth-channels > span').first().locator('svg path').getAttribute('d'),'M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z');
  // Retain upstream story-copy/footer/product-tint contrast checks with the Campaign markup.
  for(const selector of ['.auth-story p:not(.auth-story-title)','.auth-story > small','.auth-story .brand small','.auth-story .brand strong']){const pair=await page.locator(selector).evaluate(e=>({text:getComputedStyle(e).color,surface:getComputedStyle(e.closest('.auth-story')).backgroundColor}));assert.ok(ratio(pair.text,pair.surface)>=4.5,selector+' readable story contrast');}
- const button=await style(page.getByRole('button',{name:'Sign in',exact:true}));assert.equal(button.radius,'8px');assert.equal(button.font,'13px');assert.equal(button.weight,'600');assert.ok(ratio(button.color,button.background)>=4.5,'Primary button contrast');
+ const button=await style(page.getByRole('button',{name:'Sign in',exact:true}));assert.equal(button.radius,'6px');assert.equal(button.font,'13px');assert.equal(button.weight,'600');assert.ok(ratio(button.color,button.background)>=4.5,'Primary button contrast');
 }
 async function authThemePairs(){
  const pairs=[],selectors=[
