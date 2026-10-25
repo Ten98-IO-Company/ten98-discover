@@ -78,6 +78,20 @@ export async function runStartupMigrateChecks() {
     assert.deepEqual(await versions(), expected);
     assert.equal(await probeTable(), null);
     console.log('PASS a timed-out startup migration fails and commits nothing');
+
+    // A migration statement longer than the pool's statement_timeout still applies (#467). One connection makes the
+    // follow-up request query reuse the migration's session, proving the pool timeout is back in force afterwards.
+    const tight = new pg.Pool({ connectionString: fresh.href, max: 1, connectionTimeoutMillis: 5_000, statement_timeout: 500 });
+    try {
+      await assert.rejects(tight.query('SELECT pg_sleep(1)'), (error: { code?: string }) => error.code === '57014', 'The pool timeout cancels a slow request query.');
+      const long = await withExtra('9002_startup_long_probe.sql', 'CREATE TABLE startup_long_probe (id integer);\nSELECT pg_sleep(1.5);\n');
+      assert.deepEqual(await migrateDatabase({ pool: tight, ledger: long, timeoutMs: 30_000, log }), ['9002']);
+      assert.equal((await web.query<{ table: string | null }>("SELECT to_regclass('public.startup_long_probe')::text AS table")).rows[0].table, 'startup_long_probe');
+      await assert.rejects(tight.query('SELECT pg_sleep(1)'), (error: { code?: string }) => error.code === '57014', 'Request queries keep the pool timeout after migrating.');
+    } finally {
+      await tight.end();
+    }
+    console.log('PASS a migration statement longer than the pool statement_timeout applies; request queries keep the timeout');
   } finally {
     await Promise.all([web.end(), worker.end()]);
     await rm(directory, { recursive: true, force: true });
