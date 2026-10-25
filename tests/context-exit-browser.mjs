@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 import {readFileSync} from 'node:fs';
 import {createServer} from 'vite';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 import {settingsSections} from './helpers/app-navigation.ts';
 assert.equal(process.env.TEN98_CONTEXT_EXIT_BROWSER,'1');
 assert.ok(process.env.PLAYWRIGHT_MODULE);
@@ -82,14 +82,14 @@ try{
  assert.equal(await page.locator('.t98-sidebar-footer').getByText('Version '+appVersion,{exact:true}).count(),1);
  const requestCount=apiRequests;
  for(const width of [320,1440])for(const theme of ['light','dark']){
-  await page.setViewportSize({width,height:900});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.style.colorScheme=theme;},theme);await frame();
+  await setViewport(page,{width,height:900});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.style.colorScheme=theme;},theme);await frame();
   const trigger=button('Account menu');await trigger.click();const panel=page.locator('[id="'+await trigger.getAttribute('aria-controls')+'"]');
   assert.deepEqual(await panel.getByRole('link').allTextContents(),['Profile','Security','Sign-in methods']);
   const bounds=await panel.boundingBox();assert.ok(bounds&&bounds.x>=-1&&bounds.x+bounds.width<=width+1,'Account disclosure remains inside viewport');await page.screenshot({path:resolve('private/swarm/runtime13-ui19/account-'+width+'-'+theme+'.png'),fullPage:false});
   await page.keyboard.press('Escape');assert.equal(await trigger.getAttribute('aria-expanded'),'false');assert.equal(await trigger.evaluate(node=>document.activeElement===node),true);
  }
  assert.equal(apiRequests,requestCount,'Opening or closing account controls dispatches no API work');
- await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>{document.documentElement.dataset.theme='light';document.documentElement.style.colorScheme='light';});
+ await setViewport(page,{width:1440,height:1000});await page.evaluate(()=>{document.documentElement.dataset.theme='light';document.documentElement.style.colorScheme='light';});
  await button('Account menu').click();await page.locator('[id="'+await button('Account menu').getAttribute('aria-controls')+'"]').getByRole('link',{name:'Profile',exact:true}).click();await at('preferences');await page.getByLabel('Name',{exact:true}).waitFor();assert.equal(await button('Account menu').getAttribute('aria-expanded'),'false');
  await page.screenshot({path:resolve('private/swarm/runtime13-ui19/profile-light.png'),fullPage:false});
  pass('Actual header account disclosure, native profile link, app-version footer, narrow/wide light/dark geometry and Escape focus');

@@ -6,7 +6,7 @@ import {claimInstallation} from '../src/server/auth.ts';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
 import {createWorkspace,removeMember} from '../src/server/teams.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 // Real local UI acceptance. Playwright is optional operator tooling, not an application dependency.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');
@@ -207,7 +207,7 @@ try {
   await page.getByRole('button',{name:'Refresh links',exact:true}).click();await page.getByRole('row').filter({hasText:'Client alpha'}).waitFor();await page.unroute(sharePath);
   await mkdir('private/reports-screenshots',{recursive:true});
   for(const width of [1280,360]) {
-    await page.setViewportSize({width,height:900});
+    await setViewport(page,{width,height:900});
     if(width===360) {
       const menu=page.getByRole('button',{name:'Menu',exact:true});
       assert.equal(await menu.getAttribute('aria-expanded'),'false');assert.equal(await menu.getAttribute('aria-controls'),'app-navigation');

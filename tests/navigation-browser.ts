@@ -8,7 +8,7 @@ import { assertSchema, closeDatabase, getDatabase } from '../src/server/db.ts'
 import { createWorkspace } from '../src/server/teams.ts'
 import { createPrompts } from '../src/server/prompts.ts'
 import { updateProjectContext } from '../src/server/project-context.ts'
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 import {openView,settingsSections} from './helpers/app-navigation.ts';
 import type {AppView} from '../src/lib/navigation.ts';
 
@@ -234,7 +234,7 @@ try {
 
   await mkdir('private/navigation-browser', { recursive: true })
   for (const width of [320, 360, 1440]) {
-    await page.setViewportSize({ width, height: 900 })
+    await setViewport(page,{ width, height: 900 })
     await page.goto(href(a.id, a1, 'events')); await heading('Overview')
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Closed navigation must fit ${width}px.`)
     await menu()
@@ -266,7 +266,7 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     await page.screenshot({ path: `private/navigation-browser/context-${width}.png`, fullPage: true })
   }
-  await page.setViewportSize({ width: 1280, height: 900 })
+  await setViewport(page,{ width: 1280, height: 900 })
   console.log('PASS navigation: real production 320/360/1440 reflow, flat visible groups, mobile targets and project-selection focus.')
 
   const failedProjects = `**/api/workspaces/${a.id}/projects`
@@ -375,10 +375,10 @@ try {
     await metrics.getByText('Beta one',{exact:true}).waitFor();assert.equal(await metrics.getByText('1 / 1 (100%)',{exact:true}).count(),3)
     if(email===owner.email) {
       for(const width of [1440,360]) {
-        await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
+        await setViewport(page,{width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
         await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`private/navigation-browser/ai-insights-${width}.png`,fullPage:true})
       }
-      await page.setViewportSize({width:1280,height:900})
+      await setViewport(page,{width:1280,height:900})
     }
     const [download]=await Promise.all([page.waitForEvent('download'),page.getByRole('button',{name:'Export report CSV',exact:true}).click()])
     assert.equal(download.suggestedFilename(),'prompt-insights.csv');const csv=await readFile(await download.path(),'utf8')
@@ -440,8 +440,8 @@ try {
     await page.getByRole('button',{name:cellName!,exact:true}).waitFor();await page.getByRole('button',{name:cellName!.replace('current','previous'),exact:true}).click()
     await page.getByRole('button',{name:'Open comparison for execution '+previousRun,exact:true}).click();await page.getByText(previousAnswer,{exact:true}).waitFor()
     await page.getByRole('button',{name:'Back to comparison',exact:true}).click();await page.getByRole('button',{name:'Open comparison for execution '+previousRun,exact:true}).waitFor()
-    if(email===owner.email)for(const width of [1440,360]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`private/navigation-browser/ai-comparison-${width}.png`,fullPage:true})}
-    await page.setViewportSize({width:1280,height:900});const beforeInsights=requests.length;await page.getByRole('button',{name:'Back to insights',exact:true}).click()
+    if(email===owner.email)for(const width of [1440,360]){await setViewport(page,{width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`private/navigation-browser/ai-comparison-${width}.png`,fullPage:true})}
+    await setViewport(page,{width:1280,height:900});const beforeInsights=requests.length;await page.getByRole('button',{name:'Back to insights',exact:true}).click()
     await page.getByRole('region',{name:'Entity metrics',exact:true}).getByText('1 / 1 (100%)',{exact:true}).first().waitFor();assert.ok(requests.slice(beforeInsights).includes(`/api/projects/${b1}/prompt-insights`))
     for(const [label,value]of [['From',currentDay],['To',currentDay],['Timezone','UTC'],['Model','openai/gpt-4o-mini'],['Prompt',insightPrompt.id],['Current tag','navigation-comparison']])assert.equal(await page.getByLabel(label,{exact:true}).inputValue(),value)
     assert.equal(new URL(page.url()).searchParams.get('view'),'ai-insights')
@@ -485,8 +485,8 @@ try {
     const beforeCitations=requests.length;await page.getByRole('button',{name:'Back to citations',exact:true}).click();await heading('Citation evidence')
     await citationRows.getByText('Synthetic provider annotation',{exact:true}).waitFor();assert.ok(requests.slice(beforeCitations).includes(`/api/projects/${b1}/prompt-insights/citations`))
     await page.getByRole('button',{name:'Back to source report',exact:true}).click();await heading('Citations')
-    if(email===owner.email)for(const width of [1440,360]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`private/navigation-browser/ai-citations-${width}.png`,fullPage:true})}
-    await page.setViewportSize({width:1280,height:900});const beforeCitationBack=requests.length;await page.getByRole('button',{name:'Back to insights',exact:true}).click()
+    if(email===owner.email)for(const width of [1440,360]){await setViewport(page,{width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`private/navigation-browser/ai-citations-${width}.png`,fullPage:true})}
+    await setViewport(page,{width:1280,height:900});const beforeCitationBack=requests.length;await page.getByRole('button',{name:'Back to insights',exact:true}).click()
     await page.getByRole('region',{name:'Entity metrics',exact:true}).getByText('1 / 1 (100%)',{exact:true}).first().waitFor();assert.ok(requests.slice(beforeCitationBack).includes(`/api/projects/${b1}/prompt-insights`))
     for(const [label,value]of [['From',currentDay],['To',currentDay],['Timezone','UTC'],['Model','openai/gpt-4o-mini'],['Prompt',insightPrompt.id],['Current tag','navigation-comparison']])assert.equal(await page.getByLabel(label,{exact:true}).inputValue(),value)
   }
@@ -499,7 +499,7 @@ try {
   await pool.query("UPDATE prompt_execution SET result=jsonb_set(result,'{citations}',(result->'citations')||$2::jsonb) WHERE id=$1",[insightRun,JSON.stringify([{url:redditUrl,title:'Retained Reddit navigation annotation'}])])
   const specializedEndpoint=`/api/projects/${b1}/prompt-insights/citation-specializations`
   const specializedRead=()=>page.waitForResponse((response:any)=>new URL(response.url()).pathname===specializedEndpoint&&response.request().method()==='GET')
-  await page.setViewportSize({width:360,height:900})
+  await setViewport(page,{width:360,height:900})
   const specializedEntry=page.getByRole('button',{name:'Specialized citation reports',exact:true})
   await specializedEntry.scrollIntoViewIfNeeded();assert.equal(await specializedEntry.isEnabled(),true)
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
@@ -512,7 +512,7 @@ try {
   await heading('Reddit communities');await page.getByRole('region',{name:'Group comparison results',exact:true}).getByText('r/navigationfixture',{exact:true}).waitFor()
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'private/navigation-browser/ai-specializations-360.png',fullPage:true})
-  await page.setViewportSize({width:1440,height:900})
+  await setViewport(page,{width:1440,height:900})
   await page.getByRole('button',{name:/^Current pages for r\/navigationfixture /}).click();await heading('Community pages')
   await page.getByText('Retained Reddit navigation annotation',{exact:true}).waitFor()
   await page.getByRole('button',{name:'View community annotations',exact:true}).click();await heading('Retained annotations')
@@ -532,7 +532,7 @@ try {
   assert.ok(requests.slice(beforeSpecializedBack).includes(`/api/projects/${b1}/prompt-insights`))
   for(const [label,value]of [['From',currentDay],['To',currentDay],['Timezone','UTC'],['Model','openai/gpt-4o-mini'],['Prompt',insightPrompt.id],['Current tag','navigation-comparison']])assert.equal(await page.getByLabel(label,{exact:true}).inputValue(),value)
   assert.equal(new URL(page.url()).searchParams.get('view'),'ai-insights');assert.equal(page.url().includes(specialized.page.rows[0].id),false)
-  await page.setViewportSize({width:1280,height:900})
+  await setViewport(page,{width:1280,height:900})
   console.log('PASS navigation: viewer/mobile specialized citations entry, real retained Reddit group/pages/evidence and exact saved receipt return through fresh filtered Insights; no provider work.')
 
   // Back must recompute current context, rather than restore cached denominators.
@@ -574,7 +574,7 @@ try {
   console.log('PASS navigation: late 401 from an earlier session cannot sign out the new account.')
 
   // The Overview section link opens its first tab, the current page here.
-  await page.setViewportSize({ width: 360, height: 800 }); await (await navigationLink('Overview')).click(); await heading('Overview')
+  await setViewport(page,{ width: 360, height: 800 }); await (await navigationLink('Overview')).click(); await heading('Overview')
   assert.equal(new URL(page.url()).searchParams.get('view'), 'project')
   assert.equal(await page.getByRole('button', { name: 'Menu', exact: true }).getAttribute('aria-expanded'), 'false')
   await menu()

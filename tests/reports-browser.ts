@@ -7,7 +7,7 @@ import {getConfig} from '../src/server/config.ts';
 import {closeDatabase,getDatabase,assertSchema} from '../src/server/db.ts';
 import {createWorkspace} from '../src/server/teams.ts';
 import {createReportShare,revokeReportShare,saveReport} from '../src/server/reports.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 // Optional browser acceptance runner: installed tooling is supplied by the operator, never bundled in production.
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1','Browser checks require an isolated local fixture.');
@@ -73,7 +73,7 @@ try {
   for(const colorScheme of ['light','dark'] as const) {
     await publicPage.emulateMedia({colorScheme});
     for(const width of [1440,390]) {
-      await publicPage.setViewportSize({width,height:900});
+      await setViewport(publicPage,{width,height:900});
       await publicPage.getByRole('heading',{name:'Report unavailable',exact:true}).waitFor({state:'visible'});
       assert.equal(await publicPage.locator('.t98-auth-layout').count(),1);
       assert.equal(await publicPage.locator('html').getAttribute('data-theme'),'system');

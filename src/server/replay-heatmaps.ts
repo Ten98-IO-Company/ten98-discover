@@ -1,5 +1,6 @@
 import {retentionCoverage} from '../lib/analytics-comparison.ts';
-import {createHash,createHmac,randomUUID,randomInt,timingSafeEqual} from 'node:crypto';
+import {createHash,randomUUID,randomInt} from 'node:crypto';
+import {readCapability,signCapability} from '@ten98/runtime';
 import {z} from 'zod';
 import {getConfig} from './config.ts';
 import {FoundationError} from './auth.ts';
@@ -34,9 +35,10 @@ export async function saveReplay(projectId:string,userId:string,recordingId:stri
  });}
 
 const capability=z.object({version:z.literal(1),id:z.uuid(),projectId:z.uuid(),origin:z.string(),epoch:z.uuid(),settingsHash:z.string().regex(/^[a-f0-9]{64}$/),until:z.number().int().nonnegative()}).strict();
-const sign=(body:string)=>createHmac('sha256',getConfig().authSecret).update('ten98.heatmap-upload.v1:'+body).digest('hex');
-function token(row:{id:string;project_id:string;origin:string;epoch:string;settings_hash:string;upload_until:Date}){const body=Buffer.from(JSON.stringify({version:1,id:row.id,projectId:row.project_id,origin:row.origin,epoch:row.epoch,settingsHash:row.settings_hash,until:row.upload_until.getTime()})).toString('base64url');return body+'.'+sign(body);}
-function readToken(value:string){try{if(!/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(value))throw invalid();const[body,signature]=value.split('.');if(!timingSafeEqual(Buffer.from(signature,'hex'),Buffer.from(sign(body),'hex')))throw invalid();const raw=Buffer.from(body,'base64url');if(raw.toString('base64url')!==body)throw invalid();return capability.parse(JSON.parse(raw.toString('utf8')));}catch{throw new FoundationError(409,'The heatmap capability expired or changed.');}}
+// Hex signatures keep tokens issued before the shared helper valid; the framing is unchanged.
+const purpose='ten98.heatmap-upload.v1';
+function token(row:{id:string;project_id:string;origin:string;epoch:string;settings_hash:string;upload_until:Date}){return signCapability(purpose,{version:1,id:row.id,projectId:row.project_id,origin:row.origin,epoch:row.epoch,settingsHash:row.settings_hash,until:row.upload_until.getTime()},getConfig().authSecret,{encoding:'hex'});}
+export function readToken(value:string){const payload=readCapability(purpose,value,getConfig().authSecret,{encoding:'hex'});const parsed=capability.safeParse(payload);if(payload===null||!parsed.success)throw new FoundationError(409,'The heatmap capability expired or changed.');return parsed.data;}
 export async function beginHeatmap(request:Request,raw:unknown){const parsed=heatmapBegin.safeParse(raw);if(!parsed.success)throw invalid();const input=parsed.data;return transaction(async client=>{
  await client.query('SELECT id FROM project WHERE public_key=$1 FOR SHARE',[input.siteKey]);const policy=await nativeCollectionPolicy(client,request,input.siteKey,input,'heatmap'),settings=policy.project?publicAnalyticsSettings(policy.project.analytics_settings).heatmap??defaultHeatmapSettings:defaultHeatmapSettings;
  if(policy.reason||policy.basis!=='consent'||!settings.enabled)throw new FoundationError(403,'Current Analytics permission and enabled heatmaps are required.');

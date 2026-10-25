@@ -8,7 +8,7 @@ import { assertSchema, closeDatabase, getDatabase } from '../src/server/db.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { addDomain, issueDomainChallenge, verifyDomain } from '../src/server/domains.ts';
 import { saveAnalyticsSettings } from '../src/server/native-analytics.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 import {settingsOpen,settingsSections} from './helpers/app-navigation.ts';
 
 // Actual production app + tracker + loader, with synthetic HTTPS documents and
@@ -128,7 +128,7 @@ try {
   const download = await downloadEvent, stream = await download.createReadStream();
   let csv = ''; for await (const chunk of stream) csv += chunk.toString();
   assert.ok(csv.includes(serving)); assert.equal(csv.includes(canonical), false);
-  await dashboard.setViewportSize({ width: 360, height: 740 });
+  await setViewport(dashboard,{ width: 360, height: 740 });
   assert.equal(await dashboard.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.BROWSER_ARTIFACT_DIR) {
     await mkdir(process.env.BROWSER_ARTIFACT_DIR, { recursive: true });

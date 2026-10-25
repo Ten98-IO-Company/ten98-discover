@@ -10,7 +10,7 @@ import {assertSchema,closeDatabase,getDatabase} from '../src/server/db.ts';
 import {createWorkspace} from '../src/server/teams.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
 import {getDestinations,saveDestinationsDraft,publishDestinations} from '../src/server/destinations.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 
 // Root builds/starts the production app and supplies a fresh owned database.
 // This runner never migrates, launches the app, retries against another DB, or contacts vendors.
@@ -96,8 +96,8 @@ try{
   assert.equal((await identify({plan:'never-stored'},'discarded-before-consent')).status,'not_sent');
   assert.equal(captured.length,0);assert.deepEqual(await traffic(),{events:[],visitors:[]});assert.deepEqual(await profiles(),[]);assert.equal(await receipts(),0);
   await preferences().click();await dialog().getByText(/identifier and profile details/).waitFor();
-  for(const width of [1440,320]){await page.setViewportSize({width,height:900});await screenshot(page,`identify-consent-${width}.png`);const fit=await dialog().evaluate((node:HTMLElement)=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;});assert.equal(fit,true);}
-  await dialog().getByRole('button',{name:'Cancel',exact:true}).click();await page.setViewportSize({width:1440,height:900});
+  for(const width of [1440,320]){await setViewport(page,{width,height:900});await screenshot(page,`identify-consent-${width}.png`);const fit=await dialog().evaluate((node:HTMLElement)=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;});assert.equal(fit,true);}
+  await dialog().getByRole('button',{name:'Cancel',exact:true}).click();await setViewport(page,{width:1440,height:900});
   mark('fresh guarded fixture; pre-consent identify has no writes, retained identifier or outbound request; consent copy fits desktop/mobile');
 
   await grant();const beforeProfile=await traffic();assert.equal(beforeProfile.events.length,1);assert.equal(beforeProfile.visitors.length,1);assert.equal(captured[0].value.dimensions.distinctId,undefined);assert.equal(captured[0].value.properties,undefined);
@@ -158,7 +158,7 @@ try{
   await dashboard.route(previewUrl,async(route:any)=>{const original=await route.fetch(),body=await original.json();body.profileEstimate={status:'unavailable',properties:null,atLeast:false};await route.fulfill({response:original,json:body});});
   await dashboard.getByRole('button',{name:'Preview cleanup',exact:true}).click();await dashboard.getByText('Session-property estimate unavailable. Try previewing again; retention still applies.',{exact:true}).waitFor();
   assert.equal(await dashboard.getByText('0 session properties eligible for cleanup.',{exact:true}).count(),0);
-  await dashboard.setViewportSize({width:320,height:900});await screenshot(dashboard,'identify-retention-unavailable-320.png');
+  await setViewport(dashboard,{width:320,height:900});await screenshot(dashboard,'identify-retention-unavailable-320.png');
   assert.equal((await pool.query('SELECT raw_analytics_days FROM workspace WHERE id=$1',[workspace.id])).rows[0].raw_analytics_days,90);
   mark('real retention preview separates profile count from event count; injected unavailable estimate stays unavailable and preview does not save');
 

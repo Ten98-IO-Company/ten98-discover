@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {loadNavigationSession} from './fixtures/navigation-review.mjs';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 import {settingsSections} from './helpers/app-navigation.ts';
 
 assert.equal(process.env.TEN98_SHELL_FLOW_BROWSER, '1', 'Explicit isolated-shell opt-in required.');
@@ -329,7 +329,7 @@ try {
   stage = 'responsive reflow, scroll regions, long names, RTL and forced colors';
   eventReply = {body:populated};
   for (const width of [320,360,768,1440]) {
-    await page.setViewportSize({width,height:900});
+    await setViewport(page,{width,height:900});
     for (const view of ['events','installation']) {
       await open(view); const region = view === 'events' ? eventRegion() : snippetRegion(); await region.waitFor();
       await fit(view + ' ' + width);
@@ -367,12 +367,12 @@ try {
   }
   longNames = true;
   for (const width of [320,768,1440]) {
-    await page.setViewportSize({width,height:900}); await open('events'); await eventRegion().waitFor(); await fit('Long scope names ' + width); await compactScope('Long scope names ' + width);
+    await setViewport(page,{width,height:900}); await open('events'); await eventRegion().waitFor(); await fit('Long scope names ' + width); await compactScope('Long scope names ' + width);
     await page.evaluate(() => { document.documentElement.dir = 'rtl'; }); await fit('RTL long scope names ' + width); await compactScope('RTL long scope names ' + width);
     assert.equal(await page.getByText('Development preview', {exact:true}).isVisible(), width > 760); // The shared top bar hides the preview badge at 760px and below.
     await capture('events-long-scope-rtl-' + width);
   }
-  longNames = false; await page.setViewportSize({width:1440,height:900}); await open('installation'); await snippetRegion().waitFor();
+  longNames = false; await setViewport(page,{width:1440,height:900}); await open('installation'); await snippetRegion().waitFor();
   // CSS layout zoom exercises 200% reflow; this is not a browser-chrome zoom claim.
   await page.evaluate(() => { document.documentElement.style.zoom = '2'; }); await fit('200% CSS layout zoom');
   assert.equal(await button('Copy code').isVisible(), true); await capture('installation-layout-zoom-200');
@@ -387,7 +387,7 @@ try {
 
   stage = 'workspace and account scope, native keyboard and role presentations';
   await page.emulateMedia({forcedColors:'none', reducedMotion:'no-preference'});
-  await page.setViewportSize({width:927,height:1270});
+  await setViewport(page,{width:927,height:1270});
   projectListCount = 2;
   // The shared shell presents the rail as a complementary landmark, or as a modal dialog while the narrow drawer is open.
   const side = page.locator('aside[aria-label="Application navigation"]');
@@ -523,7 +523,7 @@ try {
   longNames = true; longIdentity = true;
   const longEmail = 'a'.repeat(139) + '@fixture.example.test';
   for (const width of [320,360,768,927,1440]) {
-    await page.setViewportSize({width,height:width === 927 ? 1270 : 900}); await open('events'); await showMenu();
+    await setViewport(page,{width,height:width === 927 ? 1270 : 900}); await open('events'); await showMenu();
     await fit('Expanded sidebar ' + width);
     for (const target of await side.locator('button, select, a').all()) {
       if (!await target.isVisible()) continue;
@@ -558,7 +558,7 @@ try {
     await page.keyboard.press('Escape');
   }
   longNames = false; longIdentity = false; operator = true; role = 'owner'; projectListCount = 20;
-  await page.setViewportSize({width:768,height:420}); await open('events'); await showMenu();
+  await setViewport(page,{width:768,height:420}); await open('events'); await showMenu();
   await settingsLink.focus();
   assert.equal(await side.evaluate(element => element.scrollTop > 0 && element.scrollHeight > element.clientHeight), true);
   assert.equal(await inViewport(settingsLink), true, 'Final sidebar action remains reachable in an overflowing short rail.');
@@ -568,7 +568,7 @@ try {
   assert.equal(await inViewport((await accountPanel()).getByRole('button', {name:'Sign out', exact:true})), true, 'Sign out remains reachable in a short viewport.');
   await page.keyboard.press('Escape');
   projectListCount = 2; operator = false; role = 'viewer';
-  await page.setViewportSize({width:1440,height:900}); await open('events'); await openAccount();
+  await setViewport(page,{width:1440,height:900}); await open('events'); await openAccount();
   const footerSignOut = (await accountPanel()).getByRole('button', {name:'Sign out', exact:true});
   await page.evaluate(() => { document.documentElement.style.zoom = '2'; }); await fit('Account 200% CSS layout zoom');
   assert.equal(await footerSignOut.isVisible(), true); await capture('navigation-account-layout-zoom-200');

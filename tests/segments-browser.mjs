@@ -13,7 +13,7 @@ import {hashPassword} from 'better-auth/crypto';
 import {getConfig} from '../src/server/config.ts';
 import {assertSchema,getDatabase,closeDatabase} from '../src/server/db.ts';
 import {normalizeProperties} from '../src/server/analytics-input.ts';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 import {openView} from './helpers/app-navigation.ts';
 
 assert.equal(process.env.TEN98_INTEGRATION_TEST,'1');assert.equal(process.env.TEN98_SEGMENTS_BROWSER,'1');
@@ -65,10 +65,10 @@ try{
   const explicit=new URLSearchParams({from:day,to:day,timeZone:'America/New_York',groupBy:'path',kind:'custom',path:literal,campaignSource:'',propertyKey:'value',propertyType:'number',propertyValue:'0'});
   const expected=await (await context.request.get(config.appUrl+explore+'?'+explicit)).json();assert.equal(expected.totals.events,1);await apply();assert.equal(analyticsGets,reads+1);assert.equal(await csv(),expected.csv);assert.equal(await page.locator('.metric-value').first().innerText(),'1');
   await mkdir(evidence,{recursive:true});await page.screenshot({path:evidence+'/saved-applied-1440.png',fullPage:true});
-  for(const width of [320,360]){await page.setViewportSize({width,height:950});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:evidence+'/saved-applied-'+width+'.png',fullPage:true});}
+  for(const width of [320,360]){await setViewport(page,{width,height:950});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:evidence+'/saved-applied-'+width+'.png',fullPage:true});}
   console.log('PASS actual save with Enter, immutable predicate-only storage, load-to-draft without analytics, retained report context and exact applied CSV at desktop/mobile widths');
 
-  await page.setViewportSize({width:1440,height:1000});await (await editExplore(page)).getByLabel('Path equals',{exact:true}).fill('/other');await name.fill('Updated filter');const beforeUpdateReads=analyticsGets,appliedCsv=await csv();const updated=(await mutation('Update saved filter')).item;assert.equal(updated.revision,2);assert.equal(new URLSearchParams(updated.definition.query).get('path'),'/other');assert.equal(analyticsGets,beforeUpdateReads);assert.equal(await csv(),appliedCsv);
+  await setViewport(page,{width:1440,height:1000});await (await editExplore(page)).getByLabel('Path equals',{exact:true}).fill('/other');await name.fill('Updated filter');const beforeUpdateReads=analyticsGets,appliedCsv=await csv();const updated=(await mutation('Update saved filter')).item;assert.equal(updated.revision,2);assert.equal(new URLSearchParams(updated.definition.query).get('path'),'/other');assert.equal(analyticsGets,beforeUpdateReads);assert.equal(await csv(),appliedCsv);
   const other=await post('/'+created.id+'/update',{requestId:randomUUID(),revision:2,definition:{...updated.definition,name:'Concurrent name'}});assert.equal(other.item.revision,3);
   await (await editExplore(page)).getByLabel('Path equals',{exact:true}).fill('/retained draft');await name.fill('Stale name');const conflict=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname===endpoint+'/'+created.id+'/update');await (await editExplore(page)).getByRole('button',{name:'Rename',exact:true}).click();assert.equal((await conflict).status(),409);
   await saved.getByText('This saved filter changed. Its current definition was reloaded.',{exact:false}).waitFor();assert.equal(await name.inputValue(),'Concurrent name');assert.equal(await (await editExplore(page)).getByLabel('Path equals',{exact:true}).inputValue(),'/retained draft');assert.equal(analyticsGets,beforeUpdateReads);assert.equal(await csv(),appliedCsv);
@@ -84,7 +84,7 @@ try{
   await mutation('Delete saved filter','Delete this saved filter?');await saved.getByText('Saved filter deleted.',{exact:false}).waitFor();
   const deletedLost=await loseAcknowledgement('Deleted before confirmation');await post('/'+deletedLost.committed.item.id+'/delete',{requestId:randomUUID(),revision:1});const secondRetry=page.waitForRequest(r=>new URL(r.url()).pathname===endpoint&&r.method()==='POST');const tombstone=await mutation('Retry same request');assert.deepEqual((await secondRetry).postDataJSON(),deletedLost.originalBody);assert.equal(tombstone.replayed,true);assert.equal(tombstone.deleted,true);assert.equal(tombstone.item,null);await saved.getByText('The original save was confirmed, but that saved filter was since deleted.',{exact:false}).waitFor();
   await saved.getByText('No saved filters yet.',{exact:true}).waitFor();assert.equal((await pool.query('SELECT 1 FROM analytics_segment WHERE id=$1',[deletedLost.committed.item.id])).rowCount,0);assert.equal(analyticsGets,beforeUpdateReads);assert.equal(await csv(),appliedCsv);assert.equal(outbound,0);
-  await page.setViewportSize({width:360,height:950});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:evidence+'/saved-replay-deleted-360.png',fullPage:true});
+  await setViewport(page,{width:360,height:950});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:evidence+'/saved-replay-deleted-360.png',fullPage:true});
   console.log('PASS committed-but-lost acknowledgement retries exact request once; deleted receipt resolves without resurrection, automatic analytics or outbound traffic');
 }finally{await browser?.close();await closeDatabase();}
 

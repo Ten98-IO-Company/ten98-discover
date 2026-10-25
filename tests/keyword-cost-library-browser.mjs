@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createServer} from 'vite';
-import {launchChromium} from './helpers/playwright.mjs';
+import {launchChromium,setViewport} from './helpers/playwright.mjs';
 assert.equal(process.env.TEN98_KEYWORD_COST_BROWSER,'1');
 const started=Date.now(),id=n=>`${n}0000000-0000-4000-8000-000000000001`,pid=id(3),cid=id(4),rid=id(5),qid=id(6),at='2026-10-19T12:00:00.000Z';
 const request={connectionId:cid,mode:'overview',keywords:['native keyword','second keyword'],locationCode:2840,languageCode:'en',limit:100};
@@ -92,7 +92,7 @@ try{
  });
  const visual=[];
  for(const theme of ['light','dark'])for(const width of [320,1440]){
-  await fresh();await page.emulateMedia({colorScheme:theme});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.style.fontSize='200%';},theme);await page.setViewportSize({width,height:1000});await prepare();
+  await fresh();await page.emulateMedia({colorScheme:theme});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.style.fontSize='200%';},theme);await setViewport(page,{width,height:1000});await prepare();
   const region=cost('Quote cost');await region.scrollIntoViewIfNeeded();await page.evaluate(async()=>{getComputedStyle(document.documentElement).color;await Promise.all(document.getAnimations().filter(a=>Number.isFinite(a.effect?.getComputedTiming().iterations)).map(a=>a.finished.catch(()=>{})));await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${theme}/${width} has page overflow`);
   const result=await contrast(region);assert.ok(result.count>10);assert.deepEqual(result.failures,[],`${theme}/${width} contrast`);
   visual.push({theme,width,textNodes:result.count,background:await region.evaluate(e=>getComputedStyle(e).backgroundColor)});
