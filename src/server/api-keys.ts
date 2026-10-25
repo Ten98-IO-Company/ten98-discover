@@ -110,19 +110,23 @@ export async function revokeApiKey(workspaceId: string, userId: string, keyId: s
 // Records a successful use at most once a minute per key. It runs on its own pooled connection and is not awaited, so a
 // request neither waits for it nor holds its row lock; SKIP LOCKED leaves a row another transaction holds to a later use.
 // A request may authenticate more than once, so one write per key is in flight per process; others are dropped, not queued.
-const recordingUse = new Set<string>();
-function recordApiKeyUse(id: string): void {
-  if (recordingUse.has(id)) return;
-  recordingUse.add(id);
+// A read that began before the previous write finished may still see the old time, so it is dropped too: that write
+// committed no earlier than the read began and already records this use. Reads run in READ COMMITTED statements.
+const recordingUse = new Map<string, number>();
+function recordApiKeyUse(id: string, readStartedAt: number): void {
+  const written = recordingUse.get(id);
+  if (written !== undefined && written >= readStartedAt) return;
+  recordingUse.set(id, Infinity);
   void getDatabase().pool.query(
     `UPDATE api_key SET last_used_at=clock_timestamp() WHERE id=(SELECT id FROM api_key WHERE id=$1
        AND (last_used_at IS NULL OR last_used_at<clock_timestamp()-interval '1 minute') FOR NO KEY UPDATE SKIP LOCKED)`, [id],
   ).catch(() => console.error('API key last-used update failed; check database availability.'))
-    .finally(() => recordingUse.delete(id));
+    .finally(() => recordingUse.set(id, performance.now()));
 }
 
 export async function authenticateApiKey(token: string, client?: Pick<PoolClient, 'query'>): Promise<ApiKeyPrincipal> {
   if (typeof token !== 'string' || !validToken(token)) invalidKey();
+  const readStartedAt = performance.now();
   const result = await (client ?? getDatabase().pool).query<ApiKeyPrincipal & { useDue: boolean }>(
     `SELECT k.id,k.issuer_user_id AS "userId",k.workspace_id AS "workspaceId",m.role,k.scopes,
        (k.last_used_at IS NULL OR k.last_used_at<clock_timestamp()-interval '1 minute') AS "useDue"
@@ -133,7 +137,7 @@ export async function authenticateApiKey(token: string, client?: Pick<PoolClient
   const row = result.rows[0];
   if (!row || !workspaceRoles.includes(row.role as WorkspaceRole)) invalidKey();
   const { useDue, ...principal } = row;
-  if (useDue) recordApiKeyUse(principal.id);
+  if (useDue) recordApiKeyUse(principal.id, readStartedAt);
   return { ...principal, scopes: principal.scopes.filter((scope) => apiKeyScopes.includes(scope) && allows(principal.role, scope)) };
 }
 
