@@ -1,4 +1,5 @@
 // src/components/SavedKeywordFilterFields.tsx
+import {Disclosure} from '@ten98/ui';
 export type SavedKeywordFilterDraft = {
   search: string; includeTerms: string; excludeTerms: string;
   locationCode: string; languageCode: string; tagIds: string[];
@@ -51,8 +52,7 @@ export function SavedKeywordFilterFields({ value, onChange, tags, disabled = fal
           </select>
         </div>
       </div>
-      <details>
-        <summary>More filters</summary>
+      <Disclosure summary="More filters" variant="plain">
         <div className="field">
           <label htmlFor={`${prefix}-include-terms`}>Include phrases</label>
           <textarea id={`${prefix}-include-terms`} rows={3} maxLength={4020} value={value.includeTerms} onChange={(e) => onChange({ ...value, includeTerms: e.target.value })} />
@@ -136,7 +136,7 @@ export function SavedKeywordFilterFields({ value, onChange, tags, disabled = fal
             </>
           )}
         </fieldset>
-      </details>
+      </Disclosure>
     </fieldset>
   );
 }

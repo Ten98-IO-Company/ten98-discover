@@ -1,5 +1,5 @@
 import {useEffect, useId, useRef, useState, type FormEvent} from 'react';
-import { useConfirmDialog } from '@ten98/ui'
+import { Disclosure, useConfirmDialog } from '@ten98/ui'
 import {useBlocker} from '@tanstack/react-router';
 import {z} from 'zod';
 import {api, ApiError, errMsg} from '../lib/api';
@@ -105,7 +105,7 @@ function DiscoveryPanel({projectId, onUse, onBack, onAccessLoss}: Props) {
           <div className="field"><label htmlFor={id + '-audience'}>Audience (optional)</label><input id={id + '-audience'} value={audience} maxLength={100} style={control} onChange={event => setAudience(event.target.value)} placeholder="For example, small businesses"/></div>
           <div className="field"><label htmlFor={id + '-intent'}>Question intent</label><select id={id + '-intent'} value={intent} style={control} onChange={event => setIntent(event.target.value as PromptDiscoveryIntent)}>{promptDiscoveryIntents.map(value => <option key={value} value={value}>{intentNames[value]}</option>)}</select></div>
         </div>
-        {context && <details><summary>Optional saved context</summary><div className="stack"><label style={{display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, overflowWrap: 'anywhere'}}><input type="checkbox" checked={includeBrand} onChange={event => setIncludeBrand(event.target.checked)}/>Include saved brand: {context.profile.name}</label>{!!context.competitors.length && <div className="field"><label htmlFor={id + '-competitor'}>Competitor (optional)</label><select id={id + '-competitor'} value={competitorId} style={control} onChange={event => setCompetitorId(event.target.value)}><option value="">No competitor</option>{context.competitors.map(value => <option key={value.id} value={value.id}>{value.name || value.primaryDomain}</option>)}</select></div>}<p className="hint">Selected names are added to the questions.</p></div></details>}
+        {context && <Disclosure summary="Optional saved context" variant="plain"><div className="stack"><label style={{display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, overflowWrap: 'anywhere'}}><input type="checkbox" checked={includeBrand} onChange={event => setIncludeBrand(event.target.checked)}/>Include saved brand: {context.profile.name}</label>{!!context.competitors.length && <div className="field"><label htmlFor={id + '-competitor'}>Competitor (optional)</label><select id={id + '-competitor'} value={competitorId} style={control} onChange={event => setCompetitorId(event.target.value)}><option value="">No competitor</option>{context.competitors.map(value => <option key={value.id} value={value.id}>{value.name || value.primaryDomain}</option>)}</select></div>}<p className="hint">Selected names are added to the questions.</p></div></Disclosure>}
         {error && <p className="alert" role="alert" ref={errorFocus} tabIndex={-1}>{error}</p>}
         <div className="row"><button type="submit" className="btn primary" style={{minHeight: 44}}>Build starter questions</button></div>
       </form>

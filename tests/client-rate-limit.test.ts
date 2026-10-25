@@ -31,11 +31,46 @@ test('per-client limit keys separate clients, keep no address and give unknown c
   const first = clientLimitKey('signin', '198.51.100.7', 'k'.repeat(32)), second = clientLimitKey('signin', '198.51.100.8', 'k'.repeat(32));
   assert.notEqual(first, second);
   assert.equal(clientLimitKey('signin', '198.51.100.7', 'k'.repeat(32)), first);
-  assert.match(first, /^signin:client:[0-9a-f]{64}$/);
+  assert.match(first, /^signin:client:[A-Za-z0-9_-]{43}$/);
   assert.ok(!first.includes('198.51.100.7'));
   assert.notEqual(clientLimitKey('signin', '198.51.100.7', 'j'.repeat(32)), first, 'the key is a keyed hash, not a plain digest');
-  assert.equal(clientLimitKey('signin', null, 'k'.repeat(32)), 'signin:client:unknown');
-  assert.equal(clientRateKey(new Request(`${appUrl}/api/auth/sign-in/email`, { headers: { 'x-forwarded-for': '198.51.100.7' } }), 'signin', baseEnv), 'signin:client:unknown', 'headers never stand in for a missing transport');
+  assert.equal(clientLimitKey('signin', null, 'k'.repeat(32)), 'signin:client:unresolved');
+  assert.equal(clientRateKey(new Request(`${appUrl}/api/auth/sign-in/email`, { headers: { 'x-forwarded-for': '198.51.100.7' } }), 'signin', baseEnv), 'signin:client:unresolved', 'headers never stand in for a missing transport');
+});
+
+test('IPv6 clients are keyed per /56 network and IPv4 per address, through the runtime clientLimitKey', () => {
+  const key = (address: string | null, scope = 'signin') => clientLimitKey(scope, address, 'k'.repeat(32));
+  // 2001:db8:0:00xx::/56 holds the first 56 bits; the low byte of the fourth group and the interface id stay inside it.
+  const network = key('2001:db8:0:ff::1');
+  for (const address of ['2001:db8::1', '2001:db8:0:1::', '2001:db8:0:aa:ffff:ffff:ffff:ffff', '2001:0db8:0000:00ff:0000:0000:0000:0002']) assert.equal(key(address), network, address);
+  for (const address of ['2001:db8:0:100::1', '2001:db8:1::1', '2001:db9::1']) assert.notEqual(key(address), network, address);
+  assert.match(network, /^signin:client:[A-Za-z0-9_-]{43}$/);
+  assert.ok(!network.includes('2001'), 'the key never contains the address or its network');
+  assert.notEqual(key('198.51.100.7'), key('198.51.100.8'), 'IPv4 clients are not grouped');
+  assert.equal(key('::ffff:198.51.100.7'), key('198.51.100.7'), 'an IPv4-mapped address is its IPv4 client');
+  assert.throws(() => key('unknown'), TypeError, 'a placeholder is refused rather than becoming a shared key');
+});
+
+test('an unresolved client has its own key per scope, apart from every resolved client and from other scopes', () => {
+  const secret = 'k'.repeat(32), scopes = ['setup', 'signin', 'two-factor', 'password-recovery:request', 'password-recovery:reset', 'oidc:start', 'oidc:callback', 'invitations:public'];
+  const unresolved = scopes.map(scope => clientLimitKey(scope, null, secret));
+  assert.deepEqual(unresolved, scopes.map(scope => `${scope}:client:unresolved`), 'existing scope prefixes are kept');
+  assert.equal(new Set(unresolved).size, scopes.length, 'no global key is shared across scopes');
+  for (const scope of scopes) for (const address of ['198.51.100.7', '2001:db8::1', '127.0.0.1']) assert.notEqual(clientLimitKey(scope, address, secret), clientLimitKey(scope, null, secret));
+});
+
+test('sign-in and setup keys group IPv6 clients behind a trusted proxy by /56', async () => {
+  await withTransport(async fromPeer => {
+    const env = { ...baseEnv, TRUSTED_PROXIES: '127.0.0.1' };
+    const via = (forwarded: string, scope: string) => clientRateKey(fromPeer('/api/auth/sign-in/email', { headers: { 'x-forwarded-for': forwarded } }), scope, env);
+    for (const scope of ['signin', 'setup']) {
+      assert.equal(via('2001:db8:0:ff::1', scope), via('2001:db8:0:1:abcd::7', scope), `${scope}: one /56 shares a limit`);
+      assert.notEqual(via('2001:db8:0:ff::1', scope), via('2001:db8:0:100::1', scope), `${scope}: another /56 does not`);
+      assert.equal(via('2001:db8:0:ff::1', scope), clientLimitKey(scope, '2001:db8::', baseEnv.AUTH_SECRET));
+    }
+    assert.equal(clientRateKey(fromPeer('/api/setup'), 'setup', env), 'setup:client:unresolved', 'a trusted peer without a chain is unresolved');
+    assert.equal(clientRateKey(fromPeer('/api/setup', { headers: { 'x-forwarded-for': '2001:db8::1' } }), 'setup', { ...baseEnv, TRUSTED_PROXIES: '10.0.0.0/8' }), clientLimitKey('setup', '127.0.0.1', baseEnv.AUTH_SECRET), 'an untrusted peer cannot choose its key');
+  });
 });
 
 test('forwarding headers are honoured only from configured trusted proxies', async () => {
@@ -50,6 +85,34 @@ test('forwarding headers are honoured only from configured trusted proxies', asy
     assert.equal(requestClientAddress(fromPeer('/', { headers: { 'x-forwarded-for': 'malformed' } }), { TRUSTED_PROXIES: '127.0.0.1' }), null);
     assert.equal(requestClientAddress(spoofed, { ANALYTICS_TRUSTED_PROXIES: '127.0.0.1' }), '198.51.100.7', 'the analytics proxy list applies when TRUSTED_PROXIES is unset');
     assert.equal(requestClientAddress(spoofed, { TRUSTED_PROXIES: '10.0.0.0/8', ANALYTICS_TRUSTED_PROXIES: '127.0.0.1' }), '127.0.0.1', 'an explicit TRUSTED_PROXIES wins');
+  });
+});
+
+test('client-controlled X-Forwarded-For entries left of the client hop cannot unresolve the client or choose its key', async () => {
+  await withTransport(async fromPeer => {
+    const trusted = { ...baseEnv, TRUSTED_PROXIES: '127.0.0.1' }, real = clientLimitKey('signin', '198.51.100.7', baseEnv.AUTH_SECRET);
+    const via = (forwarded: string) => fromPeer('/api/auth/sign-in/email', { headers: { 'x-forwarded-for': forwarded } });
+    // (a) A trusted proxy appends the real client to whatever junk the client sent.
+    for (const junk of ['unknown', 'garbage', '"192.0.2.1"', '192.0.2.1:80', 'example.test', ',']) {
+      assert.equal(requestClientAddress(via(`${junk}, 198.51.100.7`), trusted), '198.51.100.7', junk);
+      assert.equal(clientRateKey(via(`${junk}, 198.51.100.7`), 'signin', trusted), real, `${junk}: the real client keeps its key`);
+    }
+    // (b) A left-padded spoof cannot pick the key: neither another client's, the shared unresolved one, nor a trusted address.
+    for (const padding of ['203.0.113.66', '203.0.113.66, 192.0.2.44', '127.0.0.1', 'unknown, 203.0.113.66', Array(18).fill('203.0.113.66').join(',')]) {
+      const key = clientRateKey(via(`${padding}, 198.51.100.7`), 'signin', trusted);
+      assert.equal(key, real, padding);
+      assert.notEqual(key, 'signin:client:unresolved');
+      assert.notEqual(key, clientLimitKey('signin', '203.0.113.66', baseEnv.AUTH_SECRET));
+    }
+    // A malformed client hop, or junk reached only through trusted hops, is still unresolved.
+    assert.equal(requestClientAddress(via('198.51.100.7, garbage'), trusted), null);
+    assert.equal(requestClientAddress(via('garbage, 127.0.0.1'), trusted), null);
+    assert.equal(requestClientAddress(via(Array(21).fill('198.51.100.7').join(',')), trusted), null, 'the hop limit still applies');
+    // (c) An untrusted peer is still its own client, whatever the header says.
+    for (const forwarded of ['garbage, 198.51.100.7', '203.0.113.66, 198.51.100.7', '198.51.100.7, garbage']) {
+      assert.equal(requestClientAddress(via(forwarded), { TRUSTED_PROXIES: '10.0.0.0/8' }), '127.0.0.1', forwarded);
+      assert.equal(requestClientAddress(via(forwarded), {}), '127.0.0.1', forwarded);
+    }
   });
 });
 
@@ -107,8 +170,8 @@ test('sign-in limits count per client, and the same client is still limited', as
       for (let index = 0; index < 60; index++) assert.equal(await signIn(plain), 'reached account limit');
       assert.equal(await signIn(plain), 429, 'unknown clients share one conservative key');
       assert.equal(await signIn(fromPeer, '198.51.100.9'), 'reached account limit', 'the unknown key does not limit resolved clients');
-      assert.equal(counts.get('signin:client:unknown'), 61);
-      assert.deepEqual([...counts.keys()].filter(key => key !== 'signin:client:unknown').map(key => /^signin:client:[0-9a-f]{64}$/.test(key)), [true, true, true]);
+      assert.equal(counts.get('signin:client:unresolved'), 61);
+      assert.deepEqual([...counts.keys()].filter(key => key !== 'signin:client:unresolved').map(key => /^signin:client:[A-Za-z0-9_-]{43}$/.test(key)), [true, true, true]);
     });
   } finally {
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];

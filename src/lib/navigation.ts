@@ -6,6 +6,7 @@ import {geographyFields,geographyFiltersValid,parseGeographyKey,serializeGeograp
 import {journeysLimits} from './journeys.ts'
 import {attributionLimits} from './attribution.ts'
 import {analyticsDimensions,type AnalyticsDimension} from './analytics-dimensions.ts'
+import {isOidcReturnCode,type OidcReturnCode} from './auth-messages.ts'
 
 export const views = ['project', 'realtime', 'performance', 'replays', 'heatmaps', 'boards', 'compare', 'campaigns', 'links', 'pixels', 'tracked-share', 'new-project', 'team', 'workspace', 'security', 'preferences', 'providers', 'keys', 'destinations', 'identity', 'collection', 'domains', 'reports', 'installation', 'events', 'retention', 'visitor-retention', 'context', 'prompts', 'ai-search', 'ai-insights', 'explore', 'sessions', 'journeys', 'revenue', 'attribution', 'google', 'imports', 'google-app', 'identity-providers', 'diagnostics', 'keywords', 'domain-seo', 'ranks', 'audits', 'conversions'] as const
 export type AppView = typeof views[number]
@@ -275,6 +276,7 @@ export type CallbackIntent =
   | { kind: 'google-error' }
   | { kind: 'proof'; proof: string }
   | { kind: 'factor' | 'complete' | 'identity-error' }
+  | { kind: 'oidc-error'; code: OidcReturnCode }
   | { kind: 'invite'; token: string }
   | { kind: 'invalid' }
 
@@ -307,6 +309,9 @@ export function parseCallback(hash: string): CallbackIntent | null {
     if (navigationId(proof)) return { kind: 'proof', proof }
     if (params.get('oidc-factor') === '1') return { kind: 'factor' }
     if (params.get('oidc-complete') === '1') return { kind: 'complete' }
+    // Only a code from the closed set selects a message; anything else stays the generic invalid-return notice.
+    const code = params.get('oidc-error')
+    if (isOidcReturnCode(code)) return { kind: 'oidc-error', code }
     return { kind: 'identity-error' }
   }
   const token = params.get('invite')

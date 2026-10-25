@@ -12,6 +12,7 @@ import { createWorkspace } from '../src/server/teams.ts';
 import { runGoogleChecks } from './google-integration.ts';
 import { runGoogleGa4Checks } from './google-ga4-integration.ts';
 import {launchChromium} from './helpers/playwright.mjs';
+import {settingsSections} from './helpers/app-navigation.ts';
 
 // Production client/SSR assets, actual API functions, PostgreSQL and queue worker;
 // only Google HTTP endpoints and the Google consent page are synthetic fixtures.
@@ -72,7 +73,7 @@ try {
       async function settings(name: string) {
         await navigation();
         await page.locator('aside.t98-shell-sidebar').getByRole('link', { name: 'Settings', exact: true }).click();
-        await page.getByRole('navigation', { name: 'Settings sections', exact: true }).getByRole('link', { name, exact: true }).click();
+        await (await settingsSections(page)).getByRole('link', { name, exact: true }).click();
       }
       await settings('Google app');
       assert.equal(await page.getByLabel('Client secret', { exact: true }).inputValue(), '');

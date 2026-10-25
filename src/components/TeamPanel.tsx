@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { mayGrantWorkspaceRole, mayManageWorkspaceMember, type WorkspaceRole as Role } from '@ten98/runtime';
-import { Alert, Banner, Button, Inline, useConfirmDialog } from '@ten98/ui';
-import { assignableRoles, invitableRoles } from '../lib/team-roles';
+import { Alert, Banner, Button, Field, Inline, Input, Select, useConfirmDialog } from '@ten98/ui';
+import { assignableRoles, defaultInviteRole, invitationExpiry, inviteResultText, inviteRoleOptions, roleLabel } from '../lib/team-roles';
 import { api, ApiError, errMsg } from '../lib/api';
 
 type Member = { userId: string; name: string; email: string; role: Role };
@@ -15,6 +15,8 @@ type TeamData = {
   role: Role;
   members: Member[];
   invitations: Invitation[];
+  /** Absent from an older server; Resend email is then not offered and New link still works. */
+  emailConfigured?: boolean;
 };
 
 
@@ -24,7 +26,7 @@ function is401(error: unknown): boolean {
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
 type TeamPanelProps = {
@@ -49,7 +51,7 @@ function TeamPanelContent(props: TeamPanelProps) {
   const [reload, setReload] = useState(0);
   const [name, setName] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<Role>('editor');
+  const [inviteRole, setInviteRole] = useState<Role>(defaultInviteRole);
   const [inviteLink, setInviteLink] = useState<InviteLink | null>(null);
   // A resend or new link whose reply was lost; only that exact request is offered again.
   const [attempt, setAttempt] = useState<InviteAction | null>(null);
@@ -110,7 +112,7 @@ function TeamPanelContent(props: TeamPanelProps) {
   const myRole = data?.role ?? null;
   const canManage = myRole === 'owner' || myRole === 'admin';
   const roleOptions = assignableRoles(myRole);
-  const inviteRoles = invitableRoles(myRole);
+  const inviteRoles = inviteRoleOptions(myRole);
   const transferTarget = data?.members.find(member => member.userId === transferTo && member.userId !== userId);
 
   function canManageMember(m: Member): boolean {
@@ -194,7 +196,7 @@ function TeamPanelContent(props: TeamPanelProps) {
     void runMutation('Could not create the invitation', async signal => {
       const res = await api<{ invitation: Invitation; inviteUrl: string; email: InviteDelivery }>(
         `/api/workspaces/${encodeURIComponent(workspaceId)}/invitations`,
-        { method: 'POST', body: { email, role: inviteRoles.includes(inviteRole) ? inviteRole : 'editor' }, signal },
+        { method: 'POST', body: { email, role: inviteRoles.some(option => option.value === inviteRole) ? inviteRole : defaultInviteRole }, signal },
       );
       return () => {
         setInviteLink({ email: res.invitation.email, url: res.inviteUrl, delivery: res.email, kind: 'create' });
@@ -327,12 +329,14 @@ function TeamPanelContent(props: TeamPanelProps) {
     );
   }
 
+  const solo = data.members.length === 1 && data.members[0].userId === userId;
+
   return (
     <div aria-busy={busy || loading}>
       {loading && <p className='dim' role='status'>Refreshing team…</p>}
       <div className='proj-head'>
         <h2>{data.workspace.name}</h2>
-        <p className='dim'>Your role: {data.role}</p>
+        <p className='dim'>Your role: {roleLabel(data.role)}</p>
         <button type='button' className='btn' disabled={busy} onClick={() => setReload(value => value + 1)}>Refresh team</button>
       </div>
 
@@ -342,34 +346,64 @@ function TeamPanelContent(props: TeamPanelProps) {
         </div>
       )}
 
-      {canManage && (
-        <section className='card'>
-          <h2>Rename workspace</h2>
-          <form onSubmit={submitRename}>
-            <div className='field'>
-              <label htmlFor='ws-rename'>Workspace name</label>
-              <input
-                id='ws-rename'
-                value={name}
-                onChange={e => setName(e.target.value)}
-                maxLength={120}
-                required
-                disabled={busy}
-              />
-            </div>
-            <button
-              type='submit'
-              className='btn primary'
-              disabled={busy || !name.trim() || name.trim() === data.workspace.name}
-            >
-              Rename workspace
-            </button>
+      <section className='card' aria-labelledby='members-heading'>
+        <h2 id='members-heading'>Members</h2>
+        {canManage && inviteRoles.length > 0 && (
+          <form onSubmit={submitInvite} aria-label='Invite a member'>
+            <Inline gap={2} align='end' wrap>
+              <Field label='Email address' htmlFor='invite-email' style={{ flex: '1 1 14rem', minInlineSize: 0 }}>
+                <Input
+                  id='invite-email'
+                  type='email'
+                  value={inviteEmail}
+                  onChange={e => setInviteEmail(e.target.value)}
+                  placeholder='name@example.com'
+                  maxLength={254}
+                  autoComplete='off'
+                  required
+                  disabled={busy}
+                />
+              </Field>
+              <Field label='Role' htmlFor='invite-role' style={{ flex: '1 1 14rem', minInlineSize: 0 }}>
+                <Select
+                  id='invite-role'
+                  value={inviteRole}
+                  onChange={e => setInviteRole(e.target.value as Role)}
+                  disabled={busy}
+                  options={inviteRoles.map(option => ({ value: option.value, label: `${option.label} — ${option.description}` }))}
+                />
+              </Field>
+              <Button type='submit' disabled={busy || !inviteEmail.trim()}>Invite</Button>
+            </Inline>
+            <p className='hint'>Invitation links expire after 7 days.</p>
           </form>
-        </section>
-      )}
-
-      <section className='card'>
-        <h2>Members</h2>
+        )}
+        {inviteLink && (
+          <div className='banner' role='status'>
+            <p>{inviteResultText(inviteLink)}{inviteLink.kind === 'create' ? '' : ' It expires after 7 days.'}</p>
+            <div className='row'>
+              <button type='button' className='btn' onClick={() => void copyInvite()}>
+                {copied ? 'Copied' : 'Copy link'}
+              </button>
+              <button type='button' className='btn ghost' onClick={() => setInviteLink(null)}>
+                Dismiss
+              </button>
+            </div>
+            <textarea
+              className='snippet'
+              style={{ width: '100%', resize: 'vertical' }}
+              readOnly
+              rows={3}
+              value={inviteLink.url}
+              aria-label='Invitation link'
+              onFocus={e => e.currentTarget.select()}
+            />
+            <p className='hint'>
+              If copying does not work, select the link and copy it manually. For security it is only shown here,
+              once.
+            </p>
+          </div>
+        )}
         {data.members.length === 0 ? (
           <div className='empty'>
             <p>
@@ -406,12 +440,12 @@ function TeamPanelContent(props: TeamPanelProps) {
                         >
                           {roleOptions.map(r => (
                             <option key={r} value={r}>
-                              {r}
+                              {roleLabel(r)}
                             </option>
                           ))}
                         </select>
                       ) : (
-                        m.role
+                        roleLabel(m.role)
                       )}
                     </td>
                     {canManage && (
@@ -429,7 +463,100 @@ function TeamPanelContent(props: TeamPanelProps) {
             </table>
           </div>
         )}
+        {solo && <p className='dim'>You’re the only member. Invite people to share dashboards and reports.</p>}
       </section>
+
+      <section className='card' aria-labelledby='pending-heading'>
+        <h2 id='pending-heading'>Pending invitations</h2>
+        {data.invitations.length === 0 ? (
+          <div className='empty'>
+            <p>
+              <strong>No pending invitations.</strong>
+            </p>
+            <p>
+              {canManage
+                ? 'Invite someone above to add them to this workspace.'
+                : 'Invitations that have not been accepted yet will appear here.'}
+            </p>
+          </div>
+        ) : (
+          <div className='table-wrap'>
+            <table>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Expires</th>
+                  {canManage && <th>Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {data.invitations.map(inv => (
+                  <tr key={inv.id}>
+                    <td>{inv.email}</td>
+                    <td>{roleLabel(inv.role)}</td>
+                    <td><time dateTime={inv.expiresAt} title={formatDate(inv.expiresAt)}>{invitationExpiry(inv.expiresAt)}</time></td>
+                    {canManage && (
+                      <td>
+                        {canManageInvite(inv) && (
+                          <Inline gap={2} wrap>
+                            {data.emailConfigured === true && (
+                              <Button type='button' variant='secondary' disabled={busy} aria-label={`Resend email to ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'resend', invitation: inv })}>
+                                Resend email
+                              </Button>
+                            )}
+                            <Button type='button' variant='secondary' disabled={busy} aria-label={`New link for ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'new-link', invitation: inv })}>
+                              New link
+                            </Button>
+                            <Button type='button' variant='secondary' disabled={busy} onClick={() => revokeInvite(inv)}>
+                              Revoke
+                            </Button>
+                          </Inline>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {attempt && (
+          <Alert tone='warning' title='Outcome not confirmed' actions={<Inline gap={2}>
+            <Button type='button' variant='secondary' disabled={busy} onClick={() => runInviteAction(attempt)}>Retry same request</Button>
+            <Button type='button' variant='ghost' disabled={busy} onClick={() => setAttempt(null)}>Dismiss</Button>
+          </Inline>}>
+            The {attempt.kind === 'resend' ? 'resend' : 'new link'} request for {attempt.invitation.email} was not confirmed. The
+            previous link may already have stopped working. Retry the same request to get a working link.
+          </Alert>
+        )}
+      </section>
+
+      {canManage && (
+        <section className='card'>
+          <h2>Rename workspace</h2>
+          <form onSubmit={submitRename}>
+            <div className='field'>
+              <label htmlFor='ws-rename'>Workspace name</label>
+              <input
+                id='ws-rename'
+                value={name}
+                onChange={e => setName(e.target.value)}
+                maxLength={120}
+                required
+                disabled={busy}
+              />
+            </div>
+            <button
+              type='submit'
+              className='btn primary'
+              disabled={busy || !name.trim() || name.trim() === data.workspace.name}
+            >
+              Rename workspace
+            </button>
+          </form>
+        </section>
+      )}
 
       {myRole === 'owner' && (
         <section className='card' aria-labelledby='two-factor-heading'>
@@ -465,157 +592,6 @@ function TeamPanelContent(props: TeamPanelProps) {
               <button className='btn' type='submit' disabled={busy || !transferTarget || transferEmail.trim().toLowerCase() !== transferTarget.email.toLowerCase()}>Transfer ownership and become administrator</button>
             </fieldset>
           </form>
-        </section>
-      )}
-
-      <section className='card'>
-        <h2>Pending invitations</h2>
-        {data.invitations.length === 0 ? (
-          <div className='empty'>
-            <p>
-              <strong>No pending invitations.</strong>
-            </p>
-            <p>
-              {canManage
-                ? 'Create an invitation link below to add someone to this workspace.'
-                : 'Invitations that have not been accepted yet will appear here.'}
-            </p>
-          </div>
-        ) : (
-          <div className='table-wrap'>
-            <table>
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Expires</th>
-                  {canManage && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {data.invitations.map(inv => (
-                  <tr key={inv.id}>
-                    <td>{inv.email}</td>
-                    <td>{inv.role}</td>
-                    <td>{formatDate(inv.expiresAt)}</td>
-                    {canManage && (
-                      <td>
-                        {canManageInvite(inv) && (
-                          <Inline gap={2}>
-                            <Button type='button' variant='secondary' disabled={busy} aria-label={`Resend email to ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'resend', invitation: inv })}>
-                              Resend email
-                            </Button>
-                            <Button type='button' variant='secondary' disabled={busy} aria-label={`New link for ${inv.email}`} onClick={() => void confirmInviteAction({ kind: 'new-link', invitation: inv })}>
-                              New link
-                            </Button>
-                            <Button type='button' variant='secondary' disabled={busy} onClick={() => revokeInvite(inv)}>
-                              Revoke
-                            </Button>
-                          </Inline>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {attempt && (
-          <Alert tone='warning' title='Outcome not confirmed' actions={<Inline gap={2}>
-            <Button type='button' variant='secondary' disabled={busy} onClick={() => runInviteAction(attempt)}>Retry same request</Button>
-            <Button type='button' variant='ghost' disabled={busy} onClick={() => setAttempt(null)}>Dismiss</Button>
-          </Inline>}>
-            The {attempt.kind === 'resend' ? 'resend' : 'new link'} request for {attempt.invitation.email} was not confirmed. The
-            previous link may already have stopped working. Retry the same request to get a working link.
-          </Alert>
-        )}
-      </section>
-
-      {canManage && (
-        <section className='card'>
-          <h2>Invite someone</h2>
-          <p className='dim'>
-            When this installation has email configured, the invitation is also emailed. You always get a link to copy
-            and share yourself. It expires after 7 days.
-          </p>
-          <form onSubmit={submitInvite}>
-            <div className='field'>
-              <label htmlFor='invite-email'>Email address</label>
-              <input
-                id='invite-email'
-                type='email'
-                value={inviteEmail}
-                onChange={e => setInviteEmail(e.target.value)}
-                placeholder='name@example.com'
-                maxLength={254}
-                required
-                disabled={busy}
-              />
-            </div>
-            <div className='field'>
-              <label htmlFor='invite-role'>Role</label>
-              <select
-                id='invite-role'
-                value={inviteRole}
-                onChange={e => setInviteRole(e.target.value as Role)}
-                disabled={busy}
-              >
-                {inviteRoles.map(r => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button type='submit' className='btn primary' disabled={busy || !inviteEmail.trim()}>
-              Create invitation link
-            </button>
-          </form>
-          {inviteLink && (
-            <div className='banner' role='status'>
-              <p>
-                {inviteLink.kind === 'new-link' ? (
-                  <>New invitation link for {inviteLink.email}. The previous link no longer works. Copy the link below and share it
-                  yourself — no email was sent.</>
-                ) : inviteLink.kind === 'resend' && inviteLink.delivery === 'accepted' ? (
-                  <>Invitation emailed again to {inviteLink.email}. The email provider accepted the message; delivery is not confirmed. The previous link no longer works.</>
-                ) : inviteLink.kind === 'resend' ? (
-                  <>The invitation email to {inviteLink.email} could not be sent. The previous link no longer works. Copy the new
-                  link below and share it yourself.</>
-                ) : inviteLink.delivery === 'accepted' ? (
-                  <><strong>Invitation created for {inviteLink.email}.</strong> The email provider accepted the message; delivery is not confirmed. You can also copy the link below.</>
-                ) : inviteLink.delivery === 'failed' ? (
-                  <><strong>Invitation created for {inviteLink.email}, but the email could not be sent.</strong> Copy the link
-                  below and share it yourself.</>
-                ) : (
-                  <><strong>Invitation created for {inviteLink.email}.</strong> Copy the link below and share it with them
-                  — no email was sent.</>
-                )}{' '}It expires after 7 days.
-              </p>
-              <div className='row'>
-                <button type='button' className='btn' onClick={() => void copyInvite()}>
-                  {copied ? 'Copied' : 'Copy link'}
-                </button>
-                <button type='button' className='btn ghost' onClick={() => setInviteLink(null)}>
-                  Dismiss
-                </button>
-              </div>
-              <textarea
-                className='snippet'
-                style={{ width: '100%', resize: 'vertical' }}
-                readOnly
-                rows={3}
-                value={inviteLink.url}
-                aria-label='Invitation link'
-                onFocus={e => e.currentTarget.select()}
-              />
-              <p className='hint'>
-                If copying does not work, select the link and copy it manually. For security it is only shown here,
-                once.
-              </p>
-            </div>
-          )}
         </section>
       )}
       {confirmDialog}

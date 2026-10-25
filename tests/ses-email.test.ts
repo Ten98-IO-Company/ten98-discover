@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { createHash, createHmac } from 'node:crypto';
 import { test } from 'node:test';
 import { sesOrigin } from '@ten98/runtime';
 import { EmailDeliveryError, getEmailStatus, sendTransactionalEmail, withEmailTransportsForTests } from '../src/server/email.ts';
-import { emailAddressDigest } from '../src/server/email-suppression.ts';
+import { complaintSuppressionDays, emailAddressDigest, legacyEmailAddressDigest } from '../src/server/email-suppression.ts';
 import { handleSesFeedback, sesFeedbackPath, sesFeedbackTopics } from '../src/server/ses-feedback.ts';
 import { signSnsTestMessage, snsTestCertificate, snsTestCertificateUrl, snsTestTopic } from './fixtures/sns-test-signer.ts';
 
@@ -11,6 +12,9 @@ const ses = { EMAIL_TRANSPORT: 'ses', EMAIL_FROM: 'sender@example.com', EMAIL_SE
 const message = { to: 'recipient@example.com', subject: 'Reset your password', text: 'Use this link once:\nhttps://app.example.com/reset?token=private-token' };
 const notSuppressed = async () => false;
 const unconfirmed = { name: 'EmailDeliveryError', message: 'Email acceptance could not be confirmed. No automatic retry was made.' };
+// Suppression digests are keyed with AUTH_SECRET (#310); a synthetic secret, never a real one.
+const syntheticSecret = 's'.repeat(64);
+Object.assign(process.env, { APP_URL: process.env.APP_URL ?? 'http://localhost:3000', DATABASE_URL: process.env.DATABASE_URL ?? 'postgresql://synthetic@localhost:5432/synthetic', AUTH_SECRET: syntheticSecret });
 
 test('SES readiness is configuration only and refuses regions outside the runtime allowlist and malformed credentials', () => {
   assert.deepEqual(getEmailStatus(ses), { configured: true, transport: 'ses' });
@@ -64,13 +68,28 @@ test('a suppressed SES recipient is refused before any request; a failed suppres
   assert.match(emailAddressDigest(message.to), /^[0-9a-f]{64}$/);
 });
 
+test('suppression digests are an HMAC keyed with the server secret under their own label, not an unkeyed SHA-256 (#310)', () => {
+  const address = 'recipient@example.com';
+  assert.equal(emailAddressDigest(' Recipient@Example.COM '), createHmac('sha256', syntheticSecret).update('ten98.email-suppression.v1:' + address).digest('hex'));
+  assert.notEqual(emailAddressDigest(address), createHash('sha256').update(address).digest('hex'), 'Guessing an address must not reproduce the stored value without the secret.');
+  assert.equal(legacyEmailAddressDigest(' Recipient@Example.COM '), createHash('sha256').update(address).digest('hex'), 'Rows recorded before #310 still match.');
+  const saved = process.env.AUTH_SECRET;
+  try { process.env.AUTH_SECRET = 't'.repeat(64); assert.notEqual(emailAddressDigest(address), createHmac('sha256', syntheticSecret).update('ten98.email-suppression.v1:' + address).digest('hex')); }
+  finally { process.env.AUTH_SECRET = saved; }
+});
+
+test('complaint suppressions expire after a bounded, named period; hard bounces have none (#310)', () => {
+  assert.equal(complaintSuppressionDays, 180);
+});
+
 // ---- SNS feedback webhook --------------------------------------------------------------------------------------------
 const topic = snsTestTopic, certificateUrl = snsTestCertificateUrl, signed = signSnsTestMessage;
 const feedbackEnv = { ...ses, EMAIL_SES_SNS_TOPIC_ARNS: topic };
 const notification = (event: unknown) => signed('Notification', { Message: JSON.stringify(event) });
 const mail = { timestamp: new Date().toISOString(), messageId: 'synthetic', source: 'sender@example.com', destination: ['a@example.com'] };
 // Recorded-shape SES notifications (https://docs.aws.amazon.com/ses/latest/dg/notification-contents.html) with synthetic addresses.
-const bounce = (bounceType: string, bounceSubType: string, recipients: Record<string, string>[]) => ({ notificationType: 'Bounce', mail, bounce: { bounceType, bounceSubType, bouncedRecipients: recipients, timestamp: new Date().toISOString(), feedbackId: 'synthetic' } });
+// SES addressed each message to its bounced recipients; the destination-mismatch test below overrides this.
+const bounce = (bounceType: string, bounceSubType: string, recipients: Record<string, string>[]) => ({ notificationType: 'Bounce', mail: { ...mail, destination: recipients.map(recipient => recipient.emailAddress) }, bounce: { bounceType, bounceSubType, bouncedRecipients: recipients, timestamp: new Date().toISOString(), feedbackId: 'synthetic' } });
 const complaint = (complaintFeedbackType?: string) => ({ notificationType: 'Complaint', mail, complaint: { complainedRecipients: [{ emailAddress: 'complainer@example.com' }], timestamp: new Date().toISOString(), feedbackId: 'synthetic', ...(complaintFeedbackType ? { complaintFeedbackType } : {}) } });
 
 function harness() {
@@ -119,6 +138,23 @@ test('verified hard bounces and complaints are recorded; transient, undetermined
   assert.ok(requests.length <= 1, 'The certificate is cached per process.');
 });
 
+test('a hard bounce also suppresses the single original destination when the DSN Final-Recipient differs (#310)', async () => {
+  const { adapters, recorded } = harness();
+  const diverted = (destination: string[], bounceType = 'Permanent') => ({ ...bounce(bounceType, 'General', [{ emailAddress: 'final@relay.example', status: '5.1.1' }]), mail: { ...mail, destination } });
+  const cases: [unknown, [string, string][]][] = [
+    [diverted(['sent@example.com']), [['final@relay.example', 'permanent-bounce'], ['sent@example.com', 'permanent-bounce']]],
+    [diverted(['FINAL@relay.example']), [['final@relay.example', 'permanent-bounce']]],
+    // Several destinations cannot be attributed to the one bounced Final-Recipient, so none of them is suppressed.
+    [diverted(['one@example.com', 'two@example.com']), [['final@relay.example', 'permanent-bounce']]],
+    [diverted(['sent@example.com'], 'Transient'), []],
+  ];
+  for (const [event, expected] of cases) {
+    recorded.length = 0;
+    assert.equal((await handleSesFeedback(post(notification(event)), feedbackEnv, adapters)).status, 200);
+    assert.deepEqual(recorded, expected, JSON.stringify(event));
+  }
+});
+
 test('nothing is trusted before verification: bad signature, other topic, stale or unsigned bodies are refused without a write', async t => {
   const { adapters, recorded } = harness();
   const valid = JSON.parse(notification(bounce('Permanent', 'General', [{ emailAddress: 'gone@example.com' }])));
@@ -151,6 +187,24 @@ test('the route is bounded and credential-free: POST only, no query, no Authoriz
   assert.equal((await handleSesFeedback(post(body, { 'x-api-key': 'key' }), feedbackEnv, adapters)).status, 403);
   assert.equal((await handleSesFeedback(post(body, { 'content-length': '262145' }), feedbackEnv, adapters)).status, 413);
   assert.equal((await handleSesFeedback(post(' '.repeat(262_145)), feedbackEnv, adapters)).status, 400);
+  assert.deepEqual(recorded, []); assert.deepEqual(requests, []);
+});
+
+test('the Content-Length precheck uses the runtime limit mode: oversize 413, invalid 400, both before reading', async () => {
+  const { adapters, recorded, requests } = harness();
+  const body = notification(bounce('Permanent', 'General', [{ emailAddress: 'gone@example.com' }]));
+  for (const [length, status, error] of [
+    ['262145', 413, 'Body too large.'], ['9999999999', 413, 'Body too large.'], ['9007199254740993', 413, 'Body too large.'],
+    ['abc', 400, 'Unreadable body.'], ['-1', 400, 'Unreadable body.'], ['1.5', 400, 'Unreadable body.'], ['0262145', 400, 'Unreadable body.'], ['12345678901234567', 400, 'Unreadable body.'],
+  ] as const) {
+    let pulled = false;
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { pulled = true; c.enqueue(new TextEncoder().encode(body)); c.close(); } }, { highWaterMark: 0 });
+    const request = new Request('https://discover.example' + sesFeedbackPath, { method: 'POST', body: stream, duplex: 'half', headers: { 'content-type': 'text/plain; charset=UTF-8', 'x-amz-sns-message-type': 'Notification', 'content-length': length } } as RequestInit);
+    const response = await handleSesFeedback(request, feedbackEnv, adapters);
+    assert.equal(response.status, status, length);
+    assert.deepEqual(await response.json(), { error }, length);
+    assert.equal(pulled, false, `Content-Length ${length} is refused before the body is read`);
+  }
   assert.deepEqual(recorded, []); assert.deepEqual(requests, []);
 });
 

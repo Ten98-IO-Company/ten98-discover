@@ -9,7 +9,7 @@ import { createWorkspace } from '../src/server/teams.ts'
 import { createPrompts } from '../src/server/prompts.ts'
 import { updateProjectContext } from '../src/server/project-context.ts'
 import {launchChromium} from './helpers/playwright.mjs';
-import {openView} from './helpers/app-navigation.ts';
+import {openView,settingsSections} from './helpers/app-navigation.ts';
 import type {AppView} from '../src/lib/navigation.ts';
 
 // Optional real production-client/API check, using only an isolated local database.
@@ -182,7 +182,7 @@ try {
     'AI visibility': ['Prompts', 'Answers'], Reports: ['Boards', 'Saved reports'],
   }
   const modeStrips = [['Overview', 'Dashboard', ['Summary', 'Compare periods']], ['Conversions', 'Campaigns', ['Campaign tags', 'Tracked links', 'Tracking images']], ['AI visibility', 'Answers', ['API models', 'ChatGPT app']]] as const
-  const settingsGroup = (name: string) => page.getByRole('navigation', { name: 'Settings sections', exact: true }).first().getByRole('list', { name, exact: true })
+  const settingsGroup = async (name: string) => (await settingsSections(page)).getByRole('list', { name, exact: true })
   for (const [workspace, projectId, isOwner] of [[a.id, a1, true], [b.id, b1, false]] as const) {
     await page.goto(href(workspace, projectId, 'events')); await heading('Overview'); await menu()
     const sections = page.getByRole('navigation', { name: 'Sections', exact: true })
@@ -213,23 +213,23 @@ try {
     }
     await link('Data retention'); await heading('Data retention')
     assert.equal(await sections.locator('a[aria-current="page"]').count(), 0)
-    assert.deepEqual(await settingsGroup('Account').getByRole('link').allTextContents(), ['Profile', 'Security', 'Sign-in methods'])
-    assert.deepEqual(await settingsGroup('Workspace').getByRole('link').allTextContents(), isOwner ? ['Members', 'API keys', 'Connections', 'Data retention', 'New workspace'] : ['Data retention', 'New workspace'])
-    assert.deepEqual(await settingsGroup('Project').getByRole('link').allTextContents(), isOwner ? ['Tracking code', 'Domains', 'Privacy', 'Forwarding', 'Brand and competitors', 'Imports'] : ['Tracking code', 'Privacy', 'Brand and competitors', 'Imports'])
-    assert.deepEqual(await settingsGroup('Advanced').getByRole('link').allTextContents(), ['Diagnostics'], 'Non-operators see only per-project Diagnostics under Advanced; Sign-in and Google app are for instance operators.')
-    assert.deepEqual(await settingsGroup('Workspace').locator('a[aria-current="page"]').allTextContents(), ['Data retention'])
+    assert.deepEqual(await (await settingsGroup('Account')).getByRole('link').allTextContents(), ['Profile', 'Security', 'Sign-in methods'])
+    assert.deepEqual(await (await settingsGroup('Workspace')).getByRole('link').allTextContents(), isOwner ? ['Members', 'API keys', 'Connections', 'Data retention', 'New workspace'] : ['Data retention', 'New workspace'])
+    assert.deepEqual(await (await settingsGroup('Project')).getByRole('link').allTextContents(), isOwner ? ['Tracking code', 'Domains', 'Privacy', 'Forwarding', 'Brand and competitors', 'Imports'] : ['Tracking code', 'Privacy', 'Brand and competitors', 'Imports'])
+    assert.deepEqual(await (await settingsGroup('Advanced')).getByRole('link').allTextContents(), ['Diagnostics'], 'Non-operators see only per-project Diagnostics under Advanced; Sign-in and Google app are for instance operators.')
+    assert.deepEqual(await (await settingsGroup('Workspace')).locator('a[aria-current="page"]').allTextContents(), ['Data retention'])
   }
   await pool.query("INSERT INTO instance_operator(user_id,source) VALUES($1,'host')", [owner.id])
   try {
     await page.reload(); await heading('Data retention'); await menu()
-    assert.deepEqual(await settingsGroup('Advanced').getByRole('link').allTextContents(), ['Sign-in', 'Google app', 'Diagnostics'])
+    assert.deepEqual(await (await settingsGroup('Advanced')).getByRole('link').allTextContents(), ['Sign-in', 'Google app', 'Diagnostics'])
     assert.equal(await page.getByRole('link', { name: 'Connections', exact: true, includeHidden: true }).count(), 0, 'Instance authority does not upgrade a workspace viewer.')
     await link('Google app setup'); await heading('Google app setup'); await selected(b.id, b1, 'google-app')
-    assert.deepEqual(await settingsGroup('Advanced').locator('a[aria-current="page"]').allTextContents(), ['Google app'])
+    assert.deepEqual(await (await settingsGroup('Advanced')).locator('a[aria-current="page"]').allTextContents(), ['Google app'])
   } finally { await pool.query('DELETE FROM instance_operator WHERE user_id=$1', [owner.id]) }
   await page.reload(); await heading('Web analytics'); await selected(b.id, b1, 'project')
   await link('Data retention'); await heading('Data retention')
-  assert.deepEqual(await settingsGroup('Advanced').getByRole('link').allTextContents(), ['Diagnostics'], 'Removing instance authority removes the operator-only Advanced items.')
+  assert.deepEqual(await (await settingsGroup('Advanced')).getByRole('link').allTextContents(), ['Diagnostics'], 'Removing instance authority removes the operator-only Advanced items.')
   console.log('PASS navigation: six flat sections and grouped settings, owner/viewer/operator permissions, native keyboard links and scoped current-page markers.')
 
   await mkdir('private/navigation-browser', { recursive: true })
@@ -251,6 +251,18 @@ try {
     await page.screenshot({ path: `private/navigation-browser/families-${width}.png`, fullPage: true })
     await link('Context'); await heading('Project context'); await selected(a.id, a1, 'context')
     if (width <= 360) assert.equal(await page.getByRole('button', { name: 'Menu', exact: true }).getAttribute('aria-expanded'), 'false')
+    // Narrow Settings replaces the full section list with a closed compact menu that, opened, offers the same links.
+    const fullSettingsLinks = page.locator('.t98-settings-full-nav').getByRole('link', { includeHidden: true })
+    const compactSettings = page.locator('details.t98-settings-compact-nav')
+    if (width <= 360) {
+      assert.equal(await page.locator('.t98-settings-full-nav').isVisible(), false, `The full Settings list is hidden at ${width}px.`)
+      assert.equal(await compactSettings.count(), 1); assert.equal(await compactSettings.isVisible(), true, `The compact Settings menu is shown at ${width}px.`)
+      assert.equal(await compactSettings.evaluate((node: HTMLDetailsElement) => node.open), false, 'The compact Settings menu starts closed.')
+    }
+    const visibleSettings = await settingsSections(page)
+    assert.deepEqual(await visibleSettings.getByRole('link').allTextContents(), await fullSettingsLinks.allTextContents(), `Settings links at ${width}px match the full list.`)
+    assert.deepEqual(await visibleSettings.locator('a[aria-current="page"]').allTextContents(), ['Brand and competitors'])
+    if (width <= 360) assert.equal(await compactSettings.evaluate((node: HTMLDetailsElement) => node.open), true, 'Settings links are reached by opening the compact menu.')
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     await page.screenshot({ path: `private/navigation-browser/context-${width}.png`, fullPage: true })
   }
@@ -274,7 +286,7 @@ try {
   await link('Account security'); await heading('Account security')
   slowWorkspace.release(); await slowWorkspace.remove(); await delay(150)
   await heading('Account security'); assert.equal(new URL(page.url()).searchParams.get('view'), 'security')
-  assert.deepEqual(await settingsGroup('Account').locator('a[aria-current="page"]').allTextContents(), ['Security'], 'Current account destination stays marked.')
+  assert.deepEqual(await (await settingsGroup('Account')).locator('a[aria-current="page"]').allTextContents(), ['Security'], 'Current account destination stays marked.')
   await page.goBack(); await heading('Web analytics'); await selected(b.id, b1, 'project')
   console.log('PASS navigation: a delayed workspace load cannot replace newer Account navigation.')
 

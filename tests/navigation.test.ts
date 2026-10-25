@@ -208,6 +208,14 @@ test('callbacks reject mixed families, duplicates and double-encoded capabilitie
   assert.equal(parseCallback(''), null)
 })
 
+test('SSO failures return only a known fixed reason code, never provider text', () => {
+  for (const code of ['OIDC_INVITE_EMAIL_MISMATCH', 'OIDC_NOT_PROVISIONED', 'OIDC_EMAIL_UNVERIFIED', 'OIDC_ACCOUNT_EXISTS', 'OIDC_RATE_LIMITED', 'OIDC_SIGN_IN_FAILED'])
+    assert.deepEqual(parseCallback(`#oidc-error=${code}`), { kind: 'oidc-error', code })
+  for (const hash of ['#oidc-error=1', '#oidc-error=', '#oidc-error=oidc_not_provisioned', '#oidc-error=toString', '#oidc-error=__proto__', '#oidc-error=Upstream%20said%20no', '#oidc-error=OIDC_NOT_PROVISIONED&oidc-detail=x'])
+    assert.notEqual(parseCallback(hash)?.kind, 'oidc-error', `Unknown or decorated return ${hash} must not select a message.`)
+  assert.deepEqual(parseCallback('#oidc-error=OIDC_NOT_PROVISIONED&oidc-error=OIDC_RATE_LIMITED'), { kind: 'invalid' })
+})
+
 test('Former Meta returns are no callback family and fail closed without provider text', () => {
   const meta = `#meta=connected&meta-project=${project}&meta-workspace=${workspace}`
   for (const hash of [meta, '#meta=failed', meta+'&oidc-factor=1', meta+'&invite='+'a'.repeat(43), '#meta=failed&error=private-value']) assert.deepEqual(parseCallback(hash), {kind:'invalid'})

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { getConfig } from '../src/server/config.ts';
 import { assertSchema, getDatabase } from '../src/server/db.ts';
 import { handleApi } from '../src/server/api.ts';
 import { sendTransactionalEmail, withEmailTransportsForTests } from '../src/server/email.ts';
-import { emailAddressDigest, isEmailSuppressed, recordEmailSuppression } from '../src/server/email-suppression.ts';
+import { complaintSuppressionDays, emailAddressDigest, isEmailSuppressed, legacyEmailAddressDigest, recordEmailSuppression } from '../src/server/email-suppression.ts';
 import { handleSesFeedback, sesFeedbackPath } from '../src/server/ses-feedback.ts';
 import { signSnsTestMessage, snsTestCertificate, snsTestCertificateUrl, snsTestTopic } from './fixtures/sns-test-signer.ts';
 
@@ -60,5 +61,85 @@ export async function runEmailSuppressionChecks() {
   } finally {
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
+  // #310: rows are keyed HMAC digests; nothing derivable from the address alone is written.
+  assert.deepEqual((await pool.query('SELECT keyed FROM email_suppression WHERE address_hash=$1', [emailAddressDigest(bounced)])).rows, [{ keyed: true }]);
+  assert.equal((await pool.query('SELECT 1 FROM email_suppression WHERE address_hash=$1', [legacyEmailAddressDigest(bounced)])).rowCount, 0, 'No unkeyed digest is stored.');
+  // A row recorded before #310 (unkeyed, keyed=false) still blocks, so no suppression is silently lost.
+  const legacy = `legacy-${suffix}@example.com`, legacyComplaint = `legacy-complaint-${suffix}@example.com`;
+  await pool.query('INSERT INTO email_suppression(address_hash,reason) VALUES($1,$2),($3,$4)', [legacyEmailAddressDigest(legacy), 'permanent-bounce', legacyEmailAddressDigest(legacyComplaint), 'complaint']);
+  assert.equal(await isEmailSuppressed(legacy.toUpperCase()), true);
+  assert.equal(await isEmailSuppressed(legacyComplaint), true);
+
+  // Expiry: complaints stop blocking after complaintSuppressionDays; hard bounces never expire on their own.
+  const stale = `stale-${suffix}@example.com`, oldBounce = `old-bounce-${suffix}@example.com`, upgraded = `upgraded-${suffix}@example.com`;
+  await recordEmailSuppression(stale, 'complaint'); await recordEmailSuppression(oldBounce, 'permanent-bounce');
+  const age = (digests: string[], days: number) => pool.query('UPDATE email_suppression SET created_at=clock_timestamp()-make_interval(days=>$2) WHERE address_hash=ANY($1)', [digests, days]);
+  await age([emailAddressDigest(stale)], complaintSuppressionDays - 1);
+  assert.equal(await isEmailSuppressed(stale), true, 'A complaint inside the period still blocks.');
+  await age([emailAddressDigest(stale), emailAddressDigest(oldBounce), legacyEmailAddressDigest(legacy), legacyEmailAddressDigest(legacyComplaint)], complaintSuppressionDays + 1);
+  assert.equal(await isEmailSuppressed(stale), false, 'An expired complaint no longer blocks.');
+  assert.equal(await isEmailSuppressed(legacyComplaint), false, 'An expired legacy complaint no longer blocks.');
+  assert.equal(await isEmailSuppressed(oldBounce), true, 'A hard bounce stays until cleared.');
+  assert.equal(await isEmailSuppressed(legacy), true, 'A legacy hard bounce stays until cleared.');
+  // A new complaint after expiry blocks again for a fresh period; the write also purges other expired complaints.
+  await recordEmailSuppression(stale, 'complaint');
+  assert.equal(await isEmailSuppressed(stale), true);
+  assert.equal((await pool.query('SELECT 1 FROM email_suppression WHERE address_hash=$1', [legacyEmailAddressDigest(legacyComplaint)])).rowCount, 0, 'Expired complaints are purged, not kept as personal data.');
+  // A hard bounce after a complaint makes the suppression permanent; a complaint never downgrades a hard bounce.
+  await recordEmailSuppression(upgraded, 'complaint'); await recordEmailSuppression(upgraded, 'permanent-bounce');
+  assert.deepEqual(await rows(upgraded), [{ address_hash: emailAddressDigest(upgraded), reason: 'permanent-bounce' }]);
+  // Any repeat complaint, expired or not, starts a new period: 170 days in, a repeat resets the clock, so 20 days later
+  // (190 days after the first) it still blocks. A complaint never renews or downgrades a hard bounce.
+  const repeated = `repeated-${suffix}@example.com`;
+  await recordEmailSuppression(repeated, 'complaint');
+  await age([emailAddressDigest(repeated)], complaintSuppressionDays - 10);
+  await recordEmailSuppression(repeated, 'complaint');
+  await pool.query("UPDATE email_suppression SET created_at=created_at-interval '20 days' WHERE address_hash=$1", [emailAddressDigest(repeated)]);
+  assert.equal(await isEmailSuppressed(repeated), true, 'A repeat complaint inside the period renews it.');
+  await age([emailAddressDigest(oldBounce)], complaintSuppressionDays + 1);
+  await recordEmailSuppression(oldBounce, 'complaint');
+  assert.deepEqual((await pool.query('SELECT reason,created_at<clock_timestamp()-make_interval(days=>$2) AS aged FROM email_suppression WHERE address_hash=$1', [emailAddressDigest(oldBounce), complaintSuppressionDays])).rows, [{ reason: 'permanent-bounce', aged: true }], 'A complaint leaves a hard bounce unchanged.');
+
+  // Operator clear through the real CLI: only a named instance operator, audited, and the address is never printed.
+  const account = async (label: string) => {
+    const id = randomUUID(), email = `${label}-${suffix}@suppression.integration.test`;
+    await pool.query('INSERT INTO "user"(id,name,email) VALUES($1,$2,$3)', [id, `Suppression ${label}`, email]);
+    return { id, email };
+  };
+  const operator = await account('operator'), member = await account('member');
+  await pool.query("INSERT INTO instance_operator(user_id,source) VALUES($1,'host')", [operator.id]);
+  const clears = async () => (await pool.query<{ user_id: string; scope: string | null }>("SELECT user_id,scope FROM instance_operator_audit WHERE action='email_suppression_clear' AND user_id=ANY($1) ORDER BY id", [[operator.id, member.id]])).rows;
+  const quoted = `"odd local ${suffix}"@example.com`, plus = `Tag+${suffix}=x/y@example.com`;
+  const cli = (...args: string[]) => {
+    const block = 'data:text/javascript,' + encodeURIComponent("globalThis.fetch=async()=>{throw new Error('No network allowed in suppression clear acceptance');}");
+    const result = spawnSync(process.execPath, ['--import', block, 'src/server/cli.ts', 'email-suppression', 'clear', ...args],
+      { cwd: process.cwd(), env: process.env, encoding: 'utf8', timeout: 45_000, maxBuffer: 1_000_000, windowsHide: true });
+    for (const secret of [config.databaseUrl, config.authSecret]) assert.ok(!(result.stdout + result.stderr).includes(secret), 'The CLI printed secret configuration.');
+    for (const address of [bounced, legacy, oldBounce, quoted, plus]) assert.ok(!(result.stdout + result.stderr).toLowerCase().includes(address.toLowerCase()), 'The CLI printed the suppressed address.');
+    return result;
+  };
+  for (const [args, pattern] of [
+    [[bounced], /^Usage: cli\.ts /], [[bounced, '--operator'], /^Usage: cli\.ts /], [['--operator', operator.email], /^Usage: cli\.ts /],
+    [['not-an-address', '--operator', operator.email], /^Supply the suppressed email address\./],
+    [[bounced, '--operator', member.email], /^This action requires an instance operator\./],
+    [[bounced, '--operator', `unknown-${suffix}@suppression.integration.test`], /^This action requires an instance operator\./],
+  ] as [string[], RegExp][]) {
+    const result = cli(...args);
+    assert.equal(result.status, 1, args.join(' ')); assert.match(result.stderr, pattern);
+  }
+  assert.deepEqual(await clears(), [], 'A refused clear writes no audit row.');
+  assert.equal(await isEmailSuppressed(bounced), true, 'A refused clear removes nothing.');
+  // Addresses SES can report but a strict email validator rejects (quoted or unusual local parts) must still be clearable.
+  for (const address of [quoted, plus]) await recordEmailSuppression(address, 'permanent-bounce');
+  for (const address of [bounced.toUpperCase(), legacy, oldBounce, quoted, ` ${plus.toUpperCase()} `]) {
+    const result = cli(address, '--operator', operator.email.toUpperCase());
+    assert.equal(result.status, 0, result.stderr); assert.match(result.stdout, /^Email suppression cleared and audited\./);
+    assert.equal(await isEmailSuppressed(address), false);
+  }
+  const again = cli(bounced, '--operator', operator.email);
+  assert.equal(again.status, 0, again.stderr); assert.match(again.stdout, /^No email suppression was recorded for that address\. The clear was audited\./);
+  assert.deepEqual(await clears(), Array.from({ length: 6 },() => ({ user_id: operator.id, scope: null })), 'Each clear is audited by operator id only; no address or digest is recorded.');
+  console.log('PASS suppression digests are keyed, legacy unkeyed rows still block, complaints expire while hard bounces stay, and only an audited instance operator clears one address through the CLI without printing it');
+
   console.log('PASS SES feedback records only verified hard bounces and complaints as address digests, refuses unsigned bodies through the public route, and suppressed addresses make no SES request');
 }

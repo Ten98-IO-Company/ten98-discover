@@ -28,7 +28,8 @@
     "0007_oidc",
     "0069_project_shares",
     "0070_account_closure",
-    "0071_email_suppression"
+    "0071_email_suppression",
+    "0075_email_suppression_keyed_clear"
    ]
   },
   "P03": {
@@ -53,7 +54,8 @@
     "0070_account_closure",
     "0071_email_suppression",
     "0072_paid_work_archive",
-    "0073_operator_export_audit"
+    "0073_operator_export_audit",
+    "0075_email_suppression_keyed_clear"
    ]
   },
   "P05": {

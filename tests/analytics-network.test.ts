@@ -43,13 +43,22 @@ test('mapped IPv4 and ordinary IPv6 use canonical identities and matching proxy 
 test('malformed, nonliteral and oversized forwarding chains remain unknown', () => {
   for (const value of [
     'unknown', '192.0.2.1:80', '[2001:db8::1]:80', '"192.0.2.1"', 'fe80::1%eth0',
-    '010.0.0.1', 'example.test', '192.0.2.1,,10.0.0.2', 'garbage,192.0.2.1', '\u00a0192.0.2.1',
+    '010.0.0.1', 'example.test', '192.0.2.1,,10.0.0.2', '192.0.2.1,garbage', 'garbage,10.0.0.2','\u00a0192.0.2.1',
     '192.0.2.1,' + ' '.repeat(4096) + '10.0.0.2', Array(21).fill('192.0.2.1').join(','),
   ]) assert.equal(resolveAnalyticsNetwork(request(value), '10.0.0.3', proxy), null);
   assert.equal(resolveAnalyticsNetwork(request(Array(20).fill('192.0.2.1').join(',')), '10.0.0.3', proxy), '192.0.2.1');
   for (const peer of ['', ' 192.0.2.1', '192.0.2.1:80', '[::1]', 'fe80::1%2', 'unknown']) {
     assert.equal(resolveAnalyticsNetwork(request('192.0.2.1'), peer, direct), null);
   }
+});
+
+test('proxy mode never reads client-controlled entries left of the client hop', () => {
+  for (const junk of ['garbage', 'unknown', '192.0.2.1:80', 'example.test', '"192.0.2.1"', '']) {
+    assert.equal(resolveAnalyticsNetwork(request(`${junk},192.0.2.1`), '10.0.0.3', proxy), '192.0.2.1', junk);
+    assert.equal(resolveAnalyticsNetwork(request(`${junk}, 203.0.113.8, 10.0.0.2`), '10.0.0.3', proxy), '203.0.113.8', junk);
+  }
+  assert.equal(resolveAnalyticsNetwork(request('198.51.100.4, 10.0.0.9, 203.0.113.8'), '10.0.0.3', proxy), '203.0.113.8', 'a spoofed trusted-looking entry left of the client is not walked');
+  assert.equal(resolveAnalyticsNetwork(request('garbage,192.0.2.1'), '192.0.2.9', proxy), null, 'an untrusted peer still resolves no address');
 });
 
 test('invalid configuration fails closed with redacted errors even when mode is off', () => {
@@ -83,7 +92,8 @@ test('excluded addresses match only the trust-mode address and invalid or inert 
   assert.equal(analyticsAddressExcluded(request('203.0.113.5'), '10.0.0.3', proxied), true);
   assert.equal(analyticsAddressExcluded(request('203.0.113.5, 198.51.100.7'), '10.0.0.3', proxied), false);
   assert.equal(analyticsAddressExcluded(request('203.0.113.5'), '192.0.2.9', proxied), false, 'an untrusted proxy peer resolves no address');
-  assert.equal(analyticsAddressExcluded(request('garbage, 203.0.113.5'), '10.0.0.3', proxied), false, 'a malformed chain resolves no address, so a client behind an appending edge can opt itself back in but never exclude anyone');
+  assert.equal(analyticsAddressExcluded(request('garbage, 203.0.113.5'), '10.0.0.3', proxied), true, 'junk a client puts before its own hop cannot opt it back in');
+  assert.equal(analyticsAddressExcluded(request('203.0.113.5, garbage'), '10.0.0.3', proxied), false, 'a malformed client hop resolves no address and never excludes anyone');
   const invalid = [
     { ANALYTICS_EXCLUDED_IPS: '203.0.113.0/24' }, { ANALYTICS_NETWORK_MODE: 'off', ANALYTICS_EXCLUDED_IPS: ' 203.0.113.5 ' },
     ...['secret-sentinel', '10.0.0.1,,10.0.0.2', '10.0.0.0/33', '2001:db8::/129', '10.0.0.1/-1', '10.0.0.0/01', '::ffff:10.0.0.1/24', 'fe80::1%eth0', '10.0.0.0/24/1', '192.0.2.1:80', '[2001:db8::1]', '"192.0.2.1"', 'example.test',

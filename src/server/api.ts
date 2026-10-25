@@ -281,7 +281,9 @@ export async function handleApi(request: Request): Promise<Response> {
     if ((path === '/api/session' || path === '/api/status') && request.method === 'GET') {
       const { rows } = await getDatabase().pool.query("SELECT claimed FROM installation WHERE id='instance'");
       const configured = rows[0]?.claimed === true;
-      const installation = { appUrl: config.appUrl, trackerScript: config.trackerScriptAlias ?? '/tracker.js', collectPath: config.collectPathAlias };
+      // oidcEnabled lets the signed-out sign-in screen offer single sign-on only when a provider is enabled; it names none.
+      const oidcEnabled = (await getDatabase().pool.query('SELECT EXISTS(SELECT 1 FROM oidc_provider WHERE enabled) AS enabled')).rows[0].enabled === true;
+      const installation = { appUrl: config.appUrl, trackerScript: config.trackerScriptAlias ?? '/tracker.js', collectPath: config.collectPathAlias, oidcEnabled };
       if (path === '/api/status') return json({ configured, ...installation });
       const session = configured ? await getAuth().api.getSession({ headers: request.headers }) : null;
       return json({ setupRequired: !configured, ...installation, user: session ? { id: session.user.id, name: session.user.name, email: session.user.email } : null });
@@ -355,7 +357,7 @@ export async function handleApi(request: Request): Promise<Response> {
       if (typeof token === 'string') await limit(`invitation:${createHash('sha256').update(token).digest('hex')}`, 10);
       if (path.endsWith('/inspect')) {
         const invitation = await inspectInvitation(input);
-        return json({ workspaceName: invitation.workspace.name, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt });
+        return json({ workspaceName: invitation.workspace.name, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt, accountExists: invitation.accountExists });
       }
       const session = await getAuth().api.getSession({ headers: request.headers });
       const accepted = await acceptInvitation(input, session ? { id: session.user.id, email: session.user.email } : undefined);
@@ -1086,7 +1088,8 @@ export async function handleApi(request: Request): Promise<Response> {
       if (request.method === 'GET' && match[2] === 'team') {
         const result = await getTeam(match[1], user.id);
         if (apiToken) await authorizeApiKey(apiToken, match[1], 'team:read');
-        return json(result);
+        // Lets managers see whether Resend email can work; it never exposes the transport or its settings.
+        return json({ ...result, emailConfigured: getEmailStatus().configured });
       }
       if (request.method === 'POST') {
         await limit(`team:${user.id}`, 60);

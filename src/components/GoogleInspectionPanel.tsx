@@ -1,4 +1,5 @@
 import {readResponseText} from '@ten98/runtime';
+import {Disclosure} from '@ten98/ui';
 import {useId,useState} from 'react';
 import {AppField} from '@ten98/ui/app';
 import {ApiError,errMsg} from '../lib/api';
@@ -50,7 +51,7 @@ export function GoogleInspectionPanel({projectId,connection,ops}:{projectId:stri
    if(ops.alive(op.serial,op.controller))setError(errMsg(e));
   }finally{ops.end(op.serial);}
  };
- return <details className="stack" style={{minWidth:0}}><summary style={{minHeight:44,cursor:'pointer'}}>Inspect indexed URLs</summary><div className="stack">
+ return <div style={{minWidth:0}}><Disclosure summary="Inspect indexed URLs" variant="plain"><div className="stack">
   <p className="hint">Read Google’s indexed version for this saved property. This does not fetch the live page or request indexing. Only workspace owners can make this external request.</p>
   <AppField label="URLs — one per line, up to 10" multiline id={`${uid}-urls`} dir="ltr" rows={4} maxLength={40970} disabled={ops.busy} value={urls} onChange={e=>setUrls(e.target.value)} />
   <div><AppField label="Result language (optional)" id={`${uid}-language`} dir="ltr" maxLength={80} placeholder="en-US" disabled={ops.busy} value={language} onChange={e=>setLanguage(e.target.value)} aria-describedby={`${uid}-language-help`}/><p id={`${uid}-language-help`} className="hint">Use a language tag such as ar or en-GB. The default is en-US.</p></div>
@@ -62,8 +63,8 @@ export function GoogleInspectionPanel({projectId,connection,ops}:{projectId:stri
     <p>Google verdict: {row.result.indexStatusResult?.verdict??'Unavailable'} · Coverage: {row.result.indexStatusResult?.coverageState??'Unavailable'}</p>
     <p>Google canonical: <bdi dir="ltr">{row.result.indexStatusResult?.googleCanonical??'Unavailable'}</bdi></p><p>Last crawl: <bdi dir="ltr">{row.result.indexStatusResult?.lastCrawlTime??'Unavailable'}</bdi></p>
     {row.result.inspectionResultLink&&<a href={row.result.inspectionResultLink} target="_blank" rel="noopener noreferrer" style={{display:'inline-flex',alignItems:'center',minHeight:44}}>Open this inspection in Search Console</a>}
-    <details><summary style={{minHeight:44,cursor:'pointer'}}>Full Google inspection details</summary>{([['Index and crawl','indexStatusResult'],['AMP','ampResult'],['Mobile usability (deprecated by Google)','mobileUsabilityResult'],['Rich results','richResultsResult']] as const).map(([label,key])=><section key={key}><h5>{label}</h5>{row.result?.[key]?<Fields value={row.result[key]}/>:<p>Not provided by Google. This does not establish a pass or failure.</p>}</section>)}</details>
+    <Disclosure summary="Full Google inspection details" variant="plain">{([['Index and crawl','indexStatusResult'],['AMP','ampResult'],['Mobile usability (deprecated by Google)','mobileUsabilityResult'],['Rich results','richResultsResult']] as const).map(([label,key])=><section key={key}><h5>{label}</h5>{row.result?.[key]?<Fields value={row.result[key]}/>:<p>Not provided by Google. This does not establish a pass or failure.</p>}</section>)}</Disclosure>
    </>}</article>)}
   </section>}
- </div></details>;
+ </div></Disclosure></div>;
 }

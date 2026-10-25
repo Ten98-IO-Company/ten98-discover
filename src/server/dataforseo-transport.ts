@@ -1,3 +1,4 @@
+import {readResponseText} from '@ten98/runtime';
 import {validText} from './keyword-research-input.ts';
 
 export type DataforseoResponse={httpStatus:number;body:unknown};
@@ -12,20 +13,13 @@ function authorization(value:unknown){
   if(!validText(login,254)||login.includes(':')||!validText(password,4096))invalid();
   return 'Basic '+Buffer.from(login+':'+password,'utf8').toString('base64');
 }
-// ponytail: kept instead of @ten98/runtime readResponseText. Its contentLength mode (0.2.0) always pairs the
-// declared-size precheck with an exact identity byte count, which non-AI routes do not require, and it has
-// no chunk-count ceiling, so a stream of tiny chunks would cost seconds to reach the byte limit.
+// Identity routes (AI, which request accept-encoding: identity) also require the exact declared byte count.
+// The runtime's exact mode skips that count for an encoded body, so an encoded identity response is refused here.
+// Every runtime refusal, decode or JSON error becomes the caller's single invalid() outcome.
 async function boundedJson(response:Response,maximum:number,identity=false){
-  if(!response.body)invalid();
-  const reader=response.body.getReader(),parts:Uint8Array[]=[];let size=0;
-  try{
-    const declared=response.headers.get('content-length');
-    if(identity&&response.headers.get('content-encoding')!==null&&response.headers.get('content-encoding')!.toLowerCase()!=='identity')invalid();
-    if(declared!==null&&(!/^\d+$/.test(declared)||Number(declared)>maximum))invalid();
-    for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>maximum||parts.length>=65_536)invalid();parts.push(value);}
-    if(identity&&declared!==null&&Number(declared)!==size)invalid();
-    return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts)));
-  }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+  const encoding=response.headers.get('content-encoding');
+  if(identity&&encoding!==null&&encoding.toLowerCase()!=='identity'){await response.body?.cancel().catch(()=>{});invalid();}
+  return JSON.parse(await readResponseText(response,{maxBytes:maximum,contentLength:identity?'exact':'limit',maxChunks:65_536}));
 }
 
 // Owner decision D3: wallet refusals from DataForSEO appendix/errors (checked 2026-10-18). 40201 (paused),

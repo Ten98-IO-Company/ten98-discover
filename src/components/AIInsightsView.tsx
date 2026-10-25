@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {Alert, BarList, Card, DataTable, MetricCard, Sparkline, Stack, Tabs, TimeSeriesChart} from '@ten98/ui';
+import {Alert, BarList, Card, DataTable, MetricCard, Sparkline, Stack, Tabs, TimeSeriesChart,Disclosure} from '@ten98/ui';
 import type {CarriedInsights, InsightCoverage, InsightMetric} from '../server/prompt-insights';
 import {percentText, trendSvg} from './ai-trend-svg';
 import type {WorkspaceRole} from '@ten98/runtime';
@@ -336,8 +336,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
             </div>
           </section>
 
-          <details>
-            <summary>Selection details</summary>
+          <Disclosure summary="Selection details" variant="plain">
             <div className="stack" style={{ marginTop: 8 }}>
               <p className="hint">{report.snapshotLabel}</p>
               <ul className="stack hint">
@@ -347,7 +346,7 @@ export function AIInsightsView(props: AIInsightsViewProps) {
                 <li>Provider citation annotations are separate from prose mentions.</li>
               </ul>
             </div>
-          </details>
+          </Disclosure>
 
           <section className="stack">
             <h3 id={prefix + 'daily'}>Daily observations</h3>

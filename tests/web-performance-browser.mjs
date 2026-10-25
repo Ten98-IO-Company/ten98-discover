@@ -44,8 +44,8 @@ async function fresh({query=initial,enabled=true,mode='normal',role='owner',nega
 }
 async function ready(){await card('lcp').waitFor();await wait(()=>page.getByRole('region',{name:'Web performance',exact:true}).getAttribute('aria-busy').then(value=>value==='false'));}
 async function action(run){const start=evidence.requests.length;await run();await wait(()=>evidence.requests.length>start);await ready();}
-async function filters(){const summary=page.getByText('Exact performance filters',{exact:true});if(!await summary.locator('..').evaluate(node=>node.open))await summary.click();}
-async function help(){const summary=page.getByText('How to read these measurements',{exact:true});if(!await summary.locator('..').evaluate(node=>node.open))await summary.click();}
+async function filters(){const summary=page.locator('summary').filter({hasText:/^Exact performance filters$/});if(!await summary.locator('..').evaluate(node=>node.open))await summary.click();}
+async function help(){const summary=page.locator('summary').filter({hasText:/^How to read these measurements$/});if(!await summary.locator('..').evaluate(node=>node.open))await summary.click();}
 async function set(value){scope={...scope,...value};await page.evaluate(value=>window.webPerformanceFixture.set(value),value);}
 async function release(record,code=200){try{await reply(record.route,code===200?record.body:{error:'Synthetic late authority negative.'},code);record.fulfilled=true;}catch{assert.ok(record.request.failure(),'Rejected held fulfillment must have a native aborted request');record.aborted=true;}}
 const pass=name=>{evidence.groups.push(name);save();console.log('PASS '+name);};

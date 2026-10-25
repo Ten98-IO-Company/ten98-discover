@@ -1,5 +1,5 @@
-import { createHash, createHmac } from 'node:crypto';
-import { resolveClientAddress } from '@ten98/runtime';
+import { createHash } from 'node:crypto';
+import { clientLimitKey as runtimeClientLimitKey, resolveClientAddress } from '@ten98/runtime';
 import { analyticsNetworkMode, extractAnalyticsPeer } from './analytics-network.ts';
 import { secret, trustedProxies, trustedProxiesConfigured } from './config.ts';
 
@@ -8,9 +8,13 @@ export function requestClientAddress(request: Request, env: NodeJS.ProcessEnv = 
   return resolveClientAddress(extractAnalyticsPeer(request), request.headers.get('x-forwarded-for'), trustedProxies(env));
 }
 
-/** Per-client limit key. The address is stored only as a keyed hash; every unresolvable client shares one conservative key per scope. */
+/**
+ * Per-client limit key `<scope>:client:<hmac>`, from the runtime's clientLimitKey: the address is stored only as a keyed
+ * hash, IPv6 clients share one key per /56 and every unresolved client shares `<scope>:client:unresolved`, apart from all
+ * resolved clients. The runtime's own scope is the fixed `client`, because Discover scopes contain colons.
+ */
 export function clientLimitKey(scope: string, address: string | null, key: string): string {
-  return `${scope}:client:${address === null ? 'unknown' : createHmac('sha256', key).update(address).digest('hex')}`;
+  return `${scope}:${runtimeClientLimitKey('client', address, key)}`;
 }
 
 export function clientRateKey(request: Request, scope: string, env: NodeJS.ProcessEnv = process.env): string {

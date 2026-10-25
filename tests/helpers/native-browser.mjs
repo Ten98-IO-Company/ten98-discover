@@ -29,7 +29,10 @@ const env={...process.env,NODE_ENV:'production',AUTH_SECRET:hex(32),CREDENTIAL_K
 
 let adminBase=postgres;
 const admin=async query=>{const client=new pg.Client({connectionString:new URL('/postgres',adminBase).href});await client.connect();try{await client.query(query);}finally{await client.end();}};
-const run=(command,argv)=>new Promise(resolve=>spawn(command,argv,{env,stdio:'inherit'}).on('exit',code=>resolve(code??1)));
+const running=new Set();let stopped=null;
+const run=(command,argv)=>new Promise(resolve=>{const child=spawn(command,argv,{env,stdio:'inherit'});running.add(child);child.on('exit',code=>{running.delete(child);resolve(code??1);});});
+// A SIGINT/SIGTERM (e.g. a sweep timeout or Ctrl-C) stops the migration or suite but still reaches `finally`, which drops the database.
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{stopped??=signal;for(const child of running)child.kill('SIGKILL');});
 const children=[];
 const start=(argv,name)=>{const child=spawn(process.execPath,argv,{env,stdio:['ignore','ignore','pipe']});child.stderr.on('data',chunk=>process.stderr.write(`[${name}] ${chunk}`));children.push(child);};
 
@@ -40,15 +43,17 @@ if(proxy)await new Promise((resolve,reject)=>proxy.once('error',error=>{if(error
 await mkdir(out,{recursive:true});
 await admin(`CREATE DATABASE ${database}`);
 try{
+  if(stopped)throw new Error(`Stopped by ${stopped}.`);
   if(await run(process.execPath,['src/server/cli.ts','migrate']))throw new Error('Migration failed.');
   if(!selfHosted){start(['.output/server/index.mjs'],'server');if(!options.has('no-worker'))start(['src/server/cli.ts','worker'],'worker');}
   let ready=selfHosted;
-  for(let attempt=0;attempt<80&&!ready;attempt++){ready=await fetch(origin+'/api/session').then(response=>response.ok,()=>false);if(!ready)await new Promise(resolve=>setTimeout(resolve,500));}
+  for(let attempt=0;attempt<80&&!ready&&!stopped;attempt++){ready=await fetch(origin+'/api/session').then(response=>response.ok,()=>false);if(!ready)await new Promise(resolve=>setTimeout(resolve,500));}
   if(!ready)throw new Error('The server did not become ready.');
   if(!unclaimed){
     const response=await fetch(origin+'/api/auth/setup',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({name:'Native browser owner',email:`owner-${hex(4)}@native-browser.test`,password:hex(16),workspaceName:'Native browser workspace'})});
     if(!response.ok)throw new Error(`Owner setup failed with ${response.status}.`);
   }
+  if(stopped)throw new Error(`Stopped by ${stopped}.`);
   code=await run(process.execPath,[suite]);
 }catch(error){console.error(String(error instanceof Error?error.message:error));}
 finally{
@@ -58,4 +63,4 @@ finally{
   proxy?.close();
 }
 console.log(`${suite} exit=${code}`);
-process.exitCode=code;
+process.exitCode=stopped?(stopped==='SIGINT'?130:143):code;

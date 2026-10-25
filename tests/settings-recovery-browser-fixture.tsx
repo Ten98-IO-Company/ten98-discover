@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {ToastProvider} from '@ten98/ui';
 import {createRoot} from 'react-dom/client';
 import {createRootRoute,createRoute,createRouter,Link,Outlet,RouterProvider} from '@tanstack/react-router';
 import {AccountPreferencesPanel} from '../src/components/AccountPreferencesPanel';
@@ -22,11 +23,11 @@ function Fixture(){
  :view==='providers'?<ProviderPanel workspaceId={workspace} onUnauthorized={unauthorized}/>
  :view==='domains'?<DomainsPanel projectId={project} userId={user} onUnauthorized={unauthorized} onInstallTracker={()=>{}}/>
  :view==='google'?<GoogleReportsPanel projectId={project} userId={user} onUnauthorized={unauthorized}/>
- :view==='keys'?<ApiKeysPanel workspaceId={workspace} onUnauthorized={unauthorized}/>
+ :view==='keys'?<ApiKeysPanel workspaceId={workspace} appUrl={location.origin} onUnauthorized={unauthorized}/>
  :view==='team'?<TeamPanel workspaceId={workspace} userId={user} onChanged={async()=>{}} onUnauthorized={unauthorized}/>
  :<h1>Fixture away</h1>}</>;
 }
 const root=createRootRoute({component:()=> <main style={{maxWidth:1100,margin:'20px auto',padding:'0 16px',minWidth:0}}><Outlet/></main>});
 const index=createRoute({getParentRoute:()=>root,path:'/',validateSearch:(value:Record<string,unknown>)=>({view:typeof value.view==='string'?value.view:'providers'}),component:Fixture});
 const router=createRouter({routeTree:root.addChildren([index])});
-createRoot(document.getElementById('root')!).render(<RouterProvider router={router}/>);
+createRoot(document.getElementById('root')!).render(<ToastProvider>{<RouterProvider router={router}/>}</ToastProvider>);

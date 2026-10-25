@@ -79,8 +79,9 @@ test('kept tables without a workspace or project column are the reviewed instanc
   const unscoped = accountClosureInventory
     .filter(entry => entry.rule === 'keep' && entry.table !== 'workspace' && !outlivesWorkspace.has(entry.table) && !scoped.includes(entry.table))
     .map(entry => entry.table).sort();
-  // Instance configuration, instance rate limits and account-id audits; they are not removed with a workspace (#291).
-  assert.deepEqual(unscoped, ['account_closure_audit', 'google_app', 'instance_operator_audit', 'oidc_provider', 'rateLimit']);
+  // Instance configuration, instance rate limits, account-id audits and instance mailbox suppressions (#310: complaints
+  // expire, hard bounces need an operator clear); they are not removed with a workspace (#291).
+  assert.deepEqual(unscoped, ['account_closure_audit', 'email_suppression', 'google_app', 'instance_operator_audit', 'oidc_provider', 'rateLimit']);
 });
 
 /**

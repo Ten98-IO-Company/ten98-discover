@@ -1,6 +1,7 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {WorkspaceRole} from '@ten98/runtime';
+import {CopyButton,LoadMore,SegmentedControl,StatusLine,useToast} from '@ten98/ui';
 
 type Role=WorkspaceRole;
 type Tab='reports'|'report-templates';
@@ -20,6 +21,7 @@ function localDateTime(value:Date) {
   const pad=(part:number)=>String(part).padStart(2,'0');
   return `${value.getFullYear()}-${pad(value.getMonth()+1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
 }
+const copyFailed='Automatic copy is unavailable. Select the text and copy it using your device.';
 function append<T extends {id:string}>(before:T[],after:T[]) {return [...new Map([...before,...after].map(row=>[row.id,row])).values()];}
 
 export default function ReportsPanel(props:Props) {
@@ -54,9 +56,8 @@ function ReportsView({projectId,onUnauthorized}:Props) {
   const [revokeConfirm,setRevokeConfirm]=useState<string|null>(null);
   const active=useRef({alive:false,generation:0,locked:false});
   const controller=useRef<AbortController|null>(null);
+  const {toast}=useToast();
   const unauthorized=useRef(onUnauthorized);unauthorized.current=onUnauthorized;
-  const shareField=useRef<HTMLInputElement|null>(null);
-  const briefField=useRef<HTMLTextAreaElement|null>(null);
   const reports=tab==='reports',writable=role!==null&&role!=='viewer';
   const collection=`/api/projects/${projectId}/${tab}`;
   const baseline=record?content(record):reports?blankHtml:'';
@@ -85,7 +86,7 @@ function ReportsView({projectId,onUnauthorized}:Props) {
     setOneTime(previous=>previous&&result.shares.some(share=>share.id===previous.id&&(share.revokedAt||Date.parse(share.expiresAt)<=Date.now()))?null:previous);
   }
 
-  // One operation at a time includes its refresh and clipboard callbacks. The ref closes double-click races.
+  // One operation at a time includes its refresh callbacks. The ref closes double-click races.
   async function run(work:(request:Requester,current:()=>boolean)=>Promise<void>) {
     if(!active.current.alive||active.current.locked) return;
     active.current.locked=true;setPending(true);setError('');setNotice('');
@@ -155,12 +156,12 @@ function ReportsView({projectId,onUnauthorized}:Props) {
       const result=await request<Selected>(`${collection}${record?`/${record.id}`:''}`,{...input,...(record?{revision:record.revision}:{})});
       const saved=result.report??result.template;if(!saved) throw new Error('The saved item could not be loaded. Refresh the list.');
       applyRecord(saved);await readList(request);if(reports&&canShare(role)) await readShares(request,saved.id);
-      setNotice(reports?'Report saved. Preview the saved version before sharing.':'Template saved.');
+      toast(reports?'Report saved. Preview the saved version before sharing.':'Template saved.');
     });
   }
   function remove() {
     if(!record||!deleteConfirm||!writable||dirty) return;
-    void run(async request=>{await request(`${collection}/${record.id}/delete`,{revision:record.revision});clearEditor();await readList(request);setNotice(reports?'Report deleted. Its public links are now unavailable.':'Template deleted.');});
+    void run(async request=>{await request(`${collection}/${record.id}/delete`,{revision:record.revision});clearEditor();await readList(request);toast(reports?'Report deleted. Its public links are now unavailable.':'Template deleted.');});
   }
   function share(event:FormEvent) {
     event.preventDefault();if(!record||!canShare(role)||!shareConfirm||dirty) return;
@@ -173,26 +174,17 @@ function ReportsView({projectId,onUnauthorized}:Props) {
   }
   function revoke(id:string) {
     if(!record||revokeConfirm!==id||!canShare(role)) return;
-    void run(async request=>{await request(`${collection}/${record.id}/shares/${id}/revoke`,{});setOneTime(previous=>previous?.id===id?null:previous);setRevokeConfirm(null);await readShares(request,record.id);setNotice('Link revoked. New visits cannot read this snapshot.');});
-  }
-  function copy(value:string,field:HTMLInputElement|HTMLTextAreaElement|null) {
-    void run(async(_request,current)=>{
-      try {await navigator.clipboard.writeText(value);if(current()) setNotice('Copied.');}
-      catch {if(current()) {field?.focus();field?.select();setNotice('Automatic copy is unavailable. The text is selected; copy it using your device.');}}
-    });
+    void run(async request=>{await request(`${collection}/${record.id}/shares/${id}/revoke`,{});setOneTime(previous=>previous?.id===id?null:previous);setRevokeConfirm(null);await readShares(request,record.id);toast('Link revoked. New visits cannot read this snapshot.');});
   }
 
   return <section aria-label='Reports and sharing'>
     <div className='card'>
-      <div className='row' aria-label='Report sections'>
-        <button className={`btn ${reports?'primary':''}`} aria-pressed={reports} disabled={navDisabled} onClick={()=>switchTab('reports')}>Reports</button>
-        <button className={`btn ${!reports?'primary':''}`} aria-pressed={!reports} disabled={navDisabled} onClick={()=>switchTab('report-templates')}>Templates</button>
-      </div>
+      <SegmentedControl label='Report sections' value={tab} onValueChange={value=>switchTab(value as Tab)} options={[{value:'reports',label:'Reports',disabled:navDisabled},{value:'report-templates',label:'Templates',disabled:navDisabled}]}/>
       <p className='dim' style={{marginTop:12}}>{reports?'Save an HTML report and share a fixed snapshot.':'Save reusable writing briefs. Templates do not generate reports automatically.'}</p>
       {dirty&&<p className='hint'>Save or cancel your edits before switching records or tabs.</p>}
-      {pending&&<p role='status'>Working…</p>}
+      {pending&&<StatusLine busy>Working…</StatusLine>}
       {error&&<p className='alert' role='alert'>{error}</p>}
-      {notice&&<p role='status'>{notice}</p>}
+      {notice&&<StatusLine tone='success'>{notice}</StatusLine>}
       <div className='row'>
         {writable&&<button className='btn primary' disabled={navDisabled} onClick={create}>{reports?'New report':'New template'}</button>}
         <button className='btn' disabled={navDisabled} onClick={()=>void run(async request=>{await readList(request);})}>{loaded?'Refresh list':'Retry loading'}</button>
@@ -201,20 +193,20 @@ function ReportsView({projectId,onUnauthorized}:Props) {
       {rows.length>0&&<div className='table-wrap'><table><thead><tr><th>Name</th><th>Revision</th><th>Updated</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}>
         <td><button className='btn ghost' style={{overflowWrap:'anywhere',textAlign:'left'}} disabled={navDisabled} onClick={()=>select(row.id)}>{label(row)}</button></td><td>{row.revision}</td><td>{date(row.updatedAt)}</td>
       </tr>)}</tbody></table></div>}
-      {next&&<button className='btn' disabled={navDisabled} onClick={()=>void run(async request=>{await readList(request,tab,next);})}>Load more {reports?'reports':'templates'}</button>}
+      {rows.length>0&&<LoadMore hasMore={next!==null} busy={pending} shown={rows.length} itemLabel={reports?'reports':'templates'} label={`Load more ${reports?'reports':'templates'}`} unavailableReason={dirty?'Save or cancel your edits before loading more.':undefined} onLoadMore={()=>{if(next&&!navDisabled)void run(async request=>{await readList(request,tab,next);});}}/>}
     </div>
 
     {editor&&<section className='card' aria-label={reports?'Report editor':'Template editor'}>
       <h2>{record?`${reports?'Report':'Template'} · saved revision ${record.revision}`:reports?'New report':'New template'}</h2>
       <form onSubmit={save}>
         <div className='field'><label htmlFor='report-title'>{reports?'Report title':'Template name'}</label><input id='report-title' value={title} maxLength={120} required readOnly={!writable} disabled={pending} onChange={event=>setTitle(event.target.value)}/></div>
-        <div className='field'><label htmlFor='report-body'>{reports?'HTML source':'Template brief'}</label><textarea id='report-body' ref={briefField} value={body} required maxLength={reports?1048576:20000} readOnly={!writable||pending} className={reports?'mono':''} style={{width:'100%',minHeight:reports?280:180,resize:'vertical',padding:10}} onChange={event=>setBody(event.target.value)}/></div>
+        <div className='field'><label htmlFor='report-body'>{reports?'HTML source':'Template brief'}</label><textarea id='report-body' value={body} required maxLength={reports?1048576:20000} readOnly={!writable||pending} className={reports?'mono':''} style={{width:'100%',minHeight:reports?280:180,resize:'vertical',padding:10}} onChange={event=>setBody(event.target.value)}/></div>
         {reports&&<p className='hint'>Your original source stays private to project members. Previews and shared snapshots remove scripts, forms, navigation and external assets. Use inline styles, static SVG or embedded raster images. Maximum HTML size: 1 MiB.</p>}
         {!writable&&<p className='dim'>Your current role can read this saved item.</p>}
         <div className='row' style={{marginTop:12}}>
           {writable&&<button className='btn primary' disabled={pending||!dirty}>{record?'Save changes':reports?'Save report':'Save template'}</button>}
           {dirty&&<button type='button' className='btn' disabled={pending} onClick={cancel}>Cancel edits</button>}
-          {!reports&&<button type='button' className='btn' disabled={pending} onClick={()=>copy(body,briefField.current)}>Copy brief</button>}
+          {!reports&&<CopyButton value={body} label='Copy brief' messages={{copied:'Brief copied.',copyFailed:copyFailed}}/>}
           {record&&reports&&<button type='button' className='btn' disabled={pending} onClick={()=>setPreview(value=>!value)}>{preview?'Hide preview':'Preview saved report'}</button>}
           {record&&writable&&<button type='button' className='btn' disabled={pending||dirty} onClick={()=>setDeleteConfirm(true)}>{reports?'Delete report':'Delete template'}</button>}
         </div>
@@ -233,13 +225,13 @@ function ReportsView({projectId,onUnauthorized}:Props) {
         <label className='row'><input type='checkbox' style={{width:'auto'}} checked={shareConfirm} disabled={pending||dirty} onChange={event=>setShareConfirm(event.target.checked)}/>I have reviewed saved revision {record.revision} and want to share it.</label>
         <button className='btn primary' disabled={pending||dirty||!shareConfirm}>Create public link</button>
       </form>
-      {oneTime&&<div style={{marginTop:16}}><label htmlFor='share-url'>One-time share URL</label><input id='share-url' ref={shareField} value={oneTime.url} readOnly/><p className='hint'>Copy this URL now. It disappears when you change records or leave this view.</p><button className='btn' disabled={pending} onClick={()=>copy(oneTime.url,shareField.current)}>Copy link</button></div>}
+      {oneTime&&<div style={{marginTop:16}}><label htmlFor='share-url'>One-time share URL</label><input id='share-url' value={oneTime.url} readOnly/><p className='hint'>Copy this URL now. It disappears when you change records or leave this view.</p><CopyButton value={oneTime.url} label='Copy link' messages={{copied:'Link copied.',copyFailed:copyFailed}}/></div>}
       <div className='row between' style={{marginTop:20}}><h2>Link history</h2><button className='btn' disabled={pending} onClick={()=>void run(async request=>{await readShares(request,record.id);})}>Refresh links</button></div>
       {shares.length===0?<p className='dim'>{sharesLoaded?'No public links have been created.':'Link history has not loaded. Choose Refresh links to try again.'}</p>:<div className='table-wrap'><table><thead><tr><th>Label</th><th>Revision</th><th>Expires</th><th>Status</th><th>Action</th></tr></thead><tbody>{shares.map(item=>{
         const state=item.revokedAt?'Revoked':Date.parse(item.expiresAt)<=Date.now()?'Expired':'Active';
         return <tr key={item.id}><td style={{overflowWrap:'anywhere'}}>{item.label}</td><td>{item.reportRevision}</td><td>{date(item.expiresAt)}</td><td>{state}</td><td>{state==='Active'&&(revokeConfirm===item.id?<div><p>Revoke this link?</p><button className='btn' disabled={pending} onClick={()=>revoke(item.id)}>Revoke link</button><button className='btn ghost' disabled={pending} onClick={()=>setRevokeConfirm(null)}>Keep link</button></div>:<button className='btn' disabled={pending} onClick={()=>setRevokeConfirm(item.id)}>Revoke link</button>)}</td></tr>;
       })}</tbody></table></div>}
-      {sharesNext&&<button className='btn' disabled={pending} onClick={()=>void run(async request=>{await readShares(request,record.id,sharesNext);})}>Load more links</button>}
+      {shares.length>0&&<LoadMore hasMore={sharesNext!==null} busy={pending} shown={shares.length} itemLabel='links' label='Load more links' onLoadMore={()=>{if(sharesNext)void run(async request=>{await readShares(request,record.id,sharesNext);});}}/>}
     </section>}
   </section>;
 }

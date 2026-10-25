@@ -26,7 +26,7 @@ export async function runAccountClosureChecks() {
   await assertSchema();
   const { pool } = getDatabase(), suffix = randomUUID().slice(0, 8);
   // In-process requests have no transport peer and share the unknown-client sign-in budgets; start this module with them empty.
-  await pool.query('DELETE FROM request_limit WHERE key=ANY($1::text[])', [['signin:client:unknown', 'two-factor:client:unknown']]);
+  await pool.query('DELETE FROM request_limit WHERE key=ANY($1::text[])', [['signin:client:unresolved', 'two-factor:client:unresolved']]);
 
   async function call(path: string, jar: Jar | null, body?: unknown, bearer?: string): Promise<Reply> {
     const headers = new Headers();

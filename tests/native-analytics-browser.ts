@@ -11,6 +11,7 @@ import {createWorkspace} from '../src/server/teams.ts';
 import {saveAnalyticsSettings} from '../src/server/native-analytics.ts';
 import {getDestinations, saveDestinationsDraft, publishDestinations} from '../src/server/destinations.ts';
 import {launchChromium} from './helpers/playwright.mjs';
+import {settingsOpen,settingsSections} from './helpers/app-navigation.ts';
 
 // Optional real-browser acceptance; no browser dependency belongs in production.
 assert.equal(process.env.TEN98_INTEGRATION_TEST, '1', 'Use an isolated local browser fixture.');
@@ -147,9 +148,8 @@ try {
   }
   // Project settings such as Privacy are Settings sections, opened from the sidebar Settings link.
   async function section(target:any,name:string) {
-    const tabs=target.getByRole('navigation',{name:'Settings sections',exact:true});
-    if(!await tabs.isVisible()){await navigation(target);await target.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true}).click();}
-    await tabs.getByRole('link',{name,exact:true}).click();
+    if(!await settingsOpen(target)){await navigation(target);await target.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true}).click();}
+    await (await settingsSections(target)).getByRole('link',{name,exact:true}).click();
   }
   await dashboard.goto(config.appUrl, {waitUntil: 'networkidle'});
   await dashboard.getByRole('heading',{name:'Overview',level:1,exact:true}).waitFor();
