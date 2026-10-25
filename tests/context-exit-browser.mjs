@@ -25,7 +25,7 @@ const frame=()=>page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>re
 const at=async view=>{await page.waitForFunction(view=>new URL(location.href).searchParams.get('view')===view,view);await frame();};
 const ready=async()=>{await button('Edit business context').waitFor();await page.waitForFunction(()=>![...document.querySelectorAll('[role=status]')].some(el=>el.textContent==='Loading context…'));await frame();};
 // Project context is a settings page; its Settings sections link to Profile is the accepted exit (the sidebar Settings link now opens Tracking code).
-const settings=async()=>{await (await settingsLink('Profile')).click();await at('preferences');await page.getByLabel('Display name',{exact:true}).waitFor();};
+const settings=async()=>{await (await settingsLink('Profile')).click();await at('preferences');await page.getByLabel('Name',{exact:true}).waitFor();};
 const edit=async(name='Draft brand')=>{await button('Edit business context').click();if(name!==null)await brand().fill(name);await frame();};
 const json=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
 async function release(status=200){const pending=held;assert.ok(pending);held=null;await json(pending.route,status===200?pending.body:{error:'Synthetic save status '+status},status).catch(()=>{});}
@@ -57,7 +57,7 @@ async function fresh(view='context'){
   }catch(error){errors.push('Fixture: '+error.message);return route.abort();}
  });
  page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',error=>errors.push(error.message));await page.goto(origin+'/?'+new URLSearchParams({workspace:W,project:P,view}));
- if(view==='context')await ready();else await page.getByLabel('Display name',{exact:true}).waitFor();
+ if(view==='context')await ready();else await page.getByLabel('Name',{exact:true}).waitFor();
 }
 async function confirmAction(accept,action,type='confirm'){
  let count=0;const handler=async dialog=>{count++;assert.equal(dialog.type(),type);await(accept?dialog.accept():dialog.dismiss());};page.on('dialog',handler);
@@ -90,7 +90,7 @@ try{
  }
  assert.equal(apiRequests,requestCount,'Opening or closing account controls dispatches no API work');
  await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>{document.documentElement.dataset.theme='light';document.documentElement.style.colorScheme='light';});
- await button('Account menu').click();await page.locator('[id="'+await button('Account menu').getAttribute('aria-controls')+'"]').getByRole('link',{name:'Profile',exact:true}).click();await at('preferences');await page.getByLabel('Display name',{exact:true}).waitFor();assert.equal(await button('Account menu').getAttribute('aria-expanded'),'false');
+ await button('Account menu').click();await page.locator('[id="'+await button('Account menu').getAttribute('aria-controls')+'"]').getByRole('link',{name:'Profile',exact:true}).click();await at('preferences');await page.getByLabel('Name',{exact:true}).waitFor();assert.equal(await button('Account menu').getAttribute('aria-expanded'),'false');
  await page.screenshot({path:resolve('private/swarm/runtime13-ui19/profile-light.png'),fullPage:false});
  pass('Actual header account disclosure, native profile link, app-version footer, narrow/wide light/dark geometry and Escape focus');
  await cleanAction(settings);await (await contextLink()).click();await ready();await edit();await button('Save changes').click();await saved();assert.equal(writes.length,1);await cleanAction(settings);pass('Clean loads and confirmed saves allow exits without prompting');

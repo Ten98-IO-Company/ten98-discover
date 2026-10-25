@@ -1,4 +1,5 @@
 import {workspaceRoles,type WorkspaceRole as Role} from '@ten98/runtime';
+import {Disclosure} from '@ten98/ui';
 import {useEffect,useId,useRef,useState} from 'react';
 import {api,ApiError,errMsg} from '../lib/api';
 import type {KeywordSelection} from './SavedKeywordsPanel';
@@ -67,4 +68,4 @@ export function SavedKeywordRefreshPanel({projectId,active,selection,setup,onUna
     <div><h4>Recent refreshes</h4>{plans.length===0?<p className="dim">No metric refresh plans saved yet.</p>:<ul className="saved-keyword-refresh-list">{plans.map(p=><li key={p.id}><span>{dt(p.createdAt)} · {p.targetCount} keywords · {p.status}</span><button className="btn ghost" disabled={locked} onClick={()=>void read(p.id)}>View refresh</button></li>)}</ul>}</div>
   </div>;
 }
-function QuotedChildren({children}:{children:Child[]}){return <details><summary>Exact keywords and per-request prices</summary>{children.map((c,i)=><div key={c.quoteId}><h4>Request {i+1} · ${c.estimateUsd}</h4><p>Location {c.request.locationCode} · {c.request.languageCode} · prices observed {dt(c.priceAsOf)}</p><ol>{c.request.keywords.map(k=><li key={k}>{k}</li>)}</ol></div>)}</details>;}
+function QuotedChildren({children}:{children:Child[]}){return <Disclosure summary="Exact keywords and per-request prices" variant="plain">{children.map((c,i)=><div key={c.quoteId}><h4>Request {i+1} · ${c.estimateUsd}</h4><p>Location {c.request.locationCode} · {c.request.languageCode} · prices observed {dt(c.priceAsOf)}</p><ol>{c.request.keywords.map(k=><li key={k}>{k}</li>)}</ol></div>)}</Disclosure>;}

@@ -186,7 +186,7 @@ try {
   await selectProject('Other report project');
   await page.evaluate(()=>(window as unknown as {finishFixtureCopy:()=>void}).finishFixtureCopy());
   await section('Reports','Saved reports');await page.getByText('No reports saved yet.',{exact:false}).waitFor();
-  assert.equal(await page.getByText('Copied.',{exact:true}).count(),0);assert.equal(await oneTime.count(),0);
+  assert.equal(await page.getByText('Link copied.',{exact:true}).count(),0);assert.equal(await oneTime.count(),0);
   await page.getByRole('button',{name:'New report',exact:true}).click();await page.getByLabel('Report title',{exact:true}).fill('Temporary deletion check');await page.getByLabel('HTML source',{exact:true}).fill('<p>Delete this fixture</p>');
   await page.getByRole('button',{name:'Save report',exact:true}).click();await page.getByRole('checkbox',{name:/I have reviewed saved revision 1/}).check();
   await page.getByRole('button',{name:'Create public link',exact:true}).click();await oneTime.waitFor();const deletedUrl=await oneTime.inputValue();

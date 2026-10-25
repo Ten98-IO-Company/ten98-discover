@@ -1,4 +1,5 @@
 import * as React from 'react';
+import {ToastProvider} from '@ten98/ui';
 import {createRoot} from 'react-dom/client';
 import {createMemoryHistory,createRootRoute,createRouter,RouterProvider} from '@tanstack/react-router';
 import {SessionReplayPanel} from '../src/components/SessionReplayPanel';
@@ -21,4 +22,4 @@ function Fixture(){
  </main>;
 }
 const router=createRouter({routeTree:createRootRoute({component:Fixture}),history:createMemoryHistory({initialEntries:['/']})});
-createRoot(document.getElementById('root')!).render(<RouterProvider router={router}/>);
+createRoot(document.getElementById('root')!).render(<ToastProvider>{<RouterProvider router={router}/>}</ToastProvider>);

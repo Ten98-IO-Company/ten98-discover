@@ -1,4 +1,5 @@
 import {Fragment, useCallback, useEffect, useId, useRef, useState} from 'react';
+import {Disclosure} from '@ten98/ui';
 import type {FormEvent} from 'react';
 import {api, ApiError, errMsg} from '../lib/api';
 import type {WorkspaceRole} from '@ten98/runtime';
@@ -453,12 +454,12 @@ export function RetentionPanel({workspaceId, userId, onUnauthorized}: Props) {
               <p style={{margin:'8px 0'}}>Raw provider evidence cutoff (UTC): {fmtUtc(preview.rawEvidenceCutoff)}</p>
               <p style={{margin:'8px 0'}}>{preview.promptEstimate.status==='available'&&preview.promptEstimate.results!==null?`${preview.promptEstimate.atLeast?'At least ':''}${preview.promptEstimate.results.toLocaleString()} generated prompt answers and ${preview.promptEstimate.inputs?.toLocaleString() ?? "unknown"} copied execution inputs eligible under raw provider evidence retention.`:'Prompt answer estimate unavailable.'}</p>
               <p style={{margin:'8px 0'}}>{preview.redirectEstimate?.status==='available'&&preview.redirectEstimate.checks!==null?`${preview.redirectEstimate.atLeast?'At least ':''}${preview.redirectEstimate.checks.toLocaleString()} redirect observations eligible. Their check receipts remain.`:'Redirect observation estimate unavailable.'}</p>
-              <details><summary>What stays and how expiry works</summary>
+              <Disclosure summary="What stays and how expiry works" variant="plain">
               <p className="hint" style={{margin: '8px 0'}}>Google report rows, Google quality metadata, keyword results and saved keyword metrics expire after the derived-history period. Saving or refreshing a list does not extend an older observation's expiry. Authored keywords, tags and prompt versions remain. Generated prompt answers and copied execution input follow raw provider evidence retention. Outcomes, recorded counts, used quote metadata and charge evidence remain as receipts. Active imports are preserved. Expired replay paths and content are hidden immediately and purged in bounded passes. Safe request tombstones keep retries from recreating expired recordings until derived-history retention removes them; they contain no recorded path or events.</p>
               <p className="hint" style={{margin: '8px 0'}}>
                 Kept as-is: authored reports, templates, shared snapshots, account data, credentials, configuration and all spending ledger records. Deleting live data does not erase operator backups.
               </p>
-              </details>
+              </Disclosure>
               <div className="alert" style={{margin: '8px 0'}}>
                 Older analytics, finished Google reports, keyword results, saved keyword metrics, generated prompt answers and copied execution input will be deleted automatically. Authored keyword lists and tags remain. Increasing these periods later cannot restore deleted data.
               </div>

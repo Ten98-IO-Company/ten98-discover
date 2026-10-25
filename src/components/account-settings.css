@@ -1,6 +1,6 @@
 /* Campaign AccountSettings / IntegrationSettings layouts, adapted to Discover's existing account forms. */
 .account-settings { min-inline-size: 0; max-inline-size: none; overflow-wrap: anywhere; }
-.account-settings-grid, .account-security { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr); gap: 22px; align-items: start; }
+.account-security { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr); gap: 22px; align-items: start; }
 .account-settings .settings-panel { min-inline-size: 0; margin: 0; padding: 24px; }
 .account-settings .settings-panel > p { font-size: 13px; line-height: 1.7; margin: 8px 0 20px; }
 .account-settings .provider-settings-heading { display: flex; align-items: flex-start; gap: 12px; margin-block-end: 12px; }
@@ -30,16 +30,6 @@
 .account-settings .settings-subheading { padding-block-start: 22px; margin: 22px 0 12px; border-block-start: 1px solid var(--line); font-size: 15px; font-weight: 600; }
 .account-settings .table-wrap { max-inline-size: 100%; overflow: auto; }
 .account-settings .mono, .identity-details dd { overflow-wrap: anywhere; }
-.account-settings-actions { margin-block-start: 22px; }
-.account-settings .preferences-theme { grid-column: 1 / -1; }
-.account-settings .preferences-theme .row { display: flex; gap: 12px; flex-wrap: wrap; }
-.account-settings .preferences-theme label { display: inline-flex; align-items: center; flex: 1; gap: 10px; min-block-size: 44px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 7px; font-size: 13px; cursor: pointer; margin: 0; }
-.account-settings .preferences-theme label:has(input:checked) { background: var(--blue-tint); border-color: var(--blue); color: var(--blue); }
-.account-settings .preferences-theme input { inline-size: auto; margin: 0; }
-.account-settings .preferences-preview { padding: 16px; background: var(--canvas); border: 1px solid var(--line); border-radius: 7px; }
-.account-settings .preferences-preview p { margin-block-end: 8px; }
-.account-settings .preferences-preview dl { margin: 0; }
-.account-settings .preferences-preview dd { margin-inline-start: 0; overflow-wrap: anywhere; }
 .account-security > .account-summary-card, .account-security > .account-sessions-card { grid-column: 1 / -1; }
 .account-security .account-summary-card .provider-source { border: 0; padding: 0; margin: 12px 0 0; }
 .account-security .account-sessions-card > .row { gap: 18px; flex-wrap: wrap; }
@@ -57,7 +47,7 @@
 .account-access .button { min-block-size: 44px; max-inline-size: 100%; white-space: normal; }
 .account-access .full { inline-size: 100%; }
 @media (max-width:1100px) {
-  .account-settings-grid, .account-security, .identity-provider-grid { grid-template-columns: minmax(0,1fr); }
+  .account-security, .identity-provider-grid { grid-template-columns: minmax(0,1fr); }
   .account-settings .settings-panel { padding: 20px; }
   .account-settings .identity-provider-card { padding: 21px; }
 }
@@ -66,8 +56,7 @@
   .account-settings .provider-settings-heading > div { flex-basis: calc(100% - 48px); }
   .account-settings .provider-settings-heading > .badge { margin-inline-start: 46px; }
   .account-settings .settings-panel, .account-settings .identity-provider-card { padding: 18px; }
-  .account-settings .button-wrap > .button, .account-settings-actions > .button { inline-size: 100%; }
-  .account-settings .preferences-theme label { flex-basis: 100%; }
+  .account-settings .button-wrap > .button { inline-size: 100%; }
   .identity-details { grid-template-columns: minmax(0,1fr); gap: 4px; }
   .identity-details dd + dt { margin-block-start: 10px; }
 }

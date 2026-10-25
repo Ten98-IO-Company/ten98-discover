@@ -5,7 +5,7 @@ import {readHeatmapQuery,heatmapPages,heatmapGeometries,heatmapClicks,heatmapScr
 import {InvalidReplay,readReplayResponse,ReplayPreview} from './SessionReplayPanel';
 import {boundedTree,reassembleReplay,type ReplayEvent} from '../lib/session-replay';
 import type {WorkspaceRole} from '@ten98/runtime';
-import {HeatmapPlane,HeatmapRankedList} from '@ten98/ui';
+import {HeatmapPlane,HeatmapRankedList,Disclosure} from '@ten98/ui';
 
 type Props={projectId:string;userId:string;query?:string;onNavigate:(query:string)=>void;onUnauthorized:()=>void;onSettings?:()=>void;readOwner?:string;readEnabled?:boolean};
 const schema=z.union([heatmapPages,heatmapGeometries,heatmapClicks,heatmapScroll]);
@@ -69,7 +69,7 @@ export function HeatmapsPanel({projectId,userId,query='',onNavigate,onUnauthoriz
      </>}{clicks.totals.limited&&<p className="banner">{count(clicks.totals.returnedGroups)} of {count(clicks.totals.groups)} coordinate groups returned; {count(clicks.totals.omittedGroups)} groups are omitted. Total recorded clicks include omitted groups.</p>}</>}
      {scroll&&<><p><strong>{count(scroll.captures)}</strong> captured documents with scroll observations.</p>{scroll.captures===null?<p>Scroll depth is unavailable for this layout and range.</p>:<><div className="table-wrap" role="region" aria-label="Recorded scroll depth" tabIndex={0}><table><thead><tr><th scope="col">Reached at least</th><th scope="col">Captured documents</th><th scope="col">Share</th></tr></thead><tbody>{scroll.bands.map(band=><tr key={band.depth}><th scope="row">{band.depth}% of document height</th><td>{count(band.captures)}</td><td>{scroll.captures===null?'Unavailable':scroll.captures===0?'No captured documents':`${((band.captures??0)/scroll.captures*100).toFixed(1)}%`}</td></tr>)}</tbody></table></div><p className="hint">Each captured document is counted once at its maximum observed depth. Bands are cumulative and must not be added together.</p></>}</>}
     </section>}
-    <details className="card"><summary>Observation and retention evidence</summary><p>Snapshot: <time dateTime={data.asOf}>{data.asOf}</time>.</p><p>Retained from: <time dateTime={data.retainedFrom}>{data.retainedFrom}</time>.</p><p>Sampling, consent, exclusions and privacy settings can leave activity unobserved. Zero means no matching retained observation, never proof of no activity.</p>{geometry&&<p>Coordinate basis: {geometry.basis} · Direction: {geometry.direction}. Numeric observations contain no DOM or page text.</p>}</details>
+    <Disclosure summary="Observation and retention evidence" variant="boxed"><p>Snapshot: <time dateTime={data.asOf}>{data.asOf}</time>.</p><p>Retained from: <time dateTime={data.retainedFrom}>{data.retainedFrom}</time>.</p><p>Sampling, consent, exclusions and privacy settings can leave activity unobserved. Zero means no matching retained observation, never proof of no activity.</p>{geometry&&<p>Coordinate basis: {geometry.basis} · Direction: {geometry.direction}. Numeric observations contain no DOM or page text.</p>}</Disclosure>
    </>}
   </>}
  </section>;
