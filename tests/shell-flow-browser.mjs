@@ -7,6 +7,7 @@ import {mkdir} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {loadNavigationSession} from './fixtures/navigation-review.mjs';
 import {launchChromium} from './helpers/playwright.mjs';
+import {settingsSections} from './helpers/app-navigation.ts';
 
 assert.equal(process.env.TEN98_SHELL_FLOW_BROWSER, '1', 'Explicit isolated-shell opt-in required.');
 assert.ok(process.env.PLAYWRIGHT_MODULE, 'Supply the existing Playwright module.');
@@ -403,8 +404,8 @@ try {
     await (await accountPanel()).getByRole('button', {name:/^Sign/}).waitFor();
   };
   const isActive = element => element.evaluate(node => node === document.activeElement);
-  const settingsTabs = () => main.getByRole('navigation', {name:'Settings sections', exact:true}).getByRole('link').allTextContents();
-  const openSettings = async () => { await settingsLink.click(); await main.getByRole('navigation', {name:'Settings sections', exact:true}).waitFor(); };
+  const settingsTabs = async () => (await settingsSections(main)).getByRole('link').allTextContents();
+  const openSettings = async () => { await settingsLink.click(); await settingsSections(main); };
   const menuToggle = page.getByRole('button', {name:'Menu', exact:true});
   const showMenu = async () => { if (await menuToggle.isVisible() && await menuToggle.getAttribute('aria-expanded') !== 'true') await menuToggle.click(); };
   const hideMenu = async () => { if (await menuToggle.isVisible() && await menuToggle.getAttribute('aria-expanded') === 'true') { await page.keyboard.press('Escape'); assert.equal(await menuToggle.getAttribute('aria-expanded'), 'false', 'Escape closes the navigation drawer.'); } };

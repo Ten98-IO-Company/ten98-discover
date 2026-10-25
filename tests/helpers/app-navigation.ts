@@ -18,11 +18,47 @@ export async function openView(page:any,view:AppView):Promise<void>{
   const entry=settingsEntry(view);
   if(!entry)throw new Error(`No navigation home for view ${view}`);
   // Already in Settings: choose the item directly. Otherwise open Settings and let its landing page settle first.
-  const settings=main.getByRole('navigation',{name:'Settings sections',exact:true});
-  if(!await settings.count()){
+  if(!await settingsOpen(main)){
     await sidebar.getByRole('link',{name:'Settings',exact:true}).click();
-    await settings.locator('a[aria-current="page"]').first().waitFor();
+    await settingsCurrent(main).first().waitFor({state:'attached'});
   }
-  await settings.getByRole('link',{name:entry.label,exact:true}).first().click();
-  await settings.getByRole('link',{name:entry.label,exact:true}).and(page.locator('[aria-current="page"]')).first().waitFor();
+  await (await settingsSections(main)).getByRole('link',{name:entry.label,exact:true}).first().click();
+  await settingsCurrent(main,entry.label).first().waitFor({state:'attached'});
+}
+
+// SettingsLayout renders its "Settings sections" navigation twice: the full list, and the same list inside a closed
+// <details> menu that replaces it at template widths of 52rem or less. Browser suites resolve it only through these
+// helpers, so every caller works at both widths.
+const settingsLabel='Settings sections';
+const fullSettings=(scope:any)=>scope.locator('.t98-settings-full-nav');
+
+/** True when a Settings page is mounted, whichever navigation form its width shows. */
+export async function settingsOpen(scope:any):Promise<boolean>{
+  return await fullSettings(scope).count()>0;
+}
+
+/** The current Settings link (optionally only when it is `label`), read from the full list's DOM so it is found while
+ * that list is hidden and the compact menu is closed. */
+export function settingsCurrent(scope:any,label?:string):any{
+  const links=label?fullSettings(scope).getByRole('link',{name:label,exact:true,includeHidden:true}):fullSettings(scope).locator('a');
+  return links.and(scope.locator('[aria-current="page"]'));
+}
+
+/**
+ * The visible "Settings sections" navigation. When the full list is hidden, this opens the compact menu first.
+ * Choosing a link closes that menu again, so resolve the navigation afresh before each use.
+ */
+export async function settingsSections(scope:any):Promise<any>{
+  const full=fullSettings(scope).getByRole('navigation',{name:settingsLabel,exact:true});
+  const compact=scope.locator('details.t98-settings-compact-nav');
+  const summary=compact.locator('summary.t98-settings-compact-nav__summary');
+  // The compact menu precedes the full list in the DOM and only one form is shown at a time, so wait on whichever is
+  // visible rather than the first match, which may be the hidden compact summary.
+  const visibleFull=full.filter({visible:true});
+  await visibleFull.or(summary.filter({visible:true})).first().waitFor();
+  if(await visibleFull.count())return full;
+  if(!await compact.evaluate((node:HTMLDetailsElement)=>node.open))await summary.click();
+  const nav=compact.getByRole('navigation',{name:settingsLabel,exact:true});
+  await nav.waitFor();
+  return nav;
 }

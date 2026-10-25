@@ -9,6 +9,7 @@ import { createWorkspace } from '../src/server/teams.ts';
 import { addDomain, issueDomainChallenge, verifyDomain } from '../src/server/domains.ts';
 import { saveAnalyticsSettings } from '../src/server/native-analytics.ts';
 import {launchChromium} from './helpers/playwright.mjs';
+import {settingsOpen,settingsSections} from './helpers/app-navigation.ts';
 
 // Actual production app + tracker + loader, with synthetic HTTPS documents and
 // transport forwarded only to the loopback app. No public DNS or vendor traffic.
@@ -96,14 +97,14 @@ try {
   // Report pages are tabs in a section's strip and settings pages are Settings sections; either opens from the sidebar first.
   async function section(name: string, tab: string) {
     const main = dashboard.getByRole('main', { name: 'Main content', exact: true });
-    const tabs = main.getByRole('navigation', { name: name === 'Settings' ? 'Settings sections' : `${name} pages`, exact: true });
-    if (!await tabs.isVisible()) {
+    const settings = name === 'Settings', tabs = main.getByRole('navigation', { name: `${name} pages`, exact: true });
+    if (!await (settings ? settingsOpen(main) : tabs.isVisible())) {
       const toggle = dashboard.getByRole('button', { name: /^(Menu|Close menu)$/ });
       if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
       const sidebar = dashboard.locator('aside.t98-shell-sidebar');
-      await (name === 'Settings' ? sidebar.getByRole('link', { name: 'Settings', exact: true }) : sidebar.getByRole('navigation', { name: 'Sections', exact: true }).getByRole('link', { name, exact: true })).click();
+      await (settings ? sidebar.getByRole('link', { name: 'Settings', exact: true }) : sidebar.getByRole('navigation', { name: 'Sections', exact: true }).getByRole('link', { name, exact: true })).click();
     }
-    await tabs.getByRole('link', { name: tab, exact: true }).click();
+    await (settings ? await settingsSections(main) : tabs).getByRole('link', { name: tab, exact: true }).click();
   }
   await dashboard.getByRole('heading', { name: 'Overview', exact: true, level: 1 }).waitFor();
   await section('Overview', 'Explore');

@@ -2,38 +2,22 @@
 @import '@ten98/ui/product.css';
 
 /* Discover adapters: native forms/routes, accessible states, semantic themes and RTL. */
-:root { --t98-sidebar-width:232px; }
 body { font-family:var(--font-sans); line-height:1.5; }
 [hidden] { display:none!important; }
 svg { flex-shrink:0; }
 .brand { text-align:start; }
-.brand > span:last-child { display:flex; flex-direction:column; }
-.brand small { color:var(--color-text-muted); }
-.brand-link { display:block; flex-shrink:0; }
-.sidebar-nav { overscroll-behavior:contain; padding-block-end:16px; }
-.nav-item { color:var(--color-text-muted); }
-.nav-item > span { min-inline-size:0; overflow-wrap:anywhere; }
-/* The shared footer and account-menu actions are 38px tall; keep them 44px touch targets. */
+/* The Settings footer link and the AccountMenu children are native elements at the 38px control height; keep them 44px touch targets until they move to SidebarNav and AccountMenu items. */
 .t98-sidebar-footer__actions > .nav-item, .t98-account-menu .t98-account-menu__actions :is(a,button) { min-block-size:44px; }
-.nav-item.selected { color:var(--color-accent); background:var(--color-accent-subtle); }
-.account { margin-block-start:10px; }
-.account-identity { min-inline-size:0; flex:1; color:var(--color-text); }
-.account-identity strong,.account-identity small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.account-identity strong { font-size:12px; }
-.account-identity small { margin-block-start:3px; font-size:11px; color:var(--color-text-muted); }
-.content { padding-block-end:32px; min-inline-size:0; }
-.tabs a { display:inline-flex; align-items:center; text-decoration:none; font-weight:500; }
-.tabs :is(a,button).active { color:var(--color-accent); border-block-end-color:#8970d7; }
 .card { min-inline-size:0; padding:22px; }
 .card h2 { margin-block-end:12px; }
 .card > p + p { margin-block-start:10px; }
 .card > .row { margin-block-start:14px; }
 .stack { display:grid; gap:16px; min-inline-size:0; }
 .row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+/* Native .btn and form-control geometry for panels not yet on Button and Field/Input. */
 :where(.btn,.button) { display:inline-flex; justify-content:center; align-items:center; gap:8px; text-decoration:none; max-inline-size:100%; }
 .btn { min-block-size:var(--control-md); }
 .btn.ghost { border-color:transparent; background:transparent; color:var(--color-text-muted); }
-.btn.ghost:hover:not(:disabled) { color:var(--color-accent); background:var(--color-accent-subtle); }
 :is(.btn,.button):disabled, :is(input,select,textarea):disabled { opacity:1; color:var(--color-disabled-text); background:var(--color-disabled-surface); border-color:var(--color-border-control); box-shadow:none; cursor:not-allowed; }
 :is(.btn,.button).primary:not(:disabled):active { background:var(--color-accent-active); border-color:var(--color-accent-active); }
 label { font-size:13px; color:var(--color-text-muted); }
@@ -45,7 +29,7 @@ input:where(:not([type='checkbox']):not([type='radio'])),select,textarea { min-i
 input[type='checkbox'],input[type='radio'] { accent-color:var(--color-accent); }
 textarea { resize:vertical; }
 ::placeholder { color:var(--color-text-placeholder); opacity:1; }
-/* Zero specificity: a default ring for app elements; @ten98/ui components keep their own focus treatment (the shell main and map shapes opt out). */
+/* Zero specificity: a default ring for native controls and keyboard-scrollable regions; @ten98/ui components keep their own focus treatment (the shell main and map shapes opt out). */
 :where(:focus-visible) { outline:3px solid var(--color-focus); outline-offset:2px; }
 input:focus,select:focus,textarea:focus { outline:3px solid var(--color-focus); outline-offset:2px; border-color:var(--color-focus); }
 .pill { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:600; border-radius:5px; padding:4px 8px; background:var(--color-accent-subtle); color:var(--color-accent); }
@@ -65,21 +49,17 @@ td { padding-block:16px; border-block-end:1px solid var(--color-border); vertica
 .empty-icon { display:inline-flex; align-items:center; justify-content:center; inline-size:48px; block-size:48px; border-radius:12px; background:var(--color-accent-subtle); color:var(--color-accent); }
 .empty p { max-inline-size:40ch; }
 .center { display:grid; place-items:center; min-block-size:100dvh; padding:24px; }
-:is(.auth-form-inner,.t98-auth-fields) > .auth { padding:0; margin:0; border:0; border-radius:0; box-shadow:none; inline-size:100%; }
 .connection-callout { display:flex; justify-content:space-between; align-items:center; gap:18px; padding:20px; background:var(--color-accent-subtle); border:1px solid var(--color-border); border-radius:9px; }
 .dialog,dialog { border:1px solid var(--color-border); border-radius:13px; background:var(--color-surface); color:var(--color-text); padding:25px 28px; max-inline-size:calc(100% - 32px); max-block-size:90dvh; overflow:auto; overscroll-behavior:contain; box-shadow:var(--shadow-dialog); }
 dialog::backdrop { background:var(--color-overlay); backdrop-filter:blur(3px); }
+/* @ten98/ui auth.css places the orbit with physical `right` and has no phone grid rows; both belong in the library. */
 [dir='rtl'] .auth-orbit { right:auto; inset-inline-end:-240px; }
-@media(min-width:1500px) { :root { --t98-sidebar-width:245px; } }
-@media(max-width:1200px) { :root { --t98-sidebar-width:210px; } }
 @media(max-width:760px) {
+ /* @ten98/ui has no phone touch-target floor for .t98-button/.t98-input, and native controls still need it. */
  :root { --control-md:var(--control-touch); }
- .content { padding-block-end:24px; }
  .card { padding:18px; }
  :is(.btn,.button,.t98-button,.nav-item,summary,.icon-button),input:not([type='checkbox']):not([type='radio']),select { min-block-size:44px; }
- .auth-form :is(input:not([type='checkbox']):not([type='radio']),select,.btn,.button) { min-block-size:44px; }
  .auth-shell { grid-template-rows:auto 1fr; }
- .auth-story p:not(.auth-story-title),.auth-story > small,.auth-channels { display:none; }
  [dir='rtl'] .auth-orbit { inset-inline-end:-130px; }
  .connection-callout { flex-wrap:wrap; }
 }
@@ -94,13 +74,6 @@ dialog::backdrop { background:var(--color-overlay); backdrop-filter:blur(3px); }
 .badge { color:var(--color-text-muted); background:var(--color-surface-subtle); }
 .badge.active,.badge.connected,.badge.enabled,.badge.ready { color:var(--color-success); background:var(--color-success-subtle); }
 .badge.failed,.badge.disabled,.badge.error { color:var(--color-danger); background:var(--color-danger-subtle); }
-@media(max-width:760px) {
- .icon-button,a.avatar { min-inline-size:44px; min-block-size:44px; }
- .account-identity { min-block-size:44px; display:flex; flex-direction:column; justify-content:center; }
-}
-
-/* Keep Discover's established 44px authentication targets (Campaign uses 43px). */
-.auth-form :is(input:not([type='checkbox']):not([type='radio']),select,.btn,.button) { min-block-size:44px; }
 
 .sr-only { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 
@@ -108,8 +81,6 @@ input:not([type='checkbox']):not([type='radio']):disabled,select:disabled,textar
 
 /* Preserve the established readable metadata floor for report headings and status text. */
 th { font-size:12px; }
-
-.nav-item:hover { background:var(--color-surface-subtle); color:var(--color-accent); }
 
 :is(.btn,.button).danger:not(:disabled),:is(.btn,.button).danger:not(:disabled):hover { color:var(--color-danger); background:var(--color-danger-subtle); }
 
@@ -134,7 +105,3 @@ th { font-size:12px; }
 
 /* ponytail: @ten98/ui 0.17.0 still wraps only chart summaries and notes; captions and legends cannot break long words (time zones, series names); at 320px and 200% zoom they overflow the card. */
 .t98-chart { overflow-wrap: anywhere; }
-
-
-/* ponytail: @ten98/ui 0.24.0 dropped the legacy 600px table min-width, but .t98-template-main is still a grid whose children keep min-width:auto, so a panel holding a scrolling nowrap table (team members) still widens settings past 320px. Remove once the package gives its track minmax(0,1fr) or shrinkable children. */
-.t98-template-main > * { min-inline-size:0; }

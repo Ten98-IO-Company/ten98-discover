@@ -309,7 +309,7 @@ try {
   // because `request` JSON-parses bodies, following the router's search canonicalization (`/` answers 307 to `/?view=project`)
   // to the document a browser lands on. Tag assets served from public/ must stay header-free for customer sites.
   const document = async (path: string) => { const response = await fetch(new URL(path, base), { signal: AbortSignal.timeout(15_000) }); return { response, text: await response.text() }; };
-  const documentPolicy = /^default-src 'none'; script-src 'self' 'nonce-([A-Za-z0-9+/=_-]{16,})'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' data: about:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'$/;
+  const documentPolicy = /^default-src 'none'; script-src 'self' 'nonce-([A-Za-z0-9+/=_-]{16,})'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' data: about:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'$/;
   const documentHeaders: Record<string, string> = { 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff', 'cross-origin-opener-policy': 'same-origin', 'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()', 'cache-control': 'no-store' };
   const expectDocumentHeaders = (path: string, response: Response) => {
     const nonce = response.headers.get('content-security-policy')?.match(documentPolicy)?.[1];

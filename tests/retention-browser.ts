@@ -8,6 +8,7 @@ import { assertSchema, closeDatabase, getDatabase } from '../src/server/db.ts';
 import { createWorkspace } from '../src/server/teams.ts';
 import { runRetentionBatch } from '../src/server/retention.ts';
 import {launchChromium} from './helpers/playwright.mjs';
+import {settingsOpen,settingsSections} from './helpers/app-navigation.ts';
 
 // Optional real-browser acceptance. Use a separately supplied browser module,
 // never an extra production dependency or a deployment/customer database.
@@ -55,9 +56,8 @@ try {
   }
   async function settings(tab:string) {
     // The shell opens Settings from the sidebar; each area is a tab in "Settings sections".
-    const tabs=page.getByRole('navigation',{name:'Settings sections',exact:true});
-    if(!await tabs.isVisible()){await navigation();await page.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true}).click();}
-    await tabs.getByRole('link',{name:tab,exact:true}).click();
+    if(!await settingsOpen(page)){await navigation();await page.locator('aside.t98-shell-sidebar').getByRole('link',{name:'Settings',exact:true}).click();}
+    await (await settingsSections(page)).getByRole('link',{name:tab,exact:true}).click();
   }
   await page.goto(config.appUrl,{waitUntil:'networkidle'});
   await navigation();await page.locator('aside.t98-shell-sidebar').getByLabel('Website',{exact:true}).selectOption({label:'Retention browser project'});
