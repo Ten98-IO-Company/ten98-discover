@@ -25,12 +25,22 @@ export function migrateOnStart(env: NodeJS.ProcessEnv = process.env): boolean {
   catch { throw new StartupError('MIGRATE_ON_START must be true or false.'); }
 }
 
-/** The runner's MIGRATION_TIMEOUT and MIGRATION_FAILED errors are already redacted; SCHEMA_MISMATCH passes through. */
-function startupError(error: unknown): unknown {
-  const code = (error as { code?: unknown } | null)?.code;
-  if (code === 'MIGRATION_FAILED') return new StartupError(`${(error as Error).message} Fix the cause, then restart or run the migrate command.`);
+const fixCause = 'Fix the cause, then restart or run the migrate command.';
+
+/**
+ * Maps a runner failure to operator-safe text. MIGRATION_TIMEOUT carries the runner's fixed deadline text,
+ * MIGRATION_FAILED is rebuilt from its validated SQLSTATE, SCHEMA_MISMATCH passes through, and anything else (such as
+ * a connection error naming the database URL) becomes the generic message.
+ */
+function startupError(error: unknown, generic: string): unknown {
+  const { code, sqlState } = (error ?? {}) as { code?: unknown; sqlState?: unknown };
+  if (code === 'SCHEMA_MISMATCH') return error;
   if (code === 'MIGRATION_TIMEOUT') return new StartupError((error as Error).message);
-  return error;
+  if (code === 'MIGRATION_FAILED') {
+    const state = typeof sqlState === 'string' && /^[0-9A-Z]{5}$/.test(sqlState) ? ` (PostgreSQL error ${sqlState})` : '';
+    return new StartupError(`Database migration failed${state} and was rolled back; nothing was applied. ${fixCause}`);
+  }
+  return new StartupError(generic);
 }
 
 /**
@@ -47,13 +57,13 @@ export async function migrateDatabase({ pool = getDatabase().pool, ledger = migr
         if (versions.includes('0022') || versions.includes('0023')) await initializeProviderAccountIdentity(client as pg.PoolClient, versions.includes('0022'));
       },
     });
-  } catch (error) { throw startupError(error); }
+  } catch (error) { throw startupError(error, `Database migration failed and was rolled back; nothing was applied. ${fixCause}`); }
 }
 
 /** Opt-out path: polls the schema check (no writes) until it is current, or fails at the deadline. */
 export async function waitForCurrentSchema({ pool = getDatabase().pool, ledger = migrationLedger, timeoutMs = startupMigrationTimeoutMs, log = console.log, intervalMs = 2_000 }: MigrationOptions & { intervalMs?: number } = {}): Promise<void> {
   try { await ledger.waitForCurrent(pool, { timeoutMs, intervalMs, log }); }
-  catch (error) { throw startupError(error); }
+  catch (error) { throw startupError(error, 'The database schema could not be checked. Run the migrate command, or leave MIGRATE_ON_START enabled.'); }
 }
 
 export type StartupRole = 'web' | 'worker';

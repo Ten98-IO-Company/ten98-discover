@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import type pg from 'pg';
+import { migrationLockKey } from '../src/server/db.ts';
 import { migrateDatabase, migrateOnStart, StartupError, startWhenDatabaseReady, waitForCurrentSchema, type MigrationOptions } from '../src/server/startup-migrate.ts';
 
 const quiet = () => {};
@@ -72,9 +73,17 @@ test('migration delegates to the shared deadline runner with the five-minute def
   await ok.seen.options!.afterApply!({ query: async () => { throw new Error('unexpected query'); } }, ['0072']);
 });
 
+const leaked = 'connect ECONNREFUSED postgres://user:secret@host:5432/db; syntax error at "secret-value"';
+const redacted = (error: Error) => error instanceof StartupError && !error.message.includes('secret') && !error.message.includes('postgres://');
+
 test('runner failures become redacted startup errors and a schema mismatch passes through', async () => {
-  await assert.rejects(migrateDatabase({ pool, ledger: ledger(async () => { throw runnerError('MIGRATION_FAILED', 'Database migration failed (PostgreSQL error 42601) and was rolled back; nothing was applied.'); }).fake, log: quiet }),
-    (error: Error) => error instanceof StartupError && error.message.includes('42601') && error.message.includes('rolled back') && error.message.includes('migrate command'));
+  await assert.rejects(migrateDatabase({ pool, ledger: ledger(async () => { throw Object.assign(runnerError('MIGRATION_FAILED', leaked), { sqlState: '42601' }); }).fake, log: quiet }),
+    (error: Error) => redacted(error) && error.message.includes('42601') && error.message.includes('rolled back') && error.message.includes('migrate command'));
+  // Anything the runner did not classify, such as a raw connection error, never reaches the operator verbatim.
+  for (const unknown of [Object.assign(new Error(leaked), { code: 'ECONNREFUSED' }), new Error(leaked), leaked]) {
+    await assert.rejects(migrateDatabase({ pool, ledger: ledger(async () => { throw unknown; }).fake, log: quiet }), (error: Error) => redacted(error) && error.message.includes('rolled back'));
+    await assert.rejects(waitForCurrentSchema({ pool, ledger: ledger(async () => [], async () => { throw unknown; }).fake, log: quiet }), redacted);
+  }
   await assert.rejects(migrateDatabase({ pool, ledger: ledger(async () => { throw runnerError('MIGRATION_TIMEOUT', 'Database migrations did not finish within 1 seconds; the migration transaction was abandoned and rolls back.'); }).fake, log: quiet }),
     (error: Error) => error instanceof StartupError && error.message.includes('did not finish'));
   const schemaError = runnerError('SCHEMA_MISMATCH', 'incompatible');
@@ -89,6 +98,37 @@ test('the opt-out schema wait delegates to the shared poller and fails as a star
   const late = ledger(async () => [], async () => { throw runnerError('MIGRATION_TIMEOUT', 'The database schema was not current within 1 seconds.'); });
   await assert.rejects(waitForCurrentSchema({ pool, ledger: late.fake, timeoutMs: 30, intervalMs: 5, log: quiet }),
     (error: Error) => error instanceof StartupError && !error.message.includes('schema_version'));
+});
+
+/** A fake pool for the real shared runner; its clients record SQL and `locked` decides pg_try_advisory_lock. */
+function fakePool({ locked = true, connectFails = false } = {}) {
+  const sql: string[] = [];
+  const target = {
+    connect: async () => {
+      if (connectFails) throw Object.assign(new Error('connect ECONNREFUSED postgres://user:secret@db'), { code: 'ECONNREFUSED' });
+      return {
+        query: async (text: string, params?: unknown[]) => {
+          sql.push(text);
+          if (text.includes('advisory')) assert.deepEqual(params, [...migrationLockKey]);
+          return { rows: text.includes('pg_try_advisory_lock') ? [{ locked }] : [] };
+        },
+        release: () => {},
+      };
+    },
+  } as unknown as pg.Pool;
+  return { pool: target, sql };
+}
+
+test('a held lock or unavailable database fails at the deadline with a redacted error', async () => {
+  const held = fakePool({ locked: false });
+  const logs: string[] = [];
+  await assert.rejects(migrateDatabase({ pool: held.pool, timeoutMs: 20, log: message => logs.push(message) }),
+    (error: Error) => error instanceof StartupError && error.message.includes('another process') && error.message.includes('Nothing was applied'));
+  assert.ok(held.sql.length > 0 && held.sql.every(text => text === 'SELECT pg_try_advisory_lock($1, $2) AS locked'), 'Without the lock nothing but the lock attempt runs.');
+  assert.match(logs[0], /another process/);
+  const down = fakePool({ connectFails: true });
+  await assert.rejects(migrateDatabase({ pool: down.pool, timeoutMs: 20, log: quiet }),
+    (error: Error) => redacted(error) && error.message.includes('accept connections'));
 });
 
 test('the image starts web through start-web and the CLI wires the opt-out before any database access', async () => {
