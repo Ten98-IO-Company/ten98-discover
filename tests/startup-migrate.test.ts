@@ -82,14 +82,15 @@ const ledger = (migrate: Ledger['migrate']): Ledger => ({ migrate, assertCurrent
 test('migration holds the well-known session lock and releases it after success or failure', async () => {
   const ok = fakePool();
   assert.deepEqual(await migrateDatabase({ pool: ok.pool, ledger: ledger(async () => ['0072']), timeoutMs: 1_000, log: quiet }), ['0072']);
-  assert.deepEqual(ok.sql, ['SELECT pg_try_advisory_lock($1, $2) AS locked', 'SELECT pg_advisory_unlock($1, $2)']);
+  // The pool statement_timeout is lifted only around the migration and restored before the connection returns (#467).
+  assert.deepEqual(ok.sql, ['SELECT pg_try_advisory_lock($1, $2) AS locked', 'SET statement_timeout = 0', 'RESET statement_timeout', 'SELECT pg_advisory_unlock($1, $2)']);
   assert.deepEqual(ok.releases, [undefined]);
 
   const failed = fakePool();
   const sqlError = Object.assign(new Error('syntax error at "secret-value"'), { code: '42601' });
   await assert.rejects(migrateDatabase({ pool: failed.pool, ledger: ledger(async () => { throw sqlError; }), timeoutMs: 1_000, log: quiet }),
     (error: Error) => error instanceof StartupError && error.message.includes('42601') && error.message.includes('rolled back') && !error.message.includes('secret'));
-  assert.equal(failed.sql.at(-1), 'SELECT pg_advisory_unlock($1, $2)');
+  assert.deepEqual(failed.sql.slice(-2), ['RESET statement_timeout', 'SELECT pg_advisory_unlock($1, $2)']);
   assert.equal(failed.releases.length, 1);
 
   const mismatch = fakePool();
