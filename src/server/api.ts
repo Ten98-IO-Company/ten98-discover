@@ -360,7 +360,9 @@ export async function handleApi(request: Request): Promise<Response> {
         return json({ workspaceName: invitation.workspace.name, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt, accountExists: invitation.accountExists });
       }
       const session = await getAuth().api.getSession({ headers: request.headers });
-      const accepted = await acceptInvitation(input, session ? { id: session.user.id, email: session.user.email } : undefined);
+      // The route keeps its response: the workspace, whether an account was created, and the invited email.
+      const { workspaceId, created, email } = await acceptInvitation(input, session ? { id: session.user.id, email: session.user.email } : undefined);
+      const accepted = { workspaceId, created, email };
       if (!accepted.created) return json({ ...accepted, signedIn: true });
       try {
         const signIn = await getAuth().handler(new Request(`${config.appUrl}/api/auth/sign-in/email`, {
