@@ -227,7 +227,7 @@ try {
   const basicProjectId = randomUUID(); fixtureSiteKey = randomUUID();
   await pool.query('INSERT INTO project(id,workspace_id,name,origin,public_key) VALUES($1,$2,$3,$4,$5)', [basicProjectId, basicWorkspace.id, 'Cookieless browser sandbox', fixtureOrigin, fixtureSiteKey]);
   await saveAnalyticsSettings(basicProjectId, userId, {revision: 1, settings: {enabled: true, collectionMode: 'cookieless', consentMode: 'builtin', captureReferrer: false, captureCampaigns: false, captureScreen: false, excludeBots: false, excludedPaths: []}});
-  const basicContext = await browser.newContext({viewport: {width: 320, height: 740}, serviceWorkers: 'block'}); await basicContext.route('**/*', blockExternal);
+  const basicContext = await browser.newContext({viewport: {width: 320, height: 740}, hasTouch: true, serviceWorkers: 'block'}); await basicContext.route('**/*', blockExternal);
   const basicPage = await basicContext.newPage(), basicEvents: any[] = [];
   basicPage.on('request', (request: any) => {if (request.url() === `${config.appUrl}/api/collect`) basicEvents.push(request.postDataJSON());});
   const firstBasic = basicPage.waitForResponse((res: any) => res.url() === `${config.appUrl}/api/collect` && res.request().method() === 'POST');

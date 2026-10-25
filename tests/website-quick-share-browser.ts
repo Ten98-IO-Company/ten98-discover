@@ -16,7 +16,7 @@ const reply=(route:any,body:unknown,status=200)=>route.fulfill({status,contentTy
 const writes=()=>calls.filter(call=>call.method==='POST'&&call.path.startsWith(base));
 async function fresh({role='owner',width=1440}={}){
  await context?.close();state={mode:'ok'};calls=[];
- context=await browser.newContext({viewport:{width,height:900},serviceWorkers:'block'});await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});context.setDefaultTimeout(7000);
+ context=await browser.newContext({viewport:{width,height:900},hasTouch:width<768,serviceWorkers:'block'});await context.grantPermissions(['clipboard-read','clipboard-write'],{origin});context.setDefaultTimeout(7000);
  await context.route('**/*',async (route:any)=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){evidence.external.push(url.origin);return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();
   const path=url.pathname,method=request.method(),raw=request.postData(),body=raw?request.postDataJSON():null;calls.push({path,method,raw,body});
   if(path==='/api/status')return reply(route,{configured:true,appUrl:origin});

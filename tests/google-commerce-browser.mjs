@@ -38,7 +38,7 @@ function routes(data,override=async()=>false){return async(route,request,url)=>{
  evidence.unexpected.push(call);await route.abort();throw Error('Unplanned commerce fixture request.');
 };}
 async function fresh(data=fixture(),override=async()=>false,{selectedScope=scope,width=1440,dir='ltr',zoom=1}={}){
- if(context)await context.close();currentScope=selectedScope;handler=routes(data,override);context=await browser.newContext({viewport:{width,height:1000},serviceWorkers:'block'});evidence.contexts++;context.setDefaultTimeout(10000);
+ if(context)await context.close();currentScope=selectedScope;handler=routes(data,override);context=await browser.newContext({viewport:{width,height:1000},hasTouch:width<768,serviceWorkers:'block'});evidence.contexts++;context.setDefaultTimeout(10000);
  await context.addInitScript(({selectedScope,dir,zoom})=>{window.googleCommerceScope=selectedScope;addEventListener('DOMContentLoaded',()=>{document.documentElement.dir=dir;document.body.style.zoom=String(zoom);});},{selectedScope,dir,zoom});
  await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){evidence.external.push(url.origin);save();return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();return handler(route,request,url);});
  page=await context.newPage();page.on('pageerror',error=>{evidence.pageErrors.push(error.message);save();});await page.clock.setFixedTime(new Date(clock));await page.goto(origin);await button('Refresh status').waitFor();

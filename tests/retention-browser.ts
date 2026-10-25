@@ -34,7 +34,7 @@ try {
   await pool.query("UPDATE project SET retention_next_run_at='infinity' WHERE id=$1",[projectId]);
   await pool.query("UPDATE installation SET claimed=true WHERE id='instance'");
   browser=await launchChromium();
-  const context=await browser.newContext({viewport:{width:360,height:800}});
+  const context=await browser.newContext({viewport:{width:360,height:800},hasTouch:true});
   const external:string[]=[];
   await context.route('**/*',async(route:any)=>{
     if(new URL(route.request().url()).origin!==config.appUrl){external.push(route.request().url());await route.abort();}

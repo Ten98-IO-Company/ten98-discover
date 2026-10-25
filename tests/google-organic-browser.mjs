@@ -38,7 +38,7 @@ function routes(data,overrides=async()=>false){return async(route,request,url)=>
 };}
 async function fresh(data=fixture(),overrides=async()=>false,{clock=chartClock,width=1440,dir='ltr',zoom=1,selectedScope=scope}={}){
  if(context)await context.close();held=[];currentScope=selectedScope;handler=routes(data,overrides);
- context=await browser.newContext({viewport:{width,height:1000},serviceWorkers:'block'});evidence.contexts++;context.setDefaultTimeout(10000);
+ context=await browser.newContext({viewport:{width,height:1000},hasTouch:width<768,serviceWorkers:'block'});evidence.contexts++;context.setDefaultTimeout(10000);
  await context.addInitScript(({selectedScope,clock,dir,zoom})=>{window.googleOrganicScope=selectedScope;const OriginalDate=Date,fixed=new OriginalDate(clock).valueOf();class FixtureDate extends OriginalDate{constructor(...args){super(...(args.length?args:[fixed]));}static now(){return fixed;}}window.Date=FixtureDate;addEventListener('DOMContentLoaded',()=>{document.documentElement.dir=dir;document.body.style.zoom=String(zoom);});},{selectedScope,clock,dir,zoom});
  await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){evidence.external.push(url.origin);save();return route.abort();}if(!url.pathname.startsWith('/api/'))return route.continue();return handler(route,request,url);});
  page=await context.newPage();page.on('pageerror',error=>{evidence.pageErrors.push(error.message);save();});await page.goto(origin,{waitUntil:'networkidle'});await page.getByLabel('Google source',{exact:true}).waitFor();

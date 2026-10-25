@@ -73,7 +73,7 @@ async function normal(route,call){
 }
 async function fresh({search={workspace,view:'links'},fragment='',role='owner',mode='normal',custom=async()=>false,width=1440,dir='ltr',zoom=1,hydrate=false,...options}={}){
  for(const record of held)await record.route.abort().catch(()=>{});held=[];await context?.close();state={role,mode,grants:[],items:new Map([[assetA,item(assetA)],[assetB,item(assetB)],[pixel,item(pixel,'pixel')]]),...options};override=custom;evidence.contexts++;
- context=await browser.newContext({viewport:{width,height:1000},serviceWorkers:'block',locale:'en-US',colorScheme:'light'});context.setDefaultTimeout(8000);await context.addCookies([{name:'synthetic-session',value:'must-not-reach-public-share',url:origin}]);
+ context=await browser.newContext({viewport:{width,height:1000},hasTouch:width<768,serviceWorkers:'block',locale:'en-US',colorScheme:'light'});context.setDefaultTimeout(8000);await context.addCookies([{name:'synthetic-session',value:'must-not-reach-public-share',url:origin}]);
  await context.addInitScript(({dir,zoom})=>addEventListener('DOMContentLoaded',()=>{document.documentElement.dir=dir;document.body.style.zoom=String(zoom);}),{dir,zoom});
  await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());if(url.origin!==origin){evidence.external.push(url.origin);save();return route.abort();}if(!url.pathname.startsWith('/api/'))return request.method()==='GET'?route.continue():route.abort();
   const path=url.pathname,method=request.method(),text=request.postData(),body=text===null?null:request.postDataJSON(),call={path,method,body,text,params:url.searchParams,request,route};

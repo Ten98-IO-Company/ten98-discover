@@ -67,7 +67,7 @@ const emptyList = () => ({role: 'viewer', vaultConfigured: false, connections: [
 const otherProjectId = 'f0000000-0000-4000-8000-000000000002';
 const actorB = 'f0000000-0000-4000-8000-000000000003';
 async function run(name, options, check) {
-  const context = await browser.newContext({storageState: options.anonymous ? undefined : storageState, viewport: {width: options.width ?? 1440, height: 1000}, serviceWorkers: 'block'});
+  const context = await browser.newContext({storageState: options.anonymous ? undefined : storageState, viewport: {width: options.width ?? 1440, height: 1000}, hasTouch: (options.width ?? 1440) < 768, serviceWorkers: 'block'});
   const calls = [], blocked = [], errors = [], tasks = [], observedAssets = new Set();
   let releaseCode, codeHeld = false, actor = 'A', failed = false, syntheticProject = false;
   const gate = new Promise(resolve => { releaseCode = resolve; });
