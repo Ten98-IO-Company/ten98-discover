@@ -52,8 +52,11 @@ export async function settingsSections(scope:any):Promise<any>{
   const full=fullSettings(scope).getByRole('navigation',{name:settingsLabel,exact:true});
   const compact=scope.locator('details.t98-settings-compact-nav');
   const summary=compact.locator('summary.t98-settings-compact-nav__summary');
-  await full.or(summary).first().waitFor();
-  if(await full.isVisible())return full;
+  // The compact menu precedes the full list in the DOM and only one form is shown at a time, so wait on whichever is
+  // visible rather than the first match, which may be the hidden compact summary.
+  const visibleFull=full.filter({visible:true});
+  await visibleFull.or(summary.filter({visible:true})).first().waitFor();
+  if(await visibleFull.count())return full;
   if(!await compact.evaluate((node:HTMLDetailsElement)=>node.open))await summary.click();
   const nav=compact.getByRole('navigation',{name:settingsLabel,exact:true});
   await nav.waitFor();

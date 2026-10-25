@@ -88,6 +88,34 @@ test('forwarding headers are honoured only from configured trusted proxies', asy
   });
 });
 
+test('client-controlled X-Forwarded-For entries left of the client hop cannot unresolve the client or choose its key', async () => {
+  await withTransport(async fromPeer => {
+    const trusted = { ...baseEnv, TRUSTED_PROXIES: '127.0.0.1' }, real = clientLimitKey('signin', '198.51.100.7', baseEnv.AUTH_SECRET);
+    const via = (forwarded: string) => fromPeer('/api/auth/sign-in/email', { headers: { 'x-forwarded-for': forwarded } });
+    // (a) A trusted proxy appends the real client to whatever junk the client sent.
+    for (const junk of ['unknown', 'garbage', '"192.0.2.1"', '192.0.2.1:80', 'example.test', ',']) {
+      assert.equal(requestClientAddress(via(`${junk}, 198.51.100.7`), trusted), '198.51.100.7', junk);
+      assert.equal(clientRateKey(via(`${junk}, 198.51.100.7`), 'signin', trusted), real, `${junk}: the real client keeps its key`);
+    }
+    // (b) A left-padded spoof cannot pick the key: neither another client's, the shared unresolved one, nor a trusted address.
+    for (const padding of ['203.0.113.66', '203.0.113.66, 192.0.2.44', '127.0.0.1', 'unknown, 203.0.113.66', Array(18).fill('203.0.113.66').join(',')]) {
+      const key = clientRateKey(via(`${padding}, 198.51.100.7`), 'signin', trusted);
+      assert.equal(key, real, padding);
+      assert.notEqual(key, 'signin:client:unresolved');
+      assert.notEqual(key, clientLimitKey('signin', '203.0.113.66', baseEnv.AUTH_SECRET));
+    }
+    // A malformed client hop, or junk reached only through trusted hops, is still unresolved.
+    assert.equal(requestClientAddress(via('198.51.100.7, garbage'), trusted), null);
+    assert.equal(requestClientAddress(via('garbage, 127.0.0.1'), trusted), null);
+    assert.equal(requestClientAddress(via(Array(21).fill('198.51.100.7').join(',')), trusted), null, 'the hop limit still applies');
+    // (c) An untrusted peer is still its own client, whatever the header says.
+    for (const forwarded of ['garbage, 198.51.100.7', '203.0.113.66, 198.51.100.7', '198.51.100.7, garbage']) {
+      assert.equal(requestClientAddress(via(forwarded), { TRUSTED_PROXIES: '10.0.0.0/8' }), '127.0.0.1', forwarded);
+      assert.equal(requestClientAddress(via(forwarded), {}), '127.0.0.1', forwarded);
+    }
+  });
+});
+
 test('collection per-client keys exist only where an address identifies one visitor', async () => {
   const secretEnv = { AUTH_SECRET: 'a'.repeat(32) };
   await withTransport(async fromPeer => {
